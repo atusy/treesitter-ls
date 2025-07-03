@@ -164,18 +164,9 @@ impl TreeSitterLs {
     fn index_symbols(&self, uri: &Url, text: &str, tree: &Tree) {
         let mut cursor = tree.walk();
         self.visit_node(&mut cursor, uri, text, tree.root_node());
-        
-        // Debug: log how many symbols we indexed
-        let total_symbols: usize = self.symbol_definitions.iter().map(|entry| entry.value().len()).sum();
-        eprintln!("DEBUG: Indexed {} symbols for {}", total_symbols, uri);
     }
 
     fn visit_node(&self, cursor: &mut tree_sitter::TreeCursor, uri: &Url, text: &str, node: Node) {
-        // Debug: print all node types to understand the structure
-        if node.kind().contains("let") {
-            eprintln!("DEBUG: Found node of type: {}", node.kind());
-        }
-        
         // Check if this node represents a symbol definition
         match node.kind() {
             // Function definitions
@@ -316,18 +307,14 @@ impl TreeSitterLs {
             
             // Local variable definitions (let statements)
             "let_declaration" => {
-                eprintln!("DEBUG: Found let_declaration node");
                 if let Some(pattern_node) = node.child_by_field_name("pattern") {
-                    eprintln!("DEBUG: Extracting pattern from let_declaration");
                     self.extract_identifiers_from_pattern(pattern_node, uri, text);
                 }
             }
             
             // Also try let_statement
             "let_statement" => {
-                eprintln!("DEBUG: Found let_statement node");
                 if let Some(pattern_node) = node.child_by_field_name("pattern") {
-                    eprintln!("DEBUG: Extracting pattern from let_statement");
                     self.extract_identifiers_from_pattern(pattern_node, uri, text);
                 }
             }
@@ -336,10 +323,8 @@ impl TreeSitterLs {
             _ => {
                 // Check if this is any kind of let/variable binding node
                 if node.kind().contains("let") || node.kind() == "variable_declaration" {
-                    eprintln!("DEBUG: Found potential variable node: {}", node.kind());
                     // Look for pattern field
                     if let Some(pattern_node) = node.child_by_field_name("pattern") {
-                        eprintln!("DEBUG: Found pattern field in {}", node.kind());
                         self.extract_identifiers_from_pattern(pattern_node, uri, text);
                     } else {
                         // Look for identifier children directly
@@ -348,8 +333,6 @@ impl TreeSitterLs {
                                 if child.kind() == "identifier" {
                                     let name = text[child.byte_range()].to_string();
                                     let range = self.node_to_range(&child, text);
-                                    
-                                    eprintln!("DEBUG: Found identifier in {}: '{}'", node.kind(), name);
                                     
                                     let definition = SymbolDefinition {
                                         name: name.clone(),
@@ -380,13 +363,10 @@ impl TreeSitterLs {
     }
 
     fn extract_identifiers_from_pattern(&self, pattern_node: Node, uri: &Url, text: &str) {
-        eprintln!("DEBUG: extract_identifiers_from_pattern called with node kind: {}", pattern_node.kind());
         match pattern_node.kind() {
             "identifier" => {
                 let name = text[pattern_node.byte_range()].to_string();
                 let range = self.node_to_range(&pattern_node, text);
-                
-                eprintln!("DEBUG: Found identifier in pattern: '{}'", name);
                 
                 let definition = SymbolDefinition {
                     name: name.clone(),
@@ -822,3 +802,6 @@ impl LanguageServer for TreeSitterLs {
         Ok(None)
     }
 }
+
+#[cfg(test)]
+mod simple_tests;
