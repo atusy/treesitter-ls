@@ -6,7 +6,7 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 use tree_sitter::{Language, Parser, Query, QueryCursor, Tree, StreamingIterator, Node};
 
-const LEGEND_TYPES: &[SemanticTokenType] = &[
+pub const LEGEND_TYPES: &[SemanticTokenType] = &[
     SemanticTokenType::COMMENT,
     SemanticTokenType::KEYWORD,
     SemanticTokenType::STRING,
@@ -31,44 +31,44 @@ const LEGEND_TYPES: &[SemanticTokenType] = &[
 ];
 
 
-#[derive(Debug, Clone, Deserialize)]
-struct HighlightItem {
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+pub struct HighlightItem {
     #[serde(flatten)]
-    source: HighlightSource,
+    pub source: HighlightSource,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(untagged)]
-enum HighlightSource {
+pub enum HighlightSource {
     Path { path: String },
     Query { query: String },
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct LanguageConfig {
-    library: String,
-    highlight: Vec<HighlightItem>,
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+pub struct LanguageConfig {
+    pub library: String,
+    pub highlight: Vec<HighlightItem>,
 }
 
 #[derive(Debug, Deserialize)]
-struct TreeSitterSettings {
-    treesitter: std::collections::HashMap<String, LanguageConfig>,
-    filetypes: std::collections::HashMap<String, Vec<String>>,
+pub struct TreeSitterSettings {
+    pub treesitter: std::collections::HashMap<String, LanguageConfig>,
+    pub filetypes: std::collections::HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
-struct SymbolDefinition {
-    name: String,
-    uri: Url,
-    range: Range,
-    kind: SymbolKind,
+pub struct SymbolDefinition {
+    pub name: String,
+    pub uri: Url,
+    pub range: Range,
+    pub kind: SymbolKind,
 }
 
 #[derive(Debug, Clone)]
-struct SymbolReference {
-    name: String,
-    uri: Url,
-    range: Range,
+pub struct SymbolReference {
+    pub name: String,
+    pub uri: Url,
+    pub range: Range,
 }
 
 pub struct TreeSitterLs {
