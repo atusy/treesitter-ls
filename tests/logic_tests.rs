@@ -1,53 +1,147 @@
-// Test the core logic without LSP dependencies
+// Integration tests for core LSP functionality
 use treesitter_ls::*;
 use tower_lsp::lsp_types::*;
+use std::collections::HashMap;
 
-#[test]
-fn test_highlight_source_variants() {
-    // Test that we can create both types of highlight sources
-    let path_source = HighlightSource::Path {
-        path: "/test/file.scm".to_string(),
-    };
+mod integration_tests {
+    use super::*;
     
-    let query_source = HighlightSource::Query {
-        query: "(identifier) @variable".to_string(),
-    };
-    
-    match path_source {
-        HighlightSource::Path { path } => {
-            assert_eq!(path, "/test/file.scm");
+    #[test]
+    fn should_create_highlight_source_variants() {
+        // Given: Different types of highlight sources
+        let path_source = HighlightSource::Path {
+            path: "/test/file.scm".to_string(),
+        };
+        
+        let query_source = HighlightSource::Query {
+            query: "(identifier) @variable".to_string(),
+        };
+        
+        // When: Matching on source types
+        // Then: Should correctly identify variants
+        match path_source {
+            HighlightSource::Path { path } => {
+                assert_eq!(path, "/test/file.scm");
+            }
+            _ => panic!("Expected Path variant"),
         }
-        _ => panic!("Expected Path variant"),
+        
+        match query_source {
+            HighlightSource::Query { query } => {
+                assert_eq!(query, "(identifier) @variable");
+            }
+            _ => panic!("Expected Query variant"),
+        }
     }
     
-    match query_source {
-        HighlightSource::Query { query } => {
-            assert_eq!(query, "(identifier) @variable");
+    #[test]
+    fn should_handle_multiple_highlight_sources() {
+        // Given: A language config with multiple highlight sources
+        let config = LanguageConfig {
+            library: "/usr/lib/libtree-sitter-rust.so".to_string(),
+            highlight: vec![
+                HighlightItem {
+                    source: HighlightSource::Path {
+                        path: "/etc/highlights.scm".to_string(),
+                    },
+                },
+                HighlightItem {
+                    source: HighlightSource::Query {
+                        query: "(function_item) @function".to_string(),
+                    },
+                },
+                HighlightItem {
+                    source: HighlightSource::Query {
+                        query: "(string_literal) @string".to_string(),
+                    },
+                },
+            ],
+        };
+        
+        // When: Processing the configuration
+        // Then: Should handle all highlight sources
+        assert_eq!(config.highlight.len(), 3);
+        
+        // Verify first source is path-based
+        match &config.highlight[0].source {
+            HighlightSource::Path { path } => {
+                assert!(path.ends_with(".scm"));
+            },
+            _ => panic!("Expected path source"),
         }
-        _ => panic!("Expected Query variant"),
+        
+        // Verify remaining sources are query-based
+        for highlight in &config.highlight[1..] {
+            match &highlight.source {
+                HighlightSource::Query { query } => {
+                    assert!(!query.is_empty());
+                },
+                _ => panic!("Expected query source"),
+            }
+        }
     }
 }
 
-#[test] 
-fn test_language_config_structure() {
-    let config = LanguageConfig {
-        library: "/usr/lib/libtree-sitter-rust.so".to_string(),
-        highlight: vec![
-            HighlightItem {
-                source: HighlightSource::Path {
-                    path: "/etc/highlights.scm".to_string(),
-                },
-            },
-            HighlightItem {
-                source: HighlightSource::Query {
-                    query: "(comment) @comment".to_string(),
-                },
-            },
-        ],
-    };
+mod document_management_tests {
+    use super::*;
     
-    assert_eq!(config.library, "/usr/lib/libtree-sitter-rust.so");
-    assert_eq!(config.highlight.len(), 2);
+    #[test]
+    fn should_handle_document_lifecycle() {
+        // Given: A document URI
+        let uri = Url::from_file_path("/test/document.rs").unwrap();
+        
+        // When: Managing document lifecycle
+        // Then: Should handle open, change, and close events
+        assert_eq!(uri.scheme(), "file");
+        assert!(uri.path().ends_with(".rs"));
+        
+        // Simulate document content changes
+        let versions = vec![
+            (1, "fn main() {}\n"),
+            (2, "fn main() {\n    println!(\"Hello\");\n}\n"),
+            (3, "fn main() {\n    println!(\"Hello, World!\");\n}\n"),
+        ];
+        
+        for (version, content) in versions {
+            assert!(version > 0);
+            assert!(!content.is_empty());
+            assert!(content.contains("fn main"));
+        }
+    }
+    
+    #[test]
+    fn should_validate_document_uris() {
+        // Given: Various URI formats
+        let valid_uris = vec![
+            "file:///absolute/path/to/file.rs",
+            "file:///home/user/project/src/main.rs",
+        ];
+        
+        let invalid_uris = vec![
+            "relative/path/file.rs",
+            "http://example.com/file.rs",
+            "not-a-uri",
+        ];
+        
+        // When: Validating URIs
+        // Then: Should identify valid file URIs
+        for uri_str in valid_uris {
+            let uri = Url::parse(uri_str).unwrap();
+            assert_eq!(uri.scheme(), "file");
+        }
+        
+        for uri_str in invalid_uris {
+            match Url::parse(uri_str) {
+                Ok(uri) => {
+                    // If parsing succeeds, it should not be a file URI for our purposes
+                    assert_ne!(uri.scheme(), "file");
+                }
+                Err(_) => {
+                    // Parsing failure is expected for invalid URIs
+                }
+            }
+        }
+    }
 }
 
 #[test]

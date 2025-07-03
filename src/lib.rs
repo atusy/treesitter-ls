@@ -50,7 +50,7 @@ pub struct LanguageConfig {
     pub highlight: Vec<HighlightItem>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, serde::Serialize)]
 pub struct TreeSitterSettings {
     pub treesitter: std::collections::HashMap<String, LanguageConfig>,
     pub filetypes: std::collections::HashMap<String, Vec<String>>,
