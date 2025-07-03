@@ -4,7 +4,7 @@ use serde::Deserialize;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
-use tree_sitter::{Language, Parser, Query, QueryCursor, Tree, StreamingIterator};
+use tree_sitter::{Language, Parser, Query, QueryCursor, Tree, StreamingIterator, Node};
 
 const LEGEND_TYPES: &[SemanticTokenType] = &[
     SemanticTokenType::COMMENT,
@@ -56,6 +56,21 @@ struct TreeSitterSettings {
     filetypes: std::collections::HashMap<String, Vec<String>>,
 }
 
+#[derive(Debug, Clone)]
+struct SymbolDefinition {
+    name: String,
+    uri: Url,
+    range: Range,
+    kind: SymbolKind,
+}
+
+#[derive(Debug, Clone)]
+struct SymbolReference {
+    name: String,
+    uri: Url,
+    range: Range,
+}
+
 pub struct TreeSitterLs {
     client: Client,
     languages: std::sync::Mutex<std::collections::HashMap<String, Language>>,
@@ -63,7 +78,9 @@ pub struct TreeSitterLs {
     language_configs: std::sync::Mutex<std::collections::HashMap<String, LanguageConfig>>,
     filetype_map: std::sync::Mutex<std::collections::HashMap<String, String>>,
     libraries: std::sync::Mutex<std::collections::HashMap<String, Library>>,
-    document_map: DashMap<Url, (String, Option<Tree>)>
+    document_map: DashMap<Url, (String, Option<Tree>)>,
+    symbol_definitions: DashMap<String, Vec<SymbolDefinition>>,
+    symbol_references: DashMap<String, Vec<SymbolReference>>,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -76,6 +93,8 @@ impl std::fmt::Debug for TreeSitterLs {
             .field("filetype_map", &"Mutex<HashMap<String, String>>")
             .field("libraries", &"Mutex<HashMap<String, Library>>")
             .field("document_map", &self.document_map)
+            .field("symbol_definitions", &self.symbol_definitions)
+            .field("symbol_references", &self.symbol_references)
             .finish()
     }
 }
@@ -90,6 +109,8 @@ impl TreeSitterLs {
             filetype_map: std::sync::Mutex::new(std::collections::HashMap::new()),
             libraries: std::sync::Mutex::new(std::collections::HashMap::new()),
             document_map: DashMap::new(),
+            symbol_definitions: DashMap::new(),
+            symbol_references: DashMap::new(),
         }
     }
 
@@ -107,6 +128,9 @@ impl TreeSitterLs {
                 let mut parser = Parser::new();
                 if parser.set_language(language).is_ok() {
                     if let Some(tree) = parser.parse(&text, None) {
+                        // Index symbols for definition jumping
+                        self.index_symbols(&uri, &text, &tree);
+                        
                         self.document_map.insert(uri, (text, Some(tree)));
                         return;
                     }
@@ -135,6 +159,328 @@ impl TreeSitterLs {
         let extension = uri.path().split('.').last().unwrap_or("");
         let filetype_map = self.filetype_map.lock().unwrap();
         filetype_map.get(extension).cloned()
+    }
+
+    fn index_symbols(&self, uri: &Url, text: &str, tree: &Tree) {
+        let mut cursor = tree.walk();
+        self.visit_node(&mut cursor, uri, text, tree.root_node());
+        
+        // Debug: log how many symbols we indexed
+        let total_symbols: usize = self.symbol_definitions.iter().map(|entry| entry.value().len()).sum();
+        eprintln!("DEBUG: Indexed {} symbols for {}", total_symbols, uri);
+    }
+
+    fn visit_node(&self, cursor: &mut tree_sitter::TreeCursor, uri: &Url, text: &str, node: Node) {
+        // Debug: print all node types to understand the structure
+        if node.kind().contains("let") {
+            eprintln!("DEBUG: Found node of type: {}", node.kind());
+        }
+        
+        // Check if this node represents a symbol definition
+        match node.kind() {
+            // Function definitions
+            "function_item" => {
+                if let Some(name_node) = node.child_by_field_name("name") {
+                    let name = text[name_node.byte_range()].to_string();
+                    let range = self.node_to_range(&name_node, text);
+                    
+                    let definition = SymbolDefinition {
+                        name: name.clone(),
+                        uri: uri.clone(),
+                        range,
+                        kind: SymbolKind::FUNCTION,
+                    };
+                    
+                    self.symbol_definitions.entry(name).or_insert_with(Vec::new).push(definition);
+                }
+            }
+            
+            // Struct definitions
+            "struct_item" => {
+                if let Some(name_node) = node.child_by_field_name("name") {
+                    let name = text[name_node.byte_range()].to_string();
+                    let range = self.node_to_range(&name_node, text);
+                    
+                    let definition = SymbolDefinition {
+                        name: name.clone(),
+                        uri: uri.clone(),
+                        range,
+                        kind: SymbolKind::STRUCT,
+                    };
+                    
+                    self.symbol_definitions.entry(name).or_insert_with(Vec::new).push(definition);
+                }
+            }
+            
+            // Enum definitions
+            "enum_item" => {
+                if let Some(name_node) = node.child_by_field_name("name") {
+                    let name = text[name_node.byte_range()].to_string();
+                    let range = self.node_to_range(&name_node, text);
+                    
+                    let definition = SymbolDefinition {
+                        name: name.clone(),
+                        uri: uri.clone(),
+                        range,
+                        kind: SymbolKind::ENUM,
+                    };
+                    
+                    self.symbol_definitions.entry(name).or_insert_with(Vec::new).push(definition);
+                }
+            }
+            
+            // Trait definitions
+            "trait_item" => {
+                if let Some(name_node) = node.child_by_field_name("name") {
+                    let name = text[name_node.byte_range()].to_string();
+                    let range = self.node_to_range(&name_node, text);
+                    
+                    let definition = SymbolDefinition {
+                        name: name.clone(),
+                        uri: uri.clone(),
+                        range,
+                        kind: SymbolKind::INTERFACE,
+                    };
+                    
+                    self.symbol_definitions.entry(name).or_insert_with(Vec::new).push(definition);
+                }
+            }
+            
+            // Module definitions
+            "mod_item" => {
+                if let Some(name_node) = node.child_by_field_name("name") {
+                    let name = text[name_node.byte_range()].to_string();
+                    let range = self.node_to_range(&name_node, text);
+                    
+                    let definition = SymbolDefinition {
+                        name: name.clone(),
+                        uri: uri.clone(),
+                        range,
+                        kind: SymbolKind::MODULE,
+                    };
+                    
+                    self.symbol_definitions.entry(name).or_insert_with(Vec::new).push(definition);
+                }
+            }
+            
+            // Constant definitions
+            "const_item" => {
+                if let Some(name_node) = node.child_by_field_name("name") {
+                    let name = text[name_node.byte_range()].to_string();
+                    let range = self.node_to_range(&name_node, text);
+                    
+                    let definition = SymbolDefinition {
+                        name: name.clone(),
+                        uri: uri.clone(),
+                        range,
+                        kind: SymbolKind::CONSTANT,
+                    };
+                    
+                    self.symbol_definitions.entry(name).or_insert_with(Vec::new).push(definition);
+                }
+            }
+            
+            // Static definitions
+            "static_item" => {
+                if let Some(name_node) = node.child_by_field_name("name") {
+                    let name = text[name_node.byte_range()].to_string();
+                    let range = self.node_to_range(&name_node, text);
+                    
+                    let definition = SymbolDefinition {
+                        name: name.clone(),
+                        uri: uri.clone(),
+                        range,
+                        kind: SymbolKind::VARIABLE,
+                    };
+                    
+                    self.symbol_definitions.entry(name).or_insert_with(Vec::new).push(definition);
+                }
+            }
+            
+            // Type alias definitions
+            "type_item" => {
+                if let Some(name_node) = node.child_by_field_name("name") {
+                    let name = text[name_node.byte_range()].to_string();
+                    let range = self.node_to_range(&name_node, text);
+                    
+                    let definition = SymbolDefinition {
+                        name: name.clone(),
+                        uri: uri.clone(),
+                        range,
+                        kind: SymbolKind::TYPE_PARAMETER,
+                    };
+                    
+                    self.symbol_definitions.entry(name).or_insert_with(Vec::new).push(definition);
+                }
+            }
+            
+            // Local variable definitions (let statements)
+            "let_declaration" => {
+                eprintln!("DEBUG: Found let_declaration node");
+                if let Some(pattern_node) = node.child_by_field_name("pattern") {
+                    eprintln!("DEBUG: Extracting pattern from let_declaration");
+                    self.extract_identifiers_from_pattern(pattern_node, uri, text);
+                }
+            }
+            
+            // Also try let_statement
+            "let_statement" => {
+                eprintln!("DEBUG: Found let_statement node");
+                if let Some(pattern_node) = node.child_by_field_name("pattern") {
+                    eprintln!("DEBUG: Extracting pattern from let_statement");
+                    self.extract_identifiers_from_pattern(pattern_node, uri, text);
+                }
+            }
+            
+            // Generic pattern for any node that might contain variable bindings
+            _ => {
+                // Check if this is any kind of let/variable binding node
+                if node.kind().contains("let") || node.kind() == "variable_declaration" {
+                    eprintln!("DEBUG: Found potential variable node: {}", node.kind());
+                    // Look for pattern field
+                    if let Some(pattern_node) = node.child_by_field_name("pattern") {
+                        eprintln!("DEBUG: Found pattern field in {}", node.kind());
+                        self.extract_identifiers_from_pattern(pattern_node, uri, text);
+                    } else {
+                        // Look for identifier children directly
+                        for i in 0..node.child_count() {
+                            if let Some(child) = node.child(i) {
+                                if child.kind() == "identifier" {
+                                    let name = text[child.byte_range()].to_string();
+                                    let range = self.node_to_range(&child, text);
+                                    
+                                    eprintln!("DEBUG: Found identifier in {}: '{}'", node.kind(), name);
+                                    
+                                    let definition = SymbolDefinition {
+                                        name: name.clone(),
+                                        uri: uri.clone(),
+                                        range,
+                                        kind: SymbolKind::VARIABLE,
+                                    };
+                                    
+                                    self.symbol_definitions.entry(name).or_insert_with(Vec::new).push(definition);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Recursively visit children
+        if cursor.goto_first_child() {
+            loop {
+                self.visit_node(cursor, uri, text, cursor.node());
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+            cursor.goto_parent();
+        }
+    }
+
+    fn extract_identifiers_from_pattern(&self, pattern_node: Node, uri: &Url, text: &str) {
+        eprintln!("DEBUG: extract_identifiers_from_pattern called with node kind: {}", pattern_node.kind());
+        match pattern_node.kind() {
+            "identifier" => {
+                let name = text[pattern_node.byte_range()].to_string();
+                let range = self.node_to_range(&pattern_node, text);
+                
+                eprintln!("DEBUG: Found identifier in pattern: '{}'", name);
+                
+                let definition = SymbolDefinition {
+                    name: name.clone(),
+                    uri: uri.clone(),
+                    range,
+                    kind: SymbolKind::VARIABLE,
+                };
+                
+                self.symbol_definitions.entry(name).or_insert_with(Vec::new).push(definition);
+            }
+            "mut_pattern" => {
+                if let Some(child) = pattern_node.child(0) {
+                    self.extract_identifiers_from_pattern(child, uri, text);
+                }
+            }
+            "ref_pattern" => {
+                if let Some(child) = pattern_node.child(0) {
+                    self.extract_identifiers_from_pattern(child, uri, text);
+                }
+            }
+            "tuple_pattern" => {
+                for i in 0..pattern_node.child_count() {
+                    if let Some(child) = pattern_node.child(i) {
+                        if child.kind() != "," && child.kind() != "(" && child.kind() != ")" {
+                            self.extract_identifiers_from_pattern(child, uri, text);
+                        }
+                    }
+                }
+            }
+            _ => {
+                // For other pattern types, recursively check children
+                for i in 0..pattern_node.child_count() {
+                    if let Some(child) = pattern_node.child(i) {
+                        self.extract_identifiers_from_pattern(child, uri, text);
+                    }
+                }
+            }
+        }
+    }
+
+    fn node_to_range(&self, node: &Node, _text: &str) -> Range {
+        let start_pos = node.start_position();
+        let end_pos = node.end_position();
+        
+        Range {
+            start: Position {
+                line: start_pos.row as u32,
+                character: start_pos.column as u32,
+            },
+            end: Position {
+                line: end_pos.row as u32,
+                character: end_pos.column as u32,
+            },
+        }
+    }
+
+    fn get_symbol_at_position(&self, text: &str, tree: &Tree, position: Position) -> Option<String> {
+        let point = tree_sitter::Point {
+            row: position.line as usize,
+            column: position.character as usize,
+        };
+
+        let node = tree.root_node().descendant_for_point_range(point, point)?;
+        
+        // Look for an identifier node at this position
+        if node.kind() == "identifier" {
+            let symbol_name = text[node.byte_range()].to_string();
+            return Some(symbol_name);
+        }
+        
+        // If not directly on an identifier, check parent nodes
+        let mut current_node = node;
+        while let Some(parent) = current_node.parent() {
+            for child in 0..parent.child_count() {
+                if let Some(child_node) = parent.child(child) {
+                    if child_node.kind() == "identifier" {
+                        let child_start = child_node.start_position();
+                        let child_end = child_node.end_position();
+                        
+                        // Check if position is within this identifier
+                        if point.row >= child_start.row 
+                            && point.row <= child_end.row
+                            && (point.row > child_start.row || point.column >= child_start.column)
+                            && (point.row < child_end.row || point.column <= child_end.column) {
+                            let symbol_name = text[child_node.byte_range()].to_string();
+                            return Some(symbol_name);
+                        }
+                    }
+                }
+            }
+            current_node = parent;
+        }
+
+        None
     }
 
     fn load_query_from_highlight(&self, highlight_items: &[HighlightItem]) -> std::result::Result<String, String> {
@@ -277,6 +623,7 @@ impl LanguageServer for TreeSitterLs {
                         ..Default::default()
                     }),
                 ),
+                definition_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
         })
@@ -405,5 +752,73 @@ impl LanguageServer for TreeSitterLs {
             result_id: None,
             data,
         })))
+    }
+
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!("Definition request for position {}:{}", position.line, position.character),
+            )
+            .await;
+
+        // Get the word at the cursor position
+        if let Some(doc_entry) = self.document_map.get(&uri) {
+            let (text, tree) = doc_entry.value();
+            if let Some(tree) = tree {
+                // Find the node at the cursor position
+                if let Some(symbol_name) = self.get_symbol_at_position(text, tree, position) {
+                    self.client
+                        .log_message(
+                            MessageType::INFO,
+                            format!("Found symbol '{}' at position", symbol_name),
+                        )
+                        .await;
+                    // Look up the symbol definition
+                    if let Some(definitions) = self.symbol_definitions.get(&symbol_name) {
+                        let locations: Vec<Location> = definitions
+                            .iter()
+                            .map(|def| Location {
+                                uri: def.uri.clone(),
+                                range: def.range,
+                            })
+                            .collect();
+
+                        if !locations.is_empty() {
+                            self.client
+                                .log_message(
+                                    MessageType::INFO,
+                                    format!("Found {} definition(s) for '{}'", locations.len(), symbol_name),
+                                )
+                                .await;
+                            
+                            return Ok(Some(GotoDefinitionResponse::Array(locations)));
+                        }
+                    }
+                    
+                    self.client
+                        .log_message(
+                            MessageType::INFO,
+                            format!("No definition found for '{}'", symbol_name),
+                        )
+                        .await;
+                } else {
+                    self.client
+                        .log_message(
+                            MessageType::INFO,
+                            format!("No symbol found at position {}:{}", position.line, position.character),
+                        )
+                        .await;
+                }
+            }
+        }
+
+        Ok(None)
     }
 }

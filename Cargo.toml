@@ -7,6 +7,10 @@ edition = "2024"
 name = "treesitter-ls"
 path = "src/bin/main.rs"
 
+[[bin]]
+name = "tree_debug"
+path = "tree_debug.rs"
+
 [dependencies]
 dashmap = "6.1.0"
 libloading = "0.8.8"
