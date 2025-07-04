@@ -45,13 +45,14 @@ pub enum HighlightSource {
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct LanguageConfig {
-    pub library: String,
+    pub library: Option<String>,
     pub filetypes: Vec<String>,
     pub highlight: Vec<HighlightItem>,
 }
 
 #[derive(Debug, Deserialize, serde::Serialize)]
 pub struct TreeSitterSettings {
+    pub runtimepath: Option<Vec<String>>,
     pub languages: std::collections::HashMap<String, LanguageConfig>,
 }
 
@@ -511,6 +512,37 @@ impl TreeSitterLs {
         None
     }
 
+    fn resolve_library_path(
+        &self,
+        config: &LanguageConfig,
+        language: &str,
+        runtimepath: &Option<Vec<String>>,
+    ) -> Option<String> {
+        // If explicit library path is provided, use it
+        if let Some(library) = &config.library {
+            return Some(library.clone());
+        }
+
+        // Otherwise, search in runtimepath
+        if let Some(paths) = runtimepath {
+            for path in paths {
+                // Try .so extension first (Linux)
+                let so_path = format!("{}/{}.so", path, language);
+                if std::path::Path::new(&so_path).exists() {
+                    return Some(so_path);
+                }
+
+                // Try .dylib extension (macOS)
+                let dylib_path = format!("{}/{}.dylib", path, language);
+                if std::path::Path::new(&dylib_path).exists() {
+                    return Some(dylib_path);
+                }
+            }
+        }
+
+        None
+    }
+
     fn load_query_from_highlight(
         &self,
         highlight_items: &[HighlightItem],
@@ -559,60 +591,79 @@ impl TreeSitterLs {
             // For now, assume the function name is tree_sitter_<language>
             let func_name = format!("tree_sitter_{}", lang_name);
 
-            match self.load_language(&config.library, &func_name, lang_name) {
-                Ok(language) => {
-                    match self.load_query_from_highlight(&config.highlight) {
-                        Ok(combined_query) => match Query::new(&language, &combined_query) {
-                            Ok(query) => {
-                                {
-                                    self.queries
-                                        .lock()
-                                        .unwrap()
-                                        .insert(lang_name.to_string(), query);
+            // Resolve library path
+            let library_path = self.resolve_library_path(config, lang_name, &settings.runtimepath);
+
+            match library_path {
+                Some(lib_path) => match self.load_language(&lib_path, &func_name, lang_name) {
+                    Ok(language) => {
+                        match self.load_query_from_highlight(&config.highlight) {
+                            Ok(combined_query) => match Query::new(&language, &combined_query) {
+                                Ok(query) => {
+                                    {
+                                        self.queries
+                                            .lock()
+                                            .unwrap()
+                                            .insert(lang_name.to_string(), query);
+                                    }
+                                    self.client
+                                        .log_message(
+                                            MessageType::INFO,
+                                            format!("Query loaded for {}.", lang_name),
+                                        )
+                                        .await;
                                 }
-                                self.client
-                                    .log_message(
-                                        MessageType::INFO,
-                                        format!("Query loaded for {}.", lang_name),
-                                    )
-                                    .await;
-                            }
+                                Err(err) => {
+                                    self.client
+                                        .log_message(
+                                            MessageType::ERROR,
+                                            format!(
+                                                "Failed to parse query for {}: {}",
+                                                lang_name, err
+                                            ),
+                                        )
+                                        .await;
+                                }
+                            },
                             Err(err) => {
                                 self.client
                                     .log_message(
                                         MessageType::ERROR,
-                                        format!("Failed to parse query for {}: {}", lang_name, err),
+                                        format!(
+                                            "Failed to load highlight queries for {}: {}",
+                                            lang_name, err
+                                        ),
                                     )
                                     .await;
                             }
-                        },
-                        Err(err) => {
-                            self.client
-                                .log_message(
-                                    MessageType::ERROR,
-                                    format!(
-                                        "Failed to load highlight queries for {}: {}",
-                                        lang_name, err
-                                    ),
-                                )
-                                .await;
                         }
+                        {
+                            self.languages
+                                .lock()
+                                .unwrap()
+                                .insert(lang_name.to_string(), language);
+                        }
+                        self.client
+                            .log_message(
+                                MessageType::INFO,
+                                format!("Language {} loaded.", lang_name),
+                            )
+                            .await;
                     }
-                    {
-                        self.languages
-                            .lock()
-                            .unwrap()
-                            .insert(lang_name.to_string(), language);
+                    Err(err) => {
+                        self.client
+                            .log_message(
+                                MessageType::ERROR,
+                                format!("Failed to load language {}: {}", lang_name, err),
+                            )
+                            .await;
                     }
-                    self.client
-                        .log_message(MessageType::INFO, format!("Language {} loaded.", lang_name))
-                        .await;
-                }
-                Err(err) => {
+                },
+                None => {
                     self.client
                         .log_message(
                             MessageType::ERROR,
-                            format!("Failed to load language {}: {}", lang_name, err),
+                            format!("No library path found for language {}: neither explicit library path nor valid runtimepath entry", lang_name),
                         )
                         .await;
                 }

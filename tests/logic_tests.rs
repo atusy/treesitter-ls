@@ -37,7 +37,7 @@ mod integration_tests {
     fn should_handle_multiple_highlight_sources() {
         // Given: A language config with multiple highlight sources
         let config = LanguageConfig {
-            library: "/usr/lib/libtree-sitter-rust.so".to_string(),
+            library: Some("/usr/lib/libtree-sitter-rust.so".to_string()),
             filetypes: vec!["rs".to_string()],
             highlight: vec![
                 HighlightItem {
@@ -152,7 +152,7 @@ fn test_tree_sitter_settings_structure() {
     languages.insert(
         "rust".to_string(),
         LanguageConfig {
-            library: "/lib/rust.so".to_string(),
+            library: Some("/lib/rust.so".to_string()),
             filetypes: vec!["rs".to_string()],
             highlight: vec![HighlightItem {
                 source: HighlightSource::Query {
@@ -162,7 +162,10 @@ fn test_tree_sitter_settings_structure() {
         },
     );
 
-    let settings = TreeSitterSettings { languages };
+    let settings = TreeSitterSettings {
+        runtimepath: None,
+        languages,
+    };
 
     assert!(settings.languages.contains_key("rust"));
     assert_eq!(settings.languages["rust"].filetypes, vec!["rs"]);
@@ -273,7 +276,7 @@ fn test_various_symbol_kinds() {
 #[test]
 fn test_json_serialization_roundtrip() {
     let original_config = LanguageConfig {
-        library: "/test/lib.so".to_string(),
+        library: Some("/test/lib.so".to_string()),
         filetypes: vec!["rs".to_string()],
         highlight: vec![
             HighlightItem {
@@ -331,7 +334,10 @@ fn test_complex_json_config() {
     // Test rust configuration
     assert!(settings.languages.contains_key("rust"));
     let rust_config = &settings.languages["rust"];
-    assert_eq!(rust_config.library, "/usr/local/lib/libtree-sitter-rust.so");
+    assert_eq!(
+        rust_config.library,
+        Some("/usr/local/lib/libtree-sitter-rust.so".to_string())
+    );
     assert_eq!(rust_config.highlight.len(), 3);
     assert_eq!(rust_config.filetypes, vec!["rs", "rust"]);
 
@@ -340,7 +346,7 @@ fn test_complex_json_config() {
     let python_config = &settings.languages["python"];
     assert_eq!(
         python_config.library,
-        "/usr/local/lib/libtree-sitter-python.so"
+        Some("/usr/local/lib/libtree-sitter-python.so".to_string())
     );
     assert_eq!(python_config.highlight.len(), 1);
     assert_eq!(python_config.filetypes, vec!["py", "pyi", "python"]);

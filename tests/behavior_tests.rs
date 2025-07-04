@@ -267,7 +267,7 @@ mod configuration_behavior {
     fn should_load_language_configuration() {
         // Given: A valid language configuration
         let config = LanguageConfig {
-            library: "/usr/lib/libtree-sitter-rust.so".to_string(),
+            library: Some("/usr/lib/libtree-sitter-rust.so".to_string()),
             filetypes: vec!["rs".to_string()],
             highlight: vec![HighlightItem {
                 source: HighlightSource::Path {
@@ -278,7 +278,7 @@ mod configuration_behavior {
 
         // When: Processing the configuration
         // Then: All fields should be accessible and valid
-        assert!(!config.library.is_empty());
+        assert!(config.library.is_some());
         assert!(!config.highlight.is_empty());
         assert!(!config.filetypes.is_empty());
 
@@ -366,14 +366,14 @@ mod error_handling_behavior {
     fn should_handle_missing_library_files() {
         // Given: Configuration pointing to non-existent library
         let config = LanguageConfig {
-            library: "/nonexistent/path/lib.so".to_string(),
+            library: Some("/nonexistent/path/lib.so".to_string()),
             filetypes: vec!["rs".to_string()],
             highlight: vec![],
         };
 
         // When: Attempting to load library
         // Then: Should handle gracefully
-        assert!(!config.library.is_empty());
+        assert!(config.library.is_some());
 
         // In real implementation, would test library loading failure
         let library_loaded = false; // Simulating load failure

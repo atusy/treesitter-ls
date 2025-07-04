@@ -50,9 +50,14 @@ vim.lsp.config.treesitter_ls = {
     "path/to/treesitter-ls/target/release/treesitter-ls",
   },
   settings = {
+    runtimepath = {
+      -- look for ${language}.so or ${language}.dylib in these directories
+      "path/to/your/parsers/directory",
+    },
     languages = {
       rust = {
-        library = "path/to/treesitter/parser/rust.so ",
+        -- Specify the path to the tree-sitter parser shared library instead of finding one from the runtimepath
+        -- library = "path/to/treesitter/parser/rust.so ",
         rust = { "rs" },
         highlight = {
             { path = "path/to/highlight.scm" },

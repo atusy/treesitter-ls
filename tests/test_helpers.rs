@@ -81,7 +81,7 @@ impl TestConfigBuilder {
 
     pub fn add_language(mut self, name: &str, library_path: &str) -> Self {
         let config = LanguageConfig {
-            library: library_path.to_string(),
+            library: Some(library_path.to_string()),
             filetypes: vec![],
             highlight: vec![],
         };
@@ -106,6 +106,7 @@ impl TestConfigBuilder {
 
     pub fn build(self) -> TreeSitterSettings {
         TreeSitterSettings {
+            runtimepath: None,
             languages: self.languages,
         }
     }
@@ -361,7 +362,9 @@ mod helper_tests {
             .build();
 
         assertions::assert_config_has_language(&config, "rust");
-        assertions::assert_library_path_valid(&config.languages["rust"].library);
+        if let Some(ref library) = config.languages["rust"].library {
+            assertions::assert_library_path_valid(library);
+        }
     }
 
     #[test]

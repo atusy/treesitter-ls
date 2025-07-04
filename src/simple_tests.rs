@@ -23,8 +23,12 @@ mod simple_tests {
 
             let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
 
+            assert!(settings.runtimepath.is_none());
             assert!(settings.languages.contains_key("rust"));
-            assert_eq!(settings.languages["rust"].library, "/path/to/rust.so");
+            assert_eq!(
+                settings.languages["rust"].library,
+                Some("/path/to/rust.so".to_string())
+            );
             assert_eq!(settings.languages["rust"].filetypes, vec!["rs"]);
             assert_eq!(settings.languages["rust"].highlight.len(), 2);
 
@@ -101,7 +105,10 @@ mod simple_tests {
             let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
 
             assert!(settings.languages.contains_key("rust"));
-            assert_eq!(settings.languages["rust"].library, "/path/to/rust.so");
+            assert_eq!(
+                settings.languages["rust"].library,
+                Some("/path/to/rust.so".to_string())
+            );
             assert_eq!(settings.languages["rust"].filetypes, vec!["rs"]);
             assert_eq!(settings.languages["rust"].highlight.len(), 2);
 
@@ -118,6 +125,74 @@ mod simple_tests {
                 }
                 _ => panic!("Expected Query variant"),
             }
+        }
+
+        #[test]
+        fn should_parse_runtimepath_configuration() {
+            let config_json = r#"{
+                "runtimepath": [
+                    "/usr/local/lib/tree-sitter",
+                    "/opt/tree-sitter/parsers"
+                ],
+                "languages": {
+                    "rust": {
+                        "filetypes": ["rs"],
+                        "highlight": [
+                            {"path": "/path/to/highlights.scm"}
+                        ]
+                    }
+                }
+            }"#;
+
+            let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
+
+            assert!(settings.runtimepath.is_some());
+            assert_eq!(
+                settings.runtimepath.unwrap(),
+                vec!["/usr/local/lib/tree-sitter", "/opt/tree-sitter/parsers"]
+            );
+            assert!(settings.languages.contains_key("rust"));
+            assert_eq!(settings.languages["rust"].library, None);
+            assert_eq!(settings.languages["rust"].filetypes, vec!["rs"]);
+        }
+
+        #[test]
+        fn should_parse_mixed_configuration_with_runtimepath_and_explicit_library() {
+            let config_json = r#"{
+                "runtimepath": ["/usr/local/lib/tree-sitter"],
+                "languages": {
+                    "rust": {
+                        "library": "/custom/path/rust.so",
+                        "filetypes": ["rs"],
+                        "highlight": [
+                            {"path": "/path/to/highlights.scm"}
+                        ]
+                    },
+                    "python": {
+                        "filetypes": ["py"],
+                        "highlight": [
+                            {"path": "/path/to/python.scm"}
+                        ]
+                    }
+                }
+            }"#;
+
+            let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
+
+            assert!(settings.runtimepath.is_some());
+            assert_eq!(
+                settings.runtimepath.unwrap(),
+                vec!["/usr/local/lib/tree-sitter"]
+            );
+
+            // rust has explicit library path
+            assert_eq!(
+                settings.languages["rust"].library,
+                Some("/custom/path/rust.so".to_string())
+            );
+
+            // python will use runtimepath
+            assert_eq!(settings.languages["python"].library, None);
         }
     }
 
@@ -473,6 +548,7 @@ mod simple_tests {
         #[test]
         fn should_handle_complex_configurations_efficiently() {
             let mut config = TreeSitterSettings {
+                runtimepath: None,
                 languages: HashMap::new(),
             };
 
@@ -483,7 +559,7 @@ mod simple_tests {
                 config.languages.insert(
                     lang.to_string(),
                     LanguageConfig {
-                        library: format!("/usr/lib/libtree-sitter-{}.so", lang),
+                        library: Some(format!("/usr/lib/libtree-sitter-{}.so", lang)),
                         filetypes: match lang {
                             "rust" => vec!["rs".to_string()],
                             "python" => vec!["py".to_string(), "pyi".to_string()],
