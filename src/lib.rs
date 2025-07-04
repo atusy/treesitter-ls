@@ -182,8 +182,8 @@ impl TreeSitterLs {
     fn visit_node(&self, cursor: &mut tree_sitter::TreeCursor, uri: &Url, text: &str, node: Node) {
         // Check if this node represents a symbol definition
         match node.kind() {
-            // Function definitions
-            "function_item" => {
+            // Function definitions (Rust and Lua)
+            "function_item" | "function_declaration" => {
                 if let Some(name_node) = node.child_by_field_name("name") {
                     let name = text[name_node.byte_range()].to_string();
                     let range = self.node_to_range(&name_node, text);
