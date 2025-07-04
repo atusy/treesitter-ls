@@ -1,4 +1,3 @@
-
 use tokio::io::{stdin, stdout};
 use tower_lsp::{LspService, Server};
 use treesitter_ls::TreeSitterLs;

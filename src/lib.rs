@@ -4,7 +4,7 @@ use serde::Deserialize;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
-use tree_sitter::{Language, Parser, Query, QueryCursor, Tree, StreamingIterator, Node};
+use tree_sitter::{Language, Node, Parser, Query, QueryCursor, StreamingIterator, Tree};
 
 pub const LEGEND_TYPES: &[SemanticTokenType] = &[
     SemanticTokenType::COMMENT,
@@ -30,7 +30,6 @@ pub const LEGEND_TYPES: &[SemanticTokenType] = &[
     SemanticTokenType::DECORATOR,
 ];
 
-
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct HighlightItem {
     #[serde(flatten)]
@@ -47,13 +46,13 @@ pub enum HighlightSource {
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct LanguageConfig {
     pub library: String,
+    pub filetypes: Vec<String>,
     pub highlight: Vec<HighlightItem>,
 }
 
 #[derive(Debug, Deserialize, serde::Serialize)]
 pub struct TreeSitterSettings {
-    pub treesitter: std::collections::HashMap<String, LanguageConfig>,
-    pub filetypes: std::collections::HashMap<String, Vec<String>>,
+    pub languages: std::collections::HashMap<String, LanguageConfig>,
 }
 
 #[derive(Debug, Clone)]
@@ -89,7 +88,10 @@ impl std::fmt::Debug for TreeSitterLs {
             .field("client", &self.client)
             .field("languages", &"Mutex<HashMap<String, Language>>")
             .field("queries", &"Mutex<HashMap<String, Query>>")
-            .field("language_configs", &"Mutex<HashMap<String, LanguageConfig>>")
+            .field(
+                "language_configs",
+                &"Mutex<HashMap<String, LanguageConfig>>",
+            )
             .field("filetype_map", &"Mutex<HashMap<String, String>>")
             .field("libraries", &"Mutex<HashMap<String, Library>>")
             .field("document_map", &self.document_map)
@@ -116,12 +118,12 @@ impl TreeSitterLs {
 
     async fn parse_document(&self, uri: Url, text: String) {
         // Detect file extension
-        let extension = uri.path().split('.').last().unwrap_or("");
-        
+        let extension = uri.path().split('.').next_back().unwrap_or("");
+
         // Find the language for this file extension
         let filetype_map = self.filetype_map.lock().unwrap();
         let language_name = filetype_map.get(extension);
-        
+
         if let Some(language_name) = language_name {
             let languages = self.languages.lock().unwrap();
             if let Some(language) = languages.get(language_name) {
@@ -130,33 +132,43 @@ impl TreeSitterLs {
                     if let Some(tree) = parser.parse(&text, None) {
                         // Index symbols for definition jumping
                         self.index_symbols(&uri, &text, &tree);
-                        
+
                         self.document_map.insert(uri, (text, Some(tree)));
                         return;
                     }
                 }
             }
         }
-        
+
         self.document_map.insert(uri, (text, None));
     }
 
-    fn load_language(&self, path: &str, func_name: &str, lang_name: &str) -> std::result::Result<Language, String> {
+    fn load_language(
+        &self,
+        path: &str,
+        func_name: &str,
+        lang_name: &str,
+    ) -> std::result::Result<Language, String> {
         unsafe {
-            let lib = Library::new(path).map_err(|e| format!("Failed to load library {}: {}", path, e))?;
-            let lang_func: Symbol<unsafe extern "C" fn() -> Language> =
-                lib.get(func_name.as_bytes()).map_err(|e| format!("Failed to find function {}: {}", func_name, e))?;
+            let lib = Library::new(path)
+                .map_err(|e| format!("Failed to load library {}: {}", path, e))?;
+            let lang_func: Symbol<unsafe extern "C" fn() -> Language> = lib
+                .get(func_name.as_bytes())
+                .map_err(|e| format!("Failed to find function {}: {}", func_name, e))?;
             let language = lang_func();
-            
+
             // Store the library to keep it loaded
-            self.libraries.lock().unwrap().insert(lang_name.to_string(), lib);
-            
+            self.libraries
+                .lock()
+                .unwrap()
+                .insert(lang_name.to_string(), lib);
+
             Ok(language)
         }
     }
 
     fn get_language_for_document(&self, uri: &Url) -> Option<String> {
-        let extension = uri.path().split('.').last().unwrap_or("");
+        let extension = uri.path().split('.').next_back().unwrap_or("");
         let filetype_map = self.filetype_map.lock().unwrap();
         filetype_map.get(extension).cloned()
     }
@@ -174,151 +186,175 @@ impl TreeSitterLs {
                 if let Some(name_node) = node.child_by_field_name("name") {
                     let name = text[name_node.byte_range()].to_string();
                     let range = self.node_to_range(&name_node, text);
-                    
+
                     let definition = SymbolDefinition {
                         name: name.clone(),
                         uri: uri.clone(),
                         range,
                         kind: SymbolKind::FUNCTION,
                     };
-                    
-                    self.symbol_definitions.entry(name).or_insert_with(Vec::new).push(definition);
+
+                    self.symbol_definitions
+                        .entry(name)
+                        .or_insert_with(Vec::new)
+                        .push(definition);
                 }
             }
-            
+
             // Struct definitions
             "struct_item" => {
                 if let Some(name_node) = node.child_by_field_name("name") {
                     let name = text[name_node.byte_range()].to_string();
                     let range = self.node_to_range(&name_node, text);
-                    
+
                     let definition = SymbolDefinition {
                         name: name.clone(),
                         uri: uri.clone(),
                         range,
                         kind: SymbolKind::STRUCT,
                     };
-                    
-                    self.symbol_definitions.entry(name).or_insert_with(Vec::new).push(definition);
+
+                    self.symbol_definitions
+                        .entry(name)
+                        .or_insert_with(Vec::new)
+                        .push(definition);
                 }
             }
-            
+
             // Enum definitions
             "enum_item" => {
                 if let Some(name_node) = node.child_by_field_name("name") {
                     let name = text[name_node.byte_range()].to_string();
                     let range = self.node_to_range(&name_node, text);
-                    
+
                     let definition = SymbolDefinition {
                         name: name.clone(),
                         uri: uri.clone(),
                         range,
                         kind: SymbolKind::ENUM,
                     };
-                    
-                    self.symbol_definitions.entry(name).or_insert_with(Vec::new).push(definition);
+
+                    self.symbol_definitions
+                        .entry(name)
+                        .or_insert_with(Vec::new)
+                        .push(definition);
                 }
             }
-            
+
             // Trait definitions
             "trait_item" => {
                 if let Some(name_node) = node.child_by_field_name("name") {
                     let name = text[name_node.byte_range()].to_string();
                     let range = self.node_to_range(&name_node, text);
-                    
+
                     let definition = SymbolDefinition {
                         name: name.clone(),
                         uri: uri.clone(),
                         range,
                         kind: SymbolKind::INTERFACE,
                     };
-                    
-                    self.symbol_definitions.entry(name).or_insert_with(Vec::new).push(definition);
+
+                    self.symbol_definitions
+                        .entry(name)
+                        .or_insert_with(Vec::new)
+                        .push(definition);
                 }
             }
-            
+
             // Module definitions
             "mod_item" => {
                 if let Some(name_node) = node.child_by_field_name("name") {
                     let name = text[name_node.byte_range()].to_string();
                     let range = self.node_to_range(&name_node, text);
-                    
+
                     let definition = SymbolDefinition {
                         name: name.clone(),
                         uri: uri.clone(),
                         range,
                         kind: SymbolKind::MODULE,
                     };
-                    
-                    self.symbol_definitions.entry(name).or_insert_with(Vec::new).push(definition);
+
+                    self.symbol_definitions
+                        .entry(name)
+                        .or_insert_with(Vec::new)
+                        .push(definition);
                 }
             }
-            
+
             // Constant definitions
             "const_item" => {
                 if let Some(name_node) = node.child_by_field_name("name") {
                     let name = text[name_node.byte_range()].to_string();
                     let range = self.node_to_range(&name_node, text);
-                    
+
                     let definition = SymbolDefinition {
                         name: name.clone(),
                         uri: uri.clone(),
                         range,
                         kind: SymbolKind::CONSTANT,
                     };
-                    
-                    self.symbol_definitions.entry(name).or_insert_with(Vec::new).push(definition);
+
+                    self.symbol_definitions
+                        .entry(name)
+                        .or_insert_with(Vec::new)
+                        .push(definition);
                 }
             }
-            
+
             // Static definitions
             "static_item" => {
                 if let Some(name_node) = node.child_by_field_name("name") {
                     let name = text[name_node.byte_range()].to_string();
                     let range = self.node_to_range(&name_node, text);
-                    
+
                     let definition = SymbolDefinition {
                         name: name.clone(),
                         uri: uri.clone(),
                         range,
                         kind: SymbolKind::VARIABLE,
                     };
-                    
-                    self.symbol_definitions.entry(name).or_insert_with(Vec::new).push(definition);
+
+                    self.symbol_definitions
+                        .entry(name)
+                        .or_insert_with(Vec::new)
+                        .push(definition);
                 }
             }
-            
+
             // Type alias definitions
             "type_item" => {
                 if let Some(name_node) = node.child_by_field_name("name") {
                     let name = text[name_node.byte_range()].to_string();
                     let range = self.node_to_range(&name_node, text);
-                    
+
                     let definition = SymbolDefinition {
                         name: name.clone(),
                         uri: uri.clone(),
                         range,
                         kind: SymbolKind::TYPE_PARAMETER,
                     };
-                    
-                    self.symbol_definitions.entry(name).or_insert_with(Vec::new).push(definition);
+
+                    self.symbol_definitions
+                        .entry(name)
+                        .or_insert_with(Vec::new)
+                        .push(definition);
                 }
             }
-            
+
             // Local variable definitions (let statements)
             "let_declaration" => {
                 if let Some(pattern_node) = node.child_by_field_name("pattern") {
                     self.extract_identifiers_from_pattern(pattern_node, uri, text);
                 }
             }
-            
+
             // Also try let_statement
             "let_statement" => {
                 if let Some(pattern_node) = node.child_by_field_name("pattern") {
                     self.extract_identifiers_from_pattern(pattern_node, uri, text);
                 }
             }
-            
+
             // Generic pattern for any node that might contain variable bindings
             _ => {
                 // Check if this is any kind of let/variable binding node
@@ -333,15 +369,18 @@ impl TreeSitterLs {
                                 if child.kind() == "identifier" {
                                     let name = text[child.byte_range()].to_string();
                                     let range = self.node_to_range(&child, text);
-                                    
+
                                     let definition = SymbolDefinition {
                                         name: name.clone(),
                                         uri: uri.clone(),
                                         range,
                                         kind: SymbolKind::VARIABLE,
                                     };
-                                    
-                                    self.symbol_definitions.entry(name).or_insert_with(Vec::new).push(definition);
+
+                                    self.symbol_definitions
+                                        .entry(name)
+                                        .or_insert_with(Vec::new)
+                                        .push(definition);
                                 }
                             }
                         }
@@ -349,7 +388,7 @@ impl TreeSitterLs {
                 }
             }
         }
-        
+
         // Recursively visit children
         if cursor.goto_first_child() {
             loop {
@@ -367,15 +406,18 @@ impl TreeSitterLs {
             "identifier" => {
                 let name = text[pattern_node.byte_range()].to_string();
                 let range = self.node_to_range(&pattern_node, text);
-                
+
                 let definition = SymbolDefinition {
                     name: name.clone(),
                     uri: uri.clone(),
                     range,
                     kind: SymbolKind::VARIABLE,
                 };
-                
-                self.symbol_definitions.entry(name).or_insert_with(Vec::new).push(definition);
+
+                self.symbol_definitions
+                    .entry(name)
+                    .or_insert_with(Vec::new)
+                    .push(definition);
             }
             "mut_pattern" => {
                 if let Some(child) = pattern_node.child(0) {
@@ -410,7 +452,7 @@ impl TreeSitterLs {
     fn node_to_range(&self, node: &Node, _text: &str) -> Range {
         let start_pos = node.start_position();
         let end_pos = node.end_position();
-        
+
         Range {
             start: Position {
                 line: start_pos.row as u32,
@@ -423,20 +465,25 @@ impl TreeSitterLs {
         }
     }
 
-    fn get_symbol_at_position(&self, text: &str, tree: &Tree, position: Position) -> Option<String> {
+    fn get_symbol_at_position(
+        &self,
+        text: &str,
+        tree: &Tree,
+        position: Position,
+    ) -> Option<String> {
         let point = tree_sitter::Point {
             row: position.line as usize,
             column: position.character as usize,
         };
 
         let node = tree.root_node().descendant_for_point_range(point, point)?;
-        
+
         // Look for an identifier node at this position
         if node.kind() == "identifier" {
             let symbol_name = text[node.byte_range()].to_string();
             return Some(symbol_name);
         }
-        
+
         // If not directly on an identifier, check parent nodes
         let mut current_node = node;
         while let Some(parent) = current_node.parent() {
@@ -445,12 +492,13 @@ impl TreeSitterLs {
                     if child_node.kind() == "identifier" {
                         let child_start = child_node.start_position();
                         let child_end = child_node.end_position();
-                        
+
                         // Check if position is within this identifier
-                        if point.row >= child_start.row 
+                        if point.row >= child_start.row
                             && point.row <= child_end.row
                             && (point.row > child_start.row || point.column >= child_start.column)
-                            && (point.row < child_end.row || point.column <= child_end.column) {
+                            && (point.row < child_end.row || point.column <= child_end.column)
+                        {
                             let symbol_name = text[child_node.byte_range()].to_string();
                             return Some(symbol_name);
                         }
@@ -463,87 +511,98 @@ impl TreeSitterLs {
         None
     }
 
-    fn load_query_from_highlight(&self, highlight_items: &[HighlightItem]) -> std::result::Result<String, String> {
+    fn load_query_from_highlight(
+        &self,
+        highlight_items: &[HighlightItem],
+    ) -> std::result::Result<String, String> {
         let mut combined_query = String::new();
-        
+
         for item in highlight_items {
             match &item.source {
-                HighlightSource::Path { path } => {
-                    match std::fs::read_to_string(path) {
-                        Ok(content) => {
-                            combined_query.push_str(&content);
-                            combined_query.push('\n');
-                        }
-                        Err(e) => {
-                            return Err(format!("Failed to read query file {}: {}", path, e));
-                        }
+                HighlightSource::Path { path } => match std::fs::read_to_string(path) {
+                    Ok(content) => {
+                        combined_query.push_str(&content);
+                        combined_query.push('\n');
                     }
-                }
+                    Err(e) => {
+                        return Err(format!("Failed to read query file {}: {}", path, e));
+                    }
+                },
                 HighlightSource::Query { query } => {
                     combined_query.push_str(query);
                     combined_query.push('\n');
                 }
             }
         }
-        
+
         Ok(combined_query)
     }
 
     async fn load_settings(&self, settings: TreeSitterSettings) {
         // Store language configs
         {
-            *self.language_configs.lock().unwrap() = settings.treesitter.clone();
+            *self.language_configs.lock().unwrap() = settings.languages.clone();
         }
 
         // Build filetype map
         {
             let mut filetype_map = self.filetype_map.lock().unwrap();
-            for (language, extensions) in settings.filetypes {
-                for ext in extensions {
-                    filetype_map.insert(ext, language.clone());
+            for (language, config) in &settings.languages {
+                for ext in &config.filetypes {
+                    filetype_map.insert(ext.clone(), language.clone());
                 }
             }
         }
 
         // Load languages and queries
-        for (lang_name, config) in &settings.treesitter {
+        for (lang_name, config) in &settings.languages {
             // For now, assume the function name is tree_sitter_<language>
             let func_name = format!("tree_sitter_{}", lang_name);
-            
+
             match self.load_language(&config.library, &func_name, lang_name) {
                 Ok(language) => {
                     match self.load_query_from_highlight(&config.highlight) {
-                        Ok(combined_query) => {
-                            match Query::new(&language, &combined_query) {
-                                Ok(query) => {
-                                    {
-                                        self.queries.lock().unwrap().insert(lang_name.clone(), query);
-                                    }
-                                    self.client
-                                        .log_message(MessageType::INFO, format!("Query loaded for {}.", lang_name))
-                                        .await;
+                        Ok(combined_query) => match Query::new(&language, &combined_query) {
+                            Ok(query) => {
+                                {
+                                    self.queries
+                                        .lock()
+                                        .unwrap()
+                                        .insert(lang_name.to_string(), query);
                                 }
-                                Err(err) => {
-                                    self.client
-                                        .log_message(
-                                            MessageType::ERROR,
-                                            format!("Failed to parse query for {}: {}", lang_name, err),
-                                        )
-                                        .await;
-                                }
+                                self.client
+                                    .log_message(
+                                        MessageType::INFO,
+                                        format!("Query loaded for {}.", lang_name),
+                                    )
+                                    .await;
                             }
-                        }
+                            Err(err) => {
+                                self.client
+                                    .log_message(
+                                        MessageType::ERROR,
+                                        format!("Failed to parse query for {}: {}", lang_name, err),
+                                    )
+                                    .await;
+                            }
+                        },
                         Err(err) => {
                             self.client
                                 .log_message(
                                     MessageType::ERROR,
-                                    format!("Failed to load highlight queries for {}: {}", lang_name, err),
+                                    format!(
+                                        "Failed to load highlight queries for {}: {}",
+                                        lang_name, err
+                                    ),
                                 )
                                 .await;
                         }
                     }
                     {
-                        self.languages.lock().unwrap().insert(lang_name.clone(), language);
+                        self.languages
+                            .lock()
+                            .unwrap()
+                            .insert(lang_name.to_string(), language);
                     }
                     self.client
                         .log_message(MessageType::INFO, format!("Language {} loaded.", lang_name))
@@ -551,7 +610,10 @@ impl TreeSitterLs {
                 }
                 Err(err) => {
                     self.client
-                        .log_message(MessageType::ERROR, format!("Failed to load language {}: {}", lang_name, err))
+                        .log_message(
+                            MessageType::ERROR,
+                            format!("Failed to load language {}: {}", lang_name, err),
+                        )
                         .await;
                 }
             }
@@ -594,14 +656,16 @@ impl LanguageServer for TreeSitterLs {
                     TextDocumentSyncKind::FULL,
                 )),
                 semantic_tokens_provider: Some(
-                    SemanticTokensServerCapabilities::SemanticTokensOptions(SemanticTokensOptions {
-                        legend: SemanticTokensLegend {
-                            token_types: LEGEND_TYPES.to_vec(),
-                            token_modifiers: vec![],
+                    SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        SemanticTokensOptions {
+                            legend: SemanticTokensLegend {
+                                token_types: LEGEND_TYPES.to_vec(),
+                                token_modifiers: vec![],
+                            },
+                            full: Some(SemanticTokensFullOptions::Bool(true)),
+                            ..Default::default()
                         },
-                        full: Some(SemanticTokensFullOptions::Bool(true)),
-                        ..Default::default()
-                    }),
+                    ),
                 ),
                 definition_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
@@ -654,8 +718,10 @@ impl LanguageServer for TreeSitterLs {
         let uri = params.text_document.uri;
 
         // Find the language for this document
-        let language_name = self.get_language_for_document(&uri).unwrap_or("default".to_string());
-        
+        let language_name = self
+            .get_language_for_document(&uri)
+            .unwrap_or("default".to_string());
+
         // Get the query for this language
         let queries = self.queries.lock().unwrap();
         let query = if let Some(query) = queries.get(&language_name) {
@@ -744,7 +810,10 @@ impl LanguageServer for TreeSitterLs {
         self.client
             .log_message(
                 MessageType::INFO,
-                format!("Definition request for position {}:{}", position.line, position.character),
+                format!(
+                    "Definition request for position {}:{}",
+                    position.line, position.character
+                ),
             )
             .await;
 
@@ -774,14 +843,18 @@ impl LanguageServer for TreeSitterLs {
                             self.client
                                 .log_message(
                                     MessageType::INFO,
-                                    format!("Found {} definition(s) for '{}'", locations.len(), symbol_name),
+                                    format!(
+                                        "Found {} definition(s) for '{}'",
+                                        locations.len(),
+                                        symbol_name
+                                    ),
                                 )
                                 .await;
-                            
+
                             return Ok(Some(GotoDefinitionResponse::Array(locations)));
                         }
                     }
-                    
+
                     self.client
                         .log_message(
                             MessageType::INFO,
@@ -792,7 +865,10 @@ impl LanguageServer for TreeSitterLs {
                     self.client
                         .log_message(
                             MessageType::INFO,
-                            format!("No symbol found at position {}:{}", position.line, position.character),
+                            format!(
+                                "No symbol found at position {}:{}",
+                                position.line, position.character
+                            ),
                         )
                         .await;
                 }

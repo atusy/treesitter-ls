@@ -50,9 +50,10 @@ vim.lsp.config.treesitter_ls = {
     "path/to/treesitter-ls/target/release/treesitter-ls",
   },
   settings = {
-    treesitter = {
+    languages = {
       rust = {
         library = "path/to/treesitter/parser/rust.so ",
+        rust = { "rs" },
         highlight = {
             { path = "path/to/highlight.scm" },
             { query = [[
@@ -63,9 +64,6 @@ vim.lsp.config.treesitter_ls = {
         )]] },
         },
       },
-    },
-    filetypes = {
-      rust = { "rs" },
     },
   },
 }
