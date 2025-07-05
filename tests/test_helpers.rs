@@ -19,6 +19,7 @@ impl TestConfigBuilder {
             library: Some(library_path.to_string()),
             filetypes: vec![],
             highlight: vec![],
+            locals: None,
         };
         self.languages.insert(name.to_string(), config);
         self
@@ -189,7 +190,6 @@ pub mod performance {
             max_duration
         );
     }
-
 }
 
 #[cfg(test)]

@@ -46,6 +46,40 @@ mod simple_tests {
                 _ => panic!("Expected Query variant"),
             }
         }
+        
+        #[test]
+        fn should_parse_configuration_with_locals() {
+            let config_json = r#"{
+                "languages": {
+                    "rust": {
+                        "filetypes": ["rs"],
+                        "highlight": [
+                            {"path": "/path/to/highlights.scm"}
+                        ],
+                        "locals": [
+                            {"path": "/path/to/locals.scm"}
+                        ]
+                    }
+                }
+            }"#;
+
+            let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
+
+            assert!(settings.languages.contains_key("rust"));
+            let rust_config = &settings.languages["rust"];
+            
+            // Verify locals configuration is parsed
+            assert!(rust_config.locals.is_some(), "Locals configuration should be present");
+            let locals = rust_config.locals.as_ref().unwrap();
+            assert_eq!(locals.len(), 1, "Should have one locals item");
+            
+            match &locals[0].source {
+                HighlightSource::Path { path } => {
+                    assert_eq!(path, "/path/to/locals.scm");
+                }
+                _ => panic!("Expected Path variant for locals"),
+            }
+        }
 
         #[test]
         fn should_reject_invalid_json() {
@@ -63,7 +97,6 @@ mod simple_tests {
             assert!(result.is_err());
         }
 
-
         #[test]
         fn should_handle_empty_configurations() {
             let empty_json = r#"{
@@ -73,7 +106,6 @@ mod simple_tests {
             let settings: TreeSitterSettings = serde_json::from_str(empty_json).unwrap();
             assert!(settings.languages.is_empty());
         }
-
 
         #[test]
         fn should_parse_runtimepath_configuration() {
@@ -188,7 +220,6 @@ mod simple_tests {
         }
     }
 
-
     mod lsp_types_tests {
         use super::*;
 
@@ -235,8 +266,6 @@ mod simple_tests {
             // Validate range ordering
             assert!(range.start.line <= range.end.line);
         }
-
-
     }
 
     mod semantic_token_tests {
@@ -305,12 +334,10 @@ mod simple_tests {
                 assert_eq!(url.scheme(), "file");
             }
         }
-
     }
 
     mod performance_tests {
         use super::*;
-
 
         #[test]
         fn should_handle_complex_configurations_efficiently() {
@@ -347,6 +374,7 @@ mod simple_tests {
                                 },
                             },
                         ],
+                        locals: None,
                     },
                 );
             }

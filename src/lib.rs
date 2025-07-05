@@ -50,6 +50,7 @@ pub struct LanguageConfig {
     pub library: Option<String>,
     pub filetypes: Vec<String>,
     pub highlight: Vec<HighlightItem>,
+    pub locals: Option<Vec<HighlightItem>>,
 }
 
 #[derive(Debug, Deserialize, serde::Serialize)]
@@ -58,11 +59,11 @@ pub struct TreeSitterSettings {
     pub languages: std::collections::HashMap<String, LanguageConfig>,
 }
 
-
 pub struct TreeSitterLs {
     client: Client,
     languages: std::sync::Mutex<std::collections::HashMap<String, Language>>,
     queries: std::sync::Mutex<std::collections::HashMap<String, Query>>,
+    locals_queries: std::sync::Mutex<std::collections::HashMap<String, Query>>,
     language_configs: std::sync::Mutex<std::collections::HashMap<String, LanguageConfig>>,
     filetype_map: std::sync::Mutex<std::collections::HashMap<String, String>>,
     libraries: std::sync::Mutex<std::collections::HashMap<String, Library>>,
@@ -84,6 +85,7 @@ impl TreeSitterLs {
             client,
             languages: std::sync::Mutex::new(std::collections::HashMap::new()),
             queries: std::sync::Mutex::new(std::collections::HashMap::new()),
+            locals_queries: std::sync::Mutex::new(std::collections::HashMap::new()),
             language_configs: std::sync::Mutex::new(std::collections::HashMap::new()),
             filetype_map: std::sync::Mutex::new(std::collections::HashMap::new()),
             libraries: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -270,6 +272,55 @@ impl TreeSitterLs {
                                     .await;
                             }
                         }
+
+                        // Load locals queries if available
+                        if let Some(locals_sources) = &config.locals {
+                            match self.load_query_from_highlight(locals_sources) {
+                                Ok(combined_locals_query) => {
+                                    match Query::new(&language, &combined_locals_query) {
+                                        Ok(locals_query) => {
+                                            {
+                                                self.locals_queries
+                                                    .lock()
+                                                    .unwrap()
+                                                    .insert(lang_name.to_string(), locals_query);
+                                            }
+                                            self.client
+                                                .log_message(
+                                                    MessageType::INFO,
+                                                    format!(
+                                                        "Locals query loaded for {}.",
+                                                        lang_name
+                                                    ),
+                                                )
+                                                .await;
+                                        }
+                                        Err(err) => {
+                                            self.client
+                                                .log_message(
+                                                    MessageType::ERROR,
+                                                    format!(
+                                                        "Failed to parse locals query for {}: {}",
+                                                        lang_name, err
+                                                    ),
+                                                )
+                                                .await;
+                                        }
+                                    }
+                                }
+                                Err(err) => {
+                                    self.client
+                                        .log_message(
+                                            MessageType::ERROR,
+                                            format!(
+                                                "Failed to load locals queries for {}: {}",
+                                                lang_name, err
+                                            ),
+                                        )
+                                        .await;
+                                }
+                            }
+                        }
                         {
                             self.languages
                                 .lock()
@@ -351,6 +402,7 @@ impl LanguageServer for TreeSitterLs {
                         },
                     ),
                 ),
+                definition_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
         })
@@ -400,13 +452,21 @@ impl LanguageServer for TreeSitterLs {
     ) -> Result<Option<SemanticTokensResult>> {
         let uri = params.text_document.uri;
 
-        let Some(language_name) = self.get_language_for_document(&uri) else { return Ok(None); };
+        let Some(language_name) = self.get_language_for_document(&uri) else {
+            return Ok(None);
+        };
         let queries = self.queries.lock().unwrap();
-        let Some(query) = queries.get(&language_name) else { return Ok(None); };
+        let Some(query) = queries.get(&language_name) else {
+            return Ok(None);
+        };
 
-        let Some(doc) = self.document_map.get(&uri) else { return Ok(None); };
+        let Some(doc) = self.document_map.get(&uri) else {
+            return Ok(None);
+        };
         let (text, tree) = &*doc;
-        let Some(tree) = tree.as_ref() else { return Ok(None); };
+        let Some(tree) = tree.as_ref() else {
+            return Ok(None);
+        };
 
         let mut cursor = QueryCursor::new();
         let mut matches = cursor.matches(query, tree.root_node(), text.as_bytes());
@@ -465,6 +525,125 @@ impl LanguageServer for TreeSitterLs {
         })))
     }
 
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        // Get language for document
+        let Some(language_name) = self.get_language_for_document(&uri) else {
+            return Ok(None);
+        };
+
+        // Get locals query
+        let locals_queries = self.locals_queries.lock().unwrap();
+        let Some(locals_query) = locals_queries.get(&language_name) else {
+            return Ok(None);
+        };
+
+        // Get document and tree
+        let Some(doc) = self.document_map.get(&uri) else {
+            return Ok(None);
+        };
+        let (text, tree) = &*doc;
+        let Some(tree) = tree.as_ref() else {
+            return Ok(None);
+        };
+
+        // Find definition at cursor position
+        let byte_offset = self.position_to_byte_offset(text, position);
+
+        let mut cursor = QueryCursor::new();
+        let mut matches = cursor.matches(locals_query, tree.root_node(), text.as_bytes());
+
+        let mut definitions = Vec::new();
+        let mut references = Vec::new();
+
+        // Collect definitions and references
+        while let Some(match_) = matches.next() {
+            for capture in match_.captures {
+                let capture_name = &locals_query.capture_names()[capture.index as usize];
+                let node = capture.node;
+                let start_byte = node.start_byte();
+                let end_byte = node.end_byte();
+
+                if capture_name.starts_with("local.definition") {
+                    definitions.push((node, start_byte, end_byte));
+                } else if *capture_name == "local.reference" {
+                    references.push((node, start_byte, end_byte));
+                }
+            }
+        }
+
+        // Find the reference at cursor position
+        let mut target_reference = None;
+        for (ref_node, start_byte, end_byte) in &references {
+            if byte_offset >= *start_byte && byte_offset <= *end_byte {
+                target_reference = Some(ref_node.utf8_text(text.as_bytes()).unwrap_or(""));
+                break;
+            }
+        }
+
+        // If no reference found at cursor, return None
+        let Some(target_text) = target_reference else {
+            return Ok(None);
+        };
+
+        // Find matching definition
+        for (def_node, _start_byte, _end_byte) in definitions {
+            let def_text = def_node.utf8_text(text.as_bytes()).unwrap_or("");
+            if def_text == target_text {
+                let start_point = def_node.start_position();
+                let end_point = def_node.end_position();
+
+                let location = Location {
+                    uri: uri.clone(),
+                    range: Range {
+                        start: Position {
+                            line: start_point.row as u32,
+                            character: start_point.column as u32,
+                        },
+                        end: Position {
+                            line: end_point.row as u32,
+                            character: end_point.column as u32,
+                        },
+                    },
+                };
+
+                return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+            }
+        }
+
+        Ok(None)
+    }
+}
+
+impl TreeSitterLs {
+    fn position_to_byte_offset(&self, text: &str, position: Position) -> usize {
+        let mut byte_offset = 0;
+        let mut current_line = 0;
+        let mut current_char = 0;
+
+        for ch in text.chars() {
+            if current_line == position.line as usize && current_char == position.character as usize
+            {
+                return byte_offset;
+            }
+
+            if ch == '\n' {
+                current_line += 1;
+                current_char = 0;
+            } else {
+                current_char += 1;
+            }
+
+            byte_offset += ch.len_utf8();
+        }
+
+        byte_offset
+    }
 }
 
 #[cfg(test)]

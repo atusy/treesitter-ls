@@ -16,6 +16,7 @@ mod configuration_behavior {
                     path: "/etc/highlights.scm".to_string(),
                 },
             }],
+            locals: None,
         };
 
         // When: Processing the configuration
@@ -111,6 +112,7 @@ mod error_handling_behavior {
             library: Some("/nonexistent/path/lib.so".to_string()),
             filetypes: vec!["rs".to_string()],
             highlight: vec![],
+            locals: None,
         };
 
         // When: Attempting to load library

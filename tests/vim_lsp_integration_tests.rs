@@ -120,7 +120,6 @@ async fn test_semantic_token_type_ordering() {
     }
 }
 
-
 #[tokio::test]
 async fn test_semantic_tokens_capability_declaration() {
     // Test that verifies the server declares proper semantic tokens capabilities
