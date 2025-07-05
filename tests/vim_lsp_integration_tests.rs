@@ -1,8 +1,5 @@
-use std::collections::HashMap;
 use tower_lsp::lsp_types::*;
-use treesitter_ls::{
-    HighlightItem, HighlightSource, LEGEND_TYPES, LanguageConfig, TreeSitterSettings,
-};
+use treesitter_ls::LEGEND_TYPES;
 
 #[tokio::test]
 async fn test_server_capabilities_match_vim_lsp_expectations() {
@@ -123,21 +120,6 @@ async fn test_semantic_token_type_ordering() {
     }
 }
 
-#[tokio::test]
-async fn test_definition_capability_declaration() {
-    // Test that verifies the server declares proper definition capabilities
-
-    // This would normally require a full server setup with client
-    // For now, we'll just verify the capability constants are correct
-
-    // The server should declare definition_provider: true
-    // This is currently done in src/lib.rs:721 as OneOf::Left(true)
-    // We can't easily test this without a full server setup, but we can verify
-    // the code structure is correct
-
-    // At minimum, we want to ensure the server can provide definitions
-    assert!(true, "Server should declare definition_provider capability");
-}
 
 #[tokio::test]
 async fn test_semantic_tokens_capability_declaration() {

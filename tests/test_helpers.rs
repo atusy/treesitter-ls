@@ -3,71 +3,6 @@ use std::collections::HashMap;
 use tower_lsp::lsp_types::*;
 use treesitter_ls::*;
 
-pub struct TestSymbolBuilder {
-    name: String,
-    uri: Url,
-    kind: SymbolKind,
-    line: u32,
-    character: u32,
-    end_character: Option<u32>,
-}
-
-impl TestSymbolBuilder {
-    pub fn new(name: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            uri: Url::from_file_path("/test/default.rs").unwrap(),
-            kind: SymbolKind::FUNCTION,
-            line: 0,
-            character: 0,
-            end_character: None,
-        }
-    }
-
-    pub fn at_position(mut self, line: u32, character: u32) -> Self {
-        self.line = line;
-        self.character = character;
-        self
-    }
-
-    pub fn with_kind(mut self, kind: SymbolKind) -> Self {
-        self.kind = kind;
-        self
-    }
-
-    pub fn in_file(mut self, path: &str) -> Self {
-        self.uri = Url::from_file_path(path).unwrap();
-        self
-    }
-
-    pub fn ending_at(mut self, end_character: u32) -> Self {
-        self.end_character = Some(end_character);
-        self
-    }
-
-    pub fn build(self) -> SymbolDefinition {
-        let end_char = self
-            .end_character
-            .unwrap_or(self.character + self.name.len() as u32);
-
-        SymbolDefinition {
-            name: self.name,
-            uri: self.uri,
-            range: Range {
-                start: Position {
-                    line: self.line,
-                    character: self.character,
-                },
-                end: Position {
-                    line: self.line,
-                    character: end_char,
-                },
-            },
-            kind: self.kind,
-        }
-    }
-}
-
 pub struct TestConfigBuilder {
     languages: HashMap<String, LanguageConfig>,
 }
@@ -153,41 +88,6 @@ pub fn create_test_uri(path: &str) -> Url {
 pub mod mock_data {
     use super::*;
 
-    pub fn rust_function_symbols() -> Vec<SymbolDefinition> {
-        vec![
-            TestSymbolBuilder::new("main")
-                .at_position(1, 3)
-                .with_kind(SymbolKind::FUNCTION)
-                .in_file("/test/main.rs")
-                .build(),
-            TestSymbolBuilder::new("helper")
-                .at_position(5, 3)
-                .with_kind(SymbolKind::FUNCTION)
-                .in_file("/test/main.rs")
-                .build(),
-            TestSymbolBuilder::new("calculate")
-                .at_position(10, 3)
-                .with_kind(SymbolKind::FUNCTION)
-                .in_file("/test/main.rs")
-                .build(),
-        ]
-    }
-
-    pub fn rust_struct_symbols() -> Vec<SymbolDefinition> {
-        vec![
-            TestSymbolBuilder::new("Config")
-                .at_position(2, 7)
-                .with_kind(SymbolKind::STRUCT)
-                .in_file("/test/types.rs")
-                .build(),
-            TestSymbolBuilder::new("Person")
-                .at_position(8, 7)
-                .with_kind(SymbolKind::STRUCT)
-                .in_file("/test/types.rs")
-                .build(),
-        ]
-    }
-
     pub fn multi_language_config() -> TreeSitterSettings {
         TestConfigBuilder::new()
             .add_language("rust", "/usr/lib/libtree-sitter-rust.so")
@@ -224,31 +124,6 @@ pub mod mock_data {
 // Assertion helpers
 pub mod assertions {
     use super::*;
-
-    pub fn assert_symbol_at_position(
-        symbol: &SymbolDefinition,
-        expected_line: u32,
-        expected_char: u32,
-    ) {
-        assert_eq!(
-            symbol.range.start.line, expected_line,
-            "Symbol {} not at expected line",
-            symbol.name
-        );
-        assert_eq!(
-            symbol.range.start.character, expected_char,
-            "Symbol {} not at expected character",
-            symbol.name
-        );
-    }
-
-    pub fn assert_symbol_kind(symbol: &SymbolDefinition, expected_kind: SymbolKind) {
-        assert_eq!(
-            symbol.kind, expected_kind,
-            "Symbol {} has wrong kind",
-            symbol.name
-        );
-    }
 
     pub fn assert_valid_range(range: &Range) {
         assert!(
@@ -316,43 +191,11 @@ pub mod performance {
         );
     }
 
-    pub fn create_large_symbol_set(count: usize) -> Vec<SymbolDefinition> {
-        (0..count)
-            .map(|i| {
-                TestSymbolBuilder::new(&format!("symbol_{}", i))
-                    .at_position(i as u32, 0)
-                    .with_kind(if i % 3 == 0 {
-                        SymbolKind::FUNCTION
-                    } else if i % 3 == 1 {
-                        SymbolKind::STRUCT
-                    } else {
-                        SymbolKind::VARIABLE
-                    })
-                    .build()
-            })
-            .collect()
-    }
 }
 
 #[cfg(test)]
 mod helper_tests {
     use super::*;
-
-    #[test]
-    fn test_symbol_builder() {
-        let symbol = TestSymbolBuilder::new("test_function")
-            .at_position(5, 10)
-            .with_kind(SymbolKind::FUNCTION)
-            .in_file("/test/example.rs")
-            .ending_at(25)
-            .build();
-
-        assert_eq!(symbol.name, "test_function");
-        assert_eq!(symbol.range.start.line, 5);
-        assert_eq!(symbol.range.start.character, 10);
-        assert_eq!(symbol.range.end.character, 25);
-        assert_eq!(symbol.kind, SymbolKind::FUNCTION);
-    }
 
     #[test]
     fn test_config_builder() {
