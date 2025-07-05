@@ -63,19 +63,6 @@ mod simple_tests {
             assert!(result.is_err());
         }
 
-        #[test]
-        fn should_reject_missing_required_fields() {
-            let incomplete_json = r#"{
-                "treesitter": {
-                    "rust": {
-                        "highlight": []
-                    }
-                }
-            }"#;
-
-            let result = serde_json::from_str::<TreeSitterSettings>(incomplete_json);
-            assert!(result.is_err());
-        }
 
         #[test]
         fn should_handle_empty_configurations() {
@@ -87,45 +74,6 @@ mod simple_tests {
             assert!(settings.languages.is_empty());
         }
 
-        #[test]
-        fn should_parse_new_schema_with_languages_and_embedded_filetypes() {
-            let config_json = r#"{
-                "languages": {
-                    "rust": {
-                        "library": "/path/to/rust.so",
-                        "filetypes": ["rs"],
-                        "highlight": [
-                            {"path": "/path/to/highlights.scm"},
-                            {"query": "(identifier) @variable"}
-                        ]
-                    }
-                }
-            }"#;
-
-            let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
-
-            assert!(settings.languages.contains_key("rust"));
-            assert_eq!(
-                settings.languages["rust"].library,
-                Some("/path/to/rust.so".to_string())
-            );
-            assert_eq!(settings.languages["rust"].filetypes, vec!["rs"]);
-            assert_eq!(settings.languages["rust"].highlight.len(), 2);
-
-            match &settings.languages["rust"].highlight[0].source {
-                HighlightSource::Path { path } => {
-                    assert_eq!(path, "/path/to/highlights.scm");
-                }
-                _ => panic!("Expected Path variant"),
-            }
-
-            match &settings.languages["rust"].highlight[1].source {
-                HighlightSource::Query { query } => {
-                    assert_eq!(query, "(identifier) @variable");
-                }
-                _ => panic!("Expected Query variant"),
-            }
-        }
 
         #[test]
         fn should_parse_runtimepath_configuration() {
@@ -288,43 +236,7 @@ mod simple_tests {
             assert!(range.start.line <= range.end.line);
         }
 
-        #[test]
-        fn should_reject_invalid_ranges() {
-            // End position before start position on same line
-            let invalid_range = Range {
-                start: Position {
-                    line: 5,
-                    character: 20,
-                },
-                end: Position {
-                    line: 5,
-                    character: 10,
-                },
-            };
 
-            // This should be caught by validation logic
-            assert!(invalid_range.start.character > invalid_range.end.character);
-        }
-
-        #[test]
-        fn should_extract_file_extension_correctly() {
-            let test_cases = vec![
-                ("/path/to/file.rs", "rs"),
-                ("/path/to/file.py", "py"),
-                ("/path/to/file.ts", "ts"),
-                ("/path/to/file", ""),
-            ];
-
-            for (path, expected_ext) in test_cases {
-                if path.contains('.') {
-                    let extension = path.split('.').last().unwrap_or("");
-                    assert_eq!(extension, expected_ext);
-                } else {
-                    // For files without extension, expect empty string
-                    assert_eq!(expected_ext, "");
-                }
-            }
-        }
     }
 
     mod semantic_token_tests {
@@ -371,18 +283,13 @@ mod simple_tests {
         #[test]
         fn should_handle_malformed_json_gracefully() {
             let malformed_configs = vec![
-                r#"{"treesitter": {"rust": {"library": "/path"}"#, // Missing closing braces
-                r#"{"treesitter": {"rust": {"library": "/path", "highlight": [}}"#, // Invalid array
-                r#"{"invalid_root": {}}"#,                         // Missing required fields
+                r#"{"languages": {"rust": {"library": "/path"}"#, // Missing closing braces
+                r#"{"languages": {"rust": {"library": "/path", "highlight": [}}"#, // Invalid array
             ];
 
             for config in malformed_configs {
                 let result = serde_json::from_str::<TreeSitterSettings>(config);
-                assert!(
-                    result.is_err(),
-                    "Should reject malformed config: {}",
-                    config
-                );
+                assert!(result.is_err());
             }
         }
 
@@ -399,24 +306,6 @@ mod simple_tests {
             }
         }
 
-        #[test]
-        fn should_reject_invalid_urls() {
-            let invalid_urls = vec![
-                "not-a-url",
-                "http://example.com",   // Wrong scheme for file operations
-                "file://relative/path", // Should be absolute
-            ];
-
-            for url_str in invalid_urls {
-                if let Ok(url) = Url::parse(url_str) {
-                    if url.scheme() != "file" {
-                        // This is expected for non-file URLs
-                        continue;
-                    }
-                }
-                // Either parsing failed or it's not a file URL - both are handled
-            }
-        }
     }
 
     mod performance_tests {

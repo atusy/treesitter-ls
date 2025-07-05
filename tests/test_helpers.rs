@@ -164,7 +164,6 @@ pub mod assertions {
 
 // Performance testing utilities
 pub mod performance {
-    use super::*;
     use std::time::{Duration, Instant};
 
     pub fn measure_time<F, R>(operation: F) -> (R, Duration)

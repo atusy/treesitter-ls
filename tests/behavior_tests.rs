@@ -1,6 +1,5 @@
 // Behavioral tests following TDD principles
 use std::collections::HashMap;
-use tower_lsp::lsp_types::*;
 use treesitter_ls::*;
 
 mod configuration_behavior {

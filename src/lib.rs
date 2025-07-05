@@ -4,7 +4,7 @@ use serde::Deserialize;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
-use tree_sitter::{Language, Node, Parser, Query, QueryCursor, StreamingIterator, Tree};
+use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator, Tree};
 
 pub const LEGEND_TYPES: &[SemanticTokenType] = &[
     SemanticTokenType::COMMENT,
@@ -27,6 +27,8 @@ pub const LEGEND_TYPES: &[SemanticTokenType] = &[
     SemanticTokenType::VARIABLE,
     SemanticTokenType::PARAMETER,
     SemanticTokenType::PROPERTY,
+    SemanticTokenType::EVENT,
+    SemanticTokenType::MODIFIER,
     SemanticTokenType::DECORATOR,
 ];
 
@@ -71,16 +73,8 @@ impl std::fmt::Debug for TreeSitterLs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TreeSitterLs")
             .field("client", &self.client)
-            .field("languages", &"Mutex<HashMap<String, Language>>")
-            .field("queries", &"Mutex<HashMap<String, Query>>")
-            .field(
-                "language_configs",
-                &"Mutex<HashMap<String, LanguageConfig>>",
-            )
-            .field("filetype_map", &"Mutex<HashMap<String, String>>")
-            .field("libraries", &"Mutex<HashMap<String, Library>>")
             .field("document_map", &self.document_map)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -406,31 +400,13 @@ impl LanguageServer for TreeSitterLs {
     ) -> Result<Option<SemanticTokensResult>> {
         let uri = params.text_document.uri;
 
-        // Find the language for this document
-        let language_name = self
-            .get_language_for_document(&uri)
-            .unwrap_or("default".to_string());
-
-        // Get the query for this language
+        let Some(language_name) = self.get_language_for_document(&uri) else { return Ok(None); };
         let queries = self.queries.lock().unwrap();
-        let query = if let Some(query) = queries.get(&language_name) {
-            query
-        } else {
-            return Ok(None);
-        };
+        let Some(query) = queries.get(&language_name) else { return Ok(None); };
 
-        let doc = if let Some(doc) = self.document_map.get(&uri) {
-            doc
-        } else {
-            return Ok(None);
-        };
-
+        let Some(doc) = self.document_map.get(&uri) else { return Ok(None); };
         let (text, tree) = &*doc;
-        let tree = if let Some(tree) = tree {
-            tree
-        } else {
-            return Ok(None);
-        };
+        let Some(tree) = tree.as_ref() else { return Ok(None); };
 
         let mut cursor = QueryCursor::new();
         let mut matches = cursor.matches(query, tree.root_node(), text.as_bytes());
