@@ -591,8 +591,77 @@ impl LanguageServer for TreeSitterLs {
             return Ok(None);
         };
 
-        // Find matching definition
-        for (def_node, _start_byte, _end_byte) in definitions {
+        // Find reference node for scope analysis
+        let reference_node = references
+            .iter()
+            .find(|(_, start_byte, end_byte)| byte_offset >= *start_byte && byte_offset <= *end_byte)
+            .map(|(node, _, _)| node);
+
+        // Find matching definition - prefer the closest one in scope
+        let mut best_definition = None;
+        let mut best_distance = usize::MAX;
+
+        for (def_node, _start_byte, _end_byte) in &definitions {
+            let def_text = def_node.utf8_text(text.as_bytes()).unwrap_or("");
+            if def_text == target_text {
+                // Calculate "distance" - prefer definitions that appear later (closer to the reference)
+                // but before the reference position
+                if let Some(ref_node) = reference_node {
+                    let def_start = def_node.start_position();
+                    let ref_start = ref_node.start_position();
+                    
+                    // Only consider definitions that come before the reference
+                    if def_start.row <= ref_start.row {
+                        // Check if the definition is in scope of the reference
+                        let mut is_in_scope = false;
+                        let mut parent = ref_node.parent();
+                        
+                        // Walk up the tree to see if we can find a scope containing the definition
+                        while let Some(p) = parent {
+                            if p.start_byte() <= def_node.start_byte() && p.end_byte() >= def_node.end_byte() {
+                                is_in_scope = true;
+                                break;
+                            }
+                            parent = p.parent();
+                        }
+                        
+                        if is_in_scope {
+                            // Prefer definitions closer to the reference (smaller distance)
+                            let distance = ref_start.row - def_start.row;
+                            if distance < best_distance {
+                                best_distance = distance;
+                                best_definition = Some(def_node);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // If we found a scoped definition, use it
+        if let Some(def_node) = best_definition {
+            let start_point = def_node.start_position();
+            let end_point = def_node.end_position();
+
+            let location = Location {
+                uri: uri.clone(),
+                range: Range {
+                    start: Position {
+                        line: start_point.row as u32,
+                        character: start_point.column as u32,
+                    },
+                    end: Position {
+                        line: end_point.row as u32,
+                        character: end_point.column as u32,
+                    },
+                },
+            };
+
+            return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+        }
+
+        // Fallback: If no scoped definition found, return the first matching definition
+        for (def_node, _start_byte, _end_byte) in &definitions {
             let def_text = def_node.utf8_text(text.as_bytes()).unwrap_or("");
             if def_text == target_text {
                 let start_point = def_node.start_position();
