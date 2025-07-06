@@ -6,6 +6,9 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator, Tree};
 
+pub mod definition_resolution;
+use definition_resolution::LanguageAgnosticResolver;
+
 pub const LEGEND_TYPES: &[SemanticTokenType] = &[
     SemanticTokenType::COMMENT,
     SemanticTokenType::KEYWORD,
@@ -50,6 +53,7 @@ pub struct LanguageConfig {
     pub library: Option<String>,
     pub filetypes: Vec<String>,
     pub highlight: Vec<HighlightItem>,
+    pub locals: Option<Vec<HighlightItem>>,
 }
 
 #[derive(Debug, Deserialize, serde::Serialize)]
@@ -58,15 +62,16 @@ pub struct TreeSitterSettings {
     pub languages: std::collections::HashMap<String, LanguageConfig>,
 }
 
-
 pub struct TreeSitterLs {
     client: Client,
     languages: std::sync::Mutex<std::collections::HashMap<String, Language>>,
     queries: std::sync::Mutex<std::collections::HashMap<String, Query>>,
+    locals_queries: std::sync::Mutex<std::collections::HashMap<String, Query>>,
     language_configs: std::sync::Mutex<std::collections::HashMap<String, LanguageConfig>>,
     filetype_map: std::sync::Mutex<std::collections::HashMap<String, String>>,
     libraries: std::sync::Mutex<std::collections::HashMap<String, Library>>,
     document_map: DashMap<Url, (String, Option<Tree>)>,
+    definition_resolver: LanguageAgnosticResolver,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -84,10 +89,12 @@ impl TreeSitterLs {
             client,
             languages: std::sync::Mutex::new(std::collections::HashMap::new()),
             queries: std::sync::Mutex::new(std::collections::HashMap::new()),
+            locals_queries: std::sync::Mutex::new(std::collections::HashMap::new()),
             language_configs: std::sync::Mutex::new(std::collections::HashMap::new()),
             filetype_map: std::sync::Mutex::new(std::collections::HashMap::new()),
             libraries: std::sync::Mutex::new(std::collections::HashMap::new()),
             document_map: DashMap::new(),
+            definition_resolver: LanguageAgnosticResolver::new(),
         }
     }
 
@@ -270,6 +277,55 @@ impl TreeSitterLs {
                                     .await;
                             }
                         }
+
+                        // Load locals queries if available
+                        if let Some(locals_sources) = &config.locals {
+                            match self.load_query_from_highlight(locals_sources) {
+                                Ok(combined_locals_query) => {
+                                    match Query::new(&language, &combined_locals_query) {
+                                        Ok(locals_query) => {
+                                            {
+                                                self.locals_queries
+                                                    .lock()
+                                                    .unwrap()
+                                                    .insert(lang_name.to_string(), locals_query);
+                                            }
+                                            self.client
+                                                .log_message(
+                                                    MessageType::INFO,
+                                                    format!(
+                                                        "Locals query loaded for {}.",
+                                                        lang_name
+                                                    ),
+                                                )
+                                                .await;
+                                        }
+                                        Err(err) => {
+                                            self.client
+                                                .log_message(
+                                                    MessageType::ERROR,
+                                                    format!(
+                                                        "Failed to parse locals query for {}: {}",
+                                                        lang_name, err
+                                                    ),
+                                                )
+                                                .await;
+                                        }
+                                    }
+                                }
+                                Err(err) => {
+                                    self.client
+                                        .log_message(
+                                            MessageType::ERROR,
+                                            format!(
+                                                "Failed to load locals queries for {}: {}",
+                                                lang_name, err
+                                            ),
+                                        )
+                                        .await;
+                                }
+                            }
+                        }
                         {
                             self.languages
                                 .lock()
@@ -351,6 +407,7 @@ impl LanguageServer for TreeSitterLs {
                         },
                     ),
                 ),
+                definition_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
         })
@@ -400,13 +457,21 @@ impl LanguageServer for TreeSitterLs {
     ) -> Result<Option<SemanticTokensResult>> {
         let uri = params.text_document.uri;
 
-        let Some(language_name) = self.get_language_for_document(&uri) else { return Ok(None); };
+        let Some(language_name) = self.get_language_for_document(&uri) else {
+            return Ok(None);
+        };
         let queries = self.queries.lock().unwrap();
-        let Some(query) = queries.get(&language_name) else { return Ok(None); };
+        let Some(query) = queries.get(&language_name) else {
+            return Ok(None);
+        };
 
-        let Some(doc) = self.document_map.get(&uri) else { return Ok(None); };
+        let Some(doc) = self.document_map.get(&uri) else {
+            return Ok(None);
+        };
         let (text, tree) = &*doc;
-        let Some(tree) = tree.as_ref() else { return Ok(None); };
+        let Some(tree) = tree.as_ref() else {
+            return Ok(None);
+        };
 
         let mut cursor = QueryCursor::new();
         let mut matches = cursor.matches(query, tree.root_node(), text.as_bytes());
@@ -465,6 +530,94 @@ impl LanguageServer for TreeSitterLs {
         })))
     }
 
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        // Get language for document
+        let Some(language_name) = self.get_language_for_document(&uri) else {
+            return Ok(None);
+        };
+
+        // Get locals query
+        let locals_queries = self.locals_queries.lock().unwrap();
+        let Some(locals_query) = locals_queries.get(&language_name) else {
+            return Ok(None);
+        };
+
+        // Get document and tree
+        let Some(doc) = self.document_map.get(&uri) else {
+            return Ok(None);
+        };
+        let (text, tree) = &*doc;
+        let Some(tree) = tree.as_ref() else {
+            return Ok(None);
+        };
+
+        // Convert position to byte offset
+        let byte_offset = self.position_to_byte_offset(text, position);
+
+        // Use the new language-agnostic resolver
+        let result = self.definition_resolver.resolve_definition(
+            text,
+            tree,
+            locals_query,
+            byte_offset,
+        );
+
+        // Convert result to LSP response
+        if let Some(definition) = result {
+            let start_point = definition.node.start_position();
+            let end_point = definition.node.end_position();
+
+            let location = Location {
+                uri: uri.clone(),
+                range: Range {
+                    start: Position {
+                        line: start_point.row as u32,
+                        character: start_point.column as u32,
+                    },
+                    end: Position {
+                        line: end_point.row as u32,
+                        character: end_point.column as u32,
+                    },
+                },
+            };
+
+            Ok(Some(GotoDefinitionResponse::Scalar(location)))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+impl TreeSitterLs {
+    fn position_to_byte_offset(&self, text: &str, position: Position) -> usize {
+        let mut byte_offset = 0;
+        let mut current_line = 0;
+        let mut current_char = 0;
+
+        for ch in text.chars() {
+            if current_line == position.line as usize && current_char == position.character as usize
+            {
+                return byte_offset;
+            }
+
+            if ch == '\n' {
+                current_line += 1;
+                current_char = 0;
+            } else {
+                current_char += 1;
+            }
+
+            byte_offset += ch.len_utf8();
+        }
+
+        byte_offset
+    }
 }
 
 #[cfg(test)]
