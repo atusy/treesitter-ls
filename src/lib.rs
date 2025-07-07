@@ -1,5 +1,4 @@
 use dashmap::DashMap;
-use libloading::{Library, Symbol};
 use serde::Deserialize;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
@@ -7,7 +6,10 @@ use tower_lsp::{Client, LanguageServer};
 use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator, Tree};
 
 pub mod definition_resolution;
+mod safe_library_loader;
+
 use definition_resolution::LanguageAgnosticResolver;
+use safe_library_loader::SafeLibraryLoader;
 
 pub const LEGEND_TYPES: &[SemanticTokenType] = &[
     SemanticTokenType::COMMENT,
@@ -69,7 +71,7 @@ pub struct TreeSitterLs {
     locals_queries: std::sync::Mutex<std::collections::HashMap<String, Query>>,
     language_configs: std::sync::Mutex<std::collections::HashMap<String, LanguageConfig>>,
     filetype_map: std::sync::Mutex<std::collections::HashMap<String, String>>,
-    libraries: std::sync::Mutex<std::collections::HashMap<String, Library>>,
+    safe_loader: std::sync::Mutex<SafeLibraryLoader>,
     document_map: DashMap<Url, (String, Option<Tree>)>,
     definition_resolver: LanguageAgnosticResolver,
 }
@@ -92,7 +94,7 @@ impl TreeSitterLs {
             locals_queries: std::sync::Mutex::new(std::collections::HashMap::new()),
             language_configs: std::sync::Mutex::new(std::collections::HashMap::new()),
             filetype_map: std::sync::Mutex::new(std::collections::HashMap::new()),
-            libraries: std::sync::Mutex::new(std::collections::HashMap::new()),
+            safe_loader: std::sync::Mutex::new(SafeLibraryLoader::new()),
             document_map: DashMap::new(),
             definition_resolver: LanguageAgnosticResolver::new(),
         }
@@ -128,22 +130,12 @@ impl TreeSitterLs {
         func_name: &str,
         lang_name: &str,
     ) -> std::result::Result<Language, String> {
-        unsafe {
-            let lib = Library::new(path)
-                .map_err(|e| format!("Failed to load library {}: {}", path, e))?;
-            let lang_func: Symbol<unsafe extern "C" fn() -> Language> = lib
-                .get(func_name.as_bytes())
-                .map_err(|e| format!("Failed to find function {}: {}", func_name, e))?;
-            let language = lang_func();
-
-            // Store the library to keep it loaded
-            self.libraries
-                .lock()
-                .unwrap()
-                .insert(lang_name.to_string(), lib);
-
-            Ok(language)
-        }
+        // Use the safe library loader with proper error handling
+        self.safe_loader
+            .lock()
+            .unwrap()
+            .load_language(path, func_name, lang_name)
+            .map_err(|e| e.to_string())
     }
 
     fn get_language_for_document(&self, uri: &Url) -> Option<String> {
@@ -561,17 +553,14 @@ impl LanguageServer for TreeSitterLs {
         let byte_offset = self.position_to_byte_offset(text, position);
 
         // Use the new language-agnostic resolver
-        let result = self.definition_resolver.resolve_definition(
-            text,
-            tree,
-            locals_query,
-            byte_offset,
-        );
+        let result =
+            self.definition_resolver
+                .resolve_definition(text, tree, locals_query, byte_offset);
 
         // Convert result to LSP response
         if let Some(definition) = result {
-            let start_point = definition.node.start_position();
-            let end_point = definition.node.end_position();
+            let start_point = definition.start_position;
+            let end_point = definition.end_position;
 
             let location = Location {
                 uri: uri.clone(),

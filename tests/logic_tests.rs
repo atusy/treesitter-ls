@@ -1,8 +1,8 @@
 // Integration tests for core LSP functionality
-use tower_lsp::lsp_types::*;
-use treesitter_ls::*;
 use serde_json;
 use tower_lsp;
+use tower_lsp::lsp_types::*;
+use treesitter_ls::*;
 
 mod integration_tests {
     use super::*;
@@ -10,11 +10,11 @@ mod integration_tests {
     #[tokio::test]
     async fn should_handle_go_to_definition_request() {
         use tower_lsp::{LanguageServer, LspService};
-        
+
         // Given: A TreeSitter LSP server with Rust configuration including locals
         let (service, socket) = LspService::new(TreeSitterLs::new);
         let server = service.inner();
-        
+
         // Initialize the server with proper configuration
         let init_params = InitializeParams {
             capabilities: ClientCapabilities::default(),
@@ -33,43 +33,48 @@ mod integration_tests {
             })),
             ..Default::default()
         };
-        
+
         let _ = server.initialize(init_params).await.unwrap();
-        
+
         // Open a document with a variable definition and reference
         let uri = Url::parse("file:///test.rs").unwrap();
         let content = r#"fn main() {
     let x = 42;
     println!("{}", x);
 }"#;
-        
-        server.did_open(DidOpenTextDocumentParams {
-            text_document: TextDocumentItem {
-                uri: uri.clone(),
-                language_id: "rust".to_string(),
-                version: 1,
-                text: content.to_string(),
-            },
-        }).await;
-        
+
+        server
+            .did_open(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: "rust".to_string(),
+                    version: 1,
+                    text: content.to_string(),
+                },
+            })
+            .await;
+
         // When: Requesting goto definition on the reference 'x' at line 2
         let request = GotoDefinitionParams {
             text_document_position_params: TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier { uri: uri.clone() },
                 position: Position {
-                    line: 2,      // println! line
+                    line: 2,       // println! line
                     character: 19, // position on 'x' in println!
                 },
             },
             work_done_progress_params: WorkDoneProgressParams::default(),
             partial_result_params: PartialResultParams::default(),
         };
-        
+
         let result = server.goto_definition(request).await.unwrap();
-        
+
         // Then: Should return the definition location
-        assert!(result.is_some(), "Expected definition location but got None");
-        
+        assert!(
+            result.is_some(),
+            "Expected definition location but got None"
+        );
+
         match result.unwrap() {
             GotoDefinitionResponse::Scalar(location) => {
                 assert_eq!(location.uri, uri);

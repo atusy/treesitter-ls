@@ -43,6 +43,11 @@ check:
 format:
 	$(CARGO) fmt
 
+# Run linter (clippy)
+.PHONY: lint
+lint:
+	$(CARGO) clippy -- -D warnings
+
 # Install the binary to ~/.cargo/bin
 .PHONY: install
 install: build
@@ -58,6 +63,7 @@ help:
 	@echo "  test     - Run tests"
 	@echo "  check    - Run code checks (clippy, fmt)"
 	@echo "  format   - Format code with rustfmt"
+	@echo "  lint     - Run clippy linter"
 	@echo "  install  - Install binary to ~/.cargo/bin"
 	@echo "  help     - Show this help message"
 
