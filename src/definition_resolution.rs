@@ -4,21 +4,25 @@ use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 
 #[derive(Debug, Clone)]
 pub struct DefinitionCandidate {
-    pub node: Node<'static>,
     pub start_byte: usize,
     pub end_byte: usize,
+    pub start_position: tree_sitter::Point,
+    pub end_position: tree_sitter::Point,
     pub definition_type: String,
     pub scope_depth: usize,
     pub distance_to_reference: usize,
+    pub scope_ids: Vec<usize>, // IDs of enclosing scopes from innermost to outermost
 }
 
 #[derive(Debug, Clone)]
 pub struct ReferenceContext {
-    pub node: Node<'static>,
     pub start_byte: usize,
     pub end_byte: usize,
+    pub start_position: tree_sitter::Point,
+    pub end_position: tree_sitter::Point,
     pub reference_type: String,
     pub context_type: ContextType,
+    pub scope_ids: Vec<usize>, // IDs of enclosing scopes from innermost to outermost
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -55,7 +59,7 @@ impl LanguageAgnosticResolver {
         let target_reference = self.find_reference_at_cursor(&references, cursor_byte_offset)?;
 
         // Step 3: Extract target text
-        let target_text = target_reference.node.utf8_text(text.as_bytes()).ok()?;
+        let target_text = &text[target_reference.start_byte..target_reference.end_byte];
 
         // Step 4: Find matching definitions with enhanced scope analysis
         let candidates =
@@ -91,16 +95,14 @@ impl LanguageAgnosticResolver {
                         .to_string();
 
                     definitions.push(DefinitionCandidate {
-                        node: unsafe {
-                            std::mem::transmute::<tree_sitter::Node<'_>, tree_sitter::Node<'_>>(
-                                node,
-                            )
-                        },
                         start_byte,
                         end_byte,
+                        start_position: node.start_position(),
+                        end_position: node.end_position(),
                         definition_type,
                         scope_depth: self.calculate_scope_depth(node),
                         distance_to_reference: 0, // Will be calculated later
+                        scope_ids: self.get_scope_ids(node),
                     });
                 } else if capture_name.starts_with("local.reference") {
                     let reference_type = capture_name
@@ -122,15 +124,13 @@ impl LanguageAgnosticResolver {
                         };
 
                     references.push(ReferenceContext {
-                        node: unsafe {
-                            std::mem::transmute::<tree_sitter::Node<'_>, tree_sitter::Node<'_>>(
-                                node,
-                            )
-                        },
                         start_byte,
                         end_byte,
+                        start_position: node.start_position(),
+                        end_position: node.end_position(),
                         reference_type,
                         context_type,
+                        scope_ids: self.get_scope_ids(node),
                     });
                 }
             }
@@ -159,13 +159,13 @@ impl LanguageAgnosticResolver {
         definitions
             .iter()
             .filter_map(|def| {
-                let def_text = def.node.utf8_text(text.as_bytes()).ok()?;
+                let def_text = &text[def.start_byte..def.end_byte];
                 if def_text == target_text {
                     // Temporal ordering constraint: prefer definitions that come before the reference
                     // This prevents cases like `let stdin = stdin()` where the variable on the left
                     // should not be considered for the function call on the right
-                    let def_pos = def.node.start_position();
-                    let ref_pos = target_reference.node.start_position();
+                    let def_pos = def.start_position;
+                    let ref_pos = target_reference.start_position;
 
                     // Allow forward references only for certain definition types (functions, types)
                     let allows_forward_reference = matches!(
@@ -184,7 +184,7 @@ impl LanguageAgnosticResolver {
 
                     let mut candidate = def.clone();
                     candidate.distance_to_reference =
-                        self.calculate_distance(&def.node, &target_reference.node);
+                        self.calculate_distance_by_position(def, target_reference);
                     Some(candidate)
                 } else {
                     None
@@ -205,8 +205,8 @@ impl LanguageAgnosticResolver {
         // Sort by multiple criteria for language-agnostic ranking
         candidates.sort_by(|a, b| {
             // 1. Prefer definitions that are in scope
-            let a_in_scope = self.is_in_scope(&a.node, &target_reference.node);
-            let b_in_scope = self.is_in_scope(&b.node, &target_reference.node);
+            let a_in_scope = self.is_in_scope_by_ids(&a.scope_ids, &target_reference.scope_ids);
+            let b_in_scope = self.is_in_scope_by_ids(&b.scope_ids, &target_reference.scope_ids);
 
             match (a_in_scope, b_in_scope) {
                 (true, false) => return std::cmp::Ordering::Less,
@@ -336,47 +336,27 @@ impl LanguageAgnosticResolver {
         }
     }
 
-    fn is_in_scope(&self, def_node: &Node, ref_node: &Node) -> bool {
-        // Enhanced scope checking using proper AST traversal
-        let mut current = ref_node.parent();
+    fn get_scope_ids(&self, node: Node) -> Vec<usize> {
+        let mut scope_ids = Vec::new();
+        let mut current = node.parent();
 
-        while let Some(parent) = current {
-            // Check if this parent scope contains the definition
-            if parent.start_byte() <= def_node.start_byte()
-                && parent.end_byte() >= def_node.end_byte()
-            {
-                // Additional check: definition should be in a child scope or same scope
-                if self.is_definition_accessible_from_scope(def_node, &parent) {
-                    return true;
-                }
+        while let Some(n) = current {
+            if self.is_scope_node(n.kind()) {
+                scope_ids.push(n.id());
             }
-            current = parent.parent();
+            current = n.parent();
         }
 
-        false
+        scope_ids
     }
 
-    fn is_definition_accessible_from_scope(&self, def_node: &Node, scope_node: &Node) -> bool {
-        // Check if definition is directly in this scope or in an accessible child scope
-        let mut current = def_node.parent();
-
-        while let Some(parent) = current {
-            if parent.id() == scope_node.id() {
-                return true;
-            }
-            // Stop if we hit another scope boundary that would block visibility
-            if self.is_scope_node(parent.kind()) && parent.id() != scope_node.id() {
-                break;
-            }
-            current = parent.parent();
-        }
-
-        false
-    }
-
-    fn calculate_distance(&self, def_node: &Node, ref_node: &Node) -> usize {
-        let def_pos = def_node.start_position();
-        let ref_pos = ref_node.start_position();
+    fn calculate_distance_by_position(
+        &self,
+        def: &DefinitionCandidate,
+        ref_ctx: &ReferenceContext,
+    ) -> usize {
+        let def_pos = def.start_position;
+        let ref_pos = ref_ctx.start_position;
 
         // Enhanced distance calculation considering scope depth and lexical proximity
         let line_distance = if def_pos.row <= ref_pos.row {
@@ -399,44 +379,42 @@ impl LanguageAgnosticResolver {
             0
         };
 
-        // Calculate scope distance (how many scope levels apart they are)
-        let scope_distance = self.calculate_scope_distance(def_node, ref_node);
+        // Calculate scope distance using scope IDs
+        let scope_distance =
+            self.calculate_scope_distance_by_ids(&def.scope_ids, &ref_ctx.scope_ids);
 
         // Weighted combination: prioritize scope proximity over line distance
         (scope_distance * 1000) + (line_distance * 10) + column_distance
     }
 
-    fn calculate_scope_distance(&self, def_node: &Node, ref_node: &Node) -> usize {
-        // Find the lowest common ancestor scope
-        let def_scopes = self.get_scope_chain(def_node);
-        let ref_scopes = self.get_scope_chain(ref_node);
+    fn is_in_scope_by_ids(&self, def_scope_ids: &[usize], ref_scope_ids: &[usize]) -> bool {
+        // Check if any of the reference's scope IDs contain the definition
+        // The definition is in scope if it shares a common ancestor scope
+        for ref_scope_id in ref_scope_ids.iter() {
+            if def_scope_ids.contains(ref_scope_id) {
+                return true;
+            }
+        }
+        false
+    }
 
-        // Find the divergence point
+    fn calculate_scope_distance_by_ids(
+        &self,
+        def_scope_ids: &[usize],
+        ref_scope_ids: &[usize],
+    ) -> usize {
+        // Find the common scope depth
         let mut common_depth = 0;
-        for (def_scope, ref_scope) in def_scopes.iter().zip(ref_scopes.iter()) {
-            if def_scope.id() == ref_scope.id() {
-                common_depth += 1;
-            } else {
+        for (i, def_id) in def_scope_ids.iter().rev().enumerate() {
+            if let Some(j) = ref_scope_ids.iter().rev().position(|&id| id == *def_id) {
+                common_depth = i.min(j) + 1;
                 break;
             }
         }
 
-        // Distance is the sum of steps to reach common ancestor
-        (def_scopes.len() - common_depth) + (ref_scopes.len() - common_depth)
-    }
-
-    fn get_scope_chain<'a>(&self, node: &Node<'a>) -> Vec<Node<'a>> {
-        let mut scopes = Vec::new();
-        let mut current = node.parent();
-
-        while let Some(parent) = current {
-            if self.is_scope_node(parent.kind()) {
-                scopes.push(parent);
-            }
-            current = parent.parent();
-        }
-
-        scopes.reverse(); // Root scope first
-        scopes
+        // Distance is the sum of steps from each to common ancestor
+        let def_distance = def_scope_ids.len().saturating_sub(common_depth);
+        let ref_distance = ref_scope_ids.len().saturating_sub(common_depth);
+        def_distance + ref_distance
     }
 }

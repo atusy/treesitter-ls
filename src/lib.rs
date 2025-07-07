@@ -567,8 +567,8 @@ impl LanguageServer for TreeSitterLs {
 
         // Convert result to LSP response
         if let Some(definition) = result {
-            let start_point = definition.node.start_position();
-            let end_point = definition.node.end_position();
+            let start_point = definition.start_position;
+            let end_point = definition.end_position;
 
             let location = Location {
                 uri: uri.clone(),
