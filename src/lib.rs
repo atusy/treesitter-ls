@@ -561,12 +561,9 @@ impl LanguageServer for TreeSitterLs {
         let byte_offset = self.position_to_byte_offset(text, position);
 
         // Use the new language-agnostic resolver
-        let result = self.definition_resolver.resolve_definition(
-            text,
-            tree,
-            locals_query,
-            byte_offset,
-        );
+        let result =
+            self.definition_resolver
+                .resolve_definition(text, tree, locals_query, byte_offset);
 
         // Convert result to LSP response
         if let Some(definition) = result {

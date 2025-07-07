@@ -1,6 +1,6 @@
 // Language-agnostic definition jump resolution
-use tree_sitter::{Node, Query, QueryCursor, Tree, StreamingIterator};
 use std::collections::HashMap;
+use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 
 #[derive(Debug, Clone)]
 pub struct DefinitionCandidate {
@@ -51,16 +51,17 @@ impl LanguageAgnosticResolver {
     ) -> Option<DefinitionCandidate> {
         // Step 1: Collect all definitions and references
         let (definitions, references) = self.collect_definitions_and_references(text, tree, query);
-        
+
         // Step 2: Find the reference at cursor position
         let target_reference = self.find_reference_at_cursor(&references, cursor_byte_offset)?;
-        
+
         // Step 3: Extract target text
         let target_text = target_reference.node.utf8_text(text.as_bytes()).ok()?;
-        
+
         // Step 4: Find matching definitions with enhanced scope analysis
-        let candidates = self.find_matching_definitions(&definitions, target_text, &target_reference, text);
-        
+        let candidates =
+            self.find_matching_definitions(&definitions, target_text, &target_reference, text);
+
         // Step 5: Rank candidates using language-agnostic scoring
         self.rank_and_select_best_candidate(candidates, &target_reference)
     }
@@ -73,22 +74,23 @@ impl LanguageAgnosticResolver {
     ) -> (Vec<DefinitionCandidate>, Vec<ReferenceContext>) {
         let mut cursor = QueryCursor::new();
         let mut matches = cursor.matches(query, tree.root_node(), text.as_bytes());
-        
+
         let mut definitions = Vec::new();
         let mut references = Vec::new();
-        
+
         while let Some(match_) = matches.next() {
             for capture in match_.captures {
                 let capture_name = &query.capture_names()[capture.index as usize];
                 let node = capture.node;
                 let start_byte = node.start_byte();
                 let end_byte = node.end_byte();
-                
+
                 if capture_name.starts_with("local.definition") {
-                    let definition_type = capture_name.strip_prefix("local.definition.")
+                    let definition_type = capture_name
+                        .strip_prefix("local.definition.")
                         .unwrap_or("unknown")
                         .to_string();
-                    
+
                     definitions.push(DefinitionCandidate {
                         node: unsafe { std::mem::transmute(node) },
                         start_byte,
@@ -98,22 +100,24 @@ impl LanguageAgnosticResolver {
                         distance_to_reference: 0, // Will be calculated later
                     });
                 } else if capture_name.starts_with("local.reference") {
-                    let reference_type = capture_name.strip_prefix("local.reference.")
+                    let reference_type = capture_name
+                        .strip_prefix("local.reference.")
                         .unwrap_or("reference")
                         .to_string();
-                        
-                    let context_type = if reference_type == "function_call" || reference_type == "method_call" {
-                        ContextType::FunctionCall
-                    } else if reference_type == "type" {
-                        ContextType::TypeAnnotation
-                    } else if reference_type == "field" {
-                        ContextType::FieldAccess
-                    } else if reference_type == "variable" {
-                        ContextType::VariableReference
-                    } else {
-                        self.determine_context_type(node)
-                    };
-                    
+
+                    let context_type =
+                        if reference_type == "function_call" || reference_type == "method_call" {
+                            ContextType::FunctionCall
+                        } else if reference_type == "type" {
+                            ContextType::TypeAnnotation
+                        } else if reference_type == "field" {
+                            ContextType::FieldAccess
+                        } else if reference_type == "variable" {
+                            ContextType::VariableReference
+                        } else {
+                            self.determine_context_type(node)
+                        };
+
                     references.push(ReferenceContext {
                         node: unsafe { std::mem::transmute(node) },
                         start_byte,
@@ -124,7 +128,7 @@ impl LanguageAgnosticResolver {
                 }
             }
         }
-        
+
         (definitions, references)
     }
 
@@ -155,21 +159,25 @@ impl LanguageAgnosticResolver {
                     // should not be considered for the function call on the right
                     let def_pos = def.node.start_position();
                     let ref_pos = target_reference.node.start_position();
-                    
+
                     // Allow forward references only for certain definition types (functions, types)
-                    let allows_forward_reference = matches!(def.definition_type.as_str(), 
-                        "function" | "method" | "type" | "struct" | "enum" | "class");
-                    
-                    if def_pos.row > ref_pos.row || 
-                       (def_pos.row == ref_pos.row && def_pos.column >= ref_pos.column) {
+                    let allows_forward_reference = matches!(
+                        def.definition_type.as_str(),
+                        "function" | "method" | "type" | "struct" | "enum" | "class"
+                    );
+
+                    if def_pos.row > ref_pos.row
+                        || (def_pos.row == ref_pos.row && def_pos.column >= ref_pos.column)
+                    {
                         // Definition comes after reference
                         if !allows_forward_reference {
                             return None; // Skip this definition
                         }
                     }
-                    
+
                     let mut candidate = def.clone();
-                    candidate.distance_to_reference = self.calculate_distance(&def.node, &target_reference.node);
+                    candidate.distance_to_reference =
+                        self.calculate_distance(&def.node, &target_reference.node);
                     Some(candidate)
                 } else {
                     None
@@ -192,29 +200,31 @@ impl LanguageAgnosticResolver {
             // 1. Prefer definitions that are in scope
             let a_in_scope = self.is_in_scope(&a.node, &target_reference.node);
             let b_in_scope = self.is_in_scope(&b.node, &target_reference.node);
-            
+
             match (a_in_scope, b_in_scope) {
                 (true, false) => return std::cmp::Ordering::Less,
                 (false, true) => return std::cmp::Ordering::Greater,
                 _ => {}
             }
-            
+
             // 2. Prefer definitions that match the reference context
-            let a_context_match = self.context_matches(&a.definition_type, &target_reference.context_type);
-            let b_context_match = self.context_matches(&b.definition_type, &target_reference.context_type);
-            
+            let a_context_match =
+                self.context_matches(&a.definition_type, &target_reference.context_type);
+            let b_context_match =
+                self.context_matches(&b.definition_type, &target_reference.context_type);
+
             match (a_context_match, b_context_match) {
                 (true, false) => return std::cmp::Ordering::Less,
                 (false, true) => return std::cmp::Ordering::Greater,
                 _ => {}
             }
-            
+
             // 3. Prefer definitions with greater scope depth (more local)
             let scope_cmp = b.scope_depth.cmp(&a.scope_depth);
             if scope_cmp != std::cmp::Ordering::Equal {
                 return scope_cmp;
             }
-            
+
             // 4. Prefer definitions closer to the reference
             a.distance_to_reference.cmp(&b.distance_to_reference)
         });
@@ -225,7 +235,7 @@ impl LanguageAgnosticResolver {
     fn calculate_scope_depth(&self, node: Node) -> usize {
         let mut depth = 0;
         let mut current = node.parent();
-        
+
         while let Some(parent) = current {
             // Language-agnostic scope detection based on node types
             let node_type = parent.kind();
@@ -234,40 +244,67 @@ impl LanguageAgnosticResolver {
             }
             current = parent.parent();
         }
-        
+
         depth
     }
 
     fn is_scope_node(&self, node_type: &str) -> bool {
         // Language-agnostic scope patterns
-        matches!(node_type, 
-            "block" | "function_item" | "function_declaration" | "function_definition" |
-            "method_definition" | "if_statement" | "if_expression" | "while_statement" |
-            "while_expression" | "for_statement" | "for_expression" | "loop_expression" |
-            "match_expression" | "match_statement" | "try_statement" | "catch_clause" |
-            "class_definition" | "class_declaration" | "struct_item" | "enum_item" |
-            "impl_item" | "module" | "namespace" | "scope" | "chunk" | "do_statement" |
-            "closure_expression" | "lambda" | "arrow_function"
+        matches!(
+            node_type,
+            "block"
+                | "function_item"
+                | "function_declaration"
+                | "function_definition"
+                | "method_definition"
+                | "if_statement"
+                | "if_expression"
+                | "while_statement"
+                | "while_expression"
+                | "for_statement"
+                | "for_expression"
+                | "loop_expression"
+                | "match_expression"
+                | "match_statement"
+                | "try_statement"
+                | "catch_clause"
+                | "class_definition"
+                | "class_declaration"
+                | "struct_item"
+                | "enum_item"
+                | "impl_item"
+                | "module"
+                | "namespace"
+                | "scope"
+                | "chunk"
+                | "do_statement"
+                | "closure_expression"
+                | "lambda"
+                | "arrow_function"
         )
     }
 
     fn determine_context_type(&self, node: Node) -> ContextType {
         // Walk up the AST to determine context
         let mut current = node.parent();
-        
+
         while let Some(parent) = current {
             match parent.kind() {
                 // Function call patterns
                 "call_expression" | "function_call" => return ContextType::FunctionCall,
                 // Type annotation patterns
-                "type_annotation" | "type_identifier" | "type_parameter" => return ContextType::TypeAnnotation,
+                "type_annotation" | "type_identifier" | "type_parameter" => {
+                    return ContextType::TypeAnnotation;
+                }
                 // Field access patterns
-                "field_expression" | "member_expression" | "field_access" => return ContextType::FieldAccess,
+                "field_expression" | "member_expression" | "field_access" => {
+                    return ContextType::FieldAccess;
+                }
                 _ => {}
             }
             current = parent.parent();
         }
-        
+
         ContextType::VariableReference
     }
 
@@ -283,7 +320,10 @@ impl LanguageAgnosticResolver {
                 matches!(definition_type, "field" | "property" | "attribute")
             }
             ContextType::VariableReference => {
-                matches!(definition_type, "var" | "variable" | "parameter" | "let" | "const")
+                matches!(
+                    definition_type,
+                    "var" | "variable" | "parameter" | "let" | "const"
+                )
             }
             ContextType::Unknown => true, // Don't filter based on unknown context
         }
@@ -292,10 +332,12 @@ impl LanguageAgnosticResolver {
     fn is_in_scope(&self, def_node: &Node, ref_node: &Node) -> bool {
         // Enhanced scope checking using proper AST traversal
         let mut current = ref_node.parent();
-        
+
         while let Some(parent) = current {
             // Check if this parent scope contains the definition
-            if parent.start_byte() <= def_node.start_byte() && parent.end_byte() >= def_node.end_byte() {
+            if parent.start_byte() <= def_node.start_byte()
+                && parent.end_byte() >= def_node.end_byte()
+            {
                 // Additional check: definition should be in a child scope or same scope
                 if self.is_definition_accessible_from_scope(def_node, &parent) {
                     return true;
@@ -303,14 +345,14 @@ impl LanguageAgnosticResolver {
             }
             current = parent.parent();
         }
-        
+
         false
     }
 
     fn is_definition_accessible_from_scope(&self, def_node: &Node, scope_node: &Node) -> bool {
         // Check if definition is directly in this scope or in an accessible child scope
         let mut current = def_node.parent();
-        
+
         while let Some(parent) = current {
             if parent.id() == scope_node.id() {
                 return true;
@@ -321,14 +363,14 @@ impl LanguageAgnosticResolver {
             }
             current = parent.parent();
         }
-        
+
         false
     }
 
     fn calculate_distance(&self, def_node: &Node, ref_node: &Node) -> usize {
         let def_pos = def_node.start_position();
         let ref_pos = ref_node.start_position();
-        
+
         // Enhanced distance calculation considering scope depth and lexical proximity
         let line_distance = if def_pos.row <= ref_pos.row {
             // Definition comes before reference (normal case)
@@ -338,7 +380,7 @@ impl LanguageAgnosticResolver {
             // Higher penalty for forward references
             (def_pos.row - ref_pos.row) * 100
         };
-        
+
         // Add column distance for same-line definitions
         let column_distance = if def_pos.row == ref_pos.row {
             if def_pos.column <= ref_pos.column {
@@ -349,10 +391,10 @@ impl LanguageAgnosticResolver {
         } else {
             0
         };
-        
+
         // Calculate scope distance (how many scope levels apart they are)
         let scope_distance = self.calculate_scope_distance(def_node, ref_node);
-        
+
         // Weighted combination: prioritize scope proximity over line distance
         (scope_distance * 1000) + (line_distance * 10) + column_distance
     }
@@ -361,7 +403,7 @@ impl LanguageAgnosticResolver {
         // Find the lowest common ancestor scope
         let def_scopes = self.get_scope_chain(def_node);
         let ref_scopes = self.get_scope_chain(ref_node);
-        
+
         // Find the divergence point
         let mut common_depth = 0;
         for (def_scope, ref_scope) in def_scopes.iter().zip(ref_scopes.iter()) {
@@ -371,7 +413,7 @@ impl LanguageAgnosticResolver {
                 break;
             }
         }
-        
+
         // Distance is the sum of steps to reach common ancestor
         (def_scopes.len() - common_depth) + (ref_scopes.len() - common_depth)
     }
@@ -379,14 +421,14 @@ impl LanguageAgnosticResolver {
     fn get_scope_chain<'a>(&self, node: &Node<'a>) -> Vec<Node<'a>> {
         let mut scopes = Vec::new();
         let mut current = node.parent();
-        
+
         while let Some(parent) = current {
             if self.is_scope_node(parent.kind()) {
                 scopes.push(parent);
             }
             current = parent.parent();
         }
-        
+
         scopes.reverse(); // Root scope first
         scopes
     }

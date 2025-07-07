@@ -46,7 +46,7 @@ mod simple_tests {
                 _ => panic!("Expected Query variant"),
             }
         }
-        
+
         #[test]
         fn should_parse_configuration_with_locals() {
             let config_json = r#"{
@@ -67,12 +67,15 @@ mod simple_tests {
 
             assert!(settings.languages.contains_key("rust"));
             let rust_config = &settings.languages["rust"];
-            
+
             // Verify locals configuration is parsed
-            assert!(rust_config.locals.is_some(), "Locals configuration should be present");
+            assert!(
+                rust_config.locals.is_some(),
+                "Locals configuration should be present"
+            );
             let locals = rust_config.locals.as_ref().unwrap();
             assert_eq!(locals.len(), 1, "Should have one locals item");
-            
+
             match &locals[0].source {
                 HighlightSource::Path { path } => {
                     assert_eq!(path, "/path/to/locals.scm");
@@ -387,34 +390,34 @@ mod simple_tests {
             assert_eq!(deserialized.languages.len(), config.languages.len());
         }
     }
-    
+
     mod definition_jump_tests {
         use super::*;
-        
+
         #[test]
         fn test_shadowing_prefers_local_definition() {
             // This test verifies that when a name is shadowed (like 'stdin' being both
             // an import and a local variable), the definition jump should go to the
             // nearest enclosing definition, not the import.
-            
+
             // Test scenario similar to src/bin/main.rs:
             // - Line 1: use tokio::io::{stdin, stdout};  // import
-            // - Line 7: let stdin = stdin();             // local variable  
+            // - Line 7: let stdin = stdin();             // local variable
             // - Line 11: Server::new(stdin, ...)         // reference
             //
             // When jumping from the reference on line 11, it should go to
             // the local variable on line 7, not the import on line 1.
-            
+
             // This is handled by the improved goto_definition logic that
             // considers scope and prefers closer definitions.
             assert!(true, "Scope-aware definition jumping implemented");
         }
     }
-    
+
     mod ast_analysis_tests {
         use super::*;
-        use tree_sitter::{Parser, Node};
-        
+        use tree_sitter::{Node, Parser};
+
         #[test]
         fn analyze_rust_function_call_vs_variable_reference() {
             // Create test code
@@ -427,42 +430,42 @@ fn main() {
     // Variable reference
     println!("{:?}", stdin);
 }"#;
-            
+
             // Parse with tree-sitter
             let mut parser = Parser::new();
-            
+
             // Load Rust language - we'll use the existing language loading mechanism
             // For this test, we'll just analyze the AST structure
-            
+
             println!("\n=== Analyzing Rust AST Structure ===\n");
             println!("Source code:\n{}\n", source_code);
-            
+
             // Print expected AST structure based on tree-sitter-rust
             println!("Expected AST structure for 'stdin' occurrences:\n");
-            
+
             println!("1. Import: use tokio::io::stdin");
             println!("   - Node type: identifier");
             println!("   - Parent: use_as_clause or use_list");
             println!("   - Grandparent: use_declaration");
             println!();
-            
+
             println!("2. Function call: stdin()");
             println!("   - Node type: identifier");
             println!("   - Parent: call_expression (as the function being called)");
             println!("   - The identifier 'stdin' is a direct child of call_expression");
             println!();
-            
+
             println!("3. Variable reference: println!(\"{{:?}}\", stdin)");
             println!("   - Node type: identifier");
             println!("   - Parent: arguments (of the macro call)");
             println!("   - Not a direct child of call_expression");
             println!();
-            
+
             println!("Key distinction:");
             println!("- Function call: identifier with parent = call_expression");
             println!("- Variable reference: identifier with parent != call_expression");
             println!("- Import: identifier within use_declaration");
-            
+
             assert!(true, "AST analysis complete");
         }
     }
