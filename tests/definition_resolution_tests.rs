@@ -1,4 +1,4 @@
-use treesitter_ls::definition_resolution::{ContextType, LanguageAgnosticResolver};
+use treesitter_ls::definition_resolution::{ContextType, DefinitionResolver};
 
 #[cfg(test)]
 mod tests {
@@ -6,7 +6,7 @@ mod tests {
 
     #[test]
     fn test_context_type_determination() {
-        let resolver = LanguageAgnosticResolver::new();
+        let resolver = DefinitionResolver::new();
 
         // Test context_matches for different context types
         assert!(resolver.context_matches("function", &ContextType::FunctionCall));

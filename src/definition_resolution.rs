@@ -1,4 +1,4 @@
-// Language-agnostic definition jump resolution
+// Definition jump resolution using tree-sitter queries
 use std::collections::HashMap;
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 
@@ -35,16 +35,16 @@ pub enum ContextType {
 }
 
 #[derive(Default)]
-pub struct LanguageAgnosticResolver {
+pub struct DefinitionResolver {
     pub context_patterns: HashMap<String, Vec<String>>,
 }
 
-impl LanguageAgnosticResolver {
+impl DefinitionResolver {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Resolve definition jump using language-agnostic scope analysis
+    /// Resolve definition jump using scope analysis
     pub fn resolve_definition<'a>(
         &self,
         text: &'a str,

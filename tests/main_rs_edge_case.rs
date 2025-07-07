@@ -130,9 +130,9 @@ async fn main() {
 #[test]
 fn test_context_matching_includes_imports() {
     // Test that imports are considered valid targets for function calls
-    use treesitter_ls::definition_resolution::{ContextType, LanguageAgnosticResolver};
+    use treesitter_ls::definition_resolution::{ContextType, DefinitionResolver};
 
-    let resolver = LanguageAgnosticResolver::new();
+    let resolver = DefinitionResolver::new();
 
     // Function calls should match imports (for imported functions)
     assert!(
