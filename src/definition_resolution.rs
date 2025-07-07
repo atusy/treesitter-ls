@@ -30,15 +30,14 @@ pub enum ContextType {
     Unknown,
 }
 
+#[derive(Default)]
 pub struct LanguageAgnosticResolver {
     pub context_patterns: HashMap<String, Vec<String>>,
 }
 
 impl LanguageAgnosticResolver {
     pub fn new() -> Self {
-        Self {
-            context_patterns: HashMap::new(),
-        }
+        Self::default()
     }
 
     /// Resolve definition jump using language-agnostic scope analysis
@@ -60,10 +59,10 @@ impl LanguageAgnosticResolver {
 
         // Step 4: Find matching definitions with enhanced scope analysis
         let candidates =
-            self.find_matching_definitions(&definitions, target_text, &target_reference, text);
+            self.find_matching_definitions(&definitions, target_text, target_reference, text);
 
         // Step 5: Rank candidates using language-agnostic scoring
-        self.rank_and_select_best_candidate(candidates, &target_reference)
+        self.rank_and_select_best_candidate(candidates, target_reference)
     }
 
     fn collect_definitions_and_references<'a>(
@@ -92,7 +91,11 @@ impl LanguageAgnosticResolver {
                         .to_string();
 
                     definitions.push(DefinitionCandidate {
-                        node: unsafe { std::mem::transmute(node) },
+                        node: unsafe {
+                            std::mem::transmute::<tree_sitter::Node<'_>, tree_sitter::Node<'_>>(
+                                node,
+                            )
+                        },
                         start_byte,
                         end_byte,
                         definition_type,
@@ -119,7 +122,11 @@ impl LanguageAgnosticResolver {
                         };
 
                     references.push(ReferenceContext {
-                        node: unsafe { std::mem::transmute(node) },
+                        node: unsafe {
+                            std::mem::transmute::<tree_sitter::Node<'_>, tree_sitter::Node<'_>>(
+                                node,
+                            )
+                        },
                         start_byte,
                         end_byte,
                         reference_type,
