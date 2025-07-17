@@ -3,41 +3,17 @@ use serde::Deserialize;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
-use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator, Tree};
+use tree_sitter::{Language, Parser, Query, Tree};
 
 pub mod handlers;
 mod safe_library_loader;
 pub mod utils;
 
-use handlers::{handle_goto_definition, DefinitionResolver};
+use handlers::{
+    DefinitionResolver, LEGEND_TYPES, handle_goto_definition, handle_semantic_tokens_full,
+};
 use safe_library_loader::LibraryLoader;
 use utils::position_to_byte_offset;
-
-pub const LEGEND_TYPES: &[SemanticTokenType] = &[
-    SemanticTokenType::COMMENT,
-    SemanticTokenType::KEYWORD,
-    SemanticTokenType::STRING,
-    SemanticTokenType::NUMBER,
-    SemanticTokenType::REGEXP,
-    SemanticTokenType::OPERATOR,
-    SemanticTokenType::NAMESPACE,
-    SemanticTokenType::TYPE,
-    SemanticTokenType::STRUCT,
-    SemanticTokenType::CLASS,
-    SemanticTokenType::INTERFACE,
-    SemanticTokenType::ENUM,
-    SemanticTokenType::ENUM_MEMBER,
-    SemanticTokenType::TYPE_PARAMETER,
-    SemanticTokenType::FUNCTION,
-    SemanticTokenType::METHOD,
-    SemanticTokenType::MACRO,
-    SemanticTokenType::VARIABLE,
-    SemanticTokenType::PARAMETER,
-    SemanticTokenType::PROPERTY,
-    SemanticTokenType::EVENT,
-    SemanticTokenType::MODIFIER,
-    SemanticTokenType::DECORATOR,
-];
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct HighlightItem {
@@ -467,61 +443,8 @@ impl LanguageServer for TreeSitterLs {
             return Ok(None);
         };
 
-        let mut cursor = QueryCursor::new();
-        let mut matches = cursor.matches(query, tree.root_node(), text.as_bytes());
-
-        let mut tokens = vec![];
-        while let Some(m) = matches.next() {
-            for c in m.captures {
-                let node = c.node;
-                let start_pos = node.start_position();
-                let end_pos = node.end_position();
-                if start_pos.row == end_pos.row {
-                    tokens.push((
-                        start_pos.row,
-                        start_pos.column,
-                        end_pos.column - start_pos.column,
-                        c.index,
-                    ));
-                }
-            }
-        }
-        tokens.sort();
-
-        let mut last_line = 0;
-        let mut last_start = 0;
-        let mut data = Vec::new();
-
-        for (line, start, length, capture_index) in tokens {
-            let delta_line = line - last_line;
-            let delta_start = if delta_line == 0 {
-                start - last_start
-            } else {
-                start
-            };
-
-            let token_type_name = &query.capture_names()[capture_index as usize];
-            let token_type = LEGEND_TYPES
-                .iter()
-                .position(|t| t.as_str() == *token_type_name)
-                .unwrap_or(0);
-
-            data.push(SemanticToken {
-                delta_line: delta_line as u32,
-                delta_start: delta_start as u32,
-                length: length as u32,
-                token_type: token_type as u32,
-                token_modifiers_bitset: 0,
-            });
-
-            last_line = line;
-            last_start = start;
-        }
-
-        Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
-            result_id: None,
-            data,
-        })))
+        // Delegate to handler
+        Ok(handle_semantic_tokens_full(text, tree, query))
     }
 
     async fn goto_definition(
@@ -553,10 +476,10 @@ impl LanguageServer for TreeSitterLs {
 
         // Convert position to byte offset
         let byte_offset = position_to_byte_offset(text, position);
-        
+
         // Get resolver
         let resolver = self.definition_resolver.lock().unwrap();
-        
+
         // Delegate to handler
         Ok(handle_goto_definition(
             &*resolver,
@@ -568,7 +491,6 @@ impl LanguageServer for TreeSitterLs {
         ))
     }
 }
-
 
 #[cfg(test)]
 mod simple_tests;
