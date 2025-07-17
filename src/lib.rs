@@ -130,7 +130,7 @@ impl TreeSitterLs {
         func_name: &str,
         lang_name: &str,
     ) -> std::result::Result<Language, String> {
-        // Use the library loader with proper error handling
+        // Use the library loader to load a language.
         self.library_loader
             .lock()
             .unwrap()
