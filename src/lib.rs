@@ -5,10 +5,10 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator, Tree};
 
-pub mod definition_resolution;
+pub mod handlers;
 mod safe_library_loader;
 
-use definition_resolution::DefinitionResolver;
+use handlers::DefinitionResolver;
 use safe_library_loader::LibraryLoader;
 
 pub const LEGEND_TYPES: &[SemanticTokenType] = &[
