@@ -3,7 +3,7 @@
 #[test]
 fn test_basic_compilation() {
     // Just test that the new language-agnostic resolver compiles and works
-    let _resolver = treesitter_ls::definition_resolution::LanguageAgnosticResolver::new();
+    let _resolver = treesitter_ls::definition_resolution::DefinitionResolver::new();
 
     // Test basic patterns match (language-agnostic scope detection)
     let scope_patterns = vec![

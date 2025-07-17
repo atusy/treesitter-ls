@@ -8,8 +8,8 @@ use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator, Tree}
 pub mod definition_resolution;
 mod safe_library_loader;
 
-use definition_resolution::LanguageAgnosticResolver;
-use safe_library_loader::SafeLibraryLoader;
+use definition_resolution::DefinitionResolver;
+use safe_library_loader::LibraryLoader;
 
 pub const LEGEND_TYPES: &[SemanticTokenType] = &[
     SemanticTokenType::COMMENT,
@@ -71,9 +71,9 @@ pub struct TreeSitterLs {
     locals_queries: std::sync::Mutex<std::collections::HashMap<String, Query>>,
     language_configs: std::sync::Mutex<std::collections::HashMap<String, LanguageConfig>>,
     filetype_map: std::sync::Mutex<std::collections::HashMap<String, String>>,
-    safe_loader: std::sync::Mutex<SafeLibraryLoader>,
+    library_loader: std::sync::Mutex<LibraryLoader>,
     document_map: DashMap<Url, (String, Option<Tree>)>,
-    definition_resolver: LanguageAgnosticResolver,
+    definition_resolver: DefinitionResolver,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -94,9 +94,9 @@ impl TreeSitterLs {
             locals_queries: std::sync::Mutex::new(std::collections::HashMap::new()),
             language_configs: std::sync::Mutex::new(std::collections::HashMap::new()),
             filetype_map: std::sync::Mutex::new(std::collections::HashMap::new()),
-            safe_loader: std::sync::Mutex::new(SafeLibraryLoader::new()),
+            library_loader: std::sync::Mutex::new(LibraryLoader::new()),
             document_map: DashMap::new(),
-            definition_resolver: LanguageAgnosticResolver::new(),
+            definition_resolver: DefinitionResolver::new(),
         }
     }
 
@@ -130,8 +130,8 @@ impl TreeSitterLs {
         func_name: &str,
         lang_name: &str,
     ) -> std::result::Result<Language, String> {
-        // Use the safe library loader with proper error handling
-        self.safe_loader
+        // Use the library loader to load a language.
+        self.library_loader
             .lock()
             .unwrap()
             .load_language(path, func_name, lang_name)
@@ -552,7 +552,7 @@ impl LanguageServer for TreeSitterLs {
         // Convert position to byte offset
         let byte_offset = self.position_to_byte_offset(text, position);
 
-        // Use the new language-agnostic resolver
+        // Use the definition resolver
         let result =
             self.definition_resolver
                 .resolve_definition(text, tree, locals_query, byte_offset);
