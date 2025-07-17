@@ -422,18 +422,14 @@ impl DefinitionResolver {
 
 /// Handle goto definition request
 pub fn handle_goto_definition(
+    resolver: &DefinitionResolver,
     text: &str,
     tree: &Tree,
     locals_query: &Query,
-    position: Position,
+    byte_offset: usize,
     uri: &Url,
-    position_to_byte_offset: impl Fn(&str, Position) -> usize,
 ) -> Option<GotoDefinitionResponse> {
-    // Convert position to byte offset
-    let byte_offset = position_to_byte_offset(text, position);
-
-    // Create resolver and resolve definition
-    let resolver = DefinitionResolver::new();
+    // Use provided resolver
     let result = resolver.resolve_definition(text, tree, locals_query, byte_offset);
 
     // Convert result to LSP response

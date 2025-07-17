@@ -7,9 +7,11 @@ use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator, Tree}
 
 pub mod handlers;
 mod safe_library_loader;
+pub mod utils;
 
-use handlers::handle_goto_definition;
+use handlers::{handle_goto_definition, DefinitionResolver};
 use safe_library_loader::LibraryLoader;
+use utils::position_to_byte_offset;
 
 pub const LEGEND_TYPES: &[SemanticTokenType] = &[
     SemanticTokenType::COMMENT,
@@ -73,6 +75,7 @@ pub struct TreeSitterLs {
     filetype_map: std::sync::Mutex<std::collections::HashMap<String, String>>,
     library_loader: std::sync::Mutex<LibraryLoader>,
     document_map: DashMap<Url, (String, Option<Tree>)>,
+    definition_resolver: std::sync::Mutex<DefinitionResolver>,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -95,6 +98,7 @@ impl TreeSitterLs {
             filetype_map: std::sync::Mutex::new(std::collections::HashMap::new()),
             library_loader: std::sync::Mutex::new(LibraryLoader::new()),
             document_map: DashMap::new(),
+            definition_resolver: std::sync::Mutex::new(DefinitionResolver::new()),
         }
     }
 
@@ -547,43 +551,24 @@ impl LanguageServer for TreeSitterLs {
             return Ok(None);
         };
 
+        // Convert position to byte offset
+        let byte_offset = position_to_byte_offset(text, position);
+        
+        // Get resolver
+        let resolver = self.definition_resolver.lock().unwrap();
+        
         // Delegate to handler
         Ok(handle_goto_definition(
+            &*resolver,
             text,
             tree,
             locals_query,
-            position,
+            byte_offset,
             &uri,
-            |text, pos| self.position_to_byte_offset(text, pos),
         ))
     }
 }
 
-impl TreeSitterLs {
-    fn position_to_byte_offset(&self, text: &str, position: Position) -> usize {
-        let mut byte_offset = 0;
-        let mut current_line = 0;
-        let mut current_char = 0;
-
-        for ch in text.chars() {
-            if current_line == position.line as usize && current_char == position.character as usize
-            {
-                return byte_offset;
-            }
-
-            if ch == '\n' {
-                current_line += 1;
-                current_char = 0;
-            } else {
-                current_char += 1;
-            }
-
-            byte_offset += ch.len_utf8();
-        }
-
-        byte_offset
-    }
-}
 
 #[cfg(test)]
 mod simple_tests;
