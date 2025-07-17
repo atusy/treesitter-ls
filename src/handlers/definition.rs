@@ -1,5 +1,6 @@
 // Definition jump resolution using tree-sitter queries
 use std::collections::HashMap;
+use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Position, Range, Url};
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 
 #[derive(Debug, Clone)]
@@ -417,4 +418,43 @@ impl DefinitionResolver {
         let ref_distance = ref_scope_ids.len().saturating_sub(common_depth);
         def_distance + ref_distance
     }
+}
+
+/// Handle goto definition request
+pub fn handle_goto_definition(
+    text: &str,
+    tree: &Tree,
+    locals_query: &Query,
+    position: Position,
+    uri: &Url,
+    position_to_byte_offset: impl Fn(&str, Position) -> usize,
+) -> Option<GotoDefinitionResponse> {
+    // Convert position to byte offset
+    let byte_offset = position_to_byte_offset(text, position);
+
+    // Create resolver and resolve definition
+    let resolver = DefinitionResolver::new();
+    let result = resolver.resolve_definition(text, tree, locals_query, byte_offset);
+
+    // Convert result to LSP response
+    result.map(|definition| {
+        let start_point = definition.start_position;
+        let end_point = definition.end_position;
+
+        let location = Location {
+            uri: uri.clone(),
+            range: Range {
+                start: Position {
+                    line: start_point.row as u32,
+                    character: start_point.column as u32,
+                },
+                end: Position {
+                    line: end_point.row as u32,
+                    character: end_point.column as u32,
+                },
+            },
+        };
+
+        GotoDefinitionResponse::Scalar(location)
+    })
 }

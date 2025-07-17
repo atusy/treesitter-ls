@@ -8,7 +8,7 @@ use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator, Tree}
 pub mod handlers;
 mod safe_library_loader;
 
-use handlers::DefinitionResolver;
+use handlers::handle_goto_definition;
 use safe_library_loader::LibraryLoader;
 
 pub const LEGEND_TYPES: &[SemanticTokenType] = &[
@@ -73,7 +73,6 @@ pub struct TreeSitterLs {
     filetype_map: std::sync::Mutex<std::collections::HashMap<String, String>>,
     library_loader: std::sync::Mutex<LibraryLoader>,
     document_map: DashMap<Url, (String, Option<Tree>)>,
-    definition_resolver: DefinitionResolver,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -96,7 +95,6 @@ impl TreeSitterLs {
             filetype_map: std::sync::Mutex::new(std::collections::HashMap::new()),
             library_loader: std::sync::Mutex::new(LibraryLoader::new()),
             document_map: DashMap::new(),
-            definition_resolver: DefinitionResolver::new(),
         }
     }
 
@@ -549,37 +547,15 @@ impl LanguageServer for TreeSitterLs {
             return Ok(None);
         };
 
-        // Convert position to byte offset
-        let byte_offset = self.position_to_byte_offset(text, position);
-
-        // Use the definition resolver
-        let result =
-            self.definition_resolver
-                .resolve_definition(text, tree, locals_query, byte_offset);
-
-        // Convert result to LSP response
-        if let Some(definition) = result {
-            let start_point = definition.start_position;
-            let end_point = definition.end_position;
-
-            let location = Location {
-                uri: uri.clone(),
-                range: Range {
-                    start: Position {
-                        line: start_point.row as u32,
-                        character: start_point.column as u32,
-                    },
-                    end: Position {
-                        line: end_point.row as u32,
-                        character: end_point.column as u32,
-                    },
-                },
-            };
-
-            Ok(Some(GotoDefinitionResponse::Scalar(location)))
-        } else {
-            Ok(None)
-        }
+        // Delegate to handler
+        Ok(handle_goto_definition(
+            text,
+            tree,
+            locals_query,
+            position,
+            &uri,
+            |text, pos| self.position_to_byte_offset(text, pos),
+        ))
     }
 }
 
