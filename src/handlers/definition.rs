@@ -52,12 +52,15 @@ impl DefinitionResolver {
         tree: &'a Tree,
         query: &'a Query,
         cursor_byte_offset: usize,
-    ) -> Option<DefinitionCandidate> {
+    ) -> Vec<DefinitionCandidate> {
         // Step 1: Collect all definitions and references
         let (definitions, references) = self.collect_definitions_and_references(text, tree, query);
 
         // Step 2: Find the reference at cursor position
-        let target_reference = self.find_reference_at_cursor(&references, cursor_byte_offset)?;
+        let target_reference = match self.find_reference_at_cursor(&references, cursor_byte_offset) {
+            Some(reference) => reference,
+            None => return Vec::new(),
+        };
 
         // Step 3: Extract target text
         let target_text = &text[target_reference.start_byte..target_reference.end_byte];
@@ -67,7 +70,7 @@ impl DefinitionResolver {
             self.find_matching_definitions(&definitions, target_text, target_reference, text);
 
         // Step 5: Rank candidates using language-agnostic scoring
-        self.rank_and_select_best_candidate(candidates, target_reference)
+        self.rank_candidates(candidates, target_reference)
     }
 
     fn collect_definitions_and_references<'a>(
@@ -194,13 +197,13 @@ impl DefinitionResolver {
             .collect()
     }
 
-    fn rank_and_select_best_candidate(
+    fn rank_candidates(
         &self,
         mut candidates: Vec<DefinitionCandidate>,
         target_reference: &ReferenceContext,
-    ) -> Option<DefinitionCandidate> {
+    ) -> Vec<DefinitionCandidate> {
         if candidates.is_empty() {
-            return None;
+            return Vec::new();
         }
 
         // Sort by multiple criteria for language-agnostic ranking
@@ -237,7 +240,7 @@ impl DefinitionResolver {
             a.distance_to_reference.cmp(&b.distance_to_reference)
         });
 
-        candidates.into_iter().next()
+        candidates
     }
 
     fn calculate_scope_depth(&self, node: Node) -> usize {
@@ -430,27 +433,34 @@ pub fn handle_goto_definition(
     uri: &Url,
 ) -> Option<GotoDefinitionResponse> {
     // Use provided resolver
-    let result = resolver.resolve_definition(text, tree, locals_query, byte_offset);
+    let candidates = resolver.resolve_definition(text, tree, locals_query, byte_offset);
 
-    // Convert result to LSP response
-    result.map(|definition| {
-        let start_point = definition.start_position;
-        let end_point = definition.end_position;
+    if candidates.is_empty() {
+        return None;
+    }
 
-        let location = Location {
-            uri: uri.clone(),
-            range: Range {
-                start: Position {
-                    line: start_point.row as u32,
-                    character: start_point.column as u32,
+    // Convert candidates to LSP locations
+    let locations: Vec<Location> = candidates
+        .into_iter()
+        .map(|definition| {
+            let start_point = definition.start_position;
+            let end_point = definition.end_position;
+
+            Location {
+                uri: uri.clone(),
+                range: Range {
+                    start: Position {
+                        line: start_point.row as u32,
+                        character: start_point.column as u32,
+                    },
+                    end: Position {
+                        line: end_point.row as u32,
+                        character: end_point.column as u32,
+                    },
                 },
-                end: Position {
-                    line: end_point.row as u32,
-                    character: end_point.column as u32,
-                },
-            },
-        };
+            }
+        })
+        .collect();
 
-        GotoDefinitionResponse::Scalar(location)
-    })
+    Some(GotoDefinitionResponse::Array(locations))
 }

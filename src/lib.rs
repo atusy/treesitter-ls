@@ -10,8 +10,11 @@ mod safe_library_loader;
 pub mod utils;
 
 use handlers::{
-    DefinitionResolver, LEGEND_TYPES, handle_goto_definition, handle_semantic_tokens_full,
+    DefinitionResolver as PrivateDefinitionResolver, handle_goto_definition, handle_semantic_tokens_full,
 };
+
+// Re-export for tests  
+pub use handlers::{ContextType, DefinitionCandidate, DefinitionResolver, ReferenceContext, LEGEND_TYPES};
 use safe_library_loader::LibraryLoader;
 use utils::position_to_byte_offset;
 
@@ -74,7 +77,7 @@ impl TreeSitterLs {
             filetype_map: std::sync::Mutex::new(std::collections::HashMap::new()),
             library_loader: std::sync::Mutex::new(LibraryLoader::new()),
             document_map: DashMap::new(),
-            definition_resolver: std::sync::Mutex::new(DefinitionResolver::new()),
+            definition_resolver: std::sync::Mutex::new(PrivateDefinitionResolver::new()),
         }
     }
 

@@ -1,4 +1,4 @@
-use treesitter_ls::definition_resolution::{ContextType, DefinitionResolver};
+use treesitter_ls::{ContextType, DefinitionResolver};
 
 #[cfg(test)]
 mod tests {
