@@ -11,6 +11,7 @@
 ] @local.scope
 
 ; Definitions
+
 (assignment_statement
   (variable_list
     (identifier) @local.definition.var))
@@ -51,4 +52,11 @@
   (identifier) @local.definition.parameter)
 
 ; References
-(identifier) @local.reference
+(function_call
+  name: (identifier) @local.reference.function_call)
+
+(function_call
+  name: (method_index_expression
+    (identifier) @local.reference.method_call))
+
+(identifier) @local.reference.variable
