@@ -130,7 +130,7 @@ async fn main() {
 #[test]
 fn test_context_matching_includes_imports() {
     // Test that imports are considered valid targets for function calls
-    use treesitter_ls::definition_resolution::{ContextType, DefinitionResolver};
+    use treesitter_ls::{ContextType, DefinitionResolver};
 
     let resolver = DefinitionResolver::new();
 

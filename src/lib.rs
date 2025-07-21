@@ -3,39 +3,20 @@ use serde::Deserialize;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
-use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator, Tree};
+use tree_sitter::{Language, Parser, Query, Tree};
 
-pub mod definition_resolution;
+pub mod handlers;
 mod safe_library_loader;
+pub mod utils;
 
-use definition_resolution::DefinitionResolver;
+use handlers::{
+    DefinitionResolver as PrivateDefinitionResolver, handle_goto_definition, handle_semantic_tokens_full,
+};
+
+// Re-export for tests  
+pub use handlers::{ContextType, DefinitionCandidate, DefinitionResolver, ReferenceContext, LEGEND_TYPES};
 use safe_library_loader::LibraryLoader;
-
-pub const LEGEND_TYPES: &[SemanticTokenType] = &[
-    SemanticTokenType::COMMENT,
-    SemanticTokenType::KEYWORD,
-    SemanticTokenType::STRING,
-    SemanticTokenType::NUMBER,
-    SemanticTokenType::REGEXP,
-    SemanticTokenType::OPERATOR,
-    SemanticTokenType::NAMESPACE,
-    SemanticTokenType::TYPE,
-    SemanticTokenType::STRUCT,
-    SemanticTokenType::CLASS,
-    SemanticTokenType::INTERFACE,
-    SemanticTokenType::ENUM,
-    SemanticTokenType::ENUM_MEMBER,
-    SemanticTokenType::TYPE_PARAMETER,
-    SemanticTokenType::FUNCTION,
-    SemanticTokenType::METHOD,
-    SemanticTokenType::MACRO,
-    SemanticTokenType::VARIABLE,
-    SemanticTokenType::PARAMETER,
-    SemanticTokenType::PROPERTY,
-    SemanticTokenType::EVENT,
-    SemanticTokenType::MODIFIER,
-    SemanticTokenType::DECORATOR,
-];
+use utils::position_to_byte_offset;
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct HighlightItem {
@@ -73,7 +54,7 @@ pub struct TreeSitterLs {
     filetype_map: std::sync::Mutex<std::collections::HashMap<String, String>>,
     library_loader: std::sync::Mutex<LibraryLoader>,
     document_map: DashMap<Url, (String, Option<Tree>)>,
-    definition_resolver: DefinitionResolver,
+    definition_resolver: std::sync::Mutex<DefinitionResolver>,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -96,7 +77,7 @@ impl TreeSitterLs {
             filetype_map: std::sync::Mutex::new(std::collections::HashMap::new()),
             library_loader: std::sync::Mutex::new(LibraryLoader::new()),
             document_map: DashMap::new(),
-            definition_resolver: DefinitionResolver::new(),
+            definition_resolver: std::sync::Mutex::new(PrivateDefinitionResolver::new()),
         }
     }
 
@@ -465,61 +446,8 @@ impl LanguageServer for TreeSitterLs {
             return Ok(None);
         };
 
-        let mut cursor = QueryCursor::new();
-        let mut matches = cursor.matches(query, tree.root_node(), text.as_bytes());
-
-        let mut tokens = vec![];
-        while let Some(m) = matches.next() {
-            for c in m.captures {
-                let node = c.node;
-                let start_pos = node.start_position();
-                let end_pos = node.end_position();
-                if start_pos.row == end_pos.row {
-                    tokens.push((
-                        start_pos.row,
-                        start_pos.column,
-                        end_pos.column - start_pos.column,
-                        c.index,
-                    ));
-                }
-            }
-        }
-        tokens.sort();
-
-        let mut last_line = 0;
-        let mut last_start = 0;
-        let mut data = Vec::new();
-
-        for (line, start, length, capture_index) in tokens {
-            let delta_line = line - last_line;
-            let delta_start = if delta_line == 0 {
-                start - last_start
-            } else {
-                start
-            };
-
-            let token_type_name = &query.capture_names()[capture_index as usize];
-            let token_type = LEGEND_TYPES
-                .iter()
-                .position(|t| t.as_str() == *token_type_name)
-                .unwrap_or(0);
-
-            data.push(SemanticToken {
-                delta_line: delta_line as u32,
-                delta_start: delta_start as u32,
-                length: length as u32,
-                token_type: token_type as u32,
-                token_modifiers_bitset: 0,
-            });
-
-            last_line = line;
-            last_start = start;
-        }
-
-        Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
-            result_id: None,
-            data,
-        })))
+        // Delegate to handler
+        Ok(handle_semantic_tokens_full(text, tree, query))
     }
 
     async fn goto_definition(
@@ -550,62 +478,20 @@ impl LanguageServer for TreeSitterLs {
         };
 
         // Convert position to byte offset
-        let byte_offset = self.position_to_byte_offset(text, position);
+        let byte_offset = position_to_byte_offset(text, position);
 
-        // Use the definition resolver
-        let result =
-            self.definition_resolver
-                .resolve_definition(text, tree, locals_query, byte_offset);
+        // Get resolver
+        let resolver = self.definition_resolver.lock().unwrap();
 
-        // Convert result to LSP response
-        if let Some(definition) = result {
-            let start_point = definition.start_position;
-            let end_point = definition.end_position;
-
-            let location = Location {
-                uri: uri.clone(),
-                range: Range {
-                    start: Position {
-                        line: start_point.row as u32,
-                        character: start_point.column as u32,
-                    },
-                    end: Position {
-                        line: end_point.row as u32,
-                        character: end_point.column as u32,
-                    },
-                },
-            };
-
-            Ok(Some(GotoDefinitionResponse::Scalar(location)))
-        } else {
-            Ok(None)
-        }
-    }
-}
-
-impl TreeSitterLs {
-    fn position_to_byte_offset(&self, text: &str, position: Position) -> usize {
-        let mut byte_offset = 0;
-        let mut current_line = 0;
-        let mut current_char = 0;
-
-        for ch in text.chars() {
-            if current_line == position.line as usize && current_char == position.character as usize
-            {
-                return byte_offset;
-            }
-
-            if ch == '\n' {
-                current_line += 1;
-                current_char = 0;
-            } else {
-                current_char += 1;
-            }
-
-            byte_offset += ch.len_utf8();
-        }
-
-        byte_offset
+        // Delegate to handler
+        Ok(handle_goto_definition(
+            &*resolver,
+            text,
+            tree,
+            locals_query,
+            byte_offset,
+            &uri,
+        ))
     }
 }
 

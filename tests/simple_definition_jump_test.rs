@@ -3,7 +3,7 @@
 #[test]
 fn test_basic_compilation() {
     // Just test that the new language-agnostic resolver compiles and works
-    let _resolver = treesitter_ls::definition_resolution::DefinitionResolver::new();
+    let _resolver = treesitter_ls::DefinitionResolver::new();
 
     // Test basic patterns match (language-agnostic scope detection)
     let scope_patterns = vec![
@@ -60,7 +60,7 @@ fn test_basic_compilation() {
 
 #[test]
 fn test_context_type_enum() {
-    use treesitter_ls::definition_resolution::ContextType;
+    use treesitter_ls::ContextType;
 
     // Test context type matching
     let contexts = vec![
