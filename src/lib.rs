@@ -10,11 +10,14 @@ mod safe_library_loader;
 pub mod utils;
 
 use handlers::{
-    DefinitionResolver as PrivateDefinitionResolver, handle_goto_definition, handle_semantic_tokens_full,
+    DefinitionResolver as PrivateDefinitionResolver, handle_goto_definition,
+    handle_semantic_tokens_full,
 };
 
-// Re-export for tests  
-pub use handlers::{ContextType, DefinitionCandidate, DefinitionResolver, ReferenceContext, LEGEND_TYPES};
+// Re-export for tests
+pub use handlers::{
+    ContextType, DefinitionCandidate, DefinitionResolver, LEGEND_TYPES, ReferenceContext,
+};
 use safe_library_loader::LibraryLoader;
 use utils::position_to_byte_offset;
 

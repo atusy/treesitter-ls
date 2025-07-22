@@ -57,7 +57,8 @@ impl DefinitionResolver {
         let (definitions, references) = self.collect_definitions_and_references(text, tree, query);
 
         // Step 2: Find the reference at cursor position
-        let target_reference = match self.find_reference_at_cursor(&references, cursor_byte_offset) {
+        let target_reference = match self.find_reference_at_cursor(&references, cursor_byte_offset)
+        {
             Some(reference) => reference,
             None => return Vec::new(),
         };
