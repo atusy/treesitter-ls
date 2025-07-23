@@ -57,7 +57,7 @@ impl LibraryLoader {
             .loaded_libraries
             .get(lang_name)
             .ok_or_else(|| LoadError {
-                message: format!("Failed to get library for {}", lang_name),
+                message: format!("Failed to get library for {lang_name}"),
             })?;
 
         // Get the language function from the library

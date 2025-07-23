@@ -143,13 +143,13 @@ impl TreeSitterLs {
         if let Some(paths) = runtimepath {
             for path in paths {
                 // Try .so extension first (Linux)
-                let so_path = format!("{}/{}.so", path, language);
+                let so_path = format!("{path}/{language}.so");
                 if std::path::Path::new(&so_path).exists() {
                     return Some(so_path);
                 }
 
                 // Try .dylib extension (macOS)
-                let dylib_path = format!("{}/{}.dylib", path, language);
+                let dylib_path = format!("{path}/{language}.dylib");
                 if std::path::Path::new(&dylib_path).exists() {
                     return Some(dylib_path);
                 }
@@ -173,7 +173,7 @@ impl TreeSitterLs {
                         combined_query.push('\n');
                     }
                     Err(e) => {
-                        return Err(format!("Failed to read query file {}: {}", path, e));
+                        return Err(format!("Failed to read query file {path}: {e}"));
                     }
                 },
                 HighlightSource::Query { query } => {
@@ -205,7 +205,7 @@ impl TreeSitterLs {
         // Load languages and queries
         for (lang_name, config) in &settings.languages {
             // For now, assume the function name is tree_sitter_<language>
-            let func_name = format!("tree_sitter_{}", lang_name);
+            let func_name = format!("tree_sitter_{lang_name}");
 
             // Resolve library path
             let library_path = self.resolve_library_path(config, lang_name, &settings.runtimepath);
@@ -225,7 +225,7 @@ impl TreeSitterLs {
                                     self.client
                                         .log_message(
                                             MessageType::INFO,
-                                            format!("Query loaded for {}.", lang_name),
+                                            format!("Query loaded for {lang_name}."),
                                         )
                                         .await;
                                 }
@@ -233,10 +233,7 @@ impl TreeSitterLs {
                                     self.client
                                         .log_message(
                                             MessageType::ERROR,
-                                            format!(
-                                                "Failed to parse query for {}: {}",
-                                                lang_name, err
-                                            ),
+                                            format!("Failed to parse query for {lang_name}: {err}"),
                                         )
                                         .await;
                                 }
@@ -246,8 +243,7 @@ impl TreeSitterLs {
                                     .log_message(
                                         MessageType::ERROR,
                                         format!(
-                                            "Failed to load highlight queries for {}: {}",
-                                            lang_name, err
+                                            "Failed to load highlight queries for {lang_name}: {err}"
                                         ),
                                     )
                                     .await;
@@ -269,10 +265,7 @@ impl TreeSitterLs {
                                             self.client
                                                 .log_message(
                                                     MessageType::INFO,
-                                                    format!(
-                                                        "Locals query loaded for {}.",
-                                                        lang_name
-                                                    ),
+                                                    format!("Locals query loaded for {lang_name}."),
                                                 )
                                                 .await;
                                         }
@@ -281,8 +274,7 @@ impl TreeSitterLs {
                                                 .log_message(
                                                     MessageType::ERROR,
                                                     format!(
-                                                        "Failed to parse locals query for {}: {}",
-                                                        lang_name, err
+                                                        "Failed to parse locals query for {lang_name}: {err}"
                                                     ),
                                                 )
                                                 .await;
@@ -294,8 +286,7 @@ impl TreeSitterLs {
                                         .log_message(
                                             MessageType::ERROR,
                                             format!(
-                                                "Failed to load locals queries for {}: {}",
-                                                lang_name, err
+                                                "Failed to load locals queries for {lang_name}: {err}"
                                             ),
                                         )
                                         .await;
@@ -309,17 +300,14 @@ impl TreeSitterLs {
                                 .insert(lang_name.to_string(), language);
                         }
                         self.client
-                            .log_message(
-                                MessageType::INFO,
-                                format!("Language {} loaded.", lang_name),
-                            )
+                            .log_message(MessageType::INFO, format!("Language {lang_name} loaded."))
                             .await;
                     }
                     Err(err) => {
                         self.client
                             .log_message(
                                 MessageType::ERROR,
-                                format!("Failed to load language {}: {}", lang_name, err),
+                                format!("Failed to load language {lang_name}: {err}"),
                             )
                             .await;
                     }
@@ -328,7 +316,7 @@ impl TreeSitterLs {
                     self.client
                         .log_message(
                             MessageType::ERROR,
-                            format!("No library path found for language {}: neither explicit library path nor valid runtimepath entry", lang_name),
+                            format!("No library path found for language {lang_name}: neither explicit library path nor valid runtimepath entry"),
                         )
                         .await;
                 }
@@ -488,7 +476,7 @@ impl LanguageServer for TreeSitterLs {
 
         // Delegate to handler
         Ok(handle_goto_definition(
-            &*resolver,
+            &resolver,
             text,
             tree,
             locals_query,
