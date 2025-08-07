@@ -6,7 +6,7 @@ use tower_lsp::{Client, LanguageServer};
 use tree_sitter::{Language, Parser, Query, Tree};
 
 pub mod handlers;
-mod safe_library_loader;
+mod analysis;
 pub mod utils;
 
 use handlers::{
@@ -18,7 +18,7 @@ use handlers::{
 pub use handlers::{
     ContextType, DefinitionCandidate, DefinitionResolver, LEGEND_TYPES, ReferenceContext,
 };
-use safe_library_loader::LibraryLoader;
+use analysis::ParserLoader;
 use utils::position_to_byte_offset;
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
@@ -55,7 +55,7 @@ pub struct TreeSitterLs {
     locals_queries: std::sync::Mutex<std::collections::HashMap<String, Query>>,
     language_configs: std::sync::Mutex<std::collections::HashMap<String, LanguageConfig>>,
     filetype_map: std::sync::Mutex<std::collections::HashMap<String, String>>,
-    library_loader: std::sync::Mutex<LibraryLoader>,
+    library_loader: std::sync::Mutex<ParserLoader>,
     document_map: DashMap<Url, (String, Option<Tree>)>,
     definition_resolver: std::sync::Mutex<DefinitionResolver>,
 }
@@ -78,7 +78,7 @@ impl TreeSitterLs {
             locals_queries: std::sync::Mutex::new(std::collections::HashMap::new()),
             language_configs: std::sync::Mutex::new(std::collections::HashMap::new()),
             filetype_map: std::sync::Mutex::new(std::collections::HashMap::new()),
-            library_loader: std::sync::Mutex::new(LibraryLoader::new()),
+            library_loader: std::sync::Mutex::new(ParserLoader::new()),
             document_map: DashMap::new(),
             definition_resolver: std::sync::Mutex::new(PrivateDefinitionResolver::new()),
         }
@@ -111,14 +111,13 @@ impl TreeSitterLs {
     fn load_language(
         &self,
         path: &str,
-        func_name: &str,
         lang_name: &str,
     ) -> std::result::Result<Language, String> {
         // Use the library loader to load a language.
         self.library_loader
             .lock()
             .unwrap()
-            .load_language(path, func_name, lang_name)
+            .load_language(path, lang_name)
             .map_err(|e| e.to_string())
     }
 
@@ -204,14 +203,11 @@ impl TreeSitterLs {
 
         // Load languages and queries
         for (lang_name, config) in &settings.languages {
-            // For now, assume the function name is tree_sitter_<language>
-            let func_name = format!("tree_sitter_{lang_name}");
-
             // Resolve library path
             let library_path = self.resolve_library_path(config, lang_name, &settings.runtimepath);
 
             match library_path {
-                Some(lib_path) => match self.load_language(&lib_path, &func_name, lang_name) {
+                Some(lib_path) => match self.load_language(&lib_path, lang_name) {
                     Ok(language) => {
                         match self.load_query_from_highlight(&config.highlight) {
                             Ok(combined_query) => match Query::new(&language, &combined_query) {
