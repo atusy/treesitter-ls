@@ -1,13 +1,16 @@
 use dashmap::DashMap;
-use serde::Deserialize;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 use tree_sitter::{Language, Parser, Query, Tree};
 
+pub mod config;
 pub mod handlers;
 mod analysis;
 pub mod utils;
+
+// Re-export config types for backward compatibility
+pub use config::{HighlightItem, HighlightSource, LanguageConfig, TreeSitterSettings};
 
 use handlers::{
     DefinitionResolver as PrivateDefinitionResolver, handle_goto_definition,
@@ -20,33 +23,6 @@ pub use handlers::{
 };
 use analysis::ParserLoader;
 use utils::position_to_byte_offset;
-
-#[derive(Debug, Clone, Deserialize, serde::Serialize)]
-pub struct HighlightItem {
-    #[serde(flatten)]
-    pub source: HighlightSource,
-}
-
-#[derive(Debug, Clone, Deserialize, serde::Serialize)]
-#[serde(untagged)]
-pub enum HighlightSource {
-    Path { path: String },
-    Query { query: String },
-}
-
-#[derive(Debug, Clone, Deserialize, serde::Serialize)]
-pub struct LanguageConfig {
-    pub library: Option<String>,
-    pub filetypes: Vec<String>,
-    pub highlight: Vec<HighlightItem>,
-    pub locals: Option<Vec<HighlightItem>>,
-}
-
-#[derive(Debug, Deserialize, serde::Serialize)]
-pub struct TreeSitterSettings {
-    pub runtimepath: Option<Vec<String>>,
-    pub languages: std::collections::HashMap<String, LanguageConfig>,
-}
 
 pub struct TreeSitterLs {
     client: Client,
