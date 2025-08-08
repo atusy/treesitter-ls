@@ -3,19 +3,16 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 use tree_sitter::Parser;
 
+mod analysis;
 pub mod config;
 pub mod handlers;
-mod analysis;
 pub mod state;
 pub mod utils;
 
 // Re-export config types for backward compatibility
 pub use config::{HighlightItem, HighlightSource, LanguageConfig, TreeSitterSettings};
 
-use handlers::{
-    DefinitionResolver as PrivateDefinitionResolver, handle_goto_definition,
-    handle_semantic_tokens_full,
-};
+use handlers::{handle_goto_definition, handle_semantic_tokens_full};
 
 // Re-export for tests
 pub use handlers::{
@@ -28,7 +25,6 @@ pub struct TreeSitterLs {
     client: Client,
     language_service: LanguageService,
     document_store: DocumentStore,
-    definition_resolver: std::sync::Mutex<DefinitionResolver>,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -46,7 +42,6 @@ impl TreeSitterLs {
             client,
             language_service: LanguageService::new(),
             document_store: DocumentStore::new(),
-            definition_resolver: std::sync::Mutex::new(PrivateDefinitionResolver::new()),
         }
     }
 
@@ -79,7 +74,9 @@ impl TreeSitterLs {
     }
 
     async fn load_settings(&self, settings: TreeSitterSettings) {
-        self.language_service.load_settings(settings, &self.client).await;
+        self.language_service
+            .load_settings(settings, &self.client)
+            .await;
     }
 }
 
@@ -229,8 +226,8 @@ impl LanguageServer for TreeSitterLs {
         // Convert position to byte offset
         let byte_offset = position_to_byte_offset(text, position);
 
-        // Get resolver
-        let resolver = self.definition_resolver.lock().unwrap();
+        // Create resolver
+        let resolver = DefinitionResolver::new();
 
         // Delegate to handler
         Ok(handle_goto_definition(

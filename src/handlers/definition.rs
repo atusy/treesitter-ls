@@ -1,5 +1,4 @@
 // Definition jump resolution using tree-sitter queries
-use std::collections::HashMap;
 use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Position, Range, Url};
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 
@@ -36,13 +35,11 @@ pub enum ContextType {
 }
 
 #[derive(Default)]
-pub struct DefinitionResolver {
-    pub context_patterns: HashMap<String, Vec<String>>,
-}
+pub struct DefinitionResolver;
 
 impl DefinitionResolver {
     pub fn new() -> Self {
-        Self::default()
+        Self
     }
 
     /// Resolve definition jump using scope analysis
