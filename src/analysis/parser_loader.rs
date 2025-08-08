@@ -5,6 +5,7 @@ use std::fmt;
 use tree_sitter::Language;
 
 /// A wrapper around dynamic library loading for Tree-sitter language parsers
+#[derive(Default)]
 pub struct ParserLoader {
     /// Cache of loaded libraries to prevent reloading
     loaded_libraries: HashMap<String, Library>,
@@ -38,9 +39,7 @@ impl From<libloading::Error> for ParserLoadError {
 impl ParserLoader {
     /// Create a new ParserLoader instance
     pub fn new() -> Self {
-        Self {
-            loaded_libraries: HashMap::new(),
-        }
+        Self::default()
     }
 
     /// Load a Tree-sitter language from a dynamic library

@@ -2,11 +2,12 @@ use dashmap::DashMap;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
-use tree_sitter::{Language, Parser, Query, Tree};
+use tree_sitter::{Parser, Tree};
 
 pub mod config;
 pub mod handlers;
 mod analysis;
+pub mod state;
 pub mod utils;
 
 // Re-export config types for backward compatibility
@@ -21,17 +22,12 @@ use handlers::{
 pub use handlers::{
     ContextType, DefinitionCandidate, DefinitionResolver, LEGEND_TYPES, ReferenceContext,
 };
-use analysis::ParserLoader;
+use state::LanguageService;
 use utils::position_to_byte_offset;
 
 pub struct TreeSitterLs {
     client: Client,
-    languages: std::sync::Mutex<std::collections::HashMap<String, Language>>,
-    queries: std::sync::Mutex<std::collections::HashMap<String, Query>>,
-    locals_queries: std::sync::Mutex<std::collections::HashMap<String, Query>>,
-    language_configs: std::sync::Mutex<std::collections::HashMap<String, LanguageConfig>>,
-    filetype_map: std::sync::Mutex<std::collections::HashMap<String, String>>,
-    library_loader: std::sync::Mutex<ParserLoader>,
+    language_service: LanguageService,
     document_map: DashMap<Url, (String, Option<Tree>)>,
     definition_resolver: std::sync::Mutex<DefinitionResolver>,
 }
@@ -49,12 +45,7 @@ impl TreeSitterLs {
     pub fn new(client: Client) -> Self {
         Self {
             client,
-            languages: std::sync::Mutex::new(std::collections::HashMap::new()),
-            queries: std::sync::Mutex::new(std::collections::HashMap::new()),
-            locals_queries: std::sync::Mutex::new(std::collections::HashMap::new()),
-            language_configs: std::sync::Mutex::new(std::collections::HashMap::new()),
-            filetype_map: std::sync::Mutex::new(std::collections::HashMap::new()),
-            library_loader: std::sync::Mutex::new(ParserLoader::new()),
+            language_service: LanguageService::new(),
             document_map: DashMap::new(),
             definition_resolver: std::sync::Mutex::new(PrivateDefinitionResolver::new()),
         }
@@ -65,11 +56,11 @@ impl TreeSitterLs {
         let extension = uri.path().split('.').next_back().unwrap_or("");
 
         // Find the language for this file extension
-        let filetype_map = self.filetype_map.lock().unwrap();
+        let filetype_map = self.language_service.filetype_map.lock().unwrap();
         let language_name = filetype_map.get(extension);
 
         if let Some(language_name) = language_name {
-            let languages = self.languages.lock().unwrap();
+            let languages = self.language_service.languages.lock().unwrap();
             if let Some(language) = languages.get(language_name) {
                 let mut parser = Parser::new();
                 if parser.set_language(language).is_ok() {
@@ -84,216 +75,12 @@ impl TreeSitterLs {
         self.document_map.insert(uri, (text, None));
     }
 
-    fn load_language(
-        &self,
-        path: &str,
-        lang_name: &str,
-    ) -> std::result::Result<Language, String> {
-        // Use the library loader to load a language.
-        self.library_loader
-            .lock()
-            .unwrap()
-            .load_language(path, lang_name)
-            .map_err(|e| e.to_string())
-    }
-
     fn get_language_for_document(&self, uri: &Url) -> Option<String> {
-        let extension = uri.path().split('.').next_back().unwrap_or("");
-        let filetype_map = self.filetype_map.lock().unwrap();
-        filetype_map.get(extension).cloned()
-    }
-
-    fn resolve_library_path(
-        &self,
-        config: &LanguageConfig,
-        language: &str,
-        runtimepath: &Option<Vec<String>>,
-    ) -> Option<String> {
-        // If explicit library path is provided, use it
-        if let Some(library) = &config.library {
-            return Some(library.clone());
-        }
-
-        // Otherwise, search in runtimepath
-        if let Some(paths) = runtimepath {
-            for path in paths {
-                // Try .so extension first (Linux)
-                let so_path = format!("{path}/{language}.so");
-                if std::path::Path::new(&so_path).exists() {
-                    return Some(so_path);
-                }
-
-                // Try .dylib extension (macOS)
-                let dylib_path = format!("{path}/{language}.dylib");
-                if std::path::Path::new(&dylib_path).exists() {
-                    return Some(dylib_path);
-                }
-            }
-        }
-
-        None
-    }
-
-    fn load_query_from_highlight(
-        &self,
-        highlight_items: &[HighlightItem],
-    ) -> std::result::Result<String, String> {
-        let mut combined_query = String::new();
-
-        for item in highlight_items {
-            match &item.source {
-                HighlightSource::Path { path } => match std::fs::read_to_string(path) {
-                    Ok(content) => {
-                        combined_query.push_str(&content);
-                        combined_query.push('\n');
-                    }
-                    Err(e) => {
-                        return Err(format!("Failed to read query file {path}: {e}"));
-                    }
-                },
-                HighlightSource::Query { query } => {
-                    combined_query.push_str(query);
-                    combined_query.push('\n');
-                }
-            }
-        }
-
-        Ok(combined_query)
+        self.language_service.get_language_for_document(uri)
     }
 
     async fn load_settings(&self, settings: TreeSitterSettings) {
-        // Store language configs
-        {
-            *self.language_configs.lock().unwrap() = settings.languages.clone();
-        }
-
-        // Build filetype map
-        {
-            let mut filetype_map = self.filetype_map.lock().unwrap();
-            for (language, config) in &settings.languages {
-                for ext in &config.filetypes {
-                    filetype_map.insert(ext.clone(), language.clone());
-                }
-            }
-        }
-
-        // Load languages and queries
-        for (lang_name, config) in &settings.languages {
-            // Resolve library path
-            let library_path = self.resolve_library_path(config, lang_name, &settings.runtimepath);
-
-            match library_path {
-                Some(lib_path) => match self.load_language(&lib_path, lang_name) {
-                    Ok(language) => {
-                        match self.load_query_from_highlight(&config.highlight) {
-                            Ok(combined_query) => match Query::new(&language, &combined_query) {
-                                Ok(query) => {
-                                    {
-                                        self.queries
-                                            .lock()
-                                            .unwrap()
-                                            .insert(lang_name.to_string(), query);
-                                    }
-                                    self.client
-                                        .log_message(
-                                            MessageType::INFO,
-                                            format!("Query loaded for {lang_name}."),
-                                        )
-                                        .await;
-                                }
-                                Err(err) => {
-                                    self.client
-                                        .log_message(
-                                            MessageType::ERROR,
-                                            format!("Failed to parse query for {lang_name}: {err}"),
-                                        )
-                                        .await;
-                                }
-                            },
-                            Err(err) => {
-                                self.client
-                                    .log_message(
-                                        MessageType::ERROR,
-                                        format!(
-                                            "Failed to load highlight queries for {lang_name}: {err}"
-                                        ),
-                                    )
-                                    .await;
-                            }
-                        }
-
-                        // Load locals queries if available
-                        if let Some(locals_sources) = &config.locals {
-                            match self.load_query_from_highlight(locals_sources) {
-                                Ok(combined_locals_query) => {
-                                    match Query::new(&language, &combined_locals_query) {
-                                        Ok(locals_query) => {
-                                            {
-                                                self.locals_queries
-                                                    .lock()
-                                                    .unwrap()
-                                                    .insert(lang_name.to_string(), locals_query);
-                                            }
-                                            self.client
-                                                .log_message(
-                                                    MessageType::INFO,
-                                                    format!("Locals query loaded for {lang_name}."),
-                                                )
-                                                .await;
-                                        }
-                                        Err(err) => {
-                                            self.client
-                                                .log_message(
-                                                    MessageType::ERROR,
-                                                    format!(
-                                                        "Failed to parse locals query for {lang_name}: {err}"
-                                                    ),
-                                                )
-                                                .await;
-                                        }
-                                    }
-                                }
-                                Err(err) => {
-                                    self.client
-                                        .log_message(
-                                            MessageType::ERROR,
-                                            format!(
-                                                "Failed to load locals queries for {lang_name}: {err}"
-                                            ),
-                                        )
-                                        .await;
-                                }
-                            }
-                        }
-                        {
-                            self.languages
-                                .lock()
-                                .unwrap()
-                                .insert(lang_name.to_string(), language);
-                        }
-                        self.client
-                            .log_message(MessageType::INFO, format!("Language {lang_name} loaded."))
-                            .await;
-                    }
-                    Err(err) => {
-                        self.client
-                            .log_message(
-                                MessageType::ERROR,
-                                format!("Failed to load language {lang_name}: {err}"),
-                            )
-                            .await;
-                    }
-                },
-                None => {
-                    self.client
-                        .log_message(
-                            MessageType::ERROR,
-                            format!("No library path found for language {lang_name}: neither explicit library path nor valid runtimepath entry"),
-                        )
-                        .await;
-                }
-            }
-        }
+        self.language_service.load_settings(settings, &self.client).await;
     }
 }
 
@@ -396,7 +183,7 @@ impl LanguageServer for TreeSitterLs {
         let Some(language_name) = self.get_language_for_document(&uri) else {
             return Ok(None);
         };
-        let queries = self.queries.lock().unwrap();
+        let queries = self.language_service.queries.lock().unwrap();
         let Some(query) = queries.get(&language_name) else {
             return Ok(None);
         };
@@ -426,7 +213,7 @@ impl LanguageServer for TreeSitterLs {
         };
 
         // Get locals query
-        let locals_queries = self.locals_queries.lock().unwrap();
+        let locals_queries = self.language_service.locals_queries.lock().unwrap();
         let Some(locals_query) = locals_queries.get(&language_name) else {
             return Ok(None);
         };
