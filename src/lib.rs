@@ -1,8 +1,7 @@
-use dashmap::DashMap;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
-use tree_sitter::{Parser, Tree};
+use tree_sitter::Parser;
 
 pub mod config;
 pub mod handlers;
@@ -22,13 +21,13 @@ use handlers::{
 pub use handlers::{
     ContextType, DefinitionCandidate, DefinitionResolver, LEGEND_TYPES, ReferenceContext,
 };
-use state::LanguageService;
+use state::{DocumentStore, LanguageService};
 use utils::position_to_byte_offset;
 
 pub struct TreeSitterLs {
     client: Client,
     language_service: LanguageService,
-    document_map: DashMap<Url, (String, Option<Tree>)>,
+    document_store: DocumentStore,
     definition_resolver: std::sync::Mutex<DefinitionResolver>,
 }
 
@@ -36,7 +35,7 @@ impl std::fmt::Debug for TreeSitterLs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TreeSitterLs")
             .field("client", &self.client)
-            .field("document_map", &self.document_map)
+            .field("document_store", &"DocumentStore")
             .finish_non_exhaustive()
     }
 }
@@ -46,7 +45,7 @@ impl TreeSitterLs {
         Self {
             client,
             language_service: LanguageService::new(),
-            document_map: DashMap::new(),
+            document_store: DocumentStore::new(),
             definition_resolver: std::sync::Mutex::new(PrivateDefinitionResolver::new()),
         }
     }
@@ -65,14 +64,14 @@ impl TreeSitterLs {
                 let mut parser = Parser::new();
                 if parser.set_language(language).is_ok() {
                     if let Some(tree) = parser.parse(&text, None) {
-                        self.document_map.insert(uri, (text, Some(tree)));
+                        self.document_store.insert(uri, text, Some(tree));
                         return;
                     }
                 }
             }
         }
 
-        self.document_map.insert(uri, (text, None));
+        self.document_store.insert(uri, text, None);
     }
 
     fn get_language_for_document(&self, uri: &Url) -> Option<String> {
@@ -188,11 +187,11 @@ impl LanguageServer for TreeSitterLs {
             return Ok(None);
         };
 
-        let Some(doc) = self.document_map.get(&uri) else {
+        let Some(doc) = self.document_store.get(&uri) else {
             return Ok(None);
         };
-        let (text, tree) = &*doc;
-        let Some(tree) = tree.as_ref() else {
+        let text = &doc.text;
+        let Some(tree) = doc.tree.as_ref() else {
             return Ok(None);
         };
 
@@ -219,11 +218,11 @@ impl LanguageServer for TreeSitterLs {
         };
 
         // Get document and tree
-        let Some(doc) = self.document_map.get(&uri) else {
+        let Some(doc) = self.document_store.get(&uri) else {
             return Ok(None);
         };
-        let (text, tree) = &*doc;
-        let Some(tree) = tree.as_ref() else {
+        let text = &doc.text;
+        let Some(tree) = doc.tree.as_ref() else {
             return Ok(None);
         };
 
