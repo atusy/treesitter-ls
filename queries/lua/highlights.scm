@@ -134,13 +134,6 @@
 ; VARIABLES & IDENTIFIERS
 ; ============================================================================
 
-; Base identifier - will be overridden by more specific patterns
-(identifier) @variable
-
-; Built-in constants
-((identifier) @variable
-  (#eq? @variable "_VERSION"))
-
 ((identifier) @variable
   (#eq? @variable "self"))
 
@@ -151,9 +144,6 @@
 ((identifier) @namespace
   (#eq? @namespace "coroutine"))
 
-; All-caps identifiers are constants
-((identifier) @variable
-  (#lua-match? @variable "^[A-Z][A-Z_0-9]*$"))
 
 ; ============================================================================
 ; CONSTANTS & LITERALS

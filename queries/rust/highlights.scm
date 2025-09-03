@@ -5,8 +5,6 @@
 ; IDENTIFIER CONVENTIONS & SMART DETECTION
 ; ============================================================================
 
-; Base identifier - will be overridden by more specific patterns
-(identifier) @variable
 
 ; Uppercase identifiers are likely types
 ((identifier) @type
