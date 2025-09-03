@@ -3,6 +3,41 @@ use tower_lsp::lsp_types::{
 };
 use tree_sitter::{Query, QueryCursor, StreamingIterator, Tree};
 
+/// Map capture names from tree-sitter queries to LSP semantic token types
+fn map_capture_to_token_type(capture_name: &str) -> u32 {
+    let token_type = match capture_name {
+        "comment" => SemanticTokenType::COMMENT,
+        "keyword" => SemanticTokenType::KEYWORD,
+        "string" => SemanticTokenType::STRING,
+        "number" => SemanticTokenType::NUMBER,
+        "regexp" => SemanticTokenType::REGEXP,
+        "operator" => SemanticTokenType::OPERATOR,
+        "namespace" => SemanticTokenType::NAMESPACE,
+        "type" => SemanticTokenType::TYPE,
+        "struct" => SemanticTokenType::STRUCT,
+        "class" => SemanticTokenType::CLASS,
+        "interface" => SemanticTokenType::INTERFACE,
+        "enum" => SemanticTokenType::ENUM,
+        "enumMember" => SemanticTokenType::ENUM_MEMBER,
+        "typeParameter" => SemanticTokenType::TYPE_PARAMETER,
+        "function" => SemanticTokenType::FUNCTION,
+        "method" => SemanticTokenType::METHOD,
+        "macro" => SemanticTokenType::MACRO,
+        "variable" => SemanticTokenType::VARIABLE,
+        "parameter" => SemanticTokenType::PARAMETER,
+        "property" => SemanticTokenType::PROPERTY,
+        "event" => SemanticTokenType::EVENT,
+        "modifier" => SemanticTokenType::MODIFIER,
+        "decorator" => SemanticTokenType::DECORATOR,
+        _ => SemanticTokenType::VARIABLE, // Default fallback
+    };
+    
+    LEGEND_TYPES
+        .iter()
+        .position(|t| *t == token_type)
+        .unwrap_or(0) as u32
+}
+
 /// LSP semantic token types legend
 pub const LEGEND_TYPES: &[SemanticTokenType] = &[
     SemanticTokenType::COMMENT,
@@ -87,10 +122,7 @@ pub fn handle_semantic_tokens_full(
 
         // Map capture name to token type
         let token_type_name = &query.capture_names()[capture_index as usize];
-        let token_type = LEGEND_TYPES
-            .iter()
-            .position(|t| t.as_str() == *token_type_name)
-            .unwrap_or(0);
+        let token_type = map_capture_to_token_type(token_type_name);
 
         data.push(SemanticToken {
             delta_line: delta_line as u32,
@@ -108,4 +140,18 @@ pub fn handle_semantic_tokens_full(
         result_id: None,
         data,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_map_capture_to_token_type() {
+        assert_eq!(map_capture_to_token_type("comment"), 0);
+        assert_eq!(map_capture_to_token_type("keyword"), 1);
+        assert_eq!(map_capture_to_token_type("function"), 14);
+        assert_eq!(map_capture_to_token_type("variable"), 17);
+        assert_eq!(map_capture_to_token_type("unknown"), 17); // Should default to variable
+    }
 }
