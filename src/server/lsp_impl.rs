@@ -5,7 +5,7 @@ use tree_sitter::Parser;
 
 use crate::config::TreeSitterSettings;
 use crate::handlers::{DefinitionResolver, LEGEND_TYPES};
-use crate::handlers::{handle_goto_definition, handle_semantic_tokens_full};
+use crate::handlers::{handle_goto_definition, handle_semantic_tokens_full, handle_semantic_tokens_full_delta};
 use crate::state::{DocumentStore, LanguageService};
 use crate::utils::position_to_byte_offset;
 
@@ -45,11 +45,11 @@ impl TreeSitterLs {
             let languages = self.language_service.languages.lock().unwrap();
             if let Some(language) = languages.get(language_name) {
                 let mut parser = Parser::new();
-                if parser.set_language(language).is_ok() {
-                    if let Some(tree) = parser.parse(&text, None) {
-                        self.document_store.insert(uri, text, Some(tree));
-                        return;
-                    }
+                if parser.set_language(language).is_ok()
+                    && let Some(tree) = parser.parse(&text, None)
+                {
+                    self.document_store.insert(uri, text, Some(tree));
+                    return;
                 }
             }
         }
@@ -109,7 +109,7 @@ impl LanguageServer for TreeSitterLs {
                                 token_types: LEGEND_TYPES.to_vec(),
                                 token_modifiers: vec![],
                             },
-                            full: Some(SemanticTokensFullOptions::Bool(true)),
+                            full: Some(SemanticTokensFullOptions::Delta { delta: Some(true) }),
                             ..Default::default()
                         },
                     ),
@@ -178,28 +178,121 @@ impl LanguageServer for TreeSitterLs {
             })));
         };
 
-        let Some(doc) = self.document_store.get(&uri) else {
-            return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+        // Get document data and compute tokens, then drop the reference
+        let result = {
+            let Some(doc) = self.document_store.get(&uri) else {
+                return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+                    result_id: None,
+                    data: vec![],
+                })));
+            };
+            let text = &doc.text;
+            let Some(tree) = doc.tree.as_ref() else {
+                return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+                    result_id: None,
+                    data: vec![],
+                })));
+            };
+
+            // Delegate to handler - this already returns Some(SemanticTokensResult) or None
+            // We need to ensure it always returns Some
+            handle_semantic_tokens_full(text, tree, query).or_else(|| {
+                Some(SemanticTokensResult::Tokens(SemanticTokens {
+                    result_id: None,
+                    data: vec![],
+                }))
+            })
+        }; // doc reference is dropped here
+        
+        // Store the tokens for delta calculation
+        if let Some(SemanticTokensResult::Tokens(ref tokens)) = result {
+            let mut tokens_with_id = tokens.clone();
+            // Simple ID based on token count and first/last token info
+            let id = if tokens.data.is_empty() {
+                "empty".to_string()
+            } else {
+                format!("v{}_{}", 
+                    tokens.data.len(),
+                    tokens.data.first().map(|t| t.delta_line).unwrap_or(0)
+                )
+            };
+            tokens_with_id.result_id = Some(id);
+            self.document_store.update_semantic_tokens(&uri, tokens_with_id.clone());
+            return Ok(Some(SemanticTokensResult::Tokens(tokens_with_id)));
+        }
+        
+        Ok(result)
+    }
+
+    async fn semantic_tokens_full_delta(
+        &self,
+        params: SemanticTokensDeltaParams,
+    ) -> Result<Option<SemanticTokensFullDeltaResult>> {
+        let uri = params.text_document.uri;
+        let previous_result_id = params.previous_result_id;
+
+        let Some(language_name) = self.get_language_for_document(&uri) else {
+            return Ok(Some(SemanticTokensFullDeltaResult::Tokens(SemanticTokens {
                 result_id: None,
                 data: vec![],
             })));
         };
-        let text = &doc.text;
-        let Some(tree) = doc.tree.as_ref() else {
-            return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+        
+        let queries = self.language_service.queries.lock().unwrap();
+        let Some(query) = queries.get(&language_name) else {
+            return Ok(Some(SemanticTokensFullDeltaResult::Tokens(SemanticTokens {
                 result_id: None,
                 data: vec![],
             })));
         };
 
-        // Delegate to handler - this already returns Some(SemanticTokensResult) or None
-        // We need to ensure it always returns Some
-        Ok(handle_semantic_tokens_full(text, tree, query).or_else(|| {
-            Some(SemanticTokensResult::Tokens(SemanticTokens {
-                result_id: None,
-                data: vec![],
-            }))
-        }))
+        // Get document data and compute delta, then drop the reference
+        let result = {
+            let Some(doc) = self.document_store.get(&uri) else {
+                return Ok(Some(SemanticTokensFullDeltaResult::Tokens(SemanticTokens {
+                    result_id: None,
+                    data: vec![],
+                })));
+            };
+            
+            let text = &doc.text;
+            let Some(tree) = doc.tree.as_ref() else {
+                return Ok(Some(SemanticTokensFullDeltaResult::Tokens(SemanticTokens {
+                    result_id: None,
+                    data: vec![],
+                })));
+            };
+
+            // Get previous tokens from document
+            let previous_tokens = doc.last_semantic_tokens.as_ref();
+            
+            // Delegate to handler
+            handle_semantic_tokens_full_delta(
+                text,
+                tree,
+                query,
+                &previous_result_id,
+                previous_tokens,
+            )
+        }; // doc reference is dropped here
+
+        // Store updated tokens if we got full tokens back
+        if let Some(SemanticTokensFullDeltaResult::Tokens(ref tokens)) = result {
+            let mut tokens_with_id = tokens.clone();
+            let id = if tokens.data.is_empty() {
+                "empty".to_string()
+            } else {
+                format!("v{}_{}", 
+                    tokens.data.len(),
+                    tokens.data.first().map(|t| t.delta_line).unwrap_or(0)
+                )
+            };
+            tokens_with_id.result_id = Some(id);
+            self.document_store.update_semantic_tokens(&uri, tokens_with_id.clone());
+            return Ok(Some(SemanticTokensFullDeltaResult::Tokens(tokens_with_id)));
+        }
+
+        Ok(result)
     }
 
     async fn goto_definition(

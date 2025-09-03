@@ -1,5 +1,6 @@
 use tower_lsp::lsp_types::{
-    SemanticToken, SemanticTokenType, SemanticTokens, SemanticTokensResult,
+    SemanticToken, SemanticTokenType, SemanticTokens, SemanticTokensDelta, 
+    SemanticTokensEdit, SemanticTokensFullDeltaResult, SemanticTokensResult,
 };
 use tree_sitter::{Query, QueryCursor, StreamingIterator, Tree};
 
@@ -128,7 +129,7 @@ pub fn handle_semantic_tokens_full(
             delta_line: delta_line as u32,
             delta_start: delta_start as u32,
             length: length as u32,
-            token_type: token_type as u32,
+            token_type,
             token_modifiers_bitset: 0,
         });
 
@@ -142,6 +143,97 @@ pub fn handle_semantic_tokens_full(
     }))
 }
 
+/// Handle semantic tokens full delta request
+///
+/// Analyzes the document and returns either a delta from the previous version
+/// or the full set of semantic tokens if delta cannot be calculated.
+///
+/// # Arguments
+/// * `text` - The current source text
+/// * `tree` - The parsed syntax tree for the current text
+/// * `query` - The tree-sitter query for semantic highlighting
+/// * `previous_result_id` - The result ID from the previous semantic tokens response
+/// * `previous_tokens` - The previous semantic tokens to calculate delta from
+///
+/// # Returns
+/// Either a delta or full semantic tokens for the document
+pub fn handle_semantic_tokens_full_delta(
+    text: &str,
+    tree: &Tree,
+    query: &Query,
+    previous_result_id: &str,
+    previous_tokens: Option<&SemanticTokens>,
+) -> Option<SemanticTokensFullDeltaResult> {
+    // Get current tokens
+    let current_result = handle_semantic_tokens_full(text, tree, query)?;
+    let current_tokens = match current_result {
+        SemanticTokensResult::Tokens(tokens) => tokens,
+        _ => return None,
+    };
+
+    // Check if we can calculate a delta
+    if let Some(prev) = previous_tokens
+        && prev.result_id.as_deref() == Some(previous_result_id)
+        && let Some(delta) = calculate_semantic_tokens_delta(prev, &current_tokens)
+    {
+        return Some(SemanticTokensFullDeltaResult::TokensDelta(delta));
+    }
+
+    // Fall back to full tokens
+    Some(SemanticTokensFullDeltaResult::Tokens(current_tokens))
+}
+
+/// Calculate delta between two sets of semantic tokens
+///
+/// Compares previous and current semantic tokens and returns the differences
+/// as a set of edits that can be applied to transform the previous tokens
+/// into the current tokens.
+///
+/// # Arguments
+/// * `previous` - The previous semantic tokens
+/// * `current` - The current semantic tokens
+///
+/// # Returns
+/// Semantic tokens delta containing the edits needed to transform previous to current
+fn calculate_semantic_tokens_delta(
+    previous: &SemanticTokens,
+    current: &SemanticTokens,
+) -> Option<SemanticTokensDelta> {
+    // Find the common prefix length
+    let common_prefix_len = previous.data.iter()
+        .zip(current.data.iter())
+        .take_while(|(a, b)| {
+            a.delta_line == b.delta_line 
+                && a.delta_start == b.delta_start
+                && a.length == b.length
+                && a.token_type == b.token_type
+                && a.token_modifiers_bitset == b.token_modifiers_bitset
+        })
+        .count();
+
+    // If all tokens are the same, no edits needed
+    if common_prefix_len == previous.data.len() && common_prefix_len == current.data.len() {
+        return Some(SemanticTokensDelta {
+            result_id: current.result_id.clone(),
+            edits: vec![],
+        });
+    }
+
+    // Calculate the edit
+    let start = common_prefix_len;
+    let delete_count = previous.data.len() - start;
+    let data = current.data[start..].to_vec();
+
+    Some(SemanticTokensDelta {
+        result_id: current.result_id.clone(),
+        edits: vec![SemanticTokensEdit {
+            start: start as u32,
+            delete_count: delete_count as u32,
+            data: Some(data),
+        }],
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,5 +245,96 @@ mod tests {
         assert_eq!(map_capture_to_token_type("function"), 14);
         assert_eq!(map_capture_to_token_type("variable"), 17);
         assert_eq!(map_capture_to_token_type("unknown"), 17); // Should default to variable
+    }
+
+    #[test]
+    fn test_semantic_tokens_delta() {
+        // Create mock semantic tokens for testing
+        let previous = SemanticTokens {
+            result_id: Some("v1".to_string()),
+            data: vec![
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 0,
+                    length: 10,
+                    token_type: 0, // comment
+                    token_modifiers_bitset: 0,
+                },
+                SemanticToken {
+                    delta_line: 1,
+                    delta_start: 0,
+                    length: 3,
+                    token_type: 1, // keyword
+                    token_modifiers_bitset: 0,
+                },
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 4,
+                    length: 1,
+                    token_type: 17, // variable
+                    token_modifiers_bitset: 0,
+                },
+            ],
+        };
+
+        // Modified tokens (changed comment length)
+        let current = SemanticTokens {
+            result_id: Some("v2".to_string()),
+            data: vec![
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 0,
+                    length: 14, // changed length
+                    token_type: 0, // comment
+                    token_modifiers_bitset: 0,
+                },
+                SemanticToken {
+                    delta_line: 1,
+                    delta_start: 0,
+                    length: 3,
+                    token_type: 1, // keyword
+                    token_modifiers_bitset: 0,
+                },
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 4,
+                    length: 1,
+                    token_type: 17, // variable
+                    token_modifiers_bitset: 0,
+                },
+            ],
+        };
+
+        let delta = calculate_semantic_tokens_delta(&previous, &current);
+        assert!(delta.is_some());
+        
+        let delta = delta.unwrap();
+        assert_eq!(delta.result_id, Some("v2".to_string()));
+        assert_eq!(delta.edits.len(), 1);
+        assert_eq!(delta.edits[0].start, 0);
+        assert_eq!(delta.edits[0].delete_count, 3);
+        assert_eq!(delta.edits[0].data.as_ref().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn test_semantic_tokens_delta_no_changes() {
+        let tokens = SemanticTokens {
+            result_id: Some("v1".to_string()),
+            data: vec![
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 0,
+                    length: 10,
+                    token_type: 0,
+                    token_modifiers_bitset: 0,
+                },
+            ],
+        };
+
+        let delta = calculate_semantic_tokens_delta(&tokens, &tokens);
+        assert!(delta.is_some());
+        
+        let delta = delta.unwrap();
+        assert_eq!(delta.edits.len(), 0);
     }
 }
