@@ -77,7 +77,7 @@ fn test_context_type_enum() {
 #[test]
 fn test_new_implementation_loads() {
     // Test that TreeSitterLs can be created with the new resolver
-    use tower_lsp::{Client, LanguageServer, LspService};
+    use tower_lsp::LspService;
     use treesitter_ls::TreeSitterLs;
 
     // This should not panic

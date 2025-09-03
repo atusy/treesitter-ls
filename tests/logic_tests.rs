@@ -12,7 +12,7 @@ mod integration_tests {
         use tower_lsp::{LanguageServer, LspService};
 
         // Given: A TreeSitter LSP server with Rust configuration including locals
-        let (service, socket) = LspService::new(TreeSitterLs::new);
+        let (service, _) = LspService::new(TreeSitterLs::new);
         let server = service.inner();
 
         // Initialize the server with proper configuration
