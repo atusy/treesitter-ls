@@ -5,7 +5,7 @@ use tree_sitter::Parser;
 
 use crate::config::TreeSitterSettings;
 use crate::handlers::{DefinitionResolver, LEGEND_TYPES};
-use crate::handlers::{handle_goto_definition, handle_semantic_tokens_full, handle_semantic_tokens_full_delta};
+use crate::handlers::{handle_goto_definition, handle_semantic_tokens_full, handle_semantic_tokens_full_delta, handle_semantic_tokens_range};
 use crate::state::{DocumentStore, LanguageService};
 use crate::utils::position_to_byte_offset;
 
@@ -110,6 +110,7 @@ impl LanguageServer for TreeSitterLs {
                                 token_modifiers: vec![],
                             },
                             full: Some(SemanticTokensFullOptions::Delta { delta: Some(true) }),
+                            range: Some(true),
                             ..Default::default()
                         },
                     ),
@@ -293,6 +294,58 @@ impl LanguageServer for TreeSitterLs {
         }
 
         Ok(result)
+    }
+
+    async fn semantic_tokens_range(
+        &self,
+        params: SemanticTokensRangeParams,
+    ) -> Result<Option<SemanticTokensRangeResult>> {
+        let uri = params.text_document.uri;
+        let range = params.range;
+
+        let Some(language_name) = self.get_language_for_document(&uri) else {
+            return Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
+                result_id: None,
+                data: vec![],
+            })));
+        };
+        
+        let queries = self.language_service.queries.lock().unwrap();
+        let Some(query) = queries.get(&language_name) else {
+            return Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
+                result_id: None,
+                data: vec![],
+            })));
+        };
+
+        let Some(doc) = self.document_store.get(&uri) else {
+            return Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
+                result_id: None,
+                data: vec![],
+            })));
+        };
+        
+        let text = &doc.text;
+        let Some(tree) = doc.tree.as_ref() else {
+            return Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
+                result_id: None,
+                data: vec![],
+            })));
+        };
+
+        // Delegate to handler
+        let result = handle_semantic_tokens_range(text, tree, query, &range);
+        
+        // Convert to RangeResult
+        match result {
+            Some(SemanticTokensResult::Tokens(tokens)) => {
+                Ok(Some(SemanticTokensRangeResult::Tokens(tokens)))
+            }
+            _ => Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
+                result_id: None,
+                data: vec![],
+            })))
+        }
     }
 
     async fn goto_definition(
