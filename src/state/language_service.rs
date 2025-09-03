@@ -1,10 +1,10 @@
+use crate::analysis::ParserLoader;
+use crate::config::{HighlightItem, HighlightSource, LanguageConfig, TreeSitterSettings};
 use std::collections::HashMap;
 use std::sync::Mutex;
-use tower_lsp::lsp_types::{MessageType, Url};
 use tower_lsp::Client;
+use tower_lsp::lsp_types::{MessageType, Url};
 use tree_sitter::{Language, Query};
-use crate::analysis::ParserLoader;
-use crate::config::{LanguageConfig, HighlightItem, HighlightSource, TreeSitterSettings};
 
 pub struct LanguageService {
     pub languages: Mutex<HashMap<String, Language>>,
@@ -112,13 +112,14 @@ impl LanguageService {
     pub async fn load_settings(&self, settings: TreeSitterSettings, client: &Client) {
         // Store language configs
         self.update_language_configs(&settings);
-        
+
         // Build filetype map
         self.build_filetype_map(&settings);
-        
+
         // Load languages and queries
         for (lang_name, config) in &settings.languages {
-            self.load_single_language(lang_name, config, &settings.runtimepath, client).await;
+            self.load_single_language(lang_name, config, &settings.runtimepath, client)
+                .await;
         }
     }
 
@@ -148,19 +149,21 @@ impl LanguageService {
             Some(lib_path) => match self.load_language(&lib_path, lang_name) {
                 Ok(language) => {
                     // Load highlight queries
-                    self.load_highlight_queries(lang_name, config, &language, client).await;
-                    
+                    self.load_highlight_queries(lang_name, config, &language, client)
+                        .await;
+
                     // Load locals queries if available
                     if let Some(locals_sources) = &config.locals {
-                        self.load_locals_queries(lang_name, locals_sources, &language, client).await;
+                        self.load_locals_queries(lang_name, locals_sources, &language, client)
+                            .await;
                     }
-                    
+
                     // Store the language
                     self.languages
                         .lock()
                         .unwrap()
                         .insert(lang_name.to_string(), language);
-                    
+
                     client
                         .log_message(MessageType::INFO, format!("Language {lang_name} loaded."))
                         .await;
@@ -200,10 +203,7 @@ impl LanguageService {
                         .unwrap()
                         .insert(lang_name.to_string(), query);
                     client
-                        .log_message(
-                            MessageType::INFO,
-                            format!("Query loaded for {lang_name}."),
-                        )
+                        .log_message(MessageType::INFO, format!("Query loaded for {lang_name}."))
                         .await;
                 }
                 Err(err) => {
@@ -234,30 +234,28 @@ impl LanguageService {
         client: &Client,
     ) {
         match self.load_query_from_highlight(locals_sources) {
-            Ok(combined_locals_query) => {
-                match Query::new(language, &combined_locals_query) {
-                    Ok(locals_query) => {
-                        self.locals_queries
-                            .lock()
-                            .unwrap()
-                            .insert(lang_name.to_string(), locals_query);
-                        client
-                            .log_message(
-                                MessageType::INFO,
-                                format!("Locals query loaded for {lang_name}."),
-                            )
-                            .await;
-                    }
-                    Err(err) => {
-                        client
-                            .log_message(
-                                MessageType::ERROR,
-                                format!("Failed to parse locals query for {lang_name}: {err}"),
-                            )
-                            .await;
-                    }
+            Ok(combined_locals_query) => match Query::new(language, &combined_locals_query) {
+                Ok(locals_query) => {
+                    self.locals_queries
+                        .lock()
+                        .unwrap()
+                        .insert(lang_name.to_string(), locals_query);
+                    client
+                        .log_message(
+                            MessageType::INFO,
+                            format!("Locals query loaded for {lang_name}."),
+                        )
+                        .await;
                 }
-            }
+                Err(err) => {
+                    client
+                        .log_message(
+                            MessageType::ERROR,
+                            format!("Failed to parse locals query for {lang_name}: {err}"),
+                        )
+                        .await;
+                }
+            },
             Err(err) => {
                 client
                     .log_message(

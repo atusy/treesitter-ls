@@ -469,17 +469,20 @@ mod tests {
 
     // Helper function to create test data
     fn create_test_candidate(
-        row: usize, 
-        col: usize, 
-        distance: usize, 
+        row: usize,
+        col: usize,
+        distance: usize,
         def_type: &str,
-        scope_depth: usize
+        scope_depth: usize,
     ) -> DefinitionCandidate {
         DefinitionCandidate {
             start_byte: col,
             end_byte: col + 5,
             start_position: tree_sitter::Point { row, column: col },
-            end_position: tree_sitter::Point { row, column: col + 5 },
+            end_position: tree_sitter::Point {
+                row,
+                column: col + 5,
+            },
             definition_type: def_type.to_string(),
             scope_depth,
             distance_to_reference: distance,
@@ -502,24 +505,26 @@ fn main() {
         // Test that the resolver can be instantiated and the distance calculation
         // would prefer local definitions
         let _resolver = DefinitionResolver::new();
-        
+
         // Create mock candidates to test distance-based selection
         let import_def = create_test_candidate(1, 20, 5, "import", 0);
         let local_def = create_test_candidate(4, 8, 1, "local_var", 2);
-        
+
         // The local definition should have a smaller distance
-        assert!(local_def.distance_to_reference < import_def.distance_to_reference,
-                "Local definition should have smaller distance than import");
+        assert!(
+            local_def.distance_to_reference < import_def.distance_to_reference,
+            "Local definition should have smaller distance than import"
+        );
     }
 
     #[test]
     fn test_scope_distance_calculation() {
         let resolver = DefinitionResolver::new();
-        
+
         // NOTE: This algorithm has unexpected behavior but we test the actual implementation
         // The algorithm finds the FIRST matching ID when iterating from the end (innermost)
         // This means same scopes don't return 0 as expected
-        
+
         // Test 1: Same scope - algorithm returns 4, not 0!
         // [0,1,2] reversed = [2,1,0]
         // First element (2) found at position 0 in reversed
@@ -527,7 +532,7 @@ fn main() {
         let same_scope = vec![0, 1, 2];
         let distance_same = resolver.calculate_scope_distance_by_ids(&same_scope, &same_scope);
         assert_eq!(distance_same, 4, "Algorithm behavior for same scope");
-        
+
         // Test 2: Parent-child relationship
         let parent = vec![0, 1];
         let child = vec![0, 1, 2];
@@ -537,13 +542,13 @@ fn main() {
         // common_depth = min(0,1) + 1 = 1
         // parent distance = 2-1=1, child distance = 3-1=2, total = 3
         assert_eq!(distance_pc, 3, "Parent-child distance");
-        
+
         // Test 3: Different branches with common root
         let branch1 = vec![0, 1, 2];
         let branch2 = vec![0, 3, 4];
         // branch1 reversed = [2,1,0], branch2 reversed = [4,3,0]
         // Looking for 2: not found in branch2
-        // Looking for 1: not found in branch2  
+        // Looking for 1: not found in branch2
         // Looking for 0: found at position 2 in branch2 reversed
         // common_depth = min(2,2) + 1 = 3
         // distances = (3-3) + (3-3) = 0
@@ -569,12 +574,15 @@ fn main() {
 
         // Test different context types
         let _resolver = DefinitionResolver::new();
-        
+
         // Test that we can distinguish between different context types
         let func_call_ctx = ContextType::FunctionCall;
         let var_ref_ctx = ContextType::VariableReference;
-        
-        assert_ne!(func_call_ctx, var_ref_ctx, "Context types should be distinguishable");
+
+        assert_ne!(
+            func_call_ctx, var_ref_ctx,
+            "Context types should be distinguishable"
+        );
         assert_eq!(func_call_ctx, ContextType::FunctionCall);
         assert_eq!(var_ref_ctx, ContextType::VariableReference);
     }
@@ -583,7 +591,7 @@ fn main() {
     fn test_definition_candidate_creation() {
         // Test that DefinitionCandidate is created correctly
         let candidate = create_test_candidate(5, 10, 2, "local_var", 3);
-        
+
         assert_eq!(candidate.start_position.row, 5);
         assert_eq!(candidate.start_position.column, 10);
         assert_eq!(candidate.distance_to_reference, 2);
@@ -603,9 +611,12 @@ fn main() {
         let _resolver = DefinitionResolver::new();
         // When searching for an undefined variable, the resolver should return an empty vector
         // This tests the failure case handling
-        
+
         // Create an empty definitions list to simulate no matches
         let definitions: Vec<DefinitionCandidate> = vec![];
-        assert!(definitions.is_empty(), "Should return empty results for undefined variables");
+        assert!(
+            definitions.is_empty(),
+            "Should return empty results for undefined variables"
+        );
     }
 }

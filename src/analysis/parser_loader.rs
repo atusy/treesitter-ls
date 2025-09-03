@@ -57,7 +57,7 @@ impl ParserLoader {
     ) -> Result<Language, ParserLoadError> {
         // Derive function name from language name using standard convention
         let func_name = format!("tree_sitter_{lang_name}");
-        
+
         // Load the library if not already loaded
         if !self.loaded_libraries.contains_key(lang_name) {
             let library = unsafe { Library::new(path)? };
@@ -65,26 +65,23 @@ impl ParserLoader {
         }
 
         // Get the library from cache
-        let library = self
-            .loaded_libraries
-            .get(lang_name)
-            .ok_or_else(|| ParserLoadError::CacheError(
-                format!("Failed to get library for {lang_name}")
-            ))?;
+        let library = self.loaded_libraries.get(lang_name).ok_or_else(|| {
+            ParserLoadError::CacheError(format!("Failed to get library for {lang_name}"))
+        })?;
 
         // Get the language function from the library
-        let language_fn: Symbol<unsafe extern "C" fn() -> Language> =
-            unsafe { 
-                library.get(func_name.as_bytes())
-                    .map_err(|_| ParserLoadError::SymbolNotFound(func_name.clone()))?
-            };
+        let language_fn: Symbol<unsafe extern "C" fn() -> Language> = unsafe {
+            library
+                .get(func_name.as_bytes())
+                .map_err(|_| ParserLoadError::SymbolNotFound(func_name.clone()))?
+        };
 
         // Call the function to get the Language
         let language = unsafe { language_fn() };
 
         Ok(language)
     }
-    
+
     /// Load a Tree-sitter language with a custom function name
     ///
     /// Use this when the function name doesn't follow the standard convention
@@ -110,19 +107,16 @@ impl ParserLoader {
         }
 
         // Get the library from cache
-        let library = self
-            .loaded_libraries
-            .get(lang_name)
-            .ok_or_else(|| ParserLoadError::CacheError(
-                format!("Failed to get library for {lang_name}")
-            ))?;
+        let library = self.loaded_libraries.get(lang_name).ok_or_else(|| {
+            ParserLoadError::CacheError(format!("Failed to get library for {lang_name}"))
+        })?;
 
         // Get the language function from the library
-        let language_fn: Symbol<unsafe extern "C" fn() -> Language> =
-            unsafe { 
-                library.get(func_name.as_bytes())
-                    .map_err(|_| ParserLoadError::SymbolNotFound(func_name.to_string()))?
-            };
+        let language_fn: Symbol<unsafe extern "C" fn() -> Language> = unsafe {
+            library
+                .get(func_name.as_bytes())
+                .map_err(|_| ParserLoadError::SymbolNotFound(func_name.to_string()))?
+        };
 
         // Call the function to get the Language
         let language = unsafe { language_fn() };
@@ -140,12 +134,12 @@ mod tests {
         let loader = ParserLoader::new();
         assert!(loader.loaded_libraries.is_empty());
     }
-    
+
     #[test]
     fn test_error_display() {
         let err = ParserLoadError::SymbolNotFound("tree_sitter_rust".to_string());
         assert_eq!(err.to_string(), "Symbol not found: tree_sitter_rust");
-        
+
         let err = ParserLoadError::CacheError("test error".to_string());
         assert_eq!(err.to_string(), "Cache error: test error");
     }
