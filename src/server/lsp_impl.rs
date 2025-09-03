@@ -4,8 +4,8 @@ use tower_lsp::{Client, LanguageServer};
 use tree_sitter::Parser;
 
 use crate::config::TreeSitterSettings;
-use crate::handlers::{handle_goto_definition, handle_semantic_tokens_full};
 use crate::handlers::{DefinitionResolver, LEGEND_TYPES};
+use crate::handlers::{handle_goto_definition, handle_semantic_tokens_full};
 use crate::state::{DocumentStore, LanguageService};
 use crate::utils::position_to_byte_offset;
 
@@ -165,23 +165,41 @@ impl LanguageServer for TreeSitterLs {
         let uri = params.text_document.uri;
 
         let Some(language_name) = self.get_language_for_document(&uri) else {
-            return Ok(None);
+            return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+                result_id: None,
+                data: vec![],
+            })));
         };
         let queries = self.language_service.queries.lock().unwrap();
         let Some(query) = queries.get(&language_name) else {
-            return Ok(None);
+            return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+                result_id: None,
+                data: vec![],
+            })));
         };
 
         let Some(doc) = self.document_store.get(&uri) else {
-            return Ok(None);
+            return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+                result_id: None,
+                data: vec![],
+            })));
         };
         let text = &doc.text;
         let Some(tree) = doc.tree.as_ref() else {
-            return Ok(None);
+            return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+                result_id: None,
+                data: vec![],
+            })));
         };
 
-        // Delegate to handler
-        Ok(handle_semantic_tokens_full(text, tree, query))
+        // Delegate to handler - this already returns Some(SemanticTokensResult) or None
+        // We need to ensure it always returns Some
+        Ok(handle_semantic_tokens_full(text, tree, query).or_else(|| {
+            Some(SemanticTokensResult::Tokens(SemanticTokens {
+                result_id: None,
+                data: vec![],
+            }))
+        }))
     }
 
     async fn goto_definition(
@@ -290,3 +308,4 @@ mod tests {
         }
     }
 }
+
