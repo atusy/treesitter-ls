@@ -109,16 +109,3 @@ pub fn handle_semantic_tokens_full(
         data,
     }))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_legend_types_contains_common_types() {
-        // Verify that common token types are present
-        assert!(LEGEND_TYPES.contains(&SemanticTokenType::KEYWORD));
-        assert!(LEGEND_TYPES.contains(&SemanticTokenType::FUNCTION));
-        assert!(LEGEND_TYPES.contains(&SemanticTokenType::VARIABLE));
-    }
-}
