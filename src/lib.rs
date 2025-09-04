@@ -15,4 +15,3 @@ pub use handlers::{
 
 // Re-export the main server implementation
 pub use server::TreeSitterLs;
-

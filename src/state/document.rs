@@ -1,5 +1,5 @@
 use dashmap::DashMap;
-use tower_lsp::lsp_types::{Url, SemanticTokens};
+use tower_lsp::lsp_types::{SemanticTokens, Url};
 use tree_sitter::Tree;
 
 // A document entry in our store.
@@ -28,11 +28,14 @@ impl DocumentStore {
     }
 
     pub fn insert(&self, uri: Url, text: String, tree: Option<Tree>) {
-        self.documents.insert(uri, Document { 
-            text, 
-            tree,
-            last_semantic_tokens: None,
-        });
+        self.documents.insert(
+            uri,
+            Document {
+                text,
+                tree,
+                last_semantic_tokens: None,
+            },
+        );
     }
 
     pub fn get(&self, uri: &Url) -> Option<dashmap::mapref::one::Ref<'_, Url, Document>> {
@@ -40,13 +43,16 @@ impl DocumentStore {
     }
 
     pub fn update_document(&self, uri: Url, text: String) {
-        self.documents.insert(uri, Document { 
-            text, 
-            tree: None,
-            last_semantic_tokens: None,
-        });
+        self.documents.insert(
+            uri,
+            Document {
+                text,
+                tree: None,
+                last_semantic_tokens: None,
+            },
+        );
     }
-    
+
     pub fn update_semantic_tokens(&self, uri: &Url, tokens: SemanticTokens) {
         if let Some(mut doc) = self.documents.get_mut(uri) {
             doc.last_semantic_tokens = Some(tokens);

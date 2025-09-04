@@ -1,5 +1,5 @@
 use tower_lsp::lsp_types::{
-    Range, SemanticToken, SemanticTokenType, SemanticTokens, SemanticTokensDelta, 
+    Range, SemanticToken, SemanticTokenType, SemanticTokens, SemanticTokensDelta,
     SemanticTokensEdit, SemanticTokensFullDeltaResult, SemanticTokensResult,
 };
 use tree_sitter::{Query, QueryCursor, StreamingIterator, Tree};
@@ -32,7 +32,7 @@ fn map_capture_to_token_type(capture_name: &str) -> u32 {
         "decorator" => SemanticTokenType::DECORATOR,
         _ => SemanticTokenType::VARIABLE, // Default fallback
     };
-    
+
     LEGEND_TYPES
         .iter()
         .position(|t| *t == token_type)
@@ -297,10 +297,12 @@ fn calculate_semantic_tokens_delta(
     current: &SemanticTokens,
 ) -> Option<SemanticTokensDelta> {
     // Find the common prefix length
-    let common_prefix_len = previous.data.iter()
+    let common_prefix_len = previous
+        .data
+        .iter()
         .zip(current.data.iter())
         .take_while(|(a, b)| {
-            a.delta_line == b.delta_line 
+            a.delta_line == b.delta_line
                 && a.delta_start == b.delta_start
                 && a.length == b.length
                 && a.token_type == b.token_type
@@ -381,7 +383,7 @@ mod tests {
                 SemanticToken {
                     delta_line: 0,
                     delta_start: 0,
-                    length: 14, // changed length
+                    length: 14,    // changed length
                     token_type: 0, // comment
                     token_modifiers_bitset: 0,
                 },
@@ -404,7 +406,7 @@ mod tests {
 
         let delta = calculate_semantic_tokens_delta(&previous, &current);
         assert!(delta.is_some());
-        
+
         let delta = delta.unwrap();
         assert_eq!(delta.result_id, Some("v2".to_string()));
         assert_eq!(delta.edits.len(), 1);
@@ -416,33 +418,37 @@ mod tests {
     #[test]
     fn test_semantic_tokens_range() {
         use tower_lsp::lsp_types::Position;
-        
+
         // Create mock tokens for a document
         let all_tokens = SemanticTokens {
             result_id: None,
             data: vec![
-                SemanticToken { // Line 0, col 0-10
+                SemanticToken {
+                    // Line 0, col 0-10
                     delta_line: 0,
                     delta_start: 0,
                     length: 10,
                     token_type: 0,
                     token_modifiers_bitset: 0,
                 },
-                SemanticToken { // Line 2, col 0-3
+                SemanticToken {
+                    // Line 2, col 0-3
                     delta_line: 2,
                     delta_start: 0,
                     length: 3,
                     token_type: 1,
                     token_modifiers_bitset: 0,
                 },
-                SemanticToken { // Line 2, col 4-5
+                SemanticToken {
+                    // Line 2, col 4-5
                     delta_line: 0,
                     delta_start: 4,
                     length: 1,
                     token_type: 17,
                     token_modifiers_bitset: 0,
                 },
-                SemanticToken { // Line 4, col 2-8
+                SemanticToken {
+                    // Line 4, col 2-8
                     delta_line: 2,
                     delta_start: 2,
                     length: 6,
@@ -454,8 +460,14 @@ mod tests {
 
         // Test range that includes only lines 1-3
         let _range = Range {
-            start: Position { line: 1, character: 0 },
-            end: Position { line: 3, character: 100 },
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 3,
+                character: 100,
+            },
         };
 
         // Tokens in range should be the ones on line 2
@@ -468,20 +480,18 @@ mod tests {
     fn test_semantic_tokens_delta_no_changes() {
         let tokens = SemanticTokens {
             result_id: Some("v1".to_string()),
-            data: vec![
-                SemanticToken {
-                    delta_line: 0,
-                    delta_start: 0,
-                    length: 10,
-                    token_type: 0,
-                    token_modifiers_bitset: 0,
-                },
-            ],
+            data: vec![SemanticToken {
+                delta_line: 0,
+                delta_start: 0,
+                length: 10,
+                token_type: 0,
+                token_modifiers_bitset: 0,
+            }],
         };
 
         let delta = calculate_semantic_tokens_delta(&tokens, &tokens);
         assert!(delta.is_some());
-        
+
         let delta = delta.unwrap();
         assert_eq!(delta.edits.len(), 0);
     }
