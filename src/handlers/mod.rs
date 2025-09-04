@@ -1,7 +1,12 @@
 pub mod definition;
+pub mod selection_range;
 pub mod semantic_tokens;
 
 pub use definition::{
     ContextType, DefinitionCandidate, DefinitionResolver, ReferenceContext, handle_goto_definition,
 };
-pub use semantic_tokens::{LEGEND_TYPES, handle_semantic_tokens_full, handle_semantic_tokens_full_delta, handle_semantic_tokens_range};
+pub use selection_range::handle_selection_range;
+pub use semantic_tokens::{
+    LEGEND_TYPES, handle_semantic_tokens_full, handle_semantic_tokens_full_delta,
+    handle_semantic_tokens_range,
+};

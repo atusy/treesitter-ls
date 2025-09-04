@@ -5,7 +5,10 @@ use tree_sitter::Parser;
 
 use crate::config::TreeSitterSettings;
 use crate::handlers::{DefinitionResolver, LEGEND_TYPES};
-use crate::handlers::{handle_goto_definition, handle_semantic_tokens_full, handle_semantic_tokens_full_delta, handle_semantic_tokens_range};
+use crate::handlers::{
+    handle_goto_definition, handle_selection_range, handle_semantic_tokens_full,
+    handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
+};
 use crate::state::{DocumentStore, LanguageService};
 use crate::utils::position_to_byte_offset;
 
@@ -116,6 +119,7 @@ impl LanguageServer for TreeSitterLs {
                     ),
                 ),
                 definition_provider: Some(OneOf::Left(true)),
+                selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
                 ..ServerCapabilities::default()
             },
         })
@@ -204,7 +208,7 @@ impl LanguageServer for TreeSitterLs {
                 }))
             })
         }; // doc reference is dropped here
-        
+
         // Store the tokens for delta calculation
         if let Some(SemanticTokensResult::Tokens(ref tokens)) = result {
             let mut tokens_with_id = tokens.clone();
@@ -212,16 +216,18 @@ impl LanguageServer for TreeSitterLs {
             let id = if tokens.data.is_empty() {
                 "empty".to_string()
             } else {
-                format!("v{}_{}", 
+                format!(
+                    "v{}_{}",
                     tokens.data.len(),
                     tokens.data.first().map(|t| t.delta_line).unwrap_or(0)
                 )
             };
             tokens_with_id.result_id = Some(id);
-            self.document_store.update_semantic_tokens(&uri, tokens_with_id.clone());
+            self.document_store
+                .update_semantic_tokens(&uri, tokens_with_id.clone());
             return Ok(Some(SemanticTokensResult::Tokens(tokens_with_id)));
         }
-        
+
         Ok(result)
     }
 
@@ -233,40 +239,48 @@ impl LanguageServer for TreeSitterLs {
         let previous_result_id = params.previous_result_id;
 
         let Some(language_name) = self.get_language_for_document(&uri) else {
-            return Ok(Some(SemanticTokensFullDeltaResult::Tokens(SemanticTokens {
-                result_id: None,
-                data: vec![],
-            })));
+            return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
+                SemanticTokens {
+                    result_id: None,
+                    data: vec![],
+                },
+            )));
         };
-        
+
         let queries = self.language_service.queries.lock().unwrap();
         let Some(query) = queries.get(&language_name) else {
-            return Ok(Some(SemanticTokensFullDeltaResult::Tokens(SemanticTokens {
-                result_id: None,
-                data: vec![],
-            })));
+            return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
+                SemanticTokens {
+                    result_id: None,
+                    data: vec![],
+                },
+            )));
         };
 
         // Get document data and compute delta, then drop the reference
         let result = {
             let Some(doc) = self.document_store.get(&uri) else {
-                return Ok(Some(SemanticTokensFullDeltaResult::Tokens(SemanticTokens {
-                    result_id: None,
-                    data: vec![],
-                })));
+                return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
+                    SemanticTokens {
+                        result_id: None,
+                        data: vec![],
+                    },
+                )));
             };
-            
+
             let text = &doc.text;
             let Some(tree) = doc.tree.as_ref() else {
-                return Ok(Some(SemanticTokensFullDeltaResult::Tokens(SemanticTokens {
-                    result_id: None,
-                    data: vec![],
-                })));
+                return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
+                    SemanticTokens {
+                        result_id: None,
+                        data: vec![],
+                    },
+                )));
             };
 
             // Get previous tokens from document
             let previous_tokens = doc.last_semantic_tokens.as_ref();
-            
+
             // Delegate to handler
             handle_semantic_tokens_full_delta(
                 text,
@@ -283,13 +297,15 @@ impl LanguageServer for TreeSitterLs {
             let id = if tokens.data.is_empty() {
                 "empty".to_string()
             } else {
-                format!("v{}_{}", 
+                format!(
+                    "v{}_{}",
                     tokens.data.len(),
                     tokens.data.first().map(|t| t.delta_line).unwrap_or(0)
                 )
             };
             tokens_with_id.result_id = Some(id);
-            self.document_store.update_semantic_tokens(&uri, tokens_with_id.clone());
+            self.document_store
+                .update_semantic_tokens(&uri, tokens_with_id.clone());
             return Ok(Some(SemanticTokensFullDeltaResult::Tokens(tokens_with_id)));
         }
 
@@ -309,7 +325,7 @@ impl LanguageServer for TreeSitterLs {
                 data: vec![],
             })));
         };
-        
+
         let queries = self.language_service.queries.lock().unwrap();
         let Some(query) = queries.get(&language_name) else {
             return Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
@@ -324,7 +340,7 @@ impl LanguageServer for TreeSitterLs {
                 data: vec![],
             })));
         };
-        
+
         let text = &doc.text;
         let Some(tree) = doc.tree.as_ref() else {
             return Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
@@ -335,7 +351,7 @@ impl LanguageServer for TreeSitterLs {
 
         // Delegate to handler
         let result = handle_semantic_tokens_range(text, tree, query, &range);
-        
+
         // Convert to RangeResult
         match result {
             Some(SemanticTokensResult::Tokens(tokens)) => {
@@ -344,7 +360,7 @@ impl LanguageServer for TreeSitterLs {
             _ => Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
                 result_id: None,
                 data: vec![],
-            })))
+            }))),
         }
     }
 
@@ -390,6 +406,25 @@ impl LanguageServer for TreeSitterLs {
             byte_offset,
             &uri,
         ))
+    }
+
+    async fn selection_range(
+        &self,
+        params: SelectionRangeParams,
+    ) -> Result<Option<Vec<SelectionRange>>> {
+        let uri = params.text_document.uri;
+        let positions = params.positions;
+
+        // Get document and tree
+        let Some(doc) = self.document_store.get(&uri) else {
+            return Ok(None);
+        };
+        let Some(tree) = doc.tree.as_ref() else {
+            return Ok(None);
+        };
+
+        // Delegate to handler
+        Ok(handle_selection_range(tree, &positions))
     }
 }
 
@@ -454,4 +489,3 @@ mod tests {
         }
     }
 }
-
