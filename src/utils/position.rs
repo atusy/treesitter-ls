@@ -1,4 +1,4 @@
-use tower_lsp::lsp_types::Position;
+use tower_lsp::lsp_types::{Position, Range};
 
 /// Convert LSP position (line/character) to byte offset in text
 ///
@@ -34,6 +34,38 @@ pub fn position_to_byte_offset(text: &str, position: Position) -> usize {
     }
 
     byte_offset
+}
+
+/// Convert a byte offset into an LSP `Position` (line and UTF-16 code unit character).
+pub fn byte_offset_to_position(text: &str, byte_offset: usize) -> Position {
+    let mut current_line = 0usize;
+    let mut current_char_utf16 = 0usize;
+    let mut processed_bytes = 0usize;
+
+    for ch in text.chars() {
+        if processed_bytes >= byte_offset {
+            return Position { line: current_line as u32, character: current_char_utf16 as u32 };
+        }
+
+        if ch == '\n' {
+            current_line += 1;
+            current_char_utf16 = 0;
+        } else {
+            current_char_utf16 += ch.len_utf16();
+        }
+
+        processed_bytes += ch.len_utf8();
+    }
+
+    // If offset is at or beyond end, clamp to end position
+    Position { line: current_line as u32, character: current_char_utf16 as u32 }
+}
+
+/// Convert a byte range [start, end) into an LSP `Range`.
+pub fn byte_range_to_range(text: &str, start: usize, end: usize) -> Range {
+    let start_pos = byte_offset_to_position(text, start);
+    let end_pos = byte_offset_to_position(text, end);
+    Range { start: start_pos, end: end_pos }
 }
 
 #[cfg(test)]

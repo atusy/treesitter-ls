@@ -7,7 +7,7 @@ use crate::config::TreeSitterSettings;
 use crate::handlers::{DefinitionResolver, LEGEND_TYPES};
 use crate::handlers::{
     handle_goto_definition, handle_selection_range, handle_semantic_tokens_full,
-    handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
+    handle_semantic_tokens_full_delta, handle_semantic_tokens_range, handle_code_actions,
 };
 use crate::state::{DocumentStore, LanguageService};
 use crate::utils::position_to_byte_offset;
@@ -105,6 +105,7 @@ impl LanguageServer for TreeSitterLs {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
                 )),
+                code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 semantic_tokens_provider: Some(
                     SemanticTokensServerCapabilities::SemanticTokensOptions(
                         SemanticTokensOptions {
@@ -425,6 +426,24 @@ impl LanguageServer for TreeSitterLs {
 
         // Delegate to handler
         Ok(handle_selection_range(tree, &positions))
+    }
+
+    async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
+        let uri = params.text_document.uri;
+        let range = params.range;
+
+        // Get document and tree
+        let Some(doc) = self.document_store.get(&uri) else {
+            return Ok(None);
+        };
+        let text = &doc.text;
+        let Some(tree) = doc.tree.as_ref() else {
+            return Ok(None);
+        };
+
+        // Delegate to handler
+        let actions = handle_code_actions(&uri, text, tree, range);
+        Ok(actions.map(CodeActionResponse::from))
     }
 }
 
