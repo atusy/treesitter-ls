@@ -17,6 +17,7 @@ pub enum HighlightSource {
 pub struct LanguageConfig {
     pub library: Option<String>,
     pub filetypes: Vec<String>,
+    #[serde(default)]
     pub highlight: Vec<HighlightItem>,
     pub locals: Option<Vec<HighlightItem>>,
 }
@@ -24,6 +25,7 @@ pub struct LanguageConfig {
 #[derive(Debug, Deserialize, serde::Serialize)]
 pub struct TreeSitterSettings {
     pub runtimepath: Option<Vec<String>>,
+    pub querypath: Option<Vec<String>>,
     pub languages: std::collections::HashMap<String, LanguageConfig>,
 }
 

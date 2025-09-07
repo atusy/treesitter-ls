@@ -1,6 +1,8 @@
 use crate::analysis::ParserLoader;
 use crate::config::{HighlightItem, HighlightSource, LanguageConfig, TreeSitterSettings};
 use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tower_lsp::Client;
 use tower_lsp::lsp_types::{MessageType, Url};
@@ -118,7 +120,13 @@ impl LanguageService {
 
         // Load languages and queries
         for (lang_name, config) in &settings.languages {
-            self.load_single_language(lang_name, config, &settings.runtimepath, client)
+            self.load_single_language(
+                lang_name,
+                config,
+                &settings.runtimepath,
+                &settings.querypath,
+                client,
+            )
                 .await;
         }
     }
@@ -141,6 +149,7 @@ impl LanguageService {
         lang_name: &str,
         config: &LanguageConfig,
         runtimepath: &Option<Vec<String>>,
+        querypath: &Option<Vec<String>>,
         client: &Client,
     ) {
         let library_path = self.resolve_library_path(config, lang_name, runtimepath);
@@ -148,15 +157,25 @@ impl LanguageService {
         match library_path {
             Some(lib_path) => match self.load_language(&lib_path, lang_name) {
                 Ok(language) => {
-                    // Load highlight queries
-                    self.load_highlight_queries(lang_name, config, &language, client)
+                    // Load highlight queries (explicit or via querypath)
+                    self.load_highlight_queries(
+                        lang_name,
+                        config,
+                        querypath,
+                        &language,
+                        client,
+                    )
                         .await;
 
-                    // Load locals queries if available
-                    if let Some(locals_sources) = &config.locals {
-                        self.load_locals_queries(lang_name, locals_sources, &language, client)
-                            .await;
-                    }
+                    // Load locals queries (explicit or via querypath)
+                    self.load_locals_queries_auto(
+                        lang_name,
+                        config,
+                        querypath,
+                        &language,
+                        client,
+                    )
+                    .await;
 
                     // Store the language
                     self.languages
@@ -192,38 +211,89 @@ impl LanguageService {
         &self,
         lang_name: &str,
         config: &LanguageConfig,
+        querypath: &Option<Vec<String>>,
         language: &Language,
         client: &Client,
     ) {
-        match self.load_query_from_highlight(&config.highlight) {
-            Ok(combined_query) => match Query::new(language, &combined_query) {
-                Ok(query) => {
-                    self.queries
-                        .lock()
-                        .unwrap()
-                        .insert(lang_name.to_string(), query);
-                    client
-                        .log_message(MessageType::INFO, format!("Query loaded for {lang_name}."))
-                        .await;
-                }
+        // Prefer explicit per-language highlights if provided
+        if !config.highlight.is_empty() {
+            match self.load_query_from_highlight(&config.highlight) {
+                Ok(combined_query) => match Query::new(language, &combined_query) {
+                    Ok(query) => {
+                        self.queries
+                            .lock()
+                            .unwrap()
+                            .insert(lang_name.to_string(), query);
+                        client
+                            .log_message(MessageType::INFO, format!("Query loaded for {lang_name}."))
+                            .await;
+                    }
+                    Err(err) => {
+                        client
+                            .log_message(
+                                MessageType::ERROR,
+                                format!("Failed to parse query for {lang_name}: {err}"),
+                            )
+                            .await;
+                    }
+                },
                 Err(err) => {
                     client
                         .log_message(
                             MessageType::ERROR,
-                            format!("Failed to parse query for {lang_name}: {err}"),
+                            format!("Failed to load highlight queries for {lang_name}: {err}"),
                         )
                         .await;
                 }
-            },
-            Err(err) => {
-                client
-                    .log_message(
-                        MessageType::ERROR,
-                        format!("Failed to load highlight queries for {lang_name}: {err}"),
-                    )
-                    .await;
+            }
+            return;
+        }
+
+        // Otherwise, try to load from querypath: <base>/<lang_name>/highlights.scm
+        if let Some(query_bases) = querypath {
+            if let Some(path) = self.find_query_file(query_bases, lang_name, "highlights.scm") {
+                match fs::read_to_string(&path) {
+                    Ok(content) => match Query::new(language, &content) {
+                        Ok(query) => {
+                            self.queries
+                                .lock()
+                                .unwrap()
+                                .insert(lang_name.to_string(), query);
+                            client
+                                .log_message(
+                                    MessageType::INFO,
+                                    format!("Query loaded from {path:?} for {lang_name}."),
+                                )
+                                .await;
+                            return;
+                        }
+                        Err(err) => {
+                            client
+                                .log_message(
+                                    MessageType::ERROR,
+                                    format!("Failed to parse highlight query for {lang_name} from {path:?}: {err}"),
+                                )
+                                .await;
+                        }
+                    },
+                    Err(err) => {
+                        client
+                            .log_message(
+                                MessageType::ERROR,
+                                format!("Failed to read highlight query {path:?}: {err}"),
+                            )
+                            .await;
+                    }
+                }
             }
         }
+
+        client
+            .log_message(
+                MessageType::ERROR,
+                format!("No highlight queries provided for {lang_name}: neither per-language 'highlight' nor 'querypath' yielded a file"),
+            )
+            .await;
     }
 
     async fn load_locals_queries(
@@ -265,5 +335,74 @@ impl LanguageService {
                     .await;
             }
         }
+    }
+
+    async fn load_locals_queries_auto(
+        &self,
+        lang_name: &str,
+        config: &LanguageConfig,
+        querypath: &Option<Vec<String>>,
+        language: &Language,
+        client: &Client,
+    ) {
+        if let Some(locals_sources) = &config.locals {
+            self.load_locals_queries(lang_name, locals_sources, language, client)
+                .await;
+            return;
+        }
+
+        if let Some(query_bases) = querypath {
+            if let Some(path) = self.find_query_file(query_bases, lang_name, "locals.scm") {
+                match fs::read_to_string(&path) {
+                    Ok(content) => match Query::new(language, &content) {
+                        Ok(query) => {
+                            self.locals_queries
+                                .lock()
+                                .unwrap()
+                                .insert(lang_name.to_string(), query);
+                            client
+                                .log_message(
+                                    MessageType::INFO,
+                                    format!("Locals query loaded from {path:?} for {lang_name}."),
+                                )
+                                .await;
+                            return;
+                        }
+                        Err(err) => {
+                            client
+                                .log_message(
+                                    MessageType::ERROR,
+                                    format!("Failed to parse locals query for {lang_name} from {path:?}: {err}"),
+                                )
+                                .await;
+                        }
+                    },
+                    Err(err) => {
+                        client
+                            .log_message(
+                                MessageType::ERROR,
+                                format!("Failed to read locals query {path:?}: {err}"),
+                            )
+                            .await;
+                    }
+                }
+            }
+        }
+        // No locals is acceptable; silently skip
+    }
+
+    fn find_query_file(
+        &self,
+        query_bases: &[String],
+        lang_name: &str,
+        file_name: &str,
+    ) -> Option<PathBuf> {
+        for base in query_bases {
+            let candidate = Path::new(base).join(lang_name).join(file_name);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+        None
     }
 }
