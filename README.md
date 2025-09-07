@@ -1,100 +1,125 @@
 # treesitter-ls
 
-A Language Server Protocol (LSP) implementation written in Rust, leveraging the `tree-sitter` parsing library to provide language-specific features, such as semantic highlighting.
+A Language Server Protocol (LSP) server written in Rust that uses Tree‑sitter for fast parsing and language‑aware features.
 
 ## Features
 
-*   **Dynamic Parser Loading**: Load `tree-sitter` language parsers from shared libraries at runtime.
-*   **Semantic Highlighting**: Provide rich semantic tokens for syntax highlighting based on `tree-sitter` queries.
-*   **Asynchronous Processing**: Built with `tokio` and `tower-lsp` for high-performance, asynchronous handling of LSP requests.
+- Dynamic parsers: Loads Tree‑sitter language parsers from shared libraries at runtime (via `libloading`).
+- Semantic tokens: Full, range, and delta semantic highlighting powered by Tree‑sitter queries.
+- Go to definition: Language‑agnostic resolver using Tree‑sitter “locals” queries (`local.definition.*`, `local.reference.*`).
+- Selection ranges: AST‑based selection expansion using parent nodes.
+- Code actions: Refactor to reorder parameters inside a `parameters` node (for grammars that expose it).
+- Async runtime: Built with `tokio` and `tower-lsp`.
 
-## Building the Server
-
-To build the `treesitter-ls` executable, navigate to the project root and run:
+## Build
 
 ```bash
 cargo build --release
 ```
 
-The compiled executable will be located at `target/release/treesitter-ls`.
+Binary: `target/release/treesitter-ls`
 
-## Usage with Neovim (Example Configuration)
+## Configuration (Initialization Options)
 
-This language server requires `initializationOptions` to specify the `tree-sitter` parser library, the language function name, and an optional semantic tokens query. Below is an example configuration for Neovim using `nvim-lspconfig`.
+The server reads configuration from LSP `initializationOptions`. Shape:
 
-**1. Obtain a Tree-sitter Parser Shared Library:**
-
-First, you need a compiled `tree-sitter` parser for your desired language. For example, to get the Rust parser:
-
-```bash
-git clone https://github.com/tree-sitter/tree-sitter-rust.git
-clang -shared -o tree-sitter-rust/libtree_sitter_rust.dylib tree-sitter-rust/src/parser.c tree-sitter-rust/src/scanner.c -I tree-sitter-rust/src
+```json
+{
+  "runtimepath": ["/path/to/parsers"],
+  "languages": {
+    "rust": {
+      "library": "/abs/path/to/rust.so",          // optional (overrides runtimepath)
+      "filetypes": ["rs"],                         // required; file extensions without dot
+      "highlight": [                               // required; list of query sources
+        { "path": "/abs/path/to/highlights.scm" },
+        { "query": "(identifier) @variable" }
+      ],
+      "locals": [                                  // optional; enables goto-definition
+        { "path": "/abs/path/to/locals.scm" }
+      ]
+    }
+  }
+}
 ```
 
-This will create `libtree_sitter_rust.dylib` in the `tree-sitter-rust` directory.
+Notes:
+- If `library` is omitted, the server searches each `runtimepath` directory for `<language>.so` (Linux) or `<language>.dylib` (macOS). The `<language>` key is the map key (e.g. `rust`).
+- “Go to definition” relies on locals queries that emit captures like `local.definition.*` and `local.reference.*` (see `queries/*/locals.scm` in this repo for examples).
+- Semantic tokens use capture names mapped to LSP token types (e.g. `@function`, `@type`, `@variable`, etc.).
 
-**2. Obtain the Semantic Tokens Query:**
+## Neovim Example
 
-For semantic highlighting, you'll need a `tree-sitter` query file (e.g., `highlights.scm`). You can usually find these in the `queries/` directory of the respective `tree-sitter` grammar repository. For Rust, you can get it from:
-
-`https://raw.githubusercontent.com/tree-sitter/tree-sitter-rust/master/queries/highlights.scm`
-
-Copy the content of this file.
-
-**3. Neovim Configuration:**
-
+Below is a minimal configuration using `vim.lsp.start` or `nvim-lspconfig`. Adjust paths to your environment.
 
 ```lua
 vim.lsp.config.treesitter_ls = {
-  cmd = {
-    "path/to/treesitter-ls/target/release/treesitter-ls",
-  },
+  cmd = { "/abs/path/to/treesitter-ls/target/release/treesitter-ls" },
   settings = {
     runtimepath = {
-      -- look for ${language}.so or ${language}.dylib in these directories
-      "path/to/your/parsers/directory",
+      -- Search here for <language>.so or <language>.dylib
+      "/abs/path/to/tree-sitter-parsers",
     },
     languages = {
       rust = {
-        -- Specify the path to the tree-sitter parser shared library instead of finding one from the runtimepath
-        -- library = "path/to/treesitter/parser/rust.so ",
-        rust = { "rs" },
+        -- Optional explicit parser path (overrides runtimepath search)
+        -- library = "/abs/path/to/rust.so",
+        filetypes = { "rs" },
         highlight = {
-            { path = "path/to/highlight.scm" },
-            { query = [[
-            ;; extends
-        (comment) @comment
-        (function_item
-          name: (identifier) @function
-        )]] },
+          { path = "/abs/path/to/treesitter-ls/queries/rust/highlights.scm" },
+          { query = [[
+            ;; Your custom additions
+            (comment) @comment
+          ]] },
+        },
+        -- Enable goto-definition by providing locals queries
+        locals = {
+          { path = "/abs/path/to/treesitter-ls/queries/rust/locals.scm" },
         },
       },
     },
   },
 }
-```
 
-**Important:**
-
-*   Replace `'/path/to/your/treesitter-ls/target/release/treesitter-ls'` with the actual absolute path to your compiled `treesitter-ls` executable.
-*   Replace `'/path/to/your/tree-sitter-rust/libtree_sitter_rust.dylib'` with the actual absolute path to your compiled `tree-sitter-rust` shared library.
-*   Paste the *entire content* of the `highlights.scm` file into the `semanticTokensQuery` field. Use `[[]]` for multiline strings in Lua.
-
-```lua
 vim.api.nvim_create_autocmd("FileType", {
-	pattern = "rust",
-	group = vim.api.nvim_create_augroup("treesitter_ls", { clear = true }),
-	callback = function(ctx)
-		vim.lsp.start({
-			name = "treesitter_ls",
-			cmd = vim.lsp.config.treesitter_ls.cmd,
-			root_dir = vim.fs.dirname(vim.fs.find({ "Cargo.toml" }, { upward = true })[1]),
-			init_options = vim.lsp.config.treesitter_ls.settings,
-		})
-		vim.treesitter.stop(ctx.buf)
-		vim.cmd("syntax off")
-	end,
+  pattern = { "rust" },
+  group = vim.api.nvim_create_augroup("treesitter_ls", { clear = true }),
+  callback = function(ctx)
+    vim.lsp.start({
+      name = "treesitter_ls",
+      cmd = vim.lsp.config.treesitter_ls.cmd,
+      root_dir = vim.fs.dirname(vim.fs.find({ "Cargo.toml" }, { upward = true })[1]),
+      init_options = vim.lsp.config.treesitter_ls.settings,
+    })
+    -- Avoid double-highlighting: disable Neovim Tree‑sitter
+    pcall(vim.treesitter.stop, ctx.buf)
+  end,
 })
 ```
 
-After configuring, open a Rust file in Neovim, and the `treesitter-ls` should provide semantic highlighting based on your `tree-sitter` query.
+## Parser Libraries
+
+You need Tree‑sitter parser shared libraries. Typical artifact names:
+- Linux: `<language>.so`
+- macOS: `<language>.dylib`
+
+For example, build the Rust grammar (see the grammar’s README for up‑to‑date instructions):
+
+```bash
+git clone https://github.com/tree-sitter/tree-sitter-rust.git
+# Use your platform’s build instructions to produce rust.so / rust.dylib
+```
+
+## Queries
+
+- This repo includes example queries under `queries/<language>/`:
+  - Highlights: `queries/rust/highlights.scm`, `queries/lua/highlights.scm`
+  - Locals (for definitions/references): `queries/rust/locals.scm`, `queries/lua/locals.scm`
+- You can combine multiple sources using `{ path = ... }` and `{ query = ... }` entries; the server concatenates them.
+
+## Supported LSP Capabilities
+
+- `textDocument/semanticTokens/full`, `/range`, `/full/delta`
+- `textDocument/definition` (requires locals queries)
+- `textDocument/selectionRange`
+- `textDocument/codeAction` (parameter reordering in `parameters` nodes)
+- `textDocument/didOpen`/`didChange` (full sync)
