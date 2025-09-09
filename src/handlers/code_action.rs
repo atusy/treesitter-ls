@@ -20,9 +20,7 @@ pub fn handle_code_actions(
         position_to_byte_offset(text, cursor.start)
     };
 
-    let Some(node_at_cursor) = root.descendant_for_byte_range(cursor_byte, cursor_byte) else {
-        return None;
-    };
+    let node_at_cursor = root.descendant_for_byte_range(cursor_byte, cursor_byte)?;
 
     // Ascend to a `parameters` node
     let mut n: Option<Node> = Some(node_at_cursor);
@@ -35,9 +33,7 @@ pub fn handle_code_actions(
         n = curr.parent();
     }
 
-    let Some(params_node) = params_node else {
-        return None;
-    };
+    let params_node = params_node?;
 
     // Find parentheses and commas among direct children
     let mut lparen_end: Option<usize> = None;
@@ -111,11 +107,11 @@ pub fn handle_code_actions(
                 // There is a comma followed only by whitespace before ')'
                 // Determine if this comma was not used to separate an element (i.e., trailing comma)
                 // It is trailing if the last entry ends exactly at this comma's start.
-                if let Some(&(last_start, last_end)) = entries.last() {
-                    if last_end <= last_comma.start_byte() {
-                        trailing_comma = true;
-                        trailing_ws = trailing;
-                    }
+                if let Some(&(_, last_end)) = entries.last()
+                    && last_end <= last_comma.start_byte()
+                {
+                    trailing_comma = true;
+                    trailing_ws = trailing;
                 }
             }
         }
@@ -130,9 +126,7 @@ pub fn handle_code_actions(
         }
     }
 
-    let Some(current_idx) = current_idx else {
-        return None;
-    };
+    let current_idx = current_idx?;
 
     // Prepare the edit range: replace content between '(' and ')'
     let replace_start = lparen_end;
@@ -202,7 +196,7 @@ pub fn handle_code_actions(
 fn ordinal(n: usize) -> String {
     // Simple English ordinal suffix
     let suffix = match n % 100 {
-        11 | 12 | 13 => "th",
+        11..=13 => "th",
         _ => match n % 10 {
             1 => "st",
             2 => "nd",
@@ -212,4 +206,3 @@ fn ordinal(n: usize) -> String {
     };
     format!("{}{}", n, suffix)
 }
-

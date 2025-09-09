@@ -443,7 +443,7 @@ impl LanguageServer for TreeSitterLs {
 
         // Delegate to handler
         let actions = handle_code_actions(&uri, text, tree, range);
-        Ok(actions.map(CodeActionResponse::from))
+        Ok(actions)
     }
 }
 

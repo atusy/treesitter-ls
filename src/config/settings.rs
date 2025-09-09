@@ -24,7 +24,9 @@ pub struct LanguageConfig {
 
 #[derive(Debug, Deserialize, serde::Serialize)]
 pub struct TreeSitterSettings {
-    pub runtimepath: Option<Vec<String>>,
+    // Editor-agnostic name exposed to JSON as `searchPaths`.
+    #[serde(rename = "searchPaths")]
+    pub search_paths: Option<Vec<String>>,
     pub languages: std::collections::HashMap<String, LanguageConfig>,
 }
 
@@ -50,7 +52,7 @@ mod tests {
 
         let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
 
-        assert!(settings.runtimepath.is_none());
+        assert!(settings.search_paths.is_none());
         assert!(settings.languages.contains_key("rust"));
         assert_eq!(
             settings.languages["rust"].library,
@@ -138,9 +140,9 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_runtimepath_configuration() {
+    fn should_parse_searchpaths_configuration_basic() {
         let config_json = r#"{
-            "runtimepath": [
+            "searchPaths": [
                 "/usr/local/lib/tree-sitter",
                 "/opt/tree-sitter/parsers"
             ],
@@ -156,9 +158,9 @@ mod tests {
 
         let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
 
-        assert!(settings.runtimepath.is_some());
+        assert!(settings.search_paths.is_some());
         assert_eq!(
-            settings.runtimepath.unwrap(),
+            settings.search_paths.unwrap(),
             vec!["/usr/local/lib/tree-sitter", "/opt/tree-sitter/parsers"]
         );
         assert!(settings.languages.contains_key("rust"));
@@ -167,9 +169,9 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_mixed_configuration_with_runtimepath_and_explicit_library() {
+    fn should_parse_mixed_configuration_with_searchpaths_and_explicit_library() {
         let config_json = r#"{
-            "runtimepath": ["/usr/local/lib/tree-sitter"],
+            "searchPaths": ["/usr/local/lib/tree-sitter"],
             "languages": {
                 "rust": {
                     "library": "/custom/path/rust.so",
@@ -189,11 +191,8 @@ mod tests {
 
         let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
 
-        assert!(settings.runtimepath.is_some());
-        assert_eq!(
-            settings.runtimepath.unwrap(),
-            vec!["/usr/local/lib/tree-sitter"]
-        );
+        assert!(settings.search_paths.is_some());
+        assert_eq!(settings.search_paths.unwrap(), vec!["/usr/local/lib/tree-sitter"]);
 
         // rust has explicit library path
         assert_eq!(
@@ -201,8 +200,34 @@ mod tests {
             Some("/custom/path/rust.so".to_string())
         );
 
-        // python will use runtimepath
+        // python will use searchPaths
         assert_eq!(settings.languages["python"].library, None);
+    }
+
+    #[test]
+    fn should_parse_searchpaths_configuration() {
+        let config_json = r#"{
+            "searchPaths": [
+                "/data/tree-sitter",
+                "/assets/ts"
+            ],
+            "languages": {
+                "lua": {
+                    "filetypes": ["lua"],
+                    "highlight": [
+                        {"query": "(identifier) @variable"}
+                    ]
+                }
+            }
+        }"#;
+
+        let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
+
+        assert_eq!(
+            settings.search_paths.unwrap(),
+            vec!["/data/tree-sitter", "/assets/ts"]
+        );
+        assert!(settings.languages.contains_key("lua"));
     }
 
     #[test]
@@ -261,7 +286,7 @@ mod tests {
     #[test]
     fn should_handle_complex_configurations_efficiently() {
         let mut config = TreeSitterSettings {
-            runtimepath: None,
+            search_paths: None,
             languages: HashMap::new(),
         };
 

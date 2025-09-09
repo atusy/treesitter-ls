@@ -57,15 +57,15 @@ impl LanguageService {
         &self,
         config: &LanguageConfig,
         language: &str,
-        runtimepath: &Option<Vec<String>>,
+        search_paths: &Option<Vec<String>>,
     ) -> Option<String> {
         // If explicit library path is provided, use it
         if let Some(library) = &config.library {
             return Some(library.clone());
         }
 
-        // Otherwise, search in runtimepath/parser/
-        if let Some(paths) = runtimepath {
+        // Otherwise, search in searchPaths: <base>/parser/
+        if let Some(paths) = search_paths {
             for path in paths {
                 // Try .so extension first (Linux)
                 let so_path = format!("{path}/parser/{language}.so");
@@ -123,7 +123,7 @@ impl LanguageService {
             self.load_single_language(
                 lang_name,
                 config,
-                &settings.runtimepath,
+                &settings.search_paths,
                 client,
             )
                 .await;
@@ -147,29 +147,29 @@ impl LanguageService {
         &self,
         lang_name: &str,
         config: &LanguageConfig,
-        runtimepath: &Option<Vec<String>>,
+        search_paths: &Option<Vec<String>>,
         client: &Client,
     ) {
-        let library_path = self.resolve_library_path(config, lang_name, runtimepath);
+        let library_path = self.resolve_library_path(config, lang_name, search_paths);
 
         match library_path {
             Some(lib_path) => match self.load_language(&lib_path, lang_name) {
                 Ok(language) => {
-                    // Load highlight queries (explicit or via runtimepath)
+                    // Load highlight queries (explicit or via searchPaths)
                     self.load_highlight_queries(
                         lang_name,
                         config,
-                        runtimepath,
+                        search_paths,
                         &language,
                         client,
                     )
                         .await;
 
-                    // Load locals queries (explicit or via runtimepath)
+                    // Load locals queries (explicit or via searchPaths)
                     self.load_locals_queries_auto(
                         lang_name,
                         config,
-                        runtimepath,
+                        search_paths,
                         &language,
                         client,
                     )
@@ -198,7 +198,7 @@ impl LanguageService {
                 client
                     .log_message(
                         MessageType::ERROR,
-                        format!("No library path found for language {lang_name}: neither explicit library path nor valid runtimepath entry"),
+                        format!("No library path found for language {lang_name}: neither explicit library path nor any valid entry in 'searchPaths'"),
                     )
                     .await;
             }
@@ -209,7 +209,7 @@ impl LanguageService {
         &self,
         lang_name: &str,
         config: &LanguageConfig,
-        runtimepath: &Option<Vec<String>>,
+        search_paths: &Option<Vec<String>>,
         language: &Language,
         client: &Client,
     ) {
@@ -247,51 +247,54 @@ impl LanguageService {
             return;
         }
 
-        // Otherwise, try to load from runtimepath: <base>/queries/<lang_name>/highlights.scm
-        if let Some(runtime_bases) = runtimepath {
-            if let Some(path) = self.find_query_file(runtime_bases, lang_name, "highlights.scm") {
-                match fs::read_to_string(&path) {
-                    Ok(content) => match Query::new(language, &content) {
-                        Ok(query) => {
-                            self.queries
-                                .lock()
-                                .unwrap()
-                                .insert(lang_name.to_string(), query);
-                            client
-                                .log_message(
-                                    MessageType::INFO,
-                                    format!("Query loaded from {path:?} for {lang_name}."),
-                                )
-                                .await;
-                            return;
-                        }
-                        Err(err) => {
-                            client
-                                .log_message(
-                                    MessageType::ERROR,
-                                    format!("Failed to parse highlight query for {lang_name} from {path:?}: {err}"),
-                                )
-                                .await;
-                        }
-                    },
+        // Otherwise, try to load from searchPaths: <base>/queries/<lang_name>/highlights.scm
+        let mut loaded_from_search = false;
+        if let Some(runtime_bases) = search_paths
+            && let Some(path) = self.find_query_file(runtime_bases, lang_name, "highlights.scm")
+        {
+            match fs::read_to_string(&path) {
+                Ok(content) => match Query::new(language, &content) {
+                    Ok(query) => {
+                        self.queries
+                            .lock()
+                            .unwrap()
+                            .insert(lang_name.to_string(), query);
+                        client
+                            .log_message(
+                                MessageType::INFO,
+                                format!("Query loaded from {path:?} for {lang_name}."),
+                            )
+                            .await;
+                        loaded_from_search = true;
+                    }
                     Err(err) => {
                         client
                             .log_message(
                                 MessageType::ERROR,
-                                format!("Failed to read highlight query {path:?}: {err}"),
+                                format!("Failed to parse highlight query for {lang_name} from {path:?}: {err}"),
                             )
                             .await;
                     }
+                },
+                Err(err) => {
+                    client
+                        .log_message(
+                            MessageType::ERROR,
+                            format!("Failed to read highlight query {path:?}: {err}"),
+                        )
+                        .await;
                 }
             }
         }
 
-        client
-            .log_message(
-                MessageType::ERROR,
-                format!("No highlight queries provided for {lang_name}: neither per-language 'highlight' nor 'runtimepath' yielded a file"),
-            )
-            .await;
+        if !loaded_from_search {
+            client
+                .log_message(
+                    MessageType::ERROR,
+                    format!("No highlight queries provided for {lang_name}: neither per-language 'highlight' nor any file under 'searchPaths' yielded a file"),
+                )
+                .await;
+        }
     }
 
     async fn load_locals_queries(
@@ -339,7 +342,7 @@ impl LanguageService {
         &self,
         lang_name: &str,
         config: &LanguageConfig,
-        runtimepath: &Option<Vec<String>>,
+        search_paths: &Option<Vec<String>>,
         language: &Language,
         client: &Client,
     ) {
@@ -349,40 +352,39 @@ impl LanguageService {
             return;
         }
 
-        if let Some(runtime_bases) = runtimepath {
-            if let Some(path) = self.find_query_file(runtime_bases, lang_name, "locals.scm") {
-                match fs::read_to_string(&path) {
-                    Ok(content) => match Query::new(language, &content) {
-                        Ok(query) => {
-                            self.locals_queries
-                                .lock()
-                                .unwrap()
-                                .insert(lang_name.to_string(), query);
-                            client
-                                .log_message(
-                                    MessageType::INFO,
-                                    format!("Locals query loaded from {path:?} for {lang_name}."),
-                                )
-                                .await;
-                            return;
-                        }
-                        Err(err) => {
-                            client
-                                .log_message(
-                                    MessageType::ERROR,
-                                    format!("Failed to parse locals query for {lang_name} from {path:?}: {err}"),
-                                )
-                                .await;
-                        }
-                    },
+        if let Some(runtime_bases) = search_paths
+            && let Some(path) = self.find_query_file(runtime_bases, lang_name, "locals.scm")
+        {
+            match fs::read_to_string(&path) {
+                Ok(content) => match Query::new(language, &content) {
+                    Ok(query) => {
+                        self.locals_queries
+                            .lock()
+                            .unwrap()
+                            .insert(lang_name.to_string(), query);
+                        client
+                            .log_message(
+                                MessageType::INFO,
+                                format!("Locals query loaded from {path:?} for {lang_name}."),
+                            )
+                            .await;
+                    }
                     Err(err) => {
                         client
                             .log_message(
                                 MessageType::ERROR,
-                                format!("Failed to read locals query {path:?}: {err}"),
+                                format!("Failed to parse locals query for {lang_name} from {path:?}: {err}"),
                             )
                             .await;
                     }
+                },
+                Err(err) => {
+                    client
+                        .log_message(
+                            MessageType::ERROR,
+                            format!("Failed to read locals query {path:?}: {err}"),
+                        )
+                        .await;
                 }
             }
         }

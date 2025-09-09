@@ -25,10 +25,10 @@ The server reads configuration from LSP `initializationOptions`. Shape:
 
 ```json
 {
-  "runtimepath": ["/path/to/runtime"],
+  "searchPaths": ["/path/to/resources"],
   "languages": {
     "rust": {
-      "library": "/abs/path/to/rust.so",          // optional (overrides runtimepath)
+      "library": "/abs/path/to/rust.so",          // optional (overrides searchPaths)
       "filetypes": ["rs"],                         // required; file extensions without dot
       "highlight": [                               // optional; list of query sources
         { "path": "/abs/path/to/highlights.scm" },
@@ -43,9 +43,9 @@ The server reads configuration from LSP `initializationOptions`. Shape:
 ```
 
 Notes:
-- If `library` is omitted, the server searches each `runtimepath` directory for `parser/<language>.so` (Linux) or `parser/<language>.dylib` (macOS). The `<language>` key is the map key (e.g. `rust`).
-- If `highlight` is empty/omitted, the server searches each `runtimepath` base for `queries/<language>/highlights.scm` and uses the first found.
-- If `locals` is omitted, the server searches each `runtimepath` base for `queries/<language>/locals.scm` and uses it if found.
+- If `library` is omitted, the server searches each `searchPaths` directory for `parser/<language>.so` (Linux) or `parser/<language>.dylib` (macOS). The `<language>` key is the map key (e.g. `rust`).
+- If `highlight` is empty/omitted, the server searches each `searchPaths` base for `queries/<language>/highlights.scm` and uses the first found.
+- If `locals` is omitted, the server searches each `searchPaths` base for `queries/<language>/locals.scm` and uses it if found.
 - “Go to definition” relies on locals queries that emit captures like `local.definition.*` and `local.reference.*` (see `queries/*/locals.scm` in this repo for examples).
 - Semantic tokens use capture names mapped to LSP token types (e.g. `@function`, `@type`, `@variable`, etc.).
 
@@ -57,18 +57,18 @@ Below is a minimal configuration using `vim.lsp.start` or `nvim-lspconfig`. Adju
 vim.lsp.config.treesitter_ls = {
   cmd = { "/abs/path/to/treesitter-ls/target/release/treesitter-ls" },
   settings = {
-    runtimepath = {
+    searchPaths = {
       -- Search here for parser/<language>.so or parser/<language>.dylib
       -- and queries/<language>/highlights.scm and locals.scm
-      "/abs/path/to/runtime",
-      "/abs/path/to/another/runtime",
+      "/abs/path/to/resources",
+      "/abs/path/to/another/resources",
     },
     languages = {
       rust = {
-        -- Optional explicit parser path (overrides runtimepath search)
+        -- Optional explicit parser path (overrides searchPaths search)
         -- library = "/abs/path/to/rust.so",
         filetypes = { "rs" },
-        -- highlight/locals omitted: resolved via runtimepath
+        -- highlight/locals omitted: resolved via searchPaths
       },
     },
   },
@@ -109,7 +109,7 @@ git clone https://github.com/tree-sitter/tree-sitter-rust.git
   - Highlights: `queries/rust/highlights.scm`, `queries/lua/highlights.scm`
   - Locals (for definitions/references): `queries/rust/locals.scm`, `queries/lua/locals.scm`
 - You can combine multiple sources using `{ path = ... }` and `{ query = ... }` entries; the server concatenates them.
- - Alternatively, set `runtimepath` and place files at `<base>/queries/<language>/highlights.scm` and `<base>/queries/<language>/locals.scm` so they're discovered automatically.
+- Alternatively, set `searchPaths` and place files at `<base>/queries/<language>/highlights.scm` and `<base>/queries/<language>/locals.scm` so they're discovered automatically.
 
 ## Supported LSP Capabilities
 
