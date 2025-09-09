@@ -25,7 +25,6 @@ pub struct LanguageConfig {
 #[derive(Debug, Deserialize, serde::Serialize)]
 pub struct TreeSitterSettings {
     pub runtimepath: Option<Vec<String>>,
-    pub querypath: Option<Vec<String>>,
     pub languages: std::collections::HashMap<String, LanguageConfig>,
 }
 

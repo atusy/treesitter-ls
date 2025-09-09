@@ -64,17 +64,17 @@ impl LanguageService {
             return Some(library.clone());
         }
 
-        // Otherwise, search in runtimepath
+        // Otherwise, search in runtimepath/parser/
         if let Some(paths) = runtimepath {
             for path in paths {
                 // Try .so extension first (Linux)
-                let so_path = format!("{path}/{language}.so");
+                let so_path = format!("{path}/parser/{language}.so");
                 if std::path::Path::new(&so_path).exists() {
                     return Some(so_path);
                 }
 
                 // Try .dylib extension (macOS)
-                let dylib_path = format!("{path}/{language}.dylib");
+                let dylib_path = format!("{path}/parser/{language}.dylib");
                 if std::path::Path::new(&dylib_path).exists() {
                     return Some(dylib_path);
                 }
@@ -124,7 +124,6 @@ impl LanguageService {
                 lang_name,
                 config,
                 &settings.runtimepath,
-                &settings.querypath,
                 client,
             )
                 .await;
@@ -149,7 +148,6 @@ impl LanguageService {
         lang_name: &str,
         config: &LanguageConfig,
         runtimepath: &Option<Vec<String>>,
-        querypath: &Option<Vec<String>>,
         client: &Client,
     ) {
         let library_path = self.resolve_library_path(config, lang_name, runtimepath);
@@ -157,21 +155,21 @@ impl LanguageService {
         match library_path {
             Some(lib_path) => match self.load_language(&lib_path, lang_name) {
                 Ok(language) => {
-                    // Load highlight queries (explicit or via querypath)
+                    // Load highlight queries (explicit or via runtimepath)
                     self.load_highlight_queries(
                         lang_name,
                         config,
-                        querypath,
+                        runtimepath,
                         &language,
                         client,
                     )
                         .await;
 
-                    // Load locals queries (explicit or via querypath)
+                    // Load locals queries (explicit or via runtimepath)
                     self.load_locals_queries_auto(
                         lang_name,
                         config,
-                        querypath,
+                        runtimepath,
                         &language,
                         client,
                     )
@@ -211,7 +209,7 @@ impl LanguageService {
         &self,
         lang_name: &str,
         config: &LanguageConfig,
-        querypath: &Option<Vec<String>>,
+        runtimepath: &Option<Vec<String>>,
         language: &Language,
         client: &Client,
     ) {
@@ -249,9 +247,9 @@ impl LanguageService {
             return;
         }
 
-        // Otherwise, try to load from querypath: <base>/<lang_name>/highlights.scm
-        if let Some(query_bases) = querypath {
-            if let Some(path) = self.find_query_file(query_bases, lang_name, "highlights.scm") {
+        // Otherwise, try to load from runtimepath: <base>/queries/<lang_name>/highlights.scm
+        if let Some(runtime_bases) = runtimepath {
+            if let Some(path) = self.find_query_file(runtime_bases, lang_name, "highlights.scm") {
                 match fs::read_to_string(&path) {
                     Ok(content) => match Query::new(language, &content) {
                         Ok(query) => {
@@ -291,7 +289,7 @@ impl LanguageService {
         client
             .log_message(
                 MessageType::ERROR,
-                format!("No highlight queries provided for {lang_name}: neither per-language 'highlight' nor 'querypath' yielded a file"),
+                format!("No highlight queries provided for {lang_name}: neither per-language 'highlight' nor 'runtimepath' yielded a file"),
             )
             .await;
     }
@@ -341,7 +339,7 @@ impl LanguageService {
         &self,
         lang_name: &str,
         config: &LanguageConfig,
-        querypath: &Option<Vec<String>>,
+        runtimepath: &Option<Vec<String>>,
         language: &Language,
         client: &Client,
     ) {
@@ -351,8 +349,8 @@ impl LanguageService {
             return;
         }
 
-        if let Some(query_bases) = querypath {
-            if let Some(path) = self.find_query_file(query_bases, lang_name, "locals.scm") {
+        if let Some(runtime_bases) = runtimepath {
+            if let Some(path) = self.find_query_file(runtime_bases, lang_name, "locals.scm") {
                 match fs::read_to_string(&path) {
                     Ok(content) => match Query::new(language, &content) {
                         Ok(query) => {
@@ -393,12 +391,12 @@ impl LanguageService {
 
     fn find_query_file(
         &self,
-        query_bases: &[String],
+        runtime_bases: &[String],
         lang_name: &str,
         file_name: &str,
     ) -> Option<PathBuf> {
-        for base in query_bases {
-            let candidate = Path::new(base).join(lang_name).join(file_name);
+        for base in runtime_bases {
+            let candidate = Path::new(base).join("queries").join(lang_name).join(file_name);
             if candidate.exists() {
                 return Some(candidate);
             }

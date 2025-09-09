@@ -25,8 +25,7 @@ The server reads configuration from LSP `initializationOptions`. Shape:
 
 ```json
 {
-  "runtimepath": ["/path/to/parsers"],
-  "querypath": ["/path/to/queries", "/another/base"],
+  "runtimepath": ["/path/to/runtime"],
   "languages": {
     "rust": {
       "library": "/abs/path/to/rust.so",          // optional (overrides runtimepath)
@@ -44,9 +43,9 @@ The server reads configuration from LSP `initializationOptions`. Shape:
 ```
 
 Notes:
-- If `library` is omitted, the server searches each `runtimepath` directory for `<language>.so` (Linux) or `<language>.dylib` (macOS). The `<language>` key is the map key (e.g. `rust`).
-- If `highlight` is empty/omitted, the server searches each `querypath` base for `<base>/<language>/highlights.scm` and uses the first found.
-- If `locals` is omitted, the server searches each `querypath` base for `<base>/<language>/locals.scm` and uses it if found.
+- If `library` is omitted, the server searches each `runtimepath` directory for `parser/<language>.so` (Linux) or `parser/<language>.dylib` (macOS). The `<language>` key is the map key (e.g. `rust`).
+- If `highlight` is empty/omitted, the server searches each `runtimepath` base for `queries/<language>/highlights.scm` and uses the first found.
+- If `locals` is omitted, the server searches each `runtimepath` base for `queries/<language>/locals.scm` and uses it if found.
 - “Go to definition” relies on locals queries that emit captures like `local.definition.*` and `local.reference.*` (see `queries/*/locals.scm` in this repo for examples).
 - Semantic tokens use capture names mapped to LSP token types (e.g. `@function`, `@type`, `@variable`, etc.).
 
@@ -59,21 +58,17 @@ vim.lsp.config.treesitter_ls = {
   cmd = { "/abs/path/to/treesitter-ls/target/release/treesitter-ls" },
   settings = {
     runtimepath = {
-      -- Search here for <language>.so or <language>.dylib
-      "/abs/path/to/tree-sitter-parsers",
-    },
-    -- Global query search paths. The server will look for
-    -- <base>/<language>/highlights.scm and locals.scm
-    querypath = {
-      "/abs/path/to/queries",
-      "/abs/path/to/another/queries",
+      -- Search here for parser/<language>.so or parser/<language>.dylib
+      -- and queries/<language>/highlights.scm and locals.scm
+      "/abs/path/to/runtime",
+      "/abs/path/to/another/runtime",
     },
     languages = {
       rust = {
         -- Optional explicit parser path (overrides runtimepath search)
         -- library = "/abs/path/to/rust.so",
         filetypes = { "rs" },
-        -- highlight/locals omitted: resolved via querypath
+        -- highlight/locals omitted: resolved via runtimepath
       },
     },
   },
@@ -114,7 +109,7 @@ git clone https://github.com/tree-sitter/tree-sitter-rust.git
   - Highlights: `queries/rust/highlights.scm`, `queries/lua/highlights.scm`
   - Locals (for definitions/references): `queries/rust/locals.scm`, `queries/lua/locals.scm`
 - You can combine multiple sources using `{ path = ... }` and `{ query = ... }` entries; the server concatenates them.
- - Alternatively, set `querypath` and place files at `<base>/<language>/highlights.scm` and `<base>/<language>/locals.scm` so they’re discovered automatically.
+ - Alternatively, set `runtimepath` and place files at `<base>/queries/<language>/highlights.scm` and `<base>/queries/<language>/locals.scm` so they're discovered automatically.
 
 ## Supported LSP Capabilities
 
