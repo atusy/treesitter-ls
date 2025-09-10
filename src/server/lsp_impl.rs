@@ -1,9 +1,11 @@
+use std::path::PathBuf;
+use std::sync::Mutex;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 use tree_sitter::Parser;
 
-use crate::config::TreeSitterSettings;
+use crate::config::{TreeSitterSettings, merge_settings};
 use crate::handlers::{DefinitionResolver, LEGEND_TYPES, LEGEND_MODIFIERS};
 use crate::handlers::{
     handle_goto_definition, handle_selection_range, handle_semantic_tokens_full,
@@ -16,6 +18,7 @@ pub struct TreeSitterLs {
     client: Client,
     language_service: LanguageService,
     document_store: DocumentStore,
+    root_path: Mutex<Option<PathBuf>>,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -33,6 +36,7 @@ impl TreeSitterLs {
             client,
             language_service: LanguageService::new(),
             document_store: DocumentStore::new(),
+            root_path: Mutex::new(None),
         }
     }
 
@@ -79,18 +83,74 @@ impl LanguageServer for TreeSitterLs {
             .log_message(MessageType::INFO, "Received initialization request")
             .await;
 
-        // Parse configuration from initialization_options
-        if let Some(options) = params.initialization_options {
-            if let Ok(settings) = serde_json::from_value::<TreeSitterSettings>(options) {
+        // Get root path from workspace folders or root_uri
+        let root_path = if let Some(folders) = &params.workspace_folders {
+            folders.first().and_then(|folder| {
+                folder.uri.to_file_path().ok()
+            })
+        } else if let Some(root_uri) = &params.root_uri {
+            root_uri.to_file_path().ok()
+        } else {
+            None
+        };
+        
+        // Store root path for later use
+        if let Some(ref path) = root_path {
+            *self.root_path.lock().unwrap() = Some(path.clone());
+        }
+
+        // Try to load configuration from treesitter-ls.toml file
+        let mut toml_settings = None;
+        if let Some(root) = &root_path {
+            let config_path = root.join("treesitter-ls.toml");
+            if config_path.exists() {
                 self.client
-                    .log_message(MessageType::INFO, "Parsed as TreeSitterSettings")
+                    .log_message(MessageType::INFO, format!("Found config file: {}", config_path.display()))
                     .await;
-                self.load_settings(settings).await;
-            } else {
-                self.client
-                    .log_message(MessageType::ERROR, "Failed to parse initialization options")
-                    .await;
+                
+                if let Ok(toml_contents) = std::fs::read_to_string(&config_path) {
+                    match toml::from_str::<TreeSitterSettings>(&toml_contents) {
+                        Ok(settings) => {
+                            self.client
+                                .log_message(MessageType::INFO, "Successfully loaded treesitter-ls.toml")
+                                .await;
+                            toml_settings = Some(settings);
+                        },
+                        Err(e) => {
+                            self.client
+                                .log_message(MessageType::WARNING, format!("Failed to parse treesitter-ls.toml: {}", e))
+                                .await;
+                        }
+                    }
+                }
             }
+        }
+
+        // Parse configuration from initialization_options
+        let init_settings = if let Some(options) = params.initialization_options {
+            match serde_json::from_value::<TreeSitterSettings>(options) {
+                Ok(settings) => {
+                    self.client
+                        .log_message(MessageType::INFO, "Parsed initialization options as TreeSitterSettings")
+                        .await;
+                    Some(settings)
+                },
+                Err(_) => {
+                    self.client
+                        .log_message(MessageType::WARNING, "Failed to parse initialization options")
+                        .await;
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Merge settings (prefer init_settings over toml_settings)
+        let final_settings = merge_settings(toml_settings, init_settings);
+        
+        if let Some(settings) = final_settings {
+            self.load_settings(settings).await;
         }
 
         self.client
@@ -156,7 +216,37 @@ impl LanguageServer for TreeSitterLs {
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
-        if let Ok(settings) = serde_json::from_value::<TreeSitterSettings>(params.settings) {
+        // Try to load configuration from treesitter-ls.toml file
+        let mut toml_settings = None;
+        let root_path = self.root_path.lock().unwrap().clone();
+        if let Some(root) = root_path {
+            let config_path = root.join("treesitter-ls.toml");
+            if config_path.exists() {
+                if let Ok(toml_contents) = std::fs::read_to_string(&config_path) {
+                    match toml::from_str::<TreeSitterSettings>(&toml_contents) {
+                        Ok(settings) => {
+                            self.client
+                                .log_message(MessageType::INFO, "Reloaded treesitter-ls.toml")
+                                .await;
+                            toml_settings = Some(settings);
+                        },
+                        Err(e) => {
+                            self.client
+                                .log_message(MessageType::WARNING, format!("Failed to parse treesitter-ls.toml: {}", e))
+                                .await;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Parse configuration from settings
+        let config_settings = serde_json::from_value::<TreeSitterSettings>(params.settings).ok();
+        
+        // Merge settings (prefer config_settings over toml_settings)
+        let final_settings = merge_settings(toml_settings, config_settings);
+        
+        if let Some(settings) = final_settings {
             self.load_settings(settings).await;
             self.client
                 .log_message(MessageType::INFO, "Configuration updated!")

@@ -39,7 +39,7 @@ pub struct LanguageConfig {
     pub locals: Option<Vec<HighlightItem>>,
 }
 
-#[derive(Debug, Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct TreeSitterSettings {
     // Editor-agnostic name exposed to JSON as `searchPaths`.
     #[serde(rename = "searchPaths")]
