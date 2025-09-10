@@ -210,7 +210,10 @@ mod tests {
         let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
 
         assert!(settings.search_paths.is_some());
-        assert_eq!(settings.search_paths.unwrap(), vec!["/usr/local/lib/tree-sitter"]);
+        assert_eq!(
+            settings.search_paths.unwrap(),
+            vec!["/usr/local/lib/tree-sitter"]
+        );
 
         // rust has explicit library path
         assert_eq!(
@@ -331,20 +334,32 @@ mod tests {
         }"#;
 
         let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
-        
+
         // Check capture mappings are parsed correctly
         assert!(settings.capture_mappings.contains_key("_"));
         assert!(settings.capture_mappings.contains_key("rust"));
-        
+
         let wildcard_mappings = &settings.capture_mappings["_"].highlights;
-        assert_eq!(wildcard_mappings.get("variable.builtin"), Some(&"variable.defaultLibrary".to_string()));
-        assert_eq!(wildcard_mappings.get("function.builtin"), Some(&"function.defaultLibrary".to_string()));
-        
+        assert_eq!(
+            wildcard_mappings.get("variable.builtin"),
+            Some(&"variable.defaultLibrary".to_string())
+        );
+        assert_eq!(
+            wildcard_mappings.get("function.builtin"),
+            Some(&"function.defaultLibrary".to_string())
+        );
+
         let rust_mappings = &settings.capture_mappings["rust"].highlights;
-        assert_eq!(rust_mappings.get("type.builtin"), Some(&"type.defaultLibrary".to_string()));
-        
+        assert_eq!(
+            rust_mappings.get("type.builtin"),
+            Some(&"type.defaultLibrary".to_string())
+        );
+
         let rust_locals = &settings.capture_mappings["rust"].locals;
-        assert_eq!(rust_locals.get("definition.var"), Some(&"definition.variable".to_string()));
+        assert_eq!(
+            rust_locals.get("definition.var"),
+            Some(&"definition.variable".to_string())
+        );
     }
 
     #[test]

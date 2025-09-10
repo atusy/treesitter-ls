@@ -1,5 +1,7 @@
 use crate::analysis::ParserLoader;
-use crate::config::{CaptureMappings, HighlightItem, HighlightSource, LanguageConfig, TreeSitterSettings};
+use crate::config::{
+    CaptureMappings, HighlightItem, HighlightSource, LanguageConfig, TreeSitterSettings,
+};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -119,18 +121,13 @@ impl LanguageService {
 
         // Build filetype map
         self.build_filetype_map(&settings);
-        
+
         // Store capture mappings
         *self.capture_mappings.lock().unwrap() = settings.capture_mappings.clone();
 
         // Load languages and queries
         for (lang_name, config) in &settings.languages {
-            self.load_single_language(
-                lang_name,
-                config,
-                &settings.search_paths,
-                client,
-            )
+            self.load_single_language(lang_name, config, &settings.search_paths, client)
                 .await;
         }
     }
@@ -161,13 +158,7 @@ impl LanguageService {
             Some(lib_path) => match self.load_language(&lib_path, lang_name) {
                 Ok(language) => {
                     // Load highlight queries (explicit or via searchPaths)
-                    self.load_highlight_queries(
-                        lang_name,
-                        config,
-                        search_paths,
-                        &language,
-                        client,
-                    )
+                    self.load_highlight_queries(lang_name, config, search_paths, &language, client)
                         .await;
 
                     // Load locals queries (explicit or via searchPaths)
@@ -228,7 +219,10 @@ impl LanguageService {
                             .unwrap()
                             .insert(lang_name.to_string(), query);
                         client
-                            .log_message(MessageType::INFO, format!("Query loaded for {lang_name}."))
+                            .log_message(
+                                MessageType::INFO,
+                                format!("Query loaded for {lang_name}."),
+                            )
                             .await;
                     }
                     Err(err) => {
@@ -403,7 +397,10 @@ impl LanguageService {
         file_name: &str,
     ) -> Option<PathBuf> {
         for base in runtime_bases {
-            let candidate = Path::new(base).join("queries").join(lang_name).join(file_name);
+            let candidate = Path::new(base)
+                .join("queries")
+                .join(lang_name)
+                .join(file_name);
             if candidate.exists() {
                 return Some(candidate);
             }

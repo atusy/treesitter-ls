@@ -6,10 +6,10 @@ use tower_lsp::{Client, LanguageServer};
 use tree_sitter::{Parser, Query};
 
 use crate::config::{TreeSitterSettings, merge_settings};
-use crate::handlers::{DefinitionResolver, LEGEND_TYPES, LEGEND_MODIFIERS};
+use crate::handlers::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
 use crate::handlers::{
-    handle_goto_definition, handle_selection_range, handle_semantic_tokens_full,
-    handle_semantic_tokens_full_delta, handle_semantic_tokens_range, handle_code_actions,
+    handle_code_actions, handle_goto_definition, handle_selection_range,
+    handle_semantic_tokens_full, handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
 use crate::state::{DocumentStore, LanguageService};
 use crate::utils::position_to_byte_offset;
@@ -85,15 +85,15 @@ impl LanguageServer for TreeSitterLs {
 
         // Get root path from workspace folders or root_uri
         let root_path = if let Some(folders) = &params.workspace_folders {
-            folders.first().and_then(|folder| {
-                folder.uri.to_file_path().ok()
-            })
+            folders
+                .first()
+                .and_then(|folder| folder.uri.to_file_path().ok())
         } else if let Some(root_uri) = &params.root_uri {
             root_uri.to_file_path().ok()
         } else {
             None
         };
-        
+
         // Store root path for later use
         if let Some(ref path) = root_path {
             *self.root_path.lock().unwrap() = Some(path.clone());
@@ -105,20 +105,29 @@ impl LanguageServer for TreeSitterLs {
             let config_path = root.join("treesitter-ls.toml");
             if config_path.exists() {
                 self.client
-                    .log_message(MessageType::INFO, format!("Found config file: {}", config_path.display()))
+                    .log_message(
+                        MessageType::INFO,
+                        format!("Found config file: {}", config_path.display()),
+                    )
                     .await;
-                
+
                 if let Ok(toml_contents) = std::fs::read_to_string(&config_path) {
                     match toml::from_str::<TreeSitterSettings>(&toml_contents) {
                         Ok(settings) => {
                             self.client
-                                .log_message(MessageType::INFO, "Successfully loaded treesitter-ls.toml")
+                                .log_message(
+                                    MessageType::INFO,
+                                    "Successfully loaded treesitter-ls.toml",
+                                )
                                 .await;
                             toml_settings = Some(settings);
-                        },
+                        }
                         Err(e) => {
                             self.client
-                                .log_message(MessageType::WARNING, format!("Failed to parse treesitter-ls.toml: {}", e))
+                                .log_message(
+                                    MessageType::WARNING,
+                                    format!("Failed to parse treesitter-ls.toml: {}", e),
+                                )
                                 .await;
                         }
                     }
@@ -131,13 +140,19 @@ impl LanguageServer for TreeSitterLs {
             match serde_json::from_value::<TreeSitterSettings>(options) {
                 Ok(settings) => {
                     self.client
-                        .log_message(MessageType::INFO, "Parsed initialization options as TreeSitterSettings")
+                        .log_message(
+                            MessageType::INFO,
+                            "Parsed initialization options as TreeSitterSettings",
+                        )
                         .await;
                     Some(settings)
-                },
+                }
                 Err(_) => {
                     self.client
-                        .log_message(MessageType::WARNING, "Failed to parse initialization options")
+                        .log_message(
+                            MessageType::WARNING,
+                            "Failed to parse initialization options",
+                        )
                         .await;
                     None
                 }
@@ -148,7 +163,7 @@ impl LanguageServer for TreeSitterLs {
 
         // Merge settings (prefer init_settings over toml_settings)
         let final_settings = merge_settings(toml_settings, init_settings);
-        
+
         if let Some(settings) = final_settings {
             self.load_settings(settings).await;
         }
@@ -229,23 +244,26 @@ impl LanguageServer for TreeSitterLs {
                                 .log_message(MessageType::INFO, "Reloaded treesitter-ls.toml")
                                 .await;
                             toml_settings = Some(settings);
-                        },
+                        }
                         Err(e) => {
                             self.client
-                                .log_message(MessageType::WARNING, format!("Failed to parse treesitter-ls.toml: {}", e))
+                                .log_message(
+                                    MessageType::WARNING,
+                                    format!("Failed to parse treesitter-ls.toml: {}", e),
+                                )
                                 .await;
                         }
                     }
                 }
             }
         }
-        
+
         // Parse configuration from settings
         let config_settings = serde_json::from_value::<TreeSitterSettings>(params.settings).ok();
-        
+
         // Merge settings (prefer config_settings over toml_settings)
         let final_settings = merge_settings(toml_settings, config_settings);
-        
+
         if let Some(settings) = final_settings {
             self.load_settings(settings).await;
             self.client
@@ -292,10 +310,17 @@ impl LanguageServer for TreeSitterLs {
 
             // Get capture mappings
             let capture_mappings = self.language_service.capture_mappings.lock().unwrap();
-            
+
             // Delegate to handler - this already returns Some(SemanticTokensResult) or None
             // We need to ensure it always returns Some
-            handle_semantic_tokens_full(text, tree, query, Some(&language_name), Some(&*capture_mappings)).or_else(|| {
+            handle_semantic_tokens_full(
+                text,
+                tree,
+                query,
+                Some(&language_name),
+                Some(&*capture_mappings),
+            )
+            .or_else(|| {
                 Some(SemanticTokensResult::Tokens(SemanticTokens {
                     result_id: None,
                     data: vec![],
@@ -374,7 +399,7 @@ impl LanguageServer for TreeSitterLs {
 
             // Get previous tokens from document
             let previous_tokens = doc.last_semantic_tokens.as_ref();
-            
+
             // Get capture mappings
             let capture_mappings = self.language_service.capture_mappings.lock().unwrap();
 
@@ -451,8 +476,15 @@ impl LanguageServer for TreeSitterLs {
         // Delegate to handler
         // Get capture mappings
         let capture_mappings = self.language_service.capture_mappings.lock().unwrap();
-        
-        let result = handle_semantic_tokens_range(text, tree, query, &range, Some(&language_name), Some(&*capture_mappings));
+
+        let result = handle_semantic_tokens_range(
+            text,
+            tree,
+            query,
+            &range,
+            Some(&language_name),
+            Some(&*capture_mappings),
+        );
 
         // Convert to RangeResult
         match result {
@@ -544,16 +576,19 @@ impl LanguageServer for TreeSitterLs {
 
         // Get language for the document
         let language_name = self.get_language_for_document(&uri);
-        
+
         // Get queries and delegate to handler
         if let Some(lang) = language_name {
             let queries_lock = self.language_service.queries.lock().unwrap();
             let locals_queries_lock = self.language_service.locals_queries.lock().unwrap();
-            
-            let queries = queries_lock
-                .get(&lang)
-                .map(|hq| (hq as &Query, locals_queries_lock.get(&lang).map(|lq| lq as &Query)));
-            
+
+            let queries = queries_lock.get(&lang).map(|hq| {
+                (
+                    hq as &Query,
+                    locals_queries_lock.get(&lang).map(|lq| lq as &Query),
+                )
+            });
+
             let actions = handle_code_actions(&uri, text, tree, range, queries);
             Ok(actions)
         } else {

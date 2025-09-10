@@ -1,4 +1,6 @@
-use tower_lsp::lsp_types::{CodeAction, CodeActionKind, CodeActionOrCommand, Range, TextEdit, Url, WorkspaceEdit};
+use tower_lsp::lsp_types::{
+    CodeAction, CodeActionKind, CodeActionOrCommand, Range, TextEdit, Url, WorkspaceEdit,
+};
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 
 use crate::utils::byte_range_to_range;
@@ -10,7 +12,7 @@ fn create_inspect_token_action(
     queries: Option<(&Query, Option<&Query>)>,
 ) -> CodeActionOrCommand {
     let mut info = format!("Node Type: {}\n", node.kind());
-    
+
     // Add node text if it's not too long
     let node_text = &text[node.byte_range()];
     if node_text.len() <= 100 {
@@ -18,7 +20,7 @@ fn create_inspect_token_action(
     } else {
         info.push_str(&format!("Text: {}...\n", &node_text[..97]));
     }
-    
+
     // Add position info
     info.push_str(&format!(
         "Position: {}:{} - {}:{}\n",
@@ -27,11 +29,11 @@ fn create_inspect_token_action(
         node.end_position().row + 1,
         node.end_position().column + 1
     ));
-    
+
     // If we have queries, show captures
     if let Some((highlights_query, locals_query)) = queries {
         let mut captures = Vec::new();
-        
+
         // Check highlights query
         let mut cursor = QueryCursor::new();
         let mut matches = cursor.matches(highlights_query, *node, text.as_bytes());
@@ -45,7 +47,7 @@ fn create_inspect_token_action(
                 }
             }
         }
-        
+
         // Check locals query if available
         if let Some(locals) = locals_query {
             let mut cursor = QueryCursor::new();
@@ -62,7 +64,7 @@ fn create_inspect_token_action(
                 }
             }
         }
-        
+
         if !captures.is_empty() {
             info.push_str("\nCaptures:\n");
             for capture in captures {
@@ -70,7 +72,7 @@ fn create_inspect_token_action(
             }
         }
     }
-    
+
     // Create a code action that shows this info (using title as display)
     let action = CodeAction {
         title: format!("Inspect token: {}", node.kind()),
@@ -79,12 +81,10 @@ fn create_inspect_token_action(
         edit: None,
         command: None,
         is_preferred: None,
-        disabled: Some(tower_lsp::lsp_types::CodeActionDisabled {
-            reason: info,
-        }),
+        disabled: Some(tower_lsp::lsp_types::CodeActionDisabled { reason: info }),
         data: None,
     };
-    
+
     CodeActionOrCommand::CodeAction(action)
 }
 
@@ -256,13 +256,20 @@ pub fn handle_code_actions(
             new_content.push_str(trailing_ws);
         }
 
-        let title = format!(
-            "Move parameter to {}",
-            ordinal(target_pos + 1)
-        );
+        let title = format!("Move parameter to {}", ordinal(target_pos + 1));
 
         let edit = WorkspaceEdit {
-            changes: Some(vec![(uri.clone(), vec![TextEdit { range: replace_range, new_text: new_content }])].into_iter().collect()),
+            changes: Some(
+                vec![(
+                    uri.clone(),
+                    vec![TextEdit {
+                        range: replace_range,
+                        new_text: new_content,
+                    }],
+                )]
+                .into_iter()
+                .collect(),
+            ),
             document_changes: None,
             change_annotations: None,
         };

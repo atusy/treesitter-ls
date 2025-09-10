@@ -31,7 +31,7 @@ fn apply_capture_mapping(
                 }
             }
         }
-        
+
         // Try wildcard mapping
         if let Some(wildcard_mappings) = mappings.get("_") {
             if let Some(mapped) = wildcard_mappings.highlights.get(capture_name) {
@@ -39,20 +39,20 @@ fn apply_capture_mapping(
             }
         }
     }
-    
+
     // Return original if no mapping found
     capture_name.to_string()
 }
 
 /// Map capture names from tree-sitter queries to LSP semantic token types and modifiers
-/// 
+///
 /// Capture names can be in the format "type.modifier1.modifier2" where:
 /// - The first part is the token type (e.g., "variable", "function")
 /// - Following parts are modifiers (e.g., "readonly", "defaultLibrary")
 fn map_capture_to_token_type_and_modifiers(capture_name: &str) -> (u32, u32) {
     // Split capture name by dots to separate type and modifiers
     let parts: Vec<&str> = capture_name.split('.').collect();
-    
+
     // First part is the token type
     let token_type = match parts.get(0).unwrap_or(&"variable") {
         &"comment" => SemanticTokenType::COMMENT,
@@ -85,7 +85,7 @@ fn map_capture_to_token_type_and_modifiers(capture_name: &str) -> (u32, u32) {
         .iter()
         .position(|t| *t == token_type)
         .unwrap_or(0) as u32;
-    
+
     // Process modifiers (if any)
     let mut modifiers_bitset = 0u32;
     for modifier_name in &parts[1..] {
@@ -102,12 +102,12 @@ fn map_capture_to_token_type_and_modifiers(capture_name: &str) -> (u32, u32) {
             "defaultLibrary" => SemanticTokenModifier::DEFAULT_LIBRARY,
             _ => continue, // Skip unknown modifiers
         };
-        
+
         if let Some(index) = LEGEND_MODIFIERS.iter().position(|m| *m == modifier) {
             modifiers_bitset |= 1 << index;
         }
     }
-    
+
     (token_type_index, modifiers_bitset)
 }
 
@@ -213,8 +213,10 @@ pub fn handle_semantic_tokens_full(
 
         // Map capture name to token type and modifiers
         let original_capture_name = &query.capture_names()[capture_index as usize];
-        let mapped_capture_name = apply_capture_mapping(original_capture_name, filetype, capture_mappings);
-        let (token_type, token_modifiers_bitset) = map_capture_to_token_type_and_modifiers(&mapped_capture_name);
+        let mapped_capture_name =
+            apply_capture_mapping(original_capture_name, filetype, capture_mappings);
+        let (token_type, token_modifiers_bitset) =
+            map_capture_to_token_type_and_modifiers(&mapped_capture_name);
 
         data.push(SemanticToken {
             delta_line: delta_line as u32,
@@ -315,8 +317,10 @@ pub fn handle_semantic_tokens_range(
 
         // Map capture name to token type and modifiers
         let original_capture_name = &query.capture_names()[capture_index as usize];
-        let mapped_capture_name = apply_capture_mapping(original_capture_name, filetype, capture_mappings);
-        let (token_type, token_modifiers_bitset) = map_capture_to_token_type_and_modifiers(&mapped_capture_name);
+        let mapped_capture_name =
+            apply_capture_mapping(original_capture_name, filetype, capture_mappings);
+        let (token_type, token_modifiers_bitset) =
+            map_capture_to_token_type_and_modifiers(&mapped_capture_name);
 
         data.push(SemanticToken {
             delta_line: delta_line as u32,
@@ -362,7 +366,8 @@ pub fn handle_semantic_tokens_full_delta(
     capture_mappings: Option<&CaptureMappings>,
 ) -> Option<SemanticTokensFullDeltaResult> {
     // Get current tokens
-    let current_result = handle_semantic_tokens_full(text, tree, query, filetype, capture_mappings)?;
+    let current_result =
+        handle_semantic_tokens_full(text, tree, query, filetype, capture_mappings)?;
     let current_tokens = match current_result {
         SemanticTokensResult::Tokens(tokens) => tokens,
         _ => return None,
@@ -449,18 +454,20 @@ mod tests {
         // Test with single modifier
         let (_, modifiers) = map_capture_to_token_type_and_modifiers("variable.readonly");
         assert_eq!(modifiers & (1 << 2), 1 << 2); // readonly is at index 2
-        
+
         let (_, modifiers) = map_capture_to_token_type_and_modifiers("function.async");
         assert_eq!(modifiers & (1 << 6), 1 << 6); // async is at index 6
-        
+
         // Test with multiple modifiers
-        let (token_type, modifiers) = map_capture_to_token_type_and_modifiers("variable.readonly.defaultLibrary");
+        let (token_type, modifiers) =
+            map_capture_to_token_type_and_modifiers("variable.readonly.defaultLibrary");
         assert_eq!(token_type, 17); // variable
         assert_eq!(modifiers & (1 << 2), 1 << 2); // readonly
         assert_eq!(modifiers & (1 << 9), 1 << 9); // defaultLibrary
-        
+
         // Test unknown modifiers are ignored
-        let (token_type, modifiers) = map_capture_to_token_type_and_modifiers("function.unknownModifier.async");
+        let (token_type, modifiers) =
+            map_capture_to_token_type_and_modifiers("function.unknownModifier.async");
         assert_eq!(token_type, 14); // function
         assert_eq!(modifiers & (1 << 6), 1 << 6); // async should still be set
     }
