@@ -1,4 +1,21 @@
 use serde::Deserialize;
+use std::collections::HashMap;
+
+pub type CaptureMapping = HashMap<String, String>;
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize, Default)]
+pub struct QueryTypeMappings {
+    #[serde(default)]
+    pub highlights: CaptureMapping,
+    #[serde(default)]
+    pub locals: CaptureMapping,
+    #[serde(default)]
+    pub injections: CaptureMapping,
+    #[serde(default)]
+    pub folds: CaptureMapping,
+}
+
+pub type CaptureMappings = HashMap<String, QueryTypeMappings>;
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct HighlightItem {
@@ -27,13 +44,14 @@ pub struct TreeSitterSettings {
     // Editor-agnostic name exposed to JSON as `searchPaths`.
     #[serde(rename = "searchPaths")]
     pub search_paths: Option<Vec<String>>,
-    pub languages: std::collections::HashMap<String, LanguageConfig>,
+    pub languages: HashMap<String, LanguageConfig>,
+    #[serde(rename = "captureMappings", default)]
+    pub capture_mappings: CaptureMappings,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     #[test]
     fn should_parse_valid_configuration() {
@@ -284,10 +302,57 @@ mod tests {
     }
 
     #[test]
+    fn should_parse_capture_mappings() {
+        let config_json = r#"{
+            "languages": {
+                "rust": {
+                    "filetypes": ["rs"],
+                    "highlight": [
+                        {"path": "/path/to/highlights.scm"}
+                    ]
+                }
+            },
+            "captureMappings": {
+                "_": {
+                    "highlights": {
+                        "variable.builtin": "variable.defaultLibrary",
+                        "function.builtin": "function.defaultLibrary"
+                    }
+                },
+                "rust": {
+                    "highlights": {
+                        "type.builtin": "type.defaultLibrary"
+                    },
+                    "locals": {
+                        "definition.var": "definition.variable"
+                    }
+                }
+            }
+        }"#;
+
+        let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
+        
+        // Check capture mappings are parsed correctly
+        assert!(settings.capture_mappings.contains_key("_"));
+        assert!(settings.capture_mappings.contains_key("rust"));
+        
+        let wildcard_mappings = &settings.capture_mappings["_"].highlights;
+        assert_eq!(wildcard_mappings.get("variable.builtin"), Some(&"variable.defaultLibrary".to_string()));
+        assert_eq!(wildcard_mappings.get("function.builtin"), Some(&"function.defaultLibrary".to_string()));
+        
+        let rust_mappings = &settings.capture_mappings["rust"].highlights;
+        assert_eq!(rust_mappings.get("type.builtin"), Some(&"type.defaultLibrary".to_string()));
+        
+        let rust_locals = &settings.capture_mappings["rust"].locals;
+        assert_eq!(rust_locals.get("definition.var"), Some(&"definition.variable".to_string()));
+    }
+
+    #[test]
     fn should_handle_complex_configurations_efficiently() {
         let mut config = TreeSitterSettings {
             search_paths: None,
             languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
         };
 
         // Add multiple language configurations

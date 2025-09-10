@@ -56,7 +56,7 @@ Below is a minimal configuration using `vim.lsp.start` or `nvim-lspconfig`. Adju
 ```lua
 vim.lsp.config.treesitter_ls = {
   cmd = { "/abs/path/to/treesitter-ls/target/release/treesitter-ls" },
-  settings = {
+  init_options = {
     searchPaths = {
       -- Search here for parser/<language>.so or parser/<language>.dylib
       -- and queries/<language>/highlights.scm and locals.scm
@@ -71,6 +71,11 @@ vim.lsp.config.treesitter_ls = {
         -- highlight/locals omitted: resolved via searchPaths
       },
     },
+    captureMappings = {
+      ["_"] = {
+        constant = "variable.readonly"
+      }
+    }
   },
 }
 

@@ -1,8 +1,48 @@
+use crate::config::CaptureMappings;
 use tower_lsp::lsp_types::{
     Range, SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens,
     SemanticTokensDelta, SemanticTokensEdit, SemanticTokensFullDeltaResult, SemanticTokensResult,
 };
 use tree_sitter::{Query, QueryCursor, StreamingIterator, Tree};
+
+/// Apply capture mappings to transform a capture name
+///
+/// Looks up the capture name in the provided mappings and returns the mapped value if found,
+/// or the original capture name if no mapping exists.
+///
+/// # Arguments
+/// * `capture_name` - The original capture name from the tree-sitter query
+/// * `filetype` - The filetype of the document being processed  
+/// * `capture_mappings` - The full capture mappings configuration
+///
+/// # Returns
+/// The mapped capture name or the original if no mapping exists
+fn apply_capture_mapping(
+    capture_name: &str,
+    filetype: Option<&str>,
+    capture_mappings: Option<&CaptureMappings>,
+) -> String {
+    if let Some(mappings) = capture_mappings {
+        // Try filetype-specific mapping first
+        if let Some(ft) = filetype {
+            if let Some(lang_mappings) = mappings.get(ft) {
+                if let Some(mapped) = lang_mappings.highlights.get(capture_name) {
+                    return mapped.clone();
+                }
+            }
+        }
+        
+        // Try wildcard mapping
+        if let Some(wildcard_mappings) = mappings.get("_") {
+            if let Some(mapped) = wildcard_mappings.highlights.get(capture_name) {
+                return mapped.clone();
+            }
+        }
+    }
+    
+    // Return original if no mapping found
+    capture_name.to_string()
+}
 
 /// Map capture names from tree-sitter queries to LSP semantic token types and modifiers
 /// 
@@ -120,6 +160,8 @@ pub const LEGEND_MODIFIERS: &[SemanticTokenModifier] = &[
 /// * `text` - The source text
 /// * `tree` - The parsed syntax tree
 /// * `query` - The tree-sitter query for semantic highlighting
+/// * `filetype` - The filetype of the document being processed
+/// * `capture_mappings` - The capture mappings to apply
 ///
 /// # Returns
 /// Semantic tokens for the entire document
@@ -127,6 +169,8 @@ pub fn handle_semantic_tokens_full(
     text: &str,
     tree: &Tree,
     query: &Query,
+    filetype: Option<&str>,
+    capture_mappings: Option<&CaptureMappings>,
 ) -> Option<SemanticTokensResult> {
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(query, tree.root_node(), text.as_bytes());
@@ -168,8 +212,9 @@ pub fn handle_semantic_tokens_full(
         };
 
         // Map capture name to token type and modifiers
-        let token_type_name = &query.capture_names()[capture_index as usize];
-        let (token_type, token_modifiers_bitset) = map_capture_to_token_type_and_modifiers(token_type_name);
+        let original_capture_name = &query.capture_names()[capture_index as usize];
+        let mapped_capture_name = apply_capture_mapping(original_capture_name, filetype, capture_mappings);
+        let (token_type, token_modifiers_bitset) = map_capture_to_token_type_and_modifiers(&mapped_capture_name);
 
         data.push(SemanticToken {
             delta_line: delta_line as u32,
@@ -199,6 +244,8 @@ pub fn handle_semantic_tokens_full(
 /// * `tree` - The parsed syntax tree
 /// * `query` - The tree-sitter query for semantic highlighting
 /// * `range` - The range to get tokens for (LSP positions)
+/// * `filetype` - The filetype of the document being processed
+/// * `capture_mappings` - The capture mappings to apply
 ///
 /// # Returns
 /// Semantic tokens for the specified range of the document
@@ -207,6 +254,8 @@ pub fn handle_semantic_tokens_range(
     tree: &Tree,
     query: &Query,
     range: &Range,
+    filetype: Option<&str>,
+    capture_mappings: Option<&CaptureMappings>,
 ) -> Option<SemanticTokensResult> {
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(query, tree.root_node(), text.as_bytes());
@@ -265,8 +314,9 @@ pub fn handle_semantic_tokens_range(
         };
 
         // Map capture name to token type and modifiers
-        let token_type_name = &query.capture_names()[capture_index as usize];
-        let (token_type, token_modifiers_bitset) = map_capture_to_token_type_and_modifiers(token_type_name);
+        let original_capture_name = &query.capture_names()[capture_index as usize];
+        let mapped_capture_name = apply_capture_mapping(original_capture_name, filetype, capture_mappings);
+        let (token_type, token_modifiers_bitset) = map_capture_to_token_type_and_modifiers(&mapped_capture_name);
 
         data.push(SemanticToken {
             delta_line: delta_line as u32,
@@ -297,6 +347,8 @@ pub fn handle_semantic_tokens_range(
 /// * `query` - The tree-sitter query for semantic highlighting
 /// * `previous_result_id` - The result ID from the previous semantic tokens response
 /// * `previous_tokens` - The previous semantic tokens to calculate delta from
+/// * `filetype` - The filetype of the document being processed
+/// * `capture_mappings` - The capture mappings to apply
 ///
 /// # Returns
 /// Either a delta or full semantic tokens for the document
@@ -306,9 +358,11 @@ pub fn handle_semantic_tokens_full_delta(
     query: &Query,
     previous_result_id: &str,
     previous_tokens: Option<&SemanticTokens>,
+    filetype: Option<&str>,
+    capture_mappings: Option<&CaptureMappings>,
 ) -> Option<SemanticTokensFullDeltaResult> {
     // Get current tokens
-    let current_result = handle_semantic_tokens_full(text, tree, query)?;
+    let current_result = handle_semantic_tokens_full(text, tree, query, filetype, capture_mappings)?;
     let current_tokens = match current_result {
         SemanticTokensResult::Tokens(tokens) => tokens,
         _ => return None,

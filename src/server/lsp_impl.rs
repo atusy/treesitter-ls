@@ -200,9 +200,12 @@ impl LanguageServer for TreeSitterLs {
                 })));
             };
 
+            // Get capture mappings
+            let capture_mappings = self.language_service.capture_mappings.lock().unwrap();
+            
             // Delegate to handler - this already returns Some(SemanticTokensResult) or None
             // We need to ensure it always returns Some
-            handle_semantic_tokens_full(text, tree, query).or_else(|| {
+            handle_semantic_tokens_full(text, tree, query, Some(&language_name), Some(&*capture_mappings)).or_else(|| {
                 Some(SemanticTokensResult::Tokens(SemanticTokens {
                     result_id: None,
                     data: vec![],
@@ -281,6 +284,9 @@ impl LanguageServer for TreeSitterLs {
 
             // Get previous tokens from document
             let previous_tokens = doc.last_semantic_tokens.as_ref();
+            
+            // Get capture mappings
+            let capture_mappings = self.language_service.capture_mappings.lock().unwrap();
 
             // Delegate to handler
             handle_semantic_tokens_full_delta(
@@ -289,6 +295,8 @@ impl LanguageServer for TreeSitterLs {
                 query,
                 &previous_result_id,
                 previous_tokens,
+                Some(&language_name),
+                Some(&*capture_mappings),
             )
         }; // doc reference is dropped here
 
@@ -351,7 +359,10 @@ impl LanguageServer for TreeSitterLs {
         };
 
         // Delegate to handler
-        let result = handle_semantic_tokens_range(text, tree, query, &range);
+        // Get capture mappings
+        let capture_mappings = self.language_service.capture_mappings.lock().unwrap();
+        
+        let result = handle_semantic_tokens_range(text, tree, query, &range, Some(&language_name), Some(&*capture_mappings));
 
         // Convert to RangeResult
         match result {

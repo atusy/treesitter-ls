@@ -1,5 +1,5 @@
 use crate::analysis::ParserLoader;
-use crate::config::{HighlightItem, HighlightSource, LanguageConfig, TreeSitterSettings};
+use crate::config::{CaptureMappings, HighlightItem, HighlightSource, LanguageConfig, TreeSitterSettings};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,6 +15,7 @@ pub struct LanguageService {
     pub language_configs: Mutex<HashMap<String, LanguageConfig>>,
     pub filetype_map: Mutex<HashMap<String, String>>,
     pub library_loader: Mutex<ParserLoader>,
+    pub capture_mappings: Mutex<CaptureMappings>,
 }
 
 impl Default for LanguageService {
@@ -26,6 +27,7 @@ impl Default for LanguageService {
             language_configs: Mutex::new(HashMap::new()),
             filetype_map: Mutex::new(HashMap::new()),
             library_loader: Mutex::new(ParserLoader::new()),
+            capture_mappings: Mutex::new(CaptureMappings::default()),
         }
     }
 }
@@ -117,6 +119,9 @@ impl LanguageService {
 
         // Build filetype map
         self.build_filetype_map(&settings);
+        
+        // Store capture mappings
+        *self.capture_mappings.lock().unwrap() = settings.capture_mappings.clone();
 
         // Load languages and queries
         for (lang_name, config) in &settings.languages {

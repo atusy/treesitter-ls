@@ -6,7 +6,7 @@ pub mod state;
 pub mod utils;
 
 // Re-export config types for backward compatibility
-pub use config::{HighlightItem, HighlightSource, LanguageConfig, TreeSitterSettings};
+pub use config::{CaptureMappings, CaptureMapping, HighlightItem, HighlightSource, LanguageConfig, TreeSitterSettings};
 
 // Re-export for tests
 pub use handlers::{
