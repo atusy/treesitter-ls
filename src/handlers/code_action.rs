@@ -1,7 +1,92 @@
 use tower_lsp::lsp_types::{CodeAction, CodeActionKind, CodeActionOrCommand, Range, TextEdit, Url, WorkspaceEdit};
-use tree_sitter::{Node, Tree};
+use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 
 use crate::utils::byte_range_to_range;
+
+/// Create an inspect token code action for the node at cursor
+fn create_inspect_token_action(
+    node: &Node,
+    text: &str,
+    queries: Option<(&Query, Option<&Query>)>,
+) -> CodeActionOrCommand {
+    let mut info = format!("Node Type: {}\n", node.kind());
+    
+    // Add node text if it's not too long
+    let node_text = &text[node.byte_range()];
+    if node_text.len() <= 100 {
+        info.push_str(&format!("Text: {}\n", node_text));
+    } else {
+        info.push_str(&format!("Text: {}...\n", &node_text[..97]));
+    }
+    
+    // Add position info
+    info.push_str(&format!(
+        "Position: {}:{} - {}:{}\n",
+        node.start_position().row + 1,
+        node.start_position().column + 1,
+        node.end_position().row + 1,
+        node.end_position().column + 1
+    ));
+    
+    // If we have queries, show captures
+    if let Some((highlights_query, locals_query)) = queries {
+        let mut captures = Vec::new();
+        
+        // Check highlights query
+        let mut cursor = QueryCursor::new();
+        let mut matches = cursor.matches(highlights_query, *node, text.as_bytes());
+        while let Some(m) = matches.next() {
+            for c in m.captures {
+                if c.node == *node {
+                    let capture_name = &highlights_query.capture_names()[c.index as usize];
+                    if !captures.contains(&capture_name.to_string()) {
+                        captures.push(capture_name.to_string());
+                    }
+                }
+            }
+        }
+        
+        // Check locals query if available
+        if let Some(locals) = locals_query {
+            let mut cursor = QueryCursor::new();
+            let mut matches = cursor.matches(locals, *node, text.as_bytes());
+            while let Some(m) = matches.next() {
+                for c in m.captures {
+                    if c.node == *node {
+                        let capture_name = &locals.capture_names()[c.index as usize];
+                        let prefixed = format!("(locals) {}", capture_name);
+                        if !captures.contains(&prefixed) {
+                            captures.push(prefixed);
+                        }
+                    }
+                }
+            }
+        }
+        
+        if !captures.is_empty() {
+            info.push_str("\nCaptures:\n");
+            for capture in captures {
+                info.push_str(&format!("  - {}\n", capture));
+            }
+        }
+    }
+    
+    // Create a code action that shows this info (using title as display)
+    let action = CodeAction {
+        title: format!("Inspect token: {}", node.kind()),
+        kind: Some(CodeActionKind::EMPTY),
+        diagnostics: None,
+        edit: None,
+        command: None,
+        is_preferred: None,
+        disabled: Some(tower_lsp::lsp_types::CodeActionDisabled {
+            reason: info,
+        }),
+        data: None,
+    };
+    
+    CodeActionOrCommand::CodeAction(action)
+}
 
 /// Produce code actions that reorder a parameter within a function parameter list.
 /// The implementation is language-agnostic for grammars that use a `parameters` node
@@ -11,6 +96,7 @@ pub fn handle_code_actions(
     text: &str,
     tree: &Tree,
     cursor: Range,
+    queries: Option<(&Query, Option<&Query>)>,
 ) -> Option<Vec<CodeActionOrCommand>> {
     let root = tree.root_node();
 
@@ -22,7 +108,11 @@ pub fn handle_code_actions(
 
     let node_at_cursor = root.descendant_for_byte_range(cursor_byte, cursor_byte)?;
 
-    // Ascend to a `parameters` node
+    // Always create inspect token action for the node at cursor
+    let mut actions: Vec<CodeActionOrCommand> = Vec::new();
+    actions.push(create_inspect_token_action(&node_at_cursor, text, queries));
+
+    // Ascend to a `parameters` node for parameter reordering actions
     let mut n: Option<Node> = Some(node_at_cursor);
     let mut params_node: Option<Node> = None;
     while let Some(curr) = n {
@@ -33,7 +123,10 @@ pub fn handle_code_actions(
         n = curr.parent();
     }
 
-    let params_node = params_node?;
+    let Some(params_node) = params_node else {
+        // No parameters node found, return just the inspect action
+        return Some(actions);
+    };
 
     // Find parentheses and commas among direct children
     let mut lparen_end: Option<usize> = None;
@@ -126,15 +219,17 @@ pub fn handle_code_actions(
         }
     }
 
-    let current_idx = current_idx?;
+    let Some(current_idx) = current_idx else {
+        // Cursor not in a parameter, return just the inspect action
+        return Some(actions);
+    };
 
     // Prepare the edit range: replace content between '(' and ')'
     let replace_start = lparen_end;
     let replace_end = rparen_start;
     let replace_range = byte_range_to_range(text, replace_start, replace_end);
 
-    // Build actions: move current entry to any other index
-    let mut actions: Vec<CodeActionOrCommand> = Vec::new();
+    // Build parameter reordering actions
     let n = entries.len();
 
     for target_pos in 0..n {

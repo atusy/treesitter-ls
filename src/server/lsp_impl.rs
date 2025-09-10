@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
-use tree_sitter::Parser;
+use tree_sitter::{Parser, Query};
 
 use crate::config::{TreeSitterSettings, merge_settings};
 use crate::handlers::{DefinitionResolver, LEGEND_TYPES, LEGEND_MODIFIERS};
@@ -542,9 +542,25 @@ impl LanguageServer for TreeSitterLs {
             return Ok(None);
         };
 
-        // Delegate to handler
-        let actions = handle_code_actions(&uri, text, tree, range);
-        Ok(actions)
+        // Get language for the document
+        let language_name = self.get_language_for_document(&uri);
+        
+        // Get queries and delegate to handler
+        if let Some(lang) = language_name {
+            let queries_lock = self.language_service.queries.lock().unwrap();
+            let locals_queries_lock = self.language_service.locals_queries.lock().unwrap();
+            
+            let queries = queries_lock
+                .get(&lang)
+                .map(|hq| (hq as &Query, locals_queries_lock.get(&lang).map(|lq| lq as &Query)));
+            
+            let actions = handle_code_actions(&uri, text, tree, range, queries);
+            Ok(actions)
+        } else {
+            // No language, just basic inspect without queries
+            let actions = handle_code_actions(&uri, text, tree, range, None);
+            Ok(actions)
+        }
     }
 }
 
