@@ -4,7 +4,7 @@ use tower_lsp::{Client, LanguageServer};
 use tree_sitter::Parser;
 
 use crate::config::TreeSitterSettings;
-use crate::handlers::{DefinitionResolver, LEGEND_TYPES};
+use crate::handlers::{DefinitionResolver, LEGEND_TYPES, LEGEND_MODIFIERS};
 use crate::handlers::{
     handle_goto_definition, handle_selection_range, handle_semantic_tokens_full,
     handle_semantic_tokens_full_delta, handle_semantic_tokens_range, handle_code_actions,
@@ -111,7 +111,7 @@ impl LanguageServer for TreeSitterLs {
                         SemanticTokensOptions {
                             legend: SemanticTokensLegend {
                                 token_types: LEGEND_TYPES.to_vec(),
-                                token_modifiers: vec![],
+                                token_modifiers: LEGEND_MODIFIERS.to_vec(),
                             },
                             full: Some(SemanticTokensFullOptions::Delta { delta: Some(true) }),
                             range: Some(true),

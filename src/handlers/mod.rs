@@ -8,7 +8,7 @@ pub use definition::{
 };
 pub use selection_range::handle_selection_range;
 pub use semantic_tokens::{
-    LEGEND_TYPES, handle_semantic_tokens_full, handle_semantic_tokens_full_delta,
+    LEGEND_TYPES, LEGEND_MODIFIERS, handle_semantic_tokens_full, handle_semantic_tokens_full_delta,
     handle_semantic_tokens_range,
 };
 pub use code_action::handle_code_actions;
