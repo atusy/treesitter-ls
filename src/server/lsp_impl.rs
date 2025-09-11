@@ -12,7 +12,7 @@ use crate::handlers::{
     handle_semantic_tokens_full, handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
 use crate::state::{DocumentStore, LanguageService};
-use crate::utils::position_to_byte_offset;
+use crate::treesitter::position_to_byte_offset;
 
 pub struct TreeSitterLs {
     client: Client,

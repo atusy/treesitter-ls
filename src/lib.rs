@@ -1,10 +1,8 @@
-mod analysis;
 pub mod config;
 pub mod handlers;
 pub mod server;
 pub mod state;
 pub mod treesitter;
-pub mod utils;
 
 // Re-export config types for backward compatibility
 pub use config::{

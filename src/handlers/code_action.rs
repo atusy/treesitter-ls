@@ -3,7 +3,7 @@ use tower_lsp::lsp_types::{
 };
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 
-use crate::utils::byte_range_to_range;
+use crate::treesitter::byte_range_to_range;
 
 /// Create an inspect token code action for the node at cursor
 fn create_inspect_token_action(
@@ -107,7 +107,7 @@ pub fn handle_code_actions(
 
     // Use the start position of the selection/range as the cursor location
     let cursor_byte = {
-        use crate::utils::position_to_byte_offset;
+        use crate::treesitter::position_to_byte_offset;
         position_to_byte_offset(text, cursor.start)
     };
 

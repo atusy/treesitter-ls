@@ -1,4 +1,4 @@
-use crate::analysis::ParserLoader;
+use crate::treesitter::ParserLoader;
 use crate::config::{
     CaptureMappings, HighlightItem, HighlightSource, LanguageConfig, TreeSitterSettings,
 };
