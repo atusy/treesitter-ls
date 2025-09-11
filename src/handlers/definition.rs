@@ -85,7 +85,7 @@ impl DefinitionResolver {
 
         while let Some(match_) = matches.next() {
             // Filter captures based on predicates
-            let filtered_captures = crate::query_predicates::filter_captures(query, match_, text);
+            let filtered_captures = crate::treesitter::filter_captures(query, match_, text);
             for capture in filtered_captures {
                 let capture_name = &query.capture_names()[capture.index as usize];
                 let node = capture.node;

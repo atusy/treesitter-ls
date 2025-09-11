@@ -176,7 +176,7 @@ pub fn handle_semantic_tokens_full(
     let mut tokens = vec![];
     while let Some(m) = matches.next() {
         // Filter captures based on predicates
-        let filtered_captures = crate::query_predicates::filter_captures(query, m, text);
+        let filtered_captures = crate::treesitter::filter_captures(query, m, text);
 
         for c in filtered_captures {
             let node = c.node;
@@ -270,7 +270,7 @@ pub fn handle_semantic_tokens_range(
     let mut tokens = vec![];
     while let Some(m) = matches.next() {
         // Filter captures based on predicates
-        let filtered_captures = crate::query_predicates::filter_captures(query, m, text);
+        let filtered_captures = crate::treesitter::filter_captures(query, m, text);
 
         for c in filtered_captures {
             let node = c.node;

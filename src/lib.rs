@@ -1,9 +1,9 @@
 mod analysis;
 pub mod config;
 pub mod handlers;
-pub mod query_predicates;
 pub mod server;
 pub mod state;
+pub mod treesitter;
 pub mod utils;
 
 // Re-export config types for backward compatibility

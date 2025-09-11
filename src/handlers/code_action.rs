@@ -40,7 +40,7 @@ fn create_inspect_token_action(
         while let Some(m) = matches.next() {
             // Filter captures based on predicates
             let filtered_captures =
-                crate::query_predicates::filter_captures(highlights_query, m, text);
+                crate::treesitter::filter_captures(highlights_query, m, text);
             for c in filtered_captures {
                 if c.node == *node {
                     let capture_name = &highlights_query.capture_names()[c.index as usize];
@@ -57,7 +57,7 @@ fn create_inspect_token_action(
             let mut matches = cursor.matches(locals, *node, text.as_bytes());
             while let Some(m) = matches.next() {
                 // Filter captures based on predicates
-                let filtered_captures = crate::query_predicates::filter_captures(locals, m, text);
+                let filtered_captures = crate::treesitter::filter_captures(locals, m, text);
                 for c in filtered_captures {
                     if c.node == *node {
                         let capture_name = &locals.capture_names()[c.index as usize];
