@@ -38,7 +38,10 @@ fn create_inspect_token_action(
         let mut cursor = QueryCursor::new();
         let mut matches = cursor.matches(highlights_query, *node, text.as_bytes());
         while let Some(m) = matches.next() {
-            for c in m.captures {
+            // Filter captures based on predicates
+            let filtered_captures =
+                crate::query_predicates::filter_captures(highlights_query, m, text);
+            for c in filtered_captures {
                 if c.node == *node {
                     let capture_name = &highlights_query.capture_names()[c.index as usize];
                     if !captures.contains(&capture_name.to_string()) {
@@ -53,7 +56,9 @@ fn create_inspect_token_action(
             let mut cursor = QueryCursor::new();
             let mut matches = cursor.matches(locals, *node, text.as_bytes());
             while let Some(m) = matches.next() {
-                for c in m.captures {
+                // Filter captures based on predicates
+                let filtered_captures = crate::query_predicates::filter_captures(locals, m, text);
+                for c in filtered_captures {
                     if c.node == *node {
                         let capture_name = &locals.capture_names()[c.index as usize];
                         let prefixed = format!("(locals) {}", capture_name);

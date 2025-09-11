@@ -84,7 +84,9 @@ impl DefinitionResolver {
         let mut references = Vec::new();
 
         while let Some(match_) = matches.next() {
-            for capture in match_.captures {
+            // Filter captures based on predicates
+            let filtered_captures = crate::query_predicates::filter_captures(query, &match_, text);
+            for capture in filtered_captures {
                 let capture_name = &query.capture_names()[capture.index as usize];
                 let node = capture.node;
                 let start_byte = node.start_byte();

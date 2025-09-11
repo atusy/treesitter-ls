@@ -178,7 +178,10 @@ pub fn handle_semantic_tokens_full(
     // Collect all tokens with their positions
     let mut tokens = vec![];
     while let Some(m) = matches.next() {
-        for c in m.captures {
+        // Filter captures based on predicates
+        let filtered_captures = crate::query_predicates::filter_captures(query, &m, text);
+
+        for c in filtered_captures {
             let node = c.node;
             let start_pos = node.start_position();
             let end_pos = node.end_position();
@@ -269,7 +272,10 @@ pub fn handle_semantic_tokens_range(
     // Collect tokens within the range
     let mut tokens = vec![];
     while let Some(m) = matches.next() {
-        for c in m.captures {
+        // Filter captures based on predicates
+        let filtered_captures = crate::query_predicates::filter_captures(query, &m, text);
+
+        for c in filtered_captures {
             let node = c.node;
             let start_pos = node.start_position();
             let end_pos = node.end_position();

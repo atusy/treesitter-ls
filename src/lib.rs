@@ -1,6 +1,7 @@
 mod analysis;
 pub mod config;
 pub mod handlers;
+pub mod query_predicates;
 pub mod server;
 pub mod state;
 pub mod utils;
