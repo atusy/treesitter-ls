@@ -236,8 +236,8 @@ impl LanguageServer for TreeSitterLs {
         let root_path = self.root_path.lock().unwrap().clone();
         if let Some(root) = root_path {
             let config_path = root.join("treesitter-ls.toml");
-            if config_path.exists() {
-                if let Ok(toml_contents) = std::fs::read_to_string(&config_path) {
+            if config_path.exists()
+                && let Ok(toml_contents) = std::fs::read_to_string(&config_path) {
                     match toml::from_str::<TreeSitterSettings>(&toml_contents) {
                         Ok(settings) => {
                             self.client
@@ -255,7 +255,6 @@ impl LanguageServer for TreeSitterLs {
                         }
                     }
                 }
-            }
         }
 
         // Parse configuration from settings

@@ -24,20 +24,17 @@ fn apply_capture_mapping(
 ) -> String {
     if let Some(mappings) = capture_mappings {
         // Try filetype-specific mapping first
-        if let Some(ft) = filetype {
-            if let Some(lang_mappings) = mappings.get(ft) {
-                if let Some(mapped) = lang_mappings.highlights.get(capture_name) {
-                    return mapped.clone();
-                }
-            }
-        }
-
-        // Try wildcard mapping
-        if let Some(wildcard_mappings) = mappings.get("_") {
-            if let Some(mapped) = wildcard_mappings.highlights.get(capture_name) {
+        if let Some(ft) = filetype
+            && let Some(lang_mappings) = mappings.get(ft)
+            && let Some(mapped) = lang_mappings.highlights.get(capture_name) {
                 return mapped.clone();
             }
-        }
+
+        // Try wildcard mapping
+        if let Some(wildcard_mappings) = mappings.get("_")
+            && let Some(mapped) = wildcard_mappings.highlights.get(capture_name) {
+                return mapped.clone();
+            }
     }
 
     // Return original if no mapping found
@@ -54,30 +51,30 @@ fn map_capture_to_token_type_and_modifiers(capture_name: &str) -> (u32, u32) {
     let parts: Vec<&str> = capture_name.split('.').collect();
 
     // First part is the token type
-    let token_type = match parts.get(0).unwrap_or(&"variable") {
-        &"comment" => SemanticTokenType::COMMENT,
-        &"keyword" => SemanticTokenType::KEYWORD,
-        &"string" => SemanticTokenType::STRING,
-        &"number" => SemanticTokenType::NUMBER,
-        &"regexp" => SemanticTokenType::REGEXP,
-        &"operator" => SemanticTokenType::OPERATOR,
-        &"namespace" => SemanticTokenType::NAMESPACE,
-        &"type" => SemanticTokenType::TYPE,
-        &"struct" => SemanticTokenType::STRUCT,
-        &"class" => SemanticTokenType::CLASS,
-        &"interface" => SemanticTokenType::INTERFACE,
-        &"enum" => SemanticTokenType::ENUM,
-        &"enumMember" => SemanticTokenType::ENUM_MEMBER,
-        &"typeParameter" => SemanticTokenType::TYPE_PARAMETER,
-        &"function" => SemanticTokenType::FUNCTION,
-        &"method" => SemanticTokenType::METHOD,
-        &"macro" => SemanticTokenType::MACRO,
-        &"variable" => SemanticTokenType::VARIABLE,
-        &"parameter" => SemanticTokenType::PARAMETER,
-        &"property" => SemanticTokenType::PROPERTY,
-        &"event" => SemanticTokenType::EVENT,
-        &"modifier" => SemanticTokenType::MODIFIER,
-        &"decorator" => SemanticTokenType::DECORATOR,
+    let token_type = match *parts.first().unwrap_or(&"variable") {
+        "comment" => SemanticTokenType::COMMENT,
+        "keyword" => SemanticTokenType::KEYWORD,
+        "string" => SemanticTokenType::STRING,
+        "number" => SemanticTokenType::NUMBER,
+        "regexp" => SemanticTokenType::REGEXP,
+        "operator" => SemanticTokenType::OPERATOR,
+        "namespace" => SemanticTokenType::NAMESPACE,
+        "type" => SemanticTokenType::TYPE,
+        "struct" => SemanticTokenType::STRUCT,
+        "class" => SemanticTokenType::CLASS,
+        "interface" => SemanticTokenType::INTERFACE,
+        "enum" => SemanticTokenType::ENUM,
+        "enumMember" => SemanticTokenType::ENUM_MEMBER,
+        "typeParameter" => SemanticTokenType::TYPE_PARAMETER,
+        "function" => SemanticTokenType::FUNCTION,
+        "method" => SemanticTokenType::METHOD,
+        "macro" => SemanticTokenType::MACRO,
+        "variable" => SemanticTokenType::VARIABLE,
+        "parameter" => SemanticTokenType::PARAMETER,
+        "property" => SemanticTokenType::PROPERTY,
+        "event" => SemanticTokenType::EVENT,
+        "modifier" => SemanticTokenType::MODIFIER,
+        "decorator" => SemanticTokenType::DECORATOR,
         _ => SemanticTokenType::VARIABLE, // Default fallback
     };
 
@@ -179,7 +176,7 @@ pub fn handle_semantic_tokens_full(
     let mut tokens = vec![];
     while let Some(m) = matches.next() {
         // Filter captures based on predicates
-        let filtered_captures = crate::query_predicates::filter_captures(query, &m, text);
+        let filtered_captures = crate::query_predicates::filter_captures(query, m, text);
 
         for c in filtered_captures {
             let node = c.node;
@@ -273,7 +270,7 @@ pub fn handle_semantic_tokens_range(
     let mut tokens = vec![];
     while let Some(m) = matches.next() {
         // Filter captures based on predicates
-        let filtered_captures = crate::query_predicates::filter_captures(query, &m, text);
+        let filtered_captures = crate::query_predicates::filter_captures(query, m, text);
 
         for c in filtered_captures {
             let node = c.node;
