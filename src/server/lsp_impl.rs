@@ -101,8 +101,12 @@ impl TreeSitterLs {
                     p
                 });
 
-                // Parse the document (incremental parsing temporarily disabled)
-                if let Some(tree) = parser.parse(&text, None) {
+                // Get old tree for incremental parsing if document exists
+                let old_tree = self.document_store.get(&uri)
+                    .and_then(|doc| doc.root_layer.as_ref().map(|layer| layer.tree.clone()));
+                
+                // Parse the document with incremental parsing if old tree exists
+                if let Some(tree) = parser.parse(&text, old_tree.as_ref()) {
                     // Create root layer for the parsed tree
                     let root_layer = Some(LanguageLayer::root(language_name.clone(), tree));
 
@@ -396,7 +400,6 @@ impl LanguageServer for TreeSitterLs {
                 // Incremental change - update tree with edit information
                 let start_offset = position_to_byte_offset(&text, range.start);
                 let end_offset = position_to_byte_offset(&text, range.end);
-                // Note: Incremental parsing temporarily disabled
 
                 // Replace the range with new text
                 text.replace_range(start_offset..end_offset, &change.text);
