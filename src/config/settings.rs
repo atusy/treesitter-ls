@@ -44,6 +44,7 @@ pub struct TreeSitterSettings {
     // Editor-agnostic name exposed to JSON as `searchPaths`.
     #[serde(rename = "searchPaths")]
     pub search_paths: Option<Vec<String>>,
+    #[serde(default)]
     pub languages: HashMap<String, LanguageConfig>,
     #[serde(rename = "captureMappings", default)]
     pub capture_mappings: CaptureMappings,
@@ -154,6 +155,32 @@ mod tests {
         }"#;
 
         let settings: TreeSitterSettings = serde_json::from_str(empty_json).unwrap();
+        assert!(settings.languages.is_empty());
+    }
+
+    #[test]
+    fn should_handle_missing_languages_field() {
+        let json_without_languages = r#"{
+            "searchPaths": ["/some/path"],
+            "captureMappings": {
+                "_": {
+                    "highlights": {}
+                }
+            }
+        }"#;
+
+        let settings: TreeSitterSettings = serde_json::from_str(json_without_languages).unwrap();
+        assert!(settings.languages.is_empty());
+        assert_eq!(settings.search_paths, Some(vec!["/some/path".to_string()]));
+    }
+
+    #[test]
+    fn should_parse_toml_without_languages_field() {
+        let toml_without_languages = r#"
+            [captureMappings._.highlights]
+        "#;
+
+        let settings: TreeSitterSettings = toml::from_str(toml_without_languages).unwrap();
         assert!(settings.languages.is_empty());
     }
 

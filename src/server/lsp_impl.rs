@@ -83,7 +83,7 @@ impl LanguageServer for TreeSitterLs {
             .log_message(MessageType::INFO, "Received initialization request")
             .await;
 
-        // Get root path from workspace folders or root_uri
+        // Get root path from workspace folders, root_uri, deprecated root_path, or current directory
         let root_path = if let Some(folders) = &params.workspace_folders {
             folders
                 .first()
@@ -91,12 +91,45 @@ impl LanguageServer for TreeSitterLs {
         } else if let Some(root_uri) = &params.root_uri {
             root_uri.to_file_path().ok()
         } else {
-            None
+            #[allow(deprecated)]  // Support for older LSP clients
+            if let Some(root_path) = &params.root_path {
+                // Support deprecated root_path field for compatibility
+                Some(PathBuf::from(root_path))
+            } else {
+                // Fallback to current working directory
+                std::env::current_dir().ok()
+            }
         };
 
-        // Store root path for later use
+        // Store root path for later use and log the source
         if let Some(ref path) = root_path {
+            let source = if params.workspace_folders.is_some() {
+                "workspace folders"
+            } else if params.root_uri.is_some() {
+                "root_uri"
+            } else {
+                #[allow(deprecated)]
+                if params.root_path.is_some() {
+                    "root_path (deprecated)"
+                } else {
+                    "current working directory (fallback)"
+                }
+            };
+            
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    format!("Using workspace root from {}: {}", source, path.display()),
+                )
+                .await;
             *self.root_path.lock().unwrap() = Some(path.clone());
+        } else {
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    "Failed to determine workspace root - config file will not be loaded",
+                )
+                .await;
         }
 
         // Try to load configuration from treesitter-ls.toml file
