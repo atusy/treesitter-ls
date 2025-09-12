@@ -8,7 +8,7 @@ use tree_sitter::Query;
 /// Merges tokens from all layers (root + injections)
 pub fn handle_semantic_tokens_full_layered(
     document: &Document,
-    queries: &std::collections::HashMap<String, Query>,
+    queries: &std::collections::HashMap<String, &Query>,
     capture_mappings: Option<&CaptureMappings>,
 ) -> Option<SemanticTokensResult> {
     let mut all_tokens = Vec::new();
@@ -126,7 +126,7 @@ mod tests {
         // Add a simple query for testing
         let query = tree_sitter::Query::new(&tree_sitter_rust::LANGUAGE.into(), r#""fn" @keyword"#)
             .unwrap();
-        queries.insert("rust".to_string(), query);
+        queries.insert("rust".to_string(), &query);
 
         let result = handle_semantic_tokens_full_layered(&doc, &queries, None);
         assert!(result.is_some());
