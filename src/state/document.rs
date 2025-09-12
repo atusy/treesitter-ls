@@ -34,9 +34,10 @@ impl DocumentStore {
 
     pub fn insert(&self, uri: Url, text: String, root_layer: Option<LanguageLayer>) {
         // Preserve the old tree for incremental parsing
-        let old_tree = self.documents.get(&uri).and_then(|doc| 
-            doc.root_layer.as_ref().map(|layer| layer.tree.clone())
-        );
+        let old_tree = self
+            .documents
+            .get(&uri)
+            .and_then(|doc| doc.root_layer.as_ref().map(|layer| layer.tree.clone()));
 
         self.documents.insert(
             uri,
@@ -60,13 +61,15 @@ impl DocumentStore {
         let (root_layer, old_tree) = self
             .documents
             .get(&uri)
-            .map(|doc| (
-                doc.root_layer.as_ref().map(|layer| {
-                    // Preserve the language but we'll update the tree later
-                    LanguageLayer::root(layer.language_id.clone(), layer.tree.clone())
-                }),
-                doc.root_layer.as_ref().map(|layer| layer.tree.clone())
-            ))
+            .map(|doc| {
+                (
+                    doc.root_layer.as_ref().map(|layer| {
+                        // Preserve the language but we'll update the tree later
+                        LanguageLayer::root(layer.language_id.clone(), layer.tree.clone())
+                    }),
+                    doc.root_layer.as_ref().map(|layer| layer.tree.clone()),
+                )
+            })
             .unwrap_or((None, None));
 
         self.documents.insert(
@@ -194,11 +197,7 @@ mod tests {
         let text1 = "fn main() {}";
         let tree1 = parser.parse(text1, None).unwrap();
         let root_layer1 = Some(LanguageLayer::root("rust".to_string(), tree1.clone()));
-        store.insert(
-            uri.clone(),
-            text1.to_string(),
-            root_layer1,
-        );
+        store.insert(uri.clone(), text1.to_string(), root_layer1);
 
         // Verify the document has no old_tree initially
         {
@@ -211,11 +210,7 @@ mod tests {
         let text2 = "fn main() { println!(\"hello\"); }";
         let tree2 = parser.parse(text2, Some(&tree1)).unwrap();
         let root_layer2 = Some(LanguageLayer::root("rust".to_string(), tree2));
-        store.insert(
-            uri.clone(),
-            text2.to_string(),
-            root_layer2,
-        );
+        store.insert(uri.clone(), text2.to_string(), root_layer2);
 
         // Verify the old tree is preserved
         {
@@ -244,11 +239,7 @@ mod tests {
         let text1 = "fn main() {}";
         let tree1 = parser.parse(text1, None).unwrap();
         let root_layer1 = Some(LanguageLayer::root("rust".to_string(), tree1.clone()));
-        store.insert(
-            uri.clone(),
-            text1.to_string(),
-            root_layer1,
-        );
+        store.insert(uri.clone(), text1.to_string(), root_layer1);
 
         // Update document should preserve the tree as old_tree
         let text2 = "fn main() { println!(\"hello\"); }";

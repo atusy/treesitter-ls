@@ -407,7 +407,7 @@ impl LanguageService {
             }
         }
         // No locals is acceptable; silently skip
-        
+
         // Load injections query from searchPaths
         if let Some(runtime_bases) = search_paths
             && let Some(path) = self.find_query_file(runtime_bases, lang_name, "injections.scm")
@@ -552,7 +552,8 @@ impl LanguageService {
 
                 // Try to load injections queries from searchPaths
                 if let Some(runtime_bases) = search_paths
-                    && let Some(path) = self.find_query_file(runtime_bases, lang_name, "injections.scm")
+                    && let Some(path) =
+                        self.find_query_file(runtime_bases, lang_name, "injections.scm")
                     && let Ok(content) = fs::read_to_string(&path)
                     && let Ok(query) = Query::new(&language, &content)
                 {

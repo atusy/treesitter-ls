@@ -60,29 +60,29 @@ pub fn handle_selection_range_layered(
     positions: &[Position],
 ) -> Option<Vec<SelectionRange>> {
     let mapper = document.position_mapper();
-    
+
     let ranges = positions
         .iter()
         .map(|pos| {
             // Convert position to byte offset
             let byte_offset = mapper.position_to_byte(*pos)?;
-            
+
             // Find the appropriate layer
             let layer = document.get_layer_at_position(byte_offset)?;
             let tree = &layer.tree;
             let root = tree.root_node();
-            
+
             // Convert position to point for tree-sitter
             let point = position_to_point(pos);
-            
+
             // Find the smallest node containing this position
             let node = root.descendant_for_point_range(point, point)?;
-            
+
             // Build the selection range hierarchy
             Some(build_selection_range(node))
         })
         .collect::<Option<Vec<_>>>()?;
-    
+
     Some(ranges)
 }
 

@@ -9,8 +9,8 @@ pub mod definition_poc;
 
 pub use code_action::handle_code_actions;
 pub use definition::{
-    ContextType, DefinitionCandidate, DefinitionResolver, ReferenceContext, 
-    handle_goto_definition, handle_goto_definition_layered,
+    ContextType, DefinitionCandidate, DefinitionResolver, ReferenceContext, handle_goto_definition,
+    handle_goto_definition_layered,
 };
 pub use selection_range::{handle_selection_range, handle_selection_range_layered};
 pub use semantic_tokens::{
