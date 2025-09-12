@@ -390,21 +390,15 @@ impl LanguageServer for TreeSitterLs {
         // Parse with the edited tree for true incremental parsing
         self.parse_document_with_tree(uri.clone(), text, old_tree, language_id.as_deref())
             .await;
-        
-        // Only request semantic token refresh for small incremental changes
-        // Large changes will be handled by the client automatically
-        let should_refresh = is_small_incremental;
-            
-        if should_refresh {
-            // Request the client to refresh semantic tokens
-            // This will trigger the client to request new semantic tokens
-            if self.client.semantic_tokens_refresh().await.is_ok() {
-                self.client
-                    .log_message(MessageType::INFO, "Requested semantic tokens refresh")
-                    .await;
-            }
+
+        // Request the client to refresh semantic tokens
+        // This will trigger the client to request new semantic tokens
+        if self.client.semantic_tokens_refresh().await.is_ok() {
+            self.client
+                .log_message(MessageType::INFO, "Requested semantic tokens refresh")
+                .await;
         }
-        
+
         self.client
             .log_message(MessageType::INFO, "file changed!")
             .await;
