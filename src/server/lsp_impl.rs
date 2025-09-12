@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
-use tree_sitter::{InputEdit, Parser, Point, Query, Tree};
+use tree_sitter::{Parser, Query};
 
 use crate::config::{TreeSitterSettings, merge_settings};
 use crate::handlers::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
@@ -42,23 +42,6 @@ impl TreeSitterLs {
     }
 
     async fn parse_document(&self, uri: Url, text: String, language_id: Option<&str>) {
-        // Get the current tree for incremental parsing
-        let old_tree = self
-            .document_store
-            .get(&uri)
-            .and_then(|doc| doc.get_tree().cloned());
-
-        self.parse_document_with_tree(uri, text, old_tree, language_id)
-            .await;
-    }
-
-    async fn parse_document_with_tree(
-        &self,
-        uri: Url,
-        text: String,
-        old_tree: Option<Tree>,
-        language_id: Option<&str>,
-    ) {
         // Detect file extension
         let extension = uri.path().split('.').next_back().unwrap_or("");
 
@@ -113,8 +96,8 @@ impl TreeSitterLs {
                     p
                 });
 
-                // Parse the document incrementally if old_tree exists
-                if let Some(tree) = parser.parse(&text, old_tree.as_ref()) {
+                // Parse the document (incremental parsing temporarily disabled)
+                if let Some(tree) = parser.parse(&text, None) {
                     // Create root layer for the parsed tree
                     let root_layer = Some(LanguageLayer::root(language_name.clone(), tree));
 
@@ -379,13 +362,12 @@ impl LanguageServer for TreeSitterLs {
         let uri = params.text_document.uri;
 
         // Retrieve the stored document info
-        let (language_id, old_text, mut old_tree) = {
+        let (language_id, old_text) = {
             let doc = self.document_store.get(&uri);
             match doc {
                 Some(d) => (
                     d.get_language_id().cloned(),
                     d.text.clone(),
-                    d.get_tree().cloned(),
                 ),
                 None => {
                     self.client
@@ -404,96 +386,18 @@ impl LanguageServer for TreeSitterLs {
                 // Incremental change - update tree with edit information
                 let start_offset = position_to_byte_offset(&text, range.start);
                 let end_offset = position_to_byte_offset(&text, range.end);
-                let new_end_offset = start_offset + change.text.len();
-
-                // Calculate the new end position correctly using UTF-16 code units
-                let lines_in_change = change.text.matches('\n').count();
-                let new_end_line = range.start.line + lines_in_change as u32;
-                let _new_end_character = if lines_in_change > 0 {
-                    // For multi-line changes, count UTF-16 code units in the last line
-                    change
-                        .text
-                        .split('\n')
-                        .next_back()
-                        .unwrap_or("")
-                        .chars()
-                        .map(|c| c.len_utf16())
-                        .sum::<usize>() as u32
-                } else {
-                    // For single-line changes, add UTF-16 length to the start character
-                    range.start.character
-                        + change.text.chars().map(|c| c.len_utf16()).sum::<usize>() as u32
-                };
-
-                // Apply edit to the tree if it exists
-                if let Some(ref mut tree) = old_tree {
-                    // Tree-sitter Point uses byte offsets for columns, not UTF-16 code units
-                    // We need to calculate the byte column for each position
-                    let start_byte_column = text
-                        .lines()
-                        .nth(range.start.line as usize)
-                        .map(|line| {
-                            let mut byte_col = 0;
-                            let mut utf16_col = 0;
-                            for ch in line.chars() {
-                                if utf16_col >= range.start.character as usize {
-                                    break;
-                                }
-                                byte_col += ch.len_utf8();
-                                utf16_col += ch.len_utf16();
-                            }
-                            byte_col
-                        })
-                        .unwrap_or(0);
-
-                    let old_end_byte_column = text
-                        .lines()
-                        .nth(range.end.line as usize)
-                        .map(|line| {
-                            let mut byte_col = 0;
-                            let mut utf16_col = 0;
-                            for ch in line.chars() {
-                                if utf16_col >= range.end.character as usize {
-                                    break;
-                                }
-                                byte_col += ch.len_utf8();
-                                utf16_col += ch.len_utf16();
-                            }
-                            byte_col
-                        })
-                        .unwrap_or(0);
-
-                    // Calculate new end byte column
-                    let new_end_byte_column = if lines_in_change > 0 {
-                        // For multi-line changes, calculate byte length of last line
-                        change.text.split('\n').next_back().unwrap_or("").len()
-                    } else {
-                        // For single-line changes, add byte length to start column
-                        start_byte_column + change.text.len()
-                    };
-
-                    let edit = InputEdit {
-                        start_byte: start_offset,
-                        old_end_byte: end_offset,
-                        new_end_byte: new_end_offset,
-                        start_position: Point::new(range.start.line as usize, start_byte_column),
-                        old_end_position: Point::new(range.end.line as usize, old_end_byte_column),
-                        new_end_position: Point::new(new_end_line as usize, new_end_byte_column),
-                    };
-                    tree.edit(&edit);
-                }
+                // Note: Incremental parsing temporarily disabled
 
                 // Replace the range with new text
                 text.replace_range(start_offset..end_offset, &change.text);
             } else {
-                // Full document change - clear old tree
+                // Full document change
                 text = change.text;
-                old_tree = None;
             }
         }
 
-        // Parse with the edited tree for true incremental parsing
-        self.parse_document_with_tree(uri.clone(), text, old_tree, language_id.as_deref())
+        // Parse the updated document
+        self.parse_document(uri.clone(), text, language_id.as_deref())
             .await;
 
         // Request the client to refresh semantic tokens

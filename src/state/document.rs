@@ -7,7 +7,6 @@ use tree_sitter::Tree;
 // A document entry in our store.
 pub struct Document {
     pub text: String,
-    pub old_tree: Option<Tree>, // Previous tree for incremental parsing
     pub last_semantic_tokens: Option<SemanticTokens>,
     pub root_layer: Option<LanguageLayer>, // Main language layer
     pub injection_layers: Vec<LanguageLayer>, // Injection language layers
@@ -33,17 +32,10 @@ impl DocumentStore {
     }
 
     pub fn insert(&self, uri: Url, text: String, root_layer: Option<LanguageLayer>) {
-        // Preserve the old tree for incremental parsing
-        let old_tree = self
-            .documents
-            .get(&uri)
-            .and_then(|doc| doc.root_layer.as_ref().map(|layer| layer.tree.clone()));
-
         self.documents.insert(
             uri,
             Document {
                 text,
-                old_tree,
                 last_semantic_tokens: None,
                 root_layer,
                 injection_layers: Vec::new(),
@@ -58,25 +50,20 @@ impl DocumentStore {
 
     pub fn update_document(&self, uri: Url, text: String) {
         // Preserve root layer info from existing document if available
-        let (root_layer, old_tree) = self
+        let root_layer = self
             .documents
             .get(&uri)
-            .map(|doc| {
-                (
-                    doc.root_layer.as_ref().map(|layer| {
-                        // Preserve the language but we'll update the tree later
-                        LanguageLayer::root(layer.language_id.clone(), layer.tree.clone())
-                    }),
-                    doc.root_layer.as_ref().map(|layer| layer.tree.clone()),
-                )
-            })
-            .unwrap_or((None, None));
+            .and_then(|doc| {
+                doc.root_layer.as_ref().map(|layer| {
+                    // Preserve the language but we'll update the tree later
+                    LanguageLayer::root(layer.language_id.clone(), layer.tree.clone())
+                })
+            });
 
         self.documents.insert(
             uri,
             Document {
                 text,
-                old_tree,
                 last_semantic_tokens: None,
                 root_layer,
                 injection_layers: Vec::new(),
@@ -184,7 +171,7 @@ mod tests {
     }
 
     #[test]
-    fn test_incremental_parsing_preserves_old_tree() {
+    fn test_document_layer_preservation() {
         let store = DocumentStore::new();
         let uri = Url::parse("file:///test.rs").unwrap();
 
@@ -199,11 +186,10 @@ mod tests {
         let root_layer1 = Some(LanguageLayer::root("rust".to_string(), tree1.clone()));
         store.insert(uri.clone(), text1.to_string(), root_layer1);
 
-        // Verify the document has no old_tree initially
+        // Verify the document has root layer
         {
             let doc = store.get(&uri).unwrap();
             assert!(doc.root_layer.is_some());
-            assert!(doc.old_tree.is_none());
         }
 
         // Second insert should preserve the previous tree as old_tree
@@ -212,21 +198,16 @@ mod tests {
         let root_layer2 = Some(LanguageLayer::root("rust".to_string(), tree2));
         store.insert(uri.clone(), text2.to_string(), root_layer2);
 
-        // Verify the old tree is preserved
+        // Verify the root layer is updated
         {
             let doc = store.get(&uri).unwrap();
             assert!(doc.root_layer.is_some());
-            assert!(doc.old_tree.is_some());
-            // The old_tree should be from the first parse
-            assert_eq!(
-                doc.old_tree.as_ref().unwrap().root_node().kind(),
-                tree1.root_node().kind()
-            );
+            assert_eq!(doc.text, text2);
         }
     }
 
     #[test]
-    fn test_update_document_preserves_tree_as_old_tree() {
+    fn test_update_document_preserves_language() {
         let store = DocumentStore::new();
         let uri = Url::parse("file:///test.rs").unwrap();
 
@@ -241,19 +222,15 @@ mod tests {
         let root_layer1 = Some(LanguageLayer::root("rust".to_string(), tree1.clone()));
         store.insert(uri.clone(), text1.to_string(), root_layer1);
 
-        // Update document should preserve the tree as old_tree
+        // Update document should preserve the language
         let text2 = "fn main() { println!(\"hello\"); }";
         store.update_document(uri.clone(), text2.to_string());
 
-        // Verify the tree is preserved as old_tree
+        // Verify the language is preserved
         {
             let doc = store.get(&uri).unwrap();
-            assert!(doc.root_layer.is_some()); // update_document preserves root_layer
-            assert!(doc.old_tree.is_some()); // but preserves the previous tree as old_tree
-            assert_eq!(
-                doc.old_tree.as_ref().unwrap().root_node().kind(),
-                tree1.root_node().kind()
-            );
+            assert!(doc.root_layer.is_some());
+            assert_eq!(doc.text, text2);
             assert_eq!(doc.get_language_id(), Some(&"rust".to_string()));
         }
     }

@@ -111,7 +111,6 @@ mod tests {
 
         Document {
             text: "fn main() {}".to_string(),
-            old_tree: None,
             last_semantic_tokens: None,
             root_layer: Some(LanguageLayer::root("rust".to_string(), tree)),
             injection_layers: vec![],

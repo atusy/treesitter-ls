@@ -71,7 +71,6 @@ mod tests {
 
         let mut doc = Document {
             text: text.to_string(),
-            old_tree: None,
             last_semantic_tokens: None,
             root_layer: Some(LanguageLayer::root("rust".to_string(), tree.clone())),
             injection_layers: vec![],
