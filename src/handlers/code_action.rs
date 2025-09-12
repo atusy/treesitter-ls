@@ -8,35 +8,20 @@ use crate::treesitter::{byte_range_to_range, position_to_byte_offset};
 /// Create an inspect token code action for the node at cursor
 fn create_inspect_token_action(
     node: &Node,
+    root: &Node,
     text: &str,
     queries: Option<(&Query, Option<&Query>)>,
 ) -> CodeActionOrCommand {
-    let mut info = format!("Node Type: {}\n", node.kind());
-
-    // Add node text if it's not too long
-    let node_text = &text[node.byte_range()];
-    if node_text.len() <= 100 {
-        info.push_str(&format!("Text: {}\n", node_text));
-    } else {
-        info.push_str(&format!("Text: {}...\n", &node_text[..97]));
-    }
-
-    // Add position info
-    info.push_str(&format!(
-        "Position: {}:{} - {}:{}\n",
-        node.start_position().row + 1,
-        node.start_position().column + 1,
-        node.end_position().row + 1,
-        node.end_position().column + 1
-    ));
+    let mut info = format!("* Node Type: {}\n", node.kind());
 
     // If we have queries, show captures
     if let Some((highlights_query, locals_query)) = queries {
-        let mut captures = Vec::new();
+        let mut highlight_captures = Vec::new();
+        let mut local_captures = Vec::new();
 
-        // Check highlights query
+        // Check highlights query - search from root to find all captures for this node
         let mut cursor = QueryCursor::new();
-        let mut matches = cursor.matches(highlights_query, *node, text.as_bytes());
+        let mut matches = cursor.matches(highlights_query, *root, text.as_bytes());
         while let Some(m) = matches.next() {
             // Filter captures based on predicates
             let filtered_captures =
@@ -44,37 +29,47 @@ fn create_inspect_token_action(
             for c in filtered_captures {
                 if c.node == *node {
                     let capture_name = &highlights_query.capture_names()[c.index as usize];
-                    if !captures.contains(&capture_name.to_string()) {
-                        captures.push(capture_name.to_string());
+                    if !highlight_captures.contains(&capture_name.to_string()) {
+                        highlight_captures.push(capture_name.to_string());
                     }
                 }
             }
         }
 
-        // Check locals query if available
+        // Check locals query if available - search from root to find all captures for this node
         if let Some(locals) = locals_query {
             let mut cursor = QueryCursor::new();
-            let mut matches = cursor.matches(locals, *node, text.as_bytes());
+            let mut matches = cursor.matches(locals, *root, text.as_bytes());
             while let Some(m) = matches.next() {
                 // Filter captures based on predicates
                 let filtered_captures = crate::treesitter::filter_captures(locals, m, text);
                 for c in filtered_captures {
                     if c.node == *node {
                         let capture_name = &locals.capture_names()[c.index as usize];
-                        let prefixed = format!("(locals) {}", capture_name);
-                        if !captures.contains(&prefixed) {
-                            captures.push(prefixed);
+                        if !local_captures.contains(&capture_name.to_string()) {
+                            local_captures.push(capture_name.to_string());
                         }
                     }
                 }
             }
         }
 
-        if !captures.is_empty() {
-            info.push_str("\nCaptures:\n");
-            for capture in captures {
-                info.push_str(&format!("  - {}\n", capture));
-            }
+        // Add captures section
+        info.push_str("* Captures\n");
+        
+        // Add highlights
+        if !highlight_captures.is_empty() {
+            info.push_str(&format!("    * highlights: {}\n", highlight_captures.join(", ")));
+        }
+        
+        // Add locals
+        if !local_captures.is_empty() {
+            info.push_str(&format!("    * locals: {}\n", local_captures.join(", ")));
+        }
+        
+        // If no captures at all, indicate none
+        if highlight_captures.is_empty() && local_captures.is_empty() {
+            info.push_str("    * (none)\n");
         }
     }
 
@@ -112,7 +107,7 @@ pub fn handle_code_actions(
 
     // Always create inspect token action for the node at cursor
     let mut actions: Vec<CodeActionOrCommand> = Vec::new();
-    actions.push(create_inspect_token_action(&node_at_cursor, text, queries));
+    actions.push(create_inspect_token_action(&node_at_cursor, &root, text, queries));
 
     // Ascend to a `parameters` node for parameter reordering actions
     let mut n: Option<Node> = Some(node_at_cursor);
