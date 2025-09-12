@@ -521,6 +521,17 @@ impl LanguageService {
                         format!("Dynamically loaded language {lang_name} from {lib_path}"),
                     )
                     .await;
+                
+                // Request semantic tokens refresh after successful loading
+                if client.semantic_tokens_refresh().await.is_ok() {
+                    client
+                        .log_message(
+                            MessageType::INFO,
+                            format!("Requested semantic tokens refresh for {lang_name}"),
+                        )
+                        .await;
+                }
+                
                 true
             }
             Err(err) => {
