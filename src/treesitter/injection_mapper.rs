@@ -159,7 +159,7 @@ impl<'a> InjectionPositionMapper<'a> {
         let layer_offset = layer_mapping.map_doc_to_layer_offset(doc_offset)?;
 
         // Convert layer offset to position
-        layer_byte_to_position(
+        doc_byte_to_position(
             &layer_mapping.layer_text,
             &layer_mapping.layer_line_starts,
             layer_offset,
@@ -179,7 +179,7 @@ impl<'a> InjectionPositionMapper<'a> {
             .find(|m| m.layer.language_id == layer_id)?;
 
         // Convert layer position to byte offset
-        let layer_offset = layer_position_to_byte(
+        let layer_offset = doc_position_to_byte(
             &layer_mapping.layer_text,
             &layer_mapping.layer_line_starts,
             layer_position,
@@ -262,16 +262,6 @@ fn doc_byte_to_position(_text: &str, line_starts: &[usize], offset: usize) -> Op
         line: line as u32,
         character: char_offset as u32,
     })
-}
-
-/// Convert layer position to byte offset
-fn layer_position_to_byte(text: &str, line_starts: &[usize], position: Position) -> Option<usize> {
-    doc_position_to_byte(text, line_starts, position)
-}
-
-/// Convert layer byte offset to position
-fn layer_byte_to_position(text: &str, line_starts: &[usize], offset: usize) -> Option<Position> {
-    doc_byte_to_position(text, line_starts, offset)
 }
 
 // compute_line_starts is already exported from position_mapper

@@ -50,15 +50,12 @@ impl DocumentStore {
 
     pub fn update_document(&self, uri: Url, text: String) {
         // Preserve root layer info from existing document if available
-        let root_layer = self
-            .documents
-            .get(&uri)
-            .and_then(|doc| {
-                doc.root_layer.as_ref().map(|layer| {
-                    // Preserve the language but we'll update the tree later
-                    LanguageLayer::root(layer.language_id.clone(), layer.tree.clone())
-                })
-            });
+        let root_layer = self.documents.get(&uri).and_then(|doc| {
+            doc.root_layer.as_ref().map(|layer| {
+                // Preserve the language but we'll update the tree later
+                LanguageLayer::root(layer.language_id.clone(), layer.tree.clone())
+            })
+        });
 
         self.documents.insert(
             uri,

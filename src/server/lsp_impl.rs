@@ -8,12 +8,11 @@ use tree_sitter::{InputEdit, Parser, Query};
 use crate::config::{TreeSitterSettings, merge_settings};
 use crate::handlers::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
 use crate::handlers::{
-    handle_code_actions, handle_goto_definition_layered,
-    handle_selection_range_layered, handle_semantic_tokens_full_delta,
-    handle_semantic_tokens_range,
+    handle_code_actions, handle_goto_definition_layered, handle_selection_range_layered,
+    handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
-use crate::state::{DocumentStore, LanguageLayer, LanguageService};
 use crate::state::parser_pool::{DocumentParserPool, ParserFactory};
+use crate::state::{DocumentStore, LanguageLayer, LanguageService};
 use crate::treesitter::{position_to_byte_offset, tree_utils::position_to_point};
 
 pub struct TreeSitterLs {
@@ -46,7 +45,13 @@ impl TreeSitterLs {
         }
     }
 
-    async fn parse_document(&self, uri: Url, text: String, language_id: Option<&str>, edits: Vec<InputEdit>) {
+    async fn parse_document(
+        &self,
+        uri: Url,
+        text: String,
+        language_id: Option<&str>,
+        edits: Vec<InputEdit>,
+    ) {
         // Detect file extension
         let extension = uri.path().split('.').next_back().unwrap_or("");
 
@@ -103,19 +108,20 @@ impl TreeSitterLs {
 
                 // Get old tree for incremental parsing if document exists
                 let old_tree = if !edits.is_empty() {
-                    self.document_store.get(&uri)
-                        .and_then(|doc| doc.root_layer.as_ref().map(|layer| {
+                    self.document_store.get(&uri).and_then(|doc| {
+                        doc.root_layer.as_ref().map(|layer| {
                             let mut tree = layer.tree.clone();
                             // Apply all edits to the tree
                             for edit in &edits {
                                 tree.edit(edit);
                             }
                             tree
-                        }))
+                        })
+                    })
                 } else {
                     None
                 };
-                
+
                 // Parse the document with incremental parsing if old tree exists
                 if let Some(tree) = parser.parse(&text, old_tree.as_ref()) {
                     // Create root layer for the parsed tree
@@ -414,12 +420,12 @@ impl LanguageServer for TreeSitterLs {
                 let start_offset = position_to_byte_offset(&text, range.start);
                 let end_offset = position_to_byte_offset(&text, range.end);
                 let new_end_offset = start_offset + change.text.len();
-                
+
                 // Calculate the new end position
                 let mut lines = change.text.split('\n');
                 let line_count = lines.clone().count();
                 let last_line_len = lines.next_back().map(|l| l.len()).unwrap_or(0);
-                
+
                 let new_end_position = if line_count > 1 {
                     Position::new(
                         range.start.line + (line_count - 1) as u32,
@@ -431,7 +437,7 @@ impl LanguageServer for TreeSitterLs {
                         range.start.character + last_line_len as u32,
                     )
                 };
-                
+
                 // Create InputEdit for incremental parsing
                 let edit = InputEdit {
                     start_byte: start_offset,
@@ -833,7 +839,8 @@ impl LanguageServer for TreeSitterLs {
             Ok(actions)
         } else {
             // No language, just basic inspect without queries
-            let actions = handle_code_actions(&uri, text, &root_layer.tree, range, None, None, None);
+            let actions =
+                handle_code_actions(&uri, text, &root_layer.tree, range, None, None, None);
             Ok(actions)
         }
     }
