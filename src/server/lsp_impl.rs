@@ -581,7 +581,7 @@ impl LanguageServer for TreeSitterLs {
             };
 
             let text = &doc.text;
-            let Some(tree) = doc.get_tree() else {
+            let Some(root_layer) = &doc.root_layer else {
                 return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
                     SemanticTokens {
                         result_id: None,
@@ -599,7 +599,7 @@ impl LanguageServer for TreeSitterLs {
             // Delegate to handler
             handle_semantic_tokens_full_delta(
                 text,
-                tree,
+                &root_layer.tree,
                 query,
                 &previous_result_id,
                 previous_tokens,
@@ -659,7 +659,7 @@ impl LanguageServer for TreeSitterLs {
         };
 
         let text = &doc.text;
-        let Some(tree) = doc.get_tree() else {
+        let Some(root_layer) = &doc.root_layer else {
             return Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
                 result_id: None,
                 data: vec![],
@@ -672,7 +672,7 @@ impl LanguageServer for TreeSitterLs {
 
         let result = handle_semantic_tokens_range(
             text,
-            tree,
+            &root_layer.tree,
             query,
             &range,
             Some(&language_name),
@@ -750,7 +750,7 @@ impl LanguageServer for TreeSitterLs {
             return Ok(None);
         };
         let text = &doc.text;
-        let Some(tree) = doc.get_tree() else {
+        let Some(root_layer) = &doc.root_layer else {
             return Ok(None);
         };
 
@@ -775,7 +775,7 @@ impl LanguageServer for TreeSitterLs {
             let actions = handle_code_actions(
                 &uri,
                 text,
-                tree,
+                &root_layer.tree,
                 range,
                 queries,
                 language_name.as_deref(),
@@ -784,7 +784,7 @@ impl LanguageServer for TreeSitterLs {
             Ok(actions)
         } else {
             // No language, just basic inspect without queries
-            let actions = handle_code_actions(&uri, text, tree, range, None, None, None);
+            let actions = handle_code_actions(&uri, text, &root_layer.tree, range, None, None, None);
             Ok(actions)
         }
     }
