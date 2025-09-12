@@ -15,6 +15,7 @@ pub struct LanguageService {
     pub languages: Mutex<HashMap<String, Language>>,
     pub queries: Mutex<HashMap<String, Query>>,
     pub locals_queries: Mutex<HashMap<String, Query>>,
+    pub injections_queries: Mutex<HashMap<String, Query>>,
     pub language_configs: Mutex<HashMap<String, LanguageConfig>>,
     pub filetype_map: Mutex<HashMap<String, String>>,
     pub library_loader: Mutex<ParserLoader>,
@@ -29,6 +30,7 @@ impl Default for LanguageService {
             languages: Mutex::new(HashMap::new()),
             queries: Mutex::new(HashMap::new()),
             locals_queries: Mutex::new(HashMap::new()),
+            injections_queries: Mutex::new(HashMap::new()),
             language_configs: Mutex::new(HashMap::new()),
             filetype_map: Mutex::new(HashMap::new()),
             library_loader: Mutex::new(ParserLoader::new()),
@@ -405,6 +407,45 @@ impl LanguageService {
             }
         }
         // No locals is acceptable; silently skip
+        
+        // Load injections query from searchPaths
+        if let Some(runtime_bases) = search_paths
+            && let Some(path) = self.find_query_file(runtime_bases, lang_name, "injections.scm")
+        {
+            match fs::read_to_string(&path) {
+                Ok(content) => match Query::new(language, &content) {
+                    Ok(query) => {
+                        self.injections_queries
+                            .lock()
+                            .unwrap()
+                            .insert(lang_name.to_string(), query);
+                        client
+                            .log_message(
+                                MessageType::INFO,
+                                format!("Injections query loaded from {path:?} for {lang_name}."),
+                            )
+                            .await;
+                    }
+                    Err(err) => {
+                        client
+                            .log_message(
+                                MessageType::ERROR,
+                                format!("Failed to parse injections query for {lang_name} from {path:?}: {err}"),
+                            )
+                            .await;
+                    }
+                },
+                Err(err) => {
+                    client
+                        .log_message(
+                            MessageType::ERROR,
+                            format!("Failed to read injections query {path:?}: {err}"),
+                        )
+                        .await;
+                }
+            }
+        }
+        // No injections is acceptable; silently skip
     }
 
     fn find_query_file(
@@ -505,6 +546,24 @@ impl LanguageService {
                         .log_message(
                             MessageType::INFO,
                             format!("Dynamically loaded locals for {lang_name}"),
+                        )
+                        .await;
+                }
+
+                // Try to load injections queries from searchPaths
+                if let Some(runtime_bases) = search_paths
+                    && let Some(path) = self.find_query_file(runtime_bases, lang_name, "injections.scm")
+                    && let Ok(content) = fs::read_to_string(&path)
+                    && let Ok(query) = Query::new(&language, &content)
+                {
+                    self.injections_queries
+                        .lock()
+                        .unwrap()
+                        .insert(lang_name.to_string(), query);
+                    client
+                        .log_message(
+                            MessageType::INFO,
+                            format!("Dynamically loaded injections for {lang_name}"),
                         )
                         .await;
                 }

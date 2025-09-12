@@ -1,5 +1,6 @@
 pub mod config;
 pub mod handlers;
+// pub mod injection; // TODO: Fix tree-sitter API compatibility
 pub mod server;
 pub mod state;
 pub mod treesitter;
