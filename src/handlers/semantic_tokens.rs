@@ -175,7 +175,8 @@ pub fn handle_semantic_tokens_full(
     let mut matches = cursor.matches(query, tree.root_node(), text.as_bytes());
 
     // Collect all tokens with their positions
-    let mut tokens = vec![];
+    // Pre-allocate with estimated capacity to reduce reallocations
+    let mut tokens = Vec::with_capacity(1000);
     while let Some(m) = matches.next() {
         // Filter captures based on predicates
         let filtered_captures = crate::treesitter::filter_captures(query, m, text);
@@ -203,7 +204,7 @@ pub fn handle_semantic_tokens_full(
     // Convert to LSP semantic tokens format (relative positions)
     let mut last_line = 0;
     let mut last_start = 0;
-    let mut data = Vec::new();
+    let mut data = Vec::with_capacity(tokens.len());
 
     for (line, start, length, capture_index) in tokens {
         let delta_line = line - last_line;
@@ -269,7 +270,8 @@ pub fn handle_semantic_tokens_range(
     let end_line = range.end.line as usize;
 
     // Collect tokens within the range
-    let mut tokens = vec![];
+    // Pre-allocate with estimated capacity for typical visible range
+    let mut tokens = Vec::with_capacity(200);
     while let Some(m) = matches.next() {
         // Filter captures based on predicates
         let filtered_captures = crate::treesitter::filter_captures(query, m, text);
@@ -310,7 +312,7 @@ pub fn handle_semantic_tokens_range(
     // Convert to LSP semantic tokens format (relative positions)
     let mut last_line = 0;
     let mut last_start = 0;
-    let mut data = Vec::new();
+    let mut data = Vec::with_capacity(tokens.len());
 
     for (line, start, length, capture_index) in tokens {
         let delta_line = line - last_line;

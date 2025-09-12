@@ -63,10 +63,16 @@ impl TreeSitterLs {
 
             let languages = self.language_service.languages.lock().unwrap();
             if let Some(language) = languages.get(&language_name) {
-                let mut parser = Parser::new();
-                if parser.set_language(language).is_ok()
-                    && let Some(tree) = parser.parse(&text, None)
-                {
+                // Get or create a parser for this language
+                let mut parsers = self.language_service.parsers.lock().unwrap();
+                let parser = parsers.entry(language_name.clone()).or_insert_with(|| {
+                    let mut p = Parser::new();
+                    p.set_language(language).unwrap();
+                    p
+                });
+                
+                // Parse the document
+                if let Some(tree) = parser.parse(&text, None) {
                     self.document_store.insert(uri, text, Some(tree), language_id.map(|s| s.to_string()));
                     return;
                 }
@@ -300,6 +306,11 @@ impl LanguageServer for TreeSitterLs {
             }
         };
         
+        // Track if we have small incremental changes for refresh decision
+        let is_small_incremental = params.content_changes.len() == 1 
+            && params.content_changes[0].range.is_some()
+            && params.content_changes[0].text.len() < 100;
+        
         // Apply incremental changes to the text
         for change in params.content_changes {
             if let Some(range) = change.range {
@@ -319,12 +330,18 @@ impl LanguageServer for TreeSitterLs {
         self.parse_document(uri.clone(), text, language_id.as_deref())
             .await;
         
-        // Request the client to refresh semantic tokens
-        // This will trigger the client to request new semantic tokens
-        if self.client.semantic_tokens_refresh().await.is_ok() {
-            self.client
-                .log_message(MessageType::INFO, "Requested semantic tokens refresh")
-                .await;
+        // Only request semantic token refresh for small incremental changes
+        // Large changes will be handled by the client automatically
+        let should_refresh = is_small_incremental;
+            
+        if should_refresh {
+            // Request the client to refresh semantic tokens
+            // This will trigger the client to request new semantic tokens
+            if self.client.semantic_tokens_refresh().await.is_ok() {
+                self.client
+                    .log_message(MessageType::INFO, "Requested semantic tokens refresh")
+                    .await;
+            }
         }
         
         self.client
