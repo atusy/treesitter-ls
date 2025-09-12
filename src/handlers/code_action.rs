@@ -83,10 +83,9 @@ fn create_inspect_token_action(
                         // Try wildcard mapping
                         if let Some(wildcard_mappings) = mappings.get("_")
                             && let Some(mapped) = wildcard_mappings.highlights.get(lookup_name)
+                            && capture != mapped
                         {
-                            if capture != mapped {
-                                return format!("{}->{}", capture, mapped);
-                            }
+                            return format!("{}->{}", capture, mapped);
                         }
                     }
                     capture.clone()
@@ -123,10 +122,9 @@ fn create_inspect_token_action(
                         // Try wildcard mapping
                         if let Some(wildcard_mappings) = mappings.get("_")
                             && let Some(mapped) = wildcard_mappings.locals.get(lookup_name)
+                            && capture != mapped
                         {
-                            if capture != mapped {
-                                return format!("{}->{}", capture, mapped);
-                            }
+                            return format!("{}->{}", capture, mapped);
                         }
                     }
                     capture.clone()
