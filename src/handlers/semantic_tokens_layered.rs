@@ -14,21 +14,17 @@ pub fn handle_semantic_tokens_full_layered(
     let mut all_tokens = Vec::new();
     
     // Process root layer if present
-    if let Some(root_layer) = &document.root_layer {
-        if let Some(query) = queries.get(&root_layer.language_id) {
-            // Use the existing handler for single tree
-            if let Some(result) = super::handle_semantic_tokens_full(
-                &document.text,
-                &root_layer.tree,
-                query,
-                Some(&root_layer.language_id),
-                capture_mappings,
-            ) {
-                if let SemanticTokensResult::Tokens(tokens) = result {
-                    all_tokens.extend(tokens.data);
-                }
-            }
-        }
+    if let Some(root_layer) = &document.root_layer
+        && let Some(query) = queries.get(&root_layer.language_id)
+        && let Some(SemanticTokensResult::Tokens(tokens)) = super::handle_semantic_tokens_full(
+            &document.text,
+            &root_layer.tree,
+            query,
+            Some(&root_layer.language_id),
+            capture_mappings,
+        )
+    {
+        all_tokens.extend(tokens.data);
     }
     
     // Process injection layers
@@ -44,18 +40,16 @@ pub fn handle_semantic_tokens_full_layered(
             }
             
             // Parse tokens for injection with the injection's tree
-            if let Some(result) = super::handle_semantic_tokens_full(
+            if let Some(SemanticTokensResult::Tokens(_tokens)) = super::handle_semantic_tokens_full(
                 &injection_text,
                 &injection_layer.tree,
                 query,
                 Some(&injection_layer.language_id),
                 capture_mappings,
             ) {
-                if let SemanticTokensResult::Tokens(_tokens) = result {
-                    // TODO: Adjust token positions based on injection ranges
-                    // For now, we skip injections to avoid position conflicts
-                    // This needs proper position mapping implementation
-                }
+                // TODO: Adjust token positions based on injection ranges
+                // For now, we skip injections to avoid position conflicts
+                // This needs proper position mapping implementation
             }
         }
     }

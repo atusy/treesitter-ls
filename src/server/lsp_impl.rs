@@ -11,7 +11,7 @@ use crate::handlers::{
     handle_code_actions, handle_goto_definition, handle_goto_definition_layered, handle_selection_range,
     handle_semantic_tokens_full, handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
-use crate::state::{DocumentStore, LanguageService};
+use crate::state::{DocumentStore, LanguageService, LanguageLayer};
 use crate::treesitter::position_to_byte_offset;
 
 pub struct TreeSitterLs {
@@ -45,7 +45,7 @@ impl TreeSitterLs {
         let old_tree = self
             .document_store
             .get(&uri)
-            .and_then(|doc| doc.tree.clone());
+            .and_then(|doc| doc.get_tree().cloned());
 
         self.parse_document_with_tree(uri, text, old_tree, language_id)
             .await;
@@ -114,12 +114,19 @@ impl TreeSitterLs {
 
                 // Parse the document incrementally if old_tree exists
                 if let Some(tree) = parser.parse(&text, old_tree.as_ref()) {
+                    // Create root layer for the parsed tree
+                    let root_layer = LanguageLayer::root(language_name.clone(), tree.clone());
+                    
+                    // For now, still pass tree to maintain compatibility
                     self.document_store.insert(
-                        uri,
+                        uri.clone(),
                         text,
                         Some(tree),
                         language_id.map(|s| s.to_string()),
                     );
+                    
+                    // Update document with root layer
+                    self.document_store.update_root_layer(&uri, root_layer);
                     return;
                 }
             }
@@ -377,7 +384,7 @@ impl LanguageServer for TreeSitterLs {
         let (language_id, old_text, mut old_tree) = {
             let doc = self.document_store.get(&uri);
             match doc {
-                Some(d) => (d.language_id.clone(), d.text.clone(), d.tree.clone()),
+                Some(d) => (d.get_language_id().cloned(), d.text.clone(), d.get_tree().cloned()),
                 None => {
                     self.client
                         .log_message(MessageType::WARNING, "Document not found for change event")
@@ -571,7 +578,7 @@ impl LanguageServer for TreeSitterLs {
                 })));
             };
             let text = &doc.text;
-            let Some(tree) = doc.tree.as_ref() else {
+            let Some(tree) = doc.get_tree() else {
                 return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                     result_id: None,
                     data: vec![],
@@ -658,7 +665,7 @@ impl LanguageServer for TreeSitterLs {
             };
 
             let text = &doc.text;
-            let Some(tree) = doc.tree.as_ref() else {
+            let Some(tree) = doc.get_tree() else {
                 return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
                     SemanticTokens {
                         result_id: None,
@@ -736,7 +743,7 @@ impl LanguageServer for TreeSitterLs {
         };
 
         let text = &doc.text;
-        let Some(tree) = doc.tree.as_ref() else {
+        let Some(tree) = doc.get_tree() else {
             return Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
                 result_id: None,
                 data: vec![],
@@ -797,7 +804,7 @@ impl LanguageServer for TreeSitterLs {
             let resolver = DefinitionResolver::new();
             Ok(handle_goto_definition_layered(
                 &resolver,
-                &*doc,
+                &doc,
                 position,
                 locals_query,
                 &uri,
@@ -805,7 +812,7 @@ impl LanguageServer for TreeSitterLs {
         } else {
             // Fallback to legacy handler
             let text = &doc.text;
-            let Some(tree) = doc.tree.as_ref() else {
+            let Some(tree) = doc.get_tree() else {
                 return Ok(None);
             };
             
@@ -834,7 +841,7 @@ impl LanguageServer for TreeSitterLs {
         let Some(doc) = self.document_store.get(&uri) else {
             return Ok(None);
         };
-        let Some(tree) = doc.tree.as_ref() else {
+        let Some(tree) = doc.get_tree() else {
             return Ok(None);
         };
 
@@ -851,7 +858,7 @@ impl LanguageServer for TreeSitterLs {
             return Ok(None);
         };
         let text = &doc.text;
-        let Some(tree) = doc.tree.as_ref() else {
+        let Some(tree) = doc.get_tree() else {
             return Ok(None);
         };
 

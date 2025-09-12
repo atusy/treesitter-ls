@@ -104,6 +104,12 @@ impl DocumentStore {
     pub fn get_document_text(&self, uri: &Url) -> Option<String> {
         self.documents.get(uri).map(|doc| doc.text.clone())
     }
+
+    pub fn update_root_layer(&self, uri: &Url, root_layer: LanguageLayer) {
+        if let Some(mut doc) = self.documents.get_mut(uri) {
+            doc.root_layer = Some(root_layer);
+        }
+    }
 }
 
 // Backward compatibility methods for Document
@@ -157,6 +163,18 @@ impl Document {
         }
         // Also update the deprecated tree field for backward compatibility
         self.tree = Some(tree);
+    }
+
+    /// Get the tree from root layer (backward compatibility)
+    pub fn get_tree(&self) -> Option<&Tree> {
+        self.root_layer.as_ref().map(|layer| &layer.tree)
+            .or(self.tree.as_ref())
+    }
+
+    /// Get the language_id from root layer (backward compatibility)
+    pub fn get_language_id(&self) -> Option<&String> {
+        self.root_layer.as_ref().map(|layer| &layer.language_id)
+            .or(self.language_id.as_ref())
     }
 }
 
