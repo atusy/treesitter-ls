@@ -3,6 +3,7 @@ use tower_lsp::lsp_types::{
 };
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 
+use crate::config::settings::CaptureMappings;
 use crate::treesitter::{byte_range_to_range, position_to_byte_offset};
 
 /// Create an inspect token code action for the node at cursor
@@ -11,6 +12,8 @@ fn create_inspect_token_action(
     root: &Node,
     text: &str,
     queries: Option<(&Query, Option<&Query>)>,
+    filetype: Option<&str>,
+    capture_mappings: Option<&CaptureMappings>,
 ) -> CodeActionOrCommand {
     let mut info = format!("* Node Type: {}\n", node.kind());
 
@@ -57,14 +60,80 @@ fn create_inspect_token_action(
         // Add captures section
         info.push_str("* Captures\n");
         
-        // Add highlights
+        // Add highlights with mappings
         if !highlight_captures.is_empty() {
-            info.push_str(&format!("    * highlights: {}\n", highlight_captures.join(", ")));
+            let mapped_captures: Vec<String> = highlight_captures.iter().map(|capture| {
+                // Apply capture mapping if available
+                if let Some(mappings) = capture_mappings {
+                    // Add @ prefix if not present for lookup
+                    let lookup_name = if capture.starts_with('@') {
+                        capture.to_string()
+                    } else {
+                        format!("@{}", capture)
+                    };
+                    
+                    // Try filetype-specific mapping first
+                    if let Some(ft) = filetype
+                        && let Some(lang_mappings) = mappings.get(ft)
+                        && let Some(mapped) = lang_mappings.highlights.get(&lookup_name) {
+                            // If mapping exists and is different, show as "original->mapped"
+                            let mapped_without_at = mapped.trim_start_matches('@');
+                            if capture != mapped_without_at {
+                                return format!("{}->{}", capture, mapped_without_at);
+                            }
+                    }
+                    
+                    // Try wildcard mapping
+                    if let Some(wildcard_mappings) = mappings.get("_")
+                        && let Some(mapped) = wildcard_mappings.highlights.get(&lookup_name) {
+                            let mapped_without_at = mapped.trim_start_matches('@');
+                            if capture != mapped_without_at {
+                                return format!("{}->{}", capture, mapped_without_at);
+                            }
+                    }
+                }
+                capture.clone()
+            }).collect();
+            
+            info.push_str(&format!("    * highlights: {}\n", mapped_captures.join(", ")));
         }
         
-        // Add locals
+        // Add locals with mappings
         if !local_captures.is_empty() {
-            info.push_str(&format!("    * locals: {}\n", local_captures.join(", ")));
+            let mapped_captures: Vec<String> = local_captures.iter().map(|capture| {
+                // Apply capture mapping if available
+                if let Some(mappings) = capture_mappings {
+                    // Add @ prefix if not present for lookup
+                    let lookup_name = if capture.starts_with('@') {
+                        capture.to_string()
+                    } else {
+                        format!("@{}", capture)
+                    };
+                    
+                    // Try filetype-specific mapping first
+                    if let Some(ft) = filetype
+                        && let Some(lang_mappings) = mappings.get(ft)
+                        && let Some(mapped) = lang_mappings.locals.get(&lookup_name) {
+                            // If mapping exists and is different, show as "original->mapped"
+                            let mapped_without_at = mapped.trim_start_matches('@');
+                            if capture != mapped_without_at {
+                                return format!("{}->{}", capture, mapped_without_at);
+                            }
+                    }
+                    
+                    // Try wildcard mapping
+                    if let Some(wildcard_mappings) = mappings.get("_")
+                        && let Some(mapped) = wildcard_mappings.locals.get(&lookup_name) {
+                            let mapped_without_at = mapped.trim_start_matches('@');
+                            if capture != mapped_without_at {
+                                return format!("{}->{}", capture, mapped_without_at);
+                            }
+                    }
+                }
+                capture.clone()
+            }).collect();
+            
+            info.push_str(&format!("    * locals: {}\n", mapped_captures.join(", ")));
         }
         
         // If no captures at all, indicate none
@@ -97,6 +166,8 @@ pub fn handle_code_actions(
     tree: &Tree,
     cursor: Range,
     queries: Option<(&Query, Option<&Query>)>,
+    filetype: Option<&str>,
+    capture_mappings: Option<&CaptureMappings>,
 ) -> Option<Vec<CodeActionOrCommand>> {
     let root = tree.root_node();
 
@@ -107,7 +178,14 @@ pub fn handle_code_actions(
 
     // Always create inspect token action for the node at cursor
     let mut actions: Vec<CodeActionOrCommand> = Vec::new();
-    actions.push(create_inspect_token_action(&node_at_cursor, &root, text, queries));
+    actions.push(create_inspect_token_action(
+        &node_at_cursor,
+        &root,
+        text,
+        queries,
+        filetype,
+        capture_mappings,
+    ));
 
     // Ascend to a `parameters` node for parameter reordering actions
     let mut n: Option<Node> = Some(node_at_cursor);

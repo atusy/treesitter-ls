@@ -576,8 +576,11 @@ impl LanguageServer for TreeSitterLs {
         // Get language for the document
         let language_name = self.get_language_for_document(&uri);
 
+        // Get capture mappings
+        let capture_mappings = self.language_service.capture_mappings.lock().unwrap();
+
         // Get queries and delegate to handler
-        if let Some(lang) = language_name {
+        if let Some(lang) = language_name.clone() {
             let queries_lock = self.language_service.queries.lock().unwrap();
             let locals_queries_lock = self.language_service.locals_queries.lock().unwrap();
 
@@ -588,11 +591,19 @@ impl LanguageServer for TreeSitterLs {
                 )
             });
 
-            let actions = handle_code_actions(&uri, text, tree, range, queries);
+            let actions = handle_code_actions(
+                &uri,
+                text,
+                tree,
+                range,
+                queries,
+                language_name.as_deref(),
+                Some(&*capture_mappings),
+            );
             Ok(actions)
         } else {
             // No language, just basic inspect without queries
-            let actions = handle_code_actions(&uri, text, tree, range, None);
+            let actions = handle_code_actions(&uri, text, tree, range, None, None, None);
             Ok(actions)
         }
     }
