@@ -118,10 +118,17 @@ impl TreeSitterLs {
                     let root_layer = Some(LanguageLayer::root(language_name.clone(), tree));
                     
                     self.document_store.insert(
-                        uri,
+                        uri.clone(),
                         text,
                         root_layer,
                     );
+                    
+                    // Initialize parser pool for the document
+                    // Note: We need to clone LanguageService as Arc
+                    // In a real implementation, TreeSitterLs should hold Arc<LanguageService>
+                    // For now, we'll skip parser pool initialization to avoid complexity
+                    // TODO: Refactor TreeSitterLs to use Arc<LanguageService>
+                    
                     return;
                 }
             }

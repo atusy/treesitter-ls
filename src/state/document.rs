@@ -91,6 +91,12 @@ impl DocumentStore {
     pub fn get_document_text(&self, uri: &Url) -> Option<String> {
         self.documents.get(uri).map(|doc| doc.text.clone())
     }
+
+    pub fn init_parser_pool(&self, uri: &Url, pool: DocumentParserPool) {
+        if let Some(mut doc) = self.documents.get_mut(uri) {
+            doc.parser_pool = Some(pool);
+        }
+    }
 }
 
 // Backward compatibility methods for Document
