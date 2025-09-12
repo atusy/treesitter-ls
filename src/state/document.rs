@@ -1,4 +1,5 @@
 use crate::state::language_layer::LanguageLayer;
+use crate::state::parser_pool::DocumentParserPool;
 use dashmap::DashMap;
 use tower_lsp::lsp_types::{SemanticTokens, Url};
 use tree_sitter::Tree;
@@ -12,6 +13,7 @@ pub struct Document {
     pub language_id: Option<String>,  // Deprecated: use root_layer instead
     pub root_layer: Option<LanguageLayer>,  // Main language layer
     pub injection_layers: Vec<LanguageLayer>,  // Injection language layers
+    pub parser_pool: Option<DocumentParserPool>,  // Document-specific parser pool
 }
 
 // The central store for all document-related information.
@@ -52,6 +54,7 @@ impl DocumentStore {
                 language_id,
                 root_layer,
                 injection_layers: Vec::new(),
+                parser_pool: None,  // Will be initialized when needed
             },
         );
     }
@@ -85,6 +88,7 @@ impl DocumentStore {
                 language_id,
                 root_layer,
                 injection_layers: Vec::new(),
+                parser_pool: None,  // Will be initialized when needed
             },
         );
     }
@@ -102,6 +106,11 @@ impl DocumentStore {
 
 // Backward compatibility methods for Document
 impl Document {
+    /// Initialize parser pool for this document
+    pub fn init_parser_pool(&mut self, pool: DocumentParserPool) {
+        self.parser_pool = Some(pool);
+    }
+    
     /// Get the primary language layer at a specific byte offset
     pub fn get_layer_at_position(&self, byte_offset: usize) -> Option<&LanguageLayer> {
         // Check injection layers first (they have higher priority)

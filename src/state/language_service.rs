@@ -1,11 +1,12 @@
 use crate::config::{
     CaptureMappings, HighlightItem, HighlightSource, LanguageConfig, TreeSitterSettings,
 };
+use crate::state::parser_pool::ParserFactory;
 use crate::treesitter::ParserLoader;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tower_lsp::Client;
 use tower_lsp::lsp_types::{MessageType, Url};
 use tree_sitter::{Language, Parser, Query};
@@ -41,6 +42,11 @@ impl Default for LanguageService {
 impl LanguageService {
     pub fn new() -> Self {
         Self::default()
+    }
+    
+    /// Create a ParserFactory that can create parsers for loaded languages
+    pub fn create_parser_factory(self: Arc<Self>) -> Arc<ParserFactory> {
+        Arc::new(ParserFactory::new(self))
     }
 
     pub fn load_language(
