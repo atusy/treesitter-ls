@@ -347,33 +347,79 @@ impl LanguageServer for TreeSitterLs {
                 let end_offset = position_to_byte_offset(&text, range.end);
                 let new_end_offset = start_offset + change.text.len();
 
-                // Calculate the new end position
+                // Calculate the new end position correctly using UTF-16 code units
                 let lines_in_change = change.text.matches('\n').count();
                 let new_end_line = range.start.line + lines_in_change as u32;
-                let new_end_character = if lines_in_change > 0 {
-                    change.text.split('\n').next_back().unwrap_or("").len() as u32
+                let _new_end_character = if lines_in_change > 0 {
+                    // For multi-line changes, count UTF-16 code units in the last line
+                    change
+                        .text
+                        .split('\n')
+                        .next_back()
+                        .unwrap_or("")
+                        .chars()
+                        .map(|c| c.len_utf16())
+                        .sum::<usize>() as u32
                 } else {
-                    range.start.character + change.text.len() as u32
+                    // For single-line changes, add UTF-16 length to the start character
+                    range.start.character
+                        + change.text.chars().map(|c| c.len_utf16()).sum::<usize>() as u32
                 };
 
                 // Apply edit to the tree if it exists
                 if let Some(ref mut tree) = old_tree {
+                    // Tree-sitter Point uses byte offsets for columns, not UTF-16 code units
+                    // We need to calculate the byte column for each position
+                    let start_byte_column = text
+                        .lines()
+                        .nth(range.start.line as usize)
+                        .map(|line| {
+                            let mut byte_col = 0;
+                            let mut utf16_col = 0;
+                            for ch in line.chars() {
+                                if utf16_col >= range.start.character as usize {
+                                    break;
+                                }
+                                byte_col += ch.len_utf8();
+                                utf16_col += ch.len_utf16();
+                            }
+                            byte_col
+                        })
+                        .unwrap_or(0);
+
+                    let old_end_byte_column = text
+                        .lines()
+                        .nth(range.end.line as usize)
+                        .map(|line| {
+                            let mut byte_col = 0;
+                            let mut utf16_col = 0;
+                            for ch in line.chars() {
+                                if utf16_col >= range.end.character as usize {
+                                    break;
+                                }
+                                byte_col += ch.len_utf8();
+                                utf16_col += ch.len_utf16();
+                            }
+                            byte_col
+                        })
+                        .unwrap_or(0);
+
+                    // Calculate new end byte column
+                    let new_end_byte_column = if lines_in_change > 0 {
+                        // For multi-line changes, calculate byte length of last line
+                        change.text.split('\n').next_back().unwrap_or("").len()
+                    } else {
+                        // For single-line changes, add byte length to start column
+                        start_byte_column + change.text.len()
+                    };
+
                     let edit = InputEdit {
                         start_byte: start_offset,
                         old_end_byte: end_offset,
                         new_end_byte: new_end_offset,
-                        start_position: Point::new(
-                            range.start.line as usize,
-                            range.start.character as usize,
-                        ),
-                        old_end_position: Point::new(
-                            range.end.line as usize,
-                            range.end.character as usize,
-                        ),
-                        new_end_position: Point::new(
-                            new_end_line as usize,
-                            new_end_character as usize,
-                        ),
+                        start_position: Point::new(range.start.line as usize, start_byte_column),
+                        old_end_position: Point::new(range.end.line as usize, old_end_byte_column),
+                        new_end_position: Point::new(new_end_line as usize, new_end_byte_column),
                     };
                     tree.edit(&edit);
                 }
