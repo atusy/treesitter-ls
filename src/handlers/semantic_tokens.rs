@@ -5,6 +5,22 @@ use tower_lsp::lsp_types::{
 };
 use tree_sitter::{Query, QueryCursor, StreamingIterator, Tree};
 
+/// Convert byte column position to UTF-16 column position within a line
+fn byte_to_utf16_col(line: &str, byte_col: usize) -> usize {
+    let mut utf16_col = 0;
+    let mut byte_pos = 0;
+
+    for ch in line.chars() {
+        if byte_pos >= byte_col {
+            break;
+        }
+        utf16_col += ch.len_utf16();
+        byte_pos += ch.len_utf8();
+    }
+
+    utf16_col
+}
+
 /// Apply capture mappings to transform a capture name
 ///
 /// Looks up the capture name in the provided mappings and returns the mapped value if found,
@@ -177,6 +193,10 @@ pub fn handle_semantic_tokens_full(
     // Collect all tokens with their positions
     // Pre-allocate with estimated capacity to reduce reallocations
     let mut tokens = Vec::with_capacity(1000);
+
+    // Pre-calculate line starts for efficient UTF-16 position conversion
+    let lines: Vec<&str> = text.lines().collect();
+
     while let Some(m) = matches.next() {
         // Filter captures based on predicates
         let filtered_captures = crate::treesitter::filter_captures(query, m, text);
@@ -188,12 +208,14 @@ pub fn handle_semantic_tokens_full(
 
             // Only include single-line tokens
             if start_pos.row == end_pos.row {
-                tokens.push((
-                    start_pos.row,
-                    start_pos.column,
-                    end_pos.column - start_pos.column,
-                    c.index,
-                ));
+                // Convert byte columns to UTF-16 columns
+                let line = lines.get(start_pos.row).unwrap_or(&"");
+
+                // Calculate UTF-16 column positions from byte positions
+                let start_utf16 = byte_to_utf16_col(line, start_pos.column);
+                let end_utf16 = byte_to_utf16_col(line, end_pos.column);
+
+                tokens.push((start_pos.row, start_utf16, end_utf16 - start_utf16, c.index));
             }
         }
     }
@@ -269,6 +291,9 @@ pub fn handle_semantic_tokens_range(
     let start_line = range.start.line as usize;
     let end_line = range.end.line as usize;
 
+    // Pre-calculate line starts for efficient UTF-16 position conversion
+    let lines: Vec<&str> = text.lines().collect();
+
     // Collect tokens within the range
     // Pre-allocate with estimated capacity for typical visible range
     let mut tokens = Vec::with_capacity(200);
@@ -286,22 +311,23 @@ pub fn handle_semantic_tokens_range(
                 continue;
             }
 
-            // For tokens on the boundary lines, check column positions
-            if start_pos.row == end_line && start_pos.column > range.end.character as usize {
-                continue;
-            }
-            if start_pos.row == start_line && end_pos.column < range.start.character as usize {
-                continue;
-            }
-
             // Only include single-line tokens
             if start_pos.row == end_pos.row {
-                tokens.push((
-                    start_pos.row,
-                    start_pos.column,
-                    end_pos.column - start_pos.column,
-                    c.index,
-                ));
+                let line = lines.get(start_pos.row).unwrap_or(&"");
+
+                // Convert byte columns to UTF-16 columns for proper boundary checking
+                let start_utf16 = byte_to_utf16_col(line, start_pos.column);
+                let end_utf16 = byte_to_utf16_col(line, end_pos.column);
+
+                // For tokens on the boundary lines, check column positions (now in UTF-16)
+                if start_pos.row == end_line && start_utf16 > range.end.character as usize {
+                    continue;
+                }
+                if start_pos.row == start_line && end_utf16 < range.start.character as usize {
+                    continue;
+                }
+
+                tokens.push((start_pos.row, start_utf16, end_utf16 - start_utf16, c.index));
             }
         }
     }
