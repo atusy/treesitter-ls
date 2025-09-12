@@ -9,8 +9,8 @@ use crate::config::{TreeSitterSettings, merge_settings};
 use crate::handlers::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
 use crate::handlers::{
     handle_code_actions, handle_goto_definition, handle_goto_definition_layered,
-    handle_selection_range, handle_semantic_tokens_full_delta,
-    handle_semantic_tokens_range, semantic_tokens_layered,
+    handle_selection_range, handle_semantic_tokens_full, handle_semantic_tokens_full_delta,
+    handle_semantic_tokens_range,
 };
 use crate::state::{DocumentStore, LanguageLayer, LanguageService};
 use crate::treesitter::position_to_byte_offset;
@@ -483,17 +483,23 @@ impl LanguageServer for TreeSitterLs {
                     data: vec![],
                 })));
             };
+            let text = &doc.text;
+            let Some(root_layer) = &doc.root_layer else {
+                return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+                    result_id: None,
+                    data: vec![],
+                })));
+            };
+
             // Get capture mappings
             let capture_mappings = self.language_service.capture_mappings.lock().unwrap();
 
-            // Create queries map for layered handler
-            let mut queries_map = std::collections::HashMap::new();
-            queries_map.insert(language_name.clone(), query);
-
-            // Use layered handler
-            semantic_tokens_layered::handle_semantic_tokens_full_layered(
-                &doc,
-                &queries_map,
+            // Use original handler with root layer's tree
+            crate::handlers::handle_semantic_tokens_full(
+                text,
+                &root_layer.tree,
+                query,
+                Some(&language_name),
                 Some(&*capture_mappings),
             )
             .or_else(|| {
