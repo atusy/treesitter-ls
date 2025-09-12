@@ -344,8 +344,11 @@ impl DefinitionResolver {
     }
 }
 
-/// Handle goto definition request (legacy API)
-pub fn handle_goto_definition(
+/// Handle goto definition request (legacy API - deprecated)
+/// Use handle_goto_definition_layered instead
+#[deprecated(note = "Use handle_goto_definition_layered instead")]
+#[allow(dead_code)]
+fn handle_goto_definition(
     resolver: &DefinitionResolver,
     text: &str,
     tree: &Tree,

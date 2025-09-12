@@ -18,6 +18,7 @@ fn build_selection_range(node: Node) -> SelectionRange {
 /// Handle textDocument/selectionRange request (legacy API)
 ///
 /// Returns selection ranges that expand intelligently by syntax boundaries.
+/// (legacy API - deprecated, use handle_selection_range_layered instead)
 ///
 /// # Arguments
 /// * `tree` - The parsed syntax tree
@@ -25,7 +26,9 @@ fn build_selection_range(node: Node) -> SelectionRange {
 ///
 /// # Returns
 /// Selection ranges for each position, or None if unable to compute
-pub fn handle_selection_range(tree: &Tree, positions: &[Position]) -> Option<Vec<SelectionRange>> {
+#[deprecated(note = "Use handle_selection_range_layered instead")]
+#[allow(dead_code)]
+fn handle_selection_range(tree: &Tree, positions: &[Position]) -> Option<Vec<SelectionRange>> {
     let root = tree.root_node();
 
     let ranges = positions
