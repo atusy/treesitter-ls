@@ -331,8 +331,18 @@ impl LanguageServer for TreeSitterLs {
                 queries.contains_key(&language_name)
             };
 
-            // If document is parsed but queries aren't ready, request refresh
-            if !has_queries {
+            if has_queries {
+                // Queries are ready, request immediate refresh
+                if self.client.semantic_tokens_refresh().await.is_ok() {
+                    self.client
+                        .log_message(
+                            MessageType::INFO,
+                            "Requested semantic tokens refresh on file open",
+                        )
+                        .await;
+                }
+            } else {
+                // If document is parsed but queries aren't ready, wait and retry
                 // Give a small delay for queries to load
                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
