@@ -9,8 +9,7 @@ use crate::config::{TreeSitterSettings, merge_settings};
 use crate::handlers::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
 use crate::handlers::{
     handle_code_actions, handle_goto_definition, handle_goto_definition_layered,
-    handle_selection_range, handle_semantic_tokens_full, handle_semantic_tokens_full_delta,
-    handle_semantic_tokens_range,
+    handle_selection_range, handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
 use crate::state::{DocumentStore, LanguageLayer, LanguageService};
 use crate::treesitter::position_to_byte_offset;
