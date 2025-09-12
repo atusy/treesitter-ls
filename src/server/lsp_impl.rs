@@ -8,8 +8,9 @@ use tree_sitter::{Parser, Query};
 use crate::config::{TreeSitterSettings, merge_settings};
 use crate::handlers::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
 use crate::handlers::{
-    handle_code_actions, handle_goto_definition, handle_goto_definition_layered,
-    handle_selection_range, handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
+    handle_code_actions, handle_goto_definition_layered,
+    handle_selection_range, handle_semantic_tokens_full, handle_semantic_tokens_full_delta,
+    handle_semantic_tokens_range,
 };
 use crate::state::{DocumentStore, LanguageLayer, LanguageService};
 use crate::treesitter::position_to_byte_offset;
@@ -374,10 +375,7 @@ impl LanguageServer for TreeSitterLs {
         let (language_id, old_text) = {
             let doc = self.document_store.get(&uri);
             match doc {
-                Some(d) => (
-                    d.get_language_id().cloned(),
-                    d.text.clone(),
-                ),
+                Some(d) => (d.get_language_id().cloned(), d.text.clone()),
                 None => {
                     self.client
                         .log_message(MessageType::WARNING, "Document not found for change event")
@@ -712,36 +710,15 @@ impl LanguageServer for TreeSitterLs {
             return Ok(None);
         };
 
-        // Check if we have layers (use new API) or fallback to legacy
-        if doc.root_layer.is_some() {
-            // Use new layer-aware handler
-            let resolver = DefinitionResolver::new();
-            Ok(handle_goto_definition_layered(
-                &resolver,
-                &doc,
-                position,
-                locals_query,
-                &uri,
-            ))
-        } else {
-            // Fallback to legacy handler
-            let text = &doc.text;
-            let Some(tree) = doc.get_tree() else {
-                return Ok(None);
-            };
-
-            let byte_offset = position_to_byte_offset(text, position);
-            let resolver = DefinitionResolver::new();
-
-            Ok(handle_goto_definition(
-                &resolver,
-                text,
-                tree,
-                locals_query,
-                byte_offset,
-                &uri,
-            ))
-        }
+        // Use layer-aware handler
+        let resolver = DefinitionResolver::new();
+        Ok(handle_goto_definition_layered(
+            &resolver,
+            &doc,
+            position,
+            locals_query,
+            &uri,
+        ))
     }
 
     async fn selection_range(
