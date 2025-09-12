@@ -1,6 +1,5 @@
 use crate::state::LanguageLayer;
 use crate::treesitter::position_mapper::{PositionMapper, compute_line_starts};
-use std::collections::HashMap;
 use tower_lsp::lsp_types::Position;
 
 /// Position mapper that handles injection layers
@@ -21,14 +20,6 @@ struct LayerMapping<'a> {
     // Layer coordinate system
     layer_text: String,
     layer_line_starts: Vec<usize>,
-
-    // Offset mapping tables
-    // TODO: Remove #[allow(dead_code)] once these fields are used for
-    // optimized offset lookups instead of recomputing mappings
-    #[allow(dead_code)]
-    doc_to_layer_offset: HashMap<usize, usize>,
-    #[allow(dead_code)]
-    layer_to_doc_offset: HashMap<usize, usize>,
 }
 
 impl<'a> LayerMapping<'a> {
@@ -91,26 +82,11 @@ impl<'a> InjectionPositionMapper<'a> {
                 let layer_text = extract_layer_text(text, &layer.ranges);
                 let layer_line_starts = compute_line_starts(&layer_text);
 
-                // Build offset mapping tables
-                let mut doc_to_layer = HashMap::new();
-                let mut layer_to_doc = HashMap::new();
-
-                let mut layer_offset = 0;
-                for (start, end) in &layer.ranges {
-                    for doc_offset in *start..*end {
-                        doc_to_layer.insert(doc_offset, layer_offset);
-                        layer_to_doc.insert(layer_offset, doc_offset);
-                        layer_offset += 1;
-                    }
-                }
-
                 LayerMapping {
                     layer,
                     doc_ranges: layer.ranges.clone(),
                     layer_text,
                     layer_line_starts,
-                    doc_to_layer_offset: doc_to_layer,
-                    layer_to_doc_offset: layer_to_doc,
                 }
             })
             .collect();
@@ -372,8 +348,6 @@ mod tests {
             doc_ranges: vec![(10, 20), (30, 40)],
             layer_text: String::new(),
             layer_line_starts: vec![],
-            doc_to_layer_offset: HashMap::new(),
-            layer_to_doc_offset: HashMap::new(),
         };
 
         // Test mapping within first range
