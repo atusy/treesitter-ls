@@ -9,7 +9,7 @@ use crate::config::{TreeSitterSettings, merge_settings};
 use crate::handlers::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
 use crate::handlers::{
     handle_code_actions, handle_goto_definition_layered,
-    handle_selection_range, handle_semantic_tokens_full, handle_semantic_tokens_full_delta,
+    handle_selection_range_layered, handle_semantic_tokens_full, handle_semantic_tokens_full_delta,
     handle_semantic_tokens_range,
 };
 use crate::state::{DocumentStore, LanguageLayer, LanguageService};
@@ -732,16 +732,13 @@ impl LanguageServer for TreeSitterLs {
         let uri = params.text_document.uri;
         let positions = params.positions;
 
-        // Get document and tree
+        // Get document
         let Some(doc) = self.document_store.get(&uri) else {
             return Ok(None);
         };
-        let Some(tree) = doc.get_tree() else {
-            return Ok(None);
-        };
 
-        // Delegate to handler
-        Ok(handle_selection_range(tree, &positions))
+        // Use layer-aware handler
+        Ok(handle_selection_range_layered(&doc, &positions))
     }
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
