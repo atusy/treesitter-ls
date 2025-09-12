@@ -501,7 +501,11 @@ impl LanguageServer for TreeSitterLs {
             // Get capture mappings
             let capture_mappings = self.language_service.capture_mappings.lock().unwrap();
 
-            // Use original handler with root layer's tree
+            // NOTE: We use the original handler instead of the layered version because:
+            // 1. The layered handler has incomplete injection support (positions not mapped)
+            // 2. The layered handler may fail to process tokens when queries are not found
+            // 3. The original handler is stable and well-tested
+            // TODO: Fix semantic_tokens_layered handler when implementing proper injection support
             crate::handlers::handle_semantic_tokens_full(
                 text,
                 &root_layer.tree,
