@@ -1,7 +1,7 @@
 // Definition jump resolution using tree-sitter queries
+use crate::treesitter::node_utils::{calculate_scope_depth, determine_context, get_scope_ids};
 use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Position, Range, Url};
 use tree_sitter::{Query, QueryCursor, StreamingIterator, Tree};
-use crate::treesitter::node_utils::{calculate_scope_depth, get_scope_ids, determine_context};
 
 #[derive(Debug, Clone)]
 pub struct DefinitionCandidate {
@@ -273,7 +273,6 @@ impl DefinitionResolver {
             ContextType::Unknown => true, // Don't filter based on unknown context
         }
     }
-
 
     fn calculate_distance_by_position(
         &self,

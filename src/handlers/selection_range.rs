@@ -1,6 +1,6 @@
+use crate::treesitter::tree_utils::{node_to_range, position_to_point};
 use tower_lsp::lsp_types::{Position, SelectionRange};
 use tree_sitter::{Node, Tree};
-use crate::treesitter::tree_utils::{node_to_range, position_to_point};
 
 /// Build selection range hierarchy for a node
 fn build_selection_range(node: Node) -> SelectionRange {
@@ -46,8 +46,8 @@ pub fn handle_selection_range(tree: &Tree, positions: &[Position]) -> Option<Vec
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tree_sitter::Point;
     use crate::treesitter::tree_utils::point_to_position;
+    use tree_sitter::Point;
 
     #[test]
     fn test_position_to_point() {

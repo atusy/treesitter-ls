@@ -237,24 +237,25 @@ impl LanguageServer for TreeSitterLs {
         if let Some(root) = root_path {
             let config_path = root.join("treesitter-ls.toml");
             if config_path.exists()
-                && let Ok(toml_contents) = std::fs::read_to_string(&config_path) {
-                    match toml::from_str::<TreeSitterSettings>(&toml_contents) {
-                        Ok(settings) => {
-                            self.client
-                                .log_message(MessageType::INFO, "Reloaded treesitter-ls.toml")
-                                .await;
-                            toml_settings = Some(settings);
-                        }
-                        Err(e) => {
-                            self.client
-                                .log_message(
-                                    MessageType::WARNING,
-                                    format!("Failed to parse treesitter-ls.toml: {}", e),
-                                )
-                                .await;
-                        }
+                && let Ok(toml_contents) = std::fs::read_to_string(&config_path)
+            {
+                match toml::from_str::<TreeSitterSettings>(&toml_contents) {
+                    Ok(settings) => {
+                        self.client
+                            .log_message(MessageType::INFO, "Reloaded treesitter-ls.toml")
+                            .await;
+                        toml_settings = Some(settings);
+                    }
+                    Err(e) => {
+                        self.client
+                            .log_message(
+                                MessageType::WARNING,
+                                format!("Failed to parse treesitter-ls.toml: {}", e),
+                            )
+                            .await;
                     }
                 }
+            }
         }
 
         // Parse configuration from settings

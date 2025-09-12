@@ -26,15 +26,17 @@ fn apply_capture_mapping(
         // Try filetype-specific mapping first
         if let Some(ft) = filetype
             && let Some(lang_mappings) = mappings.get(ft)
-            && let Some(mapped) = lang_mappings.highlights.get(capture_name) {
-                return mapped.clone();
-            }
+            && let Some(mapped) = lang_mappings.highlights.get(capture_name)
+        {
+            return mapped.clone();
+        }
 
         // Try wildcard mapping
         if let Some(wildcard_mappings) = mappings.get("_")
-            && let Some(mapped) = wildcard_mappings.highlights.get(capture_name) {
-                return mapped.clone();
-            }
+            && let Some(mapped) = wildcard_mappings.highlights.get(capture_name)
+        {
+            return mapped.clone();
+        }
     }
 
     // Return original if no mapping found

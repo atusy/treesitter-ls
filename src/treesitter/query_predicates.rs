@@ -22,45 +22,51 @@ pub fn check_predicate(
 
             match predicate.operator.as_ref() {
                 "lua-match?" => {
-                    if let Some(tree_sitter::QueryPredicateArg::String(pattern_str)) = predicate.args.get(1) {
-                            // Parse the lua pattern and convert to regex
-                            match lua_pattern::parse(pattern_str) {
-                                Ok(parsed_pattern) => {
-                                    // Convert to regex for matching
-                                    match lua_pattern::try_to_regex(&parsed_pattern, false, false) {
-                                        Ok(regex_str) => {
-                                            // Use regex to perform the match
-                                            if let Ok(re) = regex::Regex::new(&regex_str)
-                                                && !re.is_match(node_text) {
-                                                    return false;
-                                            } else if regex::Regex::new(&regex_str).is_err() {
-                                                eprintln!(
-                                                    "Failed to compile regex from lua-pattern: {}",
-                                                    regex_str
-                                                );
-                                            }
-                                        }
-                                        Err(e) => {
+                    if let Some(tree_sitter::QueryPredicateArg::String(pattern_str)) =
+                        predicate.args.get(1)
+                    {
+                        // Parse the lua pattern and convert to regex
+                        match lua_pattern::parse(pattern_str) {
+                            Ok(parsed_pattern) => {
+                                // Convert to regex for matching
+                                match lua_pattern::try_to_regex(&parsed_pattern, false, false) {
+                                    Ok(regex_str) => {
+                                        // Use regex to perform the match
+                                        if let Ok(re) = regex::Regex::new(&regex_str)
+                                            && !re.is_match(node_text)
+                                        {
+                                            return false;
+                                        } else if regex::Regex::new(&regex_str).is_err() {
                                             eprintln!(
-                                                "Failed to convert lua-pattern to regex: {} - {:?}",
-                                                pattern_str, e
+                                                "Failed to compile regex from lua-pattern: {}",
+                                                regex_str
                                             );
                                         }
                                     }
-                                }
-                                Err(e) => {
-                                    eprintln!("Invalid lua-pattern: {} - {:?}", pattern_str, e);
+                                    Err(e) => {
+                                        eprintln!(
+                                            "Failed to convert lua-pattern to regex: {} - {:?}",
+                                            pattern_str, e
+                                        );
+                                    }
                                 }
                             }
+                            Err(e) => {
+                                eprintln!("Invalid lua-pattern: {} - {:?}", pattern_str, e);
+                            }
+                        }
                     }
                 }
                 "match?" => {
-                    if let Some(tree_sitter::QueryPredicateArg::String(pattern_str)) = predicate.args.get(1) {
+                    if let Some(tree_sitter::QueryPredicateArg::String(pattern_str)) =
+                        predicate.args.get(1)
+                    {
                         // Use regex for match? predicate
                         if let Ok(re) = regex::Regex::new(pattern_str)
-                            && !re.is_match(node_text) {
-                                return false;
-                            }
+                            && !re.is_match(node_text)
+                        {
+                            return false;
+                        }
                     }
                 }
                 "eq?" => {

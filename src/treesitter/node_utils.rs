@@ -10,12 +10,12 @@ use tree_sitter::Node;
 pub fn calculate_depth(node: Node) -> usize {
     let mut depth = 0;
     let mut current = node.parent();
-    
+
     while let Some(parent) = current {
         depth += 1;
         current = parent.parent();
     }
-    
+
     depth
 }
 
@@ -29,12 +29,12 @@ pub fn calculate_depth(node: Node) -> usize {
 pub fn get_ancestors(node: Node) -> Vec<Node> {
     let mut ancestors = Vec::new();
     let mut current = node.parent();
-    
+
     while let Some(parent) = current {
         ancestors.push(parent);
         current = parent.parent();
     }
-    
+
     ancestors
 }
 
@@ -90,14 +90,14 @@ pub fn is_scope_node(node_type: &str) -> bool {
 pub fn get_scope_chain(node: Node) -> Vec<Node> {
     let mut scopes = Vec::new();
     let mut current = node.parent();
-    
+
     while let Some(parent) = current {
         if is_scope_node(parent.kind()) {
             scopes.push(parent);
         }
         current = parent.parent();
     }
-    
+
     scopes
 }
 
@@ -111,14 +111,14 @@ pub fn get_scope_chain(node: Node) -> Vec<Node> {
 pub fn get_scope_ids(node: Node) -> Vec<usize> {
     let mut scope_ids = Vec::new();
     let mut current = node.parent();
-    
+
     while let Some(n) = current {
         if is_scope_node(n.kind()) {
             scope_ids.push(n.id());
         }
         current = n.parent();
     }
-    
+
     scope_ids
 }
 
@@ -132,14 +132,14 @@ pub fn get_scope_ids(node: Node) -> Vec<usize> {
 pub fn calculate_scope_depth(node: Node) -> usize {
     let mut depth = 0;
     let mut current = node.parent();
-    
+
     while let Some(parent) = current {
         if is_scope_node(parent.kind()) {
             depth += 1;
         }
         current = parent.parent();
     }
-    
+
     depth
 }
 
@@ -154,18 +154,18 @@ pub fn calculate_scope_depth(node: Node) -> usize {
 pub fn find_common_ancestor<'a>(node1: Node<'a>, node2: Node<'a>) -> Option<Node<'a>> {
     let ancestors1 = get_ancestors(node1);
     let ancestors2_ids: Vec<usize> = get_ancestors(node2).iter().map(|n| n.id()).collect();
-    
+
     for ancestor in ancestors1 {
         if ancestors2_ids.contains(&ancestor.id()) {
             return Some(ancestor);
         }
     }
-    
+
     // Check if nodes are in the same tree
     if node1.id() == node2.id() {
         return Some(node1);
     }
-    
+
     None
 }
 
@@ -191,14 +191,14 @@ pub fn find_node_at_byte(root: Node, byte_offset: usize) -> Option<Node> {
 /// true if potential_ancestor is an ancestor of node
 pub fn is_ancestor_of(potential_ancestor: Node, node: Node) -> bool {
     let mut current = node.parent();
-    
+
     while let Some(parent) = current {
         if parent.id() == potential_ancestor.id() {
             return true;
         }
         current = parent.parent();
     }
-    
+
     false
 }
 
@@ -211,7 +211,7 @@ pub fn is_ancestor_of(potential_ancestor: Node, node: Node) -> bool {
 /// A string describing the context type
 pub fn determine_context(node: Node) -> &'static str {
     let mut current = node.parent();
-    
+
     while let Some(parent) = current {
         match parent.kind() {
             "call_expression" | "function_call" => return "function_call",
@@ -221,6 +221,6 @@ pub fn determine_context(node: Node) -> &'static str {
         }
         current = parent.parent();
     }
-    
+
     "variable_reference"
 }

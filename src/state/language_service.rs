@@ -1,7 +1,7 @@
-use crate::treesitter::ParserLoader;
 use crate::config::{
     CaptureMappings, HighlightItem, HighlightSource, LanguageConfig, TreeSitterSettings,
 };
+use crate::treesitter::ParserLoader;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};

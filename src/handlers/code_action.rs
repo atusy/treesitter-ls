@@ -27,8 +27,7 @@ fn create_inspect_token_action(
         let mut matches = cursor.matches(highlights_query, *root, text.as_bytes());
         while let Some(m) = matches.next() {
             // Filter captures based on predicates
-            let filtered_captures =
-                crate::treesitter::filter_captures(highlights_query, m, text);
+            let filtered_captures = crate::treesitter::filter_captures(highlights_query, m, text);
             for c in filtered_captures {
                 if c.node == *node {
                     let capture_name = &highlights_query.capture_names()[c.index as usize];
@@ -59,83 +58,96 @@ fn create_inspect_token_action(
 
         // Add captures section
         info.push_str("* Captures\n");
-        
+
         // Add highlights with mappings
         if !highlight_captures.is_empty() {
-            let mapped_captures: Vec<String> = highlight_captures.iter().map(|capture| {
-                // Apply capture mapping if available
-                if let Some(mappings) = capture_mappings {
-                    // Add @ prefix if not present for lookup
-                    let lookup_name = if capture.starts_with('@') {
-                        capture.to_string()
-                    } else {
-                        format!("@{}", capture)
-                    };
-                    
-                    // Try filetype-specific mapping first
-                    if let Some(ft) = filetype
-                        && let Some(lang_mappings) = mappings.get(ft)
-                        && let Some(mapped) = lang_mappings.highlights.get(&lookup_name) {
+            let mapped_captures: Vec<String> = highlight_captures
+                .iter()
+                .map(|capture| {
+                    // Apply capture mapping if available
+                    if let Some(mappings) = capture_mappings {
+                        // Add @ prefix if not present for lookup
+                        let lookup_name = if capture.starts_with('@') {
+                            capture.to_string()
+                        } else {
+                            format!("@{}", capture)
+                        };
+
+                        // Try filetype-specific mapping first
+                        if let Some(ft) = filetype
+                            && let Some(lang_mappings) = mappings.get(ft)
+                            && let Some(mapped) = lang_mappings.highlights.get(&lookup_name)
+                        {
                             // If mapping exists and is different, show as "original->mapped"
                             let mapped_without_at = mapped.trim_start_matches('@');
                             if capture != mapped_without_at {
                                 return format!("{}->{}", capture, mapped_without_at);
                             }
-                    }
-                    
-                    // Try wildcard mapping
-                    if let Some(wildcard_mappings) = mappings.get("_")
-                        && let Some(mapped) = wildcard_mappings.highlights.get(&lookup_name) {
+                        }
+
+                        // Try wildcard mapping
+                        if let Some(wildcard_mappings) = mappings.get("_")
+                            && let Some(mapped) = wildcard_mappings.highlights.get(&lookup_name)
+                        {
                             let mapped_without_at = mapped.trim_start_matches('@');
                             if capture != mapped_without_at {
                                 return format!("{}->{}", capture, mapped_without_at);
                             }
+                        }
                     }
-                }
-                capture.clone()
-            }).collect();
-            
-            info.push_str(&format!("    * highlights: {}\n", mapped_captures.join(", ")));
+                    capture.clone()
+                })
+                .collect();
+
+            info.push_str(&format!(
+                "    * highlights: {}\n",
+                mapped_captures.join(", ")
+            ));
         }
-        
+
         // Add locals with mappings
         if !local_captures.is_empty() {
-            let mapped_captures: Vec<String> = local_captures.iter().map(|capture| {
-                // Apply capture mapping if available
-                if let Some(mappings) = capture_mappings {
-                    // Add @ prefix if not present for lookup
-                    let lookup_name = if capture.starts_with('@') {
-                        capture.to_string()
-                    } else {
-                        format!("@{}", capture)
-                    };
-                    
-                    // Try filetype-specific mapping first
-                    if let Some(ft) = filetype
-                        && let Some(lang_mappings) = mappings.get(ft)
-                        && let Some(mapped) = lang_mappings.locals.get(&lookup_name) {
+            let mapped_captures: Vec<String> = local_captures
+                .iter()
+                .map(|capture| {
+                    // Apply capture mapping if available
+                    if let Some(mappings) = capture_mappings {
+                        // Add @ prefix if not present for lookup
+                        let lookup_name = if capture.starts_with('@') {
+                            capture.to_string()
+                        } else {
+                            format!("@{}", capture)
+                        };
+
+                        // Try filetype-specific mapping first
+                        if let Some(ft) = filetype
+                            && let Some(lang_mappings) = mappings.get(ft)
+                            && let Some(mapped) = lang_mappings.locals.get(&lookup_name)
+                        {
                             // If mapping exists and is different, show as "original->mapped"
                             let mapped_without_at = mapped.trim_start_matches('@');
                             if capture != mapped_without_at {
                                 return format!("{}->{}", capture, mapped_without_at);
                             }
-                    }
-                    
-                    // Try wildcard mapping
-                    if let Some(wildcard_mappings) = mappings.get("_")
-                        && let Some(mapped) = wildcard_mappings.locals.get(&lookup_name) {
+                        }
+
+                        // Try wildcard mapping
+                        if let Some(wildcard_mappings) = mappings.get("_")
+                            && let Some(mapped) = wildcard_mappings.locals.get(&lookup_name)
+                        {
                             let mapped_without_at = mapped.trim_start_matches('@');
                             if capture != mapped_without_at {
                                 return format!("{}->{}", capture, mapped_without_at);
                             }
+                        }
                     }
-                }
-                capture.clone()
-            }).collect();
-            
+                    capture.clone()
+                })
+                .collect();
+
             info.push_str(&format!("    * locals: {}\n", mapped_captures.join(", ")));
         }
-        
+
         // If no captures at all, indicate none
         if highlight_captures.is_empty() && local_captures.is_empty() {
             info.push_str("    * (none)\n");
