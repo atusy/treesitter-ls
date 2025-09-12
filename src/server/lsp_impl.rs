@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
-use tree_sitter::{Parser, Query};
+use tree_sitter::{InputEdit, Parser, Query};
 
 use crate::config::{TreeSitterSettings, merge_settings};
 use crate::handlers::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
@@ -14,7 +14,7 @@ use crate::handlers::{
 };
 use crate::state::{DocumentStore, LanguageLayer, LanguageService};
 use crate::state::parser_pool::{DocumentParserPool, ParserFactory};
-use crate::treesitter::position_to_byte_offset;
+use crate::treesitter::{position_to_byte_offset, tree_utils::position_to_point};
 
 pub struct TreeSitterLs {
     client: Client,
@@ -46,7 +46,7 @@ impl TreeSitterLs {
         }
     }
 
-    async fn parse_document(&self, uri: Url, text: String, language_id: Option<&str>) {
+    async fn parse_document(&self, uri: Url, text: String, language_id: Option<&str>, edits: Vec<InputEdit>) {
         // Detect file extension
         let extension = uri.path().split('.').next_back().unwrap_or("");
 
@@ -102,8 +102,19 @@ impl TreeSitterLs {
                 });
 
                 // Get old tree for incremental parsing if document exists
-                let old_tree = self.document_store.get(&uri)
-                    .and_then(|doc| doc.root_layer.as_ref().map(|layer| layer.tree.clone()));
+                let old_tree = if !edits.is_empty() {
+                    self.document_store.get(&uri)
+                        .and_then(|doc| doc.root_layer.as_ref().map(|layer| {
+                            let mut tree = layer.tree.clone();
+                            // Apply all edits to the tree
+                            for edit in &edits {
+                                tree.edit(edit);
+                            }
+                            tree
+                        }))
+                } else {
+                    None
+                };
                 
                 // Parse the document with incremental parsing if old tree exists
                 if let Some(tree) = parser.parse(&text, old_tree.as_ref()) {
@@ -328,6 +339,7 @@ impl LanguageServer for TreeSitterLs {
             params.text_document.uri,
             params.text_document.text,
             Some(&language_id),
+            vec![], // No edits for initial document open
         )
         .await;
 
@@ -393,24 +405,55 @@ impl LanguageServer for TreeSitterLs {
         };
 
         let mut text = old_text.clone();
+        let mut edits = Vec::new();
 
-        // Apply incremental changes to the text and tree
+        // Apply incremental changes to the text and collect edit information
         for change in params.content_changes {
             if let Some(range) = change.range {
-                // Incremental change - update tree with edit information
+                // Incremental change - create InputEdit for tree editing
                 let start_offset = position_to_byte_offset(&text, range.start);
                 let end_offset = position_to_byte_offset(&text, range.end);
+                let new_end_offset = start_offset + change.text.len();
+                
+                // Calculate the new end position
+                let mut lines = change.text.split('\n');
+                let line_count = lines.clone().count();
+                let last_line_len = lines.next_back().map(|l| l.len()).unwrap_or(0);
+                
+                let new_end_position = if line_count > 1 {
+                    Position::new(
+                        range.start.line + (line_count - 1) as u32,
+                        last_line_len as u32,
+                    )
+                } else {
+                    Position::new(
+                        range.start.line,
+                        range.start.character + last_line_len as u32,
+                    )
+                };
+                
+                // Create InputEdit for incremental parsing
+                let edit = InputEdit {
+                    start_byte: start_offset,
+                    old_end_byte: end_offset,
+                    new_end_byte: new_end_offset,
+                    start_position: position_to_point(&range.start),
+                    old_end_position: position_to_point(&range.end),
+                    new_end_position: position_to_point(&new_end_position),
+                };
+                edits.push(edit);
 
                 // Replace the range with new text
                 text.replace_range(start_offset..end_offset, &change.text);
             } else {
-                // Full document change
+                // Full document change - no incremental parsing
                 text = change.text;
+                edits.clear(); // Clear any previous edits since it's a full replacement
             }
         }
 
-        // Parse the updated document
-        self.parse_document(uri.clone(), text, language_id.as_deref())
+        // Parse the updated document with edit information
+        self.parse_document(uri.clone(), text, language_id.as_deref(), edits)
             .await;
 
         // Request the client to refresh semantic tokens
