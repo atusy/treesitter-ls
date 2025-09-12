@@ -1,3 +1,4 @@
+use crate::treesitter::position_mapper::{PositionMapper, SimplePositionMapper};
 use tower_lsp::lsp_types::{Position, Range};
 
 /// Convert LSP position (line/character) to byte offset in text
@@ -9,103 +10,38 @@ use tower_lsp::lsp_types::{Position, Range};
 /// # Returns
 /// Byte offset in the text
 ///
-/// # TODO
-/// - Add line offset caching for better performance
+/// # Note
+/// This function is now a wrapper around SimplePositionMapper for backward compatibility.
+/// Consider using PositionMapper trait directly for new code.
 pub fn position_to_byte_offset(text: &str, position: Position) -> usize {
-    let mut byte_offset = 0;
-    let mut current_line = 0;
-    let mut current_char_utf16 = 0;
-
-    for ch in text.chars() {
-        // Check if we've reached the target position
-        if current_line == position.line as usize {
-            if current_char_utf16 == position.character as usize {
-                return byte_offset;
-            }
-            // If we're past the requested character position on the target line,
-            // clamp to the current position
-            if current_char_utf16 > position.character as usize {
-                // Need to backtrack - this shouldn't happen with valid positions
-                return byte_offset;
-            }
-        }
-
-        // If we're past the target line, return current offset
-        if current_line > position.line as usize {
-            return byte_offset;
-        }
-
-        // Update position tracking
-        if ch == '\n' {
-            // If we're at the end of the target line, return the position before newline
-            if current_line == position.line as usize {
-                return byte_offset;
-            }
-            current_line += 1;
-            current_char_utf16 = 0;
-        } else if ch == '\r' {
-            // Handle CRLF - don't count \r in character position
-            // Just add to byte offset
-        } else {
-            current_char_utf16 += ch.len_utf16();
-        }
-
-        byte_offset += ch.len_utf8();
-    }
-
-    byte_offset
+    let mapper = SimplePositionMapper::new(text);
+    mapper.position_to_byte(position).unwrap_or(text.len())
 }
 
 /// Convert a byte offset into an LSP `Position` (line and UTF-16 code unit character).
+///
+/// # Note
+/// This function is now a wrapper around SimplePositionMapper for backward compatibility.
+/// Consider using PositionMapper trait directly for new code.
 pub fn byte_offset_to_position(text: &str, byte_offset: usize) -> Position {
-    let mut current_line = 0usize;
-    let mut current_char_utf16 = 0usize;
-    let mut processed_bytes = 0usize;
-
-    for ch in text.chars() {
-        if processed_bytes >= byte_offset {
-            return Position {
-                line: current_line as u32,
-                character: current_char_utf16 as u32,
-            };
-        }
-
-        processed_bytes += ch.len_utf8();
-
-        if ch == '\n' {
-            // If the byte offset is exactly after the newline,
-            // we're at the start of the next line
-            if processed_bytes == byte_offset {
-                return Position {
-                    line: (current_line + 1) as u32,
-                    character: 0,
-                };
-            }
-            current_line += 1;
-            current_char_utf16 = 0;
-        } else if ch == '\r' {
-            // Handle CRLF - don't count \r in character position
-            // Just processed the byte
-        } else {
-            current_char_utf16 += ch.len_utf16();
-        }
-    }
-
-    // If offset is at or beyond end, clamp to end position
-    Position {
-        line: current_line as u32,
-        character: current_char_utf16 as u32,
-    }
+    let mapper = SimplePositionMapper::new(text);
+    mapper.byte_to_position(byte_offset).unwrap_or(Position {
+        line: 0,
+        character: 0,
+    })
 }
 
 /// Convert a byte range [start, end) into an LSP `Range`.
+///
+/// # Note
+/// This function is now a wrapper around SimplePositionMapper for backward compatibility.
+/// Consider using PositionMapper trait directly for new code.
 pub fn byte_range_to_range(text: &str, start: usize, end: usize) -> Range {
-    let start_pos = byte_offset_to_position(text, start);
-    let end_pos = byte_offset_to_position(text, end);
-    Range {
-        start: start_pos,
-        end: end_pos,
-    }
+    let mapper = SimplePositionMapper::new(text);
+    mapper.byte_range_to_range(start, end).unwrap_or(Range {
+        start: Position { line: 0, character: 0 },
+        end: Position { line: 0, character: 0 },
+    })
 }
 
 #[cfg(test)]

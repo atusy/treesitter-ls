@@ -111,6 +111,15 @@ impl Document {
         self.parser_pool = Some(pool);
     }
     
+    /// Get a position mapper for this document
+    /// Returns SimplePositionMapper for now, will return InjectionPositionMapper
+    /// when injection layers are present
+    pub fn position_mapper(&self) -> Box<dyn crate::treesitter::PositionMapper + '_> {
+        // For now, always return SimplePositionMapper
+        // TODO: When injection layers are present, return InjectionPositionMapper
+        Box::new(crate::treesitter::SimplePositionMapper::new(&self.text))
+    }
+    
     /// Get the primary language layer at a specific byte offset
     pub fn get_layer_at_position(&self, byte_offset: usize) -> Option<&LanguageLayer> {
         // Check injection layers first (they have higher priority)
