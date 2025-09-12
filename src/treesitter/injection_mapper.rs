@@ -31,9 +31,9 @@ impl<'a> LayerMapping<'a> {
     }
 
     /// Map document byte offset to layer byte offset
+    /// Uses lazy computation - calculates offset on demand
     fn map_doc_to_layer_offset(&self, doc_offset: usize) -> Option<usize> {
         let mut layer_offset = 0;
-        let mut _current_doc_offset = 0;
 
         for (start, end) in &self.doc_ranges {
             if doc_offset >= *start && doc_offset < *end {
@@ -52,6 +52,7 @@ impl<'a> LayerMapping<'a> {
     }
 
     /// Map layer byte offset to document byte offset
+    /// Uses lazy computation - calculates offset on demand
     fn map_layer_to_doc_offset(&self, layer_offset: usize) -> Option<usize> {
         let mut accumulated_length = 0;
 
