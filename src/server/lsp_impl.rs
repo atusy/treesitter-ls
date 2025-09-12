@@ -41,6 +41,23 @@ impl TreeSitterLs {
     }
 
     async fn parse_document(&self, uri: Url, text: String, language_id: Option<&str>) {
+        // Get the current tree for incremental parsing
+        let old_tree = self
+            .document_store
+            .get(&uri)
+            .and_then(|doc| doc.tree.clone());
+
+        self.parse_document_with_tree(uri, text, old_tree, language_id)
+            .await;
+    }
+
+    async fn parse_document_with_tree(
+        &self,
+        uri: Url,
+        text: String,
+        old_tree: Option<Tree>,
+        language_id: Option<&str>,
+    ) {
         // Detect file extension
         let extension = uri.path().split('.').next_back().unwrap_or("");
 
@@ -76,10 +93,15 @@ impl TreeSitterLs {
                     p.set_language(language).unwrap();
                     p
                 });
-                
-                // Parse the document
-                if let Some(tree) = parser.parse(&text, None) {
-                    self.document_store.insert(uri, text, Some(tree), language_id.map(|s| s.to_string()));
+
+                // Parse the document incrementally if old_tree exists
+                if let Some(tree) = parser.parse(&text, old_tree.as_ref()) {
+                    self.document_store.insert(
+                        uri,
+                        text,
+                        Some(tree),
+                        language_id.map(|s| s.to_string()),
+                    );
                     return;
                 }
             }
@@ -300,12 +322,12 @@ impl LanguageServer for TreeSitterLs {
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri;
-        
-        // Retrieve the stored language_id and current text from the document store
-        let (language_id, mut text) = {
+
+        // Retrieve the stored document info
+        let (language_id, old_text, mut old_tree) = {
             let doc = self.document_store.get(&uri);
             match doc {
-                Some(d) => (d.language_id.clone(), d.text.clone()),
+                Some(d) => (d.language_id.clone(), d.text.clone(), d.tree.clone()),
                 None => {
                     self.client
                         .log_message(MessageType::WARNING, "Document not found for change event")
@@ -314,29 +336,59 @@ impl LanguageServer for TreeSitterLs {
                 }
             }
         };
-        
-        // Track if we have small incremental changes for refresh decision
-        let is_small_incremental = params.content_changes.len() == 1 
-            && params.content_changes[0].range.is_some()
-            && params.content_changes[0].text.len() < 100;
-        
-        // Apply incremental changes to the text
+
+        let mut text = old_text.clone();
+
+        // Apply incremental changes to the text and tree
         for change in params.content_changes {
             if let Some(range) = change.range {
-                // Incremental change
+                // Incremental change - update tree with edit information
                 let start_offset = position_to_byte_offset(&text, range.start);
                 let end_offset = position_to_byte_offset(&text, range.end);
-                
+                let new_end_offset = start_offset + change.text.len();
+
+                // Calculate the new end position
+                let lines_in_change = change.text.matches('\n').count();
+                let new_end_line = range.start.line + lines_in_change as u32;
+                let new_end_character = if lines_in_change > 0 {
+                    change.text.split('\n').next_back().unwrap_or("").len() as u32
+                } else {
+                    range.start.character + change.text.len() as u32
+                };
+
+                // Apply edit to the tree if it exists
+                if let Some(ref mut tree) = old_tree {
+                    let edit = InputEdit {
+                        start_byte: start_offset,
+                        old_end_byte: end_offset,
+                        new_end_byte: new_end_offset,
+                        start_position: Point::new(
+                            range.start.line as usize,
+                            range.start.character as usize,
+                        ),
+                        old_end_position: Point::new(
+                            range.end.line as usize,
+                            range.end.character as usize,
+                        ),
+                        new_end_position: Point::new(
+                            new_end_line as usize,
+                            new_end_character as usize,
+                        ),
+                    };
+                    tree.edit(&edit);
+                }
+
                 // Replace the range with new text
                 text.replace_range(start_offset..end_offset, &change.text);
             } else {
-                // Full document change
+                // Full document change - clear old tree
                 text = change.text;
+                old_tree = None;
             }
         }
-        
-        // Reparse the document with the updated text
-        self.parse_document(uri.clone(), text, language_id.as_deref())
+
+        // Parse with the edited tree for true incremental parsing
+        self.parse_document_with_tree(uri.clone(), text, old_tree, language_id.as_deref())
             .await;
         
         // Only request semantic token refresh for small incremental changes
