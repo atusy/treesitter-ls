@@ -1,4 +1,5 @@
 // Definition jump resolution using tree-sitter queries
+use crate::state::document::Document;
 use crate::treesitter::node_utils::{calculate_scope_depth, determine_context, get_scope_ids};
 use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Position, Range, Url};
 use tree_sitter::{Query, QueryCursor, StreamingIterator, Tree};
@@ -343,7 +344,7 @@ impl DefinitionResolver {
     }
 }
 
-/// Handle goto definition request
+/// Handle goto definition request (legacy API)
 pub fn handle_goto_definition(
     resolver: &DefinitionResolver,
     text: &str,
@@ -383,4 +384,52 @@ pub fn handle_goto_definition(
         .collect();
 
     Some(GotoDefinitionResponse::Array(locations))
+}
+
+/// Handle goto definition request with layer awareness
+pub fn handle_goto_definition_layered(
+    resolver: &DefinitionResolver,
+    document: &Document,
+    position: Position,
+    locals_query: &Query,
+    uri: &Url,
+) -> Option<GotoDefinitionResponse> {
+    // Convert LSP position to byte offset
+    let mapper = document.position_mapper();
+    let cursor_byte = mapper.position_to_byte(position)?;
+    
+    // Find the appropriate layer at cursor position
+    let layer = document.get_layer_at_position(cursor_byte)?;
+    
+    // Get the tree and text
+    let tree = &layer.tree;
+    let text = &document.text;
+    
+    // Use existing resolver logic with the layer's tree
+    let candidates = resolver.resolve_definition(text, tree, locals_query, cursor_byte);
+    
+    if candidates.is_empty() {
+        return None;
+    }
+    
+    // Convert candidates back to LSP locations using position mapper
+    let locations: Vec<Location> = candidates
+        .into_iter()
+        .filter_map(|candidate| {
+            // Convert tree-sitter byte positions to LSP positions
+            let start = mapper.byte_to_position(candidate.start_byte)?;
+            let end = mapper.byte_to_position(candidate.end_byte)?;
+            
+            Some(Location {
+                uri: uri.clone(),
+                range: Range { start, end },
+            })
+        })
+        .collect();
+        
+    if locations.is_empty() {
+        None
+    } else {
+        Some(GotoDefinitionResponse::Array(locations))
+    }
 }

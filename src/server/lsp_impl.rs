@@ -8,7 +8,7 @@ use tree_sitter::{InputEdit, Parser, Point, Query, Tree};
 use crate::config::{TreeSitterSettings, merge_settings};
 use crate::handlers::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
 use crate::handlers::{
-    handle_code_actions, handle_goto_definition, handle_selection_range,
+    handle_code_actions, handle_goto_definition, handle_goto_definition_layered, handle_selection_range,
     handle_semantic_tokens_full, handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
 use crate::state::{DocumentStore, LanguageService};
@@ -786,30 +786,41 @@ impl LanguageServer for TreeSitterLs {
             return Ok(None);
         };
 
-        // Get document and tree
+        // Get document
         let Some(doc) = self.document_store.get(&uri) else {
             return Ok(None);
         };
-        let text = &doc.text;
-        let Some(tree) = doc.tree.as_ref() else {
-            return Ok(None);
-        };
-
-        // Convert position to byte offset
-        let byte_offset = position_to_byte_offset(text, position);
-
-        // Create resolver
-        let resolver = DefinitionResolver::new();
-
-        // Delegate to handler
-        Ok(handle_goto_definition(
-            &resolver,
-            text,
-            tree,
-            locals_query,
-            byte_offset,
-            &uri,
-        ))
+        
+        // Check if we have layers (use new API) or fallback to legacy
+        if doc.root_layer.is_some() {
+            // Use new layer-aware handler
+            let resolver = DefinitionResolver::new();
+            Ok(handle_goto_definition_layered(
+                &resolver,
+                &*doc,
+                position,
+                locals_query,
+                &uri,
+            ))
+        } else {
+            // Fallback to legacy handler
+            let text = &doc.text;
+            let Some(tree) = doc.tree.as_ref() else {
+                return Ok(None);
+            };
+            
+            let byte_offset = position_to_byte_offset(text, position);
+            let resolver = DefinitionResolver::new();
+            
+            Ok(handle_goto_definition(
+                &resolver,
+                text,
+                tree,
+                locals_query,
+                byte_offset,
+                &uri,
+            ))
+        }
     }
 
     async fn selection_range(
