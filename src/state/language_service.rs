@@ -18,6 +18,7 @@ pub struct LanguageService {
     pub filetype_map: Mutex<HashMap<String, String>>,
     pub library_loader: Mutex<ParserLoader>,
     pub capture_mappings: Mutex<CaptureMappings>,
+    pub search_paths: Mutex<Option<Vec<String>>>,
 }
 
 impl Default for LanguageService {
@@ -30,6 +31,7 @@ impl Default for LanguageService {
             filetype_map: Mutex::new(HashMap::new()),
             library_loader: Mutex::new(ParserLoader::new()),
             capture_mappings: Mutex::new(CaptureMappings::default()),
+            search_paths: Mutex::new(None),
         }
     }
 }
@@ -125,6 +127,9 @@ impl LanguageService {
         // Store capture mappings
         *self.capture_mappings.lock().unwrap() = settings.capture_mappings.clone();
 
+        // Store search paths for dynamic loading
+        self.store_search_paths(settings.search_paths.clone());
+
         // Load languages and queries
         for (lang_name, config) in &settings.languages {
             self.load_single_language(lang_name, config, &settings.search_paths, client)
@@ -143,6 +148,10 @@ impl LanguageService {
                 filetype_map.insert(ext.clone(), language.clone());
             }
         }
+    }
+
+    fn store_search_paths(&self, search_paths: Option<Vec<String>>) {
+        *self.search_paths.lock().unwrap() = search_paths;
     }
 
     async fn load_single_language(
@@ -406,5 +415,110 @@ impl LanguageService {
             }
         }
         None
+    }
+
+    pub async fn try_load_language_by_id(&self, language_id: &str, client: &Client) -> bool {
+        // Check if already loaded
+        if self.languages.lock().unwrap().contains_key(language_id) {
+            return true;
+        }
+
+        // Try to load from search paths
+        let search_paths = self.search_paths.lock().unwrap().clone();
+        if let Some(paths) = &search_paths {
+            // Try to find the parser library
+            for path in paths {
+                // Try .so extension first (Linux)
+                let so_path = format!("{path}/parser/{language_id}.so");
+                if std::path::Path::new(&so_path).exists() {
+                    return self.load_language_from_path(language_id, &so_path, &search_paths, client).await;
+                }
+
+                // Try .dylib extension (macOS)
+                let dylib_path = format!("{path}/parser/{language_id}.dylib");
+                if std::path::Path::new(&dylib_path).exists() {
+                    return self.load_language_from_path(language_id, &dylib_path, &search_paths, client).await;
+                }
+            }
+        }
+
+        client
+            .log_message(
+                MessageType::WARNING,
+                format!("Could not find parser for language '{language_id}'"),
+            )
+            .await;
+        false
+    }
+
+    async fn load_language_from_path(
+        &self,
+        lang_name: &str,
+        lib_path: &str,
+        search_paths: &Option<Vec<String>>,
+        client: &Client,
+    ) -> bool {
+        match self.load_language(lib_path, lang_name) {
+            Ok(language) => {
+                // Try to load highlight queries from searchPaths
+                if let Some(runtime_bases) = search_paths
+                    && let Some(path) = self.find_query_file(runtime_bases, lang_name, "highlights.scm")
+                    && let Ok(content) = fs::read_to_string(&path)
+                    && let Ok(query) = Query::new(&language, &content)
+                {
+                    self.queries
+                        .lock()
+                        .unwrap()
+                        .insert(lang_name.to_string(), query);
+                    client
+                        .log_message(
+                            MessageType::INFO,
+                            format!("Dynamically loaded highlights for {lang_name}"),
+                        )
+                        .await;
+                }
+
+                // Try to load locals queries from searchPaths
+                if let Some(runtime_bases) = search_paths
+                    && let Some(path) = self.find_query_file(runtime_bases, lang_name, "locals.scm")
+                    && let Ok(content) = fs::read_to_string(&path)
+                    && let Ok(query) = Query::new(&language, &content)
+                {
+                    self.locals_queries
+                        .lock()
+                        .unwrap()
+                        .insert(lang_name.to_string(), query);
+                    client
+                        .log_message(
+                            MessageType::INFO,
+                            format!("Dynamically loaded locals for {lang_name}"),
+                        )
+                        .await;
+                }
+
+                // Store the language
+                self.languages
+                    .lock()
+                    .unwrap()
+                    .insert(lang_name.to_string(), language);
+
+                client
+                    .log_message(
+                        MessageType::INFO,
+                        format!("Dynamically loaded language {lang_name} from {lib_path}"),
+                    )
+                    .await;
+                true
+            }
+            Err(err) => {
+                client
+                    .log_message(
+                        MessageType::ERROR,
+                        format!("Failed to load language {lang_name} from {lib_path}: {err}"),
+                    )
+                    .await;
+                false
+            }
+        }
     }
 }

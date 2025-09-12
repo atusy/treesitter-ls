@@ -7,6 +7,7 @@ pub struct Document {
     pub text: String,
     pub tree: Option<Tree>,
     pub last_semantic_tokens: Option<SemanticTokens>,
+    pub language_id: Option<String>,
 }
 
 // The central store for all document-related information.
@@ -27,13 +28,14 @@ impl DocumentStore {
         Self::default()
     }
 
-    pub fn insert(&self, uri: Url, text: String, tree: Option<Tree>) {
+    pub fn insert(&self, uri: Url, text: String, tree: Option<Tree>, language_id: Option<String>) {
         self.documents.insert(
             uri,
             Document {
                 text,
                 tree,
                 last_semantic_tokens: None,
+                language_id,
             },
         );
     }
@@ -43,12 +45,15 @@ impl DocumentStore {
     }
 
     pub fn update_document(&self, uri: Url, text: String) {
+        // Preserve language_id from existing document if available
+        let language_id = self.documents.get(&uri).and_then(|doc| doc.language_id.clone());
         self.documents.insert(
             uri,
             Document {
                 text,
                 tree: None,
                 last_semantic_tokens: None,
+                language_id,
             },
         );
     }

@@ -40,32 +40,50 @@ impl TreeSitterLs {
         }
     }
 
-    async fn parse_document(&self, uri: Url, text: String) {
+    async fn parse_document(&self, uri: Url, text: String, language_id: Option<&str>) {
         // Detect file extension
         let extension = uri.path().split('.').next_back().unwrap_or("");
 
         // Find the language for this file extension
-        let filetype_map = self.language_service.filetype_map.lock().unwrap();
-        let language_name = filetype_map.get(extension);
+        let language_name = {
+            let filetype_map = self.language_service.filetype_map.lock().unwrap();
+            filetype_map.get(extension).cloned()
+        };
+
+        // Use the configured language or fall back to language_id
+        let language_name = language_name.or_else(|| language_id.map(|s| s.to_string()));
 
         if let Some(language_name) = language_name {
+            // Try to dynamically load the language if not already loaded
+            if !self.language_service.languages.lock().unwrap().contains_key(&language_name) {
+                self.language_service
+                    .try_load_language_by_id(&language_name, &self.client)
+                    .await;
+            }
+
             let languages = self.language_service.languages.lock().unwrap();
-            if let Some(language) = languages.get(language_name) {
+            if let Some(language) = languages.get(&language_name) {
                 let mut parser = Parser::new();
                 if parser.set_language(language).is_ok()
                     && let Some(tree) = parser.parse(&text, None)
                 {
-                    self.document_store.insert(uri, text, Some(tree));
+                    self.document_store.insert(uri, text, Some(tree), language_id.map(|s| s.to_string()));
                     return;
                 }
             }
         }
 
-        self.document_store.insert(uri, text, None);
+        self.document_store.insert(uri, text, None, language_id.map(|s| s.to_string()));
     }
 
     fn get_language_for_document(&self, uri: &Url) -> Option<String> {
-        self.language_service.get_language_for_document(uri)
+        // First try to get language from the service (based on file extension)
+        if let Some(lang) = self.language_service.get_language_for_document(uri) {
+            return Some(lang);
+        }
+        
+        // Fall back to the language_id stored in the document
+        self.document_store.get(uri).and_then(|doc| doc.language_id.clone())
     }
 
     async fn load_settings(&self, settings: TreeSitterSettings) {
@@ -245,17 +263,28 @@ impl LanguageServer for TreeSitterLs {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        self.parse_document(params.text_document.uri, params.text_document.text)
-            .await;
+        let language_id = params.text_document.language_id;
+        self.parse_document(
+            params.text_document.uri,
+            params.text_document.text,
+            Some(&language_id),
+        )
+        .await;
         self.client
             .log_message(MessageType::INFO, "file opened!")
             .await;
     }
 
     async fn did_change(&self, mut params: DidChangeTextDocumentParams) {
+        // Retrieve the stored language_id from the document store
+        let language_id = self.document_store
+            .get(&params.text_document.uri)
+            .and_then(|doc| doc.language_id.clone());
+        
         self.parse_document(
             params.text_document.uri,
             params.content_changes.remove(0).text,
+            language_id.as_deref(),
         )
         .await;
         self.client
