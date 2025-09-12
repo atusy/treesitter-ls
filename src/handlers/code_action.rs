@@ -66,32 +66,26 @@ fn create_inspect_token_action(
                 .map(|capture| {
                     // Apply capture mapping if available
                     if let Some(mappings) = capture_mappings {
-                        // Add @ prefix if not present for lookup
-                        let lookup_name = if capture.starts_with('@') {
-                            capture.to_string()
-                        } else {
-                            format!("@{}", capture)
-                        };
+                        // Use capture name directly without @ prefix for lookup
+                        let lookup_name = capture;
 
                         // Try filetype-specific mapping first
                         if let Some(ft) = filetype
                             && let Some(lang_mappings) = mappings.get(ft)
-                            && let Some(mapped) = lang_mappings.highlights.get(&lookup_name)
+                            && let Some(mapped) = lang_mappings.highlights.get(lookup_name)
                         {
                             // If mapping exists and is different, show as "original->mapped"
-                            let mapped_without_at = mapped.trim_start_matches('@');
-                            if capture != mapped_without_at {
-                                return format!("{}->{}", capture, mapped_without_at);
+                            if capture != mapped {
+                                return format!("{}->{}", capture, mapped);
                             }
                         }
 
                         // Try wildcard mapping
                         if let Some(wildcard_mappings) = mappings.get("_")
-                            && let Some(mapped) = wildcard_mappings.highlights.get(&lookup_name)
+                            && let Some(mapped) = wildcard_mappings.highlights.get(lookup_name)
                         {
-                            let mapped_without_at = mapped.trim_start_matches('@');
-                            if capture != mapped_without_at {
-                                return format!("{}->{}", capture, mapped_without_at);
+                            if capture != mapped {
+                                return format!("{}->{}", capture, mapped);
                             }
                         }
                     }
@@ -112,32 +106,26 @@ fn create_inspect_token_action(
                 .map(|capture| {
                     // Apply capture mapping if available
                     if let Some(mappings) = capture_mappings {
-                        // Add @ prefix if not present for lookup
-                        let lookup_name = if capture.starts_with('@') {
-                            capture.to_string()
-                        } else {
-                            format!("@{}", capture)
-                        };
+                        // Use capture name directly without @ prefix for lookup
+                        let lookup_name = capture;
 
                         // Try filetype-specific mapping first
                         if let Some(ft) = filetype
                             && let Some(lang_mappings) = mappings.get(ft)
-                            && let Some(mapped) = lang_mappings.locals.get(&lookup_name)
+                            && let Some(mapped) = lang_mappings.locals.get(lookup_name)
                         {
                             // If mapping exists and is different, show as "original->mapped"
-                            let mapped_without_at = mapped.trim_start_matches('@');
-                            if capture != mapped_without_at {
-                                return format!("{}->{}", capture, mapped_without_at);
+                            if capture != mapped {
+                                return format!("{}->{}", capture, mapped);
                             }
                         }
 
                         // Try wildcard mapping
                         if let Some(wildcard_mappings) = mappings.get("_")
-                            && let Some(mapped) = wildcard_mappings.locals.get(&lookup_name)
+                            && let Some(mapped) = wildcard_mappings.locals.get(lookup_name)
                         {
-                            let mapped_without_at = mapped.trim_start_matches('@');
-                            if capture != mapped_without_at {
-                                return format!("{}->{}", capture, mapped_without_at);
+                            if capture != mapped {
+                                return format!("{}->{}", capture, mapped);
                             }
                         }
                     }
