@@ -39,8 +39,14 @@ pub fn byte_offset_to_position(text: &str, byte_offset: usize) -> Position {
 pub fn byte_range_to_range(text: &str, start: usize, end: usize) -> Range {
     let mapper = SimplePositionMapper::new(text);
     mapper.byte_range_to_range(start, end).unwrap_or(Range {
-        start: Position { line: 0, character: 0 },
-        end: Position { line: 0, character: 0 },
+        start: Position {
+            line: 0,
+            character: 0,
+        },
+        end: Position {
+            line: 0,
+            character: 0,
+        },
     })
 }
 

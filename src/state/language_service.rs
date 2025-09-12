@@ -43,7 +43,7 @@ impl LanguageService {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Create a ParserFactory that can create parsers for loaded languages
     pub fn create_parser_factory(self: Arc<Self>) -> Arc<ParserFactory> {
         Arc::new(ParserFactory::new(self))
@@ -521,7 +521,7 @@ impl LanguageService {
                         format!("Dynamically loaded language {lang_name} from {lib_path}"),
                     )
                     .await;
-                
+
                 // Request semantic tokens refresh after successful loading
                 if client.semantic_tokens_refresh().await.is_ok() {
                     client
@@ -531,7 +531,7 @@ impl LanguageService {
                         )
                         .await;
                 }
-                
+
                 true
             }
             Err(err) => {

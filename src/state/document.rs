@@ -7,13 +7,13 @@ use tree_sitter::Tree;
 // A document entry in our store.
 pub struct Document {
     pub text: String,
-    pub tree: Option<Tree>,  // Deprecated: use root_layer instead
+    pub tree: Option<Tree>,     // Deprecated: use root_layer instead
     pub old_tree: Option<Tree>, // Previous tree for incremental parsing
     pub last_semantic_tokens: Option<SemanticTokens>,
-    pub language_id: Option<String>,  // Deprecated: use root_layer instead
-    pub root_layer: Option<LanguageLayer>,  // Main language layer
-    pub injection_layers: Vec<LanguageLayer>,  // Injection language layers
-    pub parser_pool: Option<DocumentParserPool>,  // Document-specific parser pool
+    pub language_id: Option<String>, // Deprecated: use root_layer instead
+    pub root_layer: Option<LanguageLayer>, // Main language layer
+    pub injection_layers: Vec<LanguageLayer>, // Injection language layers
+    pub parser_pool: Option<DocumentParserPool>, // Document-specific parser pool
 }
 
 // The central store for all document-related information.
@@ -37,7 +37,7 @@ impl DocumentStore {
     pub fn insert(&self, uri: Url, text: String, tree: Option<Tree>, language_id: Option<String>) {
         // Preserve the old tree for incremental parsing
         let old_tree = self.documents.get(&uri).and_then(|doc| doc.tree.clone());
-        
+
         // Create root layer if tree and language_id are provided
         let root_layer = match (&tree, &language_id) {
             (Some(t), Some(lang)) => Some(LanguageLayer::root(lang.clone(), t.clone())),
@@ -54,7 +54,7 @@ impl DocumentStore {
                 language_id,
                 root_layer,
                 injection_layers: Vec::new(),
-                parser_pool: None,  // Will be initialized when needed
+                parser_pool: None, // Will be initialized when needed
             },
         );
     }
@@ -75,9 +75,11 @@ impl DocumentStore {
         let root_layer = language_id.as_ref().and_then(|lang| {
             // For update_document, we don't have a tree yet, it will be set later
             // This is a temporary state
-            old_tree.as_ref().map(|t| LanguageLayer::root(lang.clone(), t.clone()))
+            old_tree
+                .as_ref()
+                .map(|t| LanguageLayer::root(lang.clone(), t.clone()))
         });
-        
+
         self.documents.insert(
             uri,
             Document {
@@ -88,7 +90,7 @@ impl DocumentStore {
                 language_id,
                 root_layer,
                 injection_layers: Vec::new(),
-                parser_pool: None,  // Will be initialized when needed
+                parser_pool: None, // Will be initialized when needed
             },
         );
     }
@@ -110,7 +112,7 @@ impl Document {
     pub fn init_parser_pool(&mut self, pool: DocumentParserPool) {
         self.parser_pool = Some(pool);
     }
-    
+
     /// Get a position mapper for this document
     /// Returns SimplePositionMapper for simple documents,
     /// InjectionPositionMapper when injection layers are present
@@ -124,7 +126,7 @@ impl Document {
             ))
         }
     }
-    
+
     /// Get the primary language layer at a specific byte offset
     pub fn get_layer_at_position(&self, byte_offset: usize) -> Option<&LanguageLayer> {
         // Check injection layers first (they have higher priority)
@@ -133,21 +135,21 @@ impl Document {
                 return Some(layer);
             }
         }
-        
+
         // Fall back to root layer
         self.root_layer.as_ref()
     }
-    
+
     /// Get all language layers (root + injections)
     pub fn get_all_layers(&self) -> impl Iterator<Item = &LanguageLayer> {
         self.root_layer.iter().chain(self.injection_layers.iter())
     }
-    
+
     /// Add an injection layer
     pub fn add_injection_layer(&mut self, layer: LanguageLayer) {
         self.injection_layers.push(layer);
     }
-    
+
     /// Update the root layer's tree (used after re-parsing)
     pub fn update_root_tree(&mut self, tree: Tree) {
         if let Some(root) = &mut self.root_layer {

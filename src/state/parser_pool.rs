@@ -75,15 +75,13 @@ impl DocumentParserPool {
         timeout_micros: Option<u64>,
     ) -> Option<Parser> {
         // For injection parsers, always create new to ensure proper configuration
-        self.factory.create_injection_parser(language_id, timeout_micros)
+        self.factory
+            .create_injection_parser(language_id, timeout_micros)
     }
 
     /// Release a parser back to the pool for reuse
     pub fn release(&mut self, language_id: String, parser: Parser) {
-        self.available
-            .entry(language_id)
-            .or_default()
-            .push(parser);
+        self.available.entry(language_id).or_default().push(parser);
     }
 
     /// Clear all cached parsers

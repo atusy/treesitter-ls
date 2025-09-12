@@ -76,24 +76,28 @@ impl TreeSitterLs {
                 let languages = self.language_service.languages.lock().unwrap();
                 languages.contains_key(&language_name)
             };
-            
+
             if !language_loaded {
-                let loaded = self.language_service
+                let loaded = self
+                    .language_service
                     .try_load_language_by_id(&language_name, &self.client)
                     .await;
-                    
+
                 // If language was dynamically loaded, check if queries are also loaded
                 if loaded {
                     let has_queries = {
                         let queries = self.language_service.queries.lock().unwrap();
                         queries.contains_key(&language_name)
                     };
-                    
+
                     // If queries are loaded, request semantic tokens refresh
                     if has_queries {
                         if self.client.semantic_tokens_refresh().await.is_ok() {
                             self.client
-                                .log_message(MessageType::INFO, "Requested semantic tokens refresh after dynamic loading")
+                                .log_message(
+                                    MessageType::INFO,
+                                    "Requested semantic tokens refresh after dynamic loading",
+                                )
                                 .await;
                         }
                     }
@@ -326,42 +330,45 @@ impl LanguageServer for TreeSitterLs {
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let language_id = params.text_document.language_id;
         let uri = params.text_document.uri.clone();
-        
+
         self.parse_document(
             params.text_document.uri,
             params.text_document.text,
             Some(&language_id),
         )
         .await;
-        
+
         // Check if queries are ready for the document
         if let Some(language_name) = self.get_language_for_document(&uri) {
             let has_queries = {
                 let queries = self.language_service.queries.lock().unwrap();
                 queries.contains_key(&language_name)
             };
-            
+
             // If document is parsed but queries aren't ready, request refresh
             if !has_queries {
                 // Give a small delay for queries to load
                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                
+
                 // Check again after delay
                 let has_queries_after_delay = {
                     let queries = self.language_service.queries.lock().unwrap();
                     queries.contains_key(&language_name)
                 };
-                
+
                 if has_queries_after_delay {
                     if self.client.semantic_tokens_refresh().await.is_ok() {
                         self.client
-                            .log_message(MessageType::INFO, "Requested semantic tokens refresh after queries loaded")
+                            .log_message(
+                                MessageType::INFO,
+                                "Requested semantic tokens refresh after queries loaded",
+                            )
                             .await;
                     }
                 }
             }
         }
-        
+
         self.client
             .log_message(MessageType::INFO, "file opened!")
             .await;
