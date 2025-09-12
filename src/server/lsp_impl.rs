@@ -228,8 +228,16 @@ impl LanguageServer for TreeSitterLs {
                 version: Some(env!("CARGO_PKG_VERSION").to_string()),
             }),
             capabilities: ServerCapabilities {
-                text_document_sync: Some(TextDocumentSyncCapability::Kind(
-                    TextDocumentSyncKind::FULL,
+                text_document_sync: Some(TextDocumentSyncCapability::Options(
+                    TextDocumentSyncOptions {
+                        open_close: Some(true),
+                        change: Some(TextDocumentSyncKind::INCREMENTAL),
+                        will_save: None,
+                        will_save_wait_until: None,
+                        save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
+                            include_text: Some(false),
+                        })),
+                    },
                 )),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 semantic_tokens_provider: Some(
@@ -275,18 +283,50 @@ impl LanguageServer for TreeSitterLs {
             .await;
     }
 
-    async fn did_change(&self, mut params: DidChangeTextDocumentParams) {
-        // Retrieve the stored language_id from the document store
-        let language_id = self.document_store
-            .get(&params.text_document.uri)
-            .and_then(|doc| doc.language_id.clone());
+    async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        let uri = params.text_document.uri;
         
-        self.parse_document(
-            params.text_document.uri,
-            params.content_changes.remove(0).text,
-            language_id.as_deref(),
-        )
-        .await;
+        // Retrieve the stored language_id and current text from the document store
+        let (language_id, mut text) = {
+            let doc = self.document_store.get(&uri);
+            match doc {
+                Some(d) => (d.language_id.clone(), d.text.clone()),
+                None => {
+                    self.client
+                        .log_message(MessageType::WARNING, "Document not found for change event")
+                        .await;
+                    return;
+                }
+            }
+        };
+        
+        // Apply incremental changes to the text
+        for change in params.content_changes {
+            if let Some(range) = change.range {
+                // Incremental change
+                let start_offset = position_to_byte_offset(&text, range.start);
+                let end_offset = position_to_byte_offset(&text, range.end);
+                
+                // Replace the range with new text
+                text.replace_range(start_offset..end_offset, &change.text);
+            } else {
+                // Full document change
+                text = change.text;
+            }
+        }
+        
+        // Reparse the document with the updated text
+        self.parse_document(uri.clone(), text, language_id.as_deref())
+            .await;
+        
+        // Request the client to refresh semantic tokens
+        // This will trigger the client to request new semantic tokens
+        if self.client.semantic_tokens_refresh().await.is_ok() {
+            self.client
+                .log_message(MessageType::INFO, "Requested semantic tokens refresh")
+                .await;
+        }
+        
         self.client
             .log_message(MessageType::INFO, "file changed!")
             .await;
