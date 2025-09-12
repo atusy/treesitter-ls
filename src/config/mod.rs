@@ -238,4 +238,38 @@ mod tests {
             "fallback.function"
         );
     }
+
+    #[test]
+    fn test_capture_mapping_handles_at_prefix() {
+        // Create capture mappings with "@" prefix
+        let mut capture_mappings = CaptureMappings::new();
+
+        let mut highlights = HashMap::new();
+        highlights.insert("@module".to_string(), "@namespace".to_string());
+        highlights.insert(
+            "@module.builtin".to_string(),
+            "@namespace.defaultLibrary".to_string(),
+        );
+
+        let query_type_mappings = QueryTypeMappings {
+            highlights,
+            locals: HashMap::new(),
+            injections: HashMap::new(),
+            folds: HashMap::new(),
+        };
+
+        capture_mappings.insert("_".to_string(), query_type_mappings);
+
+        // Verify the mapping exists and contains expected values
+        assert!(capture_mappings.get("_").is_some());
+        let wildcard_mappings = capture_mappings.get("_").unwrap();
+        assert_eq!(
+            wildcard_mappings.highlights.get("@module"),
+            Some(&"@namespace".to_string())
+        );
+        assert_eq!(
+            wildcard_mappings.highlights.get("@module.builtin"),
+            Some(&"@namespace.defaultLibrary".to_string())
+        );
+    }
 }

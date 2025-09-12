@@ -654,4 +654,74 @@ mod tests {
         let delta = delta.unwrap();
         assert_eq!(delta.edits.len(), 0);
     }
+
+    #[test]
+    fn test_byte_to_utf16_col() {
+        // ASCII text
+        let line = "hello world";
+        assert_eq!(byte_to_utf16_col(line, 0), 0);
+        assert_eq!(byte_to_utf16_col(line, 5), 5);
+        assert_eq!(byte_to_utf16_col(line, 11), 11);
+
+        // Japanese text (3 bytes per char in UTF-8, 1 code unit in UTF-16)
+        let line = "こんにちは";
+        assert_eq!(byte_to_utf16_col(line, 0), 0);
+        assert_eq!(byte_to_utf16_col(line, 3), 1); // After "こ"
+        assert_eq!(byte_to_utf16_col(line, 6), 2); // After "こん"
+        assert_eq!(byte_to_utf16_col(line, 15), 5); // After all 5 chars
+
+        // Mixed ASCII and Japanese
+        let line = "let x = \"あいうえお\"";
+        assert_eq!(byte_to_utf16_col(line, 0), 0);
+        assert_eq!(byte_to_utf16_col(line, 8), 8); // Before '"'
+        assert_eq!(byte_to_utf16_col(line, 9), 9); // Before "あ"
+        assert_eq!(byte_to_utf16_col(line, 12), 10); // After "あ" (3 bytes -> 1 UTF-16)
+        assert_eq!(byte_to_utf16_col(line, 24), 14); // After "あいうえお\"" (15 bytes + 1 quote)
+        
+        // Emoji (4 bytes in UTF-8, 2 code units in UTF-16)
+        let line = "hello 👋 world";
+        assert_eq!(byte_to_utf16_col(line, 0), 0);
+        assert_eq!(byte_to_utf16_col(line, 6), 6); // After "hello "
+        assert_eq!(byte_to_utf16_col(line, 10), 8); // After emoji (4 bytes -> 2 UTF-16)
+    }
+
+    #[test]
+    fn test_semantic_tokens_with_japanese() {
+        use tree_sitter::{Parser, Query};
+        
+        let text = r#"let x = "あいうえお"
+let y = "hello""#;
+
+        let language = tree_sitter_rust::LANGUAGE.into();
+        let mut parser = Parser::new();
+        parser.set_language(&language).unwrap();
+        
+        let tree = parser.parse(text, None).unwrap();
+        
+        let query_text = r#"
+            "let" @keyword
+            (identifier) @variable
+            (string_literal) @string
+        "#;
+        
+        let query = Query::new(&language, query_text).unwrap();
+        let result = handle_semantic_tokens_full(text, &tree, &query, Some("rust"), None);
+        
+        assert!(result.is_some());
+        
+        // Verify tokens were generated (can't inspect internals due to private type)
+        match result.unwrap() {
+            SemanticTokensResult::Tokens(tokens) => {
+                // Should have tokens for: let, x, string, let, y, string
+                assert!(tokens.data.len() >= 6);
+                
+                // Check that the string token on first line has correct UTF-16 length
+                // "あいうえお" = 5 UTF-16 code units + 2 quotes = 7
+                let string_token = tokens.data.iter()
+                    .find(|t| t.token_type == 2 && t.length == 7); // string type = 2
+                assert!(string_token.is_some(), "Japanese string token should have UTF-16 length of 7");
+            }
+            _ => panic!("Expected Tokens variant"),
+        }
+    }
 }
