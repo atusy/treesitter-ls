@@ -3,6 +3,9 @@ pub mod definition;
 pub mod selection_range;
 pub mod semantic_tokens;
 
+#[cfg(test)]
+pub mod definition_poc;
+
 pub use code_action::handle_code_actions;
 pub use definition::{
     ContextType, DefinitionCandidate, DefinitionResolver, ReferenceContext, handle_goto_definition,
