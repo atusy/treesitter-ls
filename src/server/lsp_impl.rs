@@ -115,25 +115,20 @@ impl TreeSitterLs {
                 // Parse the document incrementally if old_tree exists
                 if let Some(tree) = parser.parse(&text, old_tree.as_ref()) {
                     // Create root layer for the parsed tree
-                    let root_layer = LanguageLayer::root(language_name.clone(), tree.clone());
+                    let root_layer = Some(LanguageLayer::root(language_name.clone(), tree));
                     
-                    // For now, still pass tree to maintain compatibility
                     self.document_store.insert(
-                        uri.clone(),
+                        uri,
                         text,
-                        Some(tree),
-                        language_id.map(|s| s.to_string()),
+                        root_layer,
                     );
-                    
-                    // Update document with root layer
-                    self.document_store.update_root_layer(&uri, root_layer);
                     return;
                 }
             }
         }
 
         self.document_store
-            .insert(uri, text, None, language_id.map(|s| s.to_string()));
+            .insert(uri, text, None);
     }
 
     fn get_language_for_document(&self, uri: &Url) -> Option<String> {
@@ -145,7 +140,7 @@ impl TreeSitterLs {
         // Fall back to the language_id stored in the document
         self.document_store
             .get(uri)
-            .and_then(|doc| doc.language_id.clone())
+            .and_then(|doc| doc.get_language_id().cloned())
     }
 
     async fn load_settings(&self, settings: TreeSitterSettings) {
