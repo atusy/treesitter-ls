@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
@@ -9,17 +9,19 @@ use crate::config::{TreeSitterSettings, merge_settings};
 use crate::handlers::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
 use crate::handlers::{
     handle_code_actions, handle_goto_definition_layered,
-    handle_selection_range_layered, handle_semantic_tokens_full, handle_semantic_tokens_full_delta,
+    handle_selection_range_layered, handle_semantic_tokens_full_delta,
     handle_semantic_tokens_range,
 };
 use crate::state::{DocumentStore, LanguageLayer, LanguageService};
+use crate::state::parser_pool::{DocumentParserPool, ParserFactory};
 use crate::treesitter::position_to_byte_offset;
 
 pub struct TreeSitterLs {
     client: Client,
-    language_service: LanguageService,
+    language_service: Arc<LanguageService>,
     document_store: DocumentStore,
     root_path: Mutex<Option<PathBuf>>,
+    parser_factory: Arc<ParserFactory>,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -33,11 +35,14 @@ impl std::fmt::Debug for TreeSitterLs {
 
 impl TreeSitterLs {
     pub fn new(client: Client) -> Self {
+        let language_service = Arc::new(LanguageService::new());
+        let parser_factory = language_service.clone().create_parser_factory();
         Self {
             client,
-            language_service: LanguageService::new(),
+            language_service,
             document_store: DocumentStore::new(),
             root_path: Mutex::new(None),
+            parser_factory,
         }
     }
 
@@ -104,10 +109,8 @@ impl TreeSitterLs {
                     self.document_store.insert(uri.clone(), text, root_layer);
 
                     // Initialize parser pool for the document
-                    // Note: We need to clone LanguageService as Arc
-                    // In a real implementation, TreeSitterLs should hold Arc<LanguageService>
-                    // For now, we'll skip parser pool initialization to avoid complexity
-                    // TODO: Refactor TreeSitterLs to use Arc<LanguageService>
+                    let parser_pool = DocumentParserPool::new(self.parser_factory.clone());
+                    self.document_store.init_parser_pool(&uri, parser_pool);
 
                     return;
                 }
