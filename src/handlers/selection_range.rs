@@ -1,23 +1,6 @@
-use tower_lsp::lsp_types::{Position, Range, SelectionRange};
-use tree_sitter::{Node, Point, Tree};
-
-/// Convert LSP Position to tree-sitter Point
-fn position_to_point(pos: &Position) -> Point {
-    Point::new(pos.line as usize, pos.character as usize)
-}
-
-/// Convert tree-sitter Point to LSP Position
-fn point_to_position(point: Point) -> Position {
-    Position::new(point.row as u32, point.column as u32)
-}
-
-/// Convert tree-sitter Node to LSP Range
-fn node_to_range(node: Node) -> Range {
-    Range::new(
-        point_to_position(node.start_position()),
-        point_to_position(node.end_position()),
-    )
-}
+use tower_lsp::lsp_types::{Position, SelectionRange};
+use tree_sitter::{Node, Tree};
+use crate::treesitter::tree_utils::{node_to_range, position_to_point};
 
 /// Build selection range hierarchy for a node
 fn build_selection_range(node: Node) -> SelectionRange {
@@ -63,6 +46,8 @@ pub fn handle_selection_range(tree: &Tree, positions: &[Position]) -> Option<Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tree_sitter::Point;
+    use crate::treesitter::tree_utils::point_to_position;
 
     #[test]
     fn test_position_to_point() {

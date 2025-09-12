@@ -1,6 +1,7 @@
 // Definition jump resolution using tree-sitter queries
 use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Position, Range, Url};
-use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
+use tree_sitter::{Query, QueryCursor, StreamingIterator, Tree};
+use crate::treesitter::node_utils::{calculate_scope_depth, get_scope_ids, determine_context};
 
 #[derive(Debug, Clone)]
 pub struct DefinitionCandidate {
@@ -104,9 +105,9 @@ impl DefinitionResolver {
                         start_position: node.start_position(),
                         end_position: node.end_position(),
                         definition_type,
-                        scope_depth: self.calculate_scope_depth(node),
+                        scope_depth: calculate_scope_depth(node),
                         distance_to_reference: 0, // Will be calculated later
-                        scope_ids: self.get_scope_ids(node),
+                        scope_ids: get_scope_ids(node),
                     });
                 } else if capture_name.starts_with("local.reference") {
                     let reference_type = capture_name
@@ -124,7 +125,7 @@ impl DefinitionResolver {
                         } else if reference_type == "variable" {
                             ContextType::VariableReference
                         } else {
-                            self.determine_context_type(node)
+                            self.map_context_type(determine_context(node))
                         };
 
                     references.push(ReferenceContext {
@@ -134,7 +135,7 @@ impl DefinitionResolver {
                         end_position: node.end_position(),
                         reference_type,
                         context_type,
-                        scope_ids: self.get_scope_ids(node),
+                        scope_ids: get_scope_ids(node),
                     });
                 }
             }
@@ -243,80 +244,13 @@ impl DefinitionResolver {
         candidates
     }
 
-    fn calculate_scope_depth(&self, node: Node) -> usize {
-        let mut depth = 0;
-        let mut current = node.parent();
-
-        while let Some(parent) = current {
-            // Language-agnostic scope detection based on node types
-            let node_type = parent.kind();
-            if self.is_scope_node(node_type) {
-                depth += 1;
-            }
-            current = parent.parent();
+    fn map_context_type(&self, context_str: &str) -> ContextType {
+        match context_str {
+            "function_call" => ContextType::FunctionCall,
+            "type_annotation" => ContextType::TypeAnnotation,
+            "field_access" => ContextType::FieldAccess,
+            _ => ContextType::VariableReference,
         }
-
-        depth
-    }
-
-    fn is_scope_node(&self, node_type: &str) -> bool {
-        // Language-agnostic scope patterns
-        matches!(
-            node_type,
-            "block"
-                | "function_item"
-                | "function_declaration"
-                | "function_definition"
-                | "method_definition"
-                | "if_statement"
-                | "if_expression"
-                | "while_statement"
-                | "while_expression"
-                | "for_statement"
-                | "for_expression"
-                | "loop_expression"
-                | "match_expression"
-                | "match_statement"
-                | "try_statement"
-                | "catch_clause"
-                | "class_definition"
-                | "class_declaration"
-                | "struct_item"
-                | "enum_item"
-                | "impl_item"
-                | "module"
-                | "namespace"
-                | "scope"
-                | "chunk"
-                | "do_statement"
-                | "closure_expression"
-                | "lambda"
-                | "arrow_function"
-        )
-    }
-
-    fn determine_context_type(&self, node: Node) -> ContextType {
-        // Walk up the AST to determine context
-        let mut current = node.parent();
-
-        while let Some(parent) = current {
-            match parent.kind() {
-                // Function call patterns
-                "call_expression" | "function_call" => return ContextType::FunctionCall,
-                // Type annotation patterns
-                "type_annotation" | "type_identifier" | "type_parameter" => {
-                    return ContextType::TypeAnnotation;
-                }
-                // Field access patterns
-                "field_expression" | "member_expression" | "field_access" => {
-                    return ContextType::FieldAccess;
-                }
-                _ => {}
-            }
-            current = parent.parent();
-        }
-
-        ContextType::VariableReference
     }
 
     pub fn context_matches(&self, definition_type: &str, context_type: &ContextType) -> bool {
@@ -340,19 +274,6 @@ impl DefinitionResolver {
         }
     }
 
-    fn get_scope_ids(&self, node: Node) -> Vec<usize> {
-        let mut scope_ids = Vec::new();
-        let mut current = node.parent();
-
-        while let Some(n) = current {
-            if self.is_scope_node(n.kind()) {
-                scope_ids.push(n.id());
-            }
-            current = n.parent();
-        }
-
-        scope_ids
-    }
 
     fn calculate_distance_by_position(
         &self,
