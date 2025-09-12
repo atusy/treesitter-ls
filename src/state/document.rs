@@ -1,3 +1,4 @@
+use crate::state::language_layer::LanguageLayer;
 use dashmap::DashMap;
 use tower_lsp::lsp_types::{SemanticTokens, Url};
 use tree_sitter::Tree;
@@ -5,10 +6,12 @@ use tree_sitter::Tree;
 // A document entry in our store.
 pub struct Document {
     pub text: String,
-    pub tree: Option<Tree>,
+    pub tree: Option<Tree>,  // Deprecated: use root_layer instead
     pub old_tree: Option<Tree>, // Previous tree for incremental parsing
     pub last_semantic_tokens: Option<SemanticTokens>,
-    pub language_id: Option<String>,
+    pub language_id: Option<String>,  // Deprecated: use root_layer instead
+    pub root_layer: Option<LanguageLayer>,  // Main language layer
+    pub injection_layers: Vec<LanguageLayer>,  // Injection language layers
 }
 
 // The central store for all document-related information.
@@ -32,6 +35,12 @@ impl DocumentStore {
     pub fn insert(&self, uri: Url, text: String, tree: Option<Tree>, language_id: Option<String>) {
         // Preserve the old tree for incremental parsing
         let old_tree = self.documents.get(&uri).and_then(|doc| doc.tree.clone());
+        
+        // Create root layer if tree and language_id are provided
+        let root_layer = match (&tree, &language_id) {
+            (Some(t), Some(lang)) => Some(LanguageLayer::root(lang.clone(), t.clone())),
+            _ => None,
+        };
 
         self.documents.insert(
             uri,
@@ -41,6 +50,8 @@ impl DocumentStore {
                 old_tree,
                 last_semantic_tokens: None,
                 language_id,
+                root_layer,
+                injection_layers: Vec::new(),
             },
         );
     }
@@ -57,6 +68,13 @@ impl DocumentStore {
             .map(|doc| (doc.language_id.clone(), doc.tree.clone()))
             .unwrap_or((None, None));
 
+        // Create root layer if language_id is available
+        let root_layer = language_id.as_ref().and_then(|lang| {
+            // For update_document, we don't have a tree yet, it will be set later
+            // This is a temporary state
+            old_tree.as_ref().map(|t| LanguageLayer::root(lang.clone(), t.clone()))
+        });
+        
         self.documents.insert(
             uri,
             Document {
@@ -65,6 +83,8 @@ impl DocumentStore {
                 old_tree,
                 last_semantic_tokens: None,
                 language_id,
+                root_layer,
+                injection_layers: Vec::new(),
             },
         );
     }
@@ -77,6 +97,41 @@ impl DocumentStore {
 
     pub fn get_document_text(&self, uri: &Url) -> Option<String> {
         self.documents.get(uri).map(|doc| doc.text.clone())
+    }
+}
+
+// Backward compatibility methods for Document
+impl Document {
+    /// Get the primary language layer at a specific byte offset
+    pub fn get_layer_at_position(&self, byte_offset: usize) -> Option<&LanguageLayer> {
+        // Check injection layers first (they have higher priority)
+        for layer in &self.injection_layers {
+            if layer.contains_offset(byte_offset) {
+                return Some(layer);
+            }
+        }
+        
+        // Fall back to root layer
+        self.root_layer.as_ref()
+    }
+    
+    /// Get all language layers (root + injections)
+    pub fn get_all_layers(&self) -> impl Iterator<Item = &LanguageLayer> {
+        self.root_layer.iter().chain(self.injection_layers.iter())
+    }
+    
+    /// Add an injection layer
+    pub fn add_injection_layer(&mut self, layer: LanguageLayer) {
+        self.injection_layers.push(layer);
+    }
+    
+    /// Update the root layer's tree (used after re-parsing)
+    pub fn update_root_tree(&mut self, tree: Tree) {
+        if let Some(root) = &mut self.root_layer {
+            root.tree = tree.clone();
+        }
+        // Also update the deprecated tree field for backward compatibility
+        self.tree = Some(tree);
     }
 }
 
