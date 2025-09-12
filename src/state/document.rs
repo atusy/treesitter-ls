@@ -140,11 +140,6 @@ impl Document {
         }
     }
 
-    /// Get the tree from root layer
-    pub fn get_tree(&self) -> Option<&Tree> {
-        self.root_layer.as_ref().map(|layer| &layer.tree)
-    }
-
     /// Get the language_id from root layer
     pub fn get_language_id(&self) -> Option<&String> {
         self.root_layer.as_ref().map(|layer| &layer.language_id)
