@@ -91,15 +91,13 @@ impl TreeSitterLs {
                     };
 
                     // If queries are loaded, request semantic tokens refresh
-                    if has_queries {
-                        if self.client.semantic_tokens_refresh().await.is_ok() {
-                            self.client
-                                .log_message(
-                                    MessageType::INFO,
-                                    "Requested semantic tokens refresh after dynamic loading",
-                                )
-                                .await;
-                        }
+                    if has_queries && self.client.semantic_tokens_refresh().await.is_ok() {
+                        self.client
+                            .log_message(
+                                MessageType::INFO,
+                                "Requested semantic tokens refresh after dynamic loading",
+                            )
+                            .await;
                     }
                 }
             }
@@ -356,15 +354,13 @@ impl LanguageServer for TreeSitterLs {
                     queries.contains_key(&language_name)
                 };
 
-                if has_queries_after_delay {
-                    if self.client.semantic_tokens_refresh().await.is_ok() {
-                        self.client
-                            .log_message(
-                                MessageType::INFO,
-                                "Requested semantic tokens refresh after queries loaded",
-                            )
-                            .await;
-                    }
+                if has_queries_after_delay && self.client.semantic_tokens_refresh().await.is_ok() {
+                    self.client
+                        .log_message(
+                            MessageType::INFO,
+                            "Requested semantic tokens refresh after queries loaded",
+                        )
+                        .await;
                 }
             }
         }
