@@ -118,7 +118,7 @@ impl<'a> PositionMapper for SimplePositionMapper<'a> {
 }
 
 /// Compute line start offsets for efficient position mapping
-fn compute_line_starts(text: &str) -> Vec<usize> {
+pub fn compute_line_starts(text: &str) -> Vec<usize> {
     let mut line_starts = vec![0];
     let mut offset = 0;
     

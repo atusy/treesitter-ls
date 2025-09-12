@@ -112,12 +112,16 @@ impl Document {
     }
     
     /// Get a position mapper for this document
-    /// Returns SimplePositionMapper for now, will return InjectionPositionMapper
-    /// when injection layers are present
+    /// Returns SimplePositionMapper for simple documents,
+    /// InjectionPositionMapper when injection layers are present
     pub fn position_mapper(&self) -> Box<dyn crate::treesitter::PositionMapper + '_> {
-        // For now, always return SimplePositionMapper
-        // TODO: When injection layers are present, return InjectionPositionMapper
-        Box::new(crate::treesitter::SimplePositionMapper::new(&self.text))
+        if self.injection_layers.is_empty() {
+            Box::new(crate::treesitter::SimplePositionMapper::new(&self.text))
+        } else {
+            // For now, use SimplePositionMapper even with injections
+            // TODO: Fix lifetime issues with InjectionPositionMapper
+            Box::new(crate::treesitter::SimplePositionMapper::new(&self.text))
+        }
     }
     
     /// Get the primary language layer at a specific byte offset
