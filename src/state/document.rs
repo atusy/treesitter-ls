@@ -118,9 +118,10 @@ impl Document {
         if self.injection_layers.is_empty() {
             Box::new(crate::treesitter::SimplePositionMapper::new(&self.text))
         } else {
-            // For now, use SimplePositionMapper even with injections
-            // TODO: Fix lifetime issues with InjectionPositionMapper
-            Box::new(crate::treesitter::SimplePositionMapper::new(&self.text))
+            Box::new(crate::treesitter::InjectionPositionMapper::new(
+                &self.text,
+                &self.injection_layers,
+            ))
         }
     }
     
