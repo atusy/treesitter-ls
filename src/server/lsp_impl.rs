@@ -55,7 +55,13 @@ impl TreeSitterLs {
 
         if let Some(language_name) = language_name {
             // Try to dynamically load the language if not already loaded
-            if !self.language_service.languages.lock().unwrap().contains_key(&language_name) {
+            if !self
+                .language_service
+                .languages
+                .lock()
+                .unwrap()
+                .contains_key(&language_name)
+            {
                 self.language_service
                     .try_load_language_by_id(&language_name, &self.client)
                     .await;
@@ -79,7 +85,8 @@ impl TreeSitterLs {
             }
         }
 
-        self.document_store.insert(uri, text, None, language_id.map(|s| s.to_string()));
+        self.document_store
+            .insert(uri, text, None, language_id.map(|s| s.to_string()));
     }
 
     fn get_language_for_document(&self, uri: &Url) -> Option<String> {
@@ -87,9 +94,11 @@ impl TreeSitterLs {
         if let Some(lang) = self.language_service.get_language_for_document(uri) {
             return Some(lang);
         }
-        
+
         // Fall back to the language_id stored in the document
-        self.document_store.get(uri).and_then(|doc| doc.language_id.clone())
+        self.document_store
+            .get(uri)
+            .and_then(|doc| doc.language_id.clone())
     }
 
     async fn load_settings(&self, settings: TreeSitterSettings) {
@@ -115,7 +124,7 @@ impl LanguageServer for TreeSitterLs {
         } else if let Some(root_uri) = &params.root_uri {
             root_uri.to_file_path().ok()
         } else {
-            #[allow(deprecated)]  // Support for older LSP clients
+            #[allow(deprecated)] // Support for older LSP clients
             if let Some(root_path) = &params.root_path {
                 // Support deprecated root_path field for compatibility
                 Some(PathBuf::from(root_path))
@@ -139,7 +148,7 @@ impl LanguageServer for TreeSitterLs {
                     "current working directory (fallback)"
                 }
             };
-            
+
             self.client
                 .log_message(
                     MessageType::INFO,

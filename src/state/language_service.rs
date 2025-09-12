@@ -19,7 +19,7 @@ pub struct LanguageService {
     pub library_loader: Mutex<ParserLoader>,
     pub capture_mappings: Mutex<CaptureMappings>,
     pub search_paths: Mutex<Option<Vec<String>>>,
-    pub parsers: Mutex<HashMap<String, Parser>>,  // Parser pool for reuse
+    pub parsers: Mutex<HashMap<String, Parser>>, // Parser pool for reuse
 }
 
 impl Default for LanguageService {
@@ -433,13 +433,17 @@ impl LanguageService {
                 // Try .so extension first (Linux)
                 let so_path = format!("{path}/parser/{language_id}.so");
                 if std::path::Path::new(&so_path).exists() {
-                    return self.load_language_from_path(language_id, &so_path, &search_paths, client).await;
+                    return self
+                        .load_language_from_path(language_id, &so_path, &search_paths, client)
+                        .await;
                 }
 
                 // Try .dylib extension (macOS)
                 let dylib_path = format!("{path}/parser/{language_id}.dylib");
                 if std::path::Path::new(&dylib_path).exists() {
-                    return self.load_language_from_path(language_id, &dylib_path, &search_paths, client).await;
+                    return self
+                        .load_language_from_path(language_id, &dylib_path, &search_paths, client)
+                        .await;
                 }
             }
         }
@@ -464,7 +468,8 @@ impl LanguageService {
             Ok(language) => {
                 // Try to load highlight queries from searchPaths
                 if let Some(runtime_bases) = search_paths
-                    && let Some(path) = self.find_query_file(runtime_bases, lang_name, "highlights.scm")
+                    && let Some(path) =
+                        self.find_query_file(runtime_bases, lang_name, "highlights.scm")
                     && let Ok(content) = fs::read_to_string(&path)
                     && let Ok(query) = Query::new(&language, &content)
                 {
