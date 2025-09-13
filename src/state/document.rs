@@ -2,7 +2,7 @@ use crate::state::language_layer::LanguageLayer;
 use crate::state::parser_pool::DocumentParserPool;
 use dashmap::DashMap;
 use tower_lsp::lsp_types::{SemanticTokens, Url};
-use tree_sitter::Tree;
+use tree_sitter::{InputEdit, Tree};
 
 // A document entry in our store.
 pub struct Document {
@@ -67,6 +67,48 @@ impl DocumentStore {
                 parser_pool: None, // Will be initialized when needed
             },
         );
+    }
+
+    /// Get the existing tree and apply edits for incremental parsing
+    /// Returns the edited tree without updating the document store
+    pub fn get_edited_tree(&self, uri: &Url, edits: &[InputEdit]) -> Option<Tree> {
+        self.documents.get(uri).and_then(|doc| {
+            doc.root_layer.as_ref().map(|layer| {
+                let mut tree = layer.tree.clone();
+                // Apply all edits to the tree
+                for edit in edits {
+                    tree.edit(edit);
+                }
+                tree
+            })
+        })
+    }
+
+    /// Update document with a new tree after incremental parsing
+    pub fn update_document_with_tree(&self, uri: Url, text: String, tree: Tree) {
+        // Get the language_id from existing document
+        let language_id = self.documents.get(&uri).and_then(|doc| {
+            doc.root_layer
+                .as_ref()
+                .map(|layer| layer.language_id.clone())
+        });
+
+        if let Some(language_id) = language_id {
+            let root_layer = Some(LanguageLayer::root(language_id, tree));
+            self.documents.insert(
+                uri,
+                Document {
+                    text,
+                    last_semantic_tokens: None,
+                    root_layer,
+                    injection_layers: Vec::new(),
+                    parser_pool: None, // Will be initialized when needed
+                },
+            );
+        } else {
+            // If no language_id, just update the text
+            self.update_document(uri, text);
+        }
     }
 
     pub fn update_semantic_tokens(&self, uri: &Url, tokens: SemanticTokens) {

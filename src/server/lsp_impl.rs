@@ -109,26 +109,26 @@ impl TreeSitterLs {
 
                 // Get old tree for incremental parsing if document exists
                 let old_tree = if !edits.is_empty() {
-                    self.document_store.get(&uri).and_then(|doc| {
-                        doc.root_layer.as_ref().map(|layer| {
-                            let mut tree = layer.tree.clone();
-                            // Apply all edits to the tree
-                            for edit in &edits {
-                                tree.edit(edit);
-                            }
-                            tree
-                        })
-                    })
+                    // Get the tree with edits applied for incremental parsing
+                    self.document_store.get_edited_tree(&uri, &edits)
                 } else {
-                    None
+                    // For non-incremental updates, check if document exists
+                    self.document_store
+                        .get(&uri)
+                        .and_then(|doc| doc.root_layer.as_ref().map(|layer| layer.tree.clone()))
                 };
 
                 // Parse the document with incremental parsing if old tree exists
                 if let Some(tree) = parser.parse(&text, old_tree.as_ref()) {
-                    // Create root layer for the parsed tree
-                    let root_layer = Some(LanguageLayer::root(language_name.clone(), tree));
-
-                    self.document_store.insert(uri.clone(), text, root_layer);
+                    // Update document with the new tree (handles incremental updates properly)
+                    if !edits.is_empty() {
+                        self.document_store
+                            .update_document_with_tree(uri.clone(), text, tree);
+                    } else {
+                        // For initial parsing or full updates, use insert with root layer
+                        let root_layer = Some(LanguageLayer::root(language_name.clone(), tree));
+                        self.document_store.insert(uri.clone(), text, root_layer);
+                    }
 
                     // Initialize parser pool for the document
                     let parser_pool = DocumentParserPool::new(self.parser_factory.clone());
