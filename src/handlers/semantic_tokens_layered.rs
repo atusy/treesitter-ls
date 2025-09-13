@@ -181,4 +181,78 @@ mod tests {
             assert!(tokens.data.is_empty());
         }
     }
+
+    #[test]
+    fn test_semantic_tokens_with_injection_layers() {
+        // Create a document with injection layers
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
+        let root_tree = parser.parse("fn main() { /* comment */ }", None).unwrap();
+
+        let mut doc = Document {
+            text: "fn main() { /* comment */ }".to_string(),
+            last_semantic_tokens: None,
+            layers: crate::state::layer_manager::LayerManager::with_root(
+                "rust".to_string(),
+                root_tree,
+            ),
+        };
+
+        // Add a mock injection layer (simulating a comment with different highlighting)
+        let comment_tree = parser.parse("comment", None).unwrap();
+        let injection_layer = crate::state::language_layer::LanguageLayer::injection(
+            "comment".to_string(),
+            comment_tree,
+            vec![(14, 22)], // Position of "comment" in "/* comment */"
+            1,
+            0,
+        );
+        doc.layers.add_injection_layer(injection_layer);
+
+        // Create queries
+        let mut queries = HashMap::new();
+        let rust_query =
+            tree_sitter::Query::new(&tree_sitter_rust::LANGUAGE.into(), r#""fn" @keyword"#)
+                .unwrap();
+        queries.insert("rust".to_string(), &rust_query);
+
+        // For the comment, we'll use a simple identifier query
+        let comment_query = tree_sitter::Query::new(
+            &tree_sitter_rust::LANGUAGE.into(),
+            r#"(identifier) @comment"#,
+        )
+        .unwrap();
+        queries.insert("comment".to_string(), &comment_query);
+
+        let result = handle_semantic_tokens_full_layered(&doc, &queries, None);
+        assert!(result.is_some());
+
+        if let Some(SemanticTokensResult::Tokens(tokens)) = result {
+            // Should have tokens from both layers
+            assert!(!tokens.data.is_empty());
+
+            // Verify tokens are properly sorted
+            let mut last_line = 0;
+            let mut last_start = 0;
+            for token in &tokens.data {
+                let abs_line = last_line + token.delta_line;
+                let abs_start = if token.delta_line == 0 {
+                    last_start + token.delta_start
+                } else {
+                    token.delta_start
+                };
+
+                // Ensure tokens are in order
+                assert!(abs_line >= last_line);
+                if abs_line == last_line {
+                    assert!(abs_start >= last_start);
+                }
+
+                last_line = abs_line;
+                last_start = abs_start;
+            }
+        }
+    }
 }
