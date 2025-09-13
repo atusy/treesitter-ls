@@ -1,7 +1,7 @@
 pub mod config;
 pub mod document;
 pub mod handlers;
-// pub mod injection; // TODO: Fix tree-sitter API compatibility
+pub mod injection; // Facade over layers module
 pub mod layers;
 pub mod server;
 pub mod state;
