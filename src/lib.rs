@@ -1,7 +1,7 @@
 pub mod config;
 pub mod features;
 pub mod injection;
-pub mod server;
+pub mod lsp;
 pub mod syntax;
 pub mod text;
 pub mod workspace;
@@ -22,4 +22,4 @@ pub use features::{
 };
 
 // Re-export the main server implementation
-pub use server::TreeSitterLs;
+pub use lsp::TreeSitterLs;
