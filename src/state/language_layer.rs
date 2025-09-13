@@ -69,6 +69,16 @@ impl LanguageLayer {
             None
         }
     }
+
+    /// Update the ranges for this layer (used after applying edits)
+    pub fn update_ranges(&mut self, new_ranges: Vec<(usize, usize)>) {
+        self.ranges = new_ranges;
+    }
+
+    /// Get mutable reference to ranges for in-place updates
+    pub fn ranges_mut(&mut self) -> &mut Vec<(usize, usize)> {
+        &mut self.ranges
+    }
 }
 
 #[cfg(test)]

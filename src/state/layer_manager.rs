@@ -1,3 +1,6 @@
+use crate::state::edit_utils::{
+    adjust_ranges_for_edit, edit_affects_ranges, transform_edit_for_injection,
+};
 use crate::state::language_layer::LanguageLayer;
 use crate::state::parser_pool::{DocumentParserPool, ParserConfig};
 use tree_sitter::{InputEdit, Parser, Tree};
@@ -98,13 +101,41 @@ impl LayerManager {
             }
         }
 
-        // Apply to injection layers
-        // Note: This is simplified - injection layers may need different edit handling
-        // based on their position in the document
-        for layer in &mut self.injection_layers {
+        // Apply to injection layers with proper transformation
+        let mut layers_to_remove = Vec::new();
+
+        for (i, layer) in self.injection_layers.iter_mut().enumerate() {
+            let mut layer_valid = true;
+
             for edit in edits {
-                layer.tree.edit(edit);
+                // Check if this edit affects the layer
+                if !edit_affects_ranges(edit, &layer.ranges) {
+                    continue;
+                }
+
+                // Transform the edit for this injection layer
+                if let Some(transformed_edit) = transform_edit_for_injection(edit, &layer.ranges) {
+                    layer.tree.edit(&transformed_edit);
+                }
+
+                // Adjust the layer's ranges based on the edit
+                adjust_ranges_for_edit(layer.ranges_mut(), edit);
+
+                // If all ranges are gone, mark layer for removal
+                if layer.ranges.is_empty() {
+                    layer_valid = false;
+                    break;
+                }
             }
+
+            if !layer_valid {
+                layers_to_remove.push(i);
+            }
+        }
+
+        // Remove invalid layers (iterate in reverse to maintain indices)
+        for i in layers_to_remove.into_iter().rev() {
+            self.injection_layers.remove(i);
         }
     }
 
