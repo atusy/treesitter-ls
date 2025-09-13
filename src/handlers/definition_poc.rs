@@ -59,7 +59,7 @@ pub fn handle_goto_definition_layered(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::language_layer::LanguageLayer;
+    use crate::layers::LanguageLayer;
     use tree_sitter::Parser;
 
     fn create_test_document(text: &str, has_injection: bool) -> Document {
@@ -72,10 +72,7 @@ mod tests {
         let mut doc = Document {
             text: text.to_string(),
             last_semantic_tokens: None,
-            layers: crate::state::layer_manager::LayerManager::with_root(
-                "rust".to_string(),
-                tree.clone(),
-            ),
+            layers: crate::layers::LayerManager::with_root("rust".to_string(), tree.clone()),
         };
 
         if has_injection {

@@ -1,7 +1,7 @@
-use crate::state::edit_utils::{
+use super::edit_transform::{
     adjust_ranges_for_edit, edit_affects_ranges, transform_edit_for_injection,
 };
-use crate::state::language_layer::LanguageLayer;
+use super::language_layer::LanguageLayer;
 use crate::state::parser_pool::{DocumentParserPool, ParserConfig};
 use tree_sitter::{InputEdit, Parser, Tree};
 

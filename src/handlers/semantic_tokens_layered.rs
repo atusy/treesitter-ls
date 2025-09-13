@@ -145,7 +145,7 @@ mod tests {
         Document {
             text: "fn main() {}".to_string(),
             last_semantic_tokens: None,
-            layers: crate::state::layer_manager::LayerManager::with_root("rust".to_string(), tree),
+            layers: crate::layers::LayerManager::with_root("rust".to_string(), tree),
         }
     }
 
@@ -194,15 +194,12 @@ mod tests {
         let mut doc = Document {
             text: "fn main() { /* comment */ }".to_string(),
             last_semantic_tokens: None,
-            layers: crate::state::layer_manager::LayerManager::with_root(
-                "rust".to_string(),
-                root_tree,
-            ),
+            layers: crate::layers::LayerManager::with_root("rust".to_string(), root_tree),
         };
 
         // Add a mock injection layer (simulating a comment with different highlighting)
         let comment_tree = parser.parse("comment", None).unwrap();
-        let injection_layer = crate::state::language_layer::LanguageLayer::injection(
+        let injection_layer = crate::layers::LanguageLayer::injection(
             "comment".to_string(),
             comment_tree,
             vec![(14, 22)], // Position of "comment" in "/* comment */"

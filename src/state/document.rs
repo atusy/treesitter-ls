@@ -1,5 +1,4 @@
-use crate::state::language_layer::LanguageLayer;
-use crate::state::layer_manager::LayerManager;
+use crate::layers::{LanguageLayer, LayerManager};
 use crate::state::parser_pool::DocumentParserPool;
 use dashmap::DashMap;
 use tower_lsp::lsp_types::{SemanticTokens, Url};
