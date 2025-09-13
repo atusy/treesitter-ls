@@ -1,4 +1,5 @@
 // Layer-aware semantic tokens handler
+use super::semantic_token_mapper::SemanticTokenMapper;
 use crate::config::CaptureMappings;
 use crate::state::document::Document;
 use tower_lsp::lsp_types::{SemanticTokens, SemanticTokensResult};
@@ -47,16 +48,17 @@ pub fn handle_semantic_tokens_full_layered(
             }
 
             // Parse tokens for injection with the injection's tree
-            if let Some(SemanticTokensResult::Tokens(_tokens)) = super::handle_semantic_tokens_full(
+            if let Some(SemanticTokensResult::Tokens(tokens)) = super::handle_semantic_tokens_full(
                 &injection_text,
                 &injection_layer.tree,
                 query,
                 Some(&injection_layer.language_id),
                 capture_mappings,
             ) {
-                // TODO: Adjust token positions based on injection ranges
-                // For now, we skip injections to avoid position conflicts
-                // This needs proper position mapping implementation
+                // Map injection tokens to document coordinates
+                let mapper = SemanticTokenMapper::new(&injection_layer.ranges, &document.text);
+                let mapped_tokens = mapper.map_tokens(tokens.data);
+                all_tokens.extend(mapped_tokens);
             }
         }
     }
