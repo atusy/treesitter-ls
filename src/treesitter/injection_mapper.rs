@@ -224,20 +224,44 @@ fn doc_position_to_byte(text: &str, line_starts: &[usize], position: Position) -
 }
 
 /// Convert document byte offset to position
-fn doc_byte_to_position(_text: &str, line_starts: &[usize], offset: usize) -> Option<Position> {
+fn doc_byte_to_position(text: &str, line_starts: &[usize], offset: usize) -> Option<Position> {
     let line = match line_starts.binary_search(&offset) {
         Ok(line) => line,
         Err(line) => line.saturating_sub(1),
     };
 
     let line_start = line_starts.get(line)?;
-    let char_offset = offset.saturating_sub(*line_start);
+    let line_offset = offset.saturating_sub(*line_start);
 
-    // For simplicity, assume byte offset equals UTF-16 offset for now
-    // This should be properly calculated in production
+    // Calculate the line end
+    let line_end = if line + 1 < line_starts.len() {
+        line_starts[line + 1] - 1
+    } else {
+        text.len()
+    };
+
+    let line_text = &text[*line_start..line_end.min(text.len())];
+
+    // Convert byte offset to UTF-16 character offset
+    let mut utf16_offset = 0;
+    let mut byte_count = 0;
+
+    for ch in line_text.chars() {
+        if byte_count >= line_offset {
+            break;
+        }
+        let ch_bytes = ch.len_utf8();
+        if byte_count + ch_bytes > line_offset {
+            // We're in the middle of this character
+            break;
+        }
+        byte_count += ch_bytes;
+        utf16_offset += ch.len_utf16();
+    }
+
     Some(Position {
         line: line as u32,
-        character: char_offset as u32,
+        character: utf16_offset as u32,
     })
 }
 
