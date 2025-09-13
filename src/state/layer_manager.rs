@@ -1,5 +1,5 @@
 use crate::state::language_layer::LanguageLayer;
-use crate::state::parser_pool::DocumentParserPool;
+use crate::state::parser_pool::{DocumentParserPool, ParserConfig};
 use tree_sitter::{InputEdit, Parser, Tree};
 
 /// Manages language layers for a document, including root and injection layers
@@ -150,6 +150,22 @@ impl LayerManager {
     pub fn release_parser(&mut self, language_id: String, parser: Parser) {
         if let Some(pool) = self.parser_pool.as_mut() {
             pool.release(language_id, parser);
+        }
+    }
+
+    /// Release an injection parser back to the pool
+    pub fn release_injection_parser(
+        &mut self,
+        language_id: String,
+        timeout_micros: Option<u64>,
+        parser: Parser,
+    ) {
+        if let Some(pool) = self.parser_pool.as_mut() {
+            let config = ParserConfig {
+                language_id,
+                timeout_micros,
+            };
+            pool.release_injection(config, parser);
         }
     }
 

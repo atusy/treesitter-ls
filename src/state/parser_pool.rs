@@ -43,10 +43,19 @@ impl ParserFactory {
     }
 }
 
+/// Configuration for parsers (e.g., timeout settings)
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ParserConfig {
+    pub language_id: String,
+    pub timeout_micros: Option<u64>,
+}
+
 /// Per-document parser pool for efficient parser reuse
 pub struct DocumentParserPool {
     /// Available parsers by language ID
     available: HashMap<String, Vec<Parser>>,
+    /// Available injection parsers by configuration
+    injection_parsers: HashMap<ParserConfig, Vec<Parser>>,
     /// Factory for creating new parsers
     factory: Arc<ParserFactory>,
 }
@@ -56,6 +65,7 @@ impl DocumentParserPool {
     pub fn new(factory: Arc<ParserFactory>) -> Self {
         Self {
             available: HashMap::new(),
+            injection_parsers: HashMap::new(),
             factory,
         }
     }
@@ -80,11 +90,29 @@ impl DocumentParserPool {
         language_id: &str,
         timeout_micros: Option<u64>,
     ) -> Option<Parser> {
-        // FIXME: Injection parsers are always created fresh, never pooled
-        // This is inefficient for documents with many injections
-        // TODO: Pool injection parsers with configuration tracking in Step 3-4
+        let config = ParserConfig {
+            language_id: language_id.to_string(),
+            timeout_micros,
+        };
+
+        // Try to get from injection pool first
+        if let Some(parsers) = self.injection_parsers.get_mut(&config)
+            && let Some(parser) = parsers.pop()
+        {
+            return Some(parser);
+        }
+
+        // Create new injection parser if not in pool
         self.factory
             .create_injection_parser(language_id, timeout_micros)
+    }
+
+    /// Release an injection parser back to the pool
+    pub fn release_injection(&mut self, config: ParserConfig, parser: Parser) {
+        self.injection_parsers
+            .entry(config)
+            .or_default()
+            .push(parser);
     }
 
     /// Release a parser back to the pool for reuse
@@ -95,6 +123,7 @@ impl DocumentParserPool {
     /// Clear all cached parsers
     pub fn clear(&mut self) {
         self.available.clear();
+        self.injection_parsers.clear();
     }
 
     /// Get the number of cached parsers for a language
@@ -175,12 +204,24 @@ mod tests {
         let factory = Arc::new(ParserFactory::new(language_service));
         let mut pool = DocumentParserPool::new(factory);
 
-        // Injection parsers are always created fresh
+        // First injection parser acquisition creates new
         let parser1 = pool.acquire_injection("rust", Some(5000));
         assert!(parser1.is_some());
 
-        let parser2 = pool.acquire_injection("rust", None);
+        // Release injection parser to pool
+        let config = ParserConfig {
+            language_id: "rust".to_string(),
+            timeout_micros: Some(5000),
+        };
+        pool.release_injection(config.clone(), parser1.unwrap());
+
+        // Second acquire with same config should get from pool
+        let parser2 = pool.acquire_injection("rust", Some(5000));
         assert!(parser2.is_some());
+
+        // Different config creates new parser
+        let parser3 = pool.acquire_injection("rust", None);
+        assert!(parser3.is_some());
     }
 
     #[test]
