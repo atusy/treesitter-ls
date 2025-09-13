@@ -1,14 +1,20 @@
 pub mod config;
-pub mod document;
 pub mod features;
-pub mod injection; // Facade over layers module
-pub mod layers;
+pub mod injection;
 pub mod server;
-pub mod state;
 pub mod syntax;
 pub mod text;
-pub mod treesitter;
 pub mod workspace;
+
+// Internal modules (not part of public API)
+#[doc(hidden)]
+pub mod document;
+#[doc(hidden)]
+pub mod layers;
+#[doc(hidden)]
+pub mod state;
+#[doc(hidden)]
+pub mod treesitter;
 
 // Re-export config types for backward compatibility
 pub use config::{
