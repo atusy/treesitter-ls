@@ -13,7 +13,8 @@ use crate::handlers::{
 };
 use crate::state::parser_pool::{DocumentParserPool, ParserFactory};
 use crate::state::{DocumentStore, LanguageLayer, LanguageService};
-use crate::treesitter::{position_to_byte_offset, tree_utils::position_to_point};
+use crate::treesitter::position_mapper::{PositionMapper, SimplePositionMapper};
+use crate::treesitter::tree_utils::position_to_point;
 
 pub struct TreeSitterLs {
     client: Client,
@@ -417,8 +418,9 @@ impl LanguageServer for TreeSitterLs {
         for change in params.content_changes {
             if let Some(range) = change.range {
                 // Incremental change - create InputEdit for tree editing
-                let start_offset = position_to_byte_offset(&text, range.start);
-                let end_offset = position_to_byte_offset(&text, range.end);
+                let mapper = SimplePositionMapper::new(&text);
+                let start_offset = mapper.position_to_byte(range.start).unwrap_or(text.len());
+                let end_offset = mapper.position_to_byte(range.end).unwrap_or(text.len());
                 let new_end_offset = start_offset + change.text.len();
 
                 // Calculate the new end position
