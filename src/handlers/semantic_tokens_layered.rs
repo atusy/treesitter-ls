@@ -70,36 +70,62 @@ pub fn handle_semantic_tokens_full_layered(
         }));
     }
 
-    // Sort is already handled by the original handler, but we may need to re-sort
-    // after merging multiple layers
-    all_tokens.sort_by_key(|t| (t.delta_line, t.delta_start));
+    // Convert all tokens to absolute positions first
+    // This is necessary because tokens from different layers have independent delta sequences
+    let mut absolute_tokens = Vec::with_capacity(all_tokens.len());
+    for layer_tokens in [all_tokens].into_iter() {
+        let mut current_line = 0;
+        let mut current_start = 0;
 
-    // Recalculate deltas after sorting
+        for token in layer_tokens {
+            current_line += token.delta_line;
+            if token.delta_line == 0 {
+                current_start += token.delta_start;
+            } else {
+                current_start = token.delta_start;
+            }
+
+            absolute_tokens.push((
+                current_line,
+                current_start,
+                token.length,
+                token.token_type,
+                token.token_modifiers_bitset,
+            ));
+        }
+    }
+
+    // Sort by absolute position
+    absolute_tokens.sort_by_key(|t| (t.0, t.1));
+
+    // Convert back to delta-encoded tokens
+    let mut result_tokens = Vec::with_capacity(absolute_tokens.len());
     let mut last_line = 0;
     let mut last_start = 0;
 
-    for token in &mut all_tokens {
-        let abs_line = last_line + token.delta_line;
-        let abs_start = if token.delta_line == 0 {
-            last_start + token.delta_start
+    for (line, start, length, token_type, modifiers) in absolute_tokens {
+        let delta_line = line - last_line;
+        let delta_start = if delta_line == 0 {
+            start - last_start
         } else {
-            token.delta_start
+            start
         };
 
-        token.delta_line = abs_line - last_line;
-        token.delta_start = if token.delta_line == 0 {
-            abs_start - last_start
-        } else {
-            abs_start
-        };
+        result_tokens.push(tower_lsp::lsp_types::SemanticToken {
+            delta_line,
+            delta_start,
+            length,
+            token_type,
+            token_modifiers_bitset: modifiers,
+        });
 
-        last_line = abs_line;
-        last_start = abs_start;
+        last_line = line;
+        last_start = start;
     }
 
     Some(SemanticTokensResult::Tokens(SemanticTokens {
         result_id: None,
-        data: all_tokens,
+        data: result_tokens,
     }))
 }
 
