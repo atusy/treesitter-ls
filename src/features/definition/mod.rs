@@ -1,5 +1,5 @@
 // Definition jump resolution using tree-sitter queries
-use crate::treesitter::node_utils::{calculate_scope_depth, determine_context, get_scope_ids};
+use crate::syntax::node_utils::{calculate_scope_depth, determine_context, get_scope_ids};
 use crate::workspace::documents::Document;
 use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Position, Range, Url};
 use tree_sitter::{Query, QueryCursor, StreamingIterator, Tree};
