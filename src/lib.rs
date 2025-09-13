@@ -9,6 +9,7 @@ pub mod state;
 pub mod syntax;
 pub mod text;
 pub mod treesitter;
+pub mod workspace;
 
 // Re-export config types for backward compatibility
 pub use config::{
