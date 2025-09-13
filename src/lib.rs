@@ -12,8 +12,6 @@ pub mod document;
 #[doc(hidden)]
 pub mod layers;
 #[doc(hidden)]
-pub mod state;
-#[doc(hidden)]
 pub mod treesitter;
 
 // Re-export config types for backward compatibility
