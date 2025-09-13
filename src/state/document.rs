@@ -56,7 +56,10 @@ impl Document {
     }
 
     /// Get layer at offset
-    pub fn get_layer_at_position(&self, byte_offset: usize) -> Option<&crate::layers::LanguageLayer> {
+    pub fn get_layer_at_position(
+        &self,
+        byte_offset: usize,
+    ) -> Option<&crate::layers::LanguageLayer> {
         self.layers().get_layer_at_offset(byte_offset)
     }
 
@@ -110,7 +113,8 @@ impl DocumentStore {
         if let Some(doc) = self.documents.get(&uri) {
             let root_layer = doc.layers().root_layer().cloned();
             if let Some(root) = root_layer {
-                let new_doc = Document::with_root_layer(text, root.language_id.clone(), root.tree.clone());
+                let new_doc =
+                    Document::with_root_layer(text, root.language_id.clone(), root.tree.clone());
                 self.documents.insert(uri, new_doc);
             } else {
                 self.documents.insert(uri, Document::new(text));
@@ -190,7 +194,9 @@ mod tests {
 
         // Create a fake tree for testing
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_rust::LANGUAGE.into()).unwrap();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
         let tree = parser.parse(&text1, None).unwrap();
         let layer = LanguageLayer::root("rust".to_string(), tree);
 
@@ -213,7 +219,9 @@ mod tests {
 
         // Create document with tree
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_rust::LANGUAGE.into()).unwrap();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
         let tree = parser.parse(&text, None).unwrap();
         let layer = LanguageLayer::root("rust".to_string(), tree.clone());
 

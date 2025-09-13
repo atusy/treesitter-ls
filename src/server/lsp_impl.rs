@@ -417,7 +417,10 @@ impl LanguageServer for TreeSitterLs {
         let (language_id, old_text) = {
             let doc = self.document_store.get(&uri);
             match doc {
-                Some(d) => (d.get_language_id().map(|s| s.to_string()), d.text().to_string()),
+                Some(d) => (
+                    d.get_language_id().map(|s| s.to_string()),
+                    d.text().to_string(),
+                ),
                 None => {
                     self.client
                         .log_message(MessageType::WARNING, "Document not found for change event")
