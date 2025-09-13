@@ -358,7 +358,9 @@ impl LanguageServer for TreeSitterLs {
             };
 
             if has_queries {
-                // Queries are ready, request immediate refresh
+                // Always request semantic tokens refresh on file open
+                // This ensures the client always has fresh tokens, especially important
+                // when reopening files after they were closed
                 if self.client.semantic_tokens_refresh().await.is_ok() {
                     self.client
                         .log_message(
@@ -391,6 +393,18 @@ impl LanguageServer for TreeSitterLs {
 
         self.client
             .log_message(MessageType::INFO, "file opened!")
+            .await;
+    }
+
+    async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        let uri = params.text_document.uri;
+
+        // Remove the document from the store when it's closed
+        // This ensures that reopening the file will properly reinitialize everything
+        self.document_store.remove(&uri);
+
+        self.client
+            .log_message(MessageType::INFO, "file closed!")
             .await;
     }
 

@@ -116,6 +116,10 @@ impl DocumentStore {
             doc.layers.set_parser_pool(pool);
         }
     }
+
+    pub fn remove(&self, uri: &Url) -> Option<Document> {
+        self.documents.remove(uri).map(|(_, doc)| doc)
+    }
 }
 
 // Backward compatibility methods for Document
