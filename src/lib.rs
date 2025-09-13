@@ -1,7 +1,6 @@
 pub mod config;
 pub mod document;
 pub mod features;
-pub mod handlers;
 pub mod injection; // Facade over layers module
 pub mod layers;
 pub mod server;
@@ -18,7 +17,7 @@ pub use config::{
 };
 
 // Re-export for tests
-pub use handlers::{
+pub use features::{
     ContextType, DefinitionCandidate, DefinitionResolver, LEGEND_TYPES, ReferenceContext,
 };
 

@@ -583,7 +583,7 @@ impl LanguageServer for TreeSitterLs {
             // 2. The layered handler may fail to process tokens when queries are not found
             // 3. The original handler is stable and well-tested
             // TODO: Fix semantic_tokens_layered handler when implementing proper injection support
-            crate::handlers::handle_semantic_tokens_full(
+            crate::features::handle_semantic_tokens_full(
                 text,
                 &root_layer.tree,
                 query,
