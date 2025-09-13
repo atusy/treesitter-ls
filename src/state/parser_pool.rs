@@ -4,6 +4,12 @@ use tree_sitter::Parser;
 
 use crate::state::LanguageService;
 
+// REFACTOR NOTE (Step 3-1): Parser management is currently duplicated:
+// - LanguageService::parsers maintains a global parser cache
+// - DocumentParserPool maintains per-document parser pools
+// - These two systems don't coordinate, leading to inefficient memory usage
+// TODO: Unify parser management in Step 3-2
+
 /// Factory for creating Tree-sitter parsers with proper language configuration
 pub struct ParserFactory {
     language_service: Arc<LanguageService>,
@@ -74,7 +80,9 @@ impl DocumentParserPool {
         language_id: &str,
         timeout_micros: Option<u64>,
     ) -> Option<Parser> {
-        // For injection parsers, always create new to ensure proper configuration
+        // FIXME: Injection parsers are always created fresh, never pooled
+        // This is inefficient for documents with many injections
+        // TODO: Pool injection parsers with configuration tracking in Step 3-4
         self.factory
             .create_injection_parser(language_id, timeout_micros)
     }
