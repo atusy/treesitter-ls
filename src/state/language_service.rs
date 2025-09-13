@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tower_lsp::Client;
 use tower_lsp::lsp_types::{MessageType, Url};
-use tree_sitter::{Language, Parser, Query};
+use tree_sitter::{Language, Query};
 
 pub struct LanguageService {
     pub languages: Mutex<HashMap<String, Language>>,
@@ -21,7 +21,7 @@ pub struct LanguageService {
     pub library_loader: Mutex<ParserLoader>,
     pub capture_mappings: Mutex<CaptureMappings>,
     pub search_paths: Mutex<Option<Vec<String>>>,
-    pub parsers: Mutex<HashMap<String, Parser>>, // Parser pool for reuse
+    // NOTE: Parser management moved to DocumentParserPool (Step 3-2)
 }
 
 impl Default for LanguageService {
@@ -36,7 +36,6 @@ impl Default for LanguageService {
             library_loader: Mutex::new(ParserLoader::new()),
             capture_mappings: Mutex::new(CaptureMappings::default()),
             search_paths: Mutex::new(None),
-            parsers: Mutex::new(HashMap::new()),
         }
     }
 }

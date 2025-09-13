@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
-use tree_sitter::{InputEdit, Parser, Query};
+use tree_sitter::{InputEdit, Query};
 
 use crate::config::{TreeSitterSettings, merge_settings};
 use crate::handlers::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
@@ -97,16 +97,22 @@ impl TreeSitterLs {
                 }
             }
 
-            let languages = self.language_service.languages.lock().unwrap();
-            if let Some(language) = languages.get(&language_name) {
-                // Get or create a parser for this language
-                let mut parsers = self.language_service.parsers.lock().unwrap();
-                let parser = parsers.entry(language_name.clone()).or_insert_with(|| {
-                    let mut p = Parser::new();
-                    p.set_language(language).unwrap();
-                    p
-                });
+            // Initialize parser pool if needed
+            let needs_pool_init = self
+                .document_store
+                .get(&uri)
+                .map(|doc| doc.layers.parser_pool().is_none())
+                .unwrap_or(true);
 
+            if needs_pool_init {
+                // Initialize parser pool for new documents or documents without a pool
+                let parser_pool = DocumentParserPool::new(self.parser_factory.clone());
+                self.document_store.init_parser_pool(&uri, parser_pool);
+            }
+
+            // Create a parser for this parse operation
+            let parser = self.parser_factory.create_parser(&language_name);
+            if let Some(mut parser) = parser {
                 // Get old tree for incremental parsing if document exists
                 let old_tree = if !edits.is_empty() {
                     // Get the tree with edits applied for incremental parsing
@@ -129,10 +135,6 @@ impl TreeSitterLs {
                         let root_layer = Some(LanguageLayer::root(language_name.clone(), tree));
                         self.document_store.insert(uri.clone(), text, root_layer);
                     }
-
-                    // Initialize parser pool for the document
-                    let parser_pool = DocumentParserPool::new(self.parser_factory.clone());
-                    self.document_store.init_parser_pool(&uri, parser_pool);
 
                     return;
                 }
