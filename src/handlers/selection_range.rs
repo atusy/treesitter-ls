@@ -1,7 +1,7 @@
 use crate::state::document::Document;
 use crate::treesitter::tree_utils::{node_to_range, position_to_point};
 use tower_lsp::lsp_types::{Position, SelectionRange};
-use tree_sitter::{Node, Tree};
+use tree_sitter::Node;
 
 /// Build selection range hierarchy for a node
 fn build_selection_range(node: Node) -> SelectionRange {
@@ -15,39 +15,7 @@ fn build_selection_range(node: Node) -> SelectionRange {
     SelectionRange { range, parent }
 }
 
-/// Handle textDocument/selectionRange request (legacy API)
-///
-/// Returns selection ranges that expand intelligently by syntax boundaries.
-/// (legacy API - deprecated, use handle_selection_range_layered instead)
-///
-/// # Arguments
-/// * `tree` - The parsed syntax tree
-/// * `positions` - The requested positions
-///
-/// # Returns
-/// Selection ranges for each position, or None if unable to compute
-#[deprecated(note = "Use handle_selection_range_layered instead")]
-#[allow(dead_code)]
-fn handle_selection_range(tree: &Tree, positions: &[Position]) -> Option<Vec<SelectionRange>> {
-    let root = tree.root_node();
-
-    let ranges = positions
-        .iter()
-        .map(|pos| {
-            let point = position_to_point(pos);
-
-            // Find the smallest node containing this position
-            let node = root.descendant_for_point_range(point, point)?;
-
-            // Build the selection range hierarchy
-            Some(build_selection_range(node))
-        })
-        .collect::<Option<Vec<_>>>()?;
-
-    Some(ranges)
-}
-
-/// Handle selection range request with layer awareness
+/// Handle textDocument/selectionRange request with injection layer support
 ///
 /// Returns selection ranges that expand intelligently by syntax boundaries,
 /// using the appropriate language layer for each position.
@@ -58,7 +26,7 @@ fn handle_selection_range(tree: &Tree, positions: &[Position]) -> Option<Vec<Sel
 ///
 /// # Returns
 /// Selection ranges for each position, or None if unable to compute
-pub fn handle_selection_range_layered(
+pub fn handle_selection_range(
     document: &Document,
     positions: &[Position],
 ) -> Option<Vec<SelectionRange>> {

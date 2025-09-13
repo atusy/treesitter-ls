@@ -8,7 +8,7 @@ use tree_sitter::{InputEdit, Query};
 use crate::config::{TreeSitterSettings, merge_settings};
 use crate::handlers::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
 use crate::handlers::{
-    handle_code_actions, handle_goto_definition_layered, handle_selection_range_layered,
+    handle_code_actions, handle_goto_definition, handle_selection_range,
     handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
 use crate::layers::mappers::position_mapper::{PositionMapper, SimplePositionMapper};
@@ -792,7 +792,7 @@ impl LanguageServer for TreeSitterLs {
 
         // Use layer-aware handler
         let resolver = DefinitionResolver::new();
-        Ok(handle_goto_definition_layered(
+        Ok(handle_goto_definition(
             &resolver,
             &doc,
             position,
@@ -814,7 +814,7 @@ impl LanguageServer for TreeSitterLs {
         };
 
         // Use layer-aware handler
-        Ok(handle_selection_range_layered(&doc, &positions))
+        Ok(handle_selection_range(&doc, &positions))
     }
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {

@@ -345,52 +345,8 @@ impl DefinitionResolver {
 }
 
 /// Handle goto definition request (legacy API - deprecated)
-/// Use handle_goto_definition_layered instead
-#[deprecated(note = "Use handle_goto_definition_layered instead")]
-#[allow(dead_code)]
-fn handle_goto_definition(
-    resolver: &DefinitionResolver,
-    text: &str,
-    tree: &Tree,
-    locals_query: &Query,
-    byte_offset: usize,
-    uri: &Url,
-) -> Option<GotoDefinitionResponse> {
-    // Use provided resolver
-    let candidates = resolver.resolve_definition(text, tree, locals_query, byte_offset);
-
-    if candidates.is_empty() {
-        return None;
-    }
-
-    // Convert candidates to LSP locations
-    let locations: Vec<Location> = candidates
-        .into_iter()
-        .map(|definition| {
-            let start_point = definition.start_position;
-            let end_point = definition.end_position;
-
-            Location {
-                uri: uri.clone(),
-                range: Range {
-                    start: Position {
-                        line: start_point.row as u32,
-                        character: start_point.column as u32,
-                    },
-                    end: Position {
-                        line: end_point.row as u32,
-                        character: end_point.column as u32,
-                    },
-                },
-            }
-        })
-        .collect();
-
-    Some(GotoDefinitionResponse::Array(locations))
-}
-
-/// Handle goto definition request with layer awareness
-pub fn handle_goto_definition_layered(
+/// Handle goto definition request with injection layer support
+pub fn handle_goto_definition(
     resolver: &DefinitionResolver,
     document: &Document,
     position: Position,
