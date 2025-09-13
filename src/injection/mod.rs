@@ -13,4 +13,5 @@ pub use mappers::{
 
 // Re-export from text module
 pub use crate::text::edit as edit_transform;
-pub use crate::text::position::{PositionMapper, compute_line_starts};
+// Re-export from document module
+pub use crate::document::coordinates::{PositionMapper, compute_line_starts};

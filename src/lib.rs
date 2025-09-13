@@ -1,4 +1,5 @@
 pub mod config;
+pub mod document;
 pub mod features;
 pub mod injection;
 pub mod lsp;

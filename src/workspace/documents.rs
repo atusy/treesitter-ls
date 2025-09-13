@@ -66,7 +66,7 @@ impl Document {
     /// Create position mapper (renamed from position_mapper for clarity)
     pub fn position_mapper<'a>(&'a self) -> Box<dyn crate::injection::PositionMapper + 'a> {
         if self.layers().injection_layers().is_empty() {
-            Box::new(crate::text::position::SimplePositionMapper::new(
+            Box::new(crate::document::coordinates::SimplePositionMapper::new(
                 self.text(),
             ))
         } else {

@@ -6,6 +6,7 @@ use tower_lsp::{Client, LanguageServer};
 use tree_sitter::{InputEdit, Query};
 
 use crate::config::{TreeSitterSettings, merge_settings};
+use crate::document::coordinates::{PositionMapper, SimplePositionMapper};
 use crate::features::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
 use crate::features::{
     handle_code_actions, handle_goto_definition, handle_selection_range,
@@ -14,7 +15,6 @@ use crate::features::{
 use crate::injection::LanguageLayer;
 use crate::syntax::parser_pool::{DocumentParserPool, ParserFactory};
 use crate::syntax::tree::position_to_point;
-use crate::text::position::{PositionMapper, SimplePositionMapper};
 use crate::workspace::{documents::DocumentStore, languages::LanguageService};
 
 pub struct TreeSitterLs {
