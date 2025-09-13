@@ -4,7 +4,7 @@ use tower_lsp::lsp_types::{
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 
 use crate::config::settings::CaptureMappings;
-use crate::treesitter::{byte_range_to_range, position_to_byte_offset};
+use crate::treesitter::position_mapper::{PositionMapper, SimplePositionMapper};
 
 /// Create an inspect token code action for the node at cursor
 fn create_inspect_token_action(
@@ -170,7 +170,8 @@ pub fn handle_code_actions(
     let root = tree.root_node();
 
     // Use the start position of the selection/range as the cursor location
-    let cursor_byte = position_to_byte_offset(text, cursor.start);
+    let mapper = SimplePositionMapper::new(text);
+    let cursor_byte = mapper.position_to_byte(cursor.start).unwrap_or(text.len());
 
     let node_at_cursor = root.descendant_for_byte_range(cursor_byte, cursor_byte)?;
 
@@ -300,7 +301,18 @@ pub fn handle_code_actions(
     // Prepare the edit range: replace content between '(' and ')'
     let replace_start = lparen_end;
     let replace_end = rparen_start;
-    let replace_range = byte_range_to_range(text, replace_start, replace_end);
+    let replace_range = mapper
+        .byte_range_to_range(replace_start, replace_end)
+        .unwrap_or(Range {
+            start: tower_lsp::lsp_types::Position {
+                line: 0,
+                character: 0,
+            },
+            end: tower_lsp::lsp_types::Position {
+                line: 0,
+                character: 0,
+            },
+        });
 
     // Build parameter reordering actions
     let n = entries.len();
