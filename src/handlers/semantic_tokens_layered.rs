@@ -1,6 +1,6 @@
 // Layer-aware semantic tokens handler
-use super::semantic_token_mapper::SemanticTokenMapper;
 use crate::config::CaptureMappings;
+use crate::layers::mappers::semantic_token_mapper::SemanticTokenMapper;
 use crate::state::document::Document;
 use tower_lsp::lsp_types::{SemanticTokens, SemanticTokensResult};
 use tree_sitter::Query;

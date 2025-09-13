@@ -1,7 +1,6 @@
 pub mod code_action;
 pub mod definition;
 pub mod selection_range;
-pub mod semantic_token_mapper;
 pub mod semantic_tokens;
 pub mod semantic_tokens_layered;
 
