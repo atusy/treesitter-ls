@@ -1,4 +1,5 @@
 pub mod document;
+pub mod edit_utils;
 pub mod language_layer;
 pub mod language_service;
 pub mod layer_manager;
