@@ -1,4 +1,4 @@
-use crate::layers::mappers::position_mapper::{PositionMapper, compute_line_starts};
+use super::position_mapper::{PositionMapper, compute_line_starts};
 use crate::state::LanguageLayer;
 use tower_lsp::lsp_types::Position;
 

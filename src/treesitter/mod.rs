@@ -1,15 +1,13 @@
-pub mod injection_mapper;
 pub mod node_utils;
 pub mod parser_loader;
 pub mod query_predicates;
 pub mod tree_utils;
 
-// Re-export position_mapper from layers module for backward compatibility
+// Re-export mappers from layers module for backward compatibility
+pub use crate::layers::mappers::injection_mapper::InjectionPositionMapper;
 pub use crate::layers::mappers::position_mapper::{
     PositionMapper, SimplePositionMapper, compute_line_starts,
 };
-
-pub use injection_mapper::InjectionPositionMapper;
 pub use node_utils::{
     calculate_depth, calculate_scope_depth, determine_context, find_common_ancestor,
     find_node_at_byte, get_ancestors, get_scope_chain, get_scope_ids, is_ancestor_of,
