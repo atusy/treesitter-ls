@@ -5,6 +5,7 @@ pub mod handlers;
 pub mod layers;
 pub mod server;
 pub mod state;
+pub mod text;
 pub mod treesitter;
 
 // Re-export config types for backward compatibility
