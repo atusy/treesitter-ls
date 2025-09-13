@@ -5,6 +5,7 @@ pub mod injection; // Facade over layers module
 pub mod layers;
 pub mod server;
 pub mod state;
+pub mod syntax;
 pub mod text;
 pub mod treesitter;
 
