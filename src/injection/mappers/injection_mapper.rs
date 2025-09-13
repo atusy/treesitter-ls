@@ -18,7 +18,7 @@ pub struct InjectionPositionMapper<'a> {
 impl<'a> InjectionPositionMapper<'a> {
     /// Create a new injection position mapper from language layers
     /// This extracts only the necessary data (ranges and IDs) from the layers
-    pub fn new(text: &'a str, layers: &'a [crate::layers::LanguageLayer]) -> Self {
+    pub fn new(text: &'a str, layers: &'a [crate::injection::LanguageLayer]) -> Self {
         let document_line_starts = compute_line_starts(text);
 
         let mut mappers = Vec::new();
@@ -208,7 +208,7 @@ pub fn doc_byte_to_position(text: &str, byte_offset: usize) -> Option<Position> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layers::LanguageLayer;
+    use crate::injection::LanguageLayer;
 
     fn create_test_layers() -> Vec<LanguageLayer> {
         // Create mock language layers for testing

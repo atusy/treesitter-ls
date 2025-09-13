@@ -1,15 +1,16 @@
-// Facade module for language injection functionality
-// Re-exports from layers module while maintaining API stability
+pub mod language_layer;
+pub mod layer_manager;
+pub mod mappers;
 
-pub use crate::layers::{
-    // Core types
-    LanguageLayer,
-    LayerManager,
-
-    // Mappers
-    mappers::{
-        injection_mapper::InjectionPositionMapper,
-        range_mapper::{LayerInfo, RangeMapper},
-        semantic_token_mapper::SemanticTokenMapper,
-    },
+// Re-export commonly used types
+pub use language_layer::LanguageLayer;
+pub use layer_manager::LayerManager;
+pub use mappers::{
+    injection_mapper::InjectionPositionMapper,
+    range_mapper::{LayerInfo, RangeMapper},
+    semantic_token_mapper::SemanticTokenMapper,
 };
+
+// Re-export from text module
+pub use crate::text::edit as edit_transform;
+pub use crate::text::position::{PositionMapper, compute_line_starts};

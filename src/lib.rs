@@ -9,8 +9,6 @@ pub mod workspace;
 // Internal modules (not part of public API)
 #[doc(hidden)]
 pub mod document;
-#[doc(hidden)]
-pub mod layers;
 
 // Re-export config types for backward compatibility
 pub use config::{

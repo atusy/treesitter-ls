@@ -16,17 +16,17 @@ impl Document {
     }
 
     /// Get the root layer
-    pub fn root_layer(&self) -> Option<&crate::layers::LanguageLayer> {
+    pub fn root_layer(&self) -> Option<&crate::injection::LanguageLayer> {
         self.layers().root_layer()
     }
 
     /// Get injection layers
-    pub fn injection_layers(&self) -> &[crate::layers::LanguageLayer] {
+    pub fn injection_layers(&self) -> &[crate::injection::LanguageLayer] {
         self.layers().injection_layers()
     }
 
     /// Add an injection layer
-    pub fn add_injection_layer(&mut self, layer: crate::layers::LanguageLayer) {
+    pub fn add_injection_layer(&mut self, layer: crate::injection::LanguageLayer) {
         self.layers_mut().add_injection_layer(layer);
     }
 
@@ -51,7 +51,7 @@ impl Document {
     }
 
     /// Get all layers
-    pub fn get_all_layers(&self) -> impl Iterator<Item = &crate::layers::LanguageLayer> {
+    pub fn get_all_layers(&self) -> impl Iterator<Item = &crate::injection::LanguageLayer> {
         self.layers().all_layers()
     }
 
@@ -59,12 +59,12 @@ impl Document {
     pub fn get_layer_at_position(
         &self,
         byte_offset: usize,
-    ) -> Option<&crate::layers::LanguageLayer> {
+    ) -> Option<&crate::injection::LanguageLayer> {
         self.layers().get_layer_at_offset(byte_offset)
     }
 
     /// Create position mapper (renamed from position_mapper for clarity)
-    pub fn position_mapper<'a>(&'a self) -> Box<dyn crate::layers::PositionMapper + 'a> {
+    pub fn position_mapper<'a>(&'a self) -> Box<dyn crate::injection::PositionMapper + 'a> {
         if self.layers().injection_layers().is_empty() {
             Box::new(crate::text::position::SimplePositionMapper::new(
                 self.text(),
