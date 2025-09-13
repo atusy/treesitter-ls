@@ -38,9 +38,9 @@ fn test_document_store_reopen_resets_semantic_tokens() {
     // Verify tokens are stored
     {
         let doc = store.get(&uri).unwrap();
-        assert!(doc.last_semantic_tokens.is_some());
+        assert!(doc.last_semantic_tokens().is_some());
         assert_eq!(
-            doc.last_semantic_tokens.as_ref().unwrap().result_id,
+            doc.last_semantic_tokens().as_ref().unwrap().result_id,
             Some("v1".to_string())
         );
     }
@@ -54,7 +54,7 @@ fn test_document_store_reopen_resets_semantic_tokens() {
     {
         let doc = store.get(&uri).unwrap();
         assert!(
-            doc.last_semantic_tokens.is_none(),
+            doc.last_semantic_tokens().is_none(),
             "Semantic tokens should be reset after reopening"
         );
     }
@@ -93,7 +93,7 @@ fn test_document_store_update_preserves_semantic_tokens() {
     // Verify tokens are stored
     {
         let doc = store.get(&uri).unwrap();
-        assert!(doc.last_semantic_tokens.is_some());
+        assert!(doc.last_semantic_tokens().is_some());
     }
 
     // Update document (this also resets semantic tokens)
@@ -104,12 +104,12 @@ fn test_document_store_update_preserves_semantic_tokens() {
     {
         let doc = store.get(&uri).unwrap();
         assert!(
-            doc.last_semantic_tokens.is_none(),
+            doc.last_semantic_tokens().is_none(),
             "Semantic tokens are reset on update_document"
         );
         assert_eq!(
             doc.get_language_id(),
-            Some(&"rust".to_string()),
+            Some("rust"),
             "Language should be preserved"
         );
     }
@@ -167,7 +167,7 @@ fn test_document_store_remove() {
     {
         let doc = store.get(&uri).unwrap();
         assert!(
-            doc.last_semantic_tokens.is_none(),
+            doc.last_semantic_tokens().is_none(),
             "New document should not have old semantic tokens"
         );
     }

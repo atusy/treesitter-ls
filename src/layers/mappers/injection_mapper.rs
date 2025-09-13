@@ -1,246 +1,191 @@
 use super::position_mapper::{PositionMapper, compute_line_starts};
-use crate::layers::LanguageLayer;
+use super::range_mapper::{LayerInfo, RangeMapper};
 use tower_lsp::lsp_types::Position;
 
-/// Position mapper that handles injection layers
-/// Supports coordinate transformation between document and injection layers
+/// Position mapper that handles multiple injection layers
+/// This is a facade that converts LanguageLayer references to pure range mappers
 pub struct InjectionPositionMapper<'a> {
     document_text: &'a str,
     document_line_starts: Vec<usize>,
-    layers: Vec<LayerMapping<'a>>,
-}
-
-/// Mapping information for a single language layer
-struct LayerMapping<'a> {
-    layer: &'a LanguageLayer,
-
-    // Document coordinate system
-    doc_ranges: Vec<(usize, usize)>,
-
-    // Layer coordinate system
-    layer_text: String,
-    layer_line_starts: Vec<usize>,
-}
-
-impl<'a> LayerMapping<'a> {
-    /// Check if a document byte offset falls within this layer
-    fn contains_doc_offset(&self, offset: usize) -> bool {
-        self.doc_ranges
-            .iter()
-            .any(|(start, end)| offset >= *start && offset < *end)
-    }
-
-    /// Map document byte offset to layer byte offset
-    /// Uses lazy computation - calculates offset on demand
-    fn map_doc_to_layer_offset(&self, doc_offset: usize) -> Option<usize> {
-        let mut layer_offset = 0;
-
-        for (start, end) in &self.doc_ranges {
-            if doc_offset >= *start && doc_offset < *end {
-                // Found the range containing the offset
-                let offset_in_range = doc_offset - start;
-                return Some(layer_offset + offset_in_range);
-            }
-
-            // If we haven't found it yet, accumulate the layer offset
-            if doc_offset >= *end {
-                layer_offset += end - start;
-            }
-        }
-
-        None
-    }
-
-    /// Map layer byte offset to document byte offset
-    /// Uses lazy computation - calculates offset on demand
-    fn map_layer_to_doc_offset(&self, layer_offset: usize) -> Option<usize> {
-        let mut accumulated_length = 0;
-
-        for (start, end) in &self.doc_ranges {
-            let range_length = end - start;
-
-            if layer_offset < accumulated_length + range_length {
-                // This offset falls within this range
-                let offset_in_range = layer_offset - accumulated_length;
-                return Some(start + offset_in_range);
-            }
-
-            accumulated_length += range_length;
-        }
-
-        None
-    }
+    /// Range mappers for each layer
+    mappers: Vec<RangeMapper<'a>>,
+    /// Layer identifiers for lookups
+    layer_ids: Vec<&'a str>,
+    /// Ranges for each layer (for position calculations)
+    layer_ranges: Vec<&'a [(usize, usize)]>,
 }
 
 impl<'a> InjectionPositionMapper<'a> {
-    /// Create a new injection position mapper
-    pub fn new(text: &'a str, layers: &'a [LanguageLayer]) -> Self {
+    /// Create a new injection position mapper from language layers
+    /// This extracts only the necessary data (ranges and IDs) from the layers
+    pub fn new(text: &'a str, layers: &'a [crate::layers::LanguageLayer]) -> Self {
         let document_line_starts = compute_line_starts(text);
 
-        let layer_mappings = layers
-            .iter()
-            .map(|layer| {
-                let layer_text = extract_layer_text(text, &layer.ranges);
-                let layer_line_starts = compute_line_starts(&layer_text);
+        let mut mappers = Vec::new();
+        let mut layer_ids = Vec::new();
+        let mut layer_ranges = Vec::new();
 
-                LayerMapping {
-                    layer,
-                    doc_ranges: layer.ranges.clone(),
-                    layer_text,
-                    layer_line_starts,
-                }
-            })
-            .collect();
+        for layer in layers {
+            let layer_info = LayerInfo::new(&layer.language_id, text, &layer.ranges);
+            let mapper = RangeMapper::new(text, layer_info);
+
+            mappers.push(mapper);
+            layer_ids.push(layer.language_id.as_str());
+            layer_ranges.push(&layer.ranges as &[(usize, usize)]);
+        }
 
         Self {
             document_text: text,
             document_line_starts,
-            layers: layer_mappings,
+            mappers,
+            layer_ids,
+            layer_ranges,
         }
     }
 
-    /// Find the layer containing a document position
-    pub fn find_layer_at_position(&self, position: Position) -> Option<&LanguageLayer> {
-        let doc_offset = self.position_to_byte(position)?;
+    /// Find the layer containing the given document position
+    pub fn get_layer_at_position(&self, position: Position) -> Option<&str> {
+        let byte_offset = self.position_to_byte(position)?;
 
-        for mapping in &self.layers {
-            if mapping.contains_doc_offset(doc_offset) {
-                return Some(mapping.layer);
+        for (i, ranges) in self.layer_ranges.iter().enumerate() {
+            for (start, end) in *ranges {
+                if byte_offset >= *start && byte_offset < *end {
+                    return Some(self.layer_ids[i]);
+                }
             }
         }
 
         None
     }
 
-    /// Map a document position to a layer-local position
-    pub fn map_to_layer_position(
-        &self,
-        doc_position: Position,
-        layer_id: &str,
-    ) -> Option<Position> {
-        // Find the matching layer
-        let layer_mapping = self
-            .layers
+    /// Get the layer by its identifier
+    pub fn get_layer_by_id(&self, layer_id: &str) -> Option<&RangeMapper<'a>> {
+        self.layer_ids
             .iter()
-            .find(|m| m.layer.language_id == layer_id)?;
-
-        // Convert document position to byte offset
-        let doc_offset = self.position_to_byte(doc_position)?;
-
-        // Check if this offset is within the layer
-        if !layer_mapping.contains_doc_offset(doc_offset) {
-            return None;
-        }
-
-        // Map to layer offset
-        let layer_offset = layer_mapping.map_doc_to_layer_offset(doc_offset)?;
-
-        // Convert layer offset to position
-        doc_byte_to_position(
-            &layer_mapping.layer_text,
-            &layer_mapping.layer_line_starts,
-            layer_offset,
-        )
+            .position(|id| *id == layer_id)
+            .map(|i| &self.mappers[i])
     }
 
-    /// Map a layer-local position to document position
-    pub fn map_from_layer_position(
+    /// Map document position to layer position for a specific layer
+    pub fn doc_position_to_layer_position(
         &self,
-        layer_position: Position,
+        position: Position,
         layer_id: &str,
     ) -> Option<Position> {
-        // Find the matching layer
-        let layer_mapping = self
-            .layers
-            .iter()
-            .find(|m| m.layer.language_id == layer_id)?;
+        let mapper = self.get_layer_by_id(layer_id)?;
+        let doc_byte = self.position_to_byte(position)?;
 
-        // Convert layer position to byte offset
-        let layer_offset = doc_position_to_byte(
-            &layer_mapping.layer_text,
-            &layer_mapping.layer_line_starts,
-            layer_position,
-        )?;
+        let layer_info = mapper.layer_info();
+        let layer_byte = layer_info.doc_to_layer_offset(doc_byte)?;
 
-        // Map to document offset
-        let doc_offset = layer_mapping.map_layer_to_doc_offset(layer_offset)?;
+        mapper.byte_to_position(layer_byte)
+    }
 
-        // Convert document offset to position
-        self.byte_to_position(doc_offset)
+    /// Map layer position to document position for a specific layer
+    pub fn layer_position_to_doc_position(
+        &self,
+        position: Position,
+        layer_id: &str,
+    ) -> Option<Position> {
+        let mapper = self.get_layer_by_id(layer_id)?;
+        let layer_byte = mapper.position_to_byte(position)?;
+
+        let layer_info = mapper.layer_info();
+        let doc_byte = layer_info.layer_to_doc_offset(layer_byte)?;
+
+        self.byte_to_position(doc_byte)
     }
 }
 
 impl<'a> PositionMapper for InjectionPositionMapper<'a> {
     fn position_to_byte(&self, position: Position) -> Option<usize> {
-        doc_position_to_byte(self.document_text, &self.document_line_starts, position)
+        let line = position.line as usize;
+        let character = position.character as usize;
+
+        let line_start = self.document_line_starts.get(line)?;
+        let line_end = self
+            .document_line_starts
+            .get(line + 1)
+            .copied()
+            .unwrap_or(self.document_text.len());
+
+        let line_text = &self.document_text[*line_start..line_end];
+
+        // Convert UTF-16 character offset to byte offset
+        let mut byte_offset = 0;
+        let mut utf16_offset = 0;
+
+        for ch in line_text.chars() {
+            if utf16_offset >= character {
+                return Some(line_start + byte_offset);
+            }
+            utf16_offset += ch.len_utf16();
+            byte_offset += ch.len_utf8();
+        }
+
+        Some(line_start + byte_offset.min(line_text.len()))
     }
 
     fn byte_to_position(&self, offset: usize) -> Option<Position> {
-        doc_byte_to_position(self.document_text, &self.document_line_starts, offset)
-    }
-}
+        let line = self
+            .document_line_starts
+            .binary_search(&offset)
+            .unwrap_or_else(|i| i.saturating_sub(1));
 
-// Helper functions
+        let line_start = self.document_line_starts[line];
+        let line_offset = offset.saturating_sub(line_start);
 
-/// Extract text from document ranges
-fn extract_layer_text(document: &str, ranges: &[(usize, usize)]) -> String {
-    let mut result = String::new();
+        let line_end = self
+            .document_line_starts
+            .get(line + 1)
+            .copied()
+            .unwrap_or(self.document_text.len());
 
-    for (start, end) in ranges {
-        if *start < document.len() && *end <= document.len() {
-            result.push_str(&document[*start..*end]);
+        let line_text = &self.document_text[line_start..line_end.min(self.document_text.len())];
+
+        // Convert byte offset to UTF-16 character offset
+        let mut utf16_offset = 0;
+        let mut byte_count = 0;
+
+        for ch in line_text.chars() {
+            if byte_count >= line_offset {
+                break;
+            }
+            let ch_bytes = ch.len_utf8();
+            if byte_count + ch_bytes > line_offset {
+                break;
+            }
+            byte_count += ch_bytes;
+            utf16_offset += ch.len_utf16();
         }
-    }
 
-    result
+        Some(Position {
+            line: line as u32,
+            character: utf16_offset as u32,
+        })
+    }
 }
 
-/// Convert document position to byte offset
-fn doc_position_to_byte(text: &str, line_starts: &[usize], position: Position) -> Option<usize> {
-    let line = position.line as usize;
-    let character = position.character as usize;
+/// Helper function to convert document byte to position for layers
+pub fn doc_byte_to_position(text: &str, byte_offset: usize) -> Option<Position> {
+    let line_starts = compute_line_starts(text);
 
-    let line_start = line_starts.get(line)?;
-    let line_end = if line + 1 < line_starts.len() {
-        line_starts[line + 1] - 1
-    } else {
-        text.len()
-    };
+    let line = line_starts
+        .binary_search(&byte_offset)
+        .unwrap_or_else(|i| i.saturating_sub(1));
 
-    let line_text = &text[*line_start..line_end.min(text.len())];
-
-    let mut byte_offset = 0;
-    let mut utf16_offset = 0;
-
-    for ch in line_text.chars() {
-        if utf16_offset >= character {
-            return Some(line_start + byte_offset);
-        }
-        utf16_offset += ch.len_utf16();
-        byte_offset += ch.len_utf8();
+    if line >= line_starts.len() {
+        return None;
     }
 
-    Some(line_start + byte_offset.min(line_text.len()))
-}
+    let line_start = line_starts[line];
+    let line_offset = byte_offset.saturating_sub(line_start);
 
-/// Convert document byte offset to position
-fn doc_byte_to_position(text: &str, line_starts: &[usize], offset: usize) -> Option<Position> {
-    let line = match line_starts.binary_search(&offset) {
-        Ok(line) => line,
-        Err(line) => line.saturating_sub(1),
-    };
+    // Get the line end (start of next line or end of document)
+    let line_end = line_starts.get(line + 1).copied().unwrap_or(text.len());
 
-    let line_start = line_starts.get(line)?;
-    let line_offset = offset.saturating_sub(*line_start);
-
-    // Calculate the line end
-    let line_end = if line + 1 < line_starts.len() {
-        line_starts[line + 1] - 1
-    } else {
-        text.len()
-    };
-
-    let line_text = &text[*line_start..line_end.min(text.len())];
+    // Get the line text
+    let line_text = &text[line_start..line_end.min(text.len())];
 
     // Convert byte offset to UTF-16 character offset
     let mut utf16_offset = 0;
@@ -250,12 +195,7 @@ fn doc_byte_to_position(text: &str, line_starts: &[usize], offset: usize) -> Opt
         if byte_count >= line_offset {
             break;
         }
-        let ch_bytes = ch.len_utf8();
-        if byte_count + ch_bytes > line_offset {
-            // We're in the middle of this character
-            break;
-        }
-        byte_count += ch_bytes;
+        byte_count += ch.len_utf8();
         utf16_offset += ch.len_utf16();
     }
 
@@ -265,128 +205,111 @@ fn doc_byte_to_position(text: &str, line_starts: &[usize], offset: usize) -> Opt
     })
 }
 
-// compute_line_starts is already exported from position_mapper
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tree_sitter::Parser;
+    use crate::layers::LanguageLayer;
 
-    fn create_mock_tree() -> tree_sitter::Tree {
-        // Create a valid tree using a real parser
-        let mut parser = Parser::new();
+    fn create_test_layers() -> Vec<LanguageLayer> {
+        // Create mock language layers for testing
+        let mut parser = tree_sitter::Parser::new();
         parser
             .set_language(&tree_sitter_rust::LANGUAGE.into())
             .unwrap();
-        parser.parse("", None).unwrap()
+        let tree = parser.parse("test", None).unwrap();
+
+        vec![
+            LanguageLayer {
+                language_id: "rust".to_string(),
+                tree: tree.clone(),
+                ranges: vec![(0, 10), (20, 30)],
+                depth: 1,
+                parent_injection_node: None,
+            },
+            LanguageLayer {
+                language_id: "comment".to_string(),
+                tree,
+                ranges: vec![(10, 20)],
+                depth: 1,
+                parent_injection_node: None,
+            },
+        ]
     }
 
     #[test]
     fn test_simple_injection() {
-        // Document with a code block
-        let document = "# Title\n```rust\nfn main() {}\n```\nEnd";
-
-        // Create a mock layer for the Rust code
-        let layer = LanguageLayer {
-            language_id: "rust".to_string(),
-            tree: create_mock_tree(),
-            ranges: vec![(16, 29)], // "fn main() {}\n"
-            depth: 1,
-            parent_injection_node: None,
-        };
-
-        let layers = [layer];
-        let mapper = InjectionPositionMapper::new(document, &layers);
+        let text = "0123456789abcdefghij0123456789";
+        let layers = create_test_layers();
+        let mapper = InjectionPositionMapper::new(text, &layers);
 
         // Test finding layer at position
         let pos = Position {
-            line: 2,
-            character: 0,
-        }; // Start of "fn main()"
-        let found_layer = mapper.find_layer_at_position(pos);
-        assert!(found_layer.is_some());
-        assert_eq!(found_layer.unwrap().language_id, "rust");
-
-        // Test mapping to layer position
-        let layer_pos = mapper.map_to_layer_position(pos, "rust");
-        assert!(layer_pos.is_some());
-        let layer_pos = layer_pos.unwrap();
-        assert_eq!(layer_pos.line, 0); // First line in the layer
-        assert_eq!(layer_pos.character, 0);
-    }
-
-    #[test]
-    fn test_multiple_injections() {
-        let document = "```rust\ncode1\n```\nText\n```js\ncode2\n```";
-
-        let rust_layer = LanguageLayer {
-            language_id: "rust".to_string(),
-            tree: create_mock_tree(),
-            ranges: vec![(8, 14)], // "code1\n"
-            depth: 1,
-            parent_injection_node: None,
+            line: 0,
+            character: 5,
         };
+        let layer = mapper.get_layer_at_position(pos);
+        assert_eq!(layer, Some("rust"));
 
-        let js_layer = LanguageLayer {
-            language_id: "javascript".to_string(),
-            tree: create_mock_tree(),
-            ranges: vec![(29, 35)], // "code2\n"
-            depth: 1,
-            parent_injection_node: None,
+        let pos = Position {
+            line: 0,
+            character: 15,
         };
-
-        let layers = [rust_layer, js_layer];
-        let mapper = InjectionPositionMapper::new(document, &layers);
-
-        // Test first injection
-        let pos1 = Position {
-            line: 1,
-            character: 0,
-        }; // "code1"
-        let layer1 = mapper.find_layer_at_position(pos1);
-        assert!(layer1.is_some());
-        assert_eq!(layer1.unwrap().language_id, "rust");
-
-        // Test second injection
-        let pos2 = Position {
-            line: 5,
-            character: 0,
-        }; // "code2"
-        let layer2 = mapper.find_layer_at_position(pos2);
-        assert!(layer2.is_some());
-        assert_eq!(layer2.unwrap().language_id, "javascript");
+        let layer = mapper.get_layer_at_position(pos);
+        assert_eq!(layer, Some("comment"));
     }
 
     #[test]
     fn test_layer_offset_mapping() {
-        // Create a temporary LanguageLayer for testing
-        let test_layer = LanguageLayer {
-            language_id: "test".to_string(),
-            tree: create_mock_tree(),
-            ranges: vec![(10, 20), (30, 40)], // Two ranges
+        let text = "0123456789abcdefghij0123456789";
+        let layers = create_test_layers();
+        let mapper = InjectionPositionMapper::new(text, &layers);
+
+        // Map position in document to layer position
+        let doc_pos = Position {
+            line: 0,
+            character: 5,
+        };
+        let layer_pos = mapper.doc_position_to_layer_position(doc_pos, "rust");
+        assert!(layer_pos.is_some());
+
+        // Map back from layer to document
+        let back = mapper.layer_position_to_doc_position(layer_pos.unwrap(), "rust");
+        assert_eq!(back, Some(doc_pos));
+    }
+
+    #[test]
+    fn test_multiple_injections() {
+        let text = "fn main() {\n    // comment\n    let x = 1;\n}";
+        let layers = vec![LanguageLayer {
+            language_id: "rust".to_string(),
+            tree: {
+                let mut parser = tree_sitter::Parser::new();
+                parser
+                    .set_language(&tree_sitter_rust::LANGUAGE.into())
+                    .unwrap();
+                parser.parse("test", None).unwrap()
+            },
+            ranges: vec![(0, 12), (27, 44)],
             depth: 1,
             parent_injection_node: None,
+        }];
+
+        let mapper = InjectionPositionMapper::new(text, &layers);
+
+        // Test position in first range
+        let pos = Position {
+            line: 0,
+            character: 3,
         };
+        let layer = mapper.get_layer_at_position(pos);
+        assert_eq!(layer, Some("rust"));
 
-        let mapping = LayerMapping {
-            layer: &test_layer,
-            doc_ranges: vec![(10, 20), (30, 40)],
-            layer_text: String::new(),
-            layer_line_starts: vec![],
+        // Test position outside any layer
+        let pos = Position {
+            line: 1,
+            character: 5,
         };
-
-        // Test mapping within first range
-        assert_eq!(mapping.map_doc_to_layer_offset(15), Some(5)); // 15 - 10 = 5
-
-        // Test mapping within second range
-        assert_eq!(mapping.map_doc_to_layer_offset(35), Some(15)); // 10 + (35 - 30) = 15
-
-        // Test mapping outside ranges
-        assert_eq!(mapping.map_doc_to_layer_offset(5), None);
-        assert_eq!(mapping.map_doc_to_layer_offset(25), None);
-
-        // Test reverse mapping
-        assert_eq!(mapping.map_layer_to_doc_offset(5), Some(15)); // 10 + 5 = 15
-        assert_eq!(mapping.map_layer_to_doc_offset(15), Some(35)); // 30 + (15 - 10) = 35
+        let layer = mapper.get_layer_at_position(pos);
+        assert_eq!(layer, None);
     }
 }

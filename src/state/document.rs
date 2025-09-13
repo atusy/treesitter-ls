@@ -110,15 +110,15 @@ impl DocumentStore {
 
     pub fn update_document(&self, uri: Url, text: String) {
         // Preserve root layer info from existing document if available
-        if let Some(doc) = self.documents.get(&uri) {
-            let root_layer = doc.layers().root_layer().cloned();
-            if let Some(root) = root_layer {
-                let new_doc =
-                    Document::with_root_layer(text, root.language_id.clone(), root.tree.clone());
-                self.documents.insert(uri, new_doc);
-            } else {
-                self.documents.insert(uri, Document::new(text));
-            }
+        let root_layer = self
+            .documents
+            .get(&uri)
+            .and_then(|doc| doc.layers().root_layer().cloned());
+
+        if let Some(root) = root_layer {
+            let new_doc =
+                Document::with_root_layer(text, root.language_id.clone(), root.tree.clone());
+            self.documents.insert(uri, new_doc);
         } else {
             self.documents.insert(uri, Document::new(text));
         }
