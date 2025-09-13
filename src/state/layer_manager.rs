@@ -1,6 +1,6 @@
 use crate::state::language_layer::LanguageLayer;
 use crate::state::parser_pool::DocumentParserPool;
-use tree_sitter::{InputEdit, Tree};
+use tree_sitter::{InputEdit, Parser, Tree};
 
 /// Manages language layers for a document, including root and injection layers
 pub struct LayerManager {
@@ -126,6 +126,45 @@ impl LayerManager {
     /// Get mutable parser pool
     pub fn parser_pool_mut(&mut self) -> Option<&mut DocumentParserPool> {
         self.parser_pool.as_mut()
+    }
+
+    /// Acquire a parser for the specified language
+    /// Returns None if no parser pool is set
+    pub fn acquire_parser(&mut self, language_id: &str) -> Option<Parser> {
+        self.parser_pool.as_mut()?.acquire(language_id)
+    }
+
+    /// Acquire an injection parser for the specified language
+    /// Returns None if no parser pool is set
+    pub fn acquire_injection_parser(
+        &mut self,
+        language_id: &str,
+        timeout_micros: Option<u64>,
+    ) -> Option<Parser> {
+        self.parser_pool
+            .as_mut()?
+            .acquire_injection(language_id, timeout_micros)
+    }
+
+    /// Release a parser back to the pool
+    pub fn release_parser(&mut self, language_id: String, parser: Parser) {
+        if let Some(pool) = self.parser_pool.as_mut() {
+            pool.release(language_id, parser);
+        }
+    }
+
+    /// Parse text for a specific layer
+    /// This method manages parser acquisition and release automatically
+    pub fn parse_layer(
+        &mut self,
+        language_id: &str,
+        text: &str,
+        old_tree: Option<&Tree>,
+    ) -> Option<Tree> {
+        let mut parser = self.acquire_parser(language_id)?;
+        let tree = parser.parse(text, old_tree);
+        self.release_parser(language_id.to_string(), parser);
+        tree
     }
 }
 

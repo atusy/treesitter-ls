@@ -3,7 +3,7 @@ use crate::state::layer_manager::LayerManager;
 use crate::state::parser_pool::DocumentParserPool;
 use dashmap::DashMap;
 use tower_lsp::lsp_types::{SemanticTokens, Url};
-use tree_sitter::{InputEdit, Tree};
+use tree_sitter::{InputEdit, Parser, Tree};
 
 // A document entry in our store.
 pub struct Document {
@@ -175,6 +175,18 @@ impl Document {
 
     pub fn injection_layers(&self) -> &[LanguageLayer] {
         self.layers.injection_layers()
+    }
+
+    // Parser pool convenience methods
+
+    /// Acquire a parser for the specified language
+    pub fn acquire_parser(&mut self, language_id: &str) -> Option<Parser> {
+        self.layers.acquire_parser(language_id)
+    }
+
+    /// Release a parser back to the pool
+    pub fn release_parser(&mut self, language_id: String, parser: Parser) {
+        self.layers.release_parser(language_id, parser);
     }
 }
 
