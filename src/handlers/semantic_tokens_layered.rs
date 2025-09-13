@@ -9,9 +9,8 @@ use tree_sitter::Query;
 /// Merges tokens from all layers (root + injections)
 ///
 /// WARNING: This handler is currently incomplete and should not be used in production:
-/// - Injection token positions are not properly mapped (line 50-52)
+/// - Delta recalculation may produce incorrect results for merged tokens
 /// - May return empty tokens when queries are not found for root layer
-/// - Delta recalculation may produce incorrect results
 ///
 /// Use the original handle_semantic_tokens_full with root_layer.tree instead
 pub fn handle_semantic_tokens_full_layered(
