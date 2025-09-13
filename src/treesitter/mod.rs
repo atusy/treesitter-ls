@@ -1,7 +1,6 @@
 pub mod injection_mapper;
 pub mod node_utils;
 pub mod parser_loader;
-pub mod position;
 pub mod position_mapper;
 pub mod query_predicates;
 pub mod tree_utils;
@@ -13,7 +12,6 @@ pub use node_utils::{
     is_scope_node,
 };
 pub use parser_loader::ParserLoader;
-pub use position::{byte_offset_to_position, byte_range_to_range, position_to_byte_offset};
 pub use position_mapper::{PositionMapper, SimplePositionMapper};
 pub use query_predicates::{check_predicate, filter_captures};
 pub use tree_utils::{
