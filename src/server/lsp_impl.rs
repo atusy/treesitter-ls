@@ -101,7 +101,7 @@ impl TreeSitterLs {
             let needs_pool_init = self
                 .document_store
                 .get(&uri)
-                .map(|doc| doc.layers.parser_pool().is_none())
+                .map(|doc| doc.layers().parser_pool().is_none())
                 .unwrap_or(true);
 
             if needs_pool_init {
@@ -153,7 +153,7 @@ impl TreeSitterLs {
         // Fall back to the language_id stored in the document
         self.document_store
             .get(uri)
-            .and_then(|doc| doc.get_language_id().cloned())
+            .and_then(|doc| doc.get_language_id().map(|s| s.to_string()))
     }
 
     async fn load_settings(&self, settings: TreeSitterSettings) {
@@ -417,7 +417,7 @@ impl LanguageServer for TreeSitterLs {
         let (language_id, old_text) = {
             let doc = self.document_store.get(&uri);
             match doc {
-                Some(d) => (d.get_language_id().cloned(), d.text.clone()),
+                Some(d) => (d.get_language_id().map(|s| s.to_string()), d.text().to_string()),
                 None => {
                     self.client
                         .log_message(MessageType::WARNING, "Document not found for change event")
@@ -563,7 +563,7 @@ impl LanguageServer for TreeSitterLs {
                     data: vec![],
                 })));
             };
-            let text = &doc.text;
+            let text = doc.text();
             let Some(root_layer) = doc.root_layer() else {
                 return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                     result_id: None,
@@ -653,7 +653,7 @@ impl LanguageServer for TreeSitterLs {
                 )));
             };
 
-            let text = &doc.text;
+            let text = doc.text();
             let Some(root_layer) = doc.root_layer() else {
                 return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
                     SemanticTokens {
@@ -664,7 +664,7 @@ impl LanguageServer for TreeSitterLs {
             };
 
             // Get previous tokens from document
-            let previous_tokens = doc.last_semantic_tokens.as_ref();
+            let previous_tokens = doc.last_semantic_tokens();
 
             // Get capture mappings
             let capture_mappings = self.language_service.capture_mappings.lock().unwrap();
@@ -731,7 +731,7 @@ impl LanguageServer for TreeSitterLs {
             })));
         };
 
-        let text = &doc.text;
+        let text = doc.text();
         let Some(root_layer) = doc.root_layer() else {
             return Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
                 result_id: None,
@@ -822,7 +822,7 @@ impl LanguageServer for TreeSitterLs {
         let Some(doc) = self.document_store.get(&uri) else {
             return Ok(None);
         };
-        let text = &doc.text;
+        let text = doc.text();
         let Some(root_layer) = doc.root_layer() else {
             return Ok(None);
         };

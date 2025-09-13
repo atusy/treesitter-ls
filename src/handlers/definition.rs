@@ -406,7 +406,7 @@ pub fn handle_goto_definition_layered(
 
     // Get the tree and text
     let tree = &layer.tree;
-    let text = &document.text;
+    let text = document.text();
 
     // Use existing resolver logic with the layer's tree
     let candidates = resolver.resolve_definition(text, tree, locals_query, cursor_byte);

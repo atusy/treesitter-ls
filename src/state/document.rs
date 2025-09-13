@@ -1,14 +1,76 @@
-use crate::layers::{LanguageLayer, LayerManager};
+use crate::document::StatefulDocument;
+use crate::layers::LanguageLayer;
 use crate::state::parser_pool::DocumentParserPool;
 use dashmap::DashMap;
 use tower_lsp::lsp_types::{SemanticTokens, Url};
 use tree_sitter::{InputEdit, Parser, Tree};
 
-// A document entry in our store.
-pub struct Document {
-    pub text: String,
-    pub last_semantic_tokens: Option<SemanticTokens>,
-    pub layers: LayerManager, // Manages all language layers
+// Type alias for backward compatibility during migration
+pub type Document = StatefulDocument;
+
+// Extension methods for Document compatibility
+impl Document {
+    /// Get the language ID from root layer
+    pub fn get_language_id(&self) -> Option<&str> {
+        self.layers().get_language_id().map(|s| s.as_str())
+    }
+
+    /// Get the root layer
+    pub fn root_layer(&self) -> Option<&crate::layers::LanguageLayer> {
+        self.layers().root_layer()
+    }
+
+    /// Get injection layers
+    pub fn injection_layers(&self) -> &[crate::layers::LanguageLayer] {
+        self.layers().injection_layers()
+    }
+
+    /// Add an injection layer
+    pub fn add_injection_layer(&mut self, layer: crate::layers::LanguageLayer) {
+        self.layers_mut().add_injection_layer(layer);
+    }
+
+    /// Update the root tree
+    pub fn update_root_tree(&mut self, tree: Tree) {
+        self.layers_mut().update_root_tree(tree);
+    }
+
+    /// Acquire a parser for the specified language
+    pub fn acquire_parser(&mut self, language_id: &str) -> Option<Parser> {
+        self.layers_mut().acquire_parser(language_id)
+    }
+
+    /// Release a parser back to the pool
+    pub fn release_parser(&mut self, language_id: String, parser: Parser) {
+        self.layers_mut().release_parser(language_id, parser);
+    }
+
+    /// Set parser pool
+    pub fn init_parser_pool(&mut self, pool: DocumentParserPool) {
+        self.layers_mut().set_parser_pool(pool);
+    }
+
+    /// Get all layers
+    pub fn get_all_layers(&self) -> impl Iterator<Item = &crate::layers::LanguageLayer> {
+        self.layers().all_layers()
+    }
+
+    /// Get layer at offset
+    pub fn get_layer_at_position(&self, byte_offset: usize) -> Option<&crate::layers::LanguageLayer> {
+        self.layers().get_layer_at_offset(byte_offset)
+    }
+
+    /// Create position mapper (renamed from position_mapper for clarity)
+    pub fn position_mapper<'a>(&'a self) -> Box<dyn crate::layers::PositionMapper + 'a> {
+        if self.layers().injection_layers().is_empty() {
+            Box::new(crate::treesitter::SimplePositionMapper::new(self.text()))
+        } else {
+            Box::new(crate::treesitter::InjectionPositionMapper::new(
+                self.text(),
+                self.layers().injection_layers(),
+            ))
+        }
+    }
 }
 
 // The central store for all document-related information.
@@ -30,19 +92,13 @@ impl DocumentStore {
     }
 
     pub fn insert(&self, uri: Url, text: String, root_layer: Option<LanguageLayer>) {
-        let mut layers = LayerManager::new();
-        if let Some(layer) = root_layer {
-            layers = LayerManager::with_root(layer.language_id.clone(), layer.tree.clone());
-        }
+        let document = if let Some(layer) = root_layer {
+            Document::with_root_layer(text, layer.language_id.clone(), layer.tree.clone())
+        } else {
+            Document::new(text)
+        };
 
-        self.documents.insert(
-            uri,
-            Document {
-                text,
-                last_semantic_tokens: None,
-                layers,
-            },
-        );
+        self.documents.insert(uri, document);
     }
 
     pub fn get(&self, uri: &Url) -> Option<dashmap::mapref::one::Ref<'_, Url, Document>> {
@@ -51,21 +107,17 @@ impl DocumentStore {
 
     pub fn update_document(&self, uri: Url, text: String) {
         // Preserve root layer info from existing document if available
-        let mut layers = LayerManager::new();
-        if let Some(doc) = self.documents.get(&uri)
-            && let Some(root) = doc.layers.root_layer()
-        {
-            layers = LayerManager::with_root(root.language_id.clone(), root.tree.clone());
+        if let Some(doc) = self.documents.get(&uri) {
+            let root_layer = doc.layers().root_layer().cloned();
+            if let Some(root) = root_layer {
+                let new_doc = Document::with_root_layer(text, root.language_id.clone(), root.tree.clone());
+                self.documents.insert(uri, new_doc);
+            } else {
+                self.documents.insert(uri, Document::new(text));
+            }
+        } else {
+            self.documents.insert(uri, Document::new(text));
         }
-
-        self.documents.insert(
-            uri,
-            Document {
-                text,
-                last_semantic_tokens: None,
-                layers,
-            },
-        );
     }
 
     /// Get the existing tree and apply edits for incremental parsing
@@ -73,7 +125,7 @@ impl DocumentStore {
     pub fn get_edited_tree(&self, uri: &Url, edits: &[InputEdit]) -> Option<Tree> {
         self.documents
             .get(uri)
-            .and_then(|doc| doc.layers.apply_edits_to_root(edits))
+            .and_then(|doc| doc.layers().apply_edits_to_root(edits))
     }
 
     /// Update document with a new tree after incremental parsing
@@ -82,18 +134,11 @@ impl DocumentStore {
         let language_id = self
             .documents
             .get(&uri)
-            .and_then(|doc| doc.layers.get_language_id().cloned());
+            .and_then(|doc| doc.layers().get_language_id().cloned());
 
         if let Some(language_id) = language_id {
-            let layers = LayerManager::with_root(language_id, tree);
-            self.documents.insert(
-                uri,
-                Document {
-                    text,
-                    last_semantic_tokens: None,
-                    layers,
-                },
-            );
+            let new_doc = Document::with_root_layer(text, language_id, tree);
+            self.documents.insert(uri, new_doc);
         } else {
             // If no language_id, just update the text
             self.update_document(uri, text);
@@ -102,17 +147,17 @@ impl DocumentStore {
 
     pub fn update_semantic_tokens(&self, uri: &Url, tokens: SemanticTokens) {
         if let Some(mut doc) = self.documents.get_mut(uri) {
-            doc.last_semantic_tokens = Some(tokens);
+            doc.set_last_semantic_tokens(Some(tokens));
         }
     }
 
     pub fn get_document_text(&self, uri: &Url) -> Option<String> {
-        self.documents.get(uri).map(|doc| doc.text.clone())
+        self.documents.get(uri).map(|doc| doc.text().to_string())
     }
 
     pub fn init_parser_pool(&self, uri: &Url, pool: DocumentParserPool) {
         if let Some(mut doc) = self.documents.get_mut(uri) {
-            doc.layers.set_parser_pool(pool);
+            doc.layers_mut().set_parser_pool(pool);
         }
     }
 
@@ -121,155 +166,66 @@ impl DocumentStore {
     }
 }
 
-// Backward compatibility methods for Document
-impl Document {
-    /// Initialize parser pool for this document
-    pub fn init_parser_pool(&mut self, pool: DocumentParserPool) {
-        self.layers.set_parser_pool(pool);
-    }
-
-    /// Get a position mapper for this document
-    /// Returns SimplePositionMapper for simple documents,
-    /// InjectionPositionMapper when injection layers are present
-    pub fn position_mapper(&self) -> Box<dyn crate::treesitter::PositionMapper + '_> {
-        if self.layers.injection_layers().is_empty() {
-            Box::new(crate::treesitter::SimplePositionMapper::new(&self.text))
-        } else {
-            Box::new(crate::treesitter::InjectionPositionMapper::new(
-                &self.text,
-                self.layers.injection_layers(),
-            ))
-        }
-    }
-
-    /// Get the primary language layer at a specific byte offset
-    pub fn get_layer_at_position(&self, byte_offset: usize) -> Option<&LanguageLayer> {
-        self.layers.get_layer_at_offset(byte_offset)
-    }
-
-    /// Get all language layers (root + injections)
-    pub fn get_all_layers(&self) -> impl Iterator<Item = &LanguageLayer> {
-        self.layers.all_layers()
-    }
-
-    /// Add an injection layer
-    pub fn add_injection_layer(&mut self, layer: LanguageLayer) {
-        self.layers.add_injection_layer(layer);
-    }
-
-    /// Update the root layer's tree (used after re-parsing)
-    pub fn update_root_tree(&mut self, tree: Tree) {
-        self.layers.update_root_tree(tree);
-    }
-
-    /// Get the language_id from root layer
-    pub fn get_language_id(&self) -> Option<&String> {
-        self.layers.get_language_id()
-    }
-
-    // Accessor methods for compatibility
-    pub fn root_layer(&self) -> Option<&LanguageLayer> {
-        self.layers.root_layer()
-    }
-
-    pub fn injection_layers(&self) -> &[LanguageLayer] {
-        self.layers.injection_layers()
-    }
-
-    // Parser pool convenience methods
-
-    /// Acquire a parser for the specified language
-    pub fn acquire_parser(&mut self, language_id: &str) -> Option<Parser> {
-        self.layers.acquire_parser(language_id)
-    }
-
-    /// Release a parser back to the pool
-    pub fn release_parser(&mut self, language_id: String, parser: Parser) {
-        self.layers.release_parser(language_id, parser);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tower_lsp::lsp_types::Url;
-    use tree_sitter::Parser;
 
     #[test]
     fn test_add_and_get_document() {
         let store = DocumentStore::new();
         let uri = Url::parse("file:///test.txt").unwrap();
-        let text = "hello world";
+        let text = "hello world".to_string();
 
-        store.update_document(uri.clone(), text.to_string());
-
-        let retrieved_text = store.get_document_text(&uri);
-
-        assert_eq!(retrieved_text, Some(text.to_string()));
-    }
-
-    #[test]
-    fn test_document_layer_preservation() {
-        let store = DocumentStore::new();
-        let uri = Url::parse("file:///test.rs").unwrap();
-
-        // Create a simple tree for testing (using Rust language)
-        let language = tree_sitter_rust::LANGUAGE.into();
-        let mut parser = Parser::new();
-        parser.set_language(&language).unwrap();
-
-        // First insert with a tree
-        let text1 = "fn main() {}";
-        let tree1 = parser.parse(text1, None).unwrap();
-        let root_layer1 = Some(LanguageLayer::root("rust".to_string(), tree1.clone()));
-        store.insert(uri.clone(), text1.to_string(), root_layer1);
-
-        // Verify the document has root layer
-        {
-            let doc = store.get(&uri).unwrap();
-            assert!(doc.root_layer().is_some());
-        }
-
-        // Second insert should preserve the previous tree as old_tree
-        let text2 = "fn main() { println!(\"hello\"); }";
-        let tree2 = parser.parse(text2, Some(&tree1)).unwrap();
-        let root_layer2 = Some(LanguageLayer::root("rust".to_string(), tree2));
-        store.insert(uri.clone(), text2.to_string(), root_layer2);
-
-        // Verify the root layer is updated
-        {
-            let doc = store.get(&uri).unwrap();
-            assert!(doc.root_layer().is_some());
-            assert_eq!(doc.text, text2);
-        }
+        store.insert(uri.clone(), text.clone(), None);
+        let doc = store.get(&uri).unwrap();
+        assert_eq!(doc.text(), &text);
     }
 
     #[test]
     fn test_update_document_preserves_language() {
         let store = DocumentStore::new();
         let uri = Url::parse("file:///test.rs").unwrap();
+        let text1 = "fn main() {}".to_string();
+        let text2 = "fn main() { println!(\"hello\"); }".to_string();
 
-        // Create a simple tree for testing
-        let language = tree_sitter_rust::LANGUAGE.into();
-        let mut parser = Parser::new();
-        parser.set_language(&language).unwrap();
+        // Create a fake tree for testing
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_rust::LANGUAGE.into()).unwrap();
+        let tree = parser.parse(&text1, None).unwrap();
+        let layer = LanguageLayer::root("rust".to_string(), tree);
 
-        // First insert with a tree
-        let text1 = "fn main() {}";
-        let tree1 = parser.parse(text1, None).unwrap();
-        let root_layer1 = Some(LanguageLayer::root("rust".to_string(), tree1.clone()));
-        store.insert(uri.clone(), text1.to_string(), root_layer1);
+        store.insert(uri.clone(), text1, Some(layer));
 
-        // Update document should preserve the language
-        let text2 = "fn main() { println!(\"hello\"); }";
-        store.update_document(uri.clone(), text2.to_string());
+        // Update text
+        store.update_document(uri.clone(), text2.clone());
 
-        // Verify the language is preserved
-        {
-            let doc = store.get(&uri).unwrap();
-            assert!(doc.root_layer().is_some());
-            assert_eq!(doc.text, text2);
-            assert_eq!(doc.get_language_id(), Some(&"rust".to_string()));
-        }
+        // Language info should be preserved
+        let doc = store.get(&uri).unwrap();
+        assert_eq!(doc.text(), text2);
+        assert_eq!(doc.get_language_id(), Some("rust"));
+    }
+
+    #[test]
+    fn test_document_layer_preservation() {
+        let store = DocumentStore::new();
+        let uri = Url::parse("file:///test.rs").unwrap();
+        let text = "let x = 1;".to_string();
+
+        // Create document with tree
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_rust::LANGUAGE.into()).unwrap();
+        let tree = parser.parse(&text, None).unwrap();
+        let layer = LanguageLayer::root("rust".to_string(), tree.clone());
+
+        store.insert(uri.clone(), text.clone(), Some(layer));
+
+        // Update with new tree
+        let new_text = "let x = 2;".to_string();
+        let new_tree = parser.parse(&new_text, Some(&tree)).unwrap();
+        store.update_document_with_tree(uri.clone(), new_text.clone(), new_tree);
+
+        let doc = store.get(&uri).unwrap();
+        assert_eq!(doc.text(), new_text);
+        assert!(doc.root_layer().is_some());
     }
 }
