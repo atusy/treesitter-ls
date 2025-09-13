@@ -2,7 +2,7 @@ use super::edit_transform::{
     adjust_ranges_for_edit, edit_affects_ranges, transform_edit_for_injection,
 };
 use super::language_layer::LanguageLayer;
-use crate::state::parser_pool::{DocumentParserPool, ParserConfig};
+use crate::syntax::parser_pool::{DocumentParserPool, ParserConfig};
 use tree_sitter::{InputEdit, Parser, Tree};
 
 /// Manages language layers for a document, including root and injection layers

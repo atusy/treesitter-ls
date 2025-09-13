@@ -1,5 +1,5 @@
-use crate::state::document::Document;
-use crate::treesitter::tree_utils::{node_to_range, position_to_point};
+use crate::syntax::tree::{node_to_range, position_to_point};
+use crate::workspace::documents::Document;
 use tower_lsp::lsp_types::{Position, SelectionRange};
 use tree_sitter::Node;
 
@@ -60,7 +60,7 @@ pub fn handle_selection_range(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::treesitter::tree_utils::point_to_position;
+    use crate::syntax::tree::point_to_position;
     use tree_sitter::Point;
 
     #[test]

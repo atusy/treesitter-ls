@@ -6,15 +6,16 @@ use tower_lsp::{Client, LanguageServer};
 use tree_sitter::{InputEdit, Query};
 
 use crate::config::{TreeSitterSettings, merge_settings};
-use crate::handlers::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
-use crate::handlers::{
+use crate::features::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
+use crate::features::{
     handle_code_actions, handle_goto_definition, handle_selection_range,
     handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
-use crate::layers::mappers::position_mapper::{PositionMapper, SimplePositionMapper};
-use crate::state::parser_pool::{DocumentParserPool, ParserFactory};
-use crate::state::{DocumentStore, LanguageLayer, LanguageService};
-use crate::treesitter::tree_utils::position_to_point;
+use crate::injection::LanguageLayer;
+use crate::syntax::parser_pool::{DocumentParserPool, ParserFactory};
+use crate::syntax::tree::position_to_point;
+use crate::text::position::{PositionMapper, SimplePositionMapper};
+use crate::workspace::{documents::DocumentStore, languages::LanguageService};
 
 pub struct TreeSitterLs {
     client: Client,

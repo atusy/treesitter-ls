@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tree_sitter::Parser;
 
-use crate::state::LanguageService;
+use crate::workspace::languages::LanguageService;
 
 // REFACTOR NOTE (Step 3-1): Parser management is currently duplicated:
 // - LanguageService::parsers maintains a global parser cache
@@ -138,7 +138,7 @@ impl DocumentParserPool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::LanguageService;
+    use crate::workspace::languages::LanguageService;
 
     fn create_test_language_service() -> Arc<LanguageService> {
         let service = LanguageService::new();

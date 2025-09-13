@@ -1,6 +1,6 @@
 use crate::document::StatefulDocument;
-use crate::layers::LanguageLayer;
-use crate::state::parser_pool::DocumentParserPool;
+use crate::injection::LanguageLayer;
+use crate::syntax::parser_pool::DocumentParserPool;
 use dashmap::DashMap;
 use tower_lsp::lsp_types::{SemanticTokens, Url};
 use tree_sitter::{InputEdit, Parser, Tree};
