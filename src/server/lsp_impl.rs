@@ -11,9 +11,9 @@ use crate::handlers::{
     handle_code_actions, handle_goto_definition_layered, handle_selection_range_layered,
     handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
+use crate::layers::mappers::position_mapper::{PositionMapper, SimplePositionMapper};
 use crate::state::parser_pool::{DocumentParserPool, ParserFactory};
 use crate::state::{DocumentStore, LanguageLayer, LanguageService};
-use crate::treesitter::position_mapper::{PositionMapper, SimplePositionMapper};
 use crate::treesitter::tree_utils::position_to_point;
 
 pub struct TreeSitterLs {

@@ -1,5 +1,5 @@
+use crate::layers::mappers::position_mapper::{PositionMapper, compute_line_starts};
 use crate::state::LanguageLayer;
-use crate::treesitter::position_mapper::{PositionMapper, compute_line_starts};
 use tower_lsp::lsp_types::Position;
 
 /// Position mapper that handles injection layers
