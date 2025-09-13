@@ -1,5 +1,6 @@
 pub mod config;
 pub mod document;
+pub mod features;
 pub mod handlers;
 pub mod injection; // Facade over layers module
 pub mod layers;
