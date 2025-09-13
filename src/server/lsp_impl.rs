@@ -115,7 +115,7 @@ impl TreeSitterLs {
                     // For non-incremental updates, check if document exists
                     self.document_store
                         .get(&uri)
-                        .and_then(|doc| doc.root_layer.as_ref().map(|layer| layer.tree.clone()))
+                        .and_then(|doc| doc.root_layer().map(|layer| layer.tree.clone()))
                 };
 
                 // Parse the document with incremental parsing if old tree exists
@@ -548,7 +548,7 @@ impl LanguageServer for TreeSitterLs {
                 })));
             };
             let text = &doc.text;
-            let Some(root_layer) = &doc.root_layer else {
+            let Some(root_layer) = doc.root_layer() else {
                 return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                     result_id: None,
                     data: vec![],
@@ -638,7 +638,7 @@ impl LanguageServer for TreeSitterLs {
             };
 
             let text = &doc.text;
-            let Some(root_layer) = &doc.root_layer else {
+            let Some(root_layer) = doc.root_layer() else {
                 return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
                     SemanticTokens {
                         result_id: None,
@@ -716,7 +716,7 @@ impl LanguageServer for TreeSitterLs {
         };
 
         let text = &doc.text;
-        let Some(root_layer) = &doc.root_layer else {
+        let Some(root_layer) = doc.root_layer() else {
             return Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
                 result_id: None,
                 data: vec![],
@@ -807,7 +807,7 @@ impl LanguageServer for TreeSitterLs {
             return Ok(None);
         };
         let text = &doc.text;
-        let Some(root_layer) = &doc.root_layer else {
+        let Some(root_layer) = doc.root_layer() else {
             return Ok(None);
         };
 

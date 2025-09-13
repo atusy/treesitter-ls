@@ -72,15 +72,16 @@ mod tests {
         let mut doc = Document {
             text: text.to_string(),
             last_semantic_tokens: None,
-            root_layer: Some(LanguageLayer::root("rust".to_string(), tree.clone())),
-            injection_layers: vec![],
-            parser_pool: None,
+            layers: crate::state::layer_manager::LayerManager::with_root(
+                "rust".to_string(),
+                tree.clone(),
+            ),
         };
 
         if has_injection {
             // Simulate an injection layer (e.g., doc comment with code)
             let injection_tree = parser.parse("example", None).unwrap();
-            doc.injection_layers.push(LanguageLayer {
+            doc.layers.add_injection_layer(LanguageLayer {
                 language_id: "rust".to_string(),
                 tree: injection_tree,
                 ranges: vec![(10, 20)], // Mock range

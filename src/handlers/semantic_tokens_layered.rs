@@ -21,7 +21,7 @@ pub fn handle_semantic_tokens_full_layered(
     let mut all_tokens = Vec::new();
 
     // Process root layer if present
-    if let Some(root_layer) = &document.root_layer
+    if let Some(root_layer) = document.root_layer()
         && let Some(query) = queries.get(&root_layer.language_id)
         && let Some(SemanticTokensResult::Tokens(tokens)) = super::handle_semantic_tokens_full(
             &document.text,
@@ -35,7 +35,7 @@ pub fn handle_semantic_tokens_full_layered(
     }
 
     // Process injection layers
-    for injection_layer in &document.injection_layers {
+    for injection_layer in document.injection_layers() {
         if let Some(query) = queries.get(&injection_layer.language_id) {
             // For injection layers, we need to handle range-limited tokens
             // Extract text for the injection ranges
@@ -105,7 +105,6 @@ pub fn handle_semantic_tokens_full_layered(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::language_layer::LanguageLayer;
     use std::collections::HashMap;
     use tree_sitter::Parser;
 
@@ -119,9 +118,7 @@ mod tests {
         Document {
             text: "fn main() {}".to_string(),
             last_semantic_tokens: None,
-            root_layer: Some(LanguageLayer::root("rust".to_string(), tree)),
-            injection_layers: vec![],
-            parser_pool: None,
+            layers: crate::state::layer_manager::LayerManager::with_root("rust".to_string(), tree),
         }
     }
 
