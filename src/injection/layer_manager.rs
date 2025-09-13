@@ -1,5 +1,5 @@
 use super::language_layer::LanguageLayer;
-use crate::syntax::parser_pool::{DocumentParserPool, ParserConfig};
+use crate::language::{DocumentParserPool, ParserConfig};
 use crate::text::edit::{
     adjust_ranges_for_edit, edit_affects_ranges, transform_edit_for_injection,
 };

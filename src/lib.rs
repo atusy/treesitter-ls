@@ -2,6 +2,7 @@ pub mod config;
 pub mod document;
 pub mod features;
 pub mod injection;
+pub mod language;
 pub mod lsp;
 pub mod syntax;
 pub mod text;

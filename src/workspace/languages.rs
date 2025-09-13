@@ -1,8 +1,8 @@
 use crate::config::{
     CaptureMappings, HighlightItem, HighlightSource, LanguageConfig, TreeSitterSettings,
 };
+use crate::language::{LanguageRegistry, ParserFactory};
 use crate::syntax::loader::ParserLoader;
-use crate::syntax::parser_pool::ParserFactory;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -12,7 +12,7 @@ use tower_lsp::lsp_types::{MessageType, Url};
 use tree_sitter::{Language, Query};
 
 pub struct LanguageService {
-    pub languages: Mutex<HashMap<String, Language>>,
+    pub language_registry: Arc<LanguageRegistry>,
     pub queries: Mutex<HashMap<String, Query>>,
     pub locals_queries: Mutex<HashMap<String, Query>>,
     pub injections_queries: Mutex<HashMap<String, Query>>,
@@ -27,7 +27,7 @@ pub struct LanguageService {
 impl Default for LanguageService {
     fn default() -> Self {
         Self {
-            languages: Mutex::new(HashMap::new()),
+            language_registry: Arc::new(LanguageRegistry::new()),
             queries: Mutex::new(HashMap::new()),
             locals_queries: Mutex::new(HashMap::new()),
             injections_queries: Mutex::new(HashMap::new()),
@@ -46,8 +46,8 @@ impl LanguageService {
     }
 
     /// Create a ParserFactory that can create parsers for loaded languages
-    pub fn create_parser_factory(self: Arc<Self>) -> Arc<ParserFactory> {
-        Arc::new(ParserFactory::new(self))
+    pub fn create_parser_factory(&self) -> Arc<ParserFactory> {
+        Arc::new(ParserFactory::new(self.language_registry.clone()))
     }
 
     pub fn load_language(
@@ -190,10 +190,8 @@ impl LanguageService {
                     .await;
 
                     // Store the language
-                    self.languages
-                        .lock()
-                        .unwrap()
-                        .insert(lang_name.to_string(), language);
+                    self.language_registry
+                        .register(lang_name.to_string(), language);
 
                     client
                         .log_message(MessageType::INFO, format!("Language {lang_name} loaded."))
@@ -467,7 +465,7 @@ impl LanguageService {
 
     pub async fn try_load_language_by_id(&self, language_id: &str, client: &Client) -> bool {
         // Check if already loaded
-        if self.languages.lock().unwrap().contains_key(language_id) {
+        if self.language_registry.contains(language_id) {
             return true;
         }
 
@@ -569,10 +567,8 @@ impl LanguageService {
                 }
 
                 // Store the language
-                self.languages
-                    .lock()
-                    .unwrap()
-                    .insert(lang_name.to_string(), language);
+                self.language_registry
+                    .register(lang_name.to_string(), language);
 
                 client
                     .log_message(

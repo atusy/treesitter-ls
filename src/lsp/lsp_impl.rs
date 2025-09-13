@@ -13,7 +13,7 @@ use crate::features::{
     handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
 use crate::injection::LanguageLayer;
-use crate::syntax::parser_pool::{DocumentParserPool, ParserFactory};
+use crate::language::{DocumentParserPool, ParserFactory};
 use crate::syntax::tree::position_to_point;
 use crate::workspace::{documents::DocumentStore, languages::LanguageService};
 
@@ -37,7 +37,7 @@ impl std::fmt::Debug for TreeSitterLs {
 impl TreeSitterLs {
     pub fn new(client: Client) -> Self {
         let language_service = Arc::new(LanguageService::new());
-        let parser_factory = language_service.clone().create_parser_factory();
+        let parser_factory = language_service.create_parser_factory();
         Self {
             client,
             language_service,
@@ -68,10 +68,10 @@ impl TreeSitterLs {
 
         if let Some(language_name) = language_name {
             // Try to dynamically load the language if not already loaded
-            let language_loaded = {
-                let languages = self.language_service.languages.lock().unwrap();
-                languages.contains_key(&language_name)
-            };
+            let language_loaded = self
+                .language_service
+                .language_registry
+                .contains(&language_name);
 
             if !language_loaded {
                 let loaded = self
