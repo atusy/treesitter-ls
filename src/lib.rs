@@ -6,10 +6,6 @@ pub mod syntax;
 pub mod text;
 pub mod workspace;
 
-// Internal modules (not part of public API)
-#[doc(hidden)]
-pub mod document;
-
 // Re-export config types for backward compatibility
 pub use config::{
     CaptureMapping, CaptureMappings, HighlightItem, HighlightSource, LanguageConfig,
