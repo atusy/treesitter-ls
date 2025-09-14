@@ -1,3 +1,4 @@
+pub mod analysis;
 pub mod config;
 pub mod document;
 pub mod features;
