@@ -1,4 +1,5 @@
 use crate::config::CaptureMappings;
+use crate::document::coordinates::convert_byte_to_utf16_in_line;
 use tower_lsp::lsp_types::{
     Range, SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens,
     SemanticTokensDelta, SemanticTokensEdit, SemanticTokensFullDeltaResult, SemanticTokensResult,
@@ -6,19 +7,23 @@ use tower_lsp::lsp_types::{
 use tree_sitter::{Query, QueryCursor, StreamingIterator, Tree};
 
 /// Convert byte column position to UTF-16 column position within a line
+/// This is a wrapper around the common utility for backward compatibility
 fn byte_to_utf16_col(line: &str, byte_col: usize) -> usize {
-    let mut utf16_col = 0;
-    let mut byte_pos = 0;
-
-    for ch in line.chars() {
-        if byte_pos >= byte_col {
-            break;
+    // The common utility returns Option, but we need to handle the case where
+    // byte_col is beyond the end of the line or in the middle of a character
+    convert_byte_to_utf16_in_line(line, byte_col).unwrap_or_else(|| {
+        // If conversion fails (e.g., byte_col is in the middle of a multi-byte char),
+        // find the nearest valid position
+        let mut valid_col = byte_col;
+        while valid_col > 0 {
+            if let Some(utf16) = convert_byte_to_utf16_in_line(line, valid_col) {
+                return utf16;
+            }
+            valid_col -= 1;
         }
-        utf16_col += ch.len_utf16();
-        byte_pos += ch.len_utf8();
-    }
-
-    utf16_col
+        // Fallback to 0 if no valid position found
+        0
+    })
 }
 
 /// Apply capture mappings to transform a capture name
