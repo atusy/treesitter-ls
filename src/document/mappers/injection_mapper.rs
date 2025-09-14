@@ -1,5 +1,5 @@
-use super::position_mapper::{PositionMapper, compute_line_starts};
 use super::range_mapper::{LayerInfo, RangeMapper};
+use crate::document::coordinates::{PositionMapper, compute_line_starts};
 use crate::document::coordinates::{convert_byte_to_utf16_in_line, convert_utf16_to_byte_in_line};
 use tower_lsp::lsp_types::Position;
 
