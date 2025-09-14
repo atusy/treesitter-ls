@@ -166,45 +166,6 @@ impl<'a> PositionMapper for InjectionPositionMapper<'a> {
     }
 }
 
-/// Helper function to convert document byte to position for layers
-pub fn doc_byte_to_position(text: &str, byte_offset: usize) -> Option<Position> {
-    let line_starts = compute_line_starts(text);
-
-    let line = line_starts
-        .binary_search(&byte_offset)
-        .unwrap_or_else(|i| i.saturating_sub(1));
-
-    if line >= line_starts.len() {
-        return None;
-    }
-
-    let line_start = line_starts[line];
-    let line_offset = byte_offset.saturating_sub(line_start);
-
-    // Get the line end (start of next line or end of document)
-    let line_end = line_starts.get(line + 1).copied().unwrap_or(text.len());
-
-    // Get the line text
-    let line_text = &text[line_start..line_end.min(text.len())];
-
-    // Convert byte offset to UTF-16 character offset
-    let mut utf16_offset = 0;
-    let mut byte_count = 0;
-
-    for ch in line_text.chars() {
-        if byte_count >= line_offset {
-            break;
-        }
-        byte_count += ch.len_utf8();
-        utf16_offset += ch.len_utf16();
-    }
-
-    Some(Position {
-        line: line as u32,
-        character: utf16_offset as u32,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

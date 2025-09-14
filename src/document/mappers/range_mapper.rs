@@ -5,10 +5,6 @@ use tower_lsp::lsp_types::Position;
 /// Maps positions between document and layer coordinate systems
 /// without any dependency on specific layer types
 pub struct RangeMapper<'a> {
-    #[allow(dead_code)]
-    document_text: &'a str,
-    #[allow(dead_code)]
-    document_line_starts: Vec<usize>,
     layer_info: LayerInfo<'a>,
 }
 
@@ -90,14 +86,8 @@ impl<'a> LayerInfo<'a> {
 
 impl<'a> RangeMapper<'a> {
     /// Create a new range mapper for a single layer
-    pub fn new(document_text: &'a str, layer_info: LayerInfo<'a>) -> Self {
-        let document_line_starts = compute_line_starts(document_text);
-
-        Self {
-            document_text,
-            document_line_starts,
-            layer_info,
-        }
+    pub fn new(_document_text: &'a str, layer_info: LayerInfo<'a>) -> Self {
+        Self { layer_info }
     }
 
     /// Get the layer info

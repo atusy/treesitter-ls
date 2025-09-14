@@ -81,48 +81,6 @@ impl ParserLoader {
 
         Ok(language)
     }
-
-    /// Load a Tree-sitter language with a custom function name
-    ///
-    /// Use this when the function name doesn't follow the standard convention
-    ///
-    /// # Arguments
-    /// * `path` - Path to the dynamic library file
-    /// * `func_name` - Name of the function to load (e.g., "tree_sitter_rust")
-    /// * `lang_name` - Name of the language (used for caching)
-    ///
-    /// # Returns
-    /// The loaded Language or an error
-    #[allow(dead_code)]
-    pub fn load_language_custom(
-        &mut self,
-        path: &str,
-        func_name: &str,
-        lang_name: &str,
-    ) -> Result<Language, ParserLoadError> {
-        // Load the library if not already loaded
-        if !self.loaded_libraries.contains_key(lang_name) {
-            let library = unsafe { Library::new(path)? };
-            self.loaded_libraries.insert(lang_name.to_string(), library);
-        }
-
-        // Get the library from cache
-        let library = self.loaded_libraries.get(lang_name).ok_or_else(|| {
-            ParserLoadError::CacheError(format!("Failed to get library for {lang_name}"))
-        })?;
-
-        // Get the language function from the library
-        let language_fn: Symbol<unsafe extern "C" fn() -> Language> = unsafe {
-            library
-                .get(func_name.as_bytes())
-                .map_err(|_| ParserLoadError::SymbolNotFound(func_name.to_string()))?
-        };
-
-        // Call the function to get the Language
-        let language = unsafe { language_fn() };
-
-        Ok(language)
-    }
 }
 
 #[cfg(test)]
