@@ -1,12 +1,13 @@
-mod document;
 pub mod coordinates;
 pub mod edits;
 pub mod mappers;
 pub mod store;
 
+mod model;
+
 // Re-export main types
 pub use coordinates::{PositionMapper, SimplePositionMapper, compute_line_starts};
-pub use document::Document;
+pub use model::Document;
 pub use edits::{adjust_ranges_for_edit, edit_affects_ranges, transform_edit_for_injection};
 pub use mappers::{
     injection_mapper::InjectionPositionMapper,
