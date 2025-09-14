@@ -1,13 +1,7 @@
 use tree_sitter::Node;
 
-/// Check if a node is of a scope type
-///
-/// # Arguments
-/// * `node_type` - The type of the node
-///
-/// # Returns
-/// true if the node type represents a scope
-fn is_scope_node(node_type: &str) -> bool {
+// Helper function to check if a node type represents a scope
+fn is_scope_node_type(node_type: &str) -> bool {
     matches!(
         node_type,
         "block"
@@ -54,7 +48,7 @@ pub fn get_scope_ids(node: Node) -> Vec<usize> {
     let mut current = node.parent();
 
     while let Some(n) = current {
-        if is_scope_node(n.kind()) {
+        if is_scope_node_type(n.kind()) {
             scope_ids.push(n.id());
         }
         current = n.parent();
@@ -75,7 +69,7 @@ pub fn calculate_scope_depth(node: Node) -> usize {
     let mut current = node.parent();
 
     while let Some(parent) = current {
-        if is_scope_node(parent.kind()) {
+        if is_scope_node_type(parent.kind()) {
             depth += 1;
         }
         current = parent.parent();
