@@ -84,21 +84,6 @@ impl StatefulDocument {
     }
 }
 
-// Implement compatibility methods for easier migration
-impl StatefulDocument {
-    /// Compatibility: Access layers directly (temporary for migration)
-    #[deprecated(note = "Use layers() method instead")]
-    pub fn layers_compat(&self) -> &crate::language::LayerManager {
-        self.layers()
-    }
-
-    /// Compatibility: Access text directly (temporary for migration)
-    #[deprecated(note = "Use text() method instead")]
-    pub fn text_compat(&self) -> &str {
-        self.text()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

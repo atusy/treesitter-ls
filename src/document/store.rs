@@ -1,86 +1,12 @@
 use crate::document::StatefulDocument;
-use crate::language::DocumentParserPool;
-use crate::language::LanguageLayer;
+use crate::language::{DocumentParserPool, LanguageLayer};
 use dashmap::DashMap;
 use tower_lsp::lsp_types::{SemanticTokens, Url};
-use tree_sitter::{InputEdit, Parser, Tree};
-
-// Type alias for backward compatibility during migration
-pub type Document = StatefulDocument;
-
-// Extension methods for Document compatibility
-impl Document {
-    /// Get the language ID from root layer
-    pub fn get_language_id(&self) -> Option<&str> {
-        self.layers().get_language_id().map(|s| s.as_str())
-    }
-
-    /// Get the root layer
-    pub fn root_layer(&self) -> Option<&crate::language::LanguageLayer> {
-        self.layers().root_layer()
-    }
-
-    /// Get injection layers
-    pub fn injection_layers(&self) -> &[crate::language::LanguageLayer] {
-        self.layers().injection_layers()
-    }
-
-    /// Add an injection layer
-    pub fn add_injection_layer(&mut self, layer: crate::language::LanguageLayer) {
-        self.layers_mut().add_injection_layer(layer);
-    }
-
-    /// Update the root tree
-    pub fn update_root_tree(&mut self, tree: Tree) {
-        self.layers_mut().update_root_tree(tree);
-    }
-
-    /// Acquire a parser for the specified language
-    pub fn acquire_parser(&mut self, language_id: &str) -> Option<Parser> {
-        self.layers_mut().acquire_parser(language_id)
-    }
-
-    /// Release a parser back to the pool
-    pub fn release_parser(&mut self, language_id: String, parser: Parser) {
-        self.layers_mut().release_parser(language_id, parser);
-    }
-
-    /// Set parser pool
-    pub fn init_parser_pool(&mut self, pool: DocumentParserPool) {
-        self.layers_mut().set_parser_pool(pool);
-    }
-
-    /// Get all layers
-    pub fn get_all_layers(&self) -> impl Iterator<Item = &crate::language::LanguageLayer> {
-        self.layers().all_layers()
-    }
-
-    /// Get layer at offset
-    pub fn get_layer_at_position(
-        &self,
-        byte_offset: usize,
-    ) -> Option<&crate::language::LanguageLayer> {
-        self.layers().get_layer_at_offset(byte_offset)
-    }
-
-    /// Create position mapper (renamed from position_mapper for clarity)
-    pub fn position_mapper<'a>(&'a self) -> Box<dyn crate::document::PositionMapper + 'a> {
-        if self.layers().injection_layers().is_empty() {
-            Box::new(crate::document::coordinates::SimplePositionMapper::new(
-                self.text(),
-            ))
-        } else {
-            Box::new(crate::document::InjectionPositionMapper::new(
-                self.text(),
-                self.layers().injection_layers(),
-            ))
-        }
-    }
-}
+use tree_sitter::{InputEdit, Tree};
 
 // The central store for all document-related information.
 pub struct DocumentStore {
-    documents: DashMap<Url, Document>,
+    documents: DashMap<Url, StatefulDocument>,
 }
 
 impl Default for DocumentStore {
@@ -98,15 +24,15 @@ impl DocumentStore {
 
     pub fn insert(&self, uri: Url, text: String, root_layer: Option<LanguageLayer>) {
         let document = if let Some(layer) = root_layer {
-            Document::with_root_layer(text, layer.language_id.clone(), layer.tree.clone())
+            StatefulDocument::with_root_layer(text, layer.language_id.clone(), layer.tree.clone())
         } else {
-            Document::new(text)
+            StatefulDocument::new(text)
         };
 
         self.documents.insert(uri, document);
     }
 
-    pub fn get(&self, uri: &Url) -> Option<dashmap::mapref::one::Ref<'_, Url, Document>> {
+    pub fn get(&self, uri: &Url) -> Option<dashmap::mapref::one::Ref<'_, Url, StatefulDocument>> {
         self.documents.get(uri)
     }
 
@@ -118,11 +44,14 @@ impl DocumentStore {
             .and_then(|doc| doc.layers().root_layer().cloned());
 
         if let Some(root) = root_layer {
-            let new_doc =
-                Document::with_root_layer(text, root.language_id.clone(), root.tree.clone());
+            let new_doc = StatefulDocument::with_root_layer(
+                text,
+                root.language_id.clone(),
+                root.tree.clone(),
+            );
             self.documents.insert(uri, new_doc);
         } else {
-            self.documents.insert(uri, Document::new(text));
+            self.documents.insert(uri, StatefulDocument::new(text));
         }
     }
 
@@ -143,7 +72,7 @@ impl DocumentStore {
             .and_then(|doc| doc.layers().get_language_id().cloned());
 
         if let Some(language_id) = language_id {
-            let new_doc = Document::with_root_layer(text, language_id, tree);
+            let new_doc = StatefulDocument::with_root_layer(text, language_id, tree);
             self.documents.insert(uri, new_doc);
         } else {
             // If no language_id, just update the text
@@ -167,7 +96,7 @@ impl DocumentStore {
         }
     }
 
-    pub fn remove(&self, uri: &Url) -> Option<Document> {
+    pub fn remove(&self, uri: &Url) -> Option<StatefulDocument> {
         self.documents.remove(uri).map(|(_, doc)| doc)
     }
 }
@@ -210,7 +139,7 @@ mod tests {
         // Language info should be preserved
         let doc = store.get(&uri).unwrap();
         assert_eq!(doc.text(), text2);
-        assert_eq!(doc.get_language_id(), Some("rust"));
+        assert_eq!(doc.layers().get_language_id(), Some(&"rust".to_string()));
     }
 
     #[test]
@@ -236,6 +165,6 @@ mod tests {
 
         let doc = store.get(&uri).unwrap();
         assert_eq!(doc.text(), new_text);
-        assert!(doc.root_layer().is_some());
+        assert!(doc.layers().root_layer().is_some());
     }
 }

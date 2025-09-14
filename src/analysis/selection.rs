@@ -1,4 +1,4 @@
-use crate::document::store::Document;
+use crate::document::StatefulDocument;
 use crate::syntax::tree::{node_to_range, position_to_point};
 use tower_lsp::lsp_types::{Position, SelectionRange};
 use tree_sitter::Node;
@@ -27,10 +27,21 @@ fn build_selection_range(node: Node) -> SelectionRange {
 /// # Returns
 /// Selection ranges for each position, or None if unable to compute
 pub fn handle_selection_range(
-    document: &Document,
+    document: &StatefulDocument,
     positions: &[Position],
 ) -> Option<Vec<SelectionRange>> {
-    let mapper = document.position_mapper();
+    // Create position mapper based on whether document has injections
+    let mapper: Box<dyn crate::document::PositionMapper> =
+        if document.layers().injection_layers().is_empty() {
+            Box::new(crate::document::coordinates::SimplePositionMapper::new(
+                document.text(),
+            ))
+        } else {
+            Box::new(crate::document::InjectionPositionMapper::new(
+                document.text(),
+                document.layers().injection_layers(),
+            ))
+        };
 
     let ranges = positions
         .iter()
@@ -39,7 +50,7 @@ pub fn handle_selection_range(
             let byte_offset = mapper.position_to_byte(*pos)?;
 
             // Find the appropriate layer
-            let layer = document.get_layer_at_position(byte_offset)?;
+            let layer = document.layers().get_layer_at_offset(byte_offset)?;
             let tree = &layer.tree;
             let root = tree.root_node();
 

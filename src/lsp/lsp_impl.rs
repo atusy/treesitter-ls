@@ -122,7 +122,7 @@ impl TreeSitterLs {
                     // For non-incremental updates, check if document exists
                     self.document_store
                         .get(&uri)
-                        .and_then(|doc| doc.root_layer().map(|layer| layer.tree.clone()))
+                        .and_then(|doc| doc.layers().root_layer().map(|layer| layer.tree.clone()))
                 };
 
                 // Parse the document with incremental parsing if old tree exists
@@ -154,7 +154,7 @@ impl TreeSitterLs {
         // Fall back to the language_id stored in the document
         self.document_store
             .get(uri)
-            .and_then(|doc| doc.get_language_id().map(|s| s.to_string()))
+            .and_then(|doc| doc.layers().get_language_id().map(|s| s.to_string()))
     }
 
     async fn load_settings(&self, settings: TreeSitterSettings) {
@@ -419,7 +419,7 @@ impl LanguageServer for TreeSitterLs {
             let doc = self.document_store.get(&uri);
             match doc {
                 Some(d) => (
-                    d.get_language_id().map(|s| s.to_string()),
+                    d.layers().get_language_id().map(|s| s.to_string()),
                     d.text().to_string(),
                 ),
                 None => {
@@ -568,7 +568,7 @@ impl LanguageServer for TreeSitterLs {
                 })));
             };
             let text = doc.text();
-            let Some(root_layer) = doc.root_layer() else {
+            let Some(root_layer) = doc.layers().root_layer() else {
                 return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                     result_id: None,
                     data: vec![],
@@ -658,7 +658,7 @@ impl LanguageServer for TreeSitterLs {
             };
 
             let text = doc.text();
-            let Some(root_layer) = doc.root_layer() else {
+            let Some(root_layer) = doc.layers().root_layer() else {
                 return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
                     SemanticTokens {
                         result_id: None,
@@ -736,7 +736,7 @@ impl LanguageServer for TreeSitterLs {
         };
 
         let text = doc.text();
-        let Some(root_layer) = doc.root_layer() else {
+        let Some(root_layer) = doc.layers().root_layer() else {
             return Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
                 result_id: None,
                 data: vec![],
@@ -827,7 +827,7 @@ impl LanguageServer for TreeSitterLs {
             return Ok(None);
         };
         let text = doc.text();
-        let Some(root_layer) = doc.root_layer() else {
+        let Some(root_layer) = doc.layers().root_layer() else {
             return Ok(None);
         };
 
