@@ -1,125 +1,236 @@
 # treesitter-ls
 
-A Language Server Protocol (LSP) server written in Rust that uses Tree‑sitter for fast parsing and language‑aware features.
+A fast and flexible Language Server Protocol (LSP) server that leverages Tree-sitter for accurate parsing and language-aware features across multiple programming languages.
 
 ## Features
 
-- Dynamic parsers: Loads Tree‑sitter language parsers from shared libraries at runtime (via `libloading`).
-- Semantic tokens: Full, range, and delta semantic highlighting powered by Tree‑sitter queries.
-- Go to definition: Language‑agnostic resolver using Tree‑sitter “locals” queries (`local.definition.*`, `local.reference.*`).
-- Selection ranges: AST‑based selection expansion using parent nodes.
-- Code actions: Refactor to reorder parameters inside a `parameters` node (for grammars that expose it).
-- Async runtime: Built with `tokio` and `tower-lsp`.
+### Core Capabilities
+- **🚀 Dynamic Parser Loading** - Load Tree-sitter parsers at runtime from shared libraries
+- **🎨 Semantic Highlighting** - Full, range, and delta semantic tokens with customizable mappings
+- **🔍 Go to Definition** - Language-agnostic navigation using Tree-sitter locals queries
+- **📝 Smart Selection** - Expand selection based on AST structure
+- **🔧 Code Actions** - Refactoring support (e.g., parameter reordering)
+- **💉 Language Injection** - Support for embedded languages (e.g., code blocks in Markdown)
 
-## Build
+### Performance
+- Async runtime powered by `tokio` and `tower-lsp`
+- Parser pooling for efficient memory usage
+- Incremental parsing support
+
+## Installation
+
+### Pre-built Binaries
+*Coming soon*
+
+### Build from Source
+
+Requirements:
+- Rust (latest stable)
+- Cargo
 
 ```bash
+# Clone the repository
+git clone https://github.com/atusy/treesitter-ls.git
+cd treesitter-ls
+
+# Build release binary
 cargo build --release
+
+# Binary location: target/release/treesitter-ls
 ```
 
-Binary: `target/release/treesitter-ls`
+## Quick Start
 
-## Configuration (Initialization Options)
+### 1. Obtain Parser Libraries
 
-The server reads configuration from LSP `initializationOptions`. Shape:
+You need Tree-sitter parser shared libraries for the languages you want to support:
 
-```json
+- **Linux**: `<language>.so`
+- **macOS**: `<language>.dylib`
+- **Windows**: `<language>.dll` *(experimental)*
+
+Example: Building the Rust parser
+```bash
+git clone https://github.com/tree-sitter/tree-sitter-rust.git
+cd tree-sitter-rust
+npm install
+npm run build
+# Creates rust.so (Linux) or rust.dylib (macOS)
+```
+
+### 2. Configure Your Editor
+
+#### Neovim (Native LSP)
+
+```lua
+-- ~/.config/nvim/init.lua
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = { "rust", "lua", "markdown" },
+  callback = function()
+    vim.lsp.start({
+      name = "treesitter-ls",
+      cmd = { "/path/to/treesitter-ls" },
+      root_dir = vim.fs.dirname(vim.fs.find({ ".git" }, { upward = true })[1]),
+      init_options = {
+        searchPaths = { "/path/to/parsers" },
+        languages = {
+          rust = { filetypes = { "rs" } },
+          lua = { filetypes = { "lua" } },
+          markdown = { filetypes = { "md", "markdown" } },
+        }
+      }
+    })
+  end
+})
+```
+
+#### VS Code
+*Extension coming soon*
+
+#### Other Editors
+Any editor with LSP support can use treesitter-ls. See [Editor Setup](docs/editors.md) for more examples.
+
+## Configuration
+
+The server is configured via LSP initialization options:
+
+```jsonc
 {
-  "searchPaths": ["/path/to/resources"],
+  "searchPaths": [
+    "/path/to/parsers",      // Directory containing parser/<lang>.so files
+    "/path/to/queries"       // Directory containing queries/<lang>/*.scm files
+  ],
   "languages": {
     "rust": {
-      "library": "/abs/path/to/rust.so",          // optional (overrides searchPaths)
-      "filetypes": ["rs"],                         // required; file extensions without dot
-      "highlight": [                               // optional; list of query sources
-        { "path": "/abs/path/to/highlights.scm" },
+      "library": "/explicit/path/to/rust.so",  // Optional: override searchPaths
+      "filetypes": ["rs"],                     // Required: file extensions
+      "highlight": [                           // Optional: custom highlighting queries
+        { "path": "/path/to/highlights.scm" },
         { "query": "(identifier) @variable" }
       ],
-      "locals": [                                  // optional; enables goto-definition
-        { "path": "/abs/path/to/locals.scm" }
+      "locals": [                               // Optional: for go-to-definition
+        { "path": "/path/to/locals.scm" }
       ]
+    }
+  },
+  "captureMappings": {                         // Optional: customize token types
+    "_": {                                      // "_" applies to all languages
+      "constant": "variable.readonly",
+      "keyword.return": "keyword"
+    },
+    "rust": {                                   // Language-specific mappings
+      "lifetime": "label"
     }
   }
 }
 ```
 
-Notes:
-- If `library` is omitted, the server searches each `searchPaths` directory for `parser/<language>.so` (Linux) or `parser/<language>.dylib` (macOS). The `<language>` key is the map key (e.g. `rust`).
-- If `highlight` is empty/omitted, the server searches each `searchPaths` base for `queries/<language>/highlights.scm` and uses the first found.
-- If `locals` is omitted, the server searches each `searchPaths` base for `queries/<language>/locals.scm` and uses it if found.
-- “Go to definition” relies on locals queries that emit captures like `local.definition.*` and `local.reference.*` (see `queries/*/locals.scm` in this repo for examples).
-- Semantic tokens use capture names mapped to LSP token types (e.g. `@function`, `@type`, `@variable`, etc.).
+### Configuration Options
 
-## Neovim Example
+| Option | Description | Default |
+|--------|-------------|---------|
+| `searchPaths` | Directories to search for parsers and queries | `[]` |
+| `languages.<lang>.library` | Explicit parser library path | Auto-detect from searchPaths |
+| `languages.<lang>.filetypes` | File extensions to associate | Required |
+| `languages.<lang>.highlight` | Highlighting query sources | Auto-detect from searchPaths |
+| `languages.<lang>.locals` | Locals query sources for navigation | Auto-detect from searchPaths |
+| `captureMappings` | Map Tree-sitter captures to LSP token types | Built-in mappings |
 
-Below is a minimal configuration using `vim.lsp.start` or `nvim-lspconfig`. Adjust paths to your environment.
+## Query Files
 
-```lua
-vim.lsp.config.treesitter_ls = {
-  cmd = { "/abs/path/to/treesitter-ls/target/release/treesitter-ls" },
-  init_options = {
-    searchPaths = {
-      -- Search here for parser/<language>.so or parser/<language>.dylib
-      -- and queries/<language>/highlights.scm and locals.scm
-      "/abs/path/to/resources",
-      "/abs/path/to/another/resources",
-    },
-    languages = {
-      rust = {
-        -- Optional explicit parser path (overrides searchPaths search)
-        -- library = "/abs/path/to/rust.so",
-        filetypes = { "rs" },
-        -- highlight/locals omitted: resolved via searchPaths
-      },
-    },
-    captureMappings = {
-      ["_"] = {
-        constant = "variable.readonly"
-      }
-    }
-  },
-}
+Tree-sitter queries power the language features:
 
-vim.api.nvim_create_autocmd("FileType", {
-  pattern = { "rust" },
-  group = vim.api.nvim_create_augroup("treesitter_ls", { clear = true }),
-  callback = function(ctx)
-    vim.lsp.start({
-      name = "treesitter_ls",
-      cmd = vim.lsp.config.treesitter_ls.cmd,
-      root_dir = vim.fs.dirname(vim.fs.find({ "Cargo.toml" }, { upward = true })[1]),
-      init_options = vim.lsp.config.treesitter_ls.settings,
-    })
-    -- Avoid double-highlighting: disable Neovim Tree‑sitter
-    pcall(vim.treesitter.stop, ctx.buf)
-  end,
-})
+### Highlights Query (`highlights.scm`)
+Defines syntax highlighting:
+```scheme
+(function_item name: (identifier) @function)
+(string_literal) @string
 ```
 
-## Parser Libraries
-
-You need Tree‑sitter parser shared libraries. Typical artifact names:
-- Linux: `<language>.so`
-- macOS: `<language>.dylib`
-
-For example, build the Rust grammar (see the grammar’s README for up‑to‑date instructions):
-
-```bash
-git clone https://github.com/tree-sitter/tree-sitter-rust.git
-# Use your platform’s build instructions to produce rust.so / rust.dylib
+### Locals Query (`locals.scm`)
+Enables go-to-definition:
+```scheme
+(function_item name: (identifier) @local.definition.function)
+(call_expression function: (identifier) @local.reference.function)
 ```
 
-## Queries
+### Query Locations
+Queries are searched in this order:
+1. Explicit paths in configuration
+2. `<searchPath>/queries/<language>/highlights.scm`
+3. `<searchPath>/queries/<language>/locals.scm`
 
-- This repo includes example queries under `queries/<language>/`:
-  - Highlights: `queries/rust/highlights.scm`, `queries/lua/highlights.scm`
-  - Locals (for definitions/references): `queries/rust/locals.scm`, `queries/lua/locals.scm`
-- You can combine multiple sources using `{ path = ... }` and `{ query = ... }` entries; the server concatenates them.
-- Alternatively, set `searchPaths` and place files at `<base>/queries/<language>/highlights.scm` and `<base>/queries/<language>/locals.scm` so they're discovered automatically.
+Example directory structure:
+```
+/path/to/resources/
+├── parser/
+│   ├── rust.so
+│   └── lua.so
+└── queries/
+    ├── rust/
+    │   ├── highlights.scm
+    │   └── locals.scm
+    └── lua/
+        ├── highlights.scm
+        └── locals.scm
+```
 
-## Supported LSP Capabilities
+## Supported LSP Features
 
-- `textDocument/semanticTokens/full`, `/range`, `/full/delta`
-- `textDocument/definition` (requires locals queries)
-- `textDocument/selectionRange`
-- `textDocument/codeAction` (parameter reordering in `parameters` nodes)
-- `textDocument/didOpen`/`didChange` (full sync)
+### Text Synchronization
+- `textDocument/didOpen`
+- `textDocument/didChange` (full sync)
+- `textDocument/didClose`
+
+### Language Features
+- `textDocument/semanticTokens/full` - Full document highlighting
+- `textDocument/semanticTokens/range` - Partial highlighting
+- `textDocument/semanticTokens/full/delta` - Incremental updates
+- `textDocument/definition` - Go to definition
+- `textDocument/selectionRange` - Expand/shrink selection
+
+### Code Actions
+- `textDocument/codeAction` - Parameter reordering (for supported grammars)
+
+## Troubleshooting
+
+### Parser Not Found
+```
+Error: Could not load parser for language 'rust'
+```
+**Solution**: Ensure the parser library exists in one of the `searchPaths` directories or specify an explicit `library` path.
+
+### No Syntax Highlighting
+**Check**:
+1. Parser loaded successfully (check server logs)
+2. `highlights.scm` query file exists and is valid
+3. File extension matches configured `filetypes`
+
+### Go to Definition Not Working
+**Requirements**:
+- `locals.scm` query file with `local.definition.*` and `local.reference.*` captures
+- Properly structured Tree-sitter grammar with scope information
+
+## Contributing
+
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for:
+- Development setup and workflow
+- Architecture overview
+- Testing guidelines
+- Code style and commit conventions
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- [Tree-sitter](https://tree-sitter.github.io/) - The incremental parsing library
+- [tower-lsp](https://github.com/ebkalderon/tower-lsp) - Async LSP framework for Rust
+- The Tree-sitter grammar authors for their excellent work
+
+## Related Projects
+
+- [tree-sitter](https://github.com/tree-sitter/tree-sitter) - The parsing library
+- [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) - Neovim's Tree-sitter integration
+- Individual grammar repositories (e.g., [tree-sitter-rust](https://github.com/tree-sitter/tree-sitter-rust))
