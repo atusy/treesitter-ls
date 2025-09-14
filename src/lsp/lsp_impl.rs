@@ -172,7 +172,7 @@ impl LanguageServer for TreeSitterLs {
             .log_message(MessageType::INFO, "Received initialization request")
             .await;
 
-        // Get root path from workspace folders, root_uri, deprecated root_path, or current directory
+        // Get root path from workspace folders, root_uri, or current directory
         let root_path = if let Some(folders) = &params.workspace_folders {
             folders
                 .first()
@@ -180,14 +180,8 @@ impl LanguageServer for TreeSitterLs {
         } else if let Some(root_uri) = &params.root_uri {
             root_uri.to_file_path().ok()
         } else {
-            #[allow(deprecated)] // Support for older LSP clients
-            if let Some(root_path) = &params.root_path {
-                // Support deprecated root_path field for compatibility
-                Some(PathBuf::from(root_path))
-            } else {
-                // Fallback to current working directory
-                std::env::current_dir().ok()
-            }
+            // Fallback to current working directory
+            std::env::current_dir().ok()
         };
 
         // Store root path for later use and log the source
@@ -197,12 +191,7 @@ impl LanguageServer for TreeSitterLs {
             } else if params.root_uri.is_some() {
                 "root_uri"
             } else {
-                #[allow(deprecated)]
-                if params.root_path.is_some() {
-                    "root_path (deprecated)"
-                } else {
-                    "current working directory (fallback)"
-                }
+                "current working directory (fallback)"
             };
 
             self.client
