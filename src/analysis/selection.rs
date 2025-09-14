@@ -1,4 +1,4 @@
-use crate::document::StatefulDocument;
+use crate::document::Document;
 use tower_lsp::lsp_types::{Position, Range, SelectionRange};
 use tree_sitter::{Node, Point};
 
@@ -44,7 +44,7 @@ fn build_selection_range(node: Node) -> SelectionRange {
 /// # Returns
 /// Selection ranges for each position, or None if unable to compute
 pub fn handle_selection_range(
-    document: &StatefulDocument,
+    document: &Document,
     positions: &[Position],
 ) -> Option<Vec<SelectionRange>> {
     // Create position mapper based on whether document has injections

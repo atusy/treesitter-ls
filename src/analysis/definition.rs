@@ -1,5 +1,5 @@
 // Definition jump resolution using tree-sitter queries
-use crate::document::StatefulDocument;
+use crate::document::Document;
 use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Position, Range, Url};
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 
@@ -430,7 +430,7 @@ impl DefinitionResolver {
 /// Handle goto definition request with injection layer support
 pub fn handle_goto_definition(
     resolver: &DefinitionResolver,
-    document: &StatefulDocument,
+    document: &Document,
     position: Position,
     locals_query: &Query,
     uri: &Url,

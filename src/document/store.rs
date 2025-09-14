@@ -1,4 +1,4 @@
-use crate::document::StatefulDocument;
+use crate::document::Document;
 use crate::language::{DocumentParserPool, LanguageLayer};
 use dashmap::DashMap;
 use tower_lsp::lsp_types::{SemanticTokens, Url};
@@ -6,7 +6,7 @@ use tree_sitter::{InputEdit, Tree};
 
 // The central store for all document-related information.
 pub struct DocumentStore {
-    documents: DashMap<Url, StatefulDocument>,
+    documents: DashMap<Url, Document>,
 }
 
 impl Default for DocumentStore {
@@ -24,15 +24,15 @@ impl DocumentStore {
 
     pub fn insert(&self, uri: Url, text: String, root_layer: Option<LanguageLayer>) {
         let document = if let Some(layer) = root_layer {
-            StatefulDocument::with_root_layer(text, layer.language_id.clone(), layer.tree.clone())
+            Document::with_root_layer(text, layer.language_id.clone(), layer.tree.clone())
         } else {
-            StatefulDocument::new(text)
+            Document::new(text)
         };
 
         self.documents.insert(uri, document);
     }
 
-    pub fn get(&self, uri: &Url) -> Option<dashmap::mapref::one::Ref<'_, Url, StatefulDocument>> {
+    pub fn get(&self, uri: &Url) -> Option<dashmap::mapref::one::Ref<'_, Url, Document>> {
         self.documents.get(uri)
     }
 
@@ -44,14 +44,11 @@ impl DocumentStore {
             .and_then(|doc| doc.layers().root_layer().cloned());
 
         if let Some(root) = root_layer {
-            let new_doc = StatefulDocument::with_root_layer(
-                text,
-                root.language_id.clone(),
-                root.tree.clone(),
-            );
+            let new_doc =
+                Document::with_root_layer(text, root.language_id.clone(), root.tree.clone());
             self.documents.insert(uri, new_doc);
         } else {
-            self.documents.insert(uri, StatefulDocument::new(text));
+            self.documents.insert(uri, Document::new(text));
         }
     }
 
@@ -72,7 +69,7 @@ impl DocumentStore {
             .and_then(|doc| doc.layers().get_language_id().cloned());
 
         if let Some(language_id) = language_id {
-            let new_doc = StatefulDocument::with_root_layer(text, language_id, tree);
+            let new_doc = Document::with_root_layer(text, language_id, tree);
             self.documents.insert(uri, new_doc);
         } else {
             // If no language_id, just update the text
@@ -96,7 +93,7 @@ impl DocumentStore {
         }
     }
 
-    pub fn remove(&self, uri: &Url) -> Option<StatefulDocument> {
+    pub fn remove(&self, uri: &Url) -> Option<Document> {
         self.documents.remove(uri).map(|(_, doc)| doc)
     }
 }
