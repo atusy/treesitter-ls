@@ -58,20 +58,14 @@ impl<'a> PositionMapper for SimplePositionMapper<'a> {
         // Get the line text
         let line_text = &self.text[line_start..line_end];
 
-        // Convert UTF-16 character offset to byte offset within the line
-        let mut byte_offset = 0;
-        let mut utf16_offset = 0;
-
-        for ch in line_text.chars() {
-            if utf16_offset >= character {
-                return Some(line_start + byte_offset);
+        // Use the common utility function for UTF-16 to byte conversion
+        match convert_utf16_to_byte_in_line(line_text, character) {
+            Some(byte_offset) => Some(line_start + byte_offset),
+            None => {
+                // If position is beyond line end, return the line end
+                Some(line_start + line_text.len())
             }
-            utf16_offset += ch.len_utf16();
-            byte_offset += ch.len_utf8();
         }
-
-        // If we're past the end of the line, return the line end
-        Some(line_start + byte_offset.min(line_text.len()))
     }
 
     fn byte_to_position(&self, offset: usize) -> Option<Position> {
@@ -93,26 +87,29 @@ impl<'a> PositionMapper for SimplePositionMapper<'a> {
 
         let line_text = &self.text[line_start..line_end.min(self.text.len())];
 
-        // Convert byte offset to UTF-16 character offset
-        let mut utf16_offset = 0;
-        let mut byte_count = 0;
-
-        for ch in line_text.chars() {
-            if byte_count >= line_offset {
-                break;
+        // Use the common utility function for byte to UTF-16 conversion
+        let character = match convert_byte_to_utf16_in_line(line_text, line_offset) {
+            Some(utf16_offset) => utf16_offset,
+            None => {
+                // If we're in the middle of a character, find the character start
+                let mut valid_offset = line_offset;
+                while valid_offset > 0 {
+                    valid_offset -= 1;
+                    if let Some(utf16) = convert_byte_to_utf16_in_line(line_text, valid_offset) {
+                        return Some(Position {
+                            line: line as u32,
+                            character: utf16 as u32,
+                        });
+                    }
+                }
+                // Fallback to start of line
+                0
             }
-            let ch_bytes = ch.len_utf8();
-            if byte_count + ch_bytes > line_offset {
-                // We're in the middle of this character
-                break;
-            }
-            byte_count += ch_bytes;
-            utf16_offset += ch.len_utf16();
-        }
+        };
 
         Some(Position {
             line: line as u32,
-            character: utf16_offset as u32,
+            character: character as u32,
         })
     }
 }
