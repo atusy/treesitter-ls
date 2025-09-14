@@ -1,8 +1,90 @@
 // Definition jump resolution using tree-sitter queries
 use crate::document::StatefulDocument;
-use crate::syntax::node_utils::{calculate_scope_depth, determine_context, get_scope_ids};
 use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Position, Range, Url};
-use tree_sitter::{Query, QueryCursor, StreamingIterator, Tree};
+use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
+
+// Helper function to check if a node type represents a scope
+fn is_scope_node_type(node_type: &str) -> bool {
+    matches!(
+        node_type,
+        "block"
+            | "function_item"
+            | "function_declaration"
+            | "function_definition"
+            | "method_definition"
+            | "if_statement"
+            | "if_expression"
+            | "while_statement"
+            | "while_expression"
+            | "for_statement"
+            | "for_expression"
+            | "loop_expression"
+            | "match_expression"
+            | "match_statement"
+            | "try_statement"
+            | "catch_clause"
+            | "class_definition"
+            | "class_declaration"
+            | "struct_item"
+            | "enum_item"
+            | "impl_item"
+            | "module"
+            | "namespace"
+            | "scope"
+            | "chunk"
+            | "do_statement"
+            | "closure_expression"
+            | "lambda"
+            | "arrow_function"
+    )
+}
+
+/// Get scope IDs for a node (used for scope distance calculations)
+fn get_scope_ids(node: Node) -> Vec<usize> {
+    let mut scope_ids = Vec::new();
+    let mut current = node.parent();
+
+    while let Some(n) = current {
+        if is_scope_node_type(n.kind()) {
+            scope_ids.push(n.id());
+        }
+        current = n.parent();
+    }
+
+    scope_ids
+}
+
+/// Calculate the scope depth of a node
+fn calculate_scope_depth(node: Node) -> usize {
+    let mut depth = 0;
+    let mut current = node.parent();
+
+    while let Some(parent) = current {
+        if is_scope_node_type(parent.kind()) {
+            depth += 1;
+        }
+        current = parent.parent();
+    }
+
+    depth
+}
+
+/// Determine the context type based on parent nodes
+fn determine_context(node: Node) -> &'static str {
+    let mut current = node.parent();
+
+    while let Some(parent) = current {
+        match parent.kind() {
+            "call_expression" | "function_call" => return "function_call",
+            "type_annotation" | "type_identifier" | "type_parameter" => return "type_annotation",
+            "field_expression" | "member_expression" | "field_access" => return "field_access",
+            _ => {}
+        }
+        current = parent.parent();
+    }
+
+    "variable_reference"
+}
 
 #[derive(Debug, Clone)]
 pub struct DefinitionCandidate {
