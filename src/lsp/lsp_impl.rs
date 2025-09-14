@@ -12,7 +12,7 @@ use crate::features::{
     handle_code_actions, handle_goto_definition, handle_selection_range,
     handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
-use crate::injection::LanguageLayer;
+use crate::language::LanguageLayer;
 use crate::language::{DocumentParserPool, ParserFactory};
 use crate::syntax::tree::position_to_point;
 use crate::workspace::{DocumentStore, languages::LanguageService};
@@ -102,7 +102,7 @@ impl TreeSitterLs {
             let needs_pool_init = self
                 .document_store
                 .get(&uri)
-                .map(|doc| doc.layers().parser_pool().is_none())
+                .map(|doc| !doc.layers().has_parser_pool())
                 .unwrap_or(true);
 
             if needs_pool_init {

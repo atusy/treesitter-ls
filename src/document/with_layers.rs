@@ -1,5 +1,5 @@
 use super::text::TextDocument;
-use crate::injection::LayerManager;
+use crate::language::LayerManager;
 
 /// A parsed document with language layers
 pub struct ParsedDocument {

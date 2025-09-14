@@ -48,12 +48,12 @@ impl StatefulDocument {
     }
 
     /// Get the layer manager
-    pub fn layers(&self) -> &crate::injection::LayerManager {
+    pub fn layers(&self) -> &crate::language::LayerManager {
         self.parsed_document.layers()
     }
 
     /// Get mutable access to the layer manager
-    pub fn layers_mut(&mut self) -> &mut crate::injection::LayerManager {
+    pub fn layers_mut(&mut self) -> &mut crate::language::LayerManager {
         self.parsed_document.layers_mut()
     }
 
@@ -88,7 +88,7 @@ impl StatefulDocument {
 impl StatefulDocument {
     /// Compatibility: Access layers directly (temporary for migration)
     #[deprecated(note = "Use layers() method instead")]
-    pub fn layers_compat(&self) -> &crate::injection::LayerManager {
+    pub fn layers_compat(&self) -> &crate::language::LayerManager {
         self.layers()
     }
 

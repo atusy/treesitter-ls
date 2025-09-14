@@ -1,6 +1,6 @@
 use crate::document::StatefulDocument;
-use crate::injection::LanguageLayer;
 use crate::language::DocumentParserPool;
+use crate::language::LanguageLayer;
 use dashmap::DashMap;
 use tower_lsp::lsp_types::{SemanticTokens, Url};
 use tree_sitter::{InputEdit, Parser, Tree};
@@ -16,17 +16,17 @@ impl Document {
     }
 
     /// Get the root layer
-    pub fn root_layer(&self) -> Option<&crate::injection::LanguageLayer> {
+    pub fn root_layer(&self) -> Option<&crate::language::LanguageLayer> {
         self.layers().root_layer()
     }
 
     /// Get injection layers
-    pub fn injection_layers(&self) -> &[crate::injection::LanguageLayer] {
+    pub fn injection_layers(&self) -> &[crate::language::LanguageLayer] {
         self.layers().injection_layers()
     }
 
     /// Add an injection layer
-    pub fn add_injection_layer(&mut self, layer: crate::injection::LanguageLayer) {
+    pub fn add_injection_layer(&mut self, layer: crate::language::LanguageLayer) {
         self.layers_mut().add_injection_layer(layer);
     }
 
@@ -51,7 +51,7 @@ impl Document {
     }
 
     /// Get all layers
-    pub fn get_all_layers(&self) -> impl Iterator<Item = &crate::injection::LanguageLayer> {
+    pub fn get_all_layers(&self) -> impl Iterator<Item = &crate::language::LanguageLayer> {
         self.layers().all_layers()
     }
 
@@ -59,18 +59,18 @@ impl Document {
     pub fn get_layer_at_position(
         &self,
         byte_offset: usize,
-    ) -> Option<&crate::injection::LanguageLayer> {
+    ) -> Option<&crate::language::LanguageLayer> {
         self.layers().get_layer_at_offset(byte_offset)
     }
 
     /// Create position mapper (renamed from position_mapper for clarity)
-    pub fn position_mapper<'a>(&'a self) -> Box<dyn crate::injection::PositionMapper + 'a> {
+    pub fn position_mapper<'a>(&'a self) -> Box<dyn crate::document::PositionMapper + 'a> {
         if self.layers().injection_layers().is_empty() {
             Box::new(crate::document::coordinates::SimplePositionMapper::new(
                 self.text(),
             ))
         } else {
-            Box::new(crate::injection::InjectionPositionMapper::new(
+            Box::new(crate::document::InjectionPositionMapper::new(
                 self.text(),
                 self.layers().injection_layers(),
             ))

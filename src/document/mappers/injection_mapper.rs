@@ -18,7 +18,7 @@ pub struct InjectionPositionMapper<'a> {
 impl<'a> InjectionPositionMapper<'a> {
     /// Create a new injection position mapper from language layers
     /// This extracts only the necessary data (ranges and IDs) from the layers
-    pub fn new(text: &'a str, layers: &'a [crate::injection::LanguageLayer]) -> Self {
+    pub fn new(text: &'a str, layers: &'a [crate::language::LanguageLayer]) -> Self {
         let document_line_starts = compute_line_starts(text);
 
         let mut mappers = Vec::new();
@@ -208,7 +208,7 @@ pub fn doc_byte_to_position(text: &str, byte_offset: usize) -> Option<Position> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::injection::LanguageLayer;
+    use crate::language::LanguageLayer;
 
     fn create_test_layers() -> Vec<LanguageLayer> {
         // Create mock language layers for testing
@@ -219,20 +219,8 @@ mod tests {
         let tree = parser.parse("test", None).unwrap();
 
         vec![
-            LanguageLayer {
-                language_id: "rust".to_string(),
-                tree: tree.clone(),
-                ranges: vec![(0, 10), (20, 30)],
-                depth: 1,
-                parent_injection_node: None,
-            },
-            LanguageLayer {
-                language_id: "comment".to_string(),
-                tree,
-                ranges: vec![(10, 20)],
-                depth: 1,
-                parent_injection_node: None,
-            },
+            LanguageLayer::injection("rust".to_string(), tree.clone(), vec![(0, 10), (20, 30)]),
+            LanguageLayer::injection("comment".to_string(), tree, vec![(10, 20)]),
         ]
     }
 
@@ -280,19 +268,18 @@ mod tests {
     #[test]
     fn test_multiple_injections() {
         let text = "fn main() {\n    // comment\n    let x = 1;\n}";
-        let layers = vec![LanguageLayer {
-            language_id: "rust".to_string(),
-            tree: {
-                let mut parser = tree_sitter::Parser::new();
-                parser
-                    .set_language(&tree_sitter_rust::LANGUAGE.into())
-                    .unwrap();
-                parser.parse("test", None).unwrap()
-            },
-            ranges: vec![(0, 12), (27, 44)],
-            depth: 1,
-            parent_injection_node: None,
-        }];
+        let tree = {
+            let mut parser = tree_sitter::Parser::new();
+            parser
+                .set_language(&tree_sitter_rust::LANGUAGE.into())
+                .unwrap();
+            parser.parse("test", None).unwrap()
+        };
+        let layers = vec![LanguageLayer::injection(
+            "rust".to_string(),
+            tree,
+            vec![(0, 12), (27, 44)],
+        )];
 
         let mapper = InjectionPositionMapper::new(text, &layers);
 

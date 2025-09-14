@@ -1,17 +1,9 @@
-pub mod language_layer;
-pub mod layer_manager;
-pub mod mappers;
-
-// Re-export commonly used types
-pub use language_layer::LanguageLayer;
-pub use layer_manager::LayerManager;
-pub use mappers::{
-    injection_mapper::InjectionPositionMapper,
-    range_mapper::{LayerInfo, RangeMapper},
-    semantic_token_mapper::SemanticTokenMapper,
+// Re-export from new locations for backward compatibility
+pub use crate::document::{
+    InjectionPositionMapper, LayerInfo, PositionMapper, RangeMapper, SemanticTokenMapper,
+    compute_line_starts,
 };
+pub use crate::language::{LanguageLayer, LayerManager};
 
 // Re-export from text module
 pub use crate::text::edit as edit_transform;
-// Re-export from document module
-pub use crate::document::coordinates::{PositionMapper, compute_line_starts};
