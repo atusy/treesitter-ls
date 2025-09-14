@@ -1,4 +1,4 @@
-use super::document::TextDocument;
+use super::text::TextDocument;
 use crate::injection::LayerManager;
 
 /// A parsed document with language layers

@@ -15,7 +15,7 @@ use crate::features::{
 use crate::injection::LanguageLayer;
 use crate::language::{DocumentParserPool, ParserFactory};
 use crate::syntax::tree::position_to_point;
-use crate::workspace::{documents::DocumentStore, languages::LanguageService};
+use crate::workspace::{DocumentStore, languages::LanguageService};
 
 pub struct TreeSitterLs {
     client: Client,

@@ -1,11 +1,10 @@
-pub mod document;
-pub mod edit;
-pub mod with_layers;
-pub mod with_state;
-
-// Re-export commonly used types
-pub use document::TextDocument;
 // Re-export from document module for backward compatibility
-pub use crate::document::coordinates::{PositionMapper, SimplePositionMapper, compute_line_starts};
-pub use with_layers::ParsedDocument;
-pub use with_state::StatefulDocument;
+pub use crate::document::{
+    ParsedDocument, PositionMapper, SimplePositionMapper, StatefulDocument, TextDocument,
+    adjust_ranges_for_edit, compute_line_starts, edit_affects_ranges, transform_edit_for_injection,
+};
+
+// Create edit module re-export for backward compatibility
+pub mod edit {
+    pub use crate::document::edits::*;
+}
