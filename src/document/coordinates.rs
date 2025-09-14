@@ -132,6 +132,59 @@ pub fn compute_line_starts(text: &str) -> Vec<usize> {
     line_starts
 }
 
+/// Convert UTF-16 position to byte position within a line
+/// Returns None if the UTF-16 position is invalid
+#[inline(always)]
+pub fn convert_utf16_to_byte_in_line(line_text: &str, utf16_pos: usize) -> Option<usize> {
+    let mut byte_offset = 0;
+    let mut utf16_offset = 0;
+
+    for ch in line_text.chars() {
+        if utf16_offset >= utf16_pos {
+            return Some(byte_offset);
+        }
+        utf16_offset += ch.len_utf16();
+        byte_offset += ch.len_utf8();
+    }
+
+    // If we reached the end and the position matches exactly, return the end position
+    if utf16_offset == utf16_pos {
+        Some(byte_offset)
+    } else {
+        // Position is beyond the end of the line
+        None
+    }
+}
+
+/// Convert byte position to UTF-16 position within a line
+/// Returns None if the byte position is invalid (e.g., in the middle of a multi-byte character)
+#[inline(always)]
+pub fn convert_byte_to_utf16_in_line(line_text: &str, byte_pos: usize) -> Option<usize> {
+    let mut utf16_offset = 0;
+    let mut byte_count = 0;
+
+    for ch in line_text.chars() {
+        if byte_count == byte_pos {
+            return Some(utf16_offset);
+        }
+        let ch_bytes = ch.len_utf8();
+        if byte_count + ch_bytes > byte_pos {
+            // Position is in the middle of a multi-byte character
+            return None;
+        }
+        byte_count += ch_bytes;
+        utf16_offset += ch.len_utf16();
+    }
+
+    // If we reached the end and the position matches exactly, return the end position
+    if byte_count == byte_pos {
+        Some(utf16_offset)
+    } else {
+        // Position is beyond the end of the line
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,5 +352,70 @@ mod tests {
         let text = "";
         let line_starts = compute_line_starts(text);
         assert_eq!(line_starts, vec![0]);
+    }
+
+    #[test]
+    fn test_convert_utf16_to_byte_in_line() {
+        // ASCII text
+        let text = "hello world";
+        assert_eq!(convert_utf16_to_byte_in_line(text, 0), Some(0));
+        assert_eq!(convert_utf16_to_byte_in_line(text, 5), Some(5));
+        assert_eq!(convert_utf16_to_byte_in_line(text, 11), Some(11));
+        assert_eq!(convert_utf16_to_byte_in_line(text, 12), None); // Beyond end
+
+        // UTF-8 text (Japanese)
+        let text = "世界"; // Each char is 3 bytes in UTF-8, 1 unit in UTF-16
+        assert_eq!(convert_utf16_to_byte_in_line(text, 0), Some(0));
+        assert_eq!(convert_utf16_to_byte_in_line(text, 1), Some(3));
+        assert_eq!(convert_utf16_to_byte_in_line(text, 2), Some(6));
+        assert_eq!(convert_utf16_to_byte_in_line(text, 3), None);
+
+        // Emoji (surrogate pair)
+        let text = "👋"; // 4 bytes in UTF-8, 2 units in UTF-16
+        assert_eq!(convert_utf16_to_byte_in_line(text, 0), Some(0));
+        assert_eq!(convert_utf16_to_byte_in_line(text, 2), Some(4));
+        assert_eq!(convert_utf16_to_byte_in_line(text, 3), None);
+
+        // Mixed text
+        let text = "a世b👋c";
+        assert_eq!(convert_utf16_to_byte_in_line(text, 0), Some(0)); // 'a'
+        assert_eq!(convert_utf16_to_byte_in_line(text, 1), Some(1)); // '世'
+        assert_eq!(convert_utf16_to_byte_in_line(text, 2), Some(4)); // 'b'
+        assert_eq!(convert_utf16_to_byte_in_line(text, 3), Some(5)); // '👋'
+        assert_eq!(convert_utf16_to_byte_in_line(text, 5), Some(9)); // 'c'
+        assert_eq!(convert_utf16_to_byte_in_line(text, 6), Some(10)); // end
+    }
+
+    #[test]
+    fn test_convert_byte_to_utf16_in_line() {
+        // ASCII text
+        let text = "hello world";
+        assert_eq!(convert_byte_to_utf16_in_line(text, 0), Some(0));
+        assert_eq!(convert_byte_to_utf16_in_line(text, 5), Some(5));
+        assert_eq!(convert_byte_to_utf16_in_line(text, 11), Some(11));
+        assert_eq!(convert_byte_to_utf16_in_line(text, 12), None); // Beyond end
+
+        // UTF-8 text (Japanese)
+        let text = "世界"; // Each char is 3 bytes in UTF-8
+        assert_eq!(convert_byte_to_utf16_in_line(text, 0), Some(0));
+        assert_eq!(convert_byte_to_utf16_in_line(text, 3), Some(1));
+        assert_eq!(convert_byte_to_utf16_in_line(text, 6), Some(2));
+        assert_eq!(convert_byte_to_utf16_in_line(text, 1), None); // Middle of char
+        assert_eq!(convert_byte_to_utf16_in_line(text, 2), None); // Middle of char
+
+        // Emoji (surrogate pair)
+        let text = "👋"; // 4 bytes in UTF-8, 2 units in UTF-16
+        assert_eq!(convert_byte_to_utf16_in_line(text, 0), Some(0));
+        assert_eq!(convert_byte_to_utf16_in_line(text, 4), Some(2));
+        assert_eq!(convert_byte_to_utf16_in_line(text, 2), None); // Middle of emoji
+
+        // Mixed text
+        let text = "a世b👋c";
+        assert_eq!(convert_byte_to_utf16_in_line(text, 0), Some(0)); // 'a'
+        assert_eq!(convert_byte_to_utf16_in_line(text, 1), Some(1)); // '世'
+        assert_eq!(convert_byte_to_utf16_in_line(text, 4), Some(2)); // 'b'
+        assert_eq!(convert_byte_to_utf16_in_line(text, 5), Some(3)); // '👋'
+        assert_eq!(convert_byte_to_utf16_in_line(text, 9), Some(5)); // 'c'
+        assert_eq!(convert_byte_to_utf16_in_line(text, 10), Some(6)); // end
     }
 }
