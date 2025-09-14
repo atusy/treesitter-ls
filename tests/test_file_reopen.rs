@@ -3,8 +3,8 @@
 
 use tower_lsp::lsp_types::*;
 use tree_sitter::Parser;
-use treesitter_ls::injection::LanguageLayer;
-use treesitter_ls::workspace::documents::DocumentStore;
+use treesitter_ls::language::LanguageLayer;
+use treesitter_ls::workspace::DocumentStore;
 
 #[test]
 fn test_document_store_reopen_resets_semantic_tokens() {

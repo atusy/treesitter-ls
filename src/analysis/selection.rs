@@ -1,5 +1,5 @@
+use crate::document::store::Document;
 use crate::syntax::tree::{node_to_range, position_to_point};
-use crate::workspace::documents::Document;
 use tower_lsp::lsp_types::{Position, SelectionRange};
 use tree_sitter::Node;
 

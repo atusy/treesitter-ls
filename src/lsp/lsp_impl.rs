@@ -5,13 +5,13 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 use tree_sitter::{InputEdit, Query};
 
-use crate::config::{TreeSitterSettings, merge_settings};
-use crate::document::coordinates::{PositionMapper, SimplePositionMapper};
-use crate::features::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
-use crate::features::{
+use crate::analysis::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
+use crate::analysis::{
     handle_code_actions, handle_goto_definition, handle_selection_range,
     handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
+use crate::config::{TreeSitterSettings, merge_settings};
+use crate::document::coordinates::{PositionMapper, SimplePositionMapper};
 use crate::language::LanguageLayer;
 use crate::language::{DocumentParserPool, ParserFactory};
 use crate::syntax::tree::position_to_point;
@@ -583,7 +583,7 @@ impl LanguageServer for TreeSitterLs {
             // 2. The layered handler may fail to process tokens when queries are not found
             // 3. The original handler is stable and well-tested
             // TODO: Fix semantic_tokens_layered handler when implementing proper injection support
-            crate::features::handle_semantic_tokens_full(
+            crate::analysis::handle_semantic_tokens_full(
                 text,
                 &root_layer.tree,
                 query,
