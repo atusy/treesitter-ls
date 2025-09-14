@@ -1,0 +1,378 @@
+# Contributing to treesitter-ls
+
+Thank you for your interest in contributing to treesitter-ls! This document provides guidelines and information for contributors.
+
+## Table of Contents
+
+- [Development Setup](#development-setup)
+- [Architecture Overview](#architecture-overview)
+- [Directory Structure](#directory-structure)
+- [Development Workflow](#development-workflow)
+- [Testing Guidelines](#testing-guidelines)
+- [Code Style](#code-style)
+- [Commit Guidelines](#commit-guidelines)
+- [Adding New Features](#adding-new-features)
+
+## Development Setup
+
+### Prerequisites
+
+- Rust (latest stable version)
+- Cargo
+- Tree-sitter CLI (optional, for grammar development)
+
+### Building the Project
+
+```bash
+# Build in debug mode
+cargo build
+
+# Build in release mode
+cargo build --release
+# or
+make build
+```
+
+### Running Tests
+
+```bash
+# Run all tests
+cargo test
+# or
+make test
+
+# Run with formatting and linting
+make test format lint
+
+# Run specific test
+cargo test test_name
+
+# Run tests with output
+cargo test -- --nocapture
+```
+
+## Architecture Overview
+
+treesitter-ls follows a **vertical slice architecture** where each module is responsible for a complete feature area. This design was chosen to avoid circular dependencies and maintain clear separation of concerns.
+
+### Design Principles
+
+1. **Single Responsibility**: Each module has one clear purpose
+2. **Vertical Slices**: Features are self-contained within their modules
+3. **Unidirectional Dependencies**: Higher-level modules depend on lower-level ones, never the reverse
+4. **No Circular Dependencies**: Strict dependency hierarchy is maintained
+
+### Key Architectural Decisions
+
+#### Why Vertical Slices?
+
+The initial codebase had several problems:
+- Circular dependencies between `state/` and `treesitter/` modules
+- Upward dependencies (e.g., `layers/` depending on `state/`)
+- Scattered responsibilities across multiple modules
+- "God objects" like `LanguageService` with too many responsibilities
+
+The vertical slice architecture solves these by:
+- Grouping related functionality together
+- Making dependencies explicit and unidirectional
+- Making it easy to find and modify features
+- Simplifying testing by isolating concerns
+
+## Directory Structure
+
+```
+src/
+├── analysis/       # LSP feature implementations (vertical slice)
+│   ├── definition.rs   # Go-to-definition functionality
+│   ├── refactor.rs     # Code actions (parameter reordering)
+│   ├── selection.rs    # Selection range expansion
+│   └── semantic.rs     # Semantic token highlighting
+│
+├── config/         # Configuration management
+│   └── settings.rs     # LSP initialization options parsing
+│
+├── document/       # Document management (vertical slice)
+│   ├── coordinates.rs  # Byte ↔ Position conversions
+│   ├── edits.rs        # Text edit operations
+│   ├── mappers/        # Injection-aware coordinate mapping
+│   │   ├── injection_mapper.rs
+│   │   ├── range_mapper.rs
+│   │   └── semantic_token_mapper.rs
+│   ├── store.rs        # Document storage and lifecycle
+│   ├── text.rs         # Basic text document
+│   ├── with_layers.rs  # Document with language layers
+│   └── with_state.rs   # Document with LSP state (semantic tokens cache)
+│
+├── language/       # Language service (vertical slice)
+│   ├── injection.rs    # Language injection and layer management
+│   ├── loader.rs       # Dynamic parser loading (.so/.dylib files)
+│   ├── parser.rs       # Parser pool and factory
+│   ├── query.rs        # Tree-sitter query execution
+│   └── registry.rs     # Language registry and configuration
+│
+├── lsp/            # LSP server implementation
+│   └── lsp_impl.rs     # LSP protocol handler and message routing
+│
+├── syntax/         # Tree-sitter utilities
+│   ├── loader.rs       # Parser library loading
+│   ├── node.rs         # AST node utilities
+│   ├── parser_pool.rs  # Parser pooling
+│   ├── position.rs     # Position conversions
+│   ├── query.rs        # Query predicates and filters
+│   └── tree.rs         # Tree traversal utilities
+│
+└── workspace/      # Workspace management
+    └── languages.rs    # Language service coordination
+```
+
+### Module Responsibilities
+
+#### `analysis/` - LSP Features
+Each file implements a complete LSP feature:
+- **definition.rs**: Handles `textDocument/definition` requests using Tree-sitter locals queries
+- **semantic.rs**: Provides syntax highlighting via `textDocument/semanticTokens`
+- **selection.rs**: Implements `textDocument/selectionRange` for smart selection
+- **refactor.rs**: Code actions like parameter reordering
+
+#### `document/` - Document Management
+Manages document lifecycle with a three-tier architecture:
+1. **TextDocument** (`text.rs`): Basic text and version tracking
+2. **ParsedDocument** (`with_layers.rs`): Adds parsed language layers
+3. **StatefulDocument** (`with_state.rs`): Adds LSP state (semantic tokens cache)
+
+The `mappers/` subdirectory handles coordinate mapping for language injections (e.g., Markdown in Rust doc comments).
+
+#### `language/` - Language Services
+Handles all language-specific operations:
+- **registry.rs**: Central registry of available languages
+- **parser.rs**: Parser pooling for performance
+- **injection.rs**: Manages language layers and injections
+- **query.rs**: Executes Tree-sitter queries for highlights and locals
+
+#### `syntax/` - Tree-sitter Utilities
+Low-level Tree-sitter operations shared across modules:
+- Node traversal and manipulation
+- Position conversions
+- Query execution helpers
+
+### Design Rationale
+
+#### Coordinate Mapping Consolidation
+Initially, coordinate conversion logic was scattered across multiple modules. We consolidated it into `document/coordinates.rs` because coordinate mapping is fundamentally a document concern.
+
+#### Injection System Design
+Language injections (like code blocks in Markdown) are split between:
+- `document/mappers/`: Coordinate mapping between layers (document responsibility)
+- `language/injection.rs`: Layer management (language service responsibility)
+
+This separation ensures each module maintains its single responsibility.
+
+#### Parser Pool Unification
+We unified parser management into a single `DocumentParserPool` to:
+- Avoid duplicate parser instances
+- Reduce memory usage
+- Simplify parser lifecycle management
+
+## Development Workflow
+
+### Adding a New LSP Feature
+
+1. Create a new file in `src/analysis/`
+2. Implement the feature handler
+3. Add the handler to `src/lsp/lsp_impl.rs`
+4. Write tests in the same file or in `tests/`
+
+Example structure for a new feature:
+```rust
+// src/analysis/my_feature.rs
+pub fn handle_my_feature(
+    document: &StatefulDocument,
+    params: MyFeatureParams,
+) -> Option<MyFeatureResponse> {
+    // Implementation
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_my_feature() {
+        // Test implementation
+    }
+}
+```
+
+### Adding Language Support
+
+1. Obtain or build the Tree-sitter parser library (.so/.dylib)
+2. Create query files:
+   - `queries/<language>/highlights.scm` for syntax highlighting
+   - `queries/<language>/locals.scm` for go-to-definition
+3. Configure the language in initialization options:
+```json
+{
+  "languages": {
+    "my_lang": {
+      "filetypes": ["ml", "mli"],
+      "library": "/path/to/my_lang.so"
+    }
+  }
+}
+```
+
+## Testing Guidelines
+
+### Test Organization
+
+- **Unit tests**: Colocated with implementation in `#[cfg(test)]` modules
+- **Integration tests**: In the `tests/` directory
+- **Test utilities**: Shared test helpers in test modules
+
+### Writing Tests
+
+Follow the TDD approach:
+1. Write a failing test that defines the desired behavior
+2. Implement the minimum code to make it pass
+3. Refactor while keeping tests green
+
+Example test structure:
+```rust
+#[test]
+fn test_semantic_tokens_with_injections() {
+    // Arrange
+    let text = "fn main() { /* comment */ }";
+    let document = create_test_document(text);
+
+    // Act
+    let tokens = handle_semantic_tokens(&document);
+
+    // Assert
+    assert!(tokens.is_some());
+    assert_eq!(tokens.unwrap().data.len(), expected_count);
+}
+```
+
+### Running Specific Tests
+
+```bash
+# Run tests for a specific module
+cargo test analysis::
+
+# Run a single test
+cargo test test_semantic_tokens_with_injections
+
+# Run tests with debug output
+cargo test -- --nocapture --test-threads=1
+```
+
+## Code Style
+
+### Rust Guidelines
+
+- Follow standard Rust naming conventions
+- Use `rustfmt` for formatting (`cargo fmt`)
+- Use `clippy` for linting (`cargo clippy -- -D warnings`)
+- Prefer explicit types for public APIs
+- Document public items with doc comments
+
+### Code Organization
+
+- Keep modules focused on a single responsibility
+- Prefer composition over inheritance
+- Use the type system to make illegal states unrepresentable
+- Minimize mutable state
+
+### Error Handling
+
+- Use `Option` for operations that might not produce a value
+- Use `Result` for operations that might fail with an error
+- Provide context in error messages
+- Avoid `unwrap()` except in tests or when impossible to fail
+
+## Commit Guidelines
+
+### Commit Message Format
+
+```
+<type>(<scope>): <brief description>
+
+<detailed description>
+
+<footer>
+```
+
+Types:
+- `feat`: New feature
+- `fix`: Bug fix
+- `refactor`: Code restructuring without behavior change
+- `test`: Test additions or modifications
+- `docs`: Documentation changes
+- `perf`: Performance improvements
+- `chore`: Maintenance tasks
+
+Example:
+```
+refactor(document): consolidate coordinate mapping
+
+Move all coordinate conversion logic to document/coordinates.rs
+to maintain single responsibility and avoid duplication.
+
+All tests passing.
+```
+
+### Commit Best Practices
+
+1. Make atomic commits (one logical change per commit)
+2. Ensure all tests pass before committing
+3. Run `make test format lint` before committing
+4. Write clear, descriptive commit messages
+5. Reference issues when applicable
+
+## Adding New Features
+
+### Checklist for New Features
+
+- [ ] Design follows vertical slice architecture
+- [ ] No circular dependencies introduced
+- [ ] Unit tests written and passing
+- [ ] Integration tests added if applicable
+- [ ] Documentation updated
+- [ ] Code formatted with `rustfmt`
+- [ ] No `clippy` warnings
+- [ ] Commit message follows guidelines
+
+### Feature Development Process
+
+1. **Design Phase**
+   - Identify which vertical slice the feature belongs to
+   - Define clear interfaces and dependencies
+   - Consider injection and multi-language support
+
+2. **Implementation Phase**
+   - Write tests first (TDD)
+   - Implement incrementally
+   - Keep commits atomic and well-documented
+
+3. **Review Phase**
+   - Self-review for code quality
+   - Ensure tests cover edge cases
+   - Update documentation
+
+### Performance Considerations
+
+- Use parser pools to avoid recreating parsers
+- Cache query compilation results
+- Be mindful of large document performance
+- Profile before optimizing
+
+## Questions and Support
+
+If you have questions about contributing:
+
+1. Check existing issues and discussions
+2. Look at similar features for examples
+3. Open an issue for design discussions
+4. Ask in pull request comments
+
+Thank you for contributing to treesitter-ls!
