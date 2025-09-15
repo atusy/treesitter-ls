@@ -86,43 +86,35 @@ src/
 │   ├── definition.rs   # Go-to-definition functionality
 │   ├── refactor.rs     # Code actions (parameter reordering)
 │   ├── selection.rs    # Selection range expansion
-│   └── semantic.rs     # Semantic token highlighting
+│   ├── semantic.rs     # Semantic token highlighting
+│   └── traits.rs       # AnalysisContext trait for dependency inversion
+│
+├── bin/            # Binary entry point
+│   └── main.rs         # Application startup and initialization
 │
 ├── config/         # Configuration management
 │   └── settings.rs     # LSP initialization options parsing
 │
 ├── document/       # Document management (vertical slice)
-│   ├── coordinates.rs  # Byte ↔ Position conversions
-│   ├── edits.rs        # Text edit operations
-│   ├── mappers/        # Injection-aware coordinate mapping
-│   │   ├── injection_mapper.rs
-│   │   ├── range_mapper.rs
-│   │   └── semantic_token_mapper.rs
-│   ├── store.rs        # Document storage and lifecycle
-│   ├── text.rs         # Basic text document
-│   ├── with_layers.rs  # Document with language layers
-│   └── with_state.rs   # Document with LSP state (semantic tokens cache)
+│   ├── injection_mapper.rs  # Coordinate mapping for language injections
+│   ├── layer.rs        # LanguageLayer structure for parsed trees
+│   ├── layer_manager.rs # Root and injection layer management
+│   ├── model.rs        # Unified Document struct (implements AnalysisContext)
+│   └── store.rs        # Thread-safe document storage with DashMap
 │
 ├── language/       # Language service (vertical slice)
-│   ├── injection.rs    # Language injection and layer management
 │   ├── loader.rs       # Dynamic parser loading (.so/.dylib files)
-│   ├── parser.rs       # Parser pool and factory
+│   ├── parser_pool.rs  # Parser pooling and factory
 │   ├── query.rs        # Tree-sitter query execution
-│   └── registry.rs     # Language registry and configuration
+│   ├── registry.rs     # Language registry and configuration
+│   └── service.rs      # Central LanguageService with facade methods
 │
 ├── lsp/            # LSP server implementation
-│   └── lsp_impl.rs     # LSP protocol handler and message routing
+│   └── lsp_impl.rs     # LSP protocol handler and orchestration
 │
-├── syntax/         # Tree-sitter utilities
-│   ├── loader.rs       # Parser library loading
-│   ├── node.rs         # AST node utilities
-│   ├── parser_pool.rs  # Parser pooling
-│   ├── position.rs     # Position conversions
-│   ├── query.rs        # Query predicates and filters
-│   └── tree.rs         # Tree traversal utilities
-│
-└── workspace/      # Workspace management
-    └── languages.rs    # Language service coordination
+└── text/           # Text manipulation utilities
+    ├── edits.rs        # Text edit operations and range adjustments
+    └── position.rs     # Coordinate conversions (byte ↔ Position)
 ```
 
 ### Module Responsibilities
