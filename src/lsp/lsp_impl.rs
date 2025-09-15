@@ -12,10 +12,8 @@ use crate::analysis::{
     handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
 use crate::config::{TreeSitterSettings, merge_settings};
-use crate::document::DocumentStore;
+use crate::document::{DocumentStore, LanguageLayer};
 use crate::language::LanguageService;
-use crate::document::LanguageLayer;
-use crate::language::{DocumentParserPool, ParserFactory};
 use crate::text::{PositionMapper, SimplePositionMapper};
 
 pub struct TreeSitterLs {
@@ -23,7 +21,6 @@ pub struct TreeSitterLs {
     language_service: Arc<LanguageService>,
     document_store: DocumentStore,
     root_path: Mutex<Option<PathBuf>>,
-    parser_factory: Arc<ParserFactory>,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -38,13 +35,11 @@ impl std::fmt::Debug for TreeSitterLs {
 impl TreeSitterLs {
     pub fn new(client: Client) -> Self {
         let language_service = Arc::new(LanguageService::new());
-        let parser_factory = language_service.create_parser_factory();
         Self {
             client,
             language_service,
             document_store: DocumentStore::new(),
             root_path: Mutex::new(None),
-            parser_factory,
         }
     }
 
@@ -105,12 +100,12 @@ impl TreeSitterLs {
 
             if needs_pool_init {
                 // Initialize parser pool for new documents or documents without a pool
-                let parser_pool = DocumentParserPool::new(self.parser_factory.clone());
+                let parser_pool = self.language_service.create_document_parser_pool();
                 self.document_store.init_parser_pool(&uri, parser_pool);
             }
 
             // Create a parser for this parse operation
-            let parser = self.parser_factory.create_parser(&language_name);
+            let parser = self.language_service.create_parser(&language_name);
             if let Some(mut parser) = parser {
                 // Get old tree for incremental parsing if document exists
                 let old_tree = if !edits.is_empty() {

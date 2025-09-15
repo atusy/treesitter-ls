@@ -625,4 +625,16 @@ impl LanguageService {
     pub fn get_capture_mappings(&self) -> CaptureMappings {
         self.capture_mappings.lock().unwrap().clone()
     }
+
+    /// Create a new document parser pool
+    pub fn create_document_parser_pool(&self) -> crate::language::DocumentParserPool {
+        let parser_factory = self.create_parser_factory();
+        crate::language::DocumentParserPool::new(parser_factory)
+    }
+
+    /// Create a parser for a specific language
+    pub fn create_parser(&self, language_name: &str) -> Option<tree_sitter::Parser> {
+        let parser_factory = self.create_parser_factory();
+        parser_factory.create_parser(language_name)
+    }
 }
