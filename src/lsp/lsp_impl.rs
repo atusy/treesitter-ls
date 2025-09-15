@@ -59,7 +59,7 @@ impl TreeSitterLs {
 
         // Find the language for this file extension
         let language_name = {
-            let filetype_map = self.language_service.filetype_map.lock().unwrap();
+            let filetype_map = self.language_service.get_filetype_map();
             filetype_map.get(extension).cloned()
         };
 
@@ -81,10 +81,7 @@ impl TreeSitterLs {
 
                 // If language was dynamically loaded, check if queries are also loaded
                 if loaded {
-                    let has_queries = {
-                        let queries = self.language_service.queries.lock().unwrap();
-                        queries.contains_key(&language_name)
-                    };
+                    let has_queries = self.language_service.has_queries(&language_name);
 
                     // If queries are loaded, request semantic tokens refresh
                     if has_queries && self.client.semantic_tokens_refresh().await.is_ok() {

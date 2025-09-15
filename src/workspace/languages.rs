@@ -614,4 +614,14 @@ impl LanguageService {
     pub fn get_highlight_query(&self, lang_name: &str) -> Option<Arc<Query>> {
         self.queries.lock().unwrap().get(lang_name).cloned()
     }
+
+    /// Get locals query for a language
+    pub fn get_locals_query(&self, lang_name: &str) -> Option<Arc<Query>> {
+        self.locals_queries.lock().unwrap().get(lang_name).cloned()
+    }
+
+    /// Get capture mappings
+    pub fn get_capture_mappings(&self) -> CaptureMappings {
+        self.capture_mappings.lock().unwrap().clone()
+    }
 }
