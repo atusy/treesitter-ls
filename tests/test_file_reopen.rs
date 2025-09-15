@@ -3,7 +3,7 @@
 
 use tower_lsp::lsp_types::*;
 use tree_sitter::Parser;
-use treesitter_ls::language::LanguageLayer;
+use treesitter_ls::document::LanguageLayer;
 use treesitter_ls::workspace::DocumentStore;
 
 #[test]

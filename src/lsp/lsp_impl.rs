@@ -13,7 +13,7 @@ use crate::analysis::{
 };
 use crate::config::{TreeSitterSettings, merge_settings};
 use crate::document::coordinates::{PositionMapper, SimplePositionMapper};
-use crate::language::LanguageLayer;
+use crate::document::LanguageLayer;
 use crate::language::{DocumentParserPool, ParserFactory};
 use crate::workspace::{DocumentStore, languages::LanguageService};
 

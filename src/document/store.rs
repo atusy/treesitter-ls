@@ -1,5 +1,5 @@
-use crate::document::Document;
-use crate::language::{DocumentParserPool, LanguageLayer};
+use crate::document::{Document, LanguageLayer};
+use crate::language::DocumentParserPool;
 use dashmap::DashMap;
 use tower_lsp::lsp_types::{SemanticTokens, Url};
 use tree_sitter::{InputEdit, Tree};
