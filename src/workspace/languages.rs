@@ -12,9 +12,9 @@ use tree_sitter::{Language, Query};
 
 pub struct LanguageService {
     pub language_registry: Arc<LanguageRegistry>,
-    pub queries: Mutex<HashMap<String, Query>>,
-    pub locals_queries: Mutex<HashMap<String, Query>>,
-    pub injections_queries: Mutex<HashMap<String, Query>>,
+    pub queries: Mutex<HashMap<String, Arc<Query>>>,
+    pub locals_queries: Mutex<HashMap<String, Arc<Query>>>,
+    pub injections_queries: Mutex<HashMap<String, Arc<Query>>>,
     pub language_configs: Mutex<HashMap<String, LanguageConfig>>,
     pub filetype_map: Mutex<HashMap<String, String>>,
     pub library_loader: Mutex<ParserLoader>,
@@ -232,7 +232,7 @@ impl LanguageService {
                         self.queries
                             .lock()
                             .unwrap()
-                            .insert(lang_name.to_string(), query);
+                            .insert(lang_name.to_string(), Arc::new(query));
                         client
                             .log_message(
                                 MessageType::INFO,
@@ -272,7 +272,7 @@ impl LanguageService {
                         self.queries
                             .lock()
                             .unwrap()
-                            .insert(lang_name.to_string(), query);
+                            .insert(lang_name.to_string(), Arc::new(query));
                         client
                             .log_message(
                                 MessageType::INFO,
@@ -324,7 +324,7 @@ impl LanguageService {
                     self.locals_queries
                         .lock()
                         .unwrap()
-                        .insert(lang_name.to_string(), locals_query);
+                        .insert(lang_name.to_string(), Arc::new(locals_query));
                     client
                         .log_message(
                             MessageType::INFO,
@@ -375,7 +375,7 @@ impl LanguageService {
                         self.locals_queries
                             .lock()
                             .unwrap()
-                            .insert(lang_name.to_string(), query);
+                            .insert(lang_name.to_string(), Arc::new(query));
                         client
                             .log_message(
                                 MessageType::INFO,
@@ -414,7 +414,7 @@ impl LanguageService {
                         self.injections_queries
                             .lock()
                             .unwrap()
-                            .insert(lang_name.to_string(), query);
+                            .insert(lang_name.to_string(), Arc::new(query));
                         client
                             .log_message(
                                 MessageType::INFO,
@@ -519,7 +519,7 @@ impl LanguageService {
                     self.queries
                         .lock()
                         .unwrap()
-                        .insert(lang_name.to_string(), query);
+                        .insert(lang_name.to_string(), Arc::new(query));
                     client
                         .log_message(
                             MessageType::INFO,
@@ -537,7 +537,7 @@ impl LanguageService {
                     self.locals_queries
                         .lock()
                         .unwrap()
-                        .insert(lang_name.to_string(), query);
+                        .insert(lang_name.to_string(), Arc::new(query));
                     client
                         .log_message(
                             MessageType::INFO,
@@ -556,7 +556,7 @@ impl LanguageService {
                     self.injections_queries
                         .lock()
                         .unwrap()
-                        .insert(lang_name.to_string(), query);
+                        .insert(lang_name.to_string(), Arc::new(query));
                     client
                         .log_message(
                             MessageType::INFO,
@@ -598,5 +598,20 @@ impl LanguageService {
                 false
             }
         }
+    }
+
+    /// Get a copy of the filetype map
+    pub fn get_filetype_map(&self) -> HashMap<String, String> {
+        self.filetype_map.lock().unwrap().clone()
+    }
+
+    /// Check if queries exist for a language
+    pub fn has_queries(&self, lang_name: &str) -> bool {
+        self.queries.lock().unwrap().contains_key(lang_name)
+    }
+
+    /// Get highlight query for a language
+    pub fn get_highlight_query(&self, lang_name: &str) -> Option<Arc<Query>> {
+        self.queries.lock().unwrap().get(lang_name).cloned()
     }
 }
