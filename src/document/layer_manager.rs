@@ -91,7 +91,7 @@ impl LayerManager {
         layer: &LanguageLayer,
     ) -> Option<InputEdit> {
         if layer.is_root() {
-            return Some(edit.clone());
+            return Some(*edit);
         }
 
         if !layer.ranges.is_empty() {
@@ -122,11 +122,10 @@ impl LayerManager {
         }
 
         // Fall back to root layer
-        if let Some(root) = &self.root_layer {
-            if root.contains_offset(byte_offset) {
+        if let Some(root) = &self.root_layer
+            && root.contains_offset(byte_offset) {
                 return Some(root);
             }
-        }
 
         None
     }
