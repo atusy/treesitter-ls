@@ -1,4 +1,4 @@
-use crate::syntax::LanguageLayer;
+use crate::document::LanguageLayer;
 use crate::text::{adjust_ranges_for_edit, edit_affects_ranges, transform_edit_for_injection};
 use tree_sitter::{InputEdit, Tree};
 

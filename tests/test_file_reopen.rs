@@ -4,7 +4,7 @@
 use tower_lsp::lsp_types::*;
 use tree_sitter::Parser;
 use treesitter_ls::document::DocumentStore;
-use treesitter_ls::syntax::LanguageLayer;
+use treesitter_ls::document::LanguageLayer;
 
 #[test]
 fn test_document_store_reopen_resets_semantic_tokens() {

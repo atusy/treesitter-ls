@@ -1,10 +1,10 @@
 // Test that LanguageLayer is accessible from document module
-use treesitter_ls::syntax::LanguageLayer;
+use treesitter_ls::document::LanguageLayer;
 
 #[test]
 fn test_language_layer_should_be_in_document_module() {
     // Red: LanguageLayer should be in document module
-    // This test will initially fail because LanguageLayer is currently in language module
+    // LanguageLayer is now correctly in document module
 
     // Create a simple tree for testing
     let language = tree_sitter_rust::LANGUAGE.into();

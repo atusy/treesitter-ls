@@ -1,5 +1,5 @@
 // Test that LayerManager does not depend on DocumentParserPool
-use treesitter_ls::syntax::LanguageLayer;
+use treesitter_ls::document::LanguageLayer;
 
 #[test]
 fn test_layer_manager_should_not_have_parser_pool() {

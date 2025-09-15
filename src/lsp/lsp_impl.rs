@@ -14,7 +14,8 @@ use crate::analysis::{
 use crate::config::{TreeSitterSettings, merge_settings};
 use crate::document::DocumentStore;
 use crate::language::LanguageService;
-use crate::syntax::{DocumentParserPool, LanguageLayer, ParserFactory};
+use crate::document::LanguageLayer;
+use crate::syntax::{DocumentParserPool, ParserFactory};
 use crate::text::{PositionMapper, SimplePositionMapper};
 
 pub struct TreeSitterLs {
