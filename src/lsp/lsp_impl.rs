@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
-use tree_sitter::{InputEdit, Query};
+use tree_sitter::InputEdit;
 
 use crate::analysis::selection::position_to_point;
 use crate::analysis::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
@@ -342,8 +342,7 @@ impl LanguageServer for TreeSitterLs {
         // Check if queries are ready for the document
         if let Some(language_name) = self.get_language_for_document(&uri) {
             let has_queries = {
-                let queries = self.language_service.queries.lock().unwrap();
-                queries.contains_key(&language_name)
+                self.language_service.has_queries(&language_name)
             };
 
             if has_queries {
@@ -537,8 +536,7 @@ impl LanguageServer for TreeSitterLs {
                 data: vec![],
             })));
         };
-        let queries = self.language_service.queries.lock().unwrap();
-        let Some(query) = queries.get(&language_name) else {
+        let Some(query) = self.language_service.get_highlight_query(&language_name) else {
             return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                 result_id: None,
                 data: vec![],
@@ -562,7 +560,7 @@ impl LanguageServer for TreeSitterLs {
             };
 
             // Get capture mappings
-            let capture_mappings = self.language_service.capture_mappings.lock().unwrap();
+            let capture_mappings = self.language_service.get_capture_mappings();
 
             // NOTE: We use the original handler instead of the layered version because:
             // 1. The layered handler has incomplete injection support (positions not mapped)
@@ -572,9 +570,9 @@ impl LanguageServer for TreeSitterLs {
             crate::analysis::handle_semantic_tokens_full(
                 text,
                 &root_layer.tree,
-                query,
+                &query,
                 Some(&language_name),
-                Some(&*capture_mappings),
+                Some(&capture_mappings),
             )
             .or_else(|| {
                 Some(SemanticTokensResult::Tokens(SemanticTokens {
@@ -622,8 +620,7 @@ impl LanguageServer for TreeSitterLs {
             )));
         };
 
-        let queries = self.language_service.queries.lock().unwrap();
-        let Some(query) = queries.get(&language_name) else {
+        let Some(query) = self.language_service.get_highlight_query(&language_name) else {
             return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
                 SemanticTokens {
                     result_id: None,
@@ -657,17 +654,17 @@ impl LanguageServer for TreeSitterLs {
             let previous_tokens = doc.last_semantic_tokens();
 
             // Get capture mappings
-            let capture_mappings = self.language_service.capture_mappings.lock().unwrap();
+            let capture_mappings = self.language_service.get_capture_mappings();
 
             // Delegate to handler
             handle_semantic_tokens_full_delta(
                 text,
                 &root_layer.tree,
-                query,
+                &query,
                 &previous_result_id,
                 previous_tokens,
                 Some(&language_name),
-                Some(&*capture_mappings),
+                Some(&capture_mappings),
             )
         }; // doc reference is dropped here
 
@@ -706,8 +703,7 @@ impl LanguageServer for TreeSitterLs {
             })));
         };
 
-        let queries = self.language_service.queries.lock().unwrap();
-        let Some(query) = queries.get(&language_name) else {
+        let Some(query) = self.language_service.get_highlight_query(&language_name) else {
             return Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
                 result_id: None,
                 data: vec![],
@@ -731,15 +727,15 @@ impl LanguageServer for TreeSitterLs {
 
         // Delegate to handler
         // Get capture mappings
-        let capture_mappings = self.language_service.capture_mappings.lock().unwrap();
+        let capture_mappings = self.language_service.get_capture_mappings();
 
         let result = handle_semantic_tokens_range(
             text,
             &root_layer.tree,
-            query,
+            &query,
             &range,
             Some(&language_name),
-            Some(&*capture_mappings),
+            Some(&capture_mappings),
         );
 
         // Convert to RangeResult
@@ -767,8 +763,7 @@ impl LanguageServer for TreeSitterLs {
         };
 
         // Get locals query
-        let locals_queries = self.language_service.locals_queries.lock().unwrap();
-        let Some(locals_query) = locals_queries.get(&language_name) else {
+        let Some(locals_query) = self.language_service.get_locals_query(&language_name) else {
             return Ok(None);
         };
 
@@ -783,7 +778,7 @@ impl LanguageServer for TreeSitterLs {
             &resolver,
             &doc,
             position,
-            locals_query,
+            &locals_query,
             &uri,
         ))
     }
@@ -821,17 +816,17 @@ impl LanguageServer for TreeSitterLs {
         let language_name = self.get_language_for_document(&uri);
 
         // Get capture mappings
-        let capture_mappings = self.language_service.capture_mappings.lock().unwrap();
+        let capture_mappings = self.language_service.get_capture_mappings();
 
         // Get queries and delegate to handler
         if let Some(lang) = language_name.clone() {
-            let queries_lock = self.language_service.queries.lock().unwrap();
-            let locals_queries_lock = self.language_service.locals_queries.lock().unwrap();
+            let highlight_query = self.language_service.get_highlight_query(&lang);
+            let locals_query = self.language_service.get_locals_query(&lang);
 
-            let queries = queries_lock.get(&lang).map(|hq| {
+            let queries = highlight_query.as_ref().map(|hq| {
                 (
-                    hq as &Query,
-                    locals_queries_lock.get(&lang).map(|lq| lq as &Query),
+                    hq.as_ref(),
+                    locals_query.as_ref().map(|lq| lq.as_ref()),
                 )
             });
 
@@ -842,7 +837,7 @@ impl LanguageServer for TreeSitterLs {
                 range,
                 queries,
                 language_name.as_deref(),
-                Some(&*capture_mappings),
+                Some(&capture_mappings),
             );
             Ok(actions)
         } else {
