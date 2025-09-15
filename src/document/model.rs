@@ -1,4 +1,4 @@
-use crate::language::LayerManager;
+use crate::document::LayerManager;
 use tower_lsp::lsp_types::SemanticTokens;
 
 /// Unified document structure combining text, parsing, and LSP state
@@ -132,7 +132,7 @@ mod tests {
 
         assert_eq!(doc.text(), "fn main() {}");
         assert!(doc.layers().root_layer().is_some());
-        assert_eq!(doc.layers().get_language_id(), Some(&"rust".to_string()));
+        assert_eq!(doc.layers().get_language_id(), Some("rust"));
     }
 
     #[test]

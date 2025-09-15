@@ -109,7 +109,7 @@ fn test_document_store_update_preserves_semantic_tokens() {
             "Semantic tokens are reset on update_document"
         );
         assert_eq!(
-            doc.layers().get_language_id().map(|s| s.as_str()),
+            doc.layers().get_language_id(),
             Some("rust"),
             "Language should be preserved"
         );

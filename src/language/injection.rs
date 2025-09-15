@@ -1,7 +1,7 @@
 use crate::document::{adjust_ranges_for_edit, edit_affects_ranges, transform_edit_for_injection};
 use crate::document::LanguageLayer;
 use crate::language::DocumentParserPool;
-use tree_sitter::{InputEdit, Parser, Range, Tree};
+use tree_sitter::{InputEdit, Parser, Tree};
 
 /// Manages language layers for a document, including root and injection layers
 pub struct LayerManager {

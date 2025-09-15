@@ -99,7 +99,7 @@ impl TreeSitterLs {
             let needs_pool_init = self
                 .document_store
                 .get(&uri)
-                .map(|doc| !doc.layers().has_parser_pool())
+                .map(|doc| !doc.layers().has_root())
                 .unwrap_or(true);
 
             if needs_pool_init {

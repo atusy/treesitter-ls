@@ -66,7 +66,7 @@ impl DocumentStore {
         let language_id = self
             .documents
             .get(&uri)
-            .and_then(|doc| doc.layers().get_language_id().cloned());
+            .and_then(|doc| doc.layers().get_language_id().map(|s| s.to_string()));
 
         if let Some(language_id) = language_id {
             let new_doc = Document::with_root_layer(text, language_id, tree);
@@ -136,7 +136,7 @@ mod tests {
         // Language info should be preserved
         let doc = store.get(&uri).unwrap();
         assert_eq!(doc.text(), text2);
-        assert_eq!(doc.layers().get_language_id(), Some(&"rust".to_string()));
+        assert_eq!(doc.layers().get_language_id(), Some("rust"));
     }
 
     #[test]
