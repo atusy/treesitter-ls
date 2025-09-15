@@ -12,10 +12,10 @@ use crate::analysis::{
     handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
 use crate::config::{TreeSitterSettings, merge_settings};
-use crate::document::coordinates::{PositionMapper, SimplePositionMapper};
-use crate::document::LanguageLayer;
-use crate::language::{DocumentParserPool, ParserFactory};
-use crate::workspace::{DocumentStore, languages::LanguageService};
+use crate::document::DocumentStore;
+use crate::language::LanguageService;
+use crate::syntax::{DocumentParserPool, LanguageLayer, ParserFactory};
+use crate::text::{PositionMapper, SimplePositionMapper};
 
 pub struct TreeSitterLs {
     client: Client,
@@ -341,9 +341,7 @@ impl LanguageServer for TreeSitterLs {
 
         // Check if queries are ready for the document
         if let Some(language_name) = self.get_language_for_document(&uri) {
-            let has_queries = {
-                self.language_service.has_queries(&language_name)
-            };
+            let has_queries = { self.language_service.has_queries(&language_name) };
 
             if has_queries {
                 // Always request semantic tokens refresh on file open
@@ -819,12 +817,9 @@ impl LanguageServer for TreeSitterLs {
             let highlight_query = self.language_service.get_highlight_query(&lang);
             let locals_query = self.language_service.get_locals_query(&lang);
 
-            let queries = highlight_query.as_ref().map(|hq| {
-                (
-                    hq.as_ref(),
-                    locals_query.as_ref().map(|lq| lq.as_ref()),
-                )
-            });
+            let queries = highlight_query
+                .as_ref()
+                .map(|hq| (hq.as_ref(), locals_query.as_ref().map(|lq| lq.as_ref())));
 
             let actions = handle_code_actions(
                 &uri,

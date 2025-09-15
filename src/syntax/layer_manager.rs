@@ -1,4 +1,5 @@
-use crate::document::{LanguageLayer, adjust_ranges_for_edit, edit_affects_ranges, transform_edit_for_injection};
+use crate::syntax::LanguageLayer;
+use crate::text::{adjust_ranges_for_edit, edit_affects_ranges, transform_edit_for_injection};
 use tree_sitter::{InputEdit, Tree};
 
 /// Manages language layers for a document without parser pool dependency
@@ -123,9 +124,10 @@ impl LayerManager {
 
         // Fall back to root layer
         if let Some(root) = &self.root_layer
-            && root.contains_offset(byte_offset) {
-                return Some(root);
-            }
+            && root.contains_offset(byte_offset)
+        {
+            return Some(root);
+        }
 
         None
     }
@@ -143,7 +145,7 @@ impl LayerManager {
 
     /// Deprecated: Parser pool is now managed separately
     /// This method is kept for backward compatibility but does nothing
-    pub fn set_parser_pool(&mut self, _pool: crate::language::DocumentParserPool) {
+    pub fn set_parser_pool(&mut self, _pool: crate::syntax::DocumentParserPool) {
         // Parser pool is now managed at a different level
         // This method is kept only for compatibility
     }

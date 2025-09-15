@@ -1,5 +1,5 @@
-use treesitter_ls::workspace::languages::LanguageService;
 use std::collections::HashMap;
+use treesitter_ls::language::LanguageService;
 
 #[test]
 fn test_language_service_should_provide_filetype_map_access() {

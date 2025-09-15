@@ -235,4 +235,104 @@ mod tests {
         // Edit spanning both ranges
         assert!(edit_affects_ranges(&create_edit(15, 35, 20), &ranges));
     }
+
+    // Additional edge case tests
+
+    #[test]
+    fn test_adjust_ranges_boundary_exact_start() {
+        let mut ranges = vec![(10, 20), (30, 40)];
+        let edit = create_edit(10, 10, 15); // Insert at exact start of first range
+
+        adjust_ranges_for_edit(&mut ranges, &edit);
+
+        assert_eq!(ranges, vec![(15, 25), (35, 45)]);
+    }
+
+    #[test]
+    fn test_adjust_ranges_boundary_exact_end() {
+        let mut ranges = vec![(10, 20), (30, 40)];
+        let edit = create_edit(20, 20, 25); // Insert at exact end of first range
+
+        adjust_ranges_for_edit(&mut ranges, &edit);
+
+        assert_eq!(ranges, vec![(10, 20), (35, 45)]);
+    }
+
+    #[test]
+    fn test_adjust_ranges_delete_entire_range() {
+        let mut ranges = vec![(10, 20), (30, 40), (50, 60)];
+        let edit = create_edit(10, 20, 10); // Delete entire first range
+
+        adjust_ranges_for_edit(&mut ranges, &edit);
+
+        assert_eq!(ranges, vec![(20, 30), (40, 50)]);
+    }
+
+    #[test]
+    fn test_adjust_ranges_delete_multiple_ranges() {
+        let mut ranges = vec![(10, 20), (30, 40), (50, 60)];
+        let edit = create_edit(5, 55, 5); // Delete across multiple ranges
+
+        adjust_ranges_for_edit(&mut ranges, &edit);
+
+        assert_eq!(ranges, vec![(5, 10)]);
+    }
+
+    #[test]
+    fn test_adjust_ranges_zero_length_removal() {
+        let mut ranges = vec![(10, 20), (30, 40)];
+        let edit = create_edit(15, 25, 15); // Delete creates zero-length range
+
+        adjust_ranges_for_edit(&mut ranges, &edit);
+
+        // Should remove any zero-length ranges
+        assert_eq!(ranges.len(), 2);
+        assert!(ranges.iter().all(|(s, e)| s < e));
+    }
+
+    #[test]
+    fn test_transform_edit_across_range_boundary() {
+        let edit = create_edit(25, 35, 40); // Edit spans from first to second range
+        let ranges = vec![(10, 30), (40, 60)];
+
+        let transformed = transform_edit_for_injection(&edit, &ranges);
+        assert!(transformed.is_some());
+        let transformed = transformed.unwrap();
+        assert_eq!(transformed.start_byte, 15); // 25 - 10
+        assert_eq!(transformed.old_end_byte, 20); // Clamped to range end
+    }
+
+    #[test]
+    fn test_transform_edit_empty_ranges() {
+        let edit = create_edit(10, 15, 20);
+        let ranges = vec![];
+
+        let transformed = transform_edit_for_injection(&edit, &ranges);
+        assert!(transformed.is_some());
+        assert_eq!(transformed.unwrap().start_byte, 10);
+    }
+
+    #[test]
+    fn test_adjust_ranges_replace_text() {
+        let mut ranges = vec![(10, 20), (30, 40)];
+        let edit = create_edit(15, 18, 25); // Replace 3 bytes with 10 bytes
+
+        adjust_ranges_for_edit(&mut ranges, &edit);
+
+        assert_eq!(ranges, vec![(10, 27), (37, 47)]);
+    }
+
+    #[test]
+    fn test_edit_affects_ranges_boundary_cases() {
+        let ranges = vec![(10, 20)];
+
+        // Edit exactly at start boundary
+        assert!(edit_affects_ranges(&create_edit(10, 15, 20), &ranges));
+
+        // Edit exactly at end boundary (should not affect)
+        assert!(!edit_affects_ranges(&create_edit(20, 25, 30), &ranges));
+
+        // Edit touching both boundaries
+        assert!(edit_affects_ranges(&create_edit(10, 20, 25), &ranges));
+    }
 }

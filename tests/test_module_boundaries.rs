@@ -1,5 +1,5 @@
 // Test that LanguageLayer is accessible from document module
-use treesitter_ls::document::LanguageLayer;
+use treesitter_ls::syntax::LanguageLayer;
 
 #[test]
 fn test_language_layer_should_be_in_document_module() {

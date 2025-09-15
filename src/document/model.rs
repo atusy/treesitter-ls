@@ -1,4 +1,4 @@
-use crate::document::LayerManager;
+use crate::syntax::LayerManager;
 use tower_lsp::lsp_types::SemanticTokens;
 
 /// Unified document structure combining text, parsing, and LSP state

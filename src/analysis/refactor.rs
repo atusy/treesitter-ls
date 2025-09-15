@@ -4,7 +4,7 @@ use tower_lsp::lsp_types::{
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 
 use crate::config::settings::CaptureMappings;
-use crate::document::coordinates::{PositionMapper, SimplePositionMapper};
+use crate::text::{PositionMapper, SimplePositionMapper};
 
 /// Create an inspect token code action for the node at cursor
 fn create_inspect_token_action(

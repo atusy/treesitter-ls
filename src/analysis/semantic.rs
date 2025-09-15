@@ -1,5 +1,5 @@
 use crate::config::CaptureMappings;
-use crate::document::coordinates::convert_byte_to_utf16_in_line;
+use crate::text::convert_byte_to_utf16_in_line;
 use tower_lsp::lsp_types::{
     Range, SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens,
     SemanticTokensDelta, SemanticTokensEdit, SemanticTokensFullDeltaResult, SemanticTokensResult,

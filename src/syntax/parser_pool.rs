@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tree_sitter::Parser;
 
-use super::registry::LanguageRegistry;
+use crate::language::registry::LanguageRegistry;
 
 // REFACTOR NOTE: Parser management has been unified in the language module
 // to break circular dependency between workspace and syntax modules
