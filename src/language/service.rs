@@ -21,7 +21,6 @@ pub struct LanguageService {
     pub library_loader: Mutex<ParserLoader>,
     pub capture_mappings: Mutex<CaptureMappings>,
     pub search_paths: Mutex<Option<Vec<String>>>,
-    // NOTE: Parser management moved to DocumentParserPool (Step 3-2)
 }
 
 impl Default for LanguageService {

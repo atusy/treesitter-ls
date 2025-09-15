@@ -135,35 +135,38 @@ Each file implements a complete LSP feature:
 - **refactor.rs**: Code actions like parameter reordering
 
 #### `document/` - Document Management
-Manages document lifecycle with a three-tier architecture:
-1. **TextDocument** (`text.rs`): Basic text and version tracking
-2. **ParsedDocument** (`with_layers.rs`): Adds parsed language layers
-3. **StatefulDocument** (`with_state.rs`): Adds LSP state (semantic tokens cache)
-
-The `mappers/` subdirectory handles coordinate mapping for language injections (e.g., Markdown in Rust doc comments).
+Manages document lifecycle and language layers:
+- **model.rs**: Unified `Document` struct implementing `AnalysisContext`
+- **layer.rs**: `LanguageLayer` structure for managing parsed trees
+- **layer_manager.rs**: Manages root and injection layers
+- **store.rs**: Thread-safe document storage with `DashMap`
+- **injection_mapper.rs**: Handles coordinate mapping for language injections
 
 #### `language/` - Language Services
-Handles all language-specific operations:
-- **registry.rs**: Central registry of available languages
-- **parser.rs**: Parser pooling for performance
-- **injection.rs**: Manages language layers and injections
-- **query.rs**: Executes Tree-sitter queries for highlights and locals
+Language configuration and parsing:
+- **service.rs**: Central `LanguageService` with facade methods
+- **registry.rs**: Language registry and configuration
+- **parser_pool.rs**: Parser pooling for efficient reuse
+- **loader.rs**: Dynamic parser library loading
+- **query.rs**: Tree-sitter query execution
 
-#### `syntax/` - Tree-sitter Utilities
-Low-level Tree-sitter operations shared across modules:
-- Node traversal and manipulation
-- Position conversions
-- Query execution helpers
+#### `text/` - Text Operations
+Text manipulation utilities:
+- **edits.rs**: Text edit operations and range adjustments
+- **position.rs**: Coordinate conversions between byte/line-column positions
 
 ### Design Rationale
 
-#### Coordinate Mapping Consolidation
-Initially, coordinate conversion logic was scattered across multiple modules. We consolidated it into `document/coordinates.rs` because coordinate mapping is fundamentally a document concern.
+#### Clean Architecture Implementation
+The refactoring implemented clean architecture principles:
+- **Dependency Inversion**: `AnalysisContext` trait allows analysis module to work without direct `Document` dependency
+- **Module Boundaries**: Clear separation between document management, language services, and text operations
+- **Facade Pattern**: `LanguageService` provides simplified interface hiding implementation details
 
 #### Injection System Design
-Language injections (like code blocks in Markdown) are split between:
-- `document/mappers/`: Coordinate mapping between layers (document responsibility)
-- `language/injection.rs`: Layer management (language service responsibility)
+Language injections (like code blocks in Markdown) are handled by:
+- `document/layer_manager.rs`: Manages injection layers
+- `document/injection_mapper.rs`: Coordinate mapping between layers
 
 This separation ensures each module maintains its single responsibility.
 

@@ -4,9 +4,6 @@ use tree_sitter::Parser;
 
 use crate::language::registry::LanguageRegistry;
 
-// REFACTOR NOTE: Parser management has been unified in the language module
-// to break circular dependency between workspace and syntax modules
-
 /// Factory for creating Tree-sitter parsers with proper language configuration
 pub struct ParserFactory {
     language_registry: Arc<LanguageRegistry>,

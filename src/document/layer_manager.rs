@@ -143,12 +143,6 @@ impl LayerManager {
         })
     }
 
-    /// Deprecated: Parser pool is now managed separately
-    /// This method is kept for backward compatibility but does nothing
-    pub fn set_parser_pool(&mut self, _pool: crate::language::DocumentParserPool) {
-        // Parser pool is now managed at a different level
-        // This method is kept only for compatibility
-    }
 }
 
 impl Default for LayerManager {

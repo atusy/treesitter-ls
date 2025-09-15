@@ -92,18 +92,6 @@ impl TreeSitterLs {
             }
 
             // Initialize parser pool if needed
-            let needs_pool_init = self
-                .document_store
-                .get(&uri)
-                .map(|doc| !doc.layers().has_root())
-                .unwrap_or(true);
-
-            if needs_pool_init {
-                // Initialize parser pool for new documents or documents without a pool
-                let parser_pool = self.language_service.create_document_parser_pool();
-                self.document_store.init_parser_pool(&uri, parser_pool);
-            }
-
             // Create a parser for this parse operation
             let parser = self.language_service.create_parser(&language_name);
             if let Some(mut parser) = parser {

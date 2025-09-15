@@ -1,6 +1,5 @@
 use crate::document::Document;
 use crate::document::LanguageLayer;
-use crate::language::DocumentParserPool;
 use dashmap::DashMap;
 use tower_lsp::lsp_types::{SemanticTokens, Url};
 use tree_sitter::{InputEdit, Tree};
@@ -88,11 +87,6 @@ impl DocumentStore {
         self.documents.get(uri).map(|doc| doc.text().to_string())
     }
 
-    pub fn init_parser_pool(&self, uri: &Url, pool: DocumentParserPool) {
-        if let Some(mut doc) = self.documents.get_mut(uri) {
-            doc.layers_mut().set_parser_pool(pool);
-        }
-    }
 
     pub fn remove(&self, uri: &Url) -> Option<Document> {
         self.documents.remove(uri).map(|(_, doc)| doc)
