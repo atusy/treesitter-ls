@@ -565,7 +565,7 @@ impl LanguageServer for TreeSitterLs {
             };
 
             // Get previous tokens from document
-            let previous_tokens = doc.last_semantic_tokens();
+            let previous_tokens = doc.last_semantic_tokens().map(|snapshot| snapshot.tokens());
 
             // Get capture mappings
             let capture_mappings = self.workspace.capture_mappings();

@@ -1,9 +1,8 @@
-use crate::document::{Document, DocumentStore, LanguageLayer};
-use dashmap::mapref::one::Ref;
-use tower_lsp::lsp_types::{SemanticTokens, Url};
+use crate::document::{Document, DocumentHandle, DocumentStore, LanguageLayer, SemanticSnapshot};
+use tower_lsp::lsp_types::Url;
 use tree_sitter::{InputEdit, Tree};
 
-pub type DocumentRef<'a> = Ref<'a, Url, Document>;
+pub type DocumentRef<'a> = DocumentHandle<'a>;
 
 pub struct WorkspaceDocuments {
     store: DocumentStore,
@@ -36,7 +35,7 @@ impl WorkspaceDocuments {
         self.store.get_edited_tree(uri, edits)
     }
 
-    pub fn update_semantic_tokens(&self, uri: &Url, tokens: SemanticTokens) {
+    pub fn update_semantic_tokens(&self, uri: &Url, tokens: SemanticSnapshot) {
         self.store.update_semantic_tokens(uri, tokens);
     }
 

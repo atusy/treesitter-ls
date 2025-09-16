@@ -5,7 +5,7 @@ use documents::WorkspaceDocuments;
 use languages::WorkspaceLanguages;
 
 use crate::config::{CaptureMappings, TreeSitterSettings};
-use crate::document::{Document, LanguageLayer};
+use crate::document::{Document, LanguageLayer, SemanticSnapshot};
 use crate::runtime::{LanguageEvent, LanguageLoadResult, LanguageLoadSummary};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -127,7 +127,8 @@ impl Workspace {
     }
 
     pub fn update_semantic_tokens(&self, uri: &Url, tokens: SemanticTokens) {
-        self.documents.update_semantic_tokens(uri, tokens);
+        self.documents
+            .update_semantic_tokens(uri, SemanticSnapshot::new(tokens));
     }
 
     pub fn remove_document(&self, uri: &Url) -> Option<Document> {

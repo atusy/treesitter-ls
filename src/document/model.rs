@@ -1,12 +1,31 @@
 use crate::document::{DocumentView, LayerManager};
 use tower_lsp::lsp_types::SemanticTokens;
 
+#[derive(Clone, Debug)]
+pub struct SemanticSnapshot {
+    tokens: SemanticTokens,
+}
+
+impl SemanticSnapshot {
+    pub fn new(tokens: SemanticTokens) -> Self {
+        Self { tokens }
+    }
+
+    pub fn tokens(&self) -> &SemanticTokens {
+        &self.tokens
+    }
+
+    pub fn into_tokens(self) -> SemanticTokens {
+        self.tokens
+    }
+}
+
 /// Unified document structure combining text, parsing, and LSP state
 pub struct Document {
     text: String,
     version: Option<i32>,
     layers: LayerManager,
-    last_semantic_tokens: Option<SemanticTokens>,
+    last_semantic_tokens: Option<SemanticSnapshot>,
 }
 
 impl Document {
@@ -71,12 +90,12 @@ impl Document {
     }
 
     /// Get the last semantic tokens
-    pub fn last_semantic_tokens(&self) -> Option<&SemanticTokens> {
+    pub fn last_semantic_tokens(&self) -> Option<&SemanticSnapshot> {
         self.last_semantic_tokens.as_ref()
     }
 
     /// Set the last semantic tokens
-    pub fn set_last_semantic_tokens(&mut self, tokens: Option<SemanticTokens>) {
+    pub fn set_last_semantic_tokens(&mut self, tokens: Option<SemanticSnapshot>) {
         self.last_semantic_tokens = tokens;
     }
 
@@ -154,8 +173,10 @@ mod tests {
             result_id: Some("test".to_string()),
             data: vec![],
         };
-        doc.set_last_semantic_tokens(Some(tokens.clone()));
-        assert_eq!(doc.last_semantic_tokens(), Some(&tokens));
+        let snapshot = SemanticSnapshot::new(tokens.clone());
+        doc.set_last_semantic_tokens(Some(snapshot.clone()));
+        assert!(doc.last_semantic_tokens().is_some());
+        assert_eq!(doc.last_semantic_tokens().unwrap().tokens(), &tokens);
 
         doc.set_last_semantic_tokens(None);
         assert!(doc.last_semantic_tokens().is_none());

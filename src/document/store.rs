@@ -1,12 +1,31 @@
-use crate::document::Document;
-use crate::document::LanguageLayer;
+use crate::document::{Document, LanguageLayer, SemanticSnapshot};
 use dashmap::DashMap;
-use tower_lsp::lsp_types::{SemanticTokens, Url};
+use dashmap::mapref::one::Ref;
+use std::ops::Deref;
+use tower_lsp::lsp_types::Url;
 use tree_sitter::{InputEdit, Tree};
 
 // The central store for all document-related information.
 pub struct DocumentStore {
     documents: DashMap<Url, Document>,
+}
+
+pub struct DocumentHandle<'a> {
+    inner: Ref<'a, Url, Document>,
+}
+
+impl<'a> DocumentHandle<'a> {
+    fn new(inner: Ref<'a, Url, Document>) -> Self {
+        Self { inner }
+    }
+}
+
+impl<'a> Deref for DocumentHandle<'a> {
+    type Target = Document;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
 }
 
 impl Default for DocumentStore {
@@ -32,8 +51,8 @@ impl DocumentStore {
         self.documents.insert(uri, document);
     }
 
-    pub fn get(&self, uri: &Url) -> Option<dashmap::mapref::one::Ref<'_, Url, Document>> {
-        self.documents.get(uri)
+    pub fn get(&self, uri: &Url) -> Option<DocumentHandle<'_>> {
+        self.documents.get(uri).map(DocumentHandle::new)
     }
 
     pub fn update_document(&self, uri: Url, text: String) {
@@ -77,7 +96,7 @@ impl DocumentStore {
         }
     }
 
-    pub fn update_semantic_tokens(&self, uri: &Url, tokens: SemanticTokens) {
+    pub fn update_semantic_tokens(&self, uri: &Url, tokens: SemanticSnapshot) {
         if let Some(mut doc) = self.documents.get_mut(uri) {
             doc.set_last_semantic_tokens(Some(tokens));
         }

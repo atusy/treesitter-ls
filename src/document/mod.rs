@@ -12,6 +12,6 @@ pub use injection_mapper::{
 };
 pub use layer::LanguageLayer;
 pub use layer_manager::LayerManager;
-pub use model::Document;
-pub use store::DocumentStore;
+pub use model::{Document, SemanticSnapshot};
+pub use store::{DocumentHandle, DocumentStore};
 pub use view::DocumentView;

@@ -3,8 +3,7 @@
 
 use tower_lsp::lsp_types::*;
 use tree_sitter::Parser;
-use treesitter_ls::document::DocumentStore;
-use treesitter_ls::document::LanguageLayer;
+use treesitter_ls::document::{DocumentStore, LanguageLayer, SemanticSnapshot};
 
 #[test]
 fn test_document_store_reopen_resets_semantic_tokens() {
@@ -34,16 +33,14 @@ fn test_document_store_reopen_resets_semantic_tokens() {
             token_modifiers_bitset: 0,
         }],
     };
-    store.update_semantic_tokens(&uri, tokens.clone());
+    store.update_semantic_tokens(&uri, SemanticSnapshot::new(tokens.clone()));
 
     // Verify tokens are stored
     {
         let doc = store.get(&uri).unwrap();
         assert!(doc.last_semantic_tokens().is_some());
-        assert_eq!(
-            doc.last_semantic_tokens().as_ref().unwrap().result_id,
-            Some("v1".to_string())
-        );
+        let snapshot = doc.last_semantic_tokens().unwrap();
+        assert_eq!(snapshot.tokens().result_id.as_deref(), Some("v1"));
     }
 
     // Reopen the document (simulating did_open after close)
@@ -89,7 +86,7 @@ fn test_document_store_update_preserves_semantic_tokens() {
             token_modifiers_bitset: 0,
         }],
     };
-    store.update_semantic_tokens(&uri, tokens.clone());
+    store.update_semantic_tokens(&uri, SemanticSnapshot::new(tokens.clone()));
 
     // Verify tokens are stored
     {
@@ -144,7 +141,7 @@ fn test_document_store_remove() {
             token_modifiers_bitset: 0,
         }],
     };
-    store.update_semantic_tokens(&uri, tokens.clone());
+    store.update_semantic_tokens(&uri, SemanticSnapshot::new(tokens.clone()));
 
     // Verify document exists
     assert!(store.get(&uri).is_some());
