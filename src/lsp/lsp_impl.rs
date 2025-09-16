@@ -14,13 +14,14 @@ use crate::analysis::{
 };
 use crate::config::{TreeSitterSettings, merge_settings};
 use crate::document::{DocumentStore, LanguageLayer};
-use crate::language::{LanguageCoordinator, LanguageEvent, LanguageLogLevel};
+use crate::language::{DocumentParserPool, LanguageCoordinator, LanguageEvent, LanguageLogLevel};
 use crate::text::{PositionMapper, SimplePositionMapper};
 
 pub struct TreeSitterLs {
     client: Client,
     language_coordinator: Arc<LanguageCoordinator>,
     document_store: DocumentStore,
+    parser_pool: Mutex<DocumentParserPool>,
     root_path: Mutex<Option<PathBuf>>,
 }
 
@@ -36,10 +37,12 @@ impl std::fmt::Debug for TreeSitterLs {
 impl TreeSitterLs {
     pub fn new(client: Client) -> Self {
         let language_coordinator = Arc::new(LanguageCoordinator::new());
+        let parser_pool = Mutex::new(language_coordinator.create_document_parser_pool());
         Self {
             client,
             language_coordinator,
             document_store: DocumentStore::new(),
+            parser_pool,
             root_path: Mutex::new(None),
         }
     }
@@ -73,8 +76,8 @@ impl TreeSitterLs {
 
             // Initialize parser pool if needed
             // Create a parser for this parse operation
-            let parser = self.language_coordinator.create_parser(&language_name);
-            if let Some(mut parser) = parser {
+            let mut pool = self.parser_pool.lock().unwrap();
+            if let Some(mut parser) = pool.acquire(&language_name) {
                 // Get old tree for incremental parsing if document exists
                 let old_tree = if !edits.is_empty() {
                     // Get the tree with edits applied for incremental parsing
@@ -87,7 +90,10 @@ impl TreeSitterLs {
                 };
 
                 // Parse the document with incremental parsing if old tree exists
-                if let Some(tree) = parser.parse(&text, old_tree.as_ref()) {
+                let parsed_tree = parser.parse(&text, old_tree.as_ref());
+                pool.release(language_name.clone(), parser);
+
+                if let Some(tree) = parsed_tree {
                     // Update document with the new tree (handles incremental updates properly)
                     if !edits.is_empty() {
                         self.document_store
