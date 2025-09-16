@@ -142,7 +142,6 @@ impl LayerManager {
             tree
         })
     }
-
 }
 
 impl Default for LayerManager {

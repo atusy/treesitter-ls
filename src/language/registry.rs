@@ -3,7 +3,6 @@ use std::sync::{Arc, Mutex};
 use tree_sitter::Language;
 
 /// Registry for managing loaded Tree-sitter languages
-/// This is separated from LanguageService to break circular dependency
 #[derive(Clone)]
 pub struct LanguageRegistry {
     languages: Arc<Mutex<HashMap<String, Language>>>,

@@ -87,7 +87,6 @@ impl DocumentStore {
         self.documents.get(uri).map(|doc| doc.text().to_string())
     }
 
-
     pub fn remove(&self, uri: &Url) -> Option<Document> {
         self.documents.remove(uri).map(|(_, doc)| doc)
     }

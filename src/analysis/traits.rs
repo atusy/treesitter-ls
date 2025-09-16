@@ -1,4 +1,4 @@
-use crate::document::{LayerManager, LanguageLayer};
+use crate::document::{LanguageLayer, LayerManager};
 use tree_sitter::Tree;
 
 /// Trait for providing analysis context to LSP features
