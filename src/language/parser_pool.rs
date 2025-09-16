@@ -17,10 +17,11 @@ impl ParserFactory {
 
     /// Create a new parser for the specified language
     pub fn create_parser(&self, language_id: &str) -> Option<Parser> {
-        self.language_registry.get(language_id).map(|lang| {
+        self.language_registry.get(language_id).and_then(|lang| {
             let mut parser = Parser::new();
-            parser.set_language(&lang).unwrap();
-            parser
+            // set_language can fail if the language version is incompatible
+            parser.set_language(&lang).ok()?;
+            Some(parser)
         })
     }
 }

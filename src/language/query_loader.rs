@@ -1,4 +1,5 @@
 use crate::config::{HighlightItem, HighlightSource};
+use crate::error::{LspError, LspResult};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tree_sitter::{Language, Query};
@@ -8,7 +9,7 @@ pub struct QueryLoader;
 
 impl QueryLoader {
     /// Load query content from highlight items
-    pub fn load_query_from_highlight(highlight_items: &[HighlightItem]) -> Result<String, String> {
+    pub fn load_query_from_highlight(highlight_items: &[HighlightItem]) -> LspResult<String> {
         let mut combined_query = String::new();
 
         for item in highlight_items {
@@ -19,7 +20,9 @@ impl QueryLoader {
                         combined_query.push('\n');
                     }
                     Err(e) => {
-                        return Err(format!("Failed to read query file {path}: {e}"));
+                        return Err(LspError::query(format!(
+                            "Failed to read query file {path}: {e}"
+                        )));
                     }
                 },
                 HighlightSource::Query { query } => {
@@ -55,27 +58,33 @@ impl QueryLoader {
         runtime_bases: &[String],
         lang_name: &str,
         file_name: &str,
-    ) -> Result<String, String> {
+    ) -> LspResult<String> {
         match Self::find_query_file(runtime_bases, lang_name, file_name) {
-            Some(path) => fs::read_to_string(&path)
-                .map_err(|e| format!("Failed to read query file {}: {}", path.display(), e)),
-            None => Err(format!(
+            Some(path) => fs::read_to_string(&path).map_err(|e| {
+                LspError::query(format!(
+                    "Failed to read query file {}: {}",
+                    path.display(),
+                    e
+                ))
+            }),
+            None => Err(LspError::query(format!(
                 "Query file {} not found for language {} in search paths",
                 file_name, lang_name
-            )),
+            ))),
         }
     }
 
     /// Parse a query string into a Tree-sitter Query
-    pub fn parse_query(language: &Language, query_str: &str) -> Result<Query, String> {
-        Query::new(language, query_str).map_err(|e| format!("Failed to parse query: {e}"))
+    pub fn parse_query(language: &Language, query_str: &str) -> LspResult<Query> {
+        Query::new(language, query_str)
+            .map_err(|e| LspError::query(format!("Failed to parse query: {e}")))
     }
 
     /// Load and parse a highlight query
     pub fn load_highlight_query(
         language: &Language,
         highlight_items: &[HighlightItem],
-    ) -> Result<Query, String> {
+    ) -> LspResult<Query> {
         let query_str = Self::load_query_from_highlight(highlight_items)?;
         Self::parse_query(language, &query_str)
     }
@@ -86,7 +95,7 @@ impl QueryLoader {
         runtime_bases: &[String],
         lang_name: &str,
         file_name: &str,
-    ) -> Result<Query, String> {
+    ) -> LspResult<Query> {
         let query_str = Self::load_query_file(runtime_bases, lang_name, file_name)?;
         Self::parse_query(language, &query_str)
     }

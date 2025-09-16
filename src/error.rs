@@ -41,9 +41,6 @@ pub enum LspError {
     Internal(String),
 }
 
-/// Type alias for backward compatibility
-pub type LockError = LspError;
-
 /// Result type for LSP operations
 pub type LspResult<T> = Result<T, LspError>;
 
