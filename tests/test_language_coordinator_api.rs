@@ -1,12 +1,11 @@
-use std::collections::HashMap;
 use treesitter_ls::language::LanguageCoordinator;
 
 #[test]
-fn test_language_coordinator_should_provide_filetype_map_access() {
+fn test_language_coordinator_should_resolve_filetype() {
     let coordinator = LanguageCoordinator::new();
 
-    // get_filetype_map メソッドが存在し、HashMap を返すことを確認
-    let _map: HashMap<String, String> = coordinator.get_filetype_map();
+    // get_language_for_extension が存在し、Option<String> を返すことを確認
+    let _lang = coordinator.get_language_for_extension("rs");
 }
 
 #[test]

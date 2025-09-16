@@ -2,7 +2,6 @@ use crate::config::{LanguageConfig, TreeSitterSettings};
 use log::warn;
 use std::collections::HashMap;
 use std::sync::RwLock;
-use tower_lsp::lsp_types::Url;
 
 /// Resolves file types to language identifiers
 pub struct FiletypeResolver {
@@ -61,13 +60,13 @@ impl FiletypeResolver {
         }
     }
 
-    /// Get language for a document URL
-    pub fn get_language_for_document(&self, uri: &Url) -> Option<String> {
-        let extension = Self::extract_extension(uri.path());
+    /// Get language for a document path (URI path or file path)
+    pub fn get_language_for_path(&self, path: &str) -> Option<String> {
+        let extension = Self::extract_extension(path);
         match self.filetype_map.read() {
             Ok(guard) => guard.get(extension).cloned(),
             Err(poisoned) => {
-                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::get_language_for_document");
+                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::get_language_for_path");
                 poisoned.into_inner().get(extension).cloned()
             }
         }
@@ -257,18 +256,16 @@ mod tests {
     }
 
     #[test]
-    fn test_filetype_resolver_document_url() {
+    fn test_filetype_resolver_document_path() {
         let resolver = FiletypeResolver::new();
         resolver.add_mapping("rs".to_string(), "rust".to_string());
 
-        let url = Url::parse("file:///path/to/file.rs").unwrap();
         assert_eq!(
-            resolver.get_language_for_document(&url),
+            resolver.get_language_for_path("/path/to/file.rs"),
             Some("rust".to_string())
         );
 
-        let url = Url::parse("file:///path/to/file").unwrap();
-        assert_eq!(resolver.get_language_for_document(&url), None);
+        assert_eq!(resolver.get_language_for_path("/path/to/file"), None);
     }
 
     #[test]

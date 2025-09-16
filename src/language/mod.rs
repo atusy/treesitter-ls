@@ -1,4 +1,5 @@
 pub mod config_store;
+pub mod events;
 pub mod filetype_resolver;
 pub mod language_coordinator;
 pub mod loader;
@@ -10,6 +11,7 @@ pub mod registry;
 
 // Re-export key types
 pub use config_store::ConfigStore;
+pub use events::{LanguageEvent, LanguageLoadResult, LanguageLoadSummary, LanguageLogLevel};
 pub use filetype_resolver::FiletypeResolver;
 pub use language_coordinator::LanguageCoordinator;
 pub use loader::ParserLoader;

@@ -1,11 +1,9 @@
 use crate::config::{LanguageConfig, TreeSitterSettings};
 use crate::language::{
-    ConfigStore, FiletypeResolver, LanguageRegistry, ParserFactory, ParserLoader, QueryLoader,
-    QueryStore,
+    ConfigStore, FiletypeResolver, LanguageEvent, LanguageLoadResult, LanguageLoadSummary,
+    LanguageLogLevel, LanguageRegistry, ParserFactory, ParserLoader, QueryLoader, QueryStore,
 };
 use std::sync::{Arc, RwLock};
-use tower_lsp::Client;
-use tower_lsp::lsp_types::{MessageType, Url};
 use tree_sitter::Language;
 
 /// Coordinates between language-related modules without holding state
@@ -28,39 +26,39 @@ impl LanguageCoordinator {
         }
     }
 
-    /// Initialize from TreeSitter settings
-    pub async fn load_settings(&self, settings: TreeSitterSettings, client: &Client) {
+    /// Initialize from TreeSitter settings and return coordination events
+    pub fn load_settings(&self, settings: TreeSitterSettings) -> LanguageLoadSummary {
         // Update configuration stores
         self.config_store.update_from_settings(&settings);
         self.filetype_resolver.build_from_settings(&settings);
 
-        // Load each language
+        // Load each language and accumulate events
+        let mut summary = LanguageLoadSummary::default();
+
         for (lang_name, config) in &settings.languages {
-            self.load_single_language(lang_name, config, &settings.search_paths, client)
-                .await;
+            let result = self.load_single_language(lang_name, config, &settings.search_paths);
+            summary.record(lang_name, result);
         }
+
+        summary
     }
 
-    /// Load a single language with its queries
-    async fn load_single_language(
+    /// Load a single language with its queries, returning emitted events
+    fn load_single_language(
         &self,
         lang_name: &str,
         config: &LanguageConfig,
         search_paths: &Option<Vec<String>>,
-        client: &Client,
-    ) {
+    ) -> LanguageLoadResult {
         // Resolve library path
         let library_path =
             QueryLoader::resolve_library_path(config.library.as_ref(), lang_name, search_paths);
 
         let Some(lib_path) = library_path else {
-            client
-                .log_message(
-                    MessageType::ERROR,
-                    format!("No library path found for language {lang_name}"),
-                )
-                .await;
-            return;
+            return LanguageLoadResult::failure_with(LanguageEvent::log(
+                LanguageLogLevel::Error,
+                format!("No library path found for language {lang_name}"),
+            ));
         };
 
         // Load the language
@@ -74,13 +72,10 @@ impl LanguageCoordinator {
             match result {
                 Ok(lang) => lang,
                 Err(err) => {
-                    client
-                        .log_message(
-                            MessageType::ERROR,
-                            format!("Failed to load language {lang_name}: {err}"),
-                        )
-                        .await;
-                    return;
+                    return LanguageLoadResult::failure_with(LanguageEvent::log(
+                        LanguageLogLevel::Error,
+                        format!("Failed to load language {lang_name}: {err}"),
+                    ));
                 }
             }
         };
@@ -89,68 +84,58 @@ impl LanguageCoordinator {
         self.language_registry
             .register_unchecked(lang_name.to_string(), language.clone());
 
-        // Load queries
-        self.load_queries_for_language(lang_name, config, search_paths, &language, client)
-            .await;
+        // Load queries and collect informational events
+        let mut events = self.load_queries_for_language(lang_name, config, search_paths, &language);
+        events.push(LanguageEvent::log(
+            LanguageLogLevel::Info,
+            format!("Language {lang_name} loaded."),
+        ));
 
-        client
-            .log_message(MessageType::INFO, format!("Language {lang_name} loaded."))
-            .await;
+        LanguageLoadResult::success_with(events)
     }
 
-    /// Load queries for a language
-    async fn load_queries_for_language(
+    /// Load queries for a language and return diagnostic events
+    fn load_queries_for_language(
         &self,
         lang_name: &str,
         config: &LanguageConfig,
         search_paths: &Option<Vec<String>>,
         language: &Language,
-        client: &Client,
-    ) {
+    ) -> Vec<LanguageEvent> {
+        let mut events = Vec::new();
+
         // Load highlight queries
         if !config.highlight.is_empty() {
             match QueryLoader::load_highlight_query(language, &config.highlight) {
                 Ok(query) => {
                     self.query_store
                         .insert_highlight_query(lang_name.to_string(), Arc::new(query));
-                    client
-                        .log_message(
-                            MessageType::INFO,
-                            format!("Highlight query loaded for {lang_name}"),
-                        )
-                        .await;
+                    events.push(LanguageEvent::log(
+                        LanguageLogLevel::Info,
+                        format!("Highlight query loaded for {lang_name}"),
+                    ));
                 }
                 Err(err) => {
-                    client
-                        .log_message(
-                            MessageType::ERROR,
-                            format!("Failed to load highlight query for {lang_name}: {err}"),
-                        )
-                        .await;
+                    events.push(LanguageEvent::log(
+                        LanguageLogLevel::Error,
+                        format!("Failed to load highlight query for {lang_name}: {err}"),
+                    ));
                 }
             }
-        } else if let Some(paths) = search_paths {
-            // Try to load from search paths
-            match QueryLoader::load_query_from_search_paths(
+        } else if let Some(paths) = search_paths
+            && let Ok(query) = QueryLoader::load_query_from_search_paths(
                 language,
                 paths,
                 lang_name,
                 "highlights.scm",
-            ) {
-                Ok(query) => {
-                    self.query_store
-                        .insert_highlight_query(lang_name.to_string(), Arc::new(query));
-                    client
-                        .log_message(
-                            MessageType::INFO,
-                            format!("Highlight query loaded from search paths for {lang_name}"),
-                        )
-                        .await;
-                }
-                Err(_) => {
-                    // Highlight queries are optional
-                }
-            }
+            )
+        {
+            self.query_store
+                .insert_highlight_query(lang_name.to_string(), Arc::new(query));
+            events.push(LanguageEvent::log(
+                LanguageLogLevel::Info,
+                format!("Highlight query loaded from search paths for {lang_name}"),
+            ));
         }
 
         // Load locals queries
@@ -159,101 +144,74 @@ impl LanguageCoordinator {
                 Ok(query) => {
                     self.query_store
                         .insert_locals_query(lang_name.to_string(), Arc::new(query));
-                    client
-                        .log_message(
-                            MessageType::INFO,
-                            format!("Locals query loaded for {lang_name}"),
-                        )
-                        .await;
+                    events.push(LanguageEvent::log(
+                        LanguageLogLevel::Info,
+                        format!("Locals query loaded for {lang_name}"),
+                    ));
                 }
                 Err(err) => {
-                    client
-                        .log_message(
-                            MessageType::ERROR,
-                            format!("Failed to load locals query for {lang_name}: {err}"),
-                        )
-                        .await;
+                    events.push(LanguageEvent::log(
+                        LanguageLogLevel::Error,
+                        format!("Failed to load locals query for {lang_name}: {err}"),
+                    ));
                 }
             }
-        } else if let Some(paths) = search_paths {
-            // Try to load from search paths
-            match QueryLoader::load_query_from_search_paths(
-                language,
-                paths,
-                lang_name,
-                "locals.scm",
-            ) {
-                Ok(query) => {
-                    self.query_store
-                        .insert_locals_query(lang_name.to_string(), Arc::new(query));
-                    client
-                        .log_message(
-                            MessageType::INFO,
-                            format!("Locals query loaded from search paths for {lang_name}"),
-                        )
-                        .await;
-                }
-                Err(_) => {
-                    // Locals queries are optional
-                }
-            }
+        } else if let Some(paths) = search_paths
+            && let Ok(query) =
+                QueryLoader::load_query_from_search_paths(language, paths, lang_name, "locals.scm")
+        {
+            self.query_store
+                .insert_locals_query(lang_name.to_string(), Arc::new(query));
+            events.push(LanguageEvent::log(
+                LanguageLogLevel::Info,
+                format!("Locals query loaded from search paths for {lang_name}"),
+            ));
         }
 
-        // Load injections queries from search paths
-        if let Some(paths) = search_paths {
-            match QueryLoader::load_query_from_search_paths(
+        // Load injections queries from search paths only (no inline config today)
+        if let Some(paths) = search_paths
+            && let Ok(query) = QueryLoader::load_query_from_search_paths(
                 language,
                 paths,
                 lang_name,
                 "injections.scm",
-            ) {
-                Ok(query) => {
-                    self.query_store
-                        .insert_injections_query(lang_name.to_string(), Arc::new(query));
-                    client
-                        .log_message(
-                            MessageType::INFO,
-                            format!("Injections query loaded for {lang_name}"),
-                        )
-                        .await;
-                }
-                Err(_) => {
-                    // Injections queries are optional
-                }
-            }
+            )
+        {
+            self.query_store
+                .insert_injections_query(lang_name.to_string(), Arc::new(query));
+            events.push(LanguageEvent::log(
+                LanguageLogLevel::Info,
+                format!("Injections query loaded for {lang_name}"),
+            ));
         }
+
+        events
     }
 
-    /// Try to dynamically load a language by ID
-    pub async fn try_load_language_by_id(&self, language_id: &str, client: &Client) -> bool {
+    /// Try to dynamically load a language by ID from configured search paths
+    pub fn try_load_language_by_id(&self, language_id: &str) -> LanguageLoadResult {
         // Check if already loaded
         if self.language_registry.contains(language_id) {
-            return true;
+            return LanguageLoadResult::success_with(Vec::new());
         }
 
         // Try to load from search paths
         let search_paths = self.config_store.get_search_paths();
         let Some(paths) = &search_paths else {
-            client
-                .log_message(
-                    MessageType::WARNING,
-                    format!("No search paths configured, cannot load language '{language_id}'"),
-                )
-                .await;
-            return false;
+            return LanguageLoadResult::failure_with(LanguageEvent::log(
+                LanguageLogLevel::Warning,
+                format!("No search paths configured, cannot load language '{language_id}'"),
+            ));
         };
 
         // Try to find the parser library
         let library_path = QueryLoader::resolve_library_path(None, language_id, &search_paths);
 
         let Some(lib_path) = library_path else {
-            client
-                .log_message(
-                    MessageType::WARNING,
-                    format!("Could not find parser for language '{language_id}'"),
-                )
-                .await;
-            return false;
+            return LanguageLoadResult::failure_with(LanguageEvent::log(
+                LanguageLogLevel::Warning,
+                format!("Could not find parser for language '{language_id}'"),
+            ));
         };
 
         // Load the language
@@ -267,13 +225,10 @@ impl LanguageCoordinator {
             match result {
                 Ok(lang) => lang,
                 Err(err) => {
-                    client
-                        .log_message(
-                            MessageType::ERROR,
-                            format!("Failed to load language {language_id} from {lib_path}: {err}"),
-                        )
-                        .await;
-                    return false;
+                    return LanguageLoadResult::failure_with(LanguageEvent::log(
+                        LanguageLogLevel::Error,
+                        format!("Failed to load language {language_id} from {lib_path}: {err}"),
+                    ));
                 }
             }
         };
@@ -283,6 +238,7 @@ impl LanguageCoordinator {
             .register_unchecked(language_id.to_string(), language.clone());
 
         // Try to load queries from search paths
+        let mut events = Vec::new();
         if let Ok(query) = QueryLoader::load_query_from_search_paths(
             &language,
             paths,
@@ -291,12 +247,10 @@ impl LanguageCoordinator {
         ) {
             self.query_store
                 .insert_highlight_query(language_id.to_string(), Arc::new(query));
-            client
-                .log_message(
-                    MessageType::INFO,
-                    format!("Dynamically loaded highlights for {language_id}"),
-                )
-                .await;
+            events.push(LanguageEvent::log(
+                LanguageLogLevel::Info,
+                format!("Dynamically loaded highlights for {language_id}"),
+            ));
         }
 
         if let Ok(query) =
@@ -304,12 +258,10 @@ impl LanguageCoordinator {
         {
             self.query_store
                 .insert_locals_query(language_id.to_string(), Arc::new(query));
-            client
-                .log_message(
-                    MessageType::INFO,
-                    format!("Dynamically loaded locals for {language_id}"),
-                )
-                .await;
+            events.push(LanguageEvent::log(
+                LanguageLogLevel::Info,
+                format!("Dynamically loaded locals for {language_id}"),
+            ));
         }
 
         if let Ok(query) = QueryLoader::load_query_from_search_paths(
@@ -320,37 +272,33 @@ impl LanguageCoordinator {
         ) {
             self.query_store
                 .insert_injections_query(language_id.to_string(), Arc::new(query));
-            client
-                .log_message(
-                    MessageType::INFO,
-                    format!("Dynamically loaded injections for {language_id}"),
-                )
-                .await;
+            events.push(LanguageEvent::log(
+                LanguageLogLevel::Info,
+                format!("Dynamically loaded injections for {language_id}"),
+            ));
         }
 
-        client
-            .log_message(
-                MessageType::INFO,
-                format!("Dynamically loaded language {language_id} from {lib_path}"),
-            )
-            .await;
-
-        // Request semantic tokens refresh after successful loading
-        if client.semantic_tokens_refresh().await.is_ok() {
-            client
-                .log_message(
-                    MessageType::INFO,
-                    format!("Requested semantic tokens refresh for {language_id}"),
-                )
-                .await;
+        events.push(LanguageEvent::log(
+            LanguageLogLevel::Info,
+            format!("Dynamically loaded language {language_id} from {lib_path}"),
+        ));
+        if self.has_queries(language_id) {
+            events.push(LanguageEvent::semantic_tokens_refresh(
+                language_id.to_string(),
+            ));
         }
 
-        true
+        LanguageLoadResult::success_with(events)
     }
 
-    /// Get language for a document
-    pub fn get_language_for_document(&self, uri: &Url) -> Option<String> {
-        self.filetype_resolver.get_language_for_document(uri)
+    /// Get language for a document path
+    pub fn get_language_for_path(&self, path: &str) -> Option<String> {
+        self.filetype_resolver.get_language_for_path(path)
+    }
+
+    /// Get language for a file extension
+    pub fn get_language_for_extension(&self, extension: &str) -> Option<String> {
+        self.filetype_resolver.get_language_for_extension(extension)
     }
 
     /// Create a parser factory
@@ -367,11 +315,6 @@ impl LanguageCoordinator {
     pub fn create_document_parser_pool(&self) -> crate::language::DocumentParserPool {
         let parser_factory = self.create_parser_factory();
         crate::language::DocumentParserPool::new(parser_factory)
-    }
-
-    /// Get filetype map
-    pub fn get_filetype_map(&self) -> std::collections::HashMap<String, String> {
-        self.filetype_resolver.get_filetype_map()
     }
 
     /// Check if queries exist for a language

@@ -14,7 +14,7 @@ use crate::analysis::{
 };
 use crate::config::{TreeSitterSettings, merge_settings};
 use crate::document::{DocumentStore, LanguageLayer};
-use crate::language::LanguageCoordinator;
+use crate::language::{LanguageCoordinator, LanguageEvent, LanguageLogLevel};
 use crate::text::{PositionMapper, SimplePositionMapper};
 
 pub struct TreeSitterLs {
@@ -51,17 +51,11 @@ impl TreeSitterLs {
         language_id: Option<&str>,
         edits: Vec<InputEdit>,
     ) {
-        // Detect file extension
-        let extension = uri.path().split('.').next_back().unwrap_or("");
-
-        // Find the language for this file extension
-        let language_name = {
-            let filetype_map = self.language_coordinator.get_filetype_map();
-            filetype_map.get(extension).cloned()
-        };
-
-        // Use the configured language or fall back to language_id
-        let language_name = language_name.or_else(|| language_id.map(|s| s.to_string()));
+        // Resolve language from configured filetype mappings or provided language_id
+        let language_name = self
+            .language_coordinator
+            .get_language_for_path(uri.path())
+            .or_else(|| language_id.map(|s| s.to_string()));
 
         if let Some(language_name) = language_name {
             // Try to dynamically load the language if not already loaded
@@ -71,25 +65,10 @@ impl TreeSitterLs {
                 .contains(&language_name);
 
             if !language_loaded {
-                let loaded = self
+                let result = self
                     .language_coordinator
-                    .try_load_language_by_id(&language_name, &self.client)
-                    .await;
-
-                // If language was dynamically loaded, check if queries are also loaded
-                if loaded {
-                    let has_queries = self.language_coordinator.has_queries(&language_name);
-
-                    // If queries are loaded, request semantic tokens refresh
-                    if has_queries && self.client.semantic_tokens_refresh().await.is_ok() {
-                        self.client
-                            .log_message(
-                                MessageType::INFO,
-                                "Requested semantic tokens refresh after dynamic loading",
-                            )
-                            .await;
-                    }
-                }
+                    .try_load_language_by_id(&language_name);
+                self.handle_language_events(&result.events).await;
             }
 
             // Initialize parser pool if needed
@@ -129,7 +108,7 @@ impl TreeSitterLs {
 
     fn get_language_for_document(&self, uri: &Url) -> Option<String> {
         // First try to get language from the service (based on file extension)
-        if let Some(lang) = self.language_coordinator.get_language_for_document(uri) {
+        if let Some(lang) = self.language_coordinator.get_language_for_path(uri.path()) {
             return Some(lang);
         }
 
@@ -140,9 +119,35 @@ impl TreeSitterLs {
     }
 
     async fn load_settings(&self, settings: TreeSitterSettings) {
-        self.language_coordinator
-            .load_settings(settings, &self.client)
-            .await;
+        let summary = self.language_coordinator.load_settings(settings);
+        self.handle_language_events(&summary.events).await;
+    }
+
+    async fn handle_language_events(&self, events: &[LanguageEvent]) {
+        for event in events {
+            match event {
+                LanguageEvent::Log { level, message } => {
+                    let message_type = match level {
+                        LanguageLogLevel::Error => MessageType::ERROR,
+                        LanguageLogLevel::Warning => MessageType::WARNING,
+                        LanguageLogLevel::Info => MessageType::INFO,
+                    };
+                    self.client.log_message(message_type, message.clone()).await;
+                }
+                LanguageEvent::SemanticTokensRefresh { language_id } => {
+                    if let Err(err) = self.client.semantic_tokens_refresh().await {
+                        self.client
+                            .log_message(
+                                MessageType::ERROR,
+                                format!(
+                                    "Failed to request semantic tokens refresh for {language_id}: {err}"
+                                ),
+                            )
+                            .await;
+                    }
+                }
+            }
+        }
     }
 }
 
