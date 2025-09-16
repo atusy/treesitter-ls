@@ -119,6 +119,9 @@ src/
 │   ├── languages.rs       # Runtime access (parsers, queries, settings)
 │   └── mod.rs             # Workspace orchestration and root-path tracking
 │
+├── domain/        # LSP-agnostic data types shared across modules
+│   └── mod.rs            # Positions, ranges, semantic token and code-action models
+│
 ├── lsp/            # LSP server implementation
 │   └── lsp_impl.rs     # LSP protocol handler and orchestration
 │
@@ -164,6 +167,11 @@ Mediates between the LSP layer and runtime/document services:
 - **languages.rs**: Runtime access (settings, queries, parser pool)
 - **documents.rs**: Safe wrappers around the document store utilities
 
+#### `domain/` - Shared Domain Model
+Provides protocol-agnostic data structures:
+- **mod.rs**: Position/Range/SelectionRange, semantic token types, code-action models
+- Serves as the contract between analysis logic and the LSP conversion layer
+
 #### `text/` - Text Operations
 Text manipulation utilities:
 - **edits.rs**: Text edit operations and range adjustments
@@ -175,8 +183,9 @@ Text manipulation utilities:
 The refactoring implemented clean architecture principles:
 - **Dependency Inversion**: `DocumentView` trait (document/view.rs) lets analysis code depend on a read-only interface instead of the concrete `Document`
 - **Module Boundaries**: Clear separation between document management, language services, and text operations
+- **Domain Model**: `domain::` defines shared types so analysis/text modules stay decoupled from `tower-lsp`
 - **Coordinator Pattern**: `RuntimeCoordinator` provides stateless coordination between runtime modules and returns events consumed by the LSP layer
-- **Workspace Facade**: `workspace::Workspace` aggregates runtime and document access so the LSP implementation stays thin.
+- **Workspace Facade**: `workspace::Workspace` aggregates runtime and document access so the LSP implementation stays thin, and `lsp_impl` is now the single place that converts between domain and protocol types.
 
 #### Injection System Design
 Language injections (like code blocks in Markdown) are handled by:
