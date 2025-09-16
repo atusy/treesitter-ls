@@ -1,4 +1,4 @@
-use tower_lsp::lsp_types::{Position, Range};
+use crate::domain::{Position, Range};
 
 /// Trait for mapping between LSP positions and byte offsets
 /// Supports both simple text mapping and complex injection scenarios
@@ -13,10 +13,7 @@ pub trait PositionMapper {
     fn byte_range_to_range(&self, start: usize, end: usize) -> Option<Range> {
         let start_pos = self.byte_to_position(start)?;
         let end_pos = self.byte_to_position(end)?;
-        Some(Range {
-            start: start_pos,
-            end: end_pos,
-        })
+        Some(Range::new(start_pos, end_pos))
     }
 }
 
@@ -96,10 +93,7 @@ impl<'a> PositionMapper for SimplePositionMapper<'a> {
                 while valid_offset > 0 {
                     valid_offset -= 1;
                     if let Some(utf16) = convert_byte_to_utf16_in_line(line_text, valid_offset) {
-                        return Some(Position {
-                            line: line as u32,
-                            character: utf16 as u32,
-                        });
+                        return Some(Position::new(line as u32, utf16 as u32));
                     }
                 }
                 // Fallback to start of line
@@ -107,10 +101,7 @@ impl<'a> PositionMapper for SimplePositionMapper<'a> {
             }
         };
 
-        Some(Position {
-            line: line as u32,
-            character: character as u32,
-        })
+        Some(Position::new(line as u32, character as u32))
     }
 }
 

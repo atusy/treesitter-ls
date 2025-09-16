@@ -1,7 +1,8 @@
 // Definition jump resolution using tree-sitter queries
 use crate::document::DocumentView;
-use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Position, Range, Url};
+use crate::domain::{DefinitionResponse, Location, Position, Range};
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
+use url::Url;
 
 // Helper function to check if a node type represents a scope
 fn is_scope_node_type(node_type: &str) -> bool {
@@ -434,7 +435,7 @@ pub fn handle_goto_definition<V: DocumentView + ?Sized>(
     position: Position,
     locals_query: &Query,
     uri: &Url,
-) -> Option<GotoDefinitionResponse> {
+) -> Option<DefinitionResponse> {
     // Convert LSP position to byte offset
     // Create position mapper based on whether document has injections
     let mapper: Box<dyn crate::text::PositionMapper> = if document.injection_layers().is_empty() {
@@ -471,7 +472,7 @@ pub fn handle_goto_definition<V: DocumentView + ?Sized>(
 
             Some(Location {
                 uri: uri.clone(),
-                range: Range { start, end },
+                range: Range::new(start, end),
             })
         })
         .collect();
@@ -479,6 +480,6 @@ pub fn handle_goto_definition<V: DocumentView + ?Sized>(
     if locations.is_empty() {
         None
     } else {
-        Some(GotoDefinitionResponse::Array(locations))
+        Some(DefinitionResponse::Locations(locations))
     }
 }

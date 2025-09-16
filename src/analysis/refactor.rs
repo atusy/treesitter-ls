@@ -1,7 +1,9 @@
-use tower_lsp::lsp_types::{
-    CodeAction, CodeActionKind, CodeActionOrCommand, Range, TextEdit, Url, WorkspaceEdit,
+use crate::domain::{
+    CodeAction, CodeActionDisabled, CodeActionOrCommand, DocumentEdits, Position, Range, TextEdit,
+    WorkspaceEdit,
 };
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
+use url::Url;
 
 use crate::config::settings::CaptureMappings;
 use crate::text::{PositionMapper, SimplePositionMapper};
@@ -143,13 +145,9 @@ fn create_inspect_token_action(
     // Create a code action that shows this info (using title as display)
     let action = CodeAction {
         title: format!("Inspect token: {}", node.kind()),
-        kind: Some(CodeActionKind::EMPTY),
-        diagnostics: None,
+        kind: Some("empty".to_string()),
         edit: None,
-        command: None,
-        is_preferred: None,
-        disabled: Some(tower_lsp::lsp_types::CodeActionDisabled { reason: info }),
-        data: None,
+        disabled: Some(CodeActionDisabled { reason: info }),
     };
 
     CodeActionOrCommand::CodeAction(action)
@@ -303,16 +301,7 @@ pub fn handle_code_actions(
     let replace_end = rparen_start;
     let replace_range = mapper
         .byte_range_to_range(replace_start, replace_end)
-        .unwrap_or(Range {
-            start: tower_lsp::lsp_types::Position {
-                line: 0,
-                character: 0,
-            },
-            end: tower_lsp::lsp_types::Position {
-                line: 0,
-                character: 0,
-            },
-        });
+        .unwrap_or(Range::new(Position::new(0, 0), Position::new(0, 0)));
 
     // Build parameter reordering actions
     let n = entries.len();
@@ -344,30 +333,20 @@ pub fn handle_code_actions(
         let title = format!("Move parameter to {}", ordinal(target_pos + 1));
 
         let edit = WorkspaceEdit {
-            changes: Some(
-                vec![(
-                    uri.clone(),
-                    vec![TextEdit {
-                        range: replace_range,
-                        new_text: new_content,
-                    }],
-                )]
-                .into_iter()
-                .collect(),
-            ),
-            document_changes: None,
-            change_annotations: None,
+            document_changes: vec![DocumentEdits {
+                uri: uri.clone(),
+                edits: vec![TextEdit {
+                    range: replace_range,
+                    new_text: new_content,
+                }],
+            }],
         };
 
         let action = CodeAction {
             title,
-            kind: Some(CodeActionKind::REFACTOR_REWRITE),
-            diagnostics: None,
+            kind: Some("refactor.rewrite".to_string()),
             edit: Some(edit),
-            command: None,
-            is_preferred: None,
             disabled: None,
-            data: None,
         };
 
         actions.push(CodeActionOrCommand::CodeAction(action));

@@ -29,11 +29,11 @@
 - [x] 3. `DocumentStore` API刷新（2025-02-14 完了）
 - [ ] 4. `analysis`/`text` のLSP依存排除
   - [x] 4.1 ドメイン型の定義と整備（2025-02-14 完了）
-  - [ ] 4.2 `text`/`analysis` のドメイン化
-        - [ ] 4.2.1 `text/position` と `analysis/selection`
-        - [ ] 4.2.2 `analysis/definition`
-        - [ ] 4.2.3 `analysis/refactor`
-        - [ ] 4.2.4 `analysis/semantic`
+  - [x] 4.2 `text`/`analysis` のドメイン化（`text`/`analysis` 系のLSP依存解消完了）
+        - [x] 4.2.1 `text/position` と `analysis/selection`
+        - [x] 4.2.2 `analysis/definition`
+        - [x] 4.2.3 `analysis/refactor`
+        - [x] 4.2.4 `analysis/semantic`
   - [ ] 4.3 LSP変換レイヤの集約
 - [ ] 5. テスト・ドキュメント更新と不要コード削除
 
@@ -44,6 +44,7 @@
 - 2025-02-14: `DocumentStore` に `DocumentHandle` と `SemanticSnapshot` を導入し、DashMapガードと `tower_lsp` 型を外部APIから排除できた。Step4で解析層からも LSP 依存を取り除きやすくなった。
 - 2025-02-14: Step4 はドメイン型導入→`text`/`analysis` の段階的移行→LSP 変換集約の3段階で進めるべきと判断。今後はこの順序で作業する。
 - 2025-02-14: Step4 のサブタスクを 4.2.1〜4.2.4 に分割。まず `text/position`/`analysis::selection` を最初に置き換え、徐々に複雑なモジュールへ展開する。
+- 2025-02-14: `analysis`/`text` から `tower_lsp` 依存を排除した結果、`lsp_impl` 側で Domain ↔ LSP の変換ヘルパーを実装。今後のStep4.3ではこのヘルパーを活用しながらエントリポイントを整理する。
 - 2025-02-14: ドメイン型を追加するにあたり `url` を直接依存に追加した。LSP 層の変換を進める際はこのモジュールを噛ませる前提で設計する。
 
 ## 変更ルール

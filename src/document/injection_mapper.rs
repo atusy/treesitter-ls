@@ -1,9 +1,9 @@
 use crate::document::LanguageLayer;
+use crate::domain::Position;
 use crate::text::{
     PositionMapper, compute_line_starts, convert_byte_to_utf16_in_line,
     convert_utf16_to_byte_in_line, extract_text_from_ranges,
 };
-use tower_lsp::lsp_types::Position;
 
 /// Map document byte offset to layer byte offset for injection ranges
 pub fn doc_to_layer_offset(doc_offset: usize, ranges: &[(usize, usize)]) -> Option<usize> {
@@ -144,10 +144,7 @@ impl<'a> InjectionPositionMapper<'a> {
         let line_text = &layer_text[*line_start..line_end.min(layer_text.len())];
         let character = convert_byte_to_utf16_in_line(line_text, line_offset).unwrap_or(0);
 
-        Some(Position {
-            line: line as u32,
-            character: character as u32,
-        })
+        Some(Position::new(line as u32, character as u32))
     }
 
     /// Map layer position back to document position

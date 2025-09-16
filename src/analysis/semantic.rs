@@ -1,9 +1,9 @@
 use crate::config::CaptureMappings;
-use crate::text::convert_byte_to_utf16_in_line;
-use tower_lsp::lsp_types::{
-    Range, SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens,
-    SemanticTokensDelta, SemanticTokensEdit, SemanticTokensFullDeltaResult, SemanticTokensResult,
+use crate::domain::{
+    LEGEND_MODIFIERS, LEGEND_TYPES, Range, SemanticToken, SemanticTokens, SemanticTokensDelta,
+    SemanticTokensEdit, SemanticTokensFullDeltaResult, SemanticTokensResult,
 };
+use crate::text::convert_byte_to_utf16_in_line;
 use tree_sitter::{Query, QueryCursor, StreamingIterator, Tree};
 
 /// Convert byte column position to UTF-16 column position within a line
@@ -70,107 +70,24 @@ fn apply_capture_mapping(
 /// - The first part is the token type (e.g., "variable", "function")
 /// - Following parts are modifiers (e.g., "readonly", "defaultLibrary")
 fn map_capture_to_token_type_and_modifiers(capture_name: &str) -> (u32, u32) {
-    // Split capture name by dots to separate type and modifiers
     let parts: Vec<&str> = capture_name.split('.').collect();
-
-    // First part is the token type
-    let token_type = match *parts.first().unwrap_or(&"variable") {
-        "comment" => SemanticTokenType::COMMENT,
-        "keyword" => SemanticTokenType::KEYWORD,
-        "string" => SemanticTokenType::STRING,
-        "number" => SemanticTokenType::NUMBER,
-        "regexp" => SemanticTokenType::REGEXP,
-        "operator" => SemanticTokenType::OPERATOR,
-        "namespace" => SemanticTokenType::NAMESPACE,
-        "type" => SemanticTokenType::TYPE,
-        "struct" => SemanticTokenType::STRUCT,
-        "class" => SemanticTokenType::CLASS,
-        "interface" => SemanticTokenType::INTERFACE,
-        "enum" => SemanticTokenType::ENUM,
-        "enumMember" => SemanticTokenType::ENUM_MEMBER,
-        "typeParameter" => SemanticTokenType::TYPE_PARAMETER,
-        "function" => SemanticTokenType::FUNCTION,
-        "method" => SemanticTokenType::METHOD,
-        "macro" => SemanticTokenType::MACRO,
-        "variable" => SemanticTokenType::VARIABLE,
-        "parameter" => SemanticTokenType::PARAMETER,
-        "property" => SemanticTokenType::PROPERTY,
-        "event" => SemanticTokenType::EVENT,
-        "modifier" => SemanticTokenType::MODIFIER,
-        "decorator" => SemanticTokenType::DECORATOR,
-        _ => SemanticTokenType::VARIABLE, // Default fallback
-    };
+    let token_type_name = parts.first().copied().unwrap_or("variable");
 
     let token_type_index = LEGEND_TYPES
         .iter()
-        .position(|t| *t == token_type)
+        .position(|t| *t == token_type_name)
+        .or_else(|| LEGEND_TYPES.iter().position(|t| *t == "variable"))
         .unwrap_or(0) as u32;
 
-    // Process modifiers (if any)
     let mut modifiers_bitset = 0u32;
     for modifier_name in &parts[1..] {
-        let modifier = match *modifier_name {
-            "declaration" => SemanticTokenModifier::DECLARATION,
-            "definition" => SemanticTokenModifier::DEFINITION,
-            "readonly" => SemanticTokenModifier::READONLY,
-            "static" => SemanticTokenModifier::STATIC,
-            "deprecated" => SemanticTokenModifier::DEPRECATED,
-            "abstract" => SemanticTokenModifier::ABSTRACT,
-            "async" => SemanticTokenModifier::ASYNC,
-            "modification" => SemanticTokenModifier::MODIFICATION,
-            "documentation" => SemanticTokenModifier::DOCUMENTATION,
-            "defaultLibrary" => SemanticTokenModifier::DEFAULT_LIBRARY,
-            _ => continue, // Skip unknown modifiers
-        };
-
-        if let Some(index) = LEGEND_MODIFIERS.iter().position(|m| *m == modifier) {
+        if let Some(index) = LEGEND_MODIFIERS.iter().position(|m| *m == *modifier_name) {
             modifiers_bitset |= 1 << index;
         }
     }
 
     (token_type_index, modifiers_bitset)
 }
-
-/// LSP semantic token types legend
-pub const LEGEND_TYPES: &[SemanticTokenType] = &[
-    SemanticTokenType::COMMENT,
-    SemanticTokenType::KEYWORD,
-    SemanticTokenType::STRING,
-    SemanticTokenType::NUMBER,
-    SemanticTokenType::REGEXP,
-    SemanticTokenType::OPERATOR,
-    SemanticTokenType::NAMESPACE,
-    SemanticTokenType::TYPE,
-    SemanticTokenType::STRUCT,
-    SemanticTokenType::CLASS,
-    SemanticTokenType::INTERFACE,
-    SemanticTokenType::ENUM,
-    SemanticTokenType::ENUM_MEMBER,
-    SemanticTokenType::TYPE_PARAMETER,
-    SemanticTokenType::FUNCTION,
-    SemanticTokenType::METHOD,
-    SemanticTokenType::MACRO,
-    SemanticTokenType::VARIABLE,
-    SemanticTokenType::PARAMETER,
-    SemanticTokenType::PROPERTY,
-    SemanticTokenType::EVENT,
-    SemanticTokenType::MODIFIER,
-    SemanticTokenType::DECORATOR,
-];
-
-/// LSP semantic token modifiers legend
-pub const LEGEND_MODIFIERS: &[SemanticTokenModifier] = &[
-    SemanticTokenModifier::DECLARATION,
-    SemanticTokenModifier::DEFINITION,
-    SemanticTokenModifier::READONLY,
-    SemanticTokenModifier::STATIC,
-    SemanticTokenModifier::DEPRECATED,
-    SemanticTokenModifier::ABSTRACT,
-    SemanticTokenModifier::ASYNC,
-    SemanticTokenModifier::MODIFICATION,
-    SemanticTokenModifier::DOCUMENTATION,
-    SemanticTokenModifier::DEFAULT_LIBRARY,
-];
 
 /// Handle semantic tokens full request
 ///
@@ -406,17 +323,14 @@ pub fn handle_semantic_tokens_full_delta(
     // Get current tokens
     let current_result =
         handle_semantic_tokens_full(text, tree, query, filetype, capture_mappings)?;
-    let current_tokens = match current_result {
-        SemanticTokensResult::Tokens(tokens) => tokens,
-        _ => return None,
-    };
+    let SemanticTokensResult::Tokens(current_tokens) = current_result;
 
     // Check if we can calculate a delta
     if let Some(prev) = previous_tokens
         && prev.result_id.as_deref() == Some(previous_result_id)
         && let Some(delta) = calculate_semantic_tokens_delta(prev, &current_tokens)
     {
-        return Some(SemanticTokensFullDeltaResult::TokensDelta(delta));
+        return Some(SemanticTokensFullDeltaResult::Delta(delta));
     }
 
     // Fall back to full tokens
@@ -471,7 +385,7 @@ fn calculate_semantic_tokens_delta(
         edits: vec![SemanticTokensEdit {
             start: start as u32,
             delete_count: delete_count as u32,
-            data: Some(data),
+            data,
         }],
     })
 }
@@ -576,12 +490,12 @@ mod tests {
         assert_eq!(delta.edits.len(), 1);
         assert_eq!(delta.edits[0].start, 0);
         assert_eq!(delta.edits[0].delete_count, 3);
-        assert_eq!(delta.edits[0].data.as_ref().unwrap().len(), 3);
+        assert_eq!(delta.edits[0].data.len(), 3);
     }
 
     #[test]
     fn test_semantic_tokens_range() {
-        use tower_lsp::lsp_types::Position;
+        use crate::domain::Position;
 
         // Create mock tokens for a document
         let all_tokens = SemanticTokens {
@@ -731,7 +645,6 @@ let y = "hello""#;
                     "Japanese string token should have UTF-16 length of 7"
                 );
             }
-            _ => unreachable!("Expected Tokens variant from handle_semantic_tokens_full"),
         }
     }
 }

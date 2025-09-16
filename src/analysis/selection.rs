@@ -1,5 +1,5 @@
 use crate::document::DocumentView;
-use tower_lsp::lsp_types::{Position, Range, SelectionRange};
+use crate::domain::{Position, Range, SelectionRange};
 use tree_sitter::{Node, Point};
 
 /// Convert LSP Position to tree-sitter Point
