@@ -1,17 +1,16 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 use tree_sitter::Parser;
 
 use crate::runtime::registry::LanguageRegistry;
 
 /// Factory for creating Tree-sitter parsers with proper language configuration
 pub struct ParserFactory {
-    language_registry: Arc<LanguageRegistry>,
+    language_registry: LanguageRegistry,
 }
 
 impl ParserFactory {
     /// Create a new ParserFactory with a reference to the language registry
-    pub fn new(language_registry: Arc<LanguageRegistry>) -> Self {
+    pub fn new(language_registry: LanguageRegistry) -> Self {
         Self { language_registry }
     }
 
@@ -31,12 +30,12 @@ pub struct DocumentParserPool {
     /// Available parsers by language ID
     available: HashMap<String, Vec<Parser>>,
     /// Factory for creating new parsers
-    factory: Arc<ParserFactory>,
+    factory: ParserFactory,
 }
 
 impl DocumentParserPool {
     /// Create a new parser pool with the given factory
-    pub fn new(factory: Arc<ParserFactory>) -> Self {
+    pub fn new(factory: ParserFactory) -> Self {
         Self {
             available: HashMap::new(),
             factory,
@@ -80,11 +79,11 @@ impl DocumentParserPool {
 mod tests {
     use super::*;
 
-    fn create_test_language_registry() -> Arc<LanguageRegistry> {
+    fn create_test_language_registry() -> LanguageRegistry {
         let registry = LanguageRegistry::new();
         // Add test language (Rust) to the registry
         registry.register_unchecked("rust".to_string(), tree_sitter_rust::LANGUAGE.into());
-        Arc::new(registry)
+        registry
     }
 
     #[test]
@@ -104,7 +103,7 @@ mod tests {
     #[test]
     fn test_document_parser_pool_acquire_release() {
         let language_registry = create_test_language_registry();
-        let factory = Arc::new(ParserFactory::new(language_registry));
+        let factory = ParserFactory::new(language_registry);
         let mut pool = DocumentParserPool::new(factory);
 
         // First acquire should create new parser
@@ -125,7 +124,7 @@ mod tests {
     #[test]
     fn test_document_parser_pool_clear() {
         let language_registry = create_test_language_registry();
-        let factory = Arc::new(ParserFactory::new(language_registry));
+        let factory = ParserFactory::new(language_registry);
         let mut pool = DocumentParserPool::new(factory);
 
         // Add parsers to pool

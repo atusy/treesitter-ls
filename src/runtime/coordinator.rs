@@ -9,11 +9,11 @@ use tree_sitter::Language;
 
 /// Coordinates language runtime components (registry, queries, configs).
 pub struct RuntimeCoordinator {
-    query_store: Arc<QueryStore>,
-    config_store: Arc<ConfigStore>,
-    filetype_resolver: Arc<FiletypeResolver>,
-    language_registry: Arc<LanguageRegistry>,
-    parser_loader: Arc<RwLock<ParserLoader>>,
+    query_store: QueryStore,
+    config_store: ConfigStore,
+    filetype_resolver: FiletypeResolver,
+    language_registry: LanguageRegistry,
+    parser_loader: RwLock<ParserLoader>,
 }
 
 impl Default for RuntimeCoordinator {
@@ -25,11 +25,11 @@ impl Default for RuntimeCoordinator {
 impl RuntimeCoordinator {
     pub fn new() -> Self {
         Self {
-            query_store: Arc::new(QueryStore::new()),
-            config_store: Arc::new(ConfigStore::new()),
-            filetype_resolver: Arc::new(FiletypeResolver::new()),
-            language_registry: Arc::new(LanguageRegistry::new()),
-            parser_loader: Arc::new(RwLock::new(ParserLoader::new())),
+            query_store: QueryStore::new(),
+            config_store: ConfigStore::new(),
+            filetype_resolver: FiletypeResolver::new(),
+            language_registry: LanguageRegistry::new(),
+            parser_loader: RwLock::new(ParserLoader::new()),
         }
     }
 
@@ -158,7 +158,7 @@ impl RuntimeCoordinator {
 
     /// Create a document parser pool
     pub fn create_document_parser_pool(&self) -> DocumentParserPool {
-        let parser_factory = Arc::new(ParserFactory::new(self.language_registry.clone()));
+        let parser_factory = ParserFactory::new(self.language_registry.clone());
         DocumentParserPool::new(parser_factory)
     }
 

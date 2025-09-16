@@ -26,7 +26,7 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new() -> Self {
-        let runtime = Arc::new(crate::runtime::RuntimeCoordinator::new());
+        let runtime = crate::runtime::RuntimeCoordinator::new();
         Self {
             languages: WorkspaceLanguages::new(runtime),
             documents: WorkspaceDocuments::new(),

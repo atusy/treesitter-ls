@@ -6,12 +6,12 @@ use std::sync::{Arc, Mutex};
 use tree_sitter::{Parser, Query};
 
 pub struct WorkspaceLanguages {
-    runtime: Arc<RuntimeCoordinator>,
+    runtime: RuntimeCoordinator,
     parser_pool: Mutex<DocumentParserPool>,
 }
 
 impl WorkspaceLanguages {
-    pub fn new(runtime: Arc<RuntimeCoordinator>) -> Self {
+    pub fn new(runtime: RuntimeCoordinator) -> Self {
         let pool = runtime.create_document_parser_pool();
         Self {
             runtime,
@@ -66,6 +66,6 @@ impl WorkspaceLanguages {
 
 impl Default for WorkspaceLanguages {
     fn default() -> Self {
-        Self::new(Arc::new(RuntimeCoordinator::new()))
+        Self::new(RuntimeCoordinator::new())
     }
 }
