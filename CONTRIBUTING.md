@@ -70,7 +70,7 @@ The initial codebase had several problems:
 - Circular dependencies between `state/` and `treesitter/` modules
 - Upward dependencies (e.g., `layers/` depending on `state/`)
 - Scattered responsibilities across multiple modules
-- "God objects" like `LanguageService` with too many responsibilities
+- "God objects" with too many responsibilities
 
 The vertical slice architecture solves these by:
 - Grouping related functionality together
@@ -103,11 +103,15 @@ src/
 │   └── store.rs        # Thread-safe document storage with DashMap
 │
 ├── language/       # Language service (vertical slice)
-│   ├── loader.rs       # Dynamic parser loading (.so/.dylib files)
-│   ├── parser_pool.rs  # Parser pooling and factory
-│   ├── query.rs        # Tree-sitter query execution
-│   ├── registry.rs     # Language registry and configuration
-│   └── service.rs      # Central LanguageService with facade methods
+│   ├── config_store.rs       # Language configuration management
+│   ├── filetype_resolver.rs  # File type to language mapping
+│   ├── language_coordinator.rs # Stateless coordination between modules
+│   ├── loader.rs             # Dynamic parser loading (.so/.dylib files)
+│   ├── parser_pool.rs        # Parser pooling and factory
+│   ├── query.rs              # Tree-sitter query execution
+│   ├── query_loader.rs       # Query file loading from disk
+│   ├── query_store.rs        # Query storage and retrieval
+│   └── registry.rs           # Language registry
 │
 ├── lsp/            # LSP server implementation
 │   └── lsp_impl.rs     # LSP protocol handler and orchestration
@@ -136,8 +140,12 @@ Manages document lifecycle and language layers:
 
 #### `language/` - Language Services
 Language configuration and parsing:
-- **service.rs**: Central `LanguageService` with facade methods
-- **registry.rs**: Language registry and configuration
+- **language_coordinator.rs**: Stateless coordination between language modules
+- **config_store.rs**: Language configuration management
+- **filetype_resolver.rs**: File type to language mapping
+- **query_store.rs**: Query storage and retrieval
+- **query_loader.rs**: Query file loading from disk
+- **registry.rs**: Language registry
 - **parser_pool.rs**: Parser pooling for efficient reuse
 - **loader.rs**: Dynamic parser library loading
 - **query.rs**: Tree-sitter query execution
@@ -153,7 +161,7 @@ Text manipulation utilities:
 The refactoring implemented clean architecture principles:
 - **Dependency Inversion**: `AnalysisContext` trait allows analysis module to work without direct `Document` dependency
 - **Module Boundaries**: Clear separation between document management, language services, and text operations
-- **Facade Pattern**: `LanguageService` provides simplified interface hiding implementation details
+- **Coordinator Pattern**: `LanguageCoordinator` provides stateless coordination between modules
 
 #### Injection System Design
 Language injections (like code blocks in Markdown) are handled by:
