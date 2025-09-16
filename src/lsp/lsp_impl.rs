@@ -13,12 +13,12 @@ use crate::analysis::{
 };
 use crate::config::{TreeSitterSettings, merge_settings};
 use crate::document::{DocumentStore, LanguageLayer};
-use crate::language::LanguageService;
+use crate::language::LanguageCoordinator;
 use crate::text::{PositionMapper, SimplePositionMapper};
 
 pub struct TreeSitterLs {
     client: Client,
-    language_service: Arc<LanguageService>,
+    language_coordinator: Arc<LanguageCoordinator>,
     document_store: DocumentStore,
     root_path: Mutex<Option<PathBuf>>,
 }
@@ -34,10 +34,10 @@ impl std::fmt::Debug for TreeSitterLs {
 
 impl TreeSitterLs {
     pub fn new(client: Client) -> Self {
-        let language_service = Arc::new(LanguageService::new());
+        let language_coordinator = Arc::new(LanguageCoordinator::new());
         Self {
             client,
-            language_service,
+            language_coordinator,
             document_store: DocumentStore::new(),
             root_path: Mutex::new(None),
         }
@@ -55,7 +55,7 @@ impl TreeSitterLs {
 
         // Find the language for this file extension
         let language_name = {
-            let filetype_map = self.language_service.get_filetype_map();
+            let filetype_map = self.language_coordinator.get_filetype_map();
             filetype_map.get(extension).cloned()
         };
 
@@ -65,19 +65,19 @@ impl TreeSitterLs {
         if let Some(language_name) = language_name {
             // Try to dynamically load the language if not already loaded
             let language_loaded = self
-                .language_service
+                .language_coordinator
                 .language_registry
                 .contains(&language_name);
 
             if !language_loaded {
                 let loaded = self
-                    .language_service
+                    .language_coordinator
                     .try_load_language_by_id(&language_name, &self.client)
                     .await;
 
                 // If language was dynamically loaded, check if queries are also loaded
                 if loaded {
-                    let has_queries = self.language_service.has_queries(&language_name);
+                    let has_queries = self.language_coordinator.has_queries(&language_name);
 
                     // If queries are loaded, request semantic tokens refresh
                     if has_queries && self.client.semantic_tokens_refresh().await.is_ok() {
@@ -93,7 +93,7 @@ impl TreeSitterLs {
 
             // Initialize parser pool if needed
             // Create a parser for this parse operation
-            let parser = self.language_service.create_parser(&language_name);
+            let parser = self.language_coordinator.create_parser(&language_name);
             if let Some(mut parser) = parser {
                 // Get old tree for incremental parsing if document exists
                 let old_tree = if !edits.is_empty() {
@@ -128,7 +128,7 @@ impl TreeSitterLs {
 
     fn get_language_for_document(&self, uri: &Url) -> Option<String> {
         // First try to get language from the service (based on file extension)
-        if let Some(lang) = self.language_service.get_language_for_document(uri) {
+        if let Some(lang) = self.language_coordinator.get_language_for_document(uri) {
             return Some(lang);
         }
 
@@ -139,7 +139,7 @@ impl TreeSitterLs {
     }
 
     async fn load_settings(&self, settings: TreeSitterSettings) {
-        self.language_service
+        self.language_coordinator
             .load_settings(settings, &self.client)
             .await;
     }
@@ -325,7 +325,7 @@ impl LanguageServer for TreeSitterLs {
 
         // Check if queries are ready for the document
         if let Some(language_name) = self.get_language_for_document(&uri) {
-            let has_queries = { self.language_service.has_queries(&language_name) };
+            let has_queries = { self.language_coordinator.has_queries(&language_name) };
 
             if has_queries {
                 // Always request semantic tokens refresh on file open
@@ -345,10 +345,7 @@ impl LanguageServer for TreeSitterLs {
                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
                 // Check again after delay
-                let has_queries_after_delay = {
-                    let queries = self.language_service.queries.lock().unwrap();
-                    queries.contains_key(&language_name)
-                };
+                let has_queries_after_delay = self.language_coordinator.has_queries(&language_name);
 
                 if has_queries_after_delay && self.client.semantic_tokens_refresh().await.is_ok() {
                     self.client
@@ -518,7 +515,10 @@ impl LanguageServer for TreeSitterLs {
                 data: vec![],
             })));
         };
-        let Some(query) = self.language_service.get_highlight_query(&language_name) else {
+        let Some(query) = self
+            .language_coordinator
+            .get_highlight_query(&language_name)
+        else {
             return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                 result_id: None,
                 data: vec![],
@@ -542,7 +542,7 @@ impl LanguageServer for TreeSitterLs {
             };
 
             // Get capture mappings
-            let capture_mappings = self.language_service.get_capture_mappings();
+            let capture_mappings = self.language_coordinator.get_capture_mappings();
 
             // Use the stable semantic tokens handler for the root layer
             crate::analysis::handle_semantic_tokens_full(
@@ -598,7 +598,10 @@ impl LanguageServer for TreeSitterLs {
             )));
         };
 
-        let Some(query) = self.language_service.get_highlight_query(&language_name) else {
+        let Some(query) = self
+            .language_coordinator
+            .get_highlight_query(&language_name)
+        else {
             return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
                 SemanticTokens {
                     result_id: None,
@@ -632,7 +635,7 @@ impl LanguageServer for TreeSitterLs {
             let previous_tokens = doc.last_semantic_tokens();
 
             // Get capture mappings
-            let capture_mappings = self.language_service.get_capture_mappings();
+            let capture_mappings = self.language_coordinator.get_capture_mappings();
 
             // Delegate to handler
             handle_semantic_tokens_full_delta(
@@ -681,7 +684,10 @@ impl LanguageServer for TreeSitterLs {
             })));
         };
 
-        let Some(query) = self.language_service.get_highlight_query(&language_name) else {
+        let Some(query) = self
+            .language_coordinator
+            .get_highlight_query(&language_name)
+        else {
             return Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
                 result_id: None,
                 data: vec![],
@@ -705,7 +711,7 @@ impl LanguageServer for TreeSitterLs {
 
         // Delegate to handler
         // Get capture mappings
-        let capture_mappings = self.language_service.get_capture_mappings();
+        let capture_mappings = self.language_coordinator.get_capture_mappings();
 
         let result = handle_semantic_tokens_range(
             text,
@@ -741,7 +747,7 @@ impl LanguageServer for TreeSitterLs {
         };
 
         // Get locals query
-        let Some(locals_query) = self.language_service.get_locals_query(&language_name) else {
+        let Some(locals_query) = self.language_coordinator.get_locals_query(&language_name) else {
             return Ok(None);
         };
 
@@ -794,12 +800,12 @@ impl LanguageServer for TreeSitterLs {
         let language_name = self.get_language_for_document(&uri);
 
         // Get capture mappings
-        let capture_mappings = self.language_service.get_capture_mappings();
+        let capture_mappings = self.language_coordinator.get_capture_mappings();
 
         // Get queries and delegate to handler
         if let Some(lang) = language_name.clone() {
-            let highlight_query = self.language_service.get_highlight_query(&lang);
-            let locals_query = self.language_service.get_locals_query(&lang);
+            let highlight_query = self.language_coordinator.get_highlight_query(&lang);
+            let locals_query = self.language_coordinator.get_locals_query(&lang);
 
             let queries = highlight_query
                 .as_ref()
