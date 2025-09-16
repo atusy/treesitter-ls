@@ -142,6 +142,26 @@ impl FiletypeResolver {
     }
 
     /// Get all extensions for a language
+    pub fn get_language_extensions_map(&self) -> std::collections::HashMap<String, Vec<String>> {
+        match self.filetype_map.read() {
+            Ok(map) => {
+                let mut result = std::collections::HashMap::new();
+                for (ext, lang) in map.iter() {
+                    result.entry(lang.clone()).or_insert_with(Vec::new).push(ext.clone());
+                }
+                result
+            }
+            Err(poisoned) => {
+                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::get_language_extensions_map");
+                let mut result = std::collections::HashMap::new();
+                for (ext, lang) in poisoned.into_inner().iter() {
+                    result.entry(lang.clone()).or_insert_with(Vec::new).push(ext.clone());
+                }
+                result
+            }
+        }
+    }
+
     pub fn get_extensions_for_language(&self, language: &str) -> Vec<String> {
         match self.filetype_map.read() {
             Ok(guard) => guard

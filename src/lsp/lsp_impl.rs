@@ -13,6 +13,7 @@ use crate::analysis::{
     handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
 use crate::config::{TreeSitterSettings, merge_settings};
+use crate::language::{LanguageLoadResult, LogLevel};
 use crate::document::{DocumentStore, LanguageLayer};
 use crate::language::LanguageCoordinator;
 use crate::text::{PositionMapper, SimplePositionMapper};
@@ -51,17 +52,11 @@ impl TreeSitterLs {
         language_id: Option<&str>,
         edits: Vec<InputEdit>,
     ) {
-        // Detect file extension
-        let extension = uri.path().split('.').next_back().unwrap_or("");
-
-        // Find the language for this file extension
-        let language_name = {
-            let filetype_map = self.language_coordinator.get_filetype_map();
-            filetype_map.get(extension).cloned()
-        };
-
-        // Use the configured language or fall back to language_id
-        let language_name = language_name.or_else(|| language_id.map(|s| s.to_string()));
+        // Get the language name from the document URL or language_id
+        let language_name = self
+            .language_coordinator
+            .get_language_for_document(&uri)
+            .or_else(|| language_id.map(|s| s.to_string()));
 
         if let Some(language_name) = language_name {
             // Try to dynamically load the language if not already loaded
@@ -71,17 +66,16 @@ impl TreeSitterLs {
                 .contains(&language_name);
 
             if !language_loaded {
-                let loaded = self
+                let load_result = self
                     .language_coordinator
-                    .try_load_language_by_id(&language_name, &self.client)
-                    .await;
+                    .try_load_language_by_id(&language_name);
 
-                // If language was dynamically loaded, check if queries are also loaded
-                if loaded {
-                    let has_queries = self.language_coordinator.has_queries(&language_name);
+                // Log all messages from the load result
+                self.log_language_load_result(&load_result).await;
 
-                    // If queries are loaded, request semantic tokens refresh
-                    if has_queries && self.client.semantic_tokens_refresh().await.is_ok() {
+                // If language was dynamically loaded and semantic refresh is needed
+                if load_result.success && load_result.needs_semantic_refresh {
+                    if self.client.semantic_tokens_refresh().await.is_ok() {
                         self.client
                             .log_message(
                                 MessageType::INFO,
@@ -92,9 +86,9 @@ impl TreeSitterLs {
                 }
             }
 
-            // Initialize parser pool if needed
-            // Create a parser for this parse operation
-            let parser = self.language_coordinator.create_parser(&language_name);
+            // Create a parser factory and then create parser for this parse operation
+            let parser_factory = self.language_coordinator.create_parser_factory();
+            let parser = parser_factory.create_parser(&language_name);
             if let Some(mut parser) = parser {
                 // Get old tree for incremental parsing if document exists
                 let old_tree = if !edits.is_empty() {
@@ -140,9 +134,23 @@ impl TreeSitterLs {
     }
 
     async fn load_settings(&self, settings: TreeSitterSettings) {
-        self.language_coordinator
-            .load_settings(settings, &self.client)
-            .await;
+        let load_result = self.language_coordinator
+            .load_settings(settings);
+
+        // Log all messages from the load result
+        self.log_language_load_result(&load_result).await;
+    }
+
+    /// Helper method to log all messages from LanguageLoadResult
+    async fn log_language_load_result(&self, result: &LanguageLoadResult) {
+        for message in &result.logs {
+            let message_type = match message.level {
+                LogLevel::Info => MessageType::INFO,
+                LogLevel::Warning => MessageType::WARNING,
+                LogLevel::Error => MessageType::ERROR,
+            };
+            self.client.log_message(message_type, &message.message).await;
+        }
     }
 }
 
@@ -771,9 +779,10 @@ impl LanguageServer for TreeSitterLs {
 
         // Use layer-aware handler
         let resolver = DefinitionResolver::new();
+        let view = doc.as_view();
         Ok(handle_goto_definition(
             &resolver,
-            &doc,
+            &view as &dyn crate::document::DocumentView,
             position,
             &locals_query,
             &uri,
@@ -793,7 +802,8 @@ impl LanguageServer for TreeSitterLs {
         };
 
         // Use layer-aware handler
-        Ok(handle_selection_range(&doc, &positions))
+        let view = doc.as_view();
+        Ok(handle_selection_range(&view as &dyn crate::document::DocumentView, &positions))
     }
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {

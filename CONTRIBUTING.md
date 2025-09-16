@@ -87,7 +87,6 @@ src/
 │   ├── refactor.rs     # Code actions (parameter reordering)
 │   ├── selection.rs    # Selection range expansion
 │   ├── semantic.rs     # Semantic token highlighting
-│   └── traits.rs       # AnalysisContext trait for dependency inversion
 │
 ├── bin/            # Binary entry point
 │   └── main.rs         # Application startup and initialization
@@ -99,7 +98,7 @@ src/
 │   ├── injection_mapper.rs  # Coordinate mapping for language injections
 │   ├── layer.rs        # LanguageLayer structure for parsed trees
 │   ├── layer_manager.rs # Root and injection layer management
-│   ├── model.rs        # Unified Document struct (implements AnalysisContext)
+│   ├── model.rs        # Unified Document struct
 │   └── store.rs        # Thread-safe document storage with DashMap
 │
 ├── language/       # Language service (vertical slice)

@@ -1,5 +1,6 @@
 // Definition jump resolution using tree-sitter queries
-use crate::document::Document;
+use crate::document::DocumentView;
+use crate::text::PositionMapper;
 use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Position, Range, Url};
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 
@@ -430,26 +431,18 @@ impl DefinitionResolver {
 /// Handle goto definition request with injection layer support
 pub fn handle_goto_definition(
     resolver: &DefinitionResolver,
-    document: &Document,
+    document: &dyn DocumentView,
     position: Position,
     locals_query: &Query,
     uri: &Url,
 ) -> Option<GotoDefinitionResponse> {
     // Convert LSP position to byte offset
-    // Create position mapper based on whether document has injections
-    let mapper: Box<dyn crate::text::PositionMapper> =
-        if document.layers().injection_layers().is_empty() {
-            Box::new(crate::text::SimplePositionMapper::new(document.text()))
-        } else {
-            Box::new(crate::document::InjectionPositionMapper::new(
-                document.text(),
-                document.layers().injection_layers(),
-            ))
-        };
+    // For now, use SimplePositionMapper until we handle injections properly
+    let mapper = crate::text::SimplePositionMapper::new(document.text());
     let cursor_byte = mapper.position_to_byte(position)?;
 
     // Find the appropriate layer at cursor position
-    let layer = document.layers().get_layer_at_offset(cursor_byte)?;
+    let layer = document.get_layer_at_offset(cursor_byte)?;
 
     // Get the tree and text
     let tree = &layer.tree;

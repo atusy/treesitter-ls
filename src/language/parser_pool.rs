@@ -4,19 +4,27 @@ use tree_sitter::Parser;
 
 use crate::language::registry::LanguageRegistry;
 
-/// Factory for creating Tree-sitter parsers with proper language configuration
-pub struct ParserFactory {
+/// Trait for creating Tree-sitter parsers with proper language configuration
+pub trait ParserFactory: Send + Sync {
+    /// Create a new parser for the specified language
+    fn create_parser(&self, language_id: &str) -> Option<Parser>;
+}
+
+/// Default implementation of ParserFactory using LanguageRegistry
+pub struct RegistryBasedParserFactory {
     language_registry: Arc<LanguageRegistry>,
 }
 
-impl ParserFactory {
+impl RegistryBasedParserFactory {
     /// Create a new ParserFactory with a reference to the language registry
     pub fn new(language_registry: Arc<LanguageRegistry>) -> Self {
         Self { language_registry }
     }
+}
 
+impl ParserFactory for RegistryBasedParserFactory {
     /// Create a new parser for the specified language
-    pub fn create_parser(&self, language_id: &str) -> Option<Parser> {
+    fn create_parser(&self, language_id: &str) -> Option<Parser> {
         self.language_registry.get(language_id).and_then(|lang| {
             let mut parser = Parser::new();
             // set_language can fail if the language version is incompatible
@@ -31,12 +39,13 @@ pub struct DocumentParserPool {
     /// Available parsers by language ID
     available: HashMap<String, Vec<Parser>>,
     /// Factory for creating new parsers
-    factory: Arc<ParserFactory>,
+    factory: Arc<dyn ParserFactory>,
+
 }
 
 impl DocumentParserPool {
     /// Create a new parser pool with the given factory
-    pub fn new(factory: Arc<ParserFactory>) -> Self {
+    pub fn new(factory: Arc<dyn ParserFactory>) -> Self {
         Self {
             available: HashMap::new(),
             factory,
@@ -90,7 +99,7 @@ mod tests {
     #[test]
     fn test_parser_factory_create_parser() {
         let language_registry = create_test_language_registry();
-        let factory = ParserFactory::new(language_registry);
+        let factory = RegistryBasedParserFactory::new(language_registry);
 
         // Should create parser for known language
         let parser = factory.create_parser("rust");
@@ -104,7 +113,7 @@ mod tests {
     #[test]
     fn test_document_parser_pool_acquire_release() {
         let language_registry = create_test_language_registry();
-        let factory = Arc::new(ParserFactory::new(language_registry));
+        let factory = Arc::new(RegistryBasedParserFactory::new(language_registry)) as Arc<dyn ParserFactory>;
         let mut pool = DocumentParserPool::new(factory);
 
         // First acquire should create new parser
@@ -125,7 +134,7 @@ mod tests {
     #[test]
     fn test_document_parser_pool_clear() {
         let language_registry = create_test_language_registry();
-        let factory = Arc::new(ParserFactory::new(language_registry));
+        let factory = Arc::new(RegistryBasedParserFactory::new(language_registry)) as Arc<dyn ParserFactory>;
         let mut pool = DocumentParserPool::new(factory);
 
         // Add parsers to pool

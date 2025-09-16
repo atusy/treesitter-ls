@@ -1,7 +1,5 @@
-use crate::analysis::AnalysisContext;
-use crate::document::LayerManager;
+use crate::document::{DocumentViewImpl, LayerManager};
 use tower_lsp::lsp_types::SemanticTokens;
-use tree_sitter::Tree;
 
 /// Unified document structure combining text, parsing, and LSP state
 pub struct Document {
@@ -99,25 +97,13 @@ impl Document {
     pub fn is_empty(&self) -> bool {
         self.text.is_empty()
     }
-}
 
-impl AnalysisContext for Document {
-    fn text(&self) -> &str {
-        &self.text
-    }
-
-    fn tree(&self) -> Option<&Tree> {
-        self.layers.root_layer().map(|l| &l.tree)
-    }
-
-    fn language_id(&self) -> Option<&str> {
-        self.layers.get_language_id()
-    }
-
-    fn layers(&self) -> &LayerManager {
-        &self.layers
+    /// Get a read-only view of the document for analysis
+    pub fn as_view(&self) -> DocumentViewImpl<'_> {
+        DocumentViewImpl::new(&self.text, &self.layers)
     }
 }
+
 
 #[cfg(test)]
 mod tests {

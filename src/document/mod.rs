@@ -2,6 +2,7 @@ pub mod injection_mapper;
 pub mod layer;
 pub mod layer_manager;
 pub mod store;
+pub mod view;
 
 mod model;
 
@@ -13,3 +14,4 @@ pub use layer::LanguageLayer;
 pub use layer_manager::LayerManager;
 pub use model::Document;
 pub use store::DocumentStore;
+pub use view::{DocumentView, DocumentViewImpl};

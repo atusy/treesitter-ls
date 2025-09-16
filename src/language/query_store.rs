@@ -171,6 +171,8 @@ impl QueryStore {
         }
     }
 
+
+
     /// Clear all queries
     pub fn clear_all(&self) {
         match self.highlight_queries.write() {
