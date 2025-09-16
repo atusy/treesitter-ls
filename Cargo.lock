@@ -1073,6 +1073,7 @@ dependencies = [
  "tower-lsp",
  "tree-sitter",
  "tree-sitter-rust",
+ "url",
 ]
 
 [[package]]
