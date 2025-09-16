@@ -102,17 +102,17 @@ src/
 │   ├── store.rs        # Thread-safe document storage with DashMap
 │   └── view.rs         # DocumentView trait exposing read-only access for analysis
 │
-├── language/       # Language service (vertical slice)
-│   ├── config_store.rs       # Language configuration management
-│   ├── events.rs            # Event and result types returned to the LSP layer
-│   ├── filetype_resolver.rs  # File type to language mapping
-│   ├── language_coordinator.rs # Stateless coordination between modules
-│   ├── loader.rs             # Dynamic parser loading (.so/.dylib files)
-│   ├── parser_pool.rs        # Parser pooling and factory
-│   ├── query.rs              # Tree-sitter query execution
-│   ├── query_loader.rs       # Query file loading from disk
-│   ├── query_store.rs        # Query storage and retrieval
-│   └── registry.rs           # Language registry
+├── runtime/        # Language runtime services (parsers, queries, config)
+│   ├── config.rs           # Configuration and capture mapping stores
+│   ├── coordinator.rs      # Stateless orchestration of runtime components
+│   ├── events.rs           # Event and result types returned to the LSP layer
+│   ├── filetypes.rs        # File type to language mapping
+│   ├── loader.rs           # Dynamic parser loading (.so/.dylib files)
+│   ├── parser_pool.rs      # Parser pooling and factory helpers
+│   ├── query.rs            # Tree-sitter query predicate utilities
+│   ├── query_loader.rs     # Query file loading from disk
+│   ├── query_store.rs      # Query storage and retrieval
+│   └── registry.rs         # Language registry
 │
 ├── lsp/            # LSP server implementation
 │   └── lsp_impl.rs     # LSP protocol handler and orchestration
@@ -140,18 +140,18 @@ Manages document lifecycle and language layers:
 - **injection_mapper.rs**: Handles coordinate mapping for language injections
 - **view.rs**: `DocumentView` trait providing read-only access for analysis code
 
-#### `language/` - Language Services
-Language configuration and parsing:
-- **language_coordinator.rs**: Stateless coordination between language modules, returning structured events
+#### `runtime/` - Language Runtime Services
+Coordinates parser loading, queries, and capture mappings:
+- **coordinator.rs**: Stateless orchestration returning structured events for the LSP layer
 - **events.rs**: Event/result types consumed by the LSP layer
-- **config_store.rs**: Language configuration management
-- **filetype_resolver.rs**: File type to language mapping
+- **config.rs**: Language configuration and capture mapping stores
+- **filetypes.rs**: File type to language mapping
 - **query_store.rs**: Query storage and retrieval
 - **query_loader.rs**: Query file loading from disk
 - **registry.rs**: Language registry
 - **parser_pool.rs**: Parser pooling for efficient reuse
 - **loader.rs**: Dynamic parser library loading
-- **query.rs**: Tree-sitter query execution
+- **query.rs**: Tree-sitter query predicate utilities
 
 #### `text/` - Text Operations
 Text manipulation utilities:
@@ -164,7 +164,7 @@ Text manipulation utilities:
 The refactoring implemented clean architecture principles:
 - **Dependency Inversion**: `DocumentView` trait (document/view.rs) lets analysis code depend on a read-only interface instead of the concrete `Document`
 - **Module Boundaries**: Clear separation between document management, language services, and text operations
-- **Coordinator Pattern**: `LanguageCoordinator` provides stateless coordination between modules and returns events consumed by the LSP layer
+- **Coordinator Pattern**: `RuntimeCoordinator` provides stateless coordination between runtime modules and returns events consumed by the LSP layer
 
 #### Injection System Design
 Language injections (like code blocks in Markdown) are handled by:

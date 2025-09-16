@@ -14,12 +14,12 @@ use crate::analysis::{
 };
 use crate::config::{TreeSitterSettings, merge_settings};
 use crate::document::{DocumentStore, LanguageLayer};
-use crate::language::{DocumentParserPool, LanguageCoordinator, LanguageEvent, LanguageLogLevel};
+use crate::runtime::{DocumentParserPool, LanguageEvent, LanguageLogLevel, RuntimeCoordinator};
 use crate::text::{PositionMapper, SimplePositionMapper};
 
 pub struct TreeSitterLs {
     client: Client,
-    language_coordinator: Arc<LanguageCoordinator>,
+    language_coordinator: Arc<RuntimeCoordinator>,
     document_store: DocumentStore,
     parser_pool: Mutex<DocumentParserPool>,
     root_path: Mutex<Option<PathBuf>>,
@@ -36,7 +36,7 @@ impl std::fmt::Debug for TreeSitterLs {
 
 impl TreeSitterLs {
     pub fn new(client: Client) -> Self {
-        let language_coordinator = Arc::new(LanguageCoordinator::new());
+        let language_coordinator = Arc::new(RuntimeCoordinator::new());
         let parser_pool = Mutex::new(language_coordinator.create_document_parser_pool());
         Self {
             client,
@@ -62,10 +62,7 @@ impl TreeSitterLs {
 
         if let Some(language_name) = language_name {
             // Try to dynamically load the language if not already loaded
-            let language_loaded = self
-                .language_coordinator
-                .language_registry
-                .contains(&language_name);
+            let language_loaded = self.language_coordinator.is_language_loaded(&language_name);
 
             if !language_loaded {
                 let result = self

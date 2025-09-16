@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tree_sitter::Parser;
 
-use crate::language::registry::LanguageRegistry;
+use crate::runtime::registry::LanguageRegistry;
 
 /// Factory for creating Tree-sitter parsers with proper language configuration
 pub struct ParserFactory {

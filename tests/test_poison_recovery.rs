@@ -2,10 +2,7 @@
 
 use std::sync::Arc;
 use std::thread;
-use treesitter_ls::language::config_store::ConfigStore;
-use treesitter_ls::language::filetype_resolver::FiletypeResolver;
-use treesitter_ls::language::query_store::QueryStore;
-use treesitter_ls::language::registry::LanguageRegistry;
+use treesitter_ls::runtime::{ConfigStore, FiletypeResolver, LanguageRegistry, QueryStore};
 
 #[test]
 fn test_registry_recovers_from_poisoned_lock() {

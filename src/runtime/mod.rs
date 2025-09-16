@@ -1,7 +1,7 @@
-pub mod config_store;
+pub mod config;
+pub mod coordinator;
 pub mod events;
-pub mod filetype_resolver;
-pub mod language_coordinator;
+pub mod filetypes;
 pub mod loader;
 pub mod parser_pool;
 pub mod query;
@@ -9,11 +9,10 @@ pub mod query_loader;
 pub mod query_store;
 pub mod registry;
 
-// Re-export key types
-pub use config_store::ConfigStore;
+pub use config::ConfigStore;
+pub use coordinator::RuntimeCoordinator;
 pub use events::{LanguageEvent, LanguageLoadResult, LanguageLoadSummary, LanguageLogLevel};
-pub use filetype_resolver::FiletypeResolver;
-pub use language_coordinator::LanguageCoordinator;
+pub use filetypes::FiletypeResolver;
 pub use loader::ParserLoader;
 pub use parser_pool::{DocumentParserPool, ParserFactory};
 pub use query::filter_captures;
