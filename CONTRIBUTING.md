@@ -114,6 +114,11 @@ src/
 │   ├── query_store.rs      # Query storage and retrieval
 │   └── registry.rs         # Language registry
 │
+├── workspace/     # Bridge between runtime services and document state
+│   ├── documents.rs       # Thin wrapper around DocumentStore operations
+│   ├── languages.rs       # Runtime access (parsers, queries, settings)
+│   └── mod.rs             # Workspace orchestration and root-path tracking
+│
 ├── lsp/            # LSP server implementation
 │   └── lsp_impl.rs     # LSP protocol handler and orchestration
 │
@@ -153,6 +158,12 @@ Coordinates parser loading, queries, and capture mappings:
 - **loader.rs**: Dynamic parser library loading
 - **query.rs**: Tree-sitter query predicate utilities
 
+#### `workspace/` - Workspace Coordination
+Mediates between the LSP layer and runtime/document services:
+- **mod.rs**: Holds `Workspace`, root-path tracking, and parse orchestration
+- **languages.rs**: Runtime access (settings, queries, parser pool)
+- **documents.rs**: Safe wrappers around the document store utilities
+
 #### `text/` - Text Operations
 Text manipulation utilities:
 - **edits.rs**: Text edit operations and range adjustments
@@ -165,6 +176,7 @@ The refactoring implemented clean architecture principles:
 - **Dependency Inversion**: `DocumentView` trait (document/view.rs) lets analysis code depend on a read-only interface instead of the concrete `Document`
 - **Module Boundaries**: Clear separation between document management, language services, and text operations
 - **Coordinator Pattern**: `RuntimeCoordinator` provides stateless coordination between runtime modules and returns events consumed by the LSP layer
+- **Workspace Facade**: `workspace::Workspace` aggregates runtime and document access so the LSP implementation stays thin.
 
 #### Injection System Design
 Language injections (like code blocks in Markdown) are handled by:

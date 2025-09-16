@@ -182,7 +182,7 @@ Example directory structure:
 
 ## Parser Reuse Strategy
 
-treesitter-ls keeps a per-language `DocumentParserPool` inside the LSP layer. Each parse acquires a parser from the pool, performs incremental parsing, then releases the parser for reuse. This keeps parser creation overhead low while the underlying `runtime/` APIs remain pure and LSP-agnostic.
+treesitter-ls keeps a per-language `DocumentParserPool` inside the `workspace/` facade. Each parse acquires a parser from the pool, performs incremental parsing, then releases the parser for reuse. This keeps parser creation overhead low while the underlying `runtime/` APIs remain pure and LSP-agnostic.
 
 ## Supported LSP Features
 
