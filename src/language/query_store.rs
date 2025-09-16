@@ -1,3 +1,4 @@
+use log::warn;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tree_sitter::Query;
@@ -20,67 +21,190 @@ impl QueryStore {
 
     // ========== Highlight Queries ==========
     pub fn insert_highlight_query(&self, lang_name: String, query: Arc<Query>) {
-        self.highlight_queries
-            .write()
-            .unwrap()
-            .insert(lang_name, query);
+        match self.highlight_queries.write() {
+            Ok(mut queries) => {
+                queries.insert(lang_name, query);
+            }
+            Err(poisoned) => {
+                warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned lock in query_store::insert_highlight_query for language: {}",
+                    lang_name
+                );
+                poisoned.into_inner().insert(lang_name, query);
+            }
+        }
     }
 
     pub fn get_highlight_query(&self, lang_name: &str) -> Option<Arc<Query>> {
-        self.highlight_queries
-            .read()
-            .unwrap()
-            .get(lang_name)
-            .cloned()
+        match self.highlight_queries.read() {
+            Ok(queries) => queries.get(lang_name).cloned(),
+            Err(poisoned) => {
+                warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned lock in query_store::get_highlight_query for language: {}",
+                    lang_name
+                );
+                poisoned.into_inner().get(lang_name).cloned()
+            }
+        }
     }
 
     pub fn has_highlight_query(&self, lang_name: &str) -> bool {
-        self.highlight_queries
-            .read()
-            .unwrap()
-            .contains_key(lang_name)
+        match self.highlight_queries.read() {
+            Ok(queries) => queries.contains_key(lang_name),
+            Err(poisoned) => {
+                warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned lock in query_store::has_highlight_query for language: {}",
+                    lang_name
+                );
+                poisoned.into_inner().contains_key(lang_name)
+            }
+        }
     }
 
     // ========== Locals Queries ==========
     pub fn insert_locals_query(&self, lang_name: String, query: Arc<Query>) {
-        self.locals_queries
-            .write()
-            .unwrap()
-            .insert(lang_name, query);
+        match self.locals_queries.write() {
+            Ok(mut queries) => {
+                queries.insert(lang_name, query);
+            }
+            Err(poisoned) => {
+                warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned lock in query_store::insert_locals_query for language: {}",
+                    lang_name
+                );
+                poisoned.into_inner().insert(lang_name, query);
+            }
+        }
     }
 
     pub fn get_locals_query(&self, lang_name: &str) -> Option<Arc<Query>> {
-        self.locals_queries.read().unwrap().get(lang_name).cloned()
+        match self.locals_queries.read() {
+            Ok(queries) => queries.get(lang_name).cloned(),
+            Err(poisoned) => {
+                warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned lock in query_store::get_locals_query for language: {}",
+                    lang_name
+                );
+                poisoned.into_inner().get(lang_name).cloned()
+            }
+        }
     }
 
     // ========== Injections Queries ==========
     pub fn insert_injections_query(&self, lang_name: String, query: Arc<Query>) {
-        self.injections_queries
-            .write()
-            .unwrap()
-            .insert(lang_name, query);
+        match self.injections_queries.write() {
+            Ok(mut queries) => {
+                queries.insert(lang_name, query);
+            }
+            Err(poisoned) => {
+                warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned lock in query_store::insert_injections_query for language: {}",
+                    lang_name
+                );
+                poisoned.into_inner().insert(lang_name, query);
+            }
+        }
     }
 
     pub fn get_injections_query(&self, lang_name: &str) -> Option<Arc<Query>> {
-        self.injections_queries
-            .read()
-            .unwrap()
-            .get(lang_name)
-            .cloned()
+        match self.injections_queries.read() {
+            Ok(queries) => queries.get(lang_name).cloned(),
+            Err(poisoned) => {
+                warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned lock in query_store::get_injections_query for language: {}",
+                    lang_name
+                );
+                poisoned.into_inner().get(lang_name).cloned()
+            }
+        }
     }
 
     /// Clear all queries for a specific language
     pub fn clear_language(&self, lang_name: &str) {
-        self.highlight_queries.write().unwrap().remove(lang_name);
-        self.locals_queries.write().unwrap().remove(lang_name);
-        self.injections_queries.write().unwrap().remove(lang_name);
+        match self.highlight_queries.write() {
+            Ok(mut queries) => {
+                queries.remove(lang_name);
+            }
+            Err(poisoned) => {
+                warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned lock in query_store::clear_language (highlight) for language: {}",
+                    lang_name
+                );
+                poisoned.into_inner().remove(lang_name);
+            }
+        }
+
+        match self.locals_queries.write() {
+            Ok(mut queries) => {
+                queries.remove(lang_name);
+            }
+            Err(poisoned) => {
+                warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned lock in query_store::clear_language (locals) for language: {}",
+                    lang_name
+                );
+                poisoned.into_inner().remove(lang_name);
+            }
+        }
+
+        match self.injections_queries.write() {
+            Ok(mut queries) => {
+                queries.remove(lang_name);
+            }
+            Err(poisoned) => {
+                warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned lock in query_store::clear_language (injections) for language: {}",
+                    lang_name
+                );
+                poisoned.into_inner().remove(lang_name);
+            }
+        }
     }
 
     /// Clear all queries
     pub fn clear_all(&self) {
-        self.highlight_queries.write().unwrap().clear();
-        self.locals_queries.write().unwrap().clear();
-        self.injections_queries.write().unwrap().clear();
+        match self.highlight_queries.write() {
+            Ok(mut queries) => queries.clear(),
+            Err(poisoned) => {
+                warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned lock in query_store::clear_all (highlight)"
+                );
+                poisoned.into_inner().clear();
+            }
+        }
+
+        match self.locals_queries.write() {
+            Ok(mut queries) => queries.clear(),
+            Err(poisoned) => {
+                warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned lock in query_store::clear_all (locals)"
+                );
+                poisoned.into_inner().clear();
+            }
+        }
+
+        match self.injections_queries.write() {
+            Ok(mut queries) => queries.clear(),
+            Err(poisoned) => {
+                warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned lock in query_store::clear_all (injections)"
+                );
+                poisoned.into_inner().clear();
+            }
+        }
     }
 }
 

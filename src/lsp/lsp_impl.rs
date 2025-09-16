@@ -1,3 +1,4 @@
+use log::warn;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tower_lsp::jsonrpc::Result;
@@ -181,7 +182,13 @@ impl LanguageServer for TreeSitterLs {
                     format!("Using workspace root from {}: {}", source, path.display()),
                 )
                 .await;
-            *self.root_path.lock().unwrap() = Some(path.clone());
+            match self.root_path.lock() {
+                Ok(mut guard) => *guard = Some(path.clone()),
+                Err(poisoned) => {
+                    warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in lsp_impl::initialize");
+                    *poisoned.into_inner() = Some(path.clone());
+                }
+            }
         } else {
             self.client
                 .log_message(
@@ -464,7 +471,13 @@ impl LanguageServer for TreeSitterLs {
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
         // Try to load configuration from treesitter-ls.toml file
         let mut toml_settings = None;
-        let root_path = self.root_path.lock().unwrap().clone();
+        let root_path = match self.root_path.lock() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => {
+                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in lsp_impl::did_change_configuration");
+                poisoned.into_inner().clone()
+            }
+        };
         if let Some(root) = root_path {
             let config_path = root.join("treesitter-ls.toml");
             if config_path.exists()

@@ -1,4 +1,5 @@
 use crate::config::{LanguageConfig, TreeSitterSettings};
+use log::warn;
 use std::collections::HashMap;
 use std::sync::RwLock;
 use tower_lsp::lsp_types::Url;
@@ -23,7 +24,13 @@ impl FiletypeResolver {
                 map.insert(ext.clone(), language.clone());
             }
         }
-        *self.filetype_map.write().unwrap() = map;
+        match self.filetype_map.write() {
+            Ok(mut guard) => *guard = map,
+            Err(poisoned) => {
+                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::build_from_settings");
+                *poisoned.into_inner() = map;
+            }
+        }
     }
 
     /// Build filetype map from language configurations
@@ -34,71 +41,134 @@ impl FiletypeResolver {
                 map.insert(ext.clone(), language.clone());
             }
         }
-        *self.filetype_map.write().unwrap() = map;
+        match self.filetype_map.write() {
+            Ok(mut guard) => *guard = map,
+            Err(poisoned) => {
+                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::build_from_configs");
+                *poisoned.into_inner() = map;
+            }
+        }
     }
 
     /// Set the filetype map directly
     pub fn set_filetype_map(&self, map: HashMap<String, String>) {
-        *self.filetype_map.write().unwrap() = map;
+        match self.filetype_map.write() {
+            Ok(mut guard) => *guard = map,
+            Err(poisoned) => {
+                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::set_filetype_map");
+                *poisoned.into_inner() = map;
+            }
+        }
     }
 
     /// Get language for a document URL
     pub fn get_language_for_document(&self, uri: &Url) -> Option<String> {
         let extension = Self::extract_extension(uri.path());
-        self.filetype_map.read().unwrap().get(extension).cloned()
+        match self.filetype_map.read() {
+            Ok(guard) => guard.get(extension).cloned(),
+            Err(poisoned) => {
+                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::get_language_for_document");
+                poisoned.into_inner().get(extension).cloned()
+            }
+        }
     }
 
     /// Get language for a file extension
     pub fn get_language_for_extension(&self, extension: &str) -> Option<String> {
-        self.filetype_map.read().unwrap().get(extension).cloned()
+        match self.filetype_map.read() {
+            Ok(guard) => guard.get(extension).cloned(),
+            Err(poisoned) => {
+                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::get_language_for_extension");
+                poisoned.into_inner().get(extension).cloned()
+            }
+        }
     }
 
     /// Get a copy of the entire filetype map
     pub fn get_filetype_map(&self) -> HashMap<String, String> {
-        self.filetype_map.read().unwrap().clone()
+        match self.filetype_map.read() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => {
+                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::get_filetype_map");
+                poisoned.into_inner().clone()
+            }
+        }
     }
 
     /// Add a single filetype mapping
     pub fn add_mapping(&self, extension: String, language: String) {
-        self.filetype_map
-            .write()
-            .unwrap()
-            .insert(extension, language);
+        match self.filetype_map.write() {
+            Ok(mut guard) => {
+                guard.insert(extension, language);
+            }
+            Err(poisoned) => {
+                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::add_mapping");
+                poisoned.into_inner().insert(extension, language);
+            }
+        }
     }
 
     /// Remove a filetype mapping
     pub fn remove_mapping(&self, extension: &str) -> Option<String> {
-        self.filetype_map.write().unwrap().remove(extension)
+        match self.filetype_map.write() {
+            Ok(mut guard) => guard.remove(extension),
+            Err(poisoned) => {
+                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::remove_mapping");
+                poisoned.into_inner().remove(extension)
+            }
+        }
     }
 
     /// Clear all mappings
     pub fn clear(&self) {
-        self.filetype_map.write().unwrap().clear();
+        match self.filetype_map.write() {
+            Ok(mut guard) => guard.clear(),
+            Err(poisoned) => {
+                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::clear");
+                poisoned.into_inner().clear();
+            }
+        }
     }
 
     /// Check if a language is registered for any extension
     pub fn has_language(&self, language: &str) -> bool {
-        self.filetype_map
-            .read()
-            .unwrap()
-            .values()
-            .any(|l| l == language)
+        match self.filetype_map.read() {
+            Ok(guard) => guard.values().any(|l| l == language),
+            Err(poisoned) => {
+                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::has_language");
+                poisoned.into_inner().values().any(|l| l == language)
+            }
+        }
     }
 
     /// Get all extensions for a language
     pub fn get_extensions_for_language(&self, language: &str) -> Vec<String> {
-        self.filetype_map
-            .read()
-            .unwrap()
-            .iter()
-            .filter_map(|(ext, lang)| {
-                if lang == language {
-                    Some(ext.clone())
-                } else {
-                    None
-                }
-            })
-            .collect()
+        match self.filetype_map.read() {
+            Ok(guard) => guard
+                .iter()
+                .filter_map(|(ext, lang)| {
+                    if lang == language {
+                        Some(ext.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            Err(poisoned) => {
+                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::get_extensions_for_language");
+                poisoned
+                    .into_inner()
+                    .iter()
+                    .filter_map(|(ext, lang)| {
+                        if lang == language {
+                            Some(ext.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            }
+        }
     }
 
     /// Extract file extension from a path

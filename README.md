@@ -17,6 +17,11 @@ A fast and flexible Language Server Protocol (LSP) server that leverages Tree-si
 - Parser pooling for efficient memory usage
 - Incremental parsing support
 
+### Reliability
+- **Robust error handling** - Graceful recovery from poisoned locks
+- **Zero panics** - All operations use proper error propagation
+- **Comprehensive logging** - Detailed diagnostics with the `log` crate
+
 ## Installation
 
 ### Pre-built Binaries

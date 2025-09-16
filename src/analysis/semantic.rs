@@ -731,7 +731,7 @@ let y = "hello""#;
                     "Japanese string token should have UTF-16 length of 7"
                 );
             }
-            _ => panic!("Expected Tokens variant"),
+            _ => unreachable!("Expected Tokens variant from handle_semantic_tokens_full"),
         }
     }
 }

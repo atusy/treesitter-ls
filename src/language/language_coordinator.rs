@@ -87,7 +87,7 @@ impl LanguageCoordinator {
 
         // Register the language
         self.language_registry
-            .register(lang_name.to_string(), language.clone());
+            .register_unchecked(lang_name.to_string(), language.clone());
 
         // Load queries
         self.load_queries_for_language(lang_name, config, search_paths, &language, client)
@@ -280,7 +280,7 @@ impl LanguageCoordinator {
 
         // Register the language
         self.language_registry
-            .register(language_id.to_string(), language.clone());
+            .register_unchecked(language_id.to_string(), language.clone());
 
         // Try to load queries from search paths
         if let Ok(query) = QueryLoader::load_query_from_search_paths(

@@ -84,14 +84,14 @@ mod tests {
             HighlightSource::Path { path } => {
                 assert_eq!(path, "/path/to/highlights.scm");
             }
-            _ => panic!("Expected Path variant"),
+            _ => unreachable!("Expected Path variant in test"),
         }
 
         match &settings.languages["rust"].highlight[1].source {
             HighlightSource::Query { query } => {
                 assert_eq!(query, "(identifier) @variable");
             }
-            _ => panic!("Expected Query variant"),
+            _ => unreachable!("Expected Query variant in test"),
         }
     }
 
@@ -128,7 +128,7 @@ mod tests {
             HighlightSource::Path { path } => {
                 assert_eq!(path, "/path/to/locals.scm");
             }
-            _ => panic!("Expected Path variant for locals"),
+            _ => unreachable!("Expected Path variant for locals in test"),
         }
     }
 
@@ -287,7 +287,7 @@ mod tests {
             HighlightSource::Path { path } => {
                 assert_eq!(path, "/test/highlights.scm");
             }
-            _ => panic!("Expected Path variant"),
+            _ => unreachable!("Expected Path variant in test"),
         }
     }
 
@@ -300,7 +300,7 @@ mod tests {
             HighlightSource::Query { query } => {
                 assert_eq!(query, "(function_item) @function");
             }
-            _ => panic!("Expected Query variant"),
+            _ => unreachable!("Expected Query variant in test"),
         }
     }
 

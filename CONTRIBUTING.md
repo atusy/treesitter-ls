@@ -279,6 +279,56 @@ cargo test -- --nocapture --test-threads=1
 - Prefer explicit types for public APIs
 - Document public items with doc comments
 
+### Error Handling Guidelines
+
+This project follows strict error handling practices to ensure robustness:
+
+#### Core Principles
+1. **No unwrap() on lock operations**: All mutex/RwLock operations use proper error handling with poison recovery
+2. **No panic! in production code**: Use Result types and proper error propagation instead
+3. **Custom error types**: Use the `LspError` enum from `src/error.rs` for type-safe error handling
+4. **Logging on recovery**: When recovering from poisoned locks, log warnings using the `log` crate
+
+#### Lock Handling Patterns
+
+```rust
+use log::warn;
+
+// ✅ Good - with poison recovery
+match self.data.lock() {
+    Ok(guard) => guard.get(key).cloned(),
+    Err(poisoned) => {
+        warn!(
+            target: "treesitter_ls::lock_recovery",
+            "Recovered from poisoned lock in module::function"
+        );
+        poisoned.into_inner().get(key).cloned()
+    }
+}
+
+// ❌ Bad - will panic on poisoned lock
+self.data.lock().unwrap().get(key).cloned()
+```
+
+#### Error Type Usage
+
+```rust
+use crate::error::{LspError, LspResult};
+
+// Function returning a Result
+pub fn process_document(uri: &str) -> LspResult<Document> {
+    let doc = store.get(uri)
+        .ok_or_else(|| LspError::document_not_found(uri))?;
+
+    // Process document...
+    Ok(doc)
+}
+```
+
+#### Testing Poison Recovery
+
+All lock-based modules include tests for poison recovery. See `tests/test_poison_recovery.rs` for examples.
+
 ### Code Organization
 
 - Keep modules focused on a single responsibility
