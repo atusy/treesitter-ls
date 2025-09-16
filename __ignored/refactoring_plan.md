@@ -162,3 +162,13 @@
   - Runtime/Infrastructure: Bさん
   - Documentation & Release: Cさん
 - トラッキング: GitHub Projects or Issues を利用し、各ステップをカード化。PR テンプレートに「テスト実行結果」「README/CONTRIBUTING 更新有無」を必須項目として追加。
+
+## セルフレビュー結果 (2025-02-14)
+- **計画の妥当性**: Step 1〜7 の内容が目的（LSP型の二重管理解消、ワークスペース境界再構築、抽象化整備、ドキュメント更新）を網羅しており、目的達成に向けた道筋として妥当。
+- **レガシー/冗長性**: 新規追記分に実装手順の重複や不整合は見当たらない。document層・analysis層の再編に向けた抽象化方針も一貫している。
+- **ドキュメント最新性**: README.md/CONTRIBUTING.md/CLAUDE.md は現状のリファクタリング方針を反映しておらず、Step 6 のタスクとして改版が必要。
+
+### 追加作業計画
+- [ ] Step 6 実行時に README.md/CONTRIBUTING.md/CLAUDE.md を計画内容に合わせて更新する具体手順を Issue 化。
+- [ ] Step 4〜5 実装開始前に `DocumentRepository`/`AnalysisRuntime` の API 草案を共有ドキュメントにまとめ、レビューを受ける。
+- [ ] 週次でセルフレビューを行い、本ファイルの進捗・気付きを更新する運用を徹底する。
