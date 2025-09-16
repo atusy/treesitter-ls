@@ -14,7 +14,7 @@ A fast and flexible Language Server Protocol (LSP) server that leverages Tree-si
 
 ### Performance
 - Async runtime powered by `tokio` and `tower-lsp`
-- Parser pooling for efficient memory usage
+- Parser pooling for efficient memory usage via per-language pools
 - Incremental parsing support
 
 ### Reliability
@@ -179,6 +179,10 @@ Example directory structure:
         ├── highlights.scm
         └── locals.scm
 ```
+
+## Parser Reuse Strategy
+
+treesitter-ls keeps a per-language `DocumentParserPool` inside the LSP layer. Each parse acquires a parser from the pool, performs incremental parsing, then releases the parser for reuse. This keeps parser creation overhead low while the underlying `language/` APIs remain pure and LSP-agnostic.
 
 ## Supported LSP Features
 

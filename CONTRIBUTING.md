@@ -86,8 +86,7 @@ src/
 │   ├── definition.rs   # Go-to-definition functionality
 │   ├── refactor.rs     # Code actions (parameter reordering)
 │   ├── selection.rs    # Selection range expansion
-│   ├── semantic.rs     # Semantic token highlighting
-│   └── traits.rs       # AnalysisContext trait for dependency inversion
+│   └── semantic.rs     # Semantic token highlighting
 │
 ├── bin/            # Binary entry point
 │   └── main.rs         # Application startup and initialization
@@ -99,11 +98,13 @@ src/
 │   ├── injection_mapper.rs  # Coordinate mapping for language injections
 │   ├── layer.rs        # LanguageLayer structure for parsed trees
 │   ├── layer_manager.rs # Root and injection layer management
-│   ├── model.rs        # Unified Document struct (implements AnalysisContext)
-│   └── store.rs        # Thread-safe document storage with DashMap
+│   ├── model.rs        # Unified Document struct
+│   ├── store.rs        # Thread-safe document storage with DashMap
+│   └── view.rs         # DocumentView trait exposing read-only access for analysis
 │
 ├── language/       # Language service (vertical slice)
 │   ├── config_store.rs       # Language configuration management
+│   ├── events.rs            # Event and result types returned to the LSP layer
 │   ├── filetype_resolver.rs  # File type to language mapping
 │   ├── language_coordinator.rs # Stateless coordination between modules
 │   ├── loader.rs             # Dynamic parser loading (.so/.dylib files)
@@ -132,15 +133,17 @@ Each file implements a complete LSP feature:
 
 #### `document/` - Document Management
 Manages document lifecycle and language layers:
-- **model.rs**: Unified `Document` struct implementing `AnalysisContext`
+- **model.rs**: Unified `Document` struct
 - **layer.rs**: `LanguageLayer` structure for managing parsed trees
 - **layer_manager.rs**: Manages root and injection layers
 - **store.rs**: Thread-safe document storage with `DashMap`
 - **injection_mapper.rs**: Handles coordinate mapping for language injections
+- **view.rs**: `DocumentView` trait providing read-only access for analysis code
 
 #### `language/` - Language Services
 Language configuration and parsing:
-- **language_coordinator.rs**: Stateless coordination between language modules
+- **language_coordinator.rs**: Stateless coordination between language modules, returning structured events
+- **events.rs**: Event/result types consumed by the LSP layer
 - **config_store.rs**: Language configuration management
 - **filetype_resolver.rs**: File type to language mapping
 - **query_store.rs**: Query storage and retrieval
@@ -159,9 +162,9 @@ Text manipulation utilities:
 
 #### Clean Architecture Implementation
 The refactoring implemented clean architecture principles:
-- **Dependency Inversion**: `AnalysisContext` trait allows analysis module to work without direct `Document` dependency
+- **Dependency Inversion**: `DocumentView` trait (document/view.rs) lets analysis code depend on a read-only interface instead of the concrete `Document`
 - **Module Boundaries**: Clear separation between document management, language services, and text operations
-- **Coordinator Pattern**: `LanguageCoordinator` provides stateless coordination between modules
+- **Coordinator Pattern**: `LanguageCoordinator` provides stateless coordination between modules and returns events consumed by the LSP layer
 
 #### Injection System Design
 Language injections (like code blocks in Markdown) are handled by:
@@ -171,10 +174,10 @@ Language injections (like code blocks in Markdown) are handled by:
 This separation ensures each module maintains its single responsibility.
 
 #### Parser Pool Unification
-We unified parser management into a single `DocumentParserPool` to:
-- Avoid duplicate parser instances
-- Reduce memory usage
-- Simplify parser lifecycle management
+We unified parser management into a single `DocumentParserPool` managed by the LSP layer to:
+- Avoid duplicate parser instances across documents
+- Reduce parser creation overhead during incremental parsing
+- Keep parsing concerns isolated from document management
 
 ## Development Workflow
 
