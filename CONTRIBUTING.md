@@ -132,6 +132,15 @@ src/
 
 ### Module Responsibilities
 
+Quick reference summary:
+
+- `domain/`: Protocol-agnostic data structures (positions, ranges, semantic tokens, code actions)
+- `analysis/`: Feature logic expressed in domain types and traits
+- `text/` & `document/`: Text mapping and document lifecycle helpers for analysis
+- `runtime/`: Parser/query/config orchestration, independent of the LSP layer
+- `workspace/`: Facade coordinating runtime and document state exposed to the server
+- `lsp/`: Translates between domain models and `tower-lsp` protocol messages
+
 #### `analysis/` - LSP Features
 Each file implements a complete LSP feature:
 - **definition.rs**: Handles `textDocument/definition` requests using Tree-sitter locals queries

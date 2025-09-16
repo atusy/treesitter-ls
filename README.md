@@ -180,19 +180,6 @@ Example directory structure:
         └── locals.scm
 ```
 
-## Parser Reuse Strategy
-
-treesitter-ls keeps a per-language `DocumentParserPool` inside the `workspace/` facade. Each parse acquires a parser from the pool, performs incremental parsing, then releases the parser for reuse. This keeps parser creation overhead low while the underlying `runtime/` APIs remain pure and LSP-agnostic.
-
-## Module Overview
-
-- `domain/`: Protocol-agnostic data structures (positions, ranges, semantic tokens, code actions)
-- `analysis/`: Feature logic expressed purely in domain types
-- `text/` & `document/`: Text mapping and document management helpers used by analysis
-- `runtime/`: Parser/query/config orchestration, independent from LSP
-- `workspace/`: Facade coordinating runtime and document state for the server
-- `lsp/`: Converts between domain types and `tower-lsp` protocol messages
-
 ## Supported LSP Features
 
 ### Text Synchronization
