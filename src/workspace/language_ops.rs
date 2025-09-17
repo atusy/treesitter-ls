@@ -1,40 +1,44 @@
-use super::languages::WorkspaceLanguages;
 use crate::domain::settings::CaptureMappings;
-use crate::language::LanguageLoadResult;
+use crate::language::{DocumentParserPool, LanguageCoordinator, LanguageLoadResult};
 use std::sync::Arc;
+use std::sync::Mutex;
 use tree_sitter::{Parser, Query};
 
-pub fn language_for_path(languages: &WorkspaceLanguages, path: &str) -> Option<String> {
-    languages.language_for_path(path)
+pub fn language_for_path(coordinator: &LanguageCoordinator, path: &str) -> Option<String> {
+    coordinator.get_language_for_path(path)
 }
 
 pub fn ensure_language_loaded(
-    languages: &WorkspaceLanguages,
+    coordinator: &LanguageCoordinator,
     language_id: &str,
 ) -> LanguageLoadResult {
-    languages.ensure_language_loaded(language_id)
+    coordinator.ensure_language_loaded(language_id)
 }
 
-pub fn has_highlight_queries(languages: &WorkspaceLanguages, language: &str) -> bool {
-    languages.has_queries(language)
+pub fn has_highlight_queries(coordinator: &LanguageCoordinator, language: &str) -> bool {
+    coordinator.has_queries(language)
 }
 
-pub fn highlight_query(languages: &WorkspaceLanguages, language: &str) -> Option<Arc<Query>> {
-    languages.highlight_query(language)
+pub fn highlight_query(coordinator: &LanguageCoordinator, language: &str) -> Option<Arc<Query>> {
+    coordinator.get_highlight_query(language)
 }
 
-pub fn locals_query(languages: &WorkspaceLanguages, language: &str) -> Option<Arc<Query>> {
-    languages.locals_query(language)
+pub fn locals_query(coordinator: &LanguageCoordinator, language: &str) -> Option<Arc<Query>> {
+    coordinator.get_locals_query(language)
 }
 
-pub fn capture_mappings(languages: &WorkspaceLanguages) -> CaptureMappings {
-    languages.capture_mappings()
+pub fn capture_mappings(coordinator: &LanguageCoordinator) -> CaptureMappings {
+    coordinator.get_capture_mappings()
 }
 
-pub fn acquire_parser(languages: &WorkspaceLanguages, language: &str) -> Option<Parser> {
-    languages.acquire_parser(language)
+pub fn acquire_parser(parser_pool: &Mutex<DocumentParserPool>, language: &str) -> Option<Parser> {
+    parser_pool.lock().unwrap().acquire(language)
 }
 
-pub fn release_parser(languages: &WorkspaceLanguages, language: String, parser: Parser) {
-    languages.release_parser(language, parser)
+pub fn release_parser(parser_pool: &Mutex<DocumentParserPool>, language: String, parser: Parser) {
+    parser_pool.lock().unwrap().release(language, parser);
+}
+
+pub fn create_parser_pool(coordinator: &LanguageCoordinator) -> DocumentParserPool {
+    coordinator.create_document_parser_pool()
 }

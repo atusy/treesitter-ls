@@ -1,13 +1,15 @@
-use super::language_ops;
-use super::languages::WorkspaceLanguages;
 use super::ParseOutcome;
+use super::language_ops;
 use crate::document::{Document, DocumentHandle, DocumentStore, LanguageLayer, SemanticSnapshot};
 use crate::domain::SemanticTokens;
+use crate::language::{DocumentParserPool, LanguageCoordinator};
+use std::sync::Mutex;
 use tree_sitter::InputEdit;
 use url::Url;
 
 pub fn parse_document(
-    languages: &WorkspaceLanguages,
+    coordinator: &LanguageCoordinator,
+    parser_pool: &Mutex<DocumentParserPool>,
     documents: &DocumentStore,
     uri: Url,
     text: String,
@@ -15,14 +17,14 @@ pub fn parse_document(
     edits: Vec<InputEdit>,
 ) -> ParseOutcome {
     let mut events = Vec::new();
-    let language_name = language_ops::language_for_path(languages, uri.path())
+    let language_name = language_ops::language_for_path(coordinator, uri.path())
         .or_else(|| language_id.map(|s| s.to_string()));
 
     if let Some(language_name) = language_name {
-        let load_result = language_ops::ensure_language_loaded(languages, &language_name);
+        let load_result = language_ops::ensure_language_loaded(coordinator, &language_name);
         events.extend(load_result.events.clone());
 
-        if let Some(mut parser) = language_ops::acquire_parser(languages, &language_name) {
+        if let Some(mut parser) = language_ops::acquire_parser(parser_pool, &language_name) {
             let old_tree = if !edits.is_empty() {
                 documents.get_edited_tree(&uri, &edits)
             } else {
@@ -32,7 +34,7 @@ pub fn parse_document(
             };
 
             let parsed_tree = parser.parse(&text, old_tree.as_ref());
-            language_ops::release_parser(languages, language_name.clone(), parser);
+            language_ops::release_parser(parser_pool, language_name.clone(), parser);
 
             if let Some(tree) = parsed_tree {
                 if !edits.is_empty() {
@@ -52,11 +54,11 @@ pub fn parse_document(
 }
 
 pub fn document_language(
-    languages: &WorkspaceLanguages,
+    coordinator: &LanguageCoordinator,
     documents: &DocumentStore,
     uri: &Url,
 ) -> Option<String> {
-    if let Some(lang) = language_ops::language_for_path(languages, uri.path()) {
+    if let Some(lang) = language_ops::language_for_path(coordinator, uri.path()) {
         return Some(lang);
     }
 

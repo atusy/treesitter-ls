@@ -39,6 +39,14 @@ impl LanguageCoordinator {
         }
     }
 
+    pub fn ensure_language_loaded(&self, language_id: &str) -> LanguageLoadResult {
+        if self.language_registry.contains(language_id) {
+            LanguageLoadResult::success_with(Vec::new())
+        } else {
+            self.try_load_language_by_id(language_id)
+        }
+    }
+
     /// Initialize from workspace-level settings and return coordination events
     pub fn load_settings(&self, settings: WorkspaceSettings) -> LanguageLoadSummary {
         let config_settings: TreeSitterSettings = settings.into();

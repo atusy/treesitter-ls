@@ -1,37 +1,33 @@
 mod document_ops;
 mod language_ops;
-mod languages;
 mod settings;
 mod state;
 
 use document_ops::{
-    document_language as resolve_document_language,
-    document_reference,
-    document_text as read_document_text,
-    parse_document as process_parse,
-    remove_document as detach_document,
-    update_semantic_tokens as store_semantic_tokens,
+    document_language as resolve_document_language, document_reference,
+    document_text as read_document_text, parse_document as process_parse,
+    remove_document as detach_document, update_semantic_tokens as store_semantic_tokens,
 };
 use language_ops::{
-    capture_mappings as collect_capture_mappings,
+    capture_mappings as collect_capture_mappings, create_parser_pool,
     ensure_language_loaded as ensure_runtime_language,
-    has_highlight_queries as language_has_queries,
-    highlight_query as load_highlight_query,
+    has_highlight_queries as language_has_queries, highlight_query as load_highlight_query,
     locals_query as load_locals_query,
 };
-use languages::WorkspaceLanguages;
-use settings::{
-    load_settings as load_settings_from_sources, SettingsEvent, SettingsEventKind,
-    SettingsLoadOutcome, SettingsSource,
+pub use settings::{
+    SettingsEvent, SettingsEventKind, SettingsLoadOutcome, SettingsSource,
+    load_settings as load_settings_from_sources,
 };
 use state::WorkspaceState;
 
 use crate::document::{Document, DocumentHandle, DocumentStore};
 use crate::domain::SemanticTokens;
 use crate::domain::settings::{CaptureMappings, WorkspaceSettings};
-use crate::language::{LanguageCoordinator, LanguageEvent, LanguageLoadResult, LanguageLoadSummary};
+use crate::language::{
+    DocumentParserPool, LanguageCoordinator, LanguageEvent, LanguageLoadResult, LanguageLoadSummary,
+};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tree_sitter::{InputEdit, Query};
 use url::Url;
 
@@ -42,7 +38,8 @@ pub struct ParseOutcome {
 }
 
 pub struct Workspace {
-    languages: WorkspaceLanguages,
+    language: LanguageCoordinator,
+    parser_pool: Mutex<DocumentParserPool>,
     documents: DocumentStore,
     state: WorkspaceState,
 }
@@ -53,16 +50,18 @@ impl Workspace {
     }
 
     /// Create a workspace using a pre-configured language coordinator.
-    pub fn with_runtime(runtime: LanguageCoordinator) -> Self {
+    pub fn with_runtime(language: LanguageCoordinator) -> Self {
+        let parser_pool = create_parser_pool(&language);
         Self {
-            languages: WorkspaceLanguages::new(runtime),
+            language,
+            parser_pool: Mutex::new(parser_pool),
             documents: DocumentStore::new(),
             state: WorkspaceState::new(),
         }
     }
 
-    pub fn languages(&self) -> &WorkspaceLanguages {
-        &self.languages
+    pub fn language(&self) -> &LanguageCoordinator {
+        &self.language
     }
 
     pub fn documents(&self) -> &DocumentStore {
@@ -70,7 +69,7 @@ impl Workspace {
     }
 
     pub fn load_settings(&self, settings: WorkspaceSettings) -> LanguageLoadSummary {
-        self.languages.load_settings(settings)
+        self.language.load_settings(settings)
     }
 
     pub fn parse_document(
@@ -80,27 +79,35 @@ impl Workspace {
         language_id: Option<&str>,
         edits: Vec<InputEdit>,
     ) -> ParseOutcome {
-        process_parse(&self.languages, &self.documents, uri, text, language_id, edits)
+        process_parse(
+            &self.language,
+            &self.parser_pool,
+            &self.documents,
+            uri,
+            text,
+            language_id,
+            edits,
+        )
     }
 
     pub fn language_for_document(&self, uri: &Url) -> Option<String> {
-        resolve_document_language(&self.languages, &self.documents, uri)
+        resolve_document_language(&self.language, &self.documents, uri)
     }
 
     pub fn has_queries(&self, language: &str) -> bool {
-        language_has_queries(&self.languages, language)
+        language_has_queries(&self.language, language)
     }
 
     pub fn highlight_query(&self, language: &str) -> Option<Arc<Query>> {
-        load_highlight_query(&self.languages, language)
+        load_highlight_query(&self.language, language)
     }
 
     pub fn locals_query(&self, language: &str) -> Option<Arc<Query>> {
-        load_locals_query(&self.languages, language)
+        load_locals_query(&self.language, language)
     }
 
     pub fn capture_mappings(&self) -> CaptureMappings {
-        collect_capture_mappings(&self.languages)
+        collect_capture_mappings(&self.language)
     }
 
     pub fn load_workspace_settings(
@@ -129,7 +136,7 @@ impl Workspace {
     }
 
     pub fn ensure_language_loaded(&self, language: &str) -> LanguageLoadResult {
-        ensure_runtime_language(&self.languages, language)
+        ensure_runtime_language(&self.language, language)
     }
 
     pub fn set_root_path(&self, path: Option<PathBuf>) {
@@ -155,18 +162,18 @@ mod tests {
 
     #[test]
     fn workspace_can_inject_runtime() {
-        let runtime = crate::language::LanguageCoordinator::new();
+        let language = LanguageCoordinator::new();
 
         let settings = DomainWorkspaceSettings::new(
             vec!["/tmp/treesitter-ls-test".to_string()],
             HashMap::new(),
             HashMap::new(),
         );
-        runtime.load_settings(settings);
+        language.load_settings(settings);
 
-        let workspace = Workspace::with_runtime(runtime);
+        let workspace = Workspace::with_runtime(language);
 
-        let injected_paths = workspace.languages().runtime().get_search_paths().unwrap();
+        let injected_paths = workspace.language().get_search_paths().unwrap();
 
         assert_eq!(injected_paths, vec!["/tmp/treesitter-ls-test".to_string()]);
     }
