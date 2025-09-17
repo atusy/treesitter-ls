@@ -1,15 +1,14 @@
-use super::ParseOutcome;
-use super::documents::WorkspaceDocuments;
 use super::language_ops;
 use super::languages::WorkspaceLanguages;
-use crate::document::{Document, LanguageLayer, SemanticSnapshot};
+use super::ParseOutcome;
+use crate::document::{Document, DocumentHandle, DocumentStore, LanguageLayer, SemanticSnapshot};
 use crate::domain::SemanticTokens;
 use tree_sitter::InputEdit;
 use url::Url;
 
 pub fn parse_document(
     languages: &WorkspaceLanguages,
-    documents: &WorkspaceDocuments,
+    documents: &DocumentStore,
     uri: Url,
     text: String,
     language_id: Option<&str>,
@@ -37,7 +36,7 @@ pub fn parse_document(
 
             if let Some(tree) = parsed_tree {
                 if !edits.is_empty() {
-                    documents.update_with_tree(uri.clone(), text, tree);
+                    documents.update_document_with_tree(uri.clone(), text, tree);
                 } else {
                     let root_layer = Some(LanguageLayer::root(language_name.clone(), tree));
                     documents.insert(uri.clone(), text, root_layer);
@@ -54,10 +53,10 @@ pub fn parse_document(
 
 pub fn document_language(
     languages: &WorkspaceLanguages,
-    documents: &WorkspaceDocuments,
+    documents: &DocumentStore,
     uri: &Url,
 ) -> Option<String> {
-    if let Some(lang) = languages.language_for_path(uri.path()) {
+    if let Some(lang) = language_ops::language_for_path(languages, uri.path()) {
         return Some(lang);
     }
 
@@ -67,20 +66,20 @@ pub fn document_language(
 }
 
 pub fn document_reference<'a>(
-    documents: &'a WorkspaceDocuments,
+    documents: &'a DocumentStore,
     uri: &Url,
-) -> Option<super::DocumentRef<'a>> {
+) -> Option<DocumentHandle<'a>> {
     documents.get(uri)
 }
 
-pub fn document_text(documents: &WorkspaceDocuments, uri: &Url) -> Option<String> {
-    documents.text(uri)
+pub fn document_text(documents: &DocumentStore, uri: &Url) -> Option<String> {
+    documents.get_document_text(uri)
 }
 
-pub fn update_semantic_tokens(documents: &WorkspaceDocuments, uri: &Url, tokens: SemanticTokens) {
+pub fn update_semantic_tokens(documents: &DocumentStore, uri: &Url, tokens: SemanticTokens) {
     documents.update_semantic_tokens(uri, SemanticSnapshot::new(tokens));
 }
 
-pub fn remove_document(documents: &WorkspaceDocuments, uri: &Url) -> Option<Document> {
+pub fn remove_document(documents: &DocumentStore, uri: &Url) -> Option<Document> {
     documents.remove(uri)
 }

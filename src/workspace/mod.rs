@@ -1,40 +1,41 @@
 mod document_ops;
-mod documents;
 mod language_ops;
 mod languages;
 mod settings;
 mod state;
 
-use self::state::WorkspaceState;
 use document_ops::{
-    document_language as resolve_document_language, document_reference,
-    document_text as read_document_text, parse_document as process_parse,
-    remove_document as detach_document, update_semantic_tokens as store_semantic_tokens,
+    document_language as resolve_document_language,
+    document_reference,
+    document_text as read_document_text,
+    parse_document as process_parse,
+    remove_document as detach_document,
+    update_semantic_tokens as store_semantic_tokens,
 };
-use documents::WorkspaceDocuments;
 use language_ops::{
     capture_mappings as collect_capture_mappings,
     ensure_language_loaded as ensure_runtime_language,
-    has_highlight_queries as language_has_queries, highlight_query as load_highlight_query,
+    has_highlight_queries as language_has_queries,
+    highlight_query as load_highlight_query,
     locals_query as load_locals_query,
 };
 use languages::WorkspaceLanguages;
+use settings::{
+    load_settings as load_settings_from_sources, SettingsEvent, SettingsEventKind,
+    SettingsLoadOutcome, SettingsSource,
+};
+use state::WorkspaceState;
 
-use crate::document::Document;
+use crate::document::{Document, DocumentHandle, DocumentStore};
 use crate::domain::SemanticTokens;
 use crate::domain::settings::{CaptureMappings, WorkspaceSettings};
-use crate::language::{LanguageEvent, LanguageLoadResult, LanguageLoadSummary};
+use crate::language::{LanguageCoordinator, LanguageEvent, LanguageLoadResult, LanguageLoadSummary};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tree_sitter::{InputEdit, Query};
 use url::Url;
 
-pub use settings::{
-    SettingsEvent, SettingsEventKind, SettingsLoadOutcome, SettingsSource,
-    load_settings as load_settings_from_sources,
-};
-
-pub use documents::DocumentRef;
+pub type DocumentRef<'a> = DocumentHandle<'a>;
 
 pub struct ParseOutcome {
     pub events: Vec<LanguageEvent>,
@@ -42,24 +43,20 @@ pub struct ParseOutcome {
 
 pub struct Workspace {
     languages: WorkspaceLanguages,
-    documents: WorkspaceDocuments,
+    documents: DocumentStore,
     state: WorkspaceState,
 }
 
 impl Workspace {
     pub fn new() -> Self {
-        Self::with_runtime(crate::language::LanguageCoordinator::new())
+        Self::with_runtime(LanguageCoordinator::new())
     }
 
-    /// Create a workspace using a pre-configured runtime coordinator.
-    ///
-    /// Useful in tests or alternate frontends that need to customise the
-    /// runtime (preloaded languages, alternate search paths, etc.) before
-    /// wiring it together with the document store.
-    pub fn with_runtime(runtime: crate::language::LanguageCoordinator) -> Self {
+    /// Create a workspace using a pre-configured language coordinator.
+    pub fn with_runtime(runtime: LanguageCoordinator) -> Self {
         Self {
             languages: WorkspaceLanguages::new(runtime),
-            documents: WorkspaceDocuments::new(),
+            documents: DocumentStore::new(),
             state: WorkspaceState::new(),
         }
     }
@@ -68,7 +65,7 @@ impl Workspace {
         &self.languages
     }
 
-    pub fn documents(&self) -> &WorkspaceDocuments {
+    pub fn documents(&self) -> &DocumentStore {
         &self.documents
     }
 
@@ -83,14 +80,7 @@ impl Workspace {
         language_id: Option<&str>,
         edits: Vec<InputEdit>,
     ) -> ParseOutcome {
-        process_parse(
-            &self.languages,
-            &self.documents,
-            uri,
-            text,
-            language_id,
-            edits,
-        )
+        process_parse(&self.languages, &self.documents, uri, text, language_id, edits)
     }
 
     pub fn language_for_document(&self, uri: &Url) -> Option<String> {
@@ -118,7 +108,7 @@ impl Workspace {
         override_settings: Option<(SettingsSource, serde_json::Value)>,
     ) -> SettingsLoadOutcome {
         let root_path = self.state.root_path();
-        settings::load_settings(root_path.as_deref(), override_settings)
+        load_settings_from_sources(root_path.as_deref(), override_settings)
     }
 
     pub fn document(&self, uri: &Url) -> Option<DocumentRef<'_>> {
