@@ -184,7 +184,7 @@ Provides protocol-agnostic data structures:
 Shared helpers used by analysis and runtime slices:
 - **edits.rs**: Text edit operations and range adjustments
 - **position.rs**: Coordinate conversions between byte/line-column positions
-- **query.rs**: Tree-sitter predicate filtering (`filter_captures`) reused by analysis and runtime
+- **language/query_predicates.rs**: Tree-sitter predicate filtering (`filter_captures`) reused by analysis and language services
 
 ### Design Rationale
 

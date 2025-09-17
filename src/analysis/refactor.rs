@@ -29,7 +29,7 @@ fn create_inspect_token_action(
         let mut matches = cursor.matches(highlights_query, *root, text.as_bytes());
         while let Some(m) = matches.next() {
             // Filter captures based on predicates
-            let filtered_captures = crate::text::filter_captures(highlights_query, m, text);
+        let filtered_captures = crate::language::filter_captures(highlights_query, m, text);
             for c in filtered_captures {
                 if c.node == *node {
                     let capture_name = &highlights_query.capture_names()[c.index as usize];
@@ -46,7 +46,7 @@ fn create_inspect_token_action(
             let mut matches = cursor.matches(locals, *root, text.as_bytes());
             while let Some(m) = matches.next() {
                 // Filter captures based on predicates
-                let filtered_captures = crate::text::filter_captures(locals, m, text);
+                let filtered_captures = crate::language::filter_captures(locals, m, text);
                 for c in filtered_captures {
                     if c.node == *node {
                         let capture_name = &locals.capture_names()[c.index as usize];

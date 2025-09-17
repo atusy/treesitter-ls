@@ -1,7 +1,6 @@
 use regex::Regex;
 use tree_sitter::{Query, QueryCapture, QueryMatch};
 
-/// Check if a predicate matches for a given capture.
 fn check_predicate(query: &Query, match_: &QueryMatch, capture: &QueryCapture, text: &str) -> bool {
     let general_predicates = query.general_predicates(match_.pattern_index);
 
@@ -113,7 +112,6 @@ fn check_predicate(query: &Query, match_: &QueryMatch, capture: &QueryCapture, t
     true
 }
 
-/// Filter captures based on query predicates.
 pub fn filter_captures<'a>(
     query: &Query,
     match_: &'a QueryMatch<'a, 'a>,

@@ -6,6 +6,7 @@ pub mod parser_pool;
 pub mod query_loader;
 pub mod query_store;
 pub mod registry;
+pub mod query_predicates;
 
 pub use coordinator::LanguageCoordinator;
 pub use events::{LanguageEvent, LanguageLoadResult, LanguageLoadSummary, LanguageLogLevel};
@@ -15,3 +16,4 @@ pub use parser_pool::{DocumentParserPool, ParserFactory};
 pub use query_loader::QueryLoader;
 pub use query_store::QueryStore;
 pub use registry::LanguageRegistry;
+pub use query_predicates::filter_captures;
