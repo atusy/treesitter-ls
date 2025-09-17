@@ -31,8 +31,7 @@ fn test_lua_match_predicates() {
     let mut found_numbers = Vec::new();
     while let Some(match_) = matches.next() {
         if !match_.captures.is_empty() {
-            let filtered =
-                treesitter_ls::runtime::query::filter_captures(&query, match_, source_code);
+            let filtered = treesitter_ls::text::filter_captures(&query, match_, source_code);
             for capture in filtered {
                 let text = &source_code[capture.node.start_byte()..capture.node.end_byte()];
                 found_numbers.push(text.to_string());
@@ -57,8 +56,7 @@ fn test_lua_match_predicates() {
     while let Some(match_) = matches.next() {
         // Only process matches that have captures
         if !match_.captures.is_empty() {
-            let filtered =
-                treesitter_ls::runtime::query::filter_captures(&query, match_, source_code);
+            let filtered = treesitter_ls::text::filter_captures(&query, match_, source_code);
             for capture in filtered {
                 let text = &source_code[capture.node.start_byte()..capture.node.end_byte()];
                 found_constants.push(text.to_string());
@@ -82,8 +80,7 @@ fn test_lua_match_predicates() {
     let mut found_words = Vec::new();
     while let Some(match_) = matches.next() {
         if !match_.captures.is_empty() {
-            let filtered =
-                treesitter_ls::runtime::query::filter_captures(&query, match_, source_code);
+            let filtered = treesitter_ls::text::filter_captures(&query, match_, source_code);
             for capture in filtered {
                 let text = &source_code[capture.node.start_byte()..capture.node.end_byte()];
                 found_words.push(text.to_string());
@@ -124,8 +121,7 @@ fn test_lua_match_with_anchors() {
     let mut found_funcs = Vec::new();
     while let Some(match_) = matches.next() {
         if !match_.captures.is_empty() {
-            let filtered =
-                treesitter_ls::runtime::query::filter_captures(&query, match_, source_code);
+            let filtered = treesitter_ls::text::filter_captures(&query, match_, source_code);
             for capture in filtered {
                 let text = &source_code[capture.node.start_byte()..capture.node.end_byte()];
                 found_funcs.push(text.to_string());
@@ -146,8 +142,7 @@ fn test_lua_match_with_anchors() {
     let mut found_suffix = Vec::new();
     while let Some(match_) = matches.next() {
         if !match_.captures.is_empty() {
-            let filtered =
-                treesitter_ls::runtime::query::filter_captures(&query, match_, source_code);
+            let filtered = treesitter_ls::text::filter_captures(&query, match_, source_code);
             for capture in filtered {
                 let text = &source_code[capture.node.start_byte()..capture.node.end_byte()];
                 found_suffix.push(text.to_string());
@@ -186,8 +181,7 @@ fn test_lua_match_quantifiers() {
     let mut found = Vec::new();
     while let Some(match_) = matches.next() {
         if !match_.captures.is_empty() {
-            let filtered =
-                treesitter_ls::runtime::query::filter_captures(&query, match_, source_code);
+            let filtered = treesitter_ls::text::filter_captures(&query, match_, source_code);
             for capture in filtered {
                 let text = &source_code[capture.node.start_byte()..capture.node.end_byte()];
                 found.push(text.to_string());
@@ -210,8 +204,7 @@ fn test_lua_match_quantifiers() {
     let mut found_any = Vec::new();
     while let Some(match_) = matches.next() {
         if !match_.captures.is_empty() {
-            let filtered =
-                treesitter_ls::runtime::query::filter_captures(&query, match_, source_code);
+            let filtered = treesitter_ls::text::filter_captures(&query, match_, source_code);
             for capture in filtered {
                 let text = &source_code[capture.node.start_byte()..capture.node.end_byte()];
                 found_any.push(text.to_string());

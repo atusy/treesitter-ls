@@ -2,8 +2,8 @@ use crate::document::{Document, LanguageLayer, SemanticSnapshot};
 use dashmap::DashMap;
 use dashmap::mapref::one::Ref;
 use std::ops::Deref;
-use tower_lsp::lsp_types::Url;
 use tree_sitter::{InputEdit, Tree};
+use url::Url;
 
 // The central store for all document-related information.
 pub struct DocumentStore {

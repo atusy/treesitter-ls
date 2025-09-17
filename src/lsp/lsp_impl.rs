@@ -63,28 +63,11 @@ fn to_lsp_semantic_token(token: DomainSemanticToken) -> SemanticToken {
     }
 }
 
-fn to_domain_semantic_token(token: &SemanticToken) -> DomainSemanticToken {
-    DomainSemanticToken {
-        delta_line: token.delta_line,
-        delta_start: token.delta_start,
-        length: token.length,
-        token_type: token.token_type,
-        token_modifiers_bitset: token.token_modifiers_bitset,
-    }
-}
-
 fn to_lsp_semantic_tokens(tokens: DomainSemanticTokens) -> SemanticTokens {
     SemanticTokens {
         result_id: tokens.result_id,
         data: tokens.data.into_iter().map(to_lsp_semantic_token).collect(),
     }
-}
-
-fn to_domain_semantic_tokens(tokens: &SemanticTokens) -> DomainSemanticTokens {
-    DomainSemanticTokens::new(
-        tokens.result_id.clone(),
-        tokens.data.iter().map(to_domain_semantic_token).collect(),
-    )
 }
 
 fn to_lsp_semantic_tokens_edit(edit: DomainSemanticTokensEdit) -> SemanticTokensEdit {
@@ -712,9 +695,9 @@ impl LanguageServer for TreeSitterLs {
             )
         };
         tokens_with_id.result_id = Some(id);
-        let lsp_tokens = to_lsp_semantic_tokens(tokens_with_id.clone());
-        self.workspace
-            .update_semantic_tokens(&uri, lsp_tokens.clone());
+        let stored_tokens = tokens_with_id.clone();
+        let lsp_tokens = to_lsp_semantic_tokens(tokens_with_id);
+        self.workspace.update_semantic_tokens(&uri, stored_tokens);
         Ok(Some(SemanticTokensResult::Tokens(lsp_tokens)))
     }
 
@@ -767,7 +750,7 @@ impl LanguageServer for TreeSitterLs {
             // Get previous tokens from document
             let previous_tokens = doc
                 .last_semantic_tokens()
-                .map(|snapshot| to_domain_semantic_tokens(snapshot.tokens()));
+                .map(|snapshot| snapshot.tokens().clone());
 
             // Get capture mappings
             let capture_mappings = self.workspace.capture_mappings();
@@ -805,9 +788,9 @@ impl LanguageServer for TreeSitterLs {
                     )
                 };
                 tokens_with_id.result_id = Some(id);
-                let lsp_tokens = to_lsp_semantic_tokens(tokens_with_id.clone());
-                self.workspace
-                    .update_semantic_tokens(&uri, lsp_tokens.clone());
+                let stored_tokens = tokens_with_id.clone();
+                let lsp_tokens = to_lsp_semantic_tokens(tokens_with_id);
+                self.workspace.update_semantic_tokens(&uri, stored_tokens);
                 Ok(Some(SemanticTokensFullDeltaResult::Tokens(lsp_tokens)))
             }
             other => Ok(Some(to_lsp_semantic_tokens_full_delta(other))),

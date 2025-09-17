@@ -109,7 +109,6 @@ src/
 │   ├── filetypes.rs        # File type to language mapping
 │   ├── loader.rs           # Dynamic parser loading (.so/.dylib files)
 │   ├── parser_pool.rs      # Parser pooling and factory helpers
-│   ├── query.rs            # Tree-sitter query predicate utilities
 │   ├── query_loader.rs     # Query file loading from disk
 │   ├── query_store.rs      # Query storage and retrieval
 │   └── registry.rs         # Language registry
@@ -125,9 +124,10 @@ src/
 ├── lsp/            # LSP server implementation
 │   └── lsp_impl.rs     # LSP protocol handler and orchestration
 │
-└── text/           # Text manipulation utilities
+└── text/           # Text and query utilities shared across slices
     ├── edits.rs        # Text edit operations and range adjustments
-    └── position.rs     # Coordinate conversions (byte ↔ Position)
+    ├── position.rs     # Coordinate conversions (byte ↔ Position)
+    └── query.rs        # Tree-sitter predicate helpers (`filter_captures`)
 ```
 
 ### Module Responsibilities
@@ -168,11 +168,10 @@ Coordinates parser loading, queries, and capture mappings:
 - **registry.rs**: Language registry
 - **parser_pool.rs**: Parser pooling for efficient reuse
 - **loader.rs**: Dynamic parser library loading
-- **query.rs**: Tree-sitter query predicate utilities
 
 #### `workspace/` - Workspace Coordination
 Mediates between the LSP layer and runtime/document services:
-- **mod.rs**: Holds `Workspace`, root-path tracking, and parse orchestration
+- **mod.rs**: Holds `Workspace`, root-path tracking, parse orchestration, and `Workspace::with_runtime` for dependency injection in tests/frontends
 - **languages.rs**: Runtime access (settings, queries, parser pool)
 - **documents.rs**: Safe wrappers around the document store utilities
 
@@ -181,10 +180,11 @@ Provides protocol-agnostic data structures:
 - **mod.rs**: Position/Range/SelectionRange, semantic token types, code-action models
 - Serves as the contract between analysis logic and the LSP conversion layer
 
-#### `text/` - Text Operations
-Text manipulation utilities:
+#### `text/` - Text Operations and Query Utilities
+Shared helpers used by analysis and runtime slices:
 - **edits.rs**: Text edit operations and range adjustments
 - **position.rs**: Coordinate conversions between byte/line-column positions
+- **query.rs**: Tree-sitter predicate filtering (`filter_captures`) reused by analysis and runtime
 
 ### Design Rationale
 
@@ -210,6 +210,12 @@ We unified parser management into a single `DocumentParserPool` managed by the L
 - Keep parsing concerns isolated from document management
 
 ## Development Workflow
+
+Always keep the following guardrails in mind:
+
+- Run `make test format lint` before every commit; CI assumes the tree is formatted, linted, and tested.
+- Update `README.md` / `CONTRIBUTING.md` whenever architectural boundaries change.
+- Prefer dependency injection via `Workspace::with_runtime` when tests need fine-grained runtime control.
 
 ### Adding a New LSP Feature
 

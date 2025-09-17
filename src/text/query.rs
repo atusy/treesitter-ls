@@ -1,17 +1,11 @@
+use regex::Regex;
 use tree_sitter::{Query, QueryCapture, QueryMatch};
 
-/// Check if a predicate matches for a given capture
-pub fn check_predicate(
-    query: &Query,
-    match_: &QueryMatch,
-    capture: &QueryCapture,
-    text: &str,
-) -> bool {
-    // Check general predicates (lua-match?, match?, eq?, not-eq?, etc.)
+/// Check if a predicate matches for a given capture.
+fn check_predicate(query: &Query, match_: &QueryMatch, capture: &QueryCapture, text: &str) -> bool {
     let general_predicates = query.general_predicates(match_.pattern_index);
 
     for predicate in general_predicates {
-        // Check if this predicate applies to our capture
         if let Some(tree_sitter::QueryPredicateArg::Capture(capture_id)) = predicate.args.first() {
             if *capture_id != capture.index {
                 continue;
@@ -25,35 +19,30 @@ pub fn check_predicate(
                     if let Some(tree_sitter::QueryPredicateArg::String(pattern_str)) =
                         predicate.args.get(1)
                     {
-                        // Parse the lua pattern and convert to regex
-                        match lua_pattern::parse(pattern_str) {
-                            Ok(parsed_pattern) => {
-                                // Convert to regex for matching
-                                match lua_pattern::try_to_regex(&parsed_pattern, false, false) {
-                                    Ok(regex_str) => {
-                                        // Use regex to perform the match
-                                        if let Ok(re) = regex::Regex::new(&regex_str)
-                                            && !re.is_match(node_text)
-                                        {
+                        if let Ok(parsed_pattern) = lua_pattern::parse(pattern_str) {
+                            match lua_pattern::try_to_regex(&parsed_pattern, false, false) {
+                                Ok(regex_str) => match Regex::new(&regex_str) {
+                                    Ok(re) => {
+                                        if !re.is_match(node_text) {
                                             return false;
-                                        } else if regex::Regex::new(&regex_str).is_err() {
-                                            eprintln!(
-                                                "Failed to compile regex from lua-pattern: {}",
-                                                regex_str
-                                            );
                                         }
                                     }
-                                    Err(e) => {
+                                    Err(err) => {
                                         eprintln!(
-                                            "Failed to convert lua-pattern to regex: {} - {:?}",
-                                            pattern_str, e
+                                            "Failed to compile regex from lua-pattern: {} ({err})",
+                                            regex_str
                                         );
                                     }
+                                },
+                                Err(err) => {
+                                    eprintln!(
+                                        "Failed to convert lua-pattern to regex: {} ({err:?})",
+                                        pattern_str
+                                    );
                                 }
                             }
-                            Err(e) => {
-                                eprintln!("Invalid lua-pattern: {} - {:?}", pattern_str, e);
-                            }
+                        } else {
+                            eprintln!("Invalid lua-pattern: {}", pattern_str);
                         }
                     }
                 }
@@ -61,11 +50,10 @@ pub fn check_predicate(
                     if let Some(tree_sitter::QueryPredicateArg::String(pattern_str)) =
                         predicate.args.get(1)
                     {
-                        // Use regex for match? predicate
-                        if let Ok(re) = regex::Regex::new(pattern_str)
-                            && !re.is_match(node_text)
-                        {
-                            return false;
+                        if let Ok(re) = Regex::new(pattern_str) {
+                            if !re.is_match(node_text) {
+                                return false;
+                            }
                         }
                     }
                 }
@@ -78,7 +66,6 @@ pub fn check_predicate(
                                 }
                             }
                             tree_sitter::QueryPredicateArg::Capture(other_capture_id) => {
-                                // Compare with another capture
                                 if let Some(other_capture) = match_
                                     .captures
                                     .iter()
@@ -104,7 +91,6 @@ pub fn check_predicate(
                                 }
                             }
                             tree_sitter::QueryPredicateArg::Capture(other_capture_id) => {
-                                // Compare with another capture
                                 if let Some(other_capture) = match_
                                     .captures
                                     .iter()
@@ -121,9 +107,7 @@ pub fn check_predicate(
                         }
                     }
                 }
-                _ => {
-                    // Unknown predicate, ignore
-                }
+                _ => {}
             }
         }
     }
@@ -131,7 +115,7 @@ pub fn check_predicate(
     true
 }
 
-/// Filter captures based on query predicates
+/// Filter captures based on query predicates.
 pub fn filter_captures<'a>(
     query: &Query,
     match_: &'a QueryMatch<'a, 'a>,

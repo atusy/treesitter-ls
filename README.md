@@ -22,6 +22,12 @@ A fast and flexible Language Server Protocol (LSP) server that leverages Tree-si
 - **Zero panics** - All operations use proper error propagation
 - **Comprehensive logging** - Detailed diagnostics with the `log` crate
 
+## Architecture Highlights
+
+- **Domain-first APIs** – Internal crates exchange data via `domain::` types; `lsp/` is the only place that touches `tower_lsp::lsp_types::*` conversions.
+- **Shared query utilities** – Tree-sitter predicate filtering lives in `text::query`, so analysis and runtime slices reuse the same logic without layering violations.
+- **Injectable runtime** – `workspace::Workspace::with_runtime` allows tests and alternate frontends to provide preconfigured `RuntimeCoordinator` instances.
+
 ## Installation
 
 ### Pre-built Binaries

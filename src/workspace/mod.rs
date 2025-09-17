@@ -6,11 +6,12 @@ use languages::WorkspaceLanguages;
 
 use crate::config::{CaptureMappings, TreeSitterSettings};
 use crate::document::{Document, LanguageLayer, SemanticSnapshot};
+use crate::domain::SemanticTokens;
 use crate::runtime::{LanguageEvent, LanguageLoadResult, LanguageLoadSummary};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tower_lsp::lsp_types::{SemanticTokens, Url};
 use tree_sitter::{InputEdit, Query};
+use url::Url;
 
 pub use documents::DocumentRef;
 
@@ -26,7 +27,15 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new() -> Self {
-        let runtime = crate::runtime::RuntimeCoordinator::new();
+        Self::with_runtime(crate::runtime::RuntimeCoordinator::new())
+    }
+
+    /// Create a workspace using a pre-configured runtime coordinator.
+    ///
+    /// Useful in tests or alternate frontends that need to customise the
+    /// runtime (preloaded languages, alternate search paths, etc.) before
+    /// wiring it together with the document store.
+    pub fn with_runtime(runtime: crate::runtime::RuntimeCoordinator) -> Self {
         Self {
             languages: WorkspaceLanguages::new(runtime),
             documents: WorkspaceDocuments::new(),
@@ -126,6 +135,7 @@ impl Workspace {
         self.documents.text(uri)
     }
 
+    /// Store the latest domain-level semantic tokens snapshot for the document.
     pub fn update_semantic_tokens(&self, uri: &Url, tokens: SemanticTokens) {
         self.documents
             .update_semantic_tokens(uri, SemanticSnapshot::new(tokens));
@@ -169,5 +179,30 @@ impl Workspace {
 impl Default for Workspace {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::TreeSitterSettings;
+    use std::collections::HashMap;
+
+    #[test]
+    fn workspace_can_inject_runtime() {
+        let runtime = crate::runtime::RuntimeCoordinator::new();
+
+        let settings = TreeSitterSettings {
+            search_paths: Some(vec!["/tmp/treesitter-ls-test".to_string()]),
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+        };
+        runtime.load_settings(settings);
+
+        let workspace = Workspace::with_runtime(runtime);
+
+        let injected_paths = workspace.languages().runtime().get_search_paths().unwrap();
+
+        assert_eq!(injected_paths, vec!["/tmp/treesitter-ls-test".to_string()]);
     }
 }

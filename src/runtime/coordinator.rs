@@ -151,6 +151,11 @@ impl RuntimeCoordinator {
         self.filetype_resolver.get_language_for_extension(extension)
     }
 
+    /// Get configured search paths (primarily for testing and diagnostics).
+    pub fn get_search_paths(&self) -> Option<Vec<String>> {
+        self.config_store.get_search_paths()
+    }
+
     /// Check if a language is already loaded in the registry
     pub fn is_language_loaded(&self, language_id: &str) -> bool {
         self.language_registry.contains(language_id)

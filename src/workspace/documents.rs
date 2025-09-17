@@ -1,6 +1,6 @@
 use crate::document::{Document, DocumentHandle, DocumentStore, LanguageLayer, SemanticSnapshot};
-use tower_lsp::lsp_types::Url;
 use tree_sitter::{InputEdit, Tree};
+use url::Url;
 
 pub type DocumentRef<'a> = DocumentHandle<'a>;
 
