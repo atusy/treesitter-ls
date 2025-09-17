@@ -11,171 +11,15 @@ use crate::analysis::{
 };
 use crate::domain::settings::WorkspaceSettings as DomainWorkspaceSettings;
 use crate::domain::{
-    CodeAction as DomainCodeAction, CodeActionOrCommand as DomainCodeActionOrCommand,
-    DefinitionResponse, Position as DomainPosition, Range as DomainRange,
-    SelectionRange as DomainSelectionRange, SemanticToken as DomainSemanticToken,
-    SemanticTokens as DomainSemanticTokens, SemanticTokensDelta as DomainSemanticTokensDelta,
-    SemanticTokensEdit as DomainSemanticTokensEdit,
+    SemanticTokens as DomainSemanticTokens,
     SemanticTokensFullDeltaResult as DomainSemanticTokensFullDeltaResult,
-    SemanticTokensResult as DomainSemanticTokensResult, WorkspaceEdit as DomainWorkspaceEdit,
+    SemanticTokensResult as DomainSemanticTokensResult,
 };
+use crate::lsp::protocol;
 use crate::runtime::{LanguageEvent, LanguageLogLevel};
 use crate::text::{PositionMapper, SimplePositionMapper};
 use crate::workspace::Workspace;
 use crate::workspace::{SettingsEvent, SettingsEventKind, SettingsSource};
-use std::collections::HashMap;
-
-fn to_domain_position(pos: &Position) -> DomainPosition {
-    DomainPosition::new(pos.line, pos.character)
-}
-
-fn to_lsp_position(pos: &DomainPosition) -> Position {
-    Position::new(pos.line, pos.character)
-}
-
-fn to_domain_range(range: &Range) -> DomainRange {
-    DomainRange::new(
-        to_domain_position(&range.start),
-        to_domain_position(&range.end),
-    )
-}
-
-fn to_lsp_range(range: &DomainRange) -> Range {
-    Range::new(to_lsp_position(&range.start), to_lsp_position(&range.end))
-}
-
-fn to_lsp_selection_range(range: &DomainSelectionRange) -> SelectionRange {
-    SelectionRange {
-        range: to_lsp_range(&range.range),
-        parent: range
-            .parent
-            .as_ref()
-            .map(|parent| Box::new(to_lsp_selection_range(parent))),
-    }
-}
-
-fn to_lsp_semantic_token(token: DomainSemanticToken) -> SemanticToken {
-    SemanticToken {
-        delta_line: token.delta_line,
-        delta_start: token.delta_start,
-        length: token.length,
-        token_type: token.token_type,
-        token_modifiers_bitset: token.token_modifiers_bitset,
-    }
-}
-
-fn to_lsp_semantic_tokens(tokens: DomainSemanticTokens) -> SemanticTokens {
-    SemanticTokens {
-        result_id: tokens.result_id,
-        data: tokens.data.into_iter().map(to_lsp_semantic_token).collect(),
-    }
-}
-
-fn to_lsp_semantic_tokens_edit(edit: DomainSemanticTokensEdit) -> SemanticTokensEdit {
-    SemanticTokensEdit {
-        start: edit.start,
-        delete_count: edit.delete_count,
-        data: Some(edit.data.into_iter().map(to_lsp_semantic_token).collect()),
-    }
-}
-
-fn to_lsp_semantic_tokens_delta(delta: DomainSemanticTokensDelta) -> SemanticTokensDelta {
-    SemanticTokensDelta {
-        result_id: delta.result_id,
-        edits: delta
-            .edits
-            .into_iter()
-            .map(to_lsp_semantic_tokens_edit)
-            .collect(),
-    }
-}
-
-fn to_lsp_semantic_tokens_full_delta(
-    result: DomainSemanticTokensFullDeltaResult,
-) -> SemanticTokensFullDeltaResult {
-    match result {
-        DomainSemanticTokensFullDeltaResult::Tokens(tokens) => {
-            SemanticTokensFullDeltaResult::Tokens(to_lsp_semantic_tokens(tokens))
-        }
-        DomainSemanticTokensFullDeltaResult::Delta(delta) => {
-            SemanticTokensFullDeltaResult::TokensDelta(to_lsp_semantic_tokens_delta(delta))
-        }
-        DomainSemanticTokensFullDeltaResult::NoChange => {
-            SemanticTokensFullDeltaResult::TokensDelta(SemanticTokensDelta {
-                result_id: None,
-                edits: vec![],
-            })
-        }
-    }
-}
-
-fn to_lsp_definition_response(resp: DefinitionResponse) -> Option<GotoDefinitionResponse> {
-    match resp {
-        DefinitionResponse::Locations(locations) => {
-            let converted: Vec<Location> = locations
-                .into_iter()
-                .map(|loc| Location {
-                    uri: loc.uri,
-                    range: to_lsp_range(&loc.range),
-                })
-                .collect();
-            if converted.is_empty() {
-                None
-            } else {
-                Some(GotoDefinitionResponse::Array(converted))
-            }
-        }
-    }
-}
-
-fn to_lsp_workspace_edit(edit: DomainWorkspaceEdit) -> WorkspaceEdit {
-    let mut changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
-    for doc_edit in edit.document_changes {
-        let edits = doc_edit
-            .edits
-            .into_iter()
-            .map(|e| TextEdit {
-                range: to_lsp_range(&e.range),
-                new_text: e.new_text,
-            })
-            .collect();
-        changes.insert(doc_edit.uri, edits);
-    }
-
-    WorkspaceEdit {
-        changes: Some(changes),
-        document_changes: None,
-        change_annotations: None,
-    }
-}
-
-fn to_lsp_code_action(action: DomainCodeAction) -> CodeAction {
-    CodeAction {
-        title: action.title,
-        kind: action.kind.map(CodeActionKind::from),
-        diagnostics: None,
-        edit: action.edit.map(to_lsp_workspace_edit),
-        command: None,
-        is_preferred: None,
-        disabled: action
-            .disabled
-            .map(|d| CodeActionDisabled { reason: d.reason }),
-        data: None,
-    }
-}
-
-fn to_lsp_code_action_response(
-    actions: Vec<DomainCodeActionOrCommand>,
-) -> Vec<CodeActionOrCommand> {
-    actions
-        .into_iter()
-        .map(|item| match item {
-            DomainCodeActionOrCommand::CodeAction(action) => {
-                CodeActionOrCommand::CodeAction(to_lsp_code_action(action))
-            }
-        })
-        .collect()
-}
 
 fn lsp_legend_types() -> Vec<SemanticTokenType> {
     LEGEND_TYPES
@@ -476,10 +320,10 @@ impl LanguageServer for TreeSitterLs {
                 // Incremental change - create InputEdit for tree editing
                 let mapper = SimplePositionMapper::new(&text);
                 let start_offset = mapper
-                    .position_to_byte(to_domain_position(&range.start))
+                    .position_to_byte(protocol::to_domain_position(&range.start))
                     .unwrap_or(text.len());
                 let end_offset = mapper
-                    .position_to_byte(to_domain_position(&range.end))
+                    .position_to_byte(protocol::to_domain_position(&range.end))
                     .unwrap_or(text.len());
                 let new_end_offset = start_offset + change.text.len();
 
@@ -505,9 +349,11 @@ impl LanguageServer for TreeSitterLs {
                     start_byte: start_offset,
                     old_end_byte: end_offset,
                     new_end_byte: new_end_offset,
-                    start_position: position_to_point(&to_domain_position(&range.start)),
-                    old_end_position: position_to_point(&to_domain_position(&range.end)),
-                    new_end_position: position_to_point(&to_domain_position(&new_end_position)),
+                    start_position: position_to_point(&protocol::to_domain_position(&range.start)),
+                    old_end_position: position_to_point(&protocol::to_domain_position(&range.end)),
+                    new_end_position: position_to_point(&protocol::to_domain_position(
+                        &new_end_position,
+                    )),
                 };
                 edits.push(edit);
 
@@ -623,7 +469,7 @@ impl LanguageServer for TreeSitterLs {
         };
         tokens_with_id.result_id = Some(id);
         let stored_tokens = tokens_with_id.clone();
-        let lsp_tokens = to_lsp_semantic_tokens(tokens_with_id);
+        let lsp_tokens = protocol::to_lsp_semantic_tokens(tokens_with_id);
         self.workspace.update_semantic_tokens(&uri, stored_tokens);
         Ok(Some(SemanticTokensResult::Tokens(lsp_tokens)))
     }
@@ -716,11 +562,11 @@ impl LanguageServer for TreeSitterLs {
                 };
                 tokens_with_id.result_id = Some(id);
                 let stored_tokens = tokens_with_id.clone();
-                let lsp_tokens = to_lsp_semantic_tokens(tokens_with_id);
+                let lsp_tokens = protocol::to_lsp_semantic_tokens(tokens_with_id);
                 self.workspace.update_semantic_tokens(&uri, stored_tokens);
                 Ok(Some(SemanticTokensFullDeltaResult::Tokens(lsp_tokens)))
             }
-            other => Ok(Some(to_lsp_semantic_tokens_full_delta(other))),
+            other => Ok(Some(protocol::to_lsp_semantic_tokens_full_delta(other))),
         }
     }
 
@@ -730,7 +576,7 @@ impl LanguageServer for TreeSitterLs {
     ) -> Result<Option<SemanticTokensRangeResult>> {
         let uri = params.text_document.uri;
         let range = params.range;
-        let domain_range = to_domain_range(&range);
+        let domain_range = protocol::to_domain_range(&range);
 
         let Some(language_name) = self.get_language_for_document(&uri) else {
             return Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
@@ -777,7 +623,7 @@ impl LanguageServer for TreeSitterLs {
         // Convert to RangeResult
         match result {
             Some(DomainSemanticTokensResult::Tokens(tokens)) => Ok(Some(
-                SemanticTokensRangeResult::Tokens(to_lsp_semantic_tokens(tokens)),
+                SemanticTokensRangeResult::Tokens(protocol::to_lsp_semantic_tokens(tokens)),
             )),
             _ => Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
                 result_id: None,
@@ -813,12 +659,12 @@ impl LanguageServer for TreeSitterLs {
         let response = handle_goto_definition(
             &resolver,
             &doc,
-            to_domain_position(&position),
+            protocol::to_domain_position(&position),
             &locals_query,
             &uri,
         );
 
-        Ok(response.and_then(to_lsp_definition_response))
+        Ok(response.and_then(protocol::to_lsp_definition_response))
     }
 
     async fn selection_range(
@@ -826,8 +672,11 @@ impl LanguageServer for TreeSitterLs {
         params: SelectionRangeParams,
     ) -> Result<Option<Vec<SelectionRange>>> {
         let uri = params.text_document.uri;
-        let positions: Vec<DomainPosition> =
-            params.positions.iter().map(to_domain_position).collect();
+        let positions: Vec<_> = params
+            .positions
+            .iter()
+            .map(protocol::to_domain_position)
+            .collect();
 
         // Get document
         let Some(doc) = self.workspace.document(&uri) else {
@@ -838,7 +687,7 @@ impl LanguageServer for TreeSitterLs {
         let result = handle_selection_range(&doc, &positions).map(|ranges| {
             ranges
                 .into_iter()
-                .map(|r| to_lsp_selection_range(&r))
+                .map(|r| protocol::to_lsp_selection_range(&r))
                 .collect()
         });
 
@@ -858,7 +707,7 @@ impl LanguageServer for TreeSitterLs {
             return Ok(None);
         };
 
-        let domain_range = to_domain_range(&range);
+        let domain_range = protocol::to_domain_range(&range);
 
         // Get language for the document
         let language_name = self.get_language_for_document(&uri);
@@ -884,10 +733,10 @@ impl LanguageServer for TreeSitterLs {
                 language_name.as_deref(),
                 Some(&capture_mappings),
             )
-            .map(to_lsp_code_action_response)
+            .map(protocol::to_lsp_code_action_response)
         } else {
             handle_code_actions(&uri, text, &root_layer.tree, domain_range, None, None, None)
-                .map(to_lsp_code_action_response)
+                .map(protocol::to_lsp_code_action_response)
         };
 
         Ok(lsp_response)
