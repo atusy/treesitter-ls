@@ -4,12 +4,14 @@ mod languages;
 mod settings;
 
 use document_ops::{
-    document_language as resolve_document_language, parse_document as process_parse,
+    document_language as resolve_document_language, document_reference,
+    document_text as read_document_text, parse_document as process_parse,
+    remove_document as detach_document, update_semantic_tokens as store_semantic_tokens,
 };
 use documents::WorkspaceDocuments;
 use languages::WorkspaceLanguages;
 
-use crate::document::{Document, SemanticSnapshot};
+use crate::document::Document;
 use crate::domain::SemanticTokens;
 use crate::domain::settings::{CaptureMappings, WorkspaceSettings};
 use crate::runtime::{LanguageEvent, LanguageLoadResult, LanguageLoadSummary};
@@ -111,21 +113,20 @@ impl Workspace {
     }
 
     pub fn document(&self, uri: &Url) -> Option<DocumentRef<'_>> {
-        self.documents.get(uri)
+        document_reference(&self.documents, uri)
     }
 
     pub fn document_text(&self, uri: &Url) -> Option<String> {
-        self.documents.text(uri)
+        read_document_text(&self.documents, uri)
     }
 
     /// Store the latest domain-level semantic tokens snapshot for the document.
     pub fn update_semantic_tokens(&self, uri: &Url, tokens: SemanticTokens) {
-        self.documents
-            .update_semantic_tokens(uri, SemanticSnapshot::new(tokens));
+        store_semantic_tokens(&self.documents, uri, tokens);
     }
 
     pub fn remove_document(&self, uri: &Url) -> Option<Document> {
-        self.documents.remove(uri)
+        detach_document(&self.documents, uri)
     }
 
     pub fn ensure_language_loaded(&self, language: &str) -> LanguageLoadResult {

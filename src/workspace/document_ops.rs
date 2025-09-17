@@ -1,7 +1,8 @@
 use super::ParseOutcome;
 use super::documents::WorkspaceDocuments;
 use super::languages::WorkspaceLanguages;
-use crate::document::LanguageLayer;
+use crate::document::{Document, LanguageLayer, SemanticSnapshot};
+use crate::domain::SemanticTokens;
 use tree_sitter::InputEdit;
 use url::Url;
 
@@ -63,4 +64,23 @@ pub fn document_language(
     documents
         .get(uri)
         .and_then(|doc| doc.layers().get_language_id().map(|s| s.to_string()))
+}
+
+pub fn document_reference<'a>(
+    documents: &'a WorkspaceDocuments,
+    uri: &Url,
+) -> Option<super::DocumentRef<'a>> {
+    documents.get(uri)
+}
+
+pub fn document_text(documents: &WorkspaceDocuments, uri: &Url) -> Option<String> {
+    documents.text(uri)
+}
+
+pub fn update_semantic_tokens(documents: &WorkspaceDocuments, uri: &Url, tokens: SemanticTokens) {
+    documents.update_semantic_tokens(uri, SemanticSnapshot::new(tokens));
+}
+
+pub fn remove_document(documents: &WorkspaceDocuments, uri: &Url) -> Option<Document> {
+    documents.remove(uri)
 }
