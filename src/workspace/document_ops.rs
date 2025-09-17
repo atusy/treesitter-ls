@@ -1,8 +1,8 @@
 use super::ParseOutcome;
 use super::language_ops;
 use crate::document::{Document, DocumentHandle, DocumentStore, LanguageLayer, SemanticSnapshot};
+use crate::domain::SemanticTokens;
 use crate::language::{DocumentParserPool, LanguageCoordinator};
-use lsp_types::SemanticTokens;
 use std::sync::Mutex;
 use tree_sitter::InputEdit;
 use url::Url;

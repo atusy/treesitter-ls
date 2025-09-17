@@ -1,9 +1,11 @@
 use std::str::FromStr;
 
+use crate::domain::{
+    CodeAction, CodeActionDisabled, CodeActionKind, CodeActionOrCommand, Position, Range, TextEdit,
+    Uri, WorkspaceEdit,
+};
 use lsp_types::{
-    CodeAction, CodeActionDisabled, CodeActionKind, CodeActionOrCommand, DocumentChanges, OneOf,
-    OptionalVersionedTextDocumentIdentifier, Position, Range, TextDocumentEdit, TextEdit, Uri,
-    WorkspaceEdit,
+    DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier, TextDocumentEdit,
 };
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 use url::Url;

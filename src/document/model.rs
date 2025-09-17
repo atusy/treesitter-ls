@@ -1,5 +1,5 @@
 use crate::document::{DocumentView, LayerManager};
-use lsp_types::SemanticTokens;
+use crate::domain::SemanticTokens;
 
 #[derive(Clone, Debug)]
 pub struct SemanticSnapshot {

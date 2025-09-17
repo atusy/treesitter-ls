@@ -1,4 +1,4 @@
-use lsp_types::{Position, Range};
+use crate::domain::{Position, Range};
 
 /// Trait for mapping between LSP positions and byte offsets
 /// Supports both simple text mapping and complex injection scenarios

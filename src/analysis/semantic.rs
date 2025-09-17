@@ -1,10 +1,9 @@
 use crate::domain::settings::CaptureMappings;
-use crate::domain::{LEGEND_MODIFIERS, LEGEND_TYPES};
-use crate::text::convert_byte_to_utf16_in_line;
-use lsp_types::{
-    Range, SemanticToken, SemanticTokens, SemanticTokensDelta, SemanticTokensEdit,
-    SemanticTokensFullDeltaResult, SemanticTokensResult,
+use crate::domain::{
+    LEGEND_MODIFIERS, LEGEND_TYPES, Range, SemanticToken, SemanticTokens, SemanticTokensDelta,
+    SemanticTokensEdit, SemanticTokensFullDeltaResult, SemanticTokensResult,
 };
+use crate::text::convert_byte_to_utf16_in_line;
 use tree_sitter::{Query, QueryCursor, StreamingIterator, Tree};
 
 /// Convert byte column position to UTF-16 column position within a line
@@ -506,7 +505,7 @@ mod tests {
 
     #[test]
     fn test_semantic_tokens_range() {
-        use lsp_types::Position;
+        use crate::domain::Position;
 
         // Create mock tokens for a document
         let all_tokens = SemanticTokens {

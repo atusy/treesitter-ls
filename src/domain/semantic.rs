@@ -1,4 +1,8 @@
-use lsp_types::{SemanticTokenModifier, SemanticTokenType};
+pub use lsp_types::{
+    SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens, SemanticTokensDelta,
+    SemanticTokensEdit, SemanticTokensFullDeltaResult, SemanticTokensRangeResult,
+    SemanticTokensResult,
+};
 
 pub const LEGEND_TYPES: &[SemanticTokenType] = &[
     SemanticTokenType::COMMENT,
