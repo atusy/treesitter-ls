@@ -4,9 +4,9 @@ mod languages;
 use documents::WorkspaceDocuments;
 use languages::WorkspaceLanguages;
 
-use crate::config::{CaptureMappings, TreeSitterSettings};
 use crate::document::{Document, LanguageLayer, SemanticSnapshot};
 use crate::domain::SemanticTokens;
+use crate::domain::settings::{CaptureMappings, WorkspaceSettings};
 use crate::runtime::{LanguageEvent, LanguageLoadResult, LanguageLoadSummary};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -51,7 +51,7 @@ impl Workspace {
         &self.documents
     }
 
-    pub fn load_settings(&self, settings: TreeSitterSettings) -> LanguageLoadSummary {
+    pub fn load_settings(&self, settings: WorkspaceSettings) -> LanguageLoadSummary {
         self.languages.load_settings(settings)
     }
 
@@ -185,18 +185,18 @@ impl Default for Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::TreeSitterSettings;
+    use crate::domain::settings::WorkspaceSettings as DomainWorkspaceSettings;
     use std::collections::HashMap;
 
     #[test]
     fn workspace_can_inject_runtime() {
         let runtime = crate::runtime::RuntimeCoordinator::new();
 
-        let settings = TreeSitterSettings {
-            search_paths: Some(vec!["/tmp/treesitter-ls-test".to_string()]),
-            languages: HashMap::new(),
-            capture_mappings: HashMap::new(),
-        };
+        let settings = DomainWorkspaceSettings::new(
+            vec!["/tmp/treesitter-ls-test".to_string()],
+            HashMap::new(),
+            HashMap::new(),
+        );
         runtime.load_settings(settings);
 
         let workspace = Workspace::with_runtime(runtime);

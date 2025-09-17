@@ -23,6 +23,18 @@ pub trait DocumentView {
     fn injection_layers(&self) -> &[LanguageLayer] {
         self.layers().injection_layers()
     }
+
+    /// Build a position mapper suited to the document's layering configuration.
+    fn position_mapper(&self) -> Box<dyn crate::text::PositionMapper + '_> {
+        if self.injection_layers().is_empty() {
+            Box::new(crate::text::SimplePositionMapper::new(self.text()))
+        } else {
+            Box::new(crate::document::InjectionPositionMapper::new(
+                self.text(),
+                self.injection_layers(),
+            ))
+        }
+    }
 }
 
 impl<T> DocumentView for T

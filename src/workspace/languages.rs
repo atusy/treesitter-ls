@@ -1,4 +1,4 @@
-use crate::config::{CaptureMappings, TreeSitterSettings};
+use crate::domain::settings::{CaptureMappings, WorkspaceSettings};
 use crate::runtime::{
     DocumentParserPool, LanguageLoadResult, LanguageLoadSummary, RuntimeCoordinator,
 };
@@ -23,7 +23,7 @@ impl WorkspaceLanguages {
         &self.runtime
     }
 
-    pub fn load_settings(&self, settings: TreeSitterSettings) -> LanguageLoadSummary {
+    pub fn load_settings(&self, settings: WorkspaceSettings) -> LanguageLoadSummary {
         self.runtime.load_settings(settings)
     }
 

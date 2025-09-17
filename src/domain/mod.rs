@@ -1,3 +1,5 @@
+pub mod settings;
+
 use url::Url;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

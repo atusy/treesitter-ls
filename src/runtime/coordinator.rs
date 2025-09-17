@@ -4,6 +4,8 @@ use super::{
     QueryLoader, QueryStore,
 };
 use crate::config::{LanguageConfig, TreeSitterSettings};
+use crate::domain::settings as domain_settings;
+use crate::domain::settings::{CaptureMappings as DomainCaptureMappings, WorkspaceSettings};
 use std::sync::{Arc, RwLock};
 use tree_sitter::Language;
 
@@ -33,10 +35,15 @@ impl RuntimeCoordinator {
         }
     }
 
-    /// Initialize from TreeSitter settings and return coordination events
-    pub fn load_settings(&self, settings: TreeSitterSettings) -> LanguageLoadSummary {
-        self.config_store.update_from_settings(&settings);
-        self.filetype_resolver.build_from_settings(&settings);
+    /// Initialize from workspace-level settings and return coordination events
+    pub fn load_settings(&self, settings: WorkspaceSettings) -> LanguageLoadSummary {
+        let config_settings: TreeSitterSettings = settings.into();
+        self.load_settings_from_config(&config_settings)
+    }
+
+    fn load_settings_from_config(&self, settings: &TreeSitterSettings) -> LanguageLoadSummary {
+        self.config_store.update_from_settings(settings);
+        self.filetype_resolver.build_from_settings(settings);
 
         let mut summary = LanguageLoadSummary::default();
         for (lang_name, config) in &settings.languages {
@@ -183,8 +190,17 @@ impl RuntimeCoordinator {
     }
 
     /// Get capture mappings
-    pub fn get_capture_mappings(&self) -> crate::config::CaptureMappings {
-        self.config_store.get_capture_mappings()
+    pub fn get_capture_mappings(&self) -> DomainCaptureMappings {
+        let config_mappings = self.config_store.get_capture_mappings();
+        config_mappings
+            .iter()
+            .map(|(lang, mappings)| {
+                (
+                    lang.clone(),
+                    domain_settings::QueryTypeMappings::from(mappings),
+                )
+            })
+            .collect::<DomainCaptureMappings>()
     }
 
     fn load_single_language(

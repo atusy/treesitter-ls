@@ -5,7 +5,7 @@ use crate::domain::{
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 use url::Url;
 
-use crate::config::settings::CaptureMappings;
+use crate::domain::settings::CaptureMappings;
 use crate::text::{PositionMapper, SimplePositionMapper};
 
 /// Create an inspect token code action for the node at cursor

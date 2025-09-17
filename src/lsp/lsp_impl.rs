@@ -10,6 +10,7 @@ use crate::analysis::{
     handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
 use crate::config::{TreeSitterSettings, merge_settings};
+use crate::domain::settings::WorkspaceSettings as DomainWorkspaceSettings;
 use crate::domain::{
     CodeAction as DomainCodeAction, CodeActionOrCommand as DomainCodeActionOrCommand,
     DefinitionResponse, Position as DomainPosition, Range as DomainRange,
@@ -230,7 +231,8 @@ impl TreeSitterLs {
     }
 
     async fn load_settings(&self, settings: TreeSitterSettings) {
-        let summary = self.workspace.load_settings(settings);
+        let domain_settings: DomainWorkspaceSettings = settings.into();
+        let summary = self.workspace.load_settings(domain_settings);
         self.handle_language_events(&summary.events).await;
     }
 

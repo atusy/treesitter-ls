@@ -1,4 +1,4 @@
-use crate::config::CaptureMappings;
+use crate::domain::settings::CaptureMappings;
 use crate::domain::{
     LEGEND_MODIFIERS, LEGEND_TYPES, Range, SemanticToken, SemanticTokens, SemanticTokensDelta,
     SemanticTokensEdit, SemanticTokensFullDeltaResult, SemanticTokensResult,

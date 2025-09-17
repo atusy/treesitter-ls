@@ -436,16 +436,8 @@ pub fn handle_goto_definition<V: DocumentView + ?Sized>(
     locals_query: &Query,
     uri: &Url,
 ) -> Option<DefinitionResponse> {
-    // Convert LSP position to byte offset
-    // Create position mapper based on whether document has injections
-    let mapper: Box<dyn crate::text::PositionMapper> = if document.injection_layers().is_empty() {
-        Box::new(crate::text::SimplePositionMapper::new(document.text()))
-    } else {
-        Box::new(crate::document::InjectionPositionMapper::new(
-            document.text(),
-            document.injection_layers(),
-        ))
-    };
+    // Convert LSP position to byte offset using document-provided mapper
+    let mapper = document.position_mapper();
     let cursor_byte = mapper.position_to_byte(position)?;
 
     // Find the appropriate layer at cursor position

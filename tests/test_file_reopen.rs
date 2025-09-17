@@ -1,9 +1,10 @@
 // This test demonstrates the semantic token issue when reopening files
 // and verifies that the fix (adding did_close handler) works correctly.
 
-use tower_lsp::lsp_types::*;
 use tree_sitter::Parser;
 use treesitter_ls::document::{DocumentStore, LanguageLayer, SemanticSnapshot};
+use treesitter_ls::domain::{SemanticToken, SemanticTokens};
+use url::Url;
 
 #[test]
 fn test_document_store_reopen_resets_semantic_tokens() {

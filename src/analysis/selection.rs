@@ -47,15 +47,8 @@ pub fn handle_selection_range<V: DocumentView + ?Sized>(
     document: &V,
     positions: &[Position],
 ) -> Option<Vec<SelectionRange>> {
-    // Create position mapper based on whether document has injections
-    let mapper: Box<dyn crate::text::PositionMapper> = if document.injection_layers().is_empty() {
-        Box::new(crate::text::SimplePositionMapper::new(document.text()))
-    } else {
-        Box::new(crate::document::InjectionPositionMapper::new(
-            document.text(),
-            document.injection_layers(),
-        ))
-    };
+    // Create position mapper via document abstraction
+    let mapper = document.position_mapper();
 
     let ranges = positions
         .iter()

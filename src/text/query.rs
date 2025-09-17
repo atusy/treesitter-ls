@@ -49,12 +49,10 @@ fn check_predicate(query: &Query, match_: &QueryMatch, capture: &QueryCapture, t
                 "match?" => {
                     if let Some(tree_sitter::QueryPredicateArg::String(pattern_str)) =
                         predicate.args.get(1)
+                        && let Ok(re) = Regex::new(pattern_str)
+                        && !re.is_match(node_text)
                     {
-                        if let Ok(re) = Regex::new(pattern_str) {
-                            if !re.is_match(node_text) {
-                                return false;
-                            }
-                        }
+                        return false;
                     }
                 }
                 "eq?" => {
