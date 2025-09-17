@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use tree_sitter::Parser;
 
-use crate::runtime::registry::LanguageRegistry;
+use super::registry::LanguageRegistry;
 
 /// Factory for creating Tree-sitter parsers with proper language configuration
 pub struct ParserFactory {

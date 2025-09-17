@@ -3,6 +3,7 @@ pub mod config;
 pub mod document;
 pub mod domain;
 pub mod error;
+pub mod language;
 pub mod lsp;
 pub mod runtime;
 pub mod text;

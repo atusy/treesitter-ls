@@ -1,5 +1,6 @@
 use super::languages::WorkspaceLanguages;
 use crate::domain::settings::CaptureMappings;
+use crate::language::LanguageLoadResult;
 use std::sync::Arc;
 use tree_sitter::{Parser, Query};
 
@@ -10,7 +11,7 @@ pub fn language_for_path(languages: &WorkspaceLanguages, path: &str) -> Option<S
 pub fn ensure_language_loaded(
     languages: &WorkspaceLanguages,
     language_id: &str,
-) -> crate::runtime::LanguageLoadResult {
+) -> LanguageLoadResult {
     languages.ensure_language_loaded(language_id)
 }
 

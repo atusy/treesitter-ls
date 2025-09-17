@@ -15,8 +15,8 @@ use crate::domain::{
     SemanticTokensFullDeltaResult as DomainSemanticTokensFullDeltaResult,
     SemanticTokensResult as DomainSemanticTokensResult,
 };
+use crate::language::{LanguageEvent, LanguageLogLevel};
 use crate::lsp::protocol;
-use crate::runtime::{LanguageEvent, LanguageLogLevel};
 use crate::text::{PositionMapper, SimplePositionMapper};
 use crate::workspace::Workspace;
 use crate::workspace::{SettingsEvent, SettingsEventKind, SettingsSource};

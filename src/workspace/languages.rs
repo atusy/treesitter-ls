@@ -1,17 +1,17 @@
 use crate::domain::settings::{CaptureMappings, WorkspaceSettings};
-use crate::runtime::{
-    DocumentParserPool, LanguageLoadResult, LanguageLoadSummary, RuntimeCoordinator,
+use crate::language::{
+    DocumentParserPool, LanguageCoordinator, LanguageLoadResult, LanguageLoadSummary,
 };
 use std::sync::{Arc, Mutex};
 use tree_sitter::{Parser, Query};
 
 pub struct WorkspaceLanguages {
-    runtime: RuntimeCoordinator,
+    runtime: LanguageCoordinator,
     parser_pool: Mutex<DocumentParserPool>,
 }
 
 impl WorkspaceLanguages {
-    pub fn new(runtime: RuntimeCoordinator) -> Self {
+    pub fn new(runtime: LanguageCoordinator) -> Self {
         let pool = runtime.create_document_parser_pool();
         Self {
             runtime,
@@ -19,7 +19,7 @@ impl WorkspaceLanguages {
         }
     }
 
-    pub fn runtime(&self) -> &RuntimeCoordinator {
+    pub fn runtime(&self) -> &LanguageCoordinator {
         &self.runtime
     }
 
@@ -66,6 +66,6 @@ impl WorkspaceLanguages {
 
 impl Default for WorkspaceLanguages {
     fn default() -> Self {
-        Self::new(RuntimeCoordinator::new())
+        Self::new(LanguageCoordinator::new())
     }
 }

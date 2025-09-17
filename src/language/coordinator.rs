@@ -1,16 +1,20 @@
-use super::{
-    ConfigStore, DocumentParserPool, FiletypeResolver, LanguageEvent, LanguageLoadResult,
-    LanguageLoadSummary, LanguageLogLevel, LanguageRegistry, ParserFactory, ParserLoader,
-    QueryLoader, QueryStore,
-};
-use crate::config::{LanguageConfig, TreeSitterSettings};
+use super::events::{LanguageEvent, LanguageLoadResult, LanguageLoadSummary, LanguageLogLevel};
+use super::filetypes::FiletypeResolver;
+use super::loader::ParserLoader;
+use super::parser_pool::{DocumentParserPool, ParserFactory};
+use super::query_loader::QueryLoader;
+use super::query_store::QueryStore;
+use super::registry::LanguageRegistry;
+use crate::config::TreeSitterSettings;
+use crate::config::settings::LanguageConfig;
 use crate::domain::settings as domain_settings;
 use crate::domain::settings::{CaptureMappings as DomainCaptureMappings, WorkspaceSettings};
+use crate::runtime::config::ConfigStore;
 use std::sync::{Arc, RwLock};
 use tree_sitter::Language;
 
 /// Coordinates language runtime components (registry, queries, configs).
-pub struct RuntimeCoordinator {
+pub struct LanguageCoordinator {
     query_store: QueryStore,
     config_store: ConfigStore,
     filetype_resolver: FiletypeResolver,
@@ -18,13 +22,13 @@ pub struct RuntimeCoordinator {
     parser_loader: RwLock<ParserLoader>,
 }
 
-impl Default for RuntimeCoordinator {
+impl Default for LanguageCoordinator {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl RuntimeCoordinator {
+impl LanguageCoordinator {
     pub fn new() -> Self {
         Self {
             query_store: QueryStore::new(),

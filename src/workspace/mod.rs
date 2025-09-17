@@ -2,9 +2,10 @@ mod document_ops;
 mod documents;
 mod language_ops;
 mod languages;
-mod state;
 mod settings;
+mod state;
 
+use self::state::WorkspaceState;
 use document_ops::{
     document_language as resolve_document_language, document_reference,
     document_text as read_document_text, parse_document as process_parse,
@@ -18,12 +19,11 @@ use language_ops::{
     locals_query as load_locals_query,
 };
 use languages::WorkspaceLanguages;
-use self::state::WorkspaceState;
 
 use crate::document::Document;
 use crate::domain::SemanticTokens;
 use crate::domain::settings::{CaptureMappings, WorkspaceSettings};
-use crate::runtime::{LanguageEvent, LanguageLoadResult, LanguageLoadSummary};
+use crate::language::{LanguageEvent, LanguageLoadResult, LanguageLoadSummary};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tree_sitter::{InputEdit, Query};
@@ -48,7 +48,7 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new() -> Self {
-        Self::with_runtime(crate::runtime::RuntimeCoordinator::new())
+        Self::with_runtime(crate::language::LanguageCoordinator::new())
     }
 
     /// Create a workspace using a pre-configured runtime coordinator.
@@ -56,7 +56,7 @@ impl Workspace {
     /// Useful in tests or alternate frontends that need to customise the
     /// runtime (preloaded languages, alternate search paths, etc.) before
     /// wiring it together with the document store.
-    pub fn with_runtime(runtime: crate::runtime::RuntimeCoordinator) -> Self {
+    pub fn with_runtime(runtime: crate::language::LanguageCoordinator) -> Self {
         Self {
             languages: WorkspaceLanguages::new(runtime),
             documents: WorkspaceDocuments::new(),
@@ -165,7 +165,7 @@ mod tests {
 
     #[test]
     fn workspace_can_inject_runtime() {
-        let runtime = crate::runtime::RuntimeCoordinator::new();
+        let runtime = crate::language::LanguageCoordinator::new();
 
         let settings = DomainWorkspaceSettings::new(
             vec!["/tmp/treesitter-ls-test".to_string()],

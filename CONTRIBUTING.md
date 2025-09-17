@@ -193,7 +193,7 @@ The refactoring implemented clean architecture principles:
 - **Dependency Inversion**: `DocumentView` trait (document/view.rs) lets analysis code depend on a read-only interface instead of the concrete `Document`
 - **Module Boundaries**: Clear separation between document management, language services, and text operations
 - **Domain Model**: `domain::` defines shared types so analysis/text modules stay decoupled from `tower-lsp`
-- **Coordinator Pattern**: `RuntimeCoordinator` provides stateless coordination between runtime modules and returns events consumed by the LSP layer
+- **Coordinator Pattern**: `LanguageCoordinator` provides stateless coordination between language modules and returns events consumed by the LSP layer
 - **Workspace Facade**: `workspace::Workspace` aggregates runtime and document access so the LSP implementation stays thin, and `lsp_impl` is now the single place that converts between domain and protocol types.
 
 #### Injection System Design
