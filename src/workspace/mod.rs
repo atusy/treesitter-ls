@@ -1,12 +1,24 @@
 mod document_ops;
 mod documents;
 mod languages;
+mod language_ops;
 mod settings;
 
 use document_ops::{
-    document_language as resolve_document_language, document_reference,
-    document_text as read_document_text, parse_document as process_parse,
-    remove_document as detach_document, update_semantic_tokens as store_semantic_tokens,
+    document_language as resolve_document_language,
+    document_reference,
+    document_text as read_document_text,
+    parse_document as process_parse,
+    remove_document as detach_document,
+    update_semantic_tokens as store_semantic_tokens,
+};
+use language_ops::{
+    capture_mappings as collect_capture_mappings,
+    ensure_language_loaded as ensure_runtime_language,
+    has_highlight_queries as language_has_queries,
+    highlight_query as load_highlight_query,
+    language_for_path,
+    locals_query as load_locals_query,
 };
 use documents::WorkspaceDocuments;
 use languages::WorkspaceLanguages;
@@ -89,19 +101,19 @@ impl Workspace {
     }
 
     pub fn has_queries(&self, language: &str) -> bool {
-        self.languages.has_queries(language)
+        language_has_queries(&self.languages, language)
     }
 
     pub fn highlight_query(&self, language: &str) -> Option<Arc<Query>> {
-        self.languages.highlight_query(language)
+        load_highlight_query(&self.languages, language)
     }
 
     pub fn locals_query(&self, language: &str) -> Option<Arc<Query>> {
-        self.languages.locals_query(language)
+        load_locals_query(&self.languages, language)
     }
 
     pub fn capture_mappings(&self) -> CaptureMappings {
-        self.languages.capture_mappings()
+        collect_capture_mappings(&self.languages)
     }
 
     pub fn load_workspace_settings(
@@ -130,7 +142,7 @@ impl Workspace {
     }
 
     pub fn ensure_language_loaded(&self, language: &str) -> LanguageLoadResult {
-        self.languages.ensure_language_loaded(language)
+        ensure_runtime_language(&self.languages, language)
     }
 
     pub fn set_root_path(&self, path: Option<PathBuf>) {
