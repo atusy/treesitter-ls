@@ -2,6 +2,7 @@ mod document_ops;
 mod documents;
 mod language_ops;
 mod languages;
+mod state;
 mod settings;
 
 use document_ops::{
@@ -13,18 +14,18 @@ use documents::WorkspaceDocuments;
 use language_ops::{
     capture_mappings as collect_capture_mappings,
     ensure_language_loaded as ensure_runtime_language,
-    has_highlight_queries as language_has_queries,
-    highlight_query as load_highlight_query,
+    has_highlight_queries as language_has_queries, highlight_query as load_highlight_query,
     locals_query as load_locals_query,
 };
 use languages::WorkspaceLanguages;
+use self::state::WorkspaceState;
 
 use crate::document::Document;
 use crate::domain::SemanticTokens;
 use crate::domain::settings::{CaptureMappings, WorkspaceSettings};
 use crate::runtime::{LanguageEvent, LanguageLoadResult, LanguageLoadSummary};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tree_sitter::{InputEdit, Query};
 use url::Url;
 
@@ -42,7 +43,7 @@ pub struct ParseOutcome {
 pub struct Workspace {
     languages: WorkspaceLanguages,
     documents: WorkspaceDocuments,
-    root_path: Mutex<Option<PathBuf>>,
+    state: WorkspaceState,
 }
 
 impl Workspace {
@@ -59,7 +60,7 @@ impl Workspace {
         Self {
             languages: WorkspaceLanguages::new(runtime),
             documents: WorkspaceDocuments::new(),
-            root_path: Mutex::new(None),
+            state: WorkspaceState::new(),
         }
     }
 
@@ -116,7 +117,7 @@ impl Workspace {
         &self,
         override_settings: Option<(SettingsSource, serde_json::Value)>,
     ) -> SettingsLoadOutcome {
-        let root_path = self.root_path();
+        let root_path = self.state.root_path();
         settings::load_settings(root_path.as_deref(), override_settings)
     }
 
@@ -142,29 +143,11 @@ impl Workspace {
     }
 
     pub fn set_root_path(&self, path: Option<PathBuf>) {
-        match self.root_path.lock() {
-            Ok(mut guard) => *guard = path,
-            Err(poisoned) => {
-                log::warn!(
-                    target: "treesitter_ls::lock_recovery",
-                    "Recovered from poisoned lock in workspace::set_root_path",
-                );
-                *poisoned.into_inner() = path;
-            }
-        }
+        self.state.set_root_path(path)
     }
 
     pub fn root_path(&self) -> Option<PathBuf> {
-        match self.root_path.lock() {
-            Ok(guard) => guard.clone(),
-            Err(poisoned) => {
-                log::warn!(
-                    target: "treesitter_ls::lock_recovery",
-                    "Recovered from poisoned lock in workspace::root_path",
-                );
-                poisoned.into_inner().clone()
-            }
-        }
+        self.state.root_path()
     }
 }
 
