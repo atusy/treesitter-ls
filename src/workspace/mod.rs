@@ -1,26 +1,22 @@
 mod document_ops;
 mod documents;
-mod languages;
 mod language_ops;
+mod languages;
 mod settings;
 
 use document_ops::{
-    document_language as resolve_document_language,
-    document_reference,
-    document_text as read_document_text,
-    parse_document as process_parse,
-    remove_document as detach_document,
-    update_semantic_tokens as store_semantic_tokens,
+    document_language as resolve_document_language, document_reference,
+    document_text as read_document_text, parse_document as process_parse,
+    remove_document as detach_document, update_semantic_tokens as store_semantic_tokens,
 };
+use documents::WorkspaceDocuments;
 use language_ops::{
     capture_mappings as collect_capture_mappings,
     ensure_language_loaded as ensure_runtime_language,
     has_highlight_queries as language_has_queries,
     highlight_query as load_highlight_query,
-    language_for_path,
     locals_query as load_locals_query,
 };
-use documents::WorkspaceDocuments;
 use languages::WorkspaceLanguages;
 
 use crate::document::Document;

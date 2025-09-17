@@ -1,5 +1,6 @@
 use super::ParseOutcome;
 use super::documents::WorkspaceDocuments;
+use super::language_ops;
 use super::languages::WorkspaceLanguages;
 use crate::document::{Document, LanguageLayer, SemanticSnapshot};
 use crate::domain::SemanticTokens;
@@ -15,15 +16,14 @@ pub fn parse_document(
     edits: Vec<InputEdit>,
 ) -> ParseOutcome {
     let mut events = Vec::new();
-    let language_name = languages
-        .language_for_path(uri.path())
+    let language_name = language_ops::language_for_path(languages, uri.path())
         .or_else(|| language_id.map(|s| s.to_string()));
 
     if let Some(language_name) = language_name {
-        let load_result = languages.ensure_language_loaded(&language_name);
+        let load_result = language_ops::ensure_language_loaded(languages, &language_name);
         events.extend(load_result.events.clone());
 
-        if let Some(mut parser) = languages.acquire_parser(&language_name) {
+        if let Some(mut parser) = language_ops::acquire_parser(languages, &language_name) {
             let old_tree = if !edits.is_empty() {
                 documents.get_edited_tree(&uri, &edits)
             } else {
@@ -33,7 +33,7 @@ pub fn parse_document(
             };
 
             let parsed_tree = parser.parse(&text, old_tree.as_ref());
-            languages.release_parser(language_name.clone(), parser);
+            language_ops::release_parser(languages, language_name.clone(), parser);
 
             if let Some(tree) = parsed_tree {
                 if !edits.is_empty() {

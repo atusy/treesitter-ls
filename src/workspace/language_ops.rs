@@ -1,7 +1,7 @@
 use super::languages::WorkspaceLanguages;
 use crate::domain::settings::CaptureMappings;
 use std::sync::Arc;
-use tree_sitter::Query;
+use tree_sitter::{Parser, Query};
 
 pub fn language_for_path(languages: &WorkspaceLanguages, path: &str) -> Option<String> {
     languages.language_for_path(path)
@@ -28,4 +28,12 @@ pub fn locals_query(languages: &WorkspaceLanguages, language: &str) -> Option<Ar
 
 pub fn capture_mappings(languages: &WorkspaceLanguages) -> CaptureMappings {
     languages.capture_mappings()
+}
+
+pub fn acquire_parser(languages: &WorkspaceLanguages, language: &str) -> Option<Parser> {
+    languages.acquire_parser(language)
+}
+
+pub fn release_parser(languages: &WorkspaceLanguages, language: String, parser: Parser) {
+    languages.release_parser(language, parser)
 }
