@@ -323,14 +323,17 @@ pub fn handle_semantic_tokens_full_delta(
     // Get current tokens
     let current_result =
         handle_semantic_tokens_full(text, tree, query, filetype, capture_mappings)?;
-    let SemanticTokensResult::Tokens(current_tokens) = current_result;
+    let current_tokens = match current_result {
+        SemanticTokensResult::Tokens(tokens) => tokens,
+        SemanticTokensResult::Partial(_) => return None,
+    };
 
     // Check if we can calculate a delta
     if let Some(prev) = previous_tokens
         && prev.result_id.as_deref() == Some(previous_result_id)
         && let Some(delta) = calculate_semantic_tokens_delta(prev, &current_tokens)
     {
-        return Some(SemanticTokensFullDeltaResult::Delta(delta));
+        return Some(SemanticTokensFullDeltaResult::TokensDelta(delta));
     }
 
     // Fall back to full tokens
@@ -385,7 +388,7 @@ fn calculate_semantic_tokens_delta(
         edits: vec![SemanticTokensEdit {
             start: start as u32,
             delete_count: delete_count as u32,
-            data,
+            data: Some(data),
         }],
     })
 }
@@ -490,7 +493,11 @@ mod tests {
         assert_eq!(delta.edits.len(), 1);
         assert_eq!(delta.edits[0].start, 0);
         assert_eq!(delta.edits[0].delete_count, 3);
-        assert_eq!(delta.edits[0].data.len(), 3);
+        let edits_data = delta.edits[0]
+            .data
+            .as_ref()
+            .expect("delta edits should include replacement data");
+        assert_eq!(edits_data.len(), 3);
     }
 
     #[test]
@@ -629,22 +636,22 @@ let y = "hello""#;
         assert!(result.is_some());
 
         // Verify tokens were generated (can't inspect internals due to private type)
-        match result.unwrap() {
-            SemanticTokensResult::Tokens(tokens) => {
-                // Should have tokens for: let, x, string, let, y, string
-                assert!(tokens.data.len() >= 6);
+        let SemanticTokensResult::Tokens(tokens) = result.unwrap() else {
+            panic!("expected complete semantic tokens result");
+        };
 
-                // Check that the string token on first line has correct UTF-16 length
-                // "あいうえお" = 5 UTF-16 code units + 2 quotes = 7
-                let string_token = tokens
-                    .data
-                    .iter()
-                    .find(|t| t.token_type == 2 && t.length == 7); // string type = 2
-                assert!(
-                    string_token.is_some(),
-                    "Japanese string token should have UTF-16 length of 7"
-                );
-            }
-        }
+        // Should have tokens for: let, x, string, let, y, string
+        assert!(tokens.data.len() >= 6);
+
+        // Check that the string token on first line has correct UTF-16 length
+        // "あいうえお" = 5 UTF-16 code units + 2 quotes = 7
+        let string_token = tokens
+            .data
+            .iter()
+            .find(|t| t.token_type == 2 && t.length == 7); // string type = 2
+        assert!(
+            string_token.is_some(),
+            "Japanese string token should have UTF-16 length of 7"
+        );
     }
 }

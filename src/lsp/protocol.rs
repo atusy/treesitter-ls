@@ -1,26 +1,41 @@
 use std::collections::HashMap;
 
+use serde::de::DeserializeOwned;
+
 use crate::domain::{
     CodeAction as DomainCodeAction, CodeActionOrCommand as DomainCodeActionOrCommand,
-    DefinitionResponse, Position as DomainPosition, Range as DomainRange,
-    SelectionRange as DomainSelectionRange, SemanticToken as DomainSemanticToken,
-    SemanticTokens as DomainSemanticTokens, SemanticTokensDelta as DomainSemanticTokensDelta,
+    DefinitionResponse as DomainDefinitionResponse, Position as DomainPosition,
+    Range as DomainRange, SelectionRange as DomainSelectionRange,
+    SemanticToken as DomainSemanticToken, SemanticTokens as DomainSemanticTokens,
+    SemanticTokensDelta as DomainSemanticTokensDelta,
     SemanticTokensEdit as DomainSemanticTokensEdit,
     SemanticTokensFullDeltaResult as DomainSemanticTokensFullDeltaResult,
     SemanticTokensRangeResult as DomainSemanticTokensRangeResult,
-    SemanticTokensResult as DomainSemanticTokensResult, WorkspaceEdit as DomainWorkspaceEdit,
+    SemanticTokensResult as DomainSemanticTokensResult, TextEdit as DomainTextEdit,
+    WorkspaceEdit as DomainWorkspaceEdit,
 };
 use tower_lsp::lsp_types::{
     CodeAction as LspCodeAction, CodeActionDisabled as LspCodeActionDisabled, CodeActionKind,
-    CodeActionOrCommand as LspCodeActionOrCommand, GotoDefinitionResponse, Location as LspLocation,
-    Position as LspPosition, Range as LspRange, SelectionRange as LspSelectionRange,
-    SemanticToken as LspSemanticToken, SemanticTokens as LspSemanticTokens,
-    SemanticTokensDelta as LspSemanticTokensDelta, SemanticTokensEdit as LspSemanticTokensEdit,
+    CodeActionOrCommand as LspCodeActionOrCommand,
+    GotoDefinitionResponse as LspGotoDefinitionResponse, Position as LspPosition,
+    Range as LspRange, SelectionRange as LspSelectionRange, SemanticToken as LspSemanticToken,
+    SemanticTokens as LspSemanticTokens, SemanticTokensDelta as LspSemanticTokensDelta,
+    SemanticTokensEdit as LspSemanticTokensEdit,
     SemanticTokensFullDeltaResult as LspSemanticTokensFullDeltaResult,
     SemanticTokensRangeResult as LspSemanticTokensRangeResult,
     SemanticTokensResult as LspSemanticTokensResult, TextEdit as LspTextEdit, Url,
     WorkspaceEdit as LspWorkspaceEdit,
 };
+
+fn convert_via_json<T, U>(value: T) -> Option<U>
+where
+    T: serde::Serialize,
+    U: DeserializeOwned,
+{
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|json| serde_json::from_value(json).ok())
+}
 
 pub fn to_domain_position(pos: &LspPosition) -> DomainPosition {
     DomainPosition::new(pos.line, pos.character)
@@ -72,7 +87,9 @@ pub fn to_lsp_semantic_tokens_edit(edit: DomainSemanticTokensEdit) -> LspSemanti
     LspSemanticTokensEdit {
         start: edit.start,
         delete_count: edit.delete_count,
-        data: Some(edit.data.into_iter().map(to_lsp_semantic_token).collect()),
+        data: edit
+            .data
+            .map(|tokens| tokens.into_iter().map(to_lsp_semantic_token).collect()),
     }
 }
 
@@ -94,14 +111,13 @@ pub fn to_lsp_semantic_tokens_full_delta(
         DomainSemanticTokensFullDeltaResult::Tokens(tokens) => {
             LspSemanticTokensFullDeltaResult::Tokens(to_lsp_semantic_tokens(tokens))
         }
-        DomainSemanticTokensFullDeltaResult::Delta(delta) => {
+        DomainSemanticTokensFullDeltaResult::TokensDelta(delta) => {
             LspSemanticTokensFullDeltaResult::TokensDelta(to_lsp_semantic_tokens_delta(delta))
         }
-        DomainSemanticTokensFullDeltaResult::NoChange => {
-            LspSemanticTokensFullDeltaResult::TokensDelta(LspSemanticTokensDelta {
-                result_id: None,
-                edits: vec![],
-            })
+        DomainSemanticTokensFullDeltaResult::PartialTokensDelta { edits } => {
+            LspSemanticTokensFullDeltaResult::PartialTokensDelta {
+                edits: edits.into_iter().map(to_lsp_semantic_tokens_edit).collect(),
+            }
         }
     }
 }
@@ -113,6 +129,14 @@ pub fn to_lsp_semantic_tokens_result(
         DomainSemanticTokensResult::Tokens(tokens) => {
             LspSemanticTokensResult::Tokens(to_lsp_semantic_tokens(tokens))
         }
+        DomainSemanticTokensResult::Partial(partial) => {
+            convert_via_json(DomainSemanticTokensResult::Partial(partial)).unwrap_or_else(|| {
+                LspSemanticTokensResult::Tokens(LspSemanticTokens {
+                    result_id: None,
+                    data: vec![],
+                })
+            })
+        }
     }
 }
 
@@ -123,61 +147,86 @@ pub fn to_lsp_semantic_tokens_range_result(
         DomainSemanticTokensRangeResult::Tokens(tokens) => {
             LspSemanticTokensRangeResult::Tokens(to_lsp_semantic_tokens(tokens))
         }
+        DomainSemanticTokensRangeResult::Partial(partial) => convert_via_json(
+            DomainSemanticTokensRangeResult::Partial(partial),
+        )
+        .unwrap_or_else(|| {
+            LspSemanticTokensRangeResult::Tokens(LspSemanticTokens {
+                result_id: None,
+                data: vec![],
+            })
+        }),
     }
 }
 
-pub fn to_lsp_definition_response(resp: DefinitionResponse) -> Option<GotoDefinitionResponse> {
-    match resp {
-        DefinitionResponse::Locations(locations) => {
-            let converted: Vec<LspLocation> = locations
-                .into_iter()
-                .map(|loc| LspLocation {
-                    uri: loc.uri,
-                    range: to_lsp_range(&loc.range),
-                })
-                .collect();
-            if converted.is_empty() {
-                None
-            } else {
-                Some(GotoDefinitionResponse::Array(converted))
-            }
-        }
+pub fn to_lsp_definition_response(
+    resp: DomainDefinitionResponse,
+) -> Option<LspGotoDefinitionResponse> {
+    let converted: LspGotoDefinitionResponse = convert_via_json(resp)?;
+    match &converted {
+        LspGotoDefinitionResponse::Array(locations) if locations.is_empty() => None,
+        _ => Some(converted),
     }
 }
 
 pub fn to_lsp_workspace_edit(edit: DomainWorkspaceEdit) -> LspWorkspaceEdit {
-    let mut changes: HashMap<Url, Vec<LspTextEdit>> = HashMap::new();
-    for doc_edit in edit.document_changes {
-        let edits = doc_edit
-            .edits
-            .into_iter()
-            .map(|e| LspTextEdit {
-                range: to_lsp_range(&e.range),
-                new_text: e.new_text,
-            })
-            .collect();
-        changes.insert(doc_edit.uri, edits);
+    if let Some(converted) = convert_via_json(edit.clone()) {
+        return converted;
     }
 
+    let changes = edit.changes.map(|map| {
+        map.into_iter()
+            .filter_map(|(uri, edits)| {
+                Url::parse(uri.as_str()).ok().map(|url| {
+                    let edits = edits
+                        .into_iter()
+                        .map(|e: DomainTextEdit| LspTextEdit {
+                            range: to_lsp_range(&e.range),
+                            new_text: e.new_text,
+                        })
+                        .collect();
+                    (url, edits)
+                })
+            })
+            .collect::<HashMap<Url, Vec<LspTextEdit>>>()
+    });
+
     LspWorkspaceEdit {
-        changes: Some(changes),
+        changes,
         document_changes: None,
         change_annotations: None,
     }
 }
 
 pub fn to_lsp_code_action(action: DomainCodeAction) -> LspCodeAction {
+    if let Some(converted) = convert_via_json(action.clone()) {
+        return converted;
+    }
+
+    let DomainCodeAction {
+        title,
+        kind,
+        diagnostics,
+        edit,
+        command,
+        is_preferred,
+        disabled,
+        data,
+    } = action;
+
+    let kind = kind.map(|kind| CodeActionKind::from(kind.as_str().to_string()));
+    let diagnostics = diagnostics.and_then(|value| convert_via_json(value));
+    let command = command.and_then(|value| convert_via_json(value));
+
     LspCodeAction {
-        title: action.title,
-        kind: action.kind.map(CodeActionKind::from),
-        diagnostics: None,
-        edit: action.edit.map(to_lsp_workspace_edit),
-        command: None,
-        is_preferred: None,
-        disabled: action
-            .disabled
-            .map(|d| LspCodeActionDisabled { reason: d.reason }),
-        data: None,
+        title,
+        kind,
+        diagnostics,
+        edit: edit.map(to_lsp_workspace_edit),
+        command,
+        is_preferred,
+        disabled: disabled.map(|d| LspCodeActionDisabled { reason: d.reason }),
+        data,
     }
 }
 
@@ -186,9 +235,12 @@ pub fn to_lsp_code_action_response(
 ) -> Vec<LspCodeActionOrCommand> {
     actions
         .into_iter()
-        .map(|item| match item {
-            DomainCodeActionOrCommand::CodeAction(action) => {
-                LspCodeActionOrCommand::CodeAction(to_lsp_code_action(action))
+        .filter_map(|item| match item {
+            DomainCodeActionOrCommand::CodeAction(action) => Some(
+                LspCodeActionOrCommand::CodeAction(to_lsp_code_action(action)),
+            ),
+            DomainCodeActionOrCommand::Command(command) => {
+                convert_via_json(command).map(LspCodeActionOrCommand::Command)
             }
         })
         .collect()

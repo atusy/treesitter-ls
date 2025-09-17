@@ -1,6 +1,9 @@
+use std::collections::HashMap;
+use std::str::FromStr;
+
 use crate::domain::{
-    CodeAction, CodeActionDisabled, CodeActionOrCommand, DocumentEdits, Position, Range, TextEdit,
-    WorkspaceEdit,
+    CodeAction, CodeActionDisabled, CodeActionKind, CodeActionOrCommand, Position, Range, TextEdit,
+    Uri, WorkspaceEdit,
 };
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 use url::Url;
@@ -29,7 +32,7 @@ fn create_inspect_token_action(
         let mut matches = cursor.matches(highlights_query, *root, text.as_bytes());
         while let Some(m) = matches.next() {
             // Filter captures based on predicates
-        let filtered_captures = crate::language::filter_captures(highlights_query, m, text);
+            let filtered_captures = crate::language::filter_captures(highlights_query, m, text);
             for c in filtered_captures {
                 if c.node == *node {
                     let capture_name = &highlights_query.capture_names()[c.index as usize];
@@ -145,9 +148,13 @@ fn create_inspect_token_action(
     // Create a code action that shows this info (using title as display)
     let action = CodeAction {
         title: format!("Inspect token: {}", node.kind()),
-        kind: Some("empty".to_string()),
+        kind: Some(CodeActionKind::from("empty".to_string())),
+        diagnostics: None,
         edit: None,
+        command: None,
+        is_preferred: None,
         disabled: Some(CodeActionDisabled { reason: info }),
+        data: None,
     };
 
     CodeActionOrCommand::CodeAction(action)
@@ -332,21 +339,34 @@ pub fn handle_code_actions(
 
         let title = format!("Move parameter to {}", ordinal(target_pos + 1));
 
-        let edit = WorkspaceEdit {
-            document_changes: vec![DocumentEdits {
-                uri: uri.clone(),
-                edits: vec![TextEdit {
-                    range: replace_range,
-                    new_text: new_content,
-                }],
-            }],
+        let edit = match Uri::from_str(uri.as_str()) {
+            Ok(uri) => {
+                let mut changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
+                changes.insert(
+                    uri,
+                    vec![TextEdit {
+                        range: replace_range,
+                        new_text: new_content,
+                    }],
+                );
+                WorkspaceEdit {
+                    changes: Some(changes),
+                    document_changes: None,
+                    change_annotations: None,
+                }
+            }
+            Err(_) => continue,
         };
 
         let action = CodeAction {
             title,
-            kind: Some("refactor.rewrite".to_string()),
+            kind: Some(CodeActionKind::REFACTOR_REWRITE),
+            diagnostics: None,
             edit: Some(edit),
+            command: None,
+            is_preferred: None,
             disabled: None,
+            data: None,
         };
 
         actions.push(CodeActionOrCommand::CodeAction(action));

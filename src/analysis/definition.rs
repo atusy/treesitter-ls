@@ -1,6 +1,8 @@
 // Definition jump resolution using tree-sitter queries
 use crate::document::DocumentView;
-use crate::domain::{DefinitionResponse, Location, Position, Range};
+use std::str::FromStr;
+
+use crate::domain::{DefinitionResponse, Location, Position, Range, Uri};
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 use url::Url;
 
@@ -170,7 +172,7 @@ impl DefinitionResolver {
 
         while let Some(match_) = matches.next() {
             // Filter captures based on predicates
-        let filtered_captures = crate::language::filter_captures(query, match_, text);
+            let filtered_captures = crate::language::filter_captures(query, match_, text);
             for capture in filtered_captures {
                 let capture_name = &query.capture_names()[capture.index as usize];
                 let node = capture.node;
@@ -454,6 +456,11 @@ pub fn handle_goto_definition<V: DocumentView + ?Sized>(
         return None;
     }
 
+    let parsed_uri = match Uri::from_str(uri.as_str()) {
+        Ok(uri) => uri,
+        Err(_) => return None,
+    };
+
     // Convert candidates back to LSP locations using position mapper
     let locations: Vec<Location> = candidates
         .into_iter()
@@ -462,16 +469,13 @@ pub fn handle_goto_definition<V: DocumentView + ?Sized>(
             let start = mapper.byte_to_position(candidate.start_byte)?;
             let end = mapper.byte_to_position(candidate.end_byte)?;
 
-            Some(Location {
-                uri: uri.clone(),
-                range: Range::new(start, end),
-            })
+            Some(Location::new(parsed_uri.clone(), Range::new(start, end)))
         })
         .collect();
 
     if locations.is_empty() {
         None
     } else {
-        Some(DefinitionResponse::Locations(locations))
+        Some(DefinitionResponse::from(locations))
     }
 }

@@ -13,6 +13,7 @@ use crate::domain::settings::WorkspaceSettings as DomainWorkspaceSettings;
 use crate::domain::{
     SemanticTokens as DomainSemanticTokens,
     SemanticTokensFullDeltaResult as DomainSemanticTokensFullDeltaResult,
+    SemanticTokensRangeResult as DomainSemanticTokensRangeResult,
     SemanticTokensResult as DomainSemanticTokensResult,
 };
 use crate::language::{LanguageEvent, LanguageLogLevel};
@@ -445,14 +446,18 @@ impl LanguageServer for TreeSitterLs {
             )
         }; // doc reference is dropped here
 
-        let domain_result = result.unwrap_or_else(|| {
-            DomainSemanticTokensResult::Tokens(DomainSemanticTokens::new(None, Vec::new()))
-        });
-
-        // Store the tokens for delta calculation
-        let DomainSemanticTokensResult::Tokens(tokens) = domain_result;
-
-        let mut tokens_with_id = tokens;
+        let mut tokens_with_id = match result.unwrap_or_else(|| {
+            DomainSemanticTokensResult::Tokens(DomainSemanticTokens {
+                result_id: None,
+                data: Vec::new(),
+            })
+        }) {
+            DomainSemanticTokensResult::Tokens(tokens) => tokens,
+            DomainSemanticTokensResult::Partial(_) => DomainSemanticTokens {
+                result_id: None,
+                data: Vec::new(),
+            },
+        };
         // Simple ID based on token count and first/last token info
         let id = if tokens_with_id.data.is_empty() {
             "empty".to_string()
@@ -541,7 +546,10 @@ impl LanguageServer for TreeSitterLs {
         }; // doc reference is dropped here
 
         let domain_result = result.unwrap_or_else(|| {
-            DomainSemanticTokensFullDeltaResult::Tokens(DomainSemanticTokens::new(None, Vec::new()))
+            DomainSemanticTokensFullDeltaResult::Tokens(DomainSemanticTokens {
+                result_id: None,
+                data: Vec::new(),
+            })
         });
 
         match domain_result {
@@ -620,16 +628,24 @@ impl LanguageServer for TreeSitterLs {
             Some(&capture_mappings),
         );
 
-        // Convert to RangeResult
-        match result {
-            Some(DomainSemanticTokensResult::Tokens(tokens)) => Ok(Some(
-                SemanticTokensRangeResult::Tokens(protocol::to_lsp_semantic_tokens(tokens)),
-            )),
-            _ => Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
+        // Convert to RangeResult, treating partial responses as empty for now
+        let domain_range_result = match result.unwrap_or_else(|| {
+            DomainSemanticTokensResult::Tokens(DomainSemanticTokens {
                 result_id: None,
-                data: vec![],
-            }))),
-        }
+                data: Vec::new(),
+            })
+        }) {
+            DomainSemanticTokensResult::Tokens(tokens) => {
+                DomainSemanticTokensRangeResult::from(tokens)
+            }
+            DomainSemanticTokensResult::Partial(partial) => {
+                DomainSemanticTokensRangeResult::from(partial)
+            }
+        };
+
+        Ok(Some(protocol::to_lsp_semantic_tokens_range_result(
+            domain_range_result,
+        )))
     }
 
     async fn goto_definition(
