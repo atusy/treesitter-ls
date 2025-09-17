@@ -75,13 +75,16 @@ fn map_capture_to_token_type_and_modifiers(capture_name: &str) -> (u32, u32) {
 
     let token_type_index = LEGEND_TYPES
         .iter()
-        .position(|t| *t == token_type_name)
-        .or_else(|| LEGEND_TYPES.iter().position(|t| *t == "variable"))
+        .position(|t| t.as_str() == token_type_name)
+        .or_else(|| LEGEND_TYPES.iter().position(|t| t.as_str() == "variable"))
         .unwrap_or(0) as u32;
 
     let mut modifiers_bitset = 0u32;
     for modifier_name in &parts[1..] {
-        if let Some(index) = LEGEND_MODIFIERS.iter().position(|m| *m == *modifier_name) {
+        if let Some(index) = LEGEND_MODIFIERS
+            .iter()
+            .position(|m| m.as_str() == *modifier_name)
+        {
             modifiers_bitset |= 1 << index;
         }
     }

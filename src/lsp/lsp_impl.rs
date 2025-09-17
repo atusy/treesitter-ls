@@ -25,16 +25,14 @@ use crate::workspace::{SettingsEvent, SettingsEventKind, SettingsSource};
 fn lsp_legend_types() -> Vec<SemanticTokenType> {
     LEGEND_TYPES
         .iter()
-        .copied()
-        .map(SemanticTokenType::new)
+        .map(|t| SemanticTokenType::new(t.as_str()))
         .collect()
 }
 
 fn lsp_legend_modifiers() -> Vec<SemanticTokenModifier> {
     LEGEND_MODIFIERS
         .iter()
-        .copied()
-        .map(SemanticTokenModifier::new)
+        .map(|m| SemanticTokenModifier::new(m.as_str()))
         .collect()
 }
 
