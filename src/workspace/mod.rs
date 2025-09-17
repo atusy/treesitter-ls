@@ -157,14 +157,14 @@ impl Default for Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::settings::WorkspaceSettings as DomainWorkspaceSettings;
+    use crate::domain::settings::WorkspaceSettings;
     use std::collections::HashMap;
 
     #[test]
     fn workspace_can_inject_runtime() {
         let language = LanguageCoordinator::new();
 
-        let settings = DomainWorkspaceSettings::new(
+        let settings = WorkspaceSettings::new(
             vec!["/tmp/treesitter-ls-test".to_string()],
             HashMap::new(),
             HashMap::new(),

@@ -9,13 +9,8 @@ use crate::analysis::{
     handle_code_actions, handle_goto_definition, handle_selection_range,
     handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
-use crate::domain::settings::WorkspaceSettings as DomainWorkspaceSettings;
-use crate::domain::{
-    SemanticTokens as DomainSemanticTokens,
-    SemanticTokensFullDeltaResult as DomainSemanticTokensFullDeltaResult,
-    SemanticTokensRangeResult as DomainSemanticTokensRangeResult,
-    SemanticTokensResult as DomainSemanticTokensResult,
-};
+use crate::domain;
+use crate::domain::settings::WorkspaceSettings;
 use crate::language::{LanguageEvent, LanguageLogLevel};
 use crate::lsp::protocol;
 use crate::text::{PositionMapper, SimplePositionMapper};
@@ -73,7 +68,7 @@ impl TreeSitterLs {
         self.workspace.language_for_document(uri)
     }
 
-    async fn apply_settings(&self, settings: DomainWorkspaceSettings) {
+    async fn apply_settings(&self, settings: WorkspaceSettings) {
         let summary = self.workspace.load_settings(settings);
         self.handle_language_events(&summary.events).await;
     }
@@ -445,13 +440,13 @@ impl LanguageServer for TreeSitterLs {
         }; // doc reference is dropped here
 
         let mut tokens_with_id = match result.unwrap_or_else(|| {
-            DomainSemanticTokensResult::Tokens(DomainSemanticTokens {
+            domain::SemanticTokensResult::Tokens(domain::SemanticTokens {
                 result_id: None,
                 data: Vec::new(),
             })
         }) {
-            DomainSemanticTokensResult::Tokens(tokens) => tokens,
-            DomainSemanticTokensResult::Partial(_) => DomainSemanticTokens {
+            domain::SemanticTokensResult::Tokens(tokens) => tokens,
+            domain::SemanticTokensResult::Partial(_) => domain::SemanticTokens {
                 result_id: None,
                 data: Vec::new(),
             },
@@ -544,14 +539,14 @@ impl LanguageServer for TreeSitterLs {
         }; // doc reference is dropped here
 
         let domain_result = result.unwrap_or_else(|| {
-            DomainSemanticTokensFullDeltaResult::Tokens(DomainSemanticTokens {
+            domain::SemanticTokensFullDeltaResult::Tokens(domain::SemanticTokens {
                 result_id: None,
                 data: Vec::new(),
             })
         });
 
         match domain_result {
-            DomainSemanticTokensFullDeltaResult::Tokens(tokens) => {
+            domain::SemanticTokensFullDeltaResult::Tokens(tokens) => {
                 let mut tokens_with_id = tokens;
                 let id = if tokens_with_id.data.is_empty() {
                     "empty".to_string()
@@ -628,16 +623,16 @@ impl LanguageServer for TreeSitterLs {
 
         // Convert to RangeResult, treating partial responses as empty for now
         let domain_range_result = match result.unwrap_or_else(|| {
-            DomainSemanticTokensResult::Tokens(DomainSemanticTokens {
+            domain::SemanticTokensResult::Tokens(domain::SemanticTokens {
                 result_id: None,
                 data: Vec::new(),
             })
         }) {
-            DomainSemanticTokensResult::Tokens(tokens) => {
-                DomainSemanticTokensRangeResult::from(tokens)
+            domain::SemanticTokensResult::Tokens(tokens) => {
+                domain::SemanticTokensRangeResult::from(tokens)
             }
-            DomainSemanticTokensResult::Partial(partial) => {
-                DomainSemanticTokensRangeResult::from(partial)
+            domain::SemanticTokensResult::Partial(partial) => {
+                domain::SemanticTokensRangeResult::from(partial)
             }
         };
 

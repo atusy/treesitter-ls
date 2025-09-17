@@ -7,8 +7,7 @@ use super::query_store::QueryStore;
 use super::registry::LanguageRegistry;
 use crate::config::TreeSitterSettings;
 use crate::config::settings::LanguageConfig;
-use crate::domain::settings as domain_settings;
-use crate::domain::settings::{CaptureMappings as DomainCaptureMappings, WorkspaceSettings};
+use crate::domain::settings::{CaptureMappings, QueryTypeMappings, WorkspaceSettings};
 use crate::runtime::config::ConfigStore;
 use std::sync::{Arc, RwLock};
 use tree_sitter::Language;
@@ -202,17 +201,12 @@ impl LanguageCoordinator {
     }
 
     /// Get capture mappings
-    pub fn get_capture_mappings(&self) -> DomainCaptureMappings {
+    pub fn get_capture_mappings(&self) -> CaptureMappings {
         let config_mappings = self.config_store.get_capture_mappings();
         config_mappings
             .iter()
-            .map(|(lang, mappings)| {
-                (
-                    lang.clone(),
-                    domain_settings::QueryTypeMappings::from(mappings),
-                )
-            })
-            .collect::<DomainCaptureMappings>()
+            .map(|(lang, mappings)| (lang.clone(), QueryTypeMappings::from(mappings)))
+            .collect::<CaptureMappings>()
     }
 
     fn load_single_language(
