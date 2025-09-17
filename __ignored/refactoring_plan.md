@@ -22,7 +22,7 @@
 2. [x] **ポジションマッピングの抽象化**  
    - 実行内容: 文書層が提供すべきマッピング API を明文化し、`DocumentView` または専用サービスを通じて解析層が利用できるようにする。既存の `InjectionPositionMapper` 直接参照箇所を置換する。  
    - DoD: `analysis` から `document` 内部構造体への直接依存が消え、全テストが成功する。
-3. [ ] **設定ロード責務の移譲**  
+3. [x] **設定ロード責務の移譲**  
    - 実行内容: 設定ファイル探索・パース・マージ・リトライ処理をまとめた新コンポーネントを用意し、LSP 層は結果の引き渡しのみを行う。  
    - DoD: LSP コードからファイル I/O と `toml` 依存が排除され、`make test format lint` が成功する。
 4. [ ] **`domain` モジュールの分割**  
@@ -60,10 +60,15 @@
   - `DocumentView::position_mapper` を追加し、文書側で注入レイヤー対応を完結。
   - `analysis::definition` / `analysis::selection` から `InjectionPositionMapper` への直接依存を排除。
   - `make format`, `make lint`, `make test` を再実行し、影響範囲全体での正常動作を確認。
+- 2025-09-17: **Step3 完了**。
+  - `workspace::settings` を新設し、ファイル読込・JSON パース・マージを一か所へ集約。
+  - LSP 層から `std::fs` / `toml` / `serde_json::from_value` 依存を排除し、イベントベースでログを受け取る構成へ変更。
+  - `make format`, `make lint`, `make test` を実行し、変更後もクリーンを確認。
 
 ## 変更中に得た気付き
 - ドメイン側の設定構造は既存 `TreeSitterSettings` とほぼ同型のため、双方向 `From` 実装で十分に橋渡しできる。以降のステップでも変換ロジックを再利用する。
 - `DocumentView` にマッピング生成を持たせれば、解析層の追加ロジック変更時も文書側で集中管理できる（テスト対象を絞りやすい）。
+- 設定ロードの責務を専用モジュールへ移すと、ログの粒度も整理できるので LSP 層は単純なイベント転送に徹せる。
 - 作業中に得た洞察・設計判断・トレードオフを随時箇条書きで記録する。
 
 ## 変更ルール

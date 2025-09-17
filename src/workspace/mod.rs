@@ -1,5 +1,6 @@
 mod documents;
 mod languages;
+mod settings;
 
 use documents::WorkspaceDocuments;
 use languages::WorkspaceLanguages;
@@ -12,6 +13,11 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tree_sitter::{InputEdit, Query};
 use url::Url;
+
+pub use settings::{
+    SettingsEvent, SettingsEventKind, SettingsLoadOutcome, SettingsSource,
+    load_settings as load_settings_from_sources,
+};
 
 pub use documents::DocumentRef;
 
@@ -125,6 +131,14 @@ impl Workspace {
 
     pub fn capture_mappings(&self) -> CaptureMappings {
         self.languages.capture_mappings()
+    }
+
+    pub fn load_workspace_settings(
+        &self,
+        override_settings: Option<(SettingsSource, serde_json::Value)>,
+    ) -> SettingsLoadOutcome {
+        let root_path = self.root_path();
+        settings::load_settings(root_path.as_deref(), override_settings)
     }
 
     pub fn document(&self, uri: &Url) -> Option<DocumentRef<'_>> {

@@ -9,7 +9,6 @@ use crate::analysis::{
     handle_code_actions, handle_goto_definition, handle_selection_range,
     handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
-use crate::config::{TreeSitterSettings, merge_settings};
 use crate::domain::settings::WorkspaceSettings as DomainWorkspaceSettings;
 use crate::domain::{
     CodeAction as DomainCodeAction, CodeActionOrCommand as DomainCodeActionOrCommand,
@@ -23,6 +22,7 @@ use crate::domain::{
 use crate::runtime::{LanguageEvent, LanguageLogLevel};
 use crate::text::{PositionMapper, SimplePositionMapper};
 use crate::workspace::Workspace;
+use crate::workspace::{SettingsEvent, SettingsEventKind, SettingsSource};
 use std::collections::HashMap;
 
 fn to_domain_position(pos: &Position) -> DomainPosition {
@@ -230,10 +230,21 @@ impl TreeSitterLs {
         self.workspace.language_for_document(uri)
     }
 
-    async fn load_settings(&self, settings: TreeSitterSettings) {
-        let domain_settings: DomainWorkspaceSettings = settings.into();
-        let summary = self.workspace.load_settings(domain_settings);
+    async fn apply_settings(&self, settings: DomainWorkspaceSettings) {
+        let summary = self.workspace.load_settings(settings);
         self.handle_language_events(&summary.events).await;
+    }
+
+    async fn report_settings_events(&self, events: &[SettingsEvent]) {
+        for event in events {
+            let message_type = match event.kind {
+                SettingsEventKind::Info => MessageType::INFO,
+                SettingsEventKind::Warning => MessageType::WARNING,
+            };
+            self.client
+                .log_message(message_type, event.message.clone())
+                .await;
+        }
     }
 
     async fn handle_language_events(&self, events: &[LanguageEvent]) {
@@ -310,73 +321,15 @@ impl LanguageServer for TreeSitterLs {
                 .await;
         }
 
-        // Try to load configuration from treesitter-ls.toml file
-        let mut toml_settings = None;
-        if let Some(root) = &root_path {
-            let config_path = root.join("treesitter-ls.toml");
-            if config_path.exists() {
-                self.client
-                    .log_message(
-                        MessageType::INFO,
-                        format!("Found config file: {}", config_path.display()),
-                    )
-                    .await;
+        let settings_outcome = self.workspace.load_workspace_settings(
+            params
+                .initialization_options
+                .map(|options| (SettingsSource::InitializationOptions, options)),
+        );
+        self.report_settings_events(&settings_outcome.events).await;
 
-                if let Ok(toml_contents) = std::fs::read_to_string(&config_path) {
-                    match toml::from_str::<TreeSitterSettings>(&toml_contents) {
-                        Ok(settings) => {
-                            self.client
-                                .log_message(
-                                    MessageType::INFO,
-                                    "Successfully loaded treesitter-ls.toml",
-                                )
-                                .await;
-                            toml_settings = Some(settings);
-                        }
-                        Err(e) => {
-                            self.client
-                                .log_message(
-                                    MessageType::WARNING,
-                                    format!("Failed to parse treesitter-ls.toml: {}", e),
-                                )
-                                .await;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Parse configuration from initialization_options
-        let init_settings = if let Some(options) = params.initialization_options {
-            match serde_json::from_value::<TreeSitterSettings>(options) {
-                Ok(settings) => {
-                    self.client
-                        .log_message(
-                            MessageType::INFO,
-                            "Parsed initialization options as TreeSitterSettings",
-                        )
-                        .await;
-                    Some(settings)
-                }
-                Err(_) => {
-                    self.client
-                        .log_message(
-                            MessageType::WARNING,
-                            "Failed to parse initialization options",
-                        )
-                        .await;
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        // Merge settings (prefer init_settings over toml_settings)
-        let final_settings = merge_settings(toml_settings, init_settings);
-
-        if let Some(settings) = final_settings {
-            self.load_settings(settings).await;
+        if let Some(settings) = settings_outcome.settings {
+            self.apply_settings(settings).await;
         }
 
         self.client
@@ -585,41 +538,13 @@ impl LanguageServer for TreeSitterLs {
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
-        // Try to load configuration from treesitter-ls.toml file
-        let mut toml_settings = None;
-        let root_path = self.workspace.root_path();
-        if let Some(root) = root_path {
-            let config_path = root.join("treesitter-ls.toml");
-            if config_path.exists()
-                && let Ok(toml_contents) = std::fs::read_to_string(&config_path)
-            {
-                match toml::from_str::<TreeSitterSettings>(&toml_contents) {
-                    Ok(settings) => {
-                        self.client
-                            .log_message(MessageType::INFO, "Reloaded treesitter-ls.toml")
-                            .await;
-                        toml_settings = Some(settings);
-                    }
-                    Err(e) => {
-                        self.client
-                            .log_message(
-                                MessageType::WARNING,
-                                format!("Failed to parse treesitter-ls.toml: {}", e),
-                            )
-                            .await;
-                    }
-                }
-            }
-        }
+        let settings_outcome = self
+            .workspace
+            .load_workspace_settings(Some((SettingsSource::ClientConfiguration, params.settings)));
+        self.report_settings_events(&settings_outcome.events).await;
 
-        // Parse configuration from settings
-        let config_settings = serde_json::from_value::<TreeSitterSettings>(params.settings).ok();
-
-        // Merge settings (prefer config_settings over toml_settings)
-        let final_settings = merge_settings(toml_settings, config_settings);
-
-        if let Some(settings) = final_settings {
-            self.load_settings(settings).await;
+        if let Some(settings) = settings_outcome.settings {
+            self.apply_settings(settings).await;
             self.client
                 .log_message(MessageType::INFO, "Configuration updated!")
                 .await;
