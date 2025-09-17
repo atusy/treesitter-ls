@@ -199,8 +199,8 @@ pub fn to_lsp_code_action(action: domain::CodeAction) -> lsp_types::CodeAction {
     } = action;
 
     let kind = kind.map(|kind| lsp_types::CodeActionKind::from(kind.as_str().to_string()));
-    let diagnostics = diagnostics.and_then(|value| convert_via_json(value));
-    let command = command.and_then(|value| convert_via_json(value));
+    let diagnostics = diagnostics.and_then(convert_via_json);
+    let command = command.and_then(convert_via_json);
 
     lsp_types::CodeAction {
         title,

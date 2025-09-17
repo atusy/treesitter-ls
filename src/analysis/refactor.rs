@@ -1,9 +1,11 @@
-use std::collections::HashMap;
 use std::str::FromStr;
 
 use crate::domain::{
     CodeAction, CodeActionDisabled, CodeActionKind, CodeActionOrCommand, Position, Range, TextEdit,
     Uri, WorkspaceEdit,
+};
+use lsp_types::{
+    DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier, TextDocumentEdit,
 };
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 use url::Url;
@@ -340,21 +342,17 @@ pub fn handle_code_actions(
         let title = format!("Move parameter to {}", ordinal(target_pos + 1));
 
         let edit = match Uri::from_str(uri.as_str()) {
-            Ok(uri) => {
-                let mut changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
-                changes.insert(
-                    uri,
-                    vec![TextEdit {
+            Ok(uri) => WorkspaceEdit {
+                changes: None,
+                document_changes: Some(DocumentChanges::Edits(vec![TextDocumentEdit {
+                    text_document: OptionalVersionedTextDocumentIdentifier { uri, version: None },
+                    edits: vec![OneOf::Left(TextEdit {
                         range: replace_range,
                         new_text: new_content,
-                    }],
-                );
-                WorkspaceEdit {
-                    changes: Some(changes),
-                    document_changes: None,
-                    change_annotations: None,
-                }
-            }
+                    })],
+                }])),
+                change_annotations: None,
+            },
             Err(_) => continue,
         };
 
