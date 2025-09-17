@@ -1,3 +1,4 @@
+use lsp_types as new_lsp;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
@@ -9,7 +10,6 @@ use crate::analysis::{
     handle_code_actions, handle_goto_definition, handle_selection_range,
     handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
-use crate::domain;
 use crate::domain::settings::WorkspaceSettings;
 use crate::language::{LanguageEvent, LanguageLogLevel};
 use crate::lsp::protocol;
@@ -440,13 +440,13 @@ impl LanguageServer for TreeSitterLs {
         }; // doc reference is dropped here
 
         let mut tokens_with_id = match result.unwrap_or_else(|| {
-            domain::SemanticTokensResult::Tokens(domain::SemanticTokens {
+            new_lsp::SemanticTokensResult::Tokens(new_lsp::SemanticTokens {
                 result_id: None,
                 data: Vec::new(),
             })
         }) {
-            domain::SemanticTokensResult::Tokens(tokens) => tokens,
-            domain::SemanticTokensResult::Partial(_) => domain::SemanticTokens {
+            new_lsp::SemanticTokensResult::Tokens(tokens) => tokens,
+            new_lsp::SemanticTokensResult::Partial(_) => new_lsp::SemanticTokens {
                 result_id: None,
                 data: Vec::new(),
             },
@@ -539,14 +539,14 @@ impl LanguageServer for TreeSitterLs {
         }; // doc reference is dropped here
 
         let domain_result = result.unwrap_or_else(|| {
-            domain::SemanticTokensFullDeltaResult::Tokens(domain::SemanticTokens {
+            new_lsp::SemanticTokensFullDeltaResult::Tokens(new_lsp::SemanticTokens {
                 result_id: None,
                 data: Vec::new(),
             })
         });
 
         match domain_result {
-            domain::SemanticTokensFullDeltaResult::Tokens(tokens) => {
+            new_lsp::SemanticTokensFullDeltaResult::Tokens(tokens) => {
                 let mut tokens_with_id = tokens;
                 let id = if tokens_with_id.data.is_empty() {
                     "empty".to_string()
@@ -623,16 +623,16 @@ impl LanguageServer for TreeSitterLs {
 
         // Convert to RangeResult, treating partial responses as empty for now
         let domain_range_result = match result.unwrap_or_else(|| {
-            domain::SemanticTokensResult::Tokens(domain::SemanticTokens {
+            new_lsp::SemanticTokensResult::Tokens(new_lsp::SemanticTokens {
                 result_id: None,
                 data: Vec::new(),
             })
         }) {
-            domain::SemanticTokensResult::Tokens(tokens) => {
-                domain::SemanticTokensRangeResult::from(tokens)
+            new_lsp::SemanticTokensResult::Tokens(tokens) => {
+                new_lsp::SemanticTokensRangeResult::from(tokens)
             }
-            domain::SemanticTokensResult::Partial(partial) => {
-                domain::SemanticTokensRangeResult::from(partial)
+            new_lsp::SemanticTokensResult::Partial(partial) => {
+                new_lsp::SemanticTokensRangeResult::from(partial)
             }
         };
 

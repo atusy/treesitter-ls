@@ -1,9 +1,9 @@
 use crate::document::LanguageLayer;
-use crate::domain::Position;
 use crate::text::{
     PositionMapper, compute_line_starts, convert_byte_to_utf16_in_line,
     convert_utf16_to_byte_in_line, extract_text_from_ranges,
 };
+use lsp_types::Position;
 
 /// Map document byte offset to layer byte offset for injection ranges
 pub fn doc_to_layer_offset(doc_offset: usize, ranges: &[(usize, usize)]) -> Option<usize> {

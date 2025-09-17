@@ -2,7 +2,7 @@
 use crate::document::DocumentView;
 use std::str::FromStr;
 
-use crate::domain::{DefinitionResponse, Location, Position, Range, Uri};
+use lsp_types::{GotoDefinitionResponse, Location, Position, Range, Uri};
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 use url::Url;
 
@@ -437,7 +437,7 @@ pub fn handle_goto_definition<V: DocumentView + ?Sized>(
     position: Position,
     locals_query: &Query,
     uri: &Url,
-) -> Option<DefinitionResponse> {
+) -> Option<GotoDefinitionResponse> {
     // Convert LSP position to byte offset using document-provided mapper
     let mapper = document.position_mapper();
     let cursor_byte = mapper.position_to_byte(position)?;
@@ -476,6 +476,6 @@ pub fn handle_goto_definition<V: DocumentView + ?Sized>(
     if locations.is_empty() {
         None
     } else {
-        Some(DefinitionResponse::from(locations))
+        Some(GotoDefinitionResponse::from(locations))
     }
 }

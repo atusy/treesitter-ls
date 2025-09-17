@@ -21,11 +21,11 @@ pub use settings::{
 use state::WorkspaceState;
 
 use crate::document::{Document, DocumentHandle, DocumentStore};
-use crate::domain::SemanticTokens;
 use crate::domain::settings::{CaptureMappings, WorkspaceSettings};
 use crate::language::{
     DocumentParserPool, LanguageCoordinator, LanguageEvent, LanguageLoadResult, LanguageLoadSummary,
 };
+use lsp_types::SemanticTokens;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tree_sitter::{InputEdit, Query};
