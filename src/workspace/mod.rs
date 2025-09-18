@@ -9,6 +9,7 @@ use crate::domain::settings::{CaptureMappings, WorkspaceSettings};
 use crate::language::{
     DocumentParserPool, LanguageCoordinator, LanguageLoadResult, LanguageLoadSummary,
 };
+use arc_swap::ArcSwap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tree_sitter::Query;
@@ -20,7 +21,7 @@ pub struct Workspace {
     language: LanguageCoordinator,
     parser_pool: Mutex<DocumentParserPool>,
     documents: DocumentStore,
-    root_path: Mutex<Option<PathBuf>>,
+    root_path: ArcSwap<Option<PathBuf>>,
 }
 
 impl Workspace {
@@ -35,7 +36,7 @@ impl Workspace {
             language,
             parser_pool: Mutex::new(parser_pool),
             documents: DocumentStore::new(),
-            root_path: Mutex::new(None),
+            root_path: ArcSwap::new(Arc::new(None)),
         }
     }
 
@@ -99,29 +100,11 @@ impl Workspace {
     }
 
     pub fn set_root_path(&self, path: Option<PathBuf>) {
-        match self.root_path.lock() {
-            Ok(mut guard) => *guard = path,
-            Err(poisoned) => {
-                log::warn!(
-                    target: "treesitter_ls::lock_recovery",
-                    "Recovered from poisoned lock in Workspace::set_root_path"
-                );
-                *poisoned.into_inner() = path;
-            }
-        }
+        self.root_path.store(Arc::new(path));
     }
 
     pub fn root_path(&self) -> Option<PathBuf> {
-        match self.root_path.lock() {
-            Ok(guard) => guard.clone(),
-            Err(poisoned) => {
-                log::warn!(
-                    target: "treesitter_ls::lock_recovery",
-                    "Recovered from poisoned lock in Workspace::root_path"
-                );
-                poisoned.into_inner().clone()
-            }
-        }
+        self.root_path.load().as_ref().clone()
     }
 }
 
