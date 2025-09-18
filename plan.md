@@ -61,6 +61,17 @@
   - リファクタリング後も`make test format lint`が成功。
   - 実施したリファクタリング内容が`plan.md`に記録されている。
 
+
+### Step 6: インジェクションチェーン検知の改善
+- 作業内容
+  - Markdownコードブロック内でも言語チェーンが表示されるよう、言語スタック構築ロジックを注入クエリ対応に拡張する。
+  - Tree-sitterのinjectionsクエリを利用して対象バイト位置の言語を特定し、Redテストで再現した問題をGreenにする。
+  - `make test format lint` を通す。
+- DoD
+  - Markdown→Luaケースで`Inspect token`が `Languages: markdown -> lua` を表示する。
+  - 新規テストがGreen。
+  - 実装内容と気付きを`plan.md`に記載する。
+
 ### Step 5: ドキュメント更新
 - 作業内容
   - README.mdやCONTRIBUTING.mdにInspect tokenのインジェクション表示機能を追記し、利用者が気付けるようにする。
@@ -76,6 +87,7 @@
 - Step 3: 完了（インジェクション表示実装・Green）
 - Step 4: 完了（単一言語時も表示）
 - Step 5: 未着手
+- Step 6: 完了（Markdownコードブロック対応）
 
 # 変更中に得た気付き
 - 作業着手前に変更ルール（復唱、段階コミット、`make test format lint`順守、逐次記録、ドキュメント更新）を確認済み。
@@ -83,6 +95,8 @@
 - 単一言語（例: markdown ヘッダ）でも言語情報が欠落する事象を利用者から報告。Redテスト追加で再現する。
 - Step 4: `inspect_token_should_display_root_language_when_no_injections` で Red -> Green。`create_inspect_token_action` が capture_context を fallback として使用し root 言語を出力するよう拡張。
 - `make test`, `make format`, `make lint` を通過して警告なしを確認済み。
+- Step 6: Markdownコードブロックで言語チェーンが欠落するため、injectionsクエリ活用の必要性を認識。
+- Step 6: `build_language_stack` にinjectionsクエリを組み込み、`should_build_language_stack_using_injection_query` で Red→Green。Workspace経由でクエリを取得し、`make test format lint` 通過。
 - 言語スタックは root layer + カーソル位置にマッチする injection layer を抽出し、2段以上ある場合のみ Inspect token に `Languages: ...` を表示。
 - Step 3: `create_inspect_token_action` にインジェクションチェーンの整形を実装し、`handle_code_actions`/`lsp_impl::code_action` から言語スタックとキャプチャコンテキストを渡すよう拡張。
 - Inspect tokenコードアクションは `src/analysis/refactor.rs` の `create_inspect_token_action`/`handle_code_actions` で生成され、LSP層 `src/lsp/lsp_impl.rs` の `code_action` から root layer の tree とハイライト/ローカルクエリ、キャプチャマッピングを受け取っている。

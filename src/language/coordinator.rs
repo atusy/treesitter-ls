@@ -200,6 +200,10 @@ impl LanguageCoordinator {
         self.query_store.get_locals_query(lang_name)
     }
 
+    pub fn get_injections_query(&self, lang_name: &str) -> Option<Arc<tree_sitter::Query>> {
+        self.query_store.get_injections_query(lang_name)
+    }
+
     /// Get capture mappings
     pub fn get_capture_mappings(&self) -> CaptureMappings {
         let config_mappings = self.config_store.get_capture_mappings();
