@@ -441,11 +441,8 @@ pub fn handle_goto_definition<V: DocumentView + ?Sized>(
     let mapper = document.position_mapper();
     let cursor_byte = mapper.position_to_byte(position)?;
 
-    // Find the appropriate layer at cursor position
-    let layer = document.get_layer_at_offset(cursor_byte)?;
-
     // Get the tree and text
-    let tree = &layer.tree;
+    let tree = document.tree()?;
     let text = document.text();
 
     // Use existing resolver logic with the layer's tree

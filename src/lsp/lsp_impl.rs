@@ -293,7 +293,7 @@ impl LanguageServer for TreeSitterLs {
             let doc = self.workspace.document(&uri);
             match doc {
                 Some(d) => (
-                    d.layers().get_language_id().map(|s| s.to_string()),
+                    d.language_id().map(|s| s.to_string()),
                     d.text().to_string(),
                 ),
                 None => {
@@ -419,7 +419,7 @@ impl LanguageServer for TreeSitterLs {
                 })));
             };
             let text = doc.text();
-            let Some(root_layer) = doc.layers().root_layer() else {
+            let Some(tree) = doc.tree() else {
                 return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                     result_id: None,
                     data: vec![],
@@ -432,7 +432,7 @@ impl LanguageServer for TreeSitterLs {
             // Use the stable semantic tokens handler for the root layer
             crate::analysis::handle_semantic_tokens_full(
                 text,
-                &root_layer.tree,
+                tree,
                 &query,
                 Some(&language_name),
                 Some(&capture_mappings),
@@ -509,7 +509,7 @@ impl LanguageServer for TreeSitterLs {
             };
 
             let text = doc.text();
-            let Some(root_layer) = doc.layers().root_layer() else {
+            let Some(tree) = doc.tree() else {
                 return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
                     SemanticTokens {
                         result_id: None,
@@ -529,7 +529,7 @@ impl LanguageServer for TreeSitterLs {
             // Delegate to handler
             handle_semantic_tokens_full_delta(
                 text,
-                &root_layer.tree,
+                tree,
                 &query,
                 &previous_result_id,
                 previous_tokens.as_ref(),
@@ -601,7 +601,7 @@ impl LanguageServer for TreeSitterLs {
         };
 
         let text = doc.text();
-        let Some(root_layer) = doc.layers().root_layer() else {
+        let Some(tree) = doc.tree() else {
             return Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
                 result_id: None,
                 data: vec![],
@@ -614,7 +614,7 @@ impl LanguageServer for TreeSitterLs {
 
         let result = handle_semantic_tokens_range(
             text,
-            &root_layer.tree,
+            tree,
             &query,
             &domain_range,
             Some(&language_name),
@@ -712,7 +712,7 @@ impl LanguageServer for TreeSitterLs {
             return Ok(None);
         };
         let text = doc.text();
-        let Some(root_layer) = doc.layers().root_layer() else {
+        let Some(tree) = doc.tree() else {
             return Ok(None);
         };
 
@@ -737,14 +737,14 @@ impl LanguageServer for TreeSitterLs {
             handle_code_actions(
                 &uri,
                 text,
-                &root_layer.tree,
+                tree,
                 domain_range,
                 queries,
                 capture_context,
             )
             .map(protocol::to_lsp_code_action_response)
         } else {
-            handle_code_actions(&uri, text, &root_layer.tree, domain_range, None, None)
+            handle_code_actions(&uri, text, tree, domain_range, None, None)
                 .map(protocol::to_lsp_code_action_response)
         };
 

@@ -1,4 +1,4 @@
-use crate::document::{Document, LanguageLayer, SemanticSnapshot};
+use crate::document::{Document, SemanticSnapshot};
 use dashmap::DashMap;
 use dashmap::mapref::one::Ref;
 use std::ops::Deref;
@@ -41,9 +41,9 @@ impl DocumentStore {
         Self::default()
     }
 
-    pub fn insert(&self, uri: Url, text: String, root_layer: Option<LanguageLayer>) {
-        let document = if let Some(layer) = root_layer {
-            Document::with_root_layer(text, layer.language_id.clone(), layer.tree.clone())
+    pub fn insert(&self, uri: Url, text: String, language_id: Option<String>, tree: Option<Tree>) {
+        let document = if let (Some(lang), Some(t)) = (language_id, tree) {
+            Document::with_tree(text, lang, t)
         } else {
             Document::new(text)
         };
@@ -56,15 +56,13 @@ impl DocumentStore {
     }
 
     pub fn update_document(&self, uri: Url, text: String) {
-        // Preserve root layer info from existing document if available
-        let root_layer = self
-            .documents
-            .get(&uri)
-            .and_then(|doc| doc.layers().root_layer().cloned());
+        // Preserve language and tree from existing document if available
+        let existing = self.documents.get(&uri);
+        let language_id = existing.as_ref().and_then(|doc| doc.language_id().map(String::from));
+        let tree = existing.and_then(|doc| doc.tree().cloned());
 
-        if let Some(root) = root_layer {
-            let new_doc =
-                Document::with_root_layer(text, root.language_id.clone(), root.tree.clone());
+        if let (Some(lang), Some(t)) = (language_id, tree) {
+            let new_doc = Document::with_tree(text, lang, t);
             self.documents.insert(uri, new_doc);
         } else {
             self.documents.insert(uri, Document::new(text));
@@ -75,8 +73,8 @@ impl DocumentStore {
     /// Returns the edited tree without updating the document store
     pub fn get_edited_tree(&self, uri: &Url, edits: &[InputEdit]) -> Option<Tree> {
         self.documents.get(uri).and_then(|doc| {
-            doc.layers().root_layer().map(|layer| {
-                let mut tree = layer.tree.clone();
+            doc.tree().map(|tree| {
+                let mut tree = tree.clone();
                 for edit in edits {
                     tree.edit(edit);
                 }
@@ -91,10 +89,10 @@ impl DocumentStore {
         let language_id = self
             .documents
             .get(&uri)
-            .and_then(|doc| doc.layers().get_language_id().map(|s| s.to_string()));
+            .and_then(|doc| doc.language_id().map(|s| s.to_string()));
 
         if let Some(language_id) = language_id {
-            let new_doc = Document::with_root_layer(text, language_id, tree);
+            let new_doc = Document::with_tree(text, language_id, tree);
             self.documents.insert(uri, new_doc);
         } else {
             // If no language_id, just update the text
@@ -127,7 +125,7 @@ mod tests {
         let uri = Url::parse("file:///test.txt").unwrap();
         let text = "hello world".to_string();
 
-        store.insert(uri.clone(), text.clone(), None);
+        store.insert(uri.clone(), text.clone(), None, None);
         let doc = store.get(&uri).unwrap();
         assert_eq!(doc.text(), &text);
     }
@@ -145,9 +143,8 @@ mod tests {
             .set_language(&tree_sitter_rust::LANGUAGE.into())
             .unwrap();
         let tree = parser.parse(&text1, None).unwrap();
-        let layer = LanguageLayer::root("rust".to_string(), tree);
 
-        store.insert(uri.clone(), text1, Some(layer));
+        store.insert(uri.clone(), text1, Some("rust".to_string()), Some(tree));
 
         // Update text
         store.update_document(uri.clone(), text2.clone());
@@ -155,7 +152,7 @@ mod tests {
         // Language info should be preserved
         let doc = store.get(&uri).unwrap();
         assert_eq!(doc.text(), text2);
-        assert_eq!(doc.layers().get_language_id(), Some("rust"));
+        assert_eq!(doc.language_id(), Some("rust"));
     }
 
     #[test]
@@ -170,9 +167,8 @@ mod tests {
             .set_language(&tree_sitter_rust::LANGUAGE.into())
             .unwrap();
         let tree = parser.parse(&text, None).unwrap();
-        let layer = LanguageLayer::root("rust".to_string(), tree.clone());
 
-        store.insert(uri.clone(), text.clone(), Some(layer));
+        store.insert(uri.clone(), text.clone(), Some("rust".to_string()), Some(tree.clone()));
 
         // Update with new tree
         let new_text = "let x = 2;".to_string();
@@ -181,6 +177,6 @@ mod tests {
 
         let doc = store.get(&uri).unwrap();
         assert_eq!(doc.text(), new_text);
-        assert!(doc.layers().root_layer().is_some());
+        assert!(doc.tree().is_some());
     }
 }

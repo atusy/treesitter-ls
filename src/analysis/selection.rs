@@ -53,11 +53,10 @@ pub fn handle_selection_range<V: DocumentView + ?Sized>(
         .iter()
         .map(|pos| {
             // Convert position to byte offset
-            let byte_offset = mapper.position_to_byte(*pos)?;
+            let _byte_offset = mapper.position_to_byte(*pos)?;
 
-            // Find the appropriate layer
-            let layer = document.get_layer_at_offset(byte_offset)?;
-            let tree = &layer.tree;
+            // Get the tree
+            let tree = document.tree()?;
             let root = tree.root_node();
 
             // Convert position to point for tree-sitter

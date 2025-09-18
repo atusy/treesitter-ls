@@ -1,5 +1,6 @@
-use crate::document::{DocumentView, LayerManager};
+use crate::document::DocumentView;
 use crate::domain::SemanticTokens;
+use tree_sitter::Tree;
 
 #[derive(Clone, Debug)]
 pub struct SemanticSnapshot {
@@ -24,7 +25,8 @@ impl SemanticSnapshot {
 pub struct Document {
     text: String,
     version: Option<i32>,
-    layers: LayerManager,
+    language_id: Option<String>,
+    tree: Option<Tree>,
     last_semantic_tokens: Option<SemanticSnapshot>,
 }
 
@@ -34,7 +36,8 @@ impl Document {
         Self {
             text,
             version: None,
-            layers: LayerManager::new(),
+            language_id: None,
+            tree: None,
             last_semantic_tokens: None,
         }
     }
@@ -44,17 +47,19 @@ impl Document {
         Self {
             text,
             version: Some(version),
-            layers: LayerManager::new(),
+            language_id: None,
+            tree: None,
             last_semantic_tokens: None,
         }
     }
 
-    /// Create with root layer
-    pub fn with_root_layer(text: String, language_id: String, tree: tree_sitter::Tree) -> Self {
+    /// Create with language and tree
+    pub fn with_tree(text: String, language_id: String, tree: Tree) -> Self {
         Self {
             text,
             version: None,
-            layers: LayerManager::with_root(language_id, tree),
+            language_id: Some(language_id),
+            tree: Some(tree),
             last_semantic_tokens: None,
         }
     }
@@ -79,14 +84,31 @@ impl Document {
         self.version = version;
     }
 
-    /// Get the layer manager
-    pub fn layers(&self) -> &LayerManager {
-        &self.layers
+    /// Get the language ID
+    pub fn language_id(&self) -> Option<&str> {
+        self.language_id.as_deref()
     }
 
-    /// Get mutable access to the layer manager
-    pub fn layers_mut(&mut self) -> &mut LayerManager {
-        &mut self.layers
+    /// Get the tree
+    pub fn tree(&self) -> Option<&Tree> {
+        self.tree.as_ref()
+    }
+
+    /// Get mutable tree
+    pub fn tree_mut(&mut self) -> Option<&mut Tree> {
+        self.tree.as_mut()
+    }
+
+    /// Set the tree and language
+    pub fn set_tree(&mut self, language_id: String, tree: Tree) {
+        self.language_id = Some(language_id);
+        self.tree = Some(tree);
+    }
+
+    /// Clear the tree and language
+    pub fn clear_tree(&mut self) {
+        self.language_id = None;
+        self.tree = None;
     }
 
     /// Get the last semantic tokens
@@ -102,8 +124,8 @@ impl Document {
     /// Update text and clear layers/state
     pub fn update_text(&mut self, text: String) {
         self.text = text;
-        // Note: Layers need to be rebuilt after text change
-        self.layers = LayerManager::new();
+        // Note: Tree needs to be rebuilt after text change
+        self.tree = None;
         self.last_semantic_tokens = None;
     }
 
@@ -123,8 +145,12 @@ impl DocumentView for Document {
         &self.text
     }
 
-    fn layers(&self) -> &LayerManager {
-        &self.layers
+    fn tree(&self) -> Option<&tree_sitter::Tree> {
+        self.tree.as_ref()
+    }
+
+    fn language_id(&self) -> Option<&str> {
+        self.language_id.as_deref()
     }
 }
 
@@ -157,11 +183,11 @@ mod tests {
             .unwrap();
         let tree = parser.parse("fn main() {}", None).unwrap();
 
-        let doc = Document::with_root_layer("fn main() {}".to_string(), "rust".to_string(), tree);
+        let doc = Document::with_tree("fn main() {}".to_string(), "rust".to_string(), tree);
 
         assert_eq!(doc.text(), "fn main() {}");
-        assert!(doc.layers().root_layer().is_some());
-        assert_eq!(doc.layers().get_language_id(), Some("rust"));
+        assert!(doc.tree().is_some());
+        assert_eq!(doc.language_id(), Some("rust"));
     }
 
     #[test]
@@ -187,7 +213,7 @@ mod tests {
         let mut doc = Document::new("initial".to_string());
         doc.update_text("updated".to_string());
         assert_eq!(doc.text(), "updated");
-        assert!(doc.layers().root_layer().is_none());
+        assert!(doc.tree().is_none());
         assert!(doc.last_semantic_tokens().is_none());
     }
 }

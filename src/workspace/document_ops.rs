@@ -1,6 +1,6 @@
 use super::ParseOutcome;
 use super::language_ops;
-use crate::document::{Document, DocumentHandle, DocumentStore, LanguageLayer, SemanticSnapshot};
+use crate::document::{Document, DocumentHandle, DocumentStore, SemanticSnapshot};
 use crate::domain::SemanticTokens;
 use crate::language::{DocumentParserPool, LanguageCoordinator};
 use std::sync::Mutex;
@@ -30,7 +30,7 @@ pub fn parse_document(
             } else {
                 documents
                     .get(&uri)
-                    .and_then(|doc| doc.layers().root_layer().map(|layer| layer.tree.clone()))
+                    .and_then(|doc| doc.tree().cloned())
             };
 
             let parsed_tree = parser.parse(&text, old_tree.as_ref());
@@ -40,8 +40,7 @@ pub fn parse_document(
                 if !edits.is_empty() {
                     documents.update_document_with_tree(uri.clone(), text, tree);
                 } else {
-                    let root_layer = Some(LanguageLayer::root(language_name.clone(), tree));
-                    documents.insert(uri.clone(), text, root_layer);
+                    documents.insert(uri.clone(), text, Some(language_name.clone()), Some(tree));
                 }
 
                 return ParseOutcome { events };
@@ -49,7 +48,7 @@ pub fn parse_document(
         }
     }
 
-    documents.insert(uri, text, None);
+    documents.insert(uri, text, None, None);
     ParseOutcome { events }
 }
 
@@ -64,7 +63,7 @@ pub fn document_language(
 
     documents
         .get(uri)
-        .and_then(|doc| doc.layers().get_language_id().map(|s| s.to_string()))
+        .and_then(|doc| doc.language_id().map(|s| s.to_string()))
 }
 
 pub fn document_reference<'a>(

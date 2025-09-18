@@ -1,4 +1,4 @@
-use crate::document::{Document, LanguageLayer, LayerManager};
+use crate::document::Document;
 use std::ops::Deref;
 
 /// Read-only view into a document for analysis operations
@@ -6,18 +6,11 @@ pub trait DocumentView {
     /// Access the document text
     fn text(&self) -> &str;
 
-    /// Access the layer manager
-    fn layers(&self) -> &LayerManager;
+    /// Access the tree
+    fn tree(&self) -> Option<&tree_sitter::Tree>;
 
-    /// Convenience: language ID of the root layer, if present
-    fn language_id(&self) -> Option<&str> {
-        self.layers().get_language_id()
-    }
-
-    /// Convenience: access the layer covering a byte offset
-    fn get_layer_at_offset(&self, offset: usize) -> Option<&LanguageLayer> {
-        self.layers().get_layer_at_offset(offset)
-    }
+    /// Access the language ID
+    fn language_id(&self) -> Option<&str>;
 
     /// Build a position mapper suited to the document's layering configuration.
     fn position_mapper(&self) -> Box<dyn crate::text::PositionMapper + '_> {
@@ -33,7 +26,11 @@ where
         self.deref().text()
     }
 
-    fn layers(&self) -> &LayerManager {
-        self.deref().layers()
+    fn tree(&self) -> Option<&tree_sitter::Tree> {
+        self.deref().tree()
+    }
+
+    fn language_id(&self) -> Option<&str> {
+        self.deref().language_id()
     }
 }
