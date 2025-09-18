@@ -1,5 +1,4 @@
 mod document_ops;
-mod language_ops;
 mod settings;
 mod state;
 
@@ -7,12 +6,6 @@ use document_ops::{
     document_language as resolve_document_language, document_reference,
     document_text as read_document_text, parse_document as process_parse,
     remove_document as detach_document, update_semantic_tokens as store_semantic_tokens,
-};
-use language_ops::{
-    capture_mappings as collect_capture_mappings, create_parser_pool,
-    ensure_language_loaded as ensure_runtime_language,
-    has_highlight_queries as language_has_queries, highlight_query as load_highlight_query,
-    locals_query as load_locals_query,
 };
 pub use settings::{
     SettingsEvent, SettingsEventKind, SettingsLoadOutcome, SettingsSource,
@@ -51,7 +44,7 @@ impl Workspace {
 
     /// Create a workspace using a pre-configured language coordinator.
     pub fn with_runtime(language: LanguageCoordinator) -> Self {
-        let parser_pool = create_parser_pool(&language);
+        let parser_pool = language.create_document_parser_pool();
         Self {
             language,
             parser_pool: Mutex::new(parser_pool),
@@ -95,19 +88,19 @@ impl Workspace {
     }
 
     pub fn has_queries(&self, language: &str) -> bool {
-        language_has_queries(&self.language, language)
+        self.language.has_queries(language)
     }
 
     pub fn highlight_query(&self, language: &str) -> Option<Arc<Query>> {
-        load_highlight_query(&self.language, language)
+        self.language.get_highlight_query(language)
     }
 
     pub fn locals_query(&self, language: &str) -> Option<Arc<Query>> {
-        load_locals_query(&self.language, language)
+        self.language.get_locals_query(language)
     }
 
     pub fn capture_mappings(&self) -> CaptureMappings {
-        collect_capture_mappings(&self.language)
+        self.language.get_capture_mappings()
     }
 
     pub fn load_workspace_settings(
@@ -136,7 +129,7 @@ impl Workspace {
     }
 
     pub fn ensure_language_loaded(&self, language: &str) -> LanguageLoadResult {
-        ensure_runtime_language(&self.language, language)
+        self.language.ensure_language_loaded(language)
     }
 
     pub fn set_root_path(&self, path: Option<PathBuf>) {
