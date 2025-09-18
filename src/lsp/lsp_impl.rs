@@ -10,11 +10,15 @@ use crate::analysis::{
     handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
 use crate::config::WorkspaceSettings;
+use crate::document::DocumentStore;
+use crate::language::{DocumentParserPool, LanguageCoordinator};
 use crate::language::{LanguageEvent, LanguageLogLevel};
 use crate::lsp::protocol;
+use crate::lsp::{SettingsEvent, SettingsEventKind, SettingsSource, load_settings};
 use crate::text::SimplePositionMapper;
-use crate::workspace::Workspace;
-use crate::workspace::{SettingsEvent, SettingsEventKind, SettingsSource};
+use arc_swap::ArcSwap;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 fn lsp_legend_types() -> Vec<SemanticTokenType> {
     LEGEND_TYPES
@@ -32,23 +36,34 @@ fn lsp_legend_modifiers() -> Vec<SemanticTokenModifier> {
 
 pub struct TreeSitterLs {
     client: Client,
-    workspace: Workspace,
+    language: LanguageCoordinator,
+    parser_pool: Mutex<DocumentParserPool>,
+    documents: DocumentStore,
+    root_path: ArcSwap<Option<PathBuf>>,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TreeSitterLs")
             .field("client", &self.client)
-            .field("workspace", &"Workspace")
+            .field("language", &"LanguageCoordinator")
+            .field("parser_pool", &"Mutex<DocumentParserPool>")
+            .field("documents", &"DocumentStore")
+            .field("root_path", &"ArcSwap<Option<PathBuf>>")
             .finish_non_exhaustive()
     }
 }
 
 impl TreeSitterLs {
     pub fn new(client: Client) -> Self {
+        let language = LanguageCoordinator::new();
+        let parser_pool = language.create_document_parser_pool();
         Self {
             client,
-            workspace: Workspace::new(),
+            language,
+            parser_pool: Mutex::new(parser_pool),
+            documents: DocumentStore::new(),
+            root_path: ArcSwap::new(Arc::new(None)),
         }
     }
 
@@ -63,30 +78,23 @@ impl TreeSitterLs {
 
         // Determine language from path or explicit language_id
         let language_name = self
-            .workspace
-            .language()
+            .language
             .get_language_for_path(uri.path())
             .or_else(|| language_id.map(|s| s.to_string()));
 
         if let Some(language_name) = language_name {
             // Ensure language is loaded
-            let load_result = self
-                .workspace
-                .language()
-                .ensure_language_loaded(&language_name);
+            let load_result = self.language.ensure_language_loaded(&language_name);
             events.extend(load_result.events.clone());
 
             // Parse the document
             let parsed_tree = {
-                let mut pool = self.workspace.parser_pool().lock().unwrap();
+                let mut pool = self.parser_pool.lock().unwrap();
                 if let Some(mut parser) = pool.acquire(&language_name) {
                     let old_tree = if !edits.is_empty() {
-                        self.workspace.documents().get_edited_tree(&uri, &edits)
+                        self.documents.get_edited_tree(&uri, &edits)
                     } else {
-                        self.workspace
-                            .documents()
-                            .get(&uri)
-                            .and_then(|doc| doc.tree().cloned())
+                        self.documents.get(&uri).and_then(|doc| doc.tree().cloned())
                     };
 
                     let result = parser.parse(&text, old_tree.as_ref());
@@ -100,11 +108,10 @@ impl TreeSitterLs {
             // Store the parsed document
             if let Some(tree) = parsed_tree {
                 if !edits.is_empty() {
-                    self.workspace
-                        .documents()
+                    self.documents
                         .update_document(uri.clone(), text, Some(tree));
                 } else {
-                    self.workspace.documents().insert(
+                    self.documents.insert(
                         uri.clone(),
                         text,
                         Some(language_name.clone()),
@@ -118,16 +125,23 @@ impl TreeSitterLs {
         }
 
         // Store unparsed document
-        self.workspace.documents().insert(uri, text, None, None);
+        self.documents.insert(uri, text, None, None);
         self.handle_language_events(&events).await;
     }
 
     fn get_language_for_document(&self, uri: &Url) -> Option<String> {
-        self.workspace.language_for_document(uri)
+        // Try path-based detection first
+        if let Some(lang) = self.language.get_language_for_path(uri.path()) {
+            return Some(lang);
+        }
+        // Fall back to document's stored language
+        self.documents
+            .get(uri)
+            .and_then(|doc| doc.language_id().map(|s| s.to_string()))
     }
 
     async fn apply_settings(&self, settings: WorkspaceSettings) {
-        let summary = self.workspace.load_settings(settings);
+        let summary = self.language.load_settings(settings);
         self.handle_language_events(&summary.events).await;
     }
 
@@ -207,7 +221,7 @@ impl LanguageServer for TreeSitterLs {
                     format!("Using workspace root from {}: {}", source, path.display()),
                 )
                 .await;
-            self.workspace.set_root_path(Some(path.clone()));
+            self.root_path.store(Arc::new(Some(path.clone())));
         } else {
             self.client
                 .log_message(
@@ -217,7 +231,9 @@ impl LanguageServer for TreeSitterLs {
                 .await;
         }
 
-        let settings_outcome = self.workspace.load_workspace_settings(
+        let root_path = self.root_path.load().as_ref().clone();
+        let settings_outcome = load_settings(
+            root_path.as_deref(),
             params
                 .initialization_options
                 .map(|options| (SettingsSource::InitializationOptions, options)),
@@ -293,7 +309,7 @@ impl LanguageServer for TreeSitterLs {
 
         // Check if queries are ready for the document
         if let Some(language_name) = self.get_language_for_document(&uri) {
-            let has_queries = self.workspace.has_queries(&language_name);
+            let has_queries = self.language.has_queries(&language_name);
 
             if has_queries {
                 // Always request semantic tokens refresh on file open
@@ -313,7 +329,7 @@ impl LanguageServer for TreeSitterLs {
                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
                 // Check again after delay
-                let has_queries_after_delay = self.workspace.has_queries(&language_name);
+                let has_queries_after_delay = self.language.has_queries(&language_name);
 
                 if has_queries_after_delay && self.client.semantic_tokens_refresh().await.is_ok() {
                     self.client
@@ -336,7 +352,7 @@ impl LanguageServer for TreeSitterLs {
 
         // Remove the document from the store when it's closed
         // This ensures that reopening the file will properly reinitialize everything
-        self.workspace.documents().remove(&uri);
+        self.documents.remove(&uri);
 
         self.client
             .log_message(MessageType::INFO, "file closed!")
@@ -348,7 +364,7 @@ impl LanguageServer for TreeSitterLs {
 
         // Retrieve the stored document info
         let (language_id, old_text) = {
-            let doc = self.workspace.document(&uri);
+            let doc = self.documents.get(&uri);
             match doc {
                 Some(d) => (d.language_id().map(|s| s.to_string()), d.text().to_string()),
                 None => {
@@ -433,9 +449,11 @@ impl LanguageServer for TreeSitterLs {
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
-        let settings_outcome = self
-            .workspace
-            .load_workspace_settings(Some((SettingsSource::ClientConfiguration, params.settings)));
+        let root_path = self.root_path.load().as_ref().clone();
+        let settings_outcome = load_settings(
+            root_path.as_deref(),
+            Some((SettingsSource::ClientConfiguration, params.settings)),
+        );
         self.report_settings_events(&settings_outcome.events).await;
 
         if let Some(settings) = settings_outcome.settings {
@@ -458,7 +476,7 @@ impl LanguageServer for TreeSitterLs {
                 data: vec![],
             })));
         };
-        let Some(query) = self.workspace.highlight_query(&language_name) else {
+        let Some(query) = self.language.get_highlight_query(&language_name) else {
             return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                 result_id: None,
                 data: vec![],
@@ -467,7 +485,7 @@ impl LanguageServer for TreeSitterLs {
 
         // Get document data and compute tokens, then drop the reference
         let result = {
-            let Some(doc) = self.workspace.document(&uri) else {
+            let Some(doc) = self.documents.get(&uri) else {
                 return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                     result_id: None,
                     data: vec![],
@@ -482,7 +500,7 @@ impl LanguageServer for TreeSitterLs {
             };
 
             // Get capture mappings
-            let capture_mappings = self.workspace.capture_mappings();
+            let capture_mappings = self.language.get_capture_mappings();
 
             // Use the stable semantic tokens handler for the root layer
             crate::analysis::handle_semantic_tokens_full(
@@ -527,9 +545,7 @@ impl LanguageServer for TreeSitterLs {
         tokens_with_id.result_id = Some(id);
         let stored_tokens = tokens_with_id.clone();
         let lsp_tokens = protocol::to_lsp_semantic_tokens(tokens_with_id);
-        self.workspace
-            .documents()
-            .update_semantic_tokens(&uri, stored_tokens);
+        self.documents.update_semantic_tokens(&uri, stored_tokens);
         Ok(Some(SemanticTokensResult::Tokens(lsp_tokens)))
     }
 
@@ -549,7 +565,7 @@ impl LanguageServer for TreeSitterLs {
             )));
         };
 
-        let Some(query) = self.workspace.highlight_query(&language_name) else {
+        let Some(query) = self.language.get_highlight_query(&language_name) else {
             return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
                 SemanticTokens {
                     result_id: None,
@@ -560,7 +576,7 @@ impl LanguageServer for TreeSitterLs {
 
         // Get document data and compute delta, then drop the reference
         let result = {
-            let Some(doc) = self.workspace.document(&uri) else {
+            let Some(doc) = self.documents.get(&uri) else {
                 return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
                     SemanticTokens {
                         result_id: None,
@@ -583,7 +599,7 @@ impl LanguageServer for TreeSitterLs {
             let previous_tokens = doc.last_semantic_tokens().cloned();
 
             // Get capture mappings
-            let capture_mappings = self.workspace.capture_mappings();
+            let capture_mappings = self.language.get_capture_mappings();
 
             // Delegate to handler
             handle_semantic_tokens_full_delta(
@@ -625,9 +641,7 @@ impl LanguageServer for TreeSitterLs {
                 tokens_with_id.result_id = Some(id);
                 let stored_tokens = tokens_with_id.clone();
                 let lsp_tokens = protocol::to_lsp_semantic_tokens(tokens_with_id);
-                self.workspace
-                    .documents()
-                    .update_semantic_tokens(&uri, stored_tokens);
+                self.documents.update_semantic_tokens(&uri, stored_tokens);
                 Ok(Some(SemanticTokensFullDeltaResult::Tokens(lsp_tokens)))
             }
             other => Ok(Some(protocol::to_lsp_semantic_tokens_full_delta(other))),
@@ -649,14 +663,14 @@ impl LanguageServer for TreeSitterLs {
             })));
         };
 
-        let Some(query) = self.workspace.highlight_query(&language_name) else {
+        let Some(query) = self.language.get_highlight_query(&language_name) else {
             return Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
                 result_id: None,
                 data: vec![],
             })));
         };
 
-        let Some(doc) = self.workspace.document(&uri) else {
+        let Some(doc) = self.documents.get(&uri) else {
             return Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
                 result_id: None,
                 data: vec![],
@@ -673,7 +687,7 @@ impl LanguageServer for TreeSitterLs {
 
         // Delegate to handler
         // Get capture mappings
-        let capture_mappings = self.workspace.capture_mappings();
+        let capture_mappings = self.language.get_capture_mappings();
 
         let result = handle_semantic_tokens_range(
             text,
@@ -719,12 +733,12 @@ impl LanguageServer for TreeSitterLs {
         };
 
         // Get locals query
-        let Some(locals_query) = self.workspace.locals_query(&language_name) else {
+        let Some(locals_query) = self.language.get_locals_query(&language_name) else {
             return Ok(None);
         };
 
         // Get document
-        let Some(doc) = self.workspace.document(&uri) else {
+        let Some(doc) = self.documents.get(&uri) else {
             return Ok(None);
         };
 
@@ -753,7 +767,7 @@ impl LanguageServer for TreeSitterLs {
             .collect();
 
         // Get document
-        let Some(doc) = self.workspace.document(&uri) else {
+        let Some(doc) = self.documents.get(&uri) else {
             return Ok(None);
         };
 
@@ -773,7 +787,7 @@ impl LanguageServer for TreeSitterLs {
         let range = params.range;
 
         // Get document and tree
-        let Some(doc) = self.workspace.document(&uri) else {
+        let Some(doc) = self.documents.get(&uri) else {
             return Ok(None);
         };
         let text = doc.text();
@@ -787,13 +801,13 @@ impl LanguageServer for TreeSitterLs {
         let language_name = self.get_language_for_document(&uri);
 
         // Get capture mappings
-        let capture_mappings = self.workspace.capture_mappings();
+        let capture_mappings = self.language.get_capture_mappings();
         let capture_context = language_name.as_deref().map(|ft| (ft, &capture_mappings));
 
         // Get queries and delegate to handler
         let lsp_response = if let Some(lang) = language_name.clone() {
-            let highlight_query = self.workspace.highlight_query(&lang);
-            let locals_query = self.workspace.locals_query(&lang);
+            let highlight_query = self.language.get_highlight_query(&lang);
+            let locals_query = self.language.get_locals_query(&lang);
 
             let queries = highlight_query
                 .as_ref()
