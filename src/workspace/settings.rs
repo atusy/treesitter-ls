@@ -1,5 +1,4 @@
-use crate::config::{TreeSitterSettings, merge_settings};
-use crate::domain::settings::WorkspaceSettings;
+use crate::config::{TreeSitterSettings, WorkspaceSettings, merge_settings};
 use serde_json::Value;
 use std::fs;
 use std::path::Path;

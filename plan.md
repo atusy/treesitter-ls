@@ -2,7 +2,7 @@
 
 ## 変更ルール
 - [ ] step-by-stepで動作可能な範囲で`git commit`しながら進める
-- [ ] `git commit`前には必ず `just fmt check`を実行し問題を解決
+- [ ] `git commit`前には必ず `make format lint`を実行し問題を解決
 - [ ] README.md/CONTRIBUTING.mdも随時更新
 - [ ] 進捗や気付きを逐次このファイルに記載
 
@@ -38,7 +38,7 @@ text + config
 - [x] runtimeモジュールを削除
 - [x] テストの修正と実行
 - [x] `cargo fmt && cargo clippy`実行
-- [ ] コミット: "refactor: remove runtime module and move ConfigStore to language"
+- [x] コミット: "refactor: remove runtime module and move ConfigStore to language"
 
 **完了の定義**:
 - runtimeモジュールが存在しない
@@ -55,7 +55,7 @@ text + config
 - [ ] domainモジュールの参照を更新
 - [ ] domainモジュールを削除
 - [ ] テストの修正と実行
-- [ ] `just fmt check`実行
+- [ ] `make format lint`実行
 - [ ] コミット: "refactor: dissolve domain module and relocate types"
 
 **完了の定義**:
@@ -72,7 +72,7 @@ text + config
 - [ ] 必要に応じてWorkspace自体を削除
 - [ ] lsp_implの更新
 - [ ] テストの修正と実行
-- [ ] `just fmt check`実行
+- [ ] `make format lint`実行
 - [ ] コミット: "refactor: simplify workspace abstraction"
 
 **完了の定義**:
@@ -88,7 +88,7 @@ text + config
 - [ ] DocumentView traitの参照を削除
 - [ ] document::viewモジュールを削除
 - [ ] テストの修正と実行
-- [ ] `just fmt check`実行
+- [ ] `make format lint`実行
 - [ ] コミット: "refactor: remove DocumentView trait abstraction"
 
 **完了の定義**:
@@ -98,11 +98,11 @@ text + config
 
 ## 進捗状況
 - 開始時刻: 2025-01-19
-- 現在のフェーズ: 計画作成中
-- 完了フェーズ: なし
+- 現在のフェーズ: フェーズ2 (domain モジュールの解体)
+- 完了フェーズ: フェーズ1 (runtime モジュールの削除)
 
 ## 変更中に得た気付き
-（変更を進めながら記載）
+- フェーズ1: ConfigStoreは既にlanguage moduleの他のコンポーネント(QueryStore等)と密接に連携しているため、languageモジュールへの移動は自然な選択だった
 
 ## リスクと対策
 - **リスク**: 大規模な変更により一時的にビルドが壊れる可能性

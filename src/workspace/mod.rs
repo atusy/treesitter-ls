@@ -4,8 +4,8 @@ pub use settings::{
     SettingsEvent, SettingsEventKind, SettingsLoadOutcome, SettingsSource, load_settings,
 };
 
+use crate::config::{CaptureMappings, WorkspaceSettings};
 use crate::document::{DocumentHandle, DocumentStore};
-use crate::domain::settings::{CaptureMappings, WorkspaceSettings};
 use crate::language::{
     DocumentParserPool, LanguageCoordinator, LanguageLoadResult, LanguageLoadSummary,
 };
@@ -117,7 +117,7 @@ impl Default for Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::settings::WorkspaceSettings;
+    use crate::config::WorkspaceSettings;
     use std::collections::HashMap;
 
     #[test]

@@ -1,5 +1,5 @@
 use crate::document::DocumentView;
-use crate::domain::SemanticTokens;
+use tower_lsp::lsp_types::SemanticTokens;
 use tree_sitter::Tree;
 
 /// Unified document structure combining text, parsing, and LSP state

@@ -1,8 +1,9 @@
 // Definition jump resolution using tree-sitter queries
 use crate::document::DocumentView;
 use std::str::FromStr;
-
-use crate::domain::{DefinitionResponse, Location, Position, Range, Uri};
+use tower_lsp::lsp_types::{
+    GotoDefinitionResponse as DefinitionResponse, Location, Position, Range, Url as Uri,
+};
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 use url::Url;
 

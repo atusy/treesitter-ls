@@ -9,8 +9,7 @@ use crate::analysis::{
     handle_code_actions, handle_goto_definition, handle_selection_range,
     handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
-use crate::domain;
-use crate::domain::settings::WorkspaceSettings;
+use crate::config::WorkspaceSettings;
 use crate::language::{LanguageEvent, LanguageLogLevel};
 use crate::lsp::protocol;
 use crate::text::SimplePositionMapper;
@@ -496,16 +495,20 @@ impl LanguageServer for TreeSitterLs {
         }; // doc reference is dropped here
 
         let mut tokens_with_id = match result.unwrap_or_else(|| {
-            domain::SemanticTokensResult::Tokens(domain::SemanticTokens {
-                result_id: None,
-                data: Vec::new(),
-            })
+            tower_lsp::lsp_types::SemanticTokensResult::Tokens(
+                tower_lsp::lsp_types::SemanticTokens {
+                    result_id: None,
+                    data: Vec::new(),
+                },
+            )
         }) {
-            domain::SemanticTokensResult::Tokens(tokens) => tokens,
-            domain::SemanticTokensResult::Partial(_) => domain::SemanticTokens {
-                result_id: None,
-                data: Vec::new(),
-            },
+            tower_lsp::lsp_types::SemanticTokensResult::Tokens(tokens) => tokens,
+            tower_lsp::lsp_types::SemanticTokensResult::Partial(_) => {
+                tower_lsp::lsp_types::SemanticTokens {
+                    result_id: None,
+                    data: Vec::new(),
+                }
+            }
         };
         // Simple ID based on token count and first/last token info
         let id = if tokens_with_id.data.is_empty() {
@@ -595,14 +598,16 @@ impl LanguageServer for TreeSitterLs {
         }; // doc reference is dropped here
 
         let domain_result = result.unwrap_or_else(|| {
-            domain::SemanticTokensFullDeltaResult::Tokens(domain::SemanticTokens {
-                result_id: None,
-                data: Vec::new(),
-            })
+            tower_lsp::lsp_types::SemanticTokensFullDeltaResult::Tokens(
+                tower_lsp::lsp_types::SemanticTokens {
+                    result_id: None,
+                    data: Vec::new(),
+                },
+            )
         });
 
         match domain_result {
-            domain::SemanticTokensFullDeltaResult::Tokens(tokens) => {
+            tower_lsp::lsp_types::SemanticTokensFullDeltaResult::Tokens(tokens) => {
                 let mut tokens_with_id = tokens;
                 let id = if tokens_with_id.data.is_empty() {
                     "empty".to_string()
@@ -681,16 +686,18 @@ impl LanguageServer for TreeSitterLs {
 
         // Convert to RangeResult, treating partial responses as empty for now
         let domain_range_result = match result.unwrap_or_else(|| {
-            domain::SemanticTokensResult::Tokens(domain::SemanticTokens {
-                result_id: None,
-                data: Vec::new(),
-            })
+            tower_lsp::lsp_types::SemanticTokensResult::Tokens(
+                tower_lsp::lsp_types::SemanticTokens {
+                    result_id: None,
+                    data: Vec::new(),
+                },
+            )
         }) {
-            domain::SemanticTokensResult::Tokens(tokens) => {
-                domain::SemanticTokensRangeResult::from(tokens)
+            tower_lsp::lsp_types::SemanticTokensResult::Tokens(tokens) => {
+                tower_lsp::lsp_types::SemanticTokensRangeResult::from(tokens)
             }
-            domain::SemanticTokensResult::Partial(partial) => {
-                domain::SemanticTokensRangeResult::from(partial)
+            tower_lsp::lsp_types::SemanticTokensResult::Partial(partial) => {
+                tower_lsp::lsp_types::SemanticTokensRangeResult::from(partial)
             }
         };
 

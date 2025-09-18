@@ -1,8 +1,8 @@
 use crate::document::Document;
-use crate::domain::SemanticTokens;
 use dashmap::DashMap;
 use dashmap::mapref::one::Ref;
 use std::ops::Deref;
+use tower_lsp::lsp_types::SemanticTokens;
 use tree_sitter::{InputEdit, Tree};
 use url::Url;
 

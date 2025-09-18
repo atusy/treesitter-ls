@@ -6,9 +6,8 @@ use super::parser_pool::{DocumentParserPool, ParserFactory};
 use super::query_loader::QueryLoader;
 use super::query_store::QueryStore;
 use super::registry::LanguageRegistry;
-use crate::config::TreeSitterSettings;
 use crate::config::settings::LanguageConfig;
-use crate::domain::settings::{CaptureMappings, QueryTypeMappings, WorkspaceSettings};
+use crate::config::{CaptureMappings, TreeSitterSettings, WorkspaceSettings};
 use std::sync::{Arc, RwLock};
 use tree_sitter::Language;
 
@@ -191,7 +190,7 @@ impl LanguageCoordinator {
         let config_mappings = self.config_store.get_capture_mappings();
         config_mappings
             .iter()
-            .map(|(lang, mappings)| (lang.clone(), QueryTypeMappings::from(mappings)))
+            .map(|(lang, mappings)| (lang.clone(), mappings.clone()))
             .collect::<CaptureMappings>()
     }
 

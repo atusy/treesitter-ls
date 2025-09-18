@@ -1,17 +1,13 @@
+use crate::config::CaptureMappings;
+use crate::text::SimplePositionMapper;
 use std::str::FromStr;
-
-use crate::domain::{
-    CodeAction, CodeActionDisabled, CodeActionKind, CodeActionOrCommand, Position, Range, TextEdit,
-    Uri, WorkspaceEdit,
-};
-use lsp_types::{
-    DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier, TextDocumentEdit,
+use tower_lsp::lsp_types::{
+    CodeAction, CodeActionDisabled, CodeActionKind, CodeActionOrCommand, DocumentChanges, OneOf,
+    OptionalVersionedTextDocumentIdentifier, Position, Range, TextDocumentEdit, TextEdit,
+    Url as Uri, WorkspaceEdit,
 };
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 use url::Url;
-
-use crate::domain::settings::CaptureMappings;
-use crate::text::SimplePositionMapper;
 
 /// Create an inspect token code action for the node at cursor
 fn create_inspect_token_action(
@@ -383,8 +379,8 @@ fn ordinal(n: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::CodeActionOrCommand;
     use std::collections::HashMap;
+    use tower_lsp::lsp_types::CodeActionOrCommand;
     use tree_sitter::Parser;
 
     #[test]

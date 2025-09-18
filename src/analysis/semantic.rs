@@ -1,10 +1,59 @@
-use crate::domain::settings::CaptureMappings;
-use crate::domain::{
-    LEGEND_MODIFIERS, LEGEND_TYPES, Range, SemanticToken, SemanticTokens, SemanticTokensDelta,
-    SemanticTokensEdit, SemanticTokensFullDeltaResult, SemanticTokensResult,
-};
+use crate::config::CaptureMappings;
 use crate::text::convert_byte_to_utf16_in_line;
+use tower_lsp::lsp_types::{
+    Range, SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens,
+    SemanticTokensDelta, SemanticTokensEdit, SemanticTokensFullDeltaResult, SemanticTokensResult,
+};
 use tree_sitter::{Query, QueryCursor, StreamingIterator, Tree};
+
+// Re-export semantic token types from lsp_types
+pub use tower_lsp::lsp_types::{
+    SemanticToken as DomainSemanticToken, SemanticTokens as DomainSemanticTokens,
+    SemanticTokensDelta as DomainSemanticTokensDelta,
+    SemanticTokensEdit as DomainSemanticTokensEdit,
+    SemanticTokensFullDeltaResult as DomainSemanticTokensFullDeltaResult,
+    SemanticTokensRangeResult as DomainSemanticTokensRangeResult,
+    SemanticTokensResult as DomainSemanticTokensResult,
+};
+
+pub const LEGEND_TYPES: &[SemanticTokenType] = &[
+    SemanticTokenType::COMMENT,
+    SemanticTokenType::KEYWORD,
+    SemanticTokenType::STRING,
+    SemanticTokenType::NUMBER,
+    SemanticTokenType::REGEXP,
+    SemanticTokenType::OPERATOR,
+    SemanticTokenType::NAMESPACE,
+    SemanticTokenType::TYPE,
+    SemanticTokenType::STRUCT,
+    SemanticTokenType::CLASS,
+    SemanticTokenType::INTERFACE,
+    SemanticTokenType::ENUM,
+    SemanticTokenType::ENUM_MEMBER,
+    SemanticTokenType::TYPE_PARAMETER,
+    SemanticTokenType::FUNCTION,
+    SemanticTokenType::METHOD,
+    SemanticTokenType::MACRO,
+    SemanticTokenType::VARIABLE,
+    SemanticTokenType::PARAMETER,
+    SemanticTokenType::PROPERTY,
+    SemanticTokenType::EVENT,
+    SemanticTokenType::MODIFIER,
+    SemanticTokenType::DECORATOR,
+];
+
+pub const LEGEND_MODIFIERS: &[SemanticTokenModifier] = &[
+    SemanticTokenModifier::DECLARATION,
+    SemanticTokenModifier::DEFINITION,
+    SemanticTokenModifier::READONLY,
+    SemanticTokenModifier::STATIC,
+    SemanticTokenModifier::DEPRECATED,
+    SemanticTokenModifier::ABSTRACT,
+    SemanticTokenModifier::ASYNC,
+    SemanticTokenModifier::MODIFICATION,
+    SemanticTokenModifier::DOCUMENTATION,
+    SemanticTokenModifier::DEFAULT_LIBRARY,
+];
 
 /// Convert byte column position to UTF-16 column position within a line
 /// This is a wrapper around the common utility for backward compatibility
@@ -505,7 +554,7 @@ mod tests {
 
     #[test]
     fn test_semantic_tokens_range() {
-        use crate::domain::Position;
+        use tower_lsp::lsp_types::Position;
 
         // Create mock tokens for a document
         let all_tokens = SemanticTokens {

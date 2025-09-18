@@ -2,11 +2,9 @@ pub mod settings;
 
 pub use settings::{
     CaptureMapping, CaptureMappings, HighlightItem, HighlightSource, LanguageConfig,
-    QueryTypeMappings, TreeSitterSettings,
+    LanguageSettings, QuerySource, QueryTypeMappings, TreeSitterSettings, WorkspaceSettings,
 };
 use std::collections::HashMap;
-
-use crate::domain::settings as domain_settings;
 
 /// Merge two TreeSitterSettings, preferring values from `primary` over `fallback`
 pub fn merge_settings(
@@ -36,59 +34,39 @@ pub fn merge_settings(
     }
 }
 
-impl From<&HighlightSource> for domain_settings::QuerySource {
+impl From<&HighlightSource> for QuerySource {
     fn from(source: &HighlightSource) -> Self {
         match source {
-            HighlightSource::Path { path } => domain_settings::QuerySource::Path(path.clone()),
-            HighlightSource::Query { query } => domain_settings::QuerySource::Inline(query.clone()),
+            HighlightSource::Path { path } => QuerySource::Path(path.clone()),
+            HighlightSource::Query { query } => QuerySource::Inline(query.clone()),
         }
     }
 }
 
-impl From<domain_settings::QuerySource> for HighlightSource {
-    fn from(source: domain_settings::QuerySource) -> Self {
+impl From<QuerySource> for HighlightSource {
+    fn from(source: QuerySource) -> Self {
         match source {
-            domain_settings::QuerySource::Path(path) => HighlightSource::Path { path },
-            domain_settings::QuerySource::Inline(query) => HighlightSource::Query { query },
+            QuerySource::Path(path) => HighlightSource::Path { path },
+            QuerySource::Inline(query) => HighlightSource::Query { query },
         }
     }
 }
 
-impl From<&QueryTypeMappings> for domain_settings::QueryTypeMappings {
-    fn from(mappings: &QueryTypeMappings) -> Self {
-        domain_settings::QueryTypeMappings {
-            highlights: mappings.highlights.clone(),
-            locals: mappings.locals.clone(),
-            folds: mappings.folds.clone(),
-        }
-    }
-}
-
-impl From<&domain_settings::QueryTypeMappings> for QueryTypeMappings {
-    fn from(mappings: &domain_settings::QueryTypeMappings) -> Self {
-        QueryTypeMappings {
-            highlights: mappings.highlights.clone(),
-            locals: mappings.locals.clone(),
-            folds: mappings.folds.clone(),
-        }
-    }
-}
-
-impl From<&LanguageConfig> for domain_settings::LanguageSettings {
+impl From<&LanguageConfig> for LanguageSettings {
     fn from(config: &LanguageConfig) -> Self {
         let highlight = config
             .highlight
             .iter()
-            .map(|item| domain_settings::QuerySource::from(&item.source))
+            .map(|item| QuerySource::from(&item.source))
             .collect();
         let locals = config.locals.as_ref().map(|items| {
             items
                 .iter()
-                .map(|item| domain_settings::QuerySource::from(&item.source))
+                .map(|item| QuerySource::from(&item.source))
                 .collect()
         });
 
-        domain_settings::LanguageSettings::new(
+        LanguageSettings::new(
             config.library.clone(),
             config.filetypes.clone(),
             highlight,
@@ -97,8 +75,8 @@ impl From<&LanguageConfig> for domain_settings::LanguageSettings {
     }
 }
 
-impl From<&domain_settings::LanguageSettings> for LanguageConfig {
-    fn from(settings: &domain_settings::LanguageSettings) -> Self {
+impl From<&LanguageSettings> for LanguageConfig {
+    fn from(settings: &LanguageSettings) -> Self {
         let highlight = settings
             .highlight
             .iter()
@@ -126,17 +104,12 @@ impl From<&domain_settings::LanguageSettings> for LanguageConfig {
     }
 }
 
-impl From<&TreeSitterSettings> for domain_settings::WorkspaceSettings {
+impl From<&TreeSitterSettings> for WorkspaceSettings {
     fn from(settings: &TreeSitterSettings) -> Self {
         let languages = settings
             .languages
             .iter()
-            .map(|(name, config)| {
-                (
-                    name.clone(),
-                    domain_settings::LanguageSettings::from(config),
-                )
-            })
+            .map(|(name, config)| (name.clone(), LanguageSettings::from(config)))
             .collect();
         let capture_mappings = settings
             .capture_mappings
@@ -144,12 +117,16 @@ impl From<&TreeSitterSettings> for domain_settings::WorkspaceSettings {
             .map(|(lang, mappings)| {
                 (
                     lang.clone(),
-                    domain_settings::QueryTypeMappings::from(mappings),
+                    QueryTypeMappings {
+                        highlights: mappings.highlights.clone(),
+                        locals: mappings.locals.clone(),
+                        folds: mappings.folds.clone(),
+                    },
                 )
             })
             .collect();
 
-        domain_settings::WorkspaceSettings::new(
+        WorkspaceSettings::new(
             settings.search_paths.clone().unwrap_or_default(),
             languages,
             capture_mappings,
@@ -157,14 +134,14 @@ impl From<&TreeSitterSettings> for domain_settings::WorkspaceSettings {
     }
 }
 
-impl From<TreeSitterSettings> for domain_settings::WorkspaceSettings {
+impl From<TreeSitterSettings> for WorkspaceSettings {
     fn from(settings: TreeSitterSettings) -> Self {
-        domain_settings::WorkspaceSettings::from(&settings)
+        WorkspaceSettings::from(&settings)
     }
 }
 
-impl From<&domain_settings::WorkspaceSettings> for TreeSitterSettings {
-    fn from(settings: &domain_settings::WorkspaceSettings) -> Self {
+impl From<&WorkspaceSettings> for TreeSitterSettings {
+    fn from(settings: &WorkspaceSettings) -> Self {
         let languages = settings
             .languages
             .iter()
@@ -173,7 +150,16 @@ impl From<&domain_settings::WorkspaceSettings> for TreeSitterSettings {
         let capture_mappings = settings
             .capture_mappings
             .iter()
-            .map(|(lang, mappings)| (lang.clone(), QueryTypeMappings::from(mappings)))
+            .map(|(lang, mappings)| {
+                (
+                    lang.clone(),
+                    QueryTypeMappings {
+                        highlights: mappings.highlights.clone(),
+                        locals: mappings.locals.clone(),
+                        folds: mappings.folds.clone(),
+                    },
+                )
+            })
             .collect();
 
         let search_paths = if settings.search_paths.is_empty() {
@@ -190,8 +176,8 @@ impl From<&domain_settings::WorkspaceSettings> for TreeSitterSettings {
     }
 }
 
-impl From<domain_settings::WorkspaceSettings> for TreeSitterSettings {
-    fn from(settings: domain_settings::WorkspaceSettings) -> Self {
+impl From<WorkspaceSettings> for TreeSitterSettings {
+    fn from(settings: WorkspaceSettings) -> Self {
         TreeSitterSettings::from(&settings)
     }
 }
