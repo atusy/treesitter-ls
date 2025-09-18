@@ -1,10 +1,8 @@
 mod settings;
-mod state;
 
 pub use settings::{
     SettingsEvent, SettingsEventKind, SettingsLoadOutcome, SettingsSource, load_settings,
 };
-use state::WorkspaceState;
 
 use crate::document::{DocumentHandle, DocumentStore};
 use crate::domain::settings::{CaptureMappings, WorkspaceSettings};
@@ -22,7 +20,7 @@ pub struct Workspace {
     language: LanguageCoordinator,
     parser_pool: Mutex<DocumentParserPool>,
     documents: DocumentStore,
-    state: WorkspaceState,
+    root_path: Mutex<Option<PathBuf>>,
 }
 
 impl Workspace {
@@ -37,7 +35,7 @@ impl Workspace {
             language,
             parser_pool: Mutex::new(parser_pool),
             documents: DocumentStore::new(),
-            state: WorkspaceState::new(),
+            root_path: Mutex::new(None),
         }
     }
 
@@ -88,7 +86,7 @@ impl Workspace {
         &self,
         override_settings: Option<(SettingsSource, serde_json::Value)>,
     ) -> SettingsLoadOutcome {
-        let root_path = self.state.root_path();
+        let root_path = self.root_path();
         load_settings(root_path.as_deref(), override_settings)
     }
 
@@ -101,11 +99,29 @@ impl Workspace {
     }
 
     pub fn set_root_path(&self, path: Option<PathBuf>) {
-        self.state.set_root_path(path)
+        match self.root_path.lock() {
+            Ok(mut guard) => *guard = path,
+            Err(poisoned) => {
+                log::warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned lock in Workspace::set_root_path"
+                );
+                *poisoned.into_inner() = path;
+            }
+        }
     }
 
     pub fn root_path(&self) -> Option<PathBuf> {
-        self.state.root_path()
+        match self.root_path.lock() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => {
+                log::warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned lock in Workspace::root_path"
+                );
+                poisoned.into_inner().clone()
+            }
+        }
     }
 }
 
