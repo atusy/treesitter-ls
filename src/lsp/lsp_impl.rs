@@ -13,7 +13,6 @@ use crate::config::WorkspaceSettings;
 use crate::document::DocumentStore;
 use crate::language::{DocumentParserPool, LanguageCoordinator};
 use crate::language::{LanguageEvent, LanguageLogLevel};
-use crate::lsp::protocol;
 use crate::lsp::{SettingsEvent, SettingsEventKind, SettingsSource, load_settings};
 use crate::text::PositionMapper;
 use arc_swap::ArcSwap;
@@ -384,12 +383,8 @@ impl LanguageServer for TreeSitterLs {
             if let Some(range) = change.range {
                 // Incremental change - create InputEdit for tree editing
                 let mapper = PositionMapper::new(&text);
-                let start_offset = mapper
-                    .position_to_byte(protocol::to_domain_position(&range.start))
-                    .unwrap_or(text.len());
-                let end_offset = mapper
-                    .position_to_byte(protocol::to_domain_position(&range.end))
-                    .unwrap_or(text.len());
+                let start_offset = mapper.position_to_byte(range.start).unwrap_or(text.len());
+                let end_offset = mapper.position_to_byte(range.end).unwrap_or(text.len());
                 let new_end_offset = start_offset + change.text.len();
 
                 // Calculate the new end position
@@ -414,11 +409,9 @@ impl LanguageServer for TreeSitterLs {
                     start_byte: start_offset,
                     old_end_byte: end_offset,
                     new_end_byte: new_end_offset,
-                    start_position: position_to_point(&protocol::to_domain_position(&range.start)),
-                    old_end_position: position_to_point(&protocol::to_domain_position(&range.end)),
-                    new_end_position: position_to_point(&protocol::to_domain_position(
-                        &new_end_position,
-                    )),
+                    start_position: position_to_point(&range.start),
+                    old_end_position: position_to_point(&range.end),
+                    new_end_position: position_to_point(&new_end_position),
                 };
                 edits.push(edit);
 
@@ -544,7 +537,7 @@ impl LanguageServer for TreeSitterLs {
         };
         tokens_with_id.result_id = Some(id);
         let stored_tokens = tokens_with_id.clone();
-        let lsp_tokens = protocol::to_lsp_semantic_tokens(tokens_with_id);
+        let lsp_tokens = tokens_with_id;
         self.documents.update_semantic_tokens(&uri, stored_tokens);
         Ok(Some(SemanticTokensResult::Tokens(lsp_tokens)))
     }
@@ -640,11 +633,11 @@ impl LanguageServer for TreeSitterLs {
                 };
                 tokens_with_id.result_id = Some(id);
                 let stored_tokens = tokens_with_id.clone();
-                let lsp_tokens = protocol::to_lsp_semantic_tokens(tokens_with_id);
+                let lsp_tokens = tokens_with_id;
                 self.documents.update_semantic_tokens(&uri, stored_tokens);
                 Ok(Some(SemanticTokensFullDeltaResult::Tokens(lsp_tokens)))
             }
-            other => Ok(Some(protocol::to_lsp_semantic_tokens_full_delta(other))),
+            other => Ok(Some(other)),
         }
     }
 
@@ -654,7 +647,7 @@ impl LanguageServer for TreeSitterLs {
     ) -> Result<Option<SemanticTokensRangeResult>> {
         let uri = params.text_document.uri;
         let range = params.range;
-        let domain_range = protocol::to_domain_range(&range);
+        let domain_range = range;
 
         let Some(language_name) = self.get_language_for_document(&uri) else {
             return Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
@@ -715,9 +708,7 @@ impl LanguageServer for TreeSitterLs {
             }
         };
 
-        Ok(Some(protocol::to_lsp_semantic_tokens_range_result(
-            domain_range_result,
-        )))
+        Ok(Some(domain_range_result))
     }
 
     async fn goto_definition(
@@ -744,15 +735,12 @@ impl LanguageServer for TreeSitterLs {
 
         // Use layer-aware handler
         let resolver = DefinitionResolver::new();
-        let response = handle_goto_definition(
-            &resolver,
-            &doc,
-            protocol::to_domain_position(&position),
-            &locals_query,
-            &uri,
-        );
+        let response = handle_goto_definition(&resolver, &doc, position, &locals_query, &uri);
 
-        Ok(response.and_then(protocol::to_lsp_definition_response))
+        Ok(response.and_then(|resp| match &resp {
+            GotoDefinitionResponse::Array(locations) if locations.is_empty() => None,
+            _ => Some(resp),
+        }))
     }
 
     async fn selection_range(
@@ -760,11 +748,7 @@ impl LanguageServer for TreeSitterLs {
         params: SelectionRangeParams,
     ) -> Result<Option<Vec<SelectionRange>>> {
         let uri = params.text_document.uri;
-        let positions: Vec<_> = params
-            .positions
-            .iter()
-            .map(protocol::to_domain_position)
-            .collect();
+        let positions = params.positions;
 
         // Get document
         let Some(doc) = self.documents.get(&uri) else {
@@ -772,12 +756,7 @@ impl LanguageServer for TreeSitterLs {
         };
 
         // Use layer-aware handler
-        let result = handle_selection_range(&doc, &positions).map(|ranges| {
-            ranges
-                .into_iter()
-                .map(|r| protocol::to_lsp_selection_range(&r))
-                .collect()
-        });
+        let result = handle_selection_range(&doc, &positions);
 
         Ok(result)
     }
@@ -795,7 +774,7 @@ impl LanguageServer for TreeSitterLs {
             return Ok(None);
         };
 
-        let domain_range = protocol::to_domain_range(&range);
+        let domain_range = range;
 
         // Get language for the document
         let language_name = self.get_language_for_document(&uri);
@@ -814,10 +793,8 @@ impl LanguageServer for TreeSitterLs {
                 .map(|hq| (hq.as_ref(), locals_query.as_ref().map(|lq| lq.as_ref())));
 
             handle_code_actions(&uri, text, tree, domain_range, queries, capture_context)
-                .map(protocol::to_lsp_code_action_response)
         } else {
             handle_code_actions(&uri, text, tree, domain_range, None, None)
-                .map(protocol::to_lsp_code_action_response)
         };
 
         Ok(lsp_response)

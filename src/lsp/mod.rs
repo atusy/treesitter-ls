@@ -1,5 +1,4 @@
 mod lsp_impl;
-pub mod protocol;
 mod settings;
 
 pub use lsp_impl::TreeSitterLs;
