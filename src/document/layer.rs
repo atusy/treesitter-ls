@@ -5,42 +5,17 @@ use tree_sitter::{InputEdit, Range, Tree};
 pub struct LanguageLayer {
     pub language_id: String,
     pub tree: Tree,
-    pub ranges: Vec<(usize, usize)>, // Byte ranges where this layer applies
 }
 
 impl LanguageLayer {
     /// Create a root layer (covers entire document)
     pub fn root(language_id: String, tree: Tree) -> Self {
-        Self {
-            language_id,
-            tree,
-            ranges: vec![],
-        }
-    }
-
-    /// Create an injection layer with specific ranges
-    pub fn injection(language_id: String, tree: Tree, ranges: Vec<(usize, usize)>) -> Self {
-        Self {
-            language_id,
-            tree,
-            ranges,
-        }
-    }
-
-    /// Check if this is a root layer
-    pub fn is_root(&self) -> bool {
-        self.ranges.is_empty()
+        Self { language_id, tree }
     }
 
     /// Check if a byte offset is within this layer's ranges
-    pub fn contains_offset(&self, byte_offset: usize) -> bool {
-        if self.is_root() {
-            true
-        } else {
-            self.ranges
-                .iter()
-                .any(|(start, end)| byte_offset >= *start && byte_offset < *end)
-        }
+    pub fn contains_offset(&self, _byte_offset: usize) -> bool {
+        true
     }
 
     /// Get the tree at a specific offset

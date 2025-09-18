@@ -430,7 +430,6 @@ impl DefinitionResolver {
 }
 
 /// Handle goto definition request (legacy API - deprecated)
-/// Handle goto definition request with injection layer support
 pub fn handle_goto_definition<V: DocumentView + ?Sized>(
     resolver: &DefinitionResolver,
     document: &V,

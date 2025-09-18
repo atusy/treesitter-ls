@@ -59,7 +59,6 @@ impl From<&QueryTypeMappings> for domain_settings::QueryTypeMappings {
         domain_settings::QueryTypeMappings {
             highlights: mappings.highlights.clone(),
             locals: mappings.locals.clone(),
-            injections: mappings.injections.clone(),
             folds: mappings.folds.clone(),
         }
     }
@@ -70,7 +69,6 @@ impl From<&domain_settings::QueryTypeMappings> for QueryTypeMappings {
         QueryTypeMappings {
             highlights: mappings.highlights.clone(),
             locals: mappings.locals.clone(),
-            injections: mappings.injections.clone(),
             folds: mappings.folds.clone(),
         }
     }
@@ -225,10 +223,6 @@ fn merge_capture_mappings(
                 for (k, v) in primary_mappings.locals.clone() {
                     fallback_mappings.locals.insert(k, v);
                 }
-                // Merge injections
-                for (k, v) in primary_mappings.injections.clone() {
-                    fallback_mappings.injections.insert(k, v);
-                }
                 // Merge folds
                 for (k, v) in primary_mappings.folds.clone() {
                     fallback_mappings.folds.insert(k, v);
@@ -347,7 +341,6 @@ mod tests {
             QueryTypeMappings {
                 highlights: fallback_highlights,
                 locals: HashMap::new(),
-                injections: HashMap::new(),
                 folds: HashMap::new(),
             },
         );
@@ -371,7 +364,6 @@ mod tests {
             QueryTypeMappings {
                 highlights: primary_highlights,
                 locals: HashMap::new(),
-                injections: HashMap::new(),
                 folds: HashMap::new(),
             },
         );
@@ -418,7 +410,6 @@ mod tests {
         let query_type_mappings = QueryTypeMappings {
             highlights,
             locals: HashMap::new(),
-            injections: HashMap::new(),
             folds: HashMap::new(),
         };
 

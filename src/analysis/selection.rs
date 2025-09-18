@@ -32,13 +32,12 @@ fn build_selection_range(node: Node) -> SelectionRange {
     SelectionRange { range, parent }
 }
 
-/// Handle textDocument/selectionRange request with injection layer support
+/// Handle textDocument/selectionRange request
 ///
-/// Returns selection ranges that expand intelligently by syntax boundaries,
-/// using the appropriate language layer for each position.
+/// Returns selection ranges that expand intelligently by syntax boundaries.
 ///
 /// # Arguments
-/// * `document` - The document containing layers
+/// * `document` - The document
 /// * `positions` - The requested positions
 ///
 /// # Returns

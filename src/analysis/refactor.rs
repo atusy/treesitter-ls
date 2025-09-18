@@ -20,7 +20,6 @@ fn create_inspect_token_action(
     text: &str,
     queries: Option<(&Query, Option<&Query>)>,
     capture_context: Option<(&str, &CaptureMappings)>,
-    language_stack: Option<&[String]>,
 ) -> CodeActionOrCommand {
     let mut info = format!("* Node Type: {}\n", node.kind());
 
@@ -135,13 +134,8 @@ fn create_inspect_token_action(
         }
     }
 
-    if let Some(languages) = language_stack
-        && !languages.is_empty()
-    {
-        let chain = languages.join(" -> ");
-        info.push_str(&format!("* Languages: {}\n", chain));
-    } else if let Some((filetype, _)) = capture_context {
-        info.push_str(&format!("* Languages: {}\n", filetype));
+    if let Some((filetype, _)) = capture_context {
+        info.push_str(&format!("* Language: {}\n", filetype));
     }
 
     // Create a code action that shows this info (using title as display)
@@ -169,7 +163,6 @@ pub fn handle_code_actions(
     cursor: Range,
     queries: Option<(&Query, Option<&Query>)>,
     capture_context: Option<(&str, &CaptureMappings)>,
-    language_stack: Option<&[String]>,
 ) -> Option<Vec<CodeActionOrCommand>> {
     let root = tree.root_node();
 
@@ -187,7 +180,6 @@ pub fn handle_code_actions(
         text,
         queries,
         capture_context,
-        language_stack,
     ));
 
     // Ascend to a `parameters` node for parameter reordering actions
@@ -396,45 +388,7 @@ mod tests {
     use tree_sitter::Parser;
 
     #[test]
-    fn inspect_token_should_display_language_injection_chain() {
-        let mut parser = Parser::new();
-        parser
-            .set_language(&tree_sitter_rust::LANGUAGE.into())
-            .expect("load rust grammar");
-
-        let text = "fn main() {}";
-        let tree = parser.parse(text, None).expect("parse fixture text");
-        let root = tree.root_node();
-        let node = root.named_child(0).expect("function node should exist");
-
-        let language_chain = vec!["markdown".to_string(), "rust".to_string()];
-
-        let action = create_inspect_token_action(
-            &node,
-            &root,
-            text,
-            None,
-            None,
-            Some(language_chain.as_slice()),
-        );
-
-        let CodeActionOrCommand::CodeAction(action) = action else {
-            panic!("expected CodeAction variant");
-        };
-
-        let reason = action
-            .disabled
-            .expect("inspect token stores info in disabled reason")
-            .reason;
-
-        assert!(
-            reason.contains("Languages: markdown -> rust"),
-            "info was {reason}"
-        );
-    }
-
-    #[test]
-    fn inspect_token_should_display_root_language_when_no_injections() {
+    fn inspect_token_should_display_language() {
         let mut parser = Parser::new();
         parser
             .set_language(&tree_sitter_rust::LANGUAGE.into())
@@ -448,7 +402,7 @@ mod tests {
         let capture_mappings: CaptureMappings = HashMap::new();
         let capture_context = Some(("rust", &capture_mappings));
 
-        let action = create_inspect_token_action(&node, &root, text, None, capture_context, None);
+        let action = create_inspect_token_action(&node, &root, text, None, capture_context);
 
         let CodeActionOrCommand::CodeAction(action) = action else {
             panic!("expected CodeAction variant");
@@ -459,6 +413,6 @@ mod tests {
             .expect("inspect token stores info in disabled reason")
             .reason;
 
-        assert!(reason.contains("Languages: rust"), "info was {reason}");
+        assert!(reason.contains("Language: rust"), "info was {reason}");
     }
 }

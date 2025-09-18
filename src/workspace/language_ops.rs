@@ -27,10 +27,6 @@ pub fn locals_query(coordinator: &LanguageCoordinator, language: &str) -> Option
     coordinator.get_locals_query(language)
 }
 
-pub fn injections_query(coordinator: &LanguageCoordinator, language: &str) -> Option<Arc<Query>> {
-    coordinator.get_injections_query(language)
-}
-
 pub fn capture_mappings(coordinator: &LanguageCoordinator) -> CaptureMappings {
     coordinator.get_capture_mappings()
 }

@@ -47,7 +47,6 @@ impl LanguageSettings {
 pub struct QueryTypeMappings {
     pub highlights: HashMap<String, String>,
     pub locals: HashMap<String, String>,
-    pub injections: HashMap<String, String>,
     pub folds: HashMap<String, String>,
 }
 

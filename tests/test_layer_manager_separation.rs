@@ -16,5 +16,5 @@ fn test_layer_manager_should_not_have_parser_pool() {
     let layer = LanguageLayer::root("rust".to_string(), tree);
 
     // This demonstrates that LanguageLayer is sufficient for document structure
-    assert!(layer.is_root());
+    assert_eq!(layer.language_id, "rust");
 }

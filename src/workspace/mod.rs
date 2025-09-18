@@ -106,10 +106,6 @@ impl Workspace {
         load_locals_query(&self.language, language)
     }
 
-    pub fn injections_query(&self, language: &str) -> Option<Arc<Query>> {
-        language_ops::injections_query(&self.language, language)
-    }
-
     pub fn capture_mappings(&self) -> CaptureMappings {
         collect_capture_mappings(&self.language)
     }

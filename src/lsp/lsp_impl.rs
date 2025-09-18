@@ -9,99 +9,13 @@ use crate::analysis::{
     handle_code_actions, handle_goto_definition, handle_selection_range,
     handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
-use crate::document::LanguageLayer;
 use crate::domain;
-use crate::domain::Range as DomainRange;
 use crate::domain::settings::WorkspaceSettings;
 use crate::language::{LanguageEvent, LanguageLogLevel};
 use crate::lsp::protocol;
 use crate::text::{PositionMapper, SimplePositionMapper};
 use crate::workspace::Workspace;
 use crate::workspace::{SettingsEvent, SettingsEventKind, SettingsSource};
-use tree_sitter::{Query, QueryCursor, StreamingIterator};
-
-fn build_language_stack(
-    root_language: Option<&str>,
-    root_layer: &LanguageLayer,
-    injection_layers: &[LanguageLayer],
-    text: &str,
-    cursor_range: &DomainRange,
-    injection_query: Option<&Query>,
-) -> Vec<String> {
-    let mut stack = Vec::new();
-
-    if let Some(lang) = root_language {
-        stack.push(lang.to_string());
-    }
-
-    let mapper = SimplePositionMapper::new(text);
-    let cursor_byte = mapper
-        .position_to_byte(cursor_range.start)
-        .unwrap_or(text.len());
-
-    for layer in injection_layers {
-        if layer.contains_offset(cursor_byte) {
-            stack.push(layer.language_id.clone());
-        }
-    }
-
-    if let Some(query) = injection_query {
-        let mut cursor = QueryCursor::new();
-        let mut matches = cursor.matches(query, root_layer.tree.root_node(), text.as_bytes());
-        while let Some(m) = matches.next() {
-            if let Some(language) = injection_language_for_match(query, m, text, cursor_byte) {
-                if !stack.contains(&language) {
-                    stack.push(language);
-                }
-                break;
-            }
-        }
-    }
-
-    stack
-}
-
-fn injection_language_for_match(
-    query: &Query,
-    qmatch: &tree_sitter::QueryMatch,
-    text: &str,
-    cursor_byte: usize,
-) -> Option<String> {
-    let capture_names = query.capture_names();
-
-    let content_capture = qmatch.captures.iter().find(|capture| {
-        capture_names
-            .get(capture.index as usize)
-            .is_some_and(|name| *name == "injection.content")
-    })?;
-
-    let node = content_capture.node;
-    if !(node.start_byte() <= cursor_byte && cursor_byte < node.end_byte()) {
-        return None;
-    }
-
-    for property in query.property_settings(qmatch.pattern_index) {
-        if property.key.as_ref() != "injection.language" {
-            continue;
-        }
-
-        if let Some(value) = &property.value {
-            return Some(value.to_string());
-        }
-
-        if let Some(capture_id) = property.capture_id
-            && let Some(capture) = qmatch
-                .captures
-                .iter()
-                .find(|capture| capture.index as usize == capture_id)
-            && let Ok(text) = capture.node.utf8_text(text.as_bytes())
-        {
-            return Some(text.trim().to_string());
-        }
-    }
-
-    None
-}
 
 fn lsp_legend_types() -> Vec<SemanticTokenType> {
     LEGEND_TYPES
@@ -807,25 +721,6 @@ impl LanguageServer for TreeSitterLs {
         // Get language for the document
         let language_name = self.get_language_for_document(&uri);
 
-        let injection_query = language_name
-            .as_deref()
-            .and_then(|lang| self.workspace.injections_query(lang));
-
-        let language_stack = build_language_stack(
-            language_name.as_deref(),
-            root_layer,
-            doc.layers().injection_layers(),
-            text,
-            &domain_range,
-            injection_query.as_ref().map(|query| query.as_ref()),
-        );
-
-        let language_stack_ref = if language_stack.len() > 1 {
-            Some(language_stack.as_slice())
-        } else {
-            None
-        };
-
         // Get capture mappings
         let capture_mappings = self.workspace.capture_mappings();
         let capture_context = language_name.as_deref().map(|ft| (ft, &capture_mappings));
@@ -846,20 +741,11 @@ impl LanguageServer for TreeSitterLs {
                 domain_range,
                 queries,
                 capture_context,
-                language_stack_ref,
             )
             .map(protocol::to_lsp_code_action_response)
         } else {
-            handle_code_actions(
-                &uri,
-                text,
-                &root_layer.tree,
-                domain_range,
-                None,
-                None,
-                language_stack_ref,
-            )
-            .map(protocol::to_lsp_code_action_response)
+            handle_code_actions(&uri, text, &root_layer.tree, domain_range, None, None)
+                .map(protocol::to_lsp_code_action_response)
         };
 
         Ok(lsp_response)
@@ -869,8 +755,6 @@ impl LanguageServer for TreeSitterLs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{Position as DomainPosition, Range as DomainRange};
-    use tree_sitter::Parser;
 
     #[test]
     fn should_create_valid_url_from_file_path() {
@@ -927,49 +811,5 @@ mod tests {
             let url = Url::parse(url_str).unwrap();
             assert_eq!(url.scheme(), "file");
         }
-    }
-
-    #[test]
-    fn should_build_language_stack_using_injection_query() {
-        let mut parser = Parser::new();
-        parser
-            .set_language(&tree_sitter_rust::LANGUAGE.into())
-            .expect("load rust grammar");
-
-        let text = "const LUA: &str = \"print(1)\";";
-        let tree = parser.parse(text, None).expect("parse rust");
-
-        let root_layer = LanguageLayer::root("rust".to_string(), tree);
-
-        let query_source = r#"
-            ((string_literal) @injection.content
-              (#set! injection.language "lua"))
-        "#;
-        let query = Query::new(&tree_sitter_rust::LANGUAGE.into(), query_source)
-            .expect("create injection query");
-
-        let range = DomainRange {
-            start: DomainPosition {
-                line: 0,
-                character: 21,
-            },
-            end: DomainPosition {
-                line: 0,
-                character: 21,
-            },
-        };
-
-        let injection_layers: Vec<LanguageLayer> = Vec::new();
-
-        let stack = build_language_stack(
-            Some("rust"),
-            &root_layer,
-            &injection_layers,
-            text,
-            &range,
-            Some(&query),
-        );
-
-        assert_eq!(stack, vec!["rust".to_string(), "lua".to_string()]);
     }
 }

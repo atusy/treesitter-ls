@@ -10,8 +10,6 @@ pub struct QueryTypeMappings {
     #[serde(default)]
     pub locals: CaptureMapping,
     #[serde(default)]
-    pub injections: CaptureMapping,
-    #[serde(default)]
     pub folds: CaptureMapping,
 }
 

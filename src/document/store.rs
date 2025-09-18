@@ -74,9 +74,15 @@ impl DocumentStore {
     /// Get the existing tree and apply edits for incremental parsing
     /// Returns the edited tree without updating the document store
     pub fn get_edited_tree(&self, uri: &Url, edits: &[InputEdit]) -> Option<Tree> {
-        self.documents
-            .get(uri)
-            .and_then(|doc| doc.layers().apply_edits_to_root(edits))
+        self.documents.get(uri).and_then(|doc| {
+            doc.layers().root_layer().map(|layer| {
+                let mut tree = layer.tree.clone();
+                for edit in edits {
+                    tree.edit(edit);
+                }
+                tree
+            })
+        })
     }
 
     /// Update document with a new tree after incremental parsing
