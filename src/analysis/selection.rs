@@ -1,4 +1,4 @@
-use crate::document::DocumentView;
+use crate::document::DocumentHandle;
 use tower_lsp::lsp_types::{Position, Range, SelectionRange};
 use tree_sitter::{Node, Point};
 
@@ -42,8 +42,8 @@ fn build_selection_range(node: Node) -> SelectionRange {
 ///
 /// # Returns
 /// Selection ranges for each position, or None if unable to compute
-pub fn handle_selection_range<V: DocumentView + ?Sized>(
-    document: &V,
+pub fn handle_selection_range(
+    document: &DocumentHandle,
     positions: &[Position],
 ) -> Option<Vec<SelectionRange>> {
     // Create position mapper via document abstraction

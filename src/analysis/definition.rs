@@ -1,5 +1,5 @@
 // Definition jump resolution using tree-sitter queries
-use crate::document::DocumentView;
+use crate::document::DocumentHandle;
 use std::str::FromStr;
 use tower_lsp::lsp_types::{
     GotoDefinitionResponse as DefinitionResponse, Location, Position, Range, Url as Uri,
@@ -423,9 +423,9 @@ impl DefinitionResolver {
 }
 
 /// Handle goto definition request (legacy API - deprecated)
-pub fn handle_goto_definition<V: DocumentView + ?Sized>(
+pub fn handle_goto_definition(
     resolver: &DefinitionResolver,
-    document: &V,
+    document: &DocumentHandle,
     position: Position,
     locals_query: &Query,
     uri: &Url,

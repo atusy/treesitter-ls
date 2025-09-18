@@ -1,4 +1,3 @@
-use crate::document::DocumentView;
 use tower_lsp::lsp_types::SemanticTokens;
 use tree_sitter::Tree;
 
@@ -75,6 +74,11 @@ impl Document {
         self.tree.as_ref()
     }
 
+    /// Get a position mapper for this document
+    pub fn position_mapper(&self) -> crate::text::SimplePositionMapper<'_> {
+        crate::text::SimplePositionMapper::new(self.text())
+    }
+
     /// Get mutable tree
     pub fn tree_mut(&mut self) -> Option<&mut Tree> {
         self.tree.as_mut()
@@ -118,20 +122,6 @@ impl Document {
     /// Check if the document is empty
     pub fn is_empty(&self) -> bool {
         self.text.is_empty()
-    }
-}
-
-impl DocumentView for Document {
-    fn text(&self) -> &str {
-        &self.text
-    }
-
-    fn tree(&self) -> Option<&tree_sitter::Tree> {
-        self.tree.as_ref()
-    }
-
-    fn language_id(&self) -> Option<&str> {
-        self.language_id.as_deref()
     }
 }
 
