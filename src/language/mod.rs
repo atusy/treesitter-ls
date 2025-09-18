@@ -1,3 +1,4 @@
+pub mod config_store;
 pub mod coordinator;
 pub mod events;
 pub mod filetypes;
@@ -8,6 +9,7 @@ pub mod query_predicates;
 pub mod query_store;
 pub mod registry;
 
+pub use config_store::ConfigStore;
 pub use coordinator::LanguageCoordinator;
 pub use events::{LanguageEvent, LanguageLoadResult, LanguageLoadSummary, LanguageLogLevel};
 pub use filetypes::FiletypeResolver;

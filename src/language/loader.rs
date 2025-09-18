@@ -1,7 +1,9 @@
 use libloading::{Library, Symbol};
+use path_clean::PathClean;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
+use std::path::PathBuf;
 use tree_sitter::Language;
 
 /// A wrapper around dynamic library loading for Tree-sitter language parsers
@@ -55,12 +57,15 @@ impl ParserLoader {
         path: &str,
         lang_name: &str,
     ) -> Result<Language, ParserLoadError> {
+        // Normalize the path before loading
+        let normalized_path = PathBuf::from(path).clean();
+
         // Derive function name from language name using standard convention
         let func_name = format!("tree_sitter_{lang_name}");
 
         // Load the library if not already loaded
         if !self.loaded_libraries.contains_key(lang_name) {
-            let library = unsafe { Library::new(path)? };
+            let library = unsafe { Library::new(&normalized_path)? };
             self.loaded_libraries.insert(lang_name.to_string(), library);
         }
 

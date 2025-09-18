@@ -1,3 +1,4 @@
+use super::config_store::ConfigStore;
 use super::events::{LanguageEvent, LanguageLoadResult, LanguageLoadSummary, LanguageLogLevel};
 use super::filetypes::FiletypeResolver;
 use super::loader::ParserLoader;
@@ -8,7 +9,6 @@ use super::registry::LanguageRegistry;
 use crate::config::TreeSitterSettings;
 use crate::config::settings::LanguageConfig;
 use crate::domain::settings::{CaptureMappings, QueryTypeMappings, WorkspaceSettings};
-use crate::runtime::config::ConfigStore;
 use std::sync::{Arc, RwLock};
 use tree_sitter::Language;
 

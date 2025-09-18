@@ -5,6 +5,5 @@ pub mod domain;
 pub mod error;
 pub mod language;
 pub mod lsp;
-pub mod runtime;
 pub mod text;
 pub mod workspace;

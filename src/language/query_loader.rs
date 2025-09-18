@@ -1,5 +1,6 @@
 use crate::config::{HighlightItem, HighlightSource};
 use crate::error::{LspError, LspResult};
+use path_clean::PathClean;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tree_sitter::{Language, Query};
@@ -14,17 +15,21 @@ impl QueryLoader {
 
         for item in highlight_items {
             match &item.source {
-                HighlightSource::Path { path } => match fs::read_to_string(path) {
-                    Ok(content) => {
-                        combined_query.push_str(&content);
-                        combined_query.push('\n');
+                HighlightSource::Path { path } => {
+                    let normalized_path = PathBuf::from(path).clean();
+                    match fs::read_to_string(&normalized_path) {
+                        Ok(content) => {
+                            combined_query.push_str(&content);
+                            combined_query.push('\n');
+                        }
+                        Err(e) => {
+                            return Err(LspError::query(format!(
+                                "Failed to read query file {}: {e}",
+                                normalized_path.display()
+                            )));
+                        }
                     }
-                    Err(e) => {
-                        return Err(LspError::query(format!(
-                            "Failed to read query file {path}: {e}"
-                        )));
-                    }
-                },
+                }
                 HighlightSource::Query { query } => {
                     combined_query.push_str(query);
                     combined_query.push('\n');
@@ -45,7 +50,8 @@ impl QueryLoader {
             let candidate = Path::new(base)
                 .join("queries")
                 .join(lang_name)
-                .join(file_name);
+                .join(file_name)
+                .clean();
             if candidate.exists() {
                 return Some(candidate);
             }
@@ -106,24 +112,31 @@ impl QueryLoader {
         language: &str,
         search_paths: &Option<Vec<String>>,
     ) -> Option<String> {
-        // If explicit library path is provided, use it
+        // If explicit library path is provided, normalize and use it
         if let Some(lib) = library {
-            return Some(lib.clone());
+            let normalized = PathBuf::from(lib).clean();
+            return Some(normalized.to_string_lossy().into_owned());
         }
 
         // Otherwise, search in searchPaths: <base>/parser/
         if let Some(paths) = search_paths {
             for path in paths {
                 // Try .so extension first (Linux)
-                let so_path = format!("{path}/parser/{language}.so");
-                if Path::new(&so_path).exists() {
-                    return Some(so_path);
+                let so_path = PathBuf::from(path)
+                    .join("parser")
+                    .join(format!("{language}.so"))
+                    .clean();
+                if so_path.exists() {
+                    return Some(so_path.to_string_lossy().into_owned());
                 }
 
                 // Try .dylib extension (macOS)
-                let dylib_path = format!("{path}/parser/{language}.dylib");
-                if Path::new(&dylib_path).exists() {
-                    return Some(dylib_path);
+                let dylib_path = PathBuf::from(path)
+                    .join("parser")
+                    .join(format!("{language}.dylib"))
+                    .clean();
+                if dylib_path.exists() {
+                    return Some(dylib_path.to_string_lossy().into_owned());
                 }
 
                 // Try .dll extension (Windows)
