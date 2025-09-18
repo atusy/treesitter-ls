@@ -10,7 +10,6 @@ A fast and flexible Language Server Protocol (LSP) server that leverages Tree-si
 - **🔍 Go to Definition** - Language-agnostic navigation using Tree-sitter locals queries
 - **📝 Smart Selection** - Expand selection based on AST structure
 - **🔧 Code Actions** - Refactoring support (e.g., parameter reordering)
-- **💉 Language Injection** - Support for embedded languages (e.g., code blocks in Markdown)
 
 ### Performance
 - Async runtime powered by `tokio` and `tower-lsp`

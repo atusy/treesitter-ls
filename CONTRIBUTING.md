@@ -95,9 +95,6 @@ src/
 │   └── settings.rs     # LSP initialization options parsing
 │
 ├── document/       # Document management (vertical slice)
-│   ├── injection_mapper.rs  # Coordinate mapping for language injections
-│   ├── layer.rs        # LanguageLayer structure for parsed trees
-│   ├── layer_manager.rs # Root and injection layer management
 │   ├── model.rs        # Unified Document struct
 │   ├── store.rs        # Thread-safe document storage with DashMap
 │   └── view.rs         # DocumentView trait exposing read-only access for analysis
@@ -149,12 +146,9 @@ Each file implements a complete LSP feature:
 - **refactor.rs**: Code actions like parameter reordering
 
 #### `document/` - Document Management
-Manages document lifecycle and language layers:
+Manages document lifecycle:
 - **model.rs**: Unified `Document` struct
-- **layer.rs**: `LanguageLayer` structure for managing parsed trees
-- **layer_manager.rs**: Manages root and injection layers
 - **store.rs**: Thread-safe document storage with `DashMap`
-- **injection_mapper.rs**: Handles coordinate mapping for language injections
 - **view.rs**: `DocumentView` trait providing read-only access for analysis code
 
 #### `runtime/` - Language Runtime Services
@@ -196,12 +190,6 @@ The refactoring implemented clean architecture principles:
 - **Coordinator Pattern**: `LanguageCoordinator` provides stateless coordination between language modules and returns events consumed by the LSP layer
 - **Workspace Facade**: `workspace::Workspace` aggregates runtime and document access so the LSP implementation stays thin, and `lsp_impl` is now the single place that converts between domain and protocol types.
 
-#### Injection System Design
-Language injections (like code blocks in Markdown) are handled by:
-- `document/layer_manager.rs`: Manages injection layers
-- `document/injection_mapper.rs`: Coordinate mapping between layers
-
-This separation ensures each module maintains its single responsibility.
 
 #### Parser Pool Unification
 We unified parser management into a single `DocumentParserPool` managed by the LSP layer to:
@@ -281,7 +269,7 @@ Follow the TDD approach:
 Example test structure:
 ```rust
 #[test]
-fn test_semantic_tokens_with_injections() {
+fn test_semantic_tokens() {
     // Arrange
     let text = "fn main() { /* comment */ }";
     let document = create_test_document(text);
@@ -302,7 +290,7 @@ fn test_semantic_tokens_with_injections() {
 cargo test analysis::
 
 # Run a single test
-cargo test test_semantic_tokens_with_injections
+cargo test test_semantic_tokens
 
 # Run tests with debug output
 cargo test -- --nocapture --test-threads=1
