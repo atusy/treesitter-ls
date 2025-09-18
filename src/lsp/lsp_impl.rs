@@ -718,11 +718,31 @@ impl LanguageServer for TreeSitterLs {
 
         let domain_range = protocol::to_domain_range(&range);
 
+        let simple_mapper = SimplePositionMapper::new(text);
+        let cursor_byte = simple_mapper
+            .position_to_byte(domain_range.start)
+            .unwrap_or(text.len());
+
+        let mut language_stack = Vec::new();
+        language_stack.push(root_layer.language_id.clone());
+        for layer in doc.layers().injection_layers() {
+            if layer.contains_offset(cursor_byte) {
+                language_stack.push(layer.language_id.clone());
+            }
+        }
+
+        let language_stack_ref = if language_stack.len() > 1 {
+            Some(language_stack.as_slice())
+        } else {
+            None
+        };
+
         // Get language for the document
         let language_name = self.get_language_for_document(&uri);
 
         // Get capture mappings
         let capture_mappings = self.workspace.capture_mappings();
+        let capture_context = language_name.as_deref().map(|ft| (ft, &capture_mappings));
 
         // Get queries and delegate to handler
         let lsp_response = if let Some(lang) = language_name.clone() {
@@ -739,13 +759,21 @@ impl LanguageServer for TreeSitterLs {
                 &root_layer.tree,
                 domain_range,
                 queries,
-                language_name.as_deref(),
-                Some(&capture_mappings),
+                capture_context,
+                language_stack_ref,
             )
             .map(protocol::to_lsp_code_action_response)
         } else {
-            handle_code_actions(&uri, text, &root_layer.tree, domain_range, None, None, None)
-                .map(protocol::to_lsp_code_action_response)
+            handle_code_actions(
+                &uri,
+                text,
+                &root_layer.tree,
+                domain_range,
+                None,
+                None,
+                language_stack_ref,
+            )
+            .map(protocol::to_lsp_code_action_response)
         };
 
         Ok(lsp_response)

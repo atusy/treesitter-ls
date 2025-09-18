@@ -19,8 +19,8 @@ fn create_inspect_token_action(
     root: &Node,
     text: &str,
     queries: Option<(&Query, Option<&Query>)>,
-    filetype: Option<&str>,
-    capture_mappings: Option<&CaptureMappings>,
+    capture_context: Option<(&str, &CaptureMappings)>,
+    language_stack: Option<&[String]>,
 ) -> CodeActionOrCommand {
     let mut info = format!("* Node Type: {}\n", node.kind());
 
@@ -72,22 +72,16 @@ fn create_inspect_token_action(
                 .iter()
                 .map(|capture| {
                     // Apply capture mapping if available
-                    if let Some(mappings) = capture_mappings {
-                        // Use capture name directly without @ prefix for lookup
+                    if let Some((filetype, mappings)) = capture_context {
                         let lookup_name = capture;
 
-                        // Try filetype-specific mapping first
-                        if let Some(ft) = filetype
-                            && let Some(lang_mappings) = mappings.get(ft)
+                        if let Some(lang_mappings) = mappings.get(filetype)
                             && let Some(mapped) = lang_mappings.highlights.get(lookup_name)
+                            && capture != mapped
                         {
-                            // If mapping exists and is different, show as "original->mapped"
-                            if capture != mapped {
-                                return format!("{}->{}", capture, mapped);
-                            }
+                            return format!("{}->{}", capture, mapped);
                         }
 
-                        // Try wildcard mapping
                         if let Some(wildcard_mappings) = mappings.get("_")
                             && let Some(mapped) = wildcard_mappings.highlights.get(lookup_name)
                             && capture != mapped
@@ -111,22 +105,16 @@ fn create_inspect_token_action(
                 .iter()
                 .map(|capture| {
                     // Apply capture mapping if available
-                    if let Some(mappings) = capture_mappings {
-                        // Use capture name directly without @ prefix for lookup
+                    if let Some((filetype, mappings)) = capture_context {
                         let lookup_name = capture;
 
-                        // Try filetype-specific mapping first
-                        if let Some(ft) = filetype
-                            && let Some(lang_mappings) = mappings.get(ft)
+                        if let Some(lang_mappings) = mappings.get(filetype)
                             && let Some(mapped) = lang_mappings.locals.get(lookup_name)
+                            && capture != mapped
                         {
-                            // If mapping exists and is different, show as "original->mapped"
-                            if capture != mapped {
-                                return format!("{}->{}", capture, mapped);
-                            }
+                            return format!("{}->{}", capture, mapped);
                         }
 
-                        // Try wildcard mapping
                         if let Some(wildcard_mappings) = mappings.get("_")
                             && let Some(mapped) = wildcard_mappings.locals.get(lookup_name)
                             && capture != mapped
@@ -145,6 +133,15 @@ fn create_inspect_token_action(
         if highlight_captures.is_empty() && local_captures.is_empty() {
             info.push_str("    * (none)\n");
         }
+    }
+
+    if let Some(languages) = language_stack
+        && !languages.is_empty()
+    {
+        let chain = languages.join(" -> ");
+        info.push_str(&format!("* Languages: {}\n", chain));
+    } else if let Some((filetype, _)) = capture_context {
+        info.push_str(&format!("* Languages: {}\n", filetype));
     }
 
     // Create a code action that shows this info (using title as display)
@@ -171,8 +168,8 @@ pub fn handle_code_actions(
     tree: &Tree,
     cursor: Range,
     queries: Option<(&Query, Option<&Query>)>,
-    filetype: Option<&str>,
-    capture_mappings: Option<&CaptureMappings>,
+    capture_context: Option<(&str, &CaptureMappings)>,
+    language_stack: Option<&[String]>,
 ) -> Option<Vec<CodeActionOrCommand>> {
     let root = tree.root_node();
 
@@ -189,8 +186,8 @@ pub fn handle_code_actions(
         &root,
         text,
         queries,
-        filetype,
-        capture_mappings,
+        capture_context,
+        language_stack,
     ));
 
     // Ascend to a `parameters` node for parameter reordering actions
@@ -389,4 +386,79 @@ fn ordinal(n: usize) -> String {
         },
     };
     format!("{}{}", n, suffix)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::CodeActionOrCommand;
+    use std::collections::HashMap;
+    use tree_sitter::Parser;
+
+    #[test]
+    fn inspect_token_should_display_language_injection_chain() {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .expect("load rust grammar");
+
+        let text = "fn main() {}";
+        let tree = parser.parse(text, None).expect("parse fixture text");
+        let root = tree.root_node();
+        let node = root.named_child(0).expect("function node should exist");
+
+        let language_chain = vec!["markdown".to_string(), "rust".to_string()];
+
+        let action = create_inspect_token_action(
+            &node,
+            &root,
+            text,
+            None,
+            None,
+            Some(language_chain.as_slice()),
+        );
+
+        let CodeActionOrCommand::CodeAction(action) = action else {
+            panic!("expected CodeAction variant");
+        };
+
+        let reason = action
+            .disabled
+            .expect("inspect token stores info in disabled reason")
+            .reason;
+
+        assert!(
+            reason.contains("Languages: markdown -> rust"),
+            "info was {reason}"
+        );
+    }
+
+    #[test]
+    fn inspect_token_should_display_root_language_when_no_injections() {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .expect("load rust grammar");
+
+        let text = "fn main() {}";
+        let tree = parser.parse(text, None).expect("parse rust");
+        let root = tree.root_node();
+        let node = root.named_child(0).expect("function node should exist");
+
+        let capture_mappings: CaptureMappings = HashMap::new();
+        let capture_context = Some(("rust", &capture_mappings));
+
+        let action = create_inspect_token_action(&node, &root, text, None, capture_context, None);
+
+        let CodeActionOrCommand::CodeAction(action) = action else {
+            panic!("expected CodeAction variant");
+        };
+
+        let reason = action
+            .disabled
+            .expect("inspect token stores info in disabled reason")
+            .reason;
+
+        assert!(reason.contains("Languages: rust"), "info was {reason}");
+    }
 }
