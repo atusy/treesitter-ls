@@ -24,28 +24,31 @@ pub fn parse_document(
         let load_result = coordinator.ensure_language_loaded(&language_name);
         events.extend(load_result.events.clone());
 
-        if let Some(mut parser) = parser_pool.lock().unwrap().acquire(&language_name) {
-            let old_tree = if !edits.is_empty() {
-                documents.get_edited_tree(&uri, &edits)
-            } else {
-                documents.get(&uri).and_then(|doc| doc.tree().cloned())
-            };
-
-            let parsed_tree = parser.parse(&text, old_tree.as_ref());
-            parser_pool
-                .lock()
-                .unwrap()
-                .release(language_name.clone(), parser);
-
-            if let Some(tree) = parsed_tree {
-                if !edits.is_empty() {
-                    documents.update_document(uri.clone(), text, Some(tree));
+        let parsed_tree = {
+            let mut pool = parser_pool.lock().unwrap();
+            if let Some(mut parser) = pool.acquire(&language_name) {
+                let old_tree = if !edits.is_empty() {
+                    documents.get_edited_tree(&uri, &edits)
                 } else {
-                    documents.insert(uri.clone(), text, Some(language_name.clone()), Some(tree));
-                }
+                    documents.get(&uri).and_then(|doc| doc.tree().cloned())
+                };
 
-                return ParseOutcome { events };
+                let result = parser.parse(&text, old_tree.as_ref());
+                pool.release(language_name.clone(), parser);
+                result
+            } else {
+                None
             }
+        };
+
+        if let Some(tree) = parsed_tree {
+            if !edits.is_empty() {
+                documents.update_document(uri.clone(), text, Some(tree));
+            } else {
+                documents.insert(uri.clone(), text, Some(language_name.clone()), Some(tree));
+            }
+
+            return ParseOutcome { events };
         }
     }
 
