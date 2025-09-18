@@ -2,7 +2,7 @@
 // and verifies that the fix (adding did_close handler) works correctly.
 
 use tree_sitter::Parser;
-use treesitter_ls::document::{DocumentStore, SemanticSnapshot};
+use treesitter_ls::document::DocumentStore;
 use treesitter_ls::domain::{SemanticToken, SemanticTokens};
 use url::Url;
 
@@ -20,7 +20,12 @@ fn test_document_store_reopen_resets_semantic_tokens() {
     // First insert with a tree
     let text = "fn main() {}";
     let tree = parser.parse(text, None).unwrap();
-    store.insert(uri.clone(), text.to_string(), Some("rust".to_string()), Some(tree));
+    store.insert(
+        uri.clone(),
+        text.to_string(),
+        Some("rust".to_string()),
+        Some(tree),
+    );
 
     // Add some semantic tokens
     let tokens = SemanticTokens {
@@ -33,19 +38,24 @@ fn test_document_store_reopen_resets_semantic_tokens() {
             token_modifiers_bitset: 0,
         }],
     };
-    store.update_semantic_tokens(&uri, SemanticSnapshot::new(tokens.clone()));
+    store.update_semantic_tokens(&uri, tokens.clone());
 
     // Verify tokens are stored
     {
         let doc = store.get(&uri).unwrap();
         assert!(doc.last_semantic_tokens().is_some());
-        let snapshot = doc.last_semantic_tokens().unwrap();
-        assert_eq!(snapshot.tokens().result_id.as_deref(), Some("v1"));
+        let tokens = doc.last_semantic_tokens().unwrap();
+        assert_eq!(tokens.result_id.as_deref(), Some("v1"));
     }
 
     // Reopen the document (simulating did_open after close)
     let tree2 = parser.parse(text, None).unwrap();
-    store.insert(uri.clone(), text.to_string(), Some("rust".to_string()), Some(tree2));
+    store.insert(
+        uri.clone(),
+        text.to_string(),
+        Some("rust".to_string()),
+        Some(tree2),
+    );
 
     // Check that semantic tokens were reset
     {
@@ -71,7 +81,12 @@ fn test_document_store_update_preserves_semantic_tokens() {
     // First insert with a tree
     let text1 = "fn main() {}";
     let tree1 = parser.parse(text1, None).unwrap();
-    store.insert(uri.clone(), text1.to_string(), Some("rust".to_string()), Some(tree1));
+    store.insert(
+        uri.clone(),
+        text1.to_string(),
+        Some("rust".to_string()),
+        Some(tree1),
+    );
 
     // Add some semantic tokens
     let tokens = SemanticTokens {
@@ -84,7 +99,7 @@ fn test_document_store_update_preserves_semantic_tokens() {
             token_modifiers_bitset: 0,
         }],
     };
-    store.update_semantic_tokens(&uri, SemanticSnapshot::new(tokens.clone()));
+    store.update_semantic_tokens(&uri, tokens.clone());
 
     // Verify tokens are stored
     {
@@ -125,7 +140,12 @@ fn test_document_store_remove() {
     // Insert a document
     let text = "fn main() {}";
     let tree = parser.parse(text, None).unwrap();
-    store.insert(uri.clone(), text.to_string(), Some("rust".to_string()), Some(tree));
+    store.insert(
+        uri.clone(),
+        text.to_string(),
+        Some("rust".to_string()),
+        Some(tree),
+    );
 
     // Add some semantic tokens
     let tokens = SemanticTokens {
@@ -138,7 +158,7 @@ fn test_document_store_remove() {
             token_modifiers_bitset: 0,
         }],
     };
-    store.update_semantic_tokens(&uri, SemanticSnapshot::new(tokens.clone()));
+    store.update_semantic_tokens(&uri, tokens.clone());
 
     // Verify document exists
     assert!(store.get(&uri).is_some());
@@ -155,7 +175,12 @@ fn test_document_store_remove() {
 
     // Reinsert should start fresh
     let tree2 = parser.parse(text, None).unwrap();
-    store.insert(uri.clone(), text.to_string(), Some("rust".to_string()), Some(tree2));
+    store.insert(
+        uri.clone(),
+        text.to_string(),
+        Some("rust".to_string()),
+        Some(tree2),
+    );
 
     // Check that it's a fresh document without old semantic tokens
     {

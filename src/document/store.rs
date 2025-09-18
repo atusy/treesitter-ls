@@ -1,4 +1,5 @@
-use crate::document::{Document, SemanticSnapshot};
+use crate::document::Document;
+use crate::domain::SemanticTokens;
 use dashmap::DashMap;
 use dashmap::mapref::one::Ref;
 use std::ops::Deref;
@@ -64,13 +65,15 @@ impl DocumentStore {
 
         match (language_id, new_tree) {
             (Some(lang), Some(tree)) => {
-                self.documents.insert(uri, Document::with_tree(text, lang, tree));
+                self.documents
+                    .insert(uri, Document::with_tree(text, lang, tree));
             }
             (Some(lang), None) => {
                 // Preserve existing tree if no new tree provided
                 let existing_tree = self.documents.get(&uri).and_then(|doc| doc.tree().cloned());
                 if let Some(tree) = existing_tree {
-                    self.documents.insert(uri, Document::with_tree(text, lang, tree));
+                    self.documents
+                        .insert(uri, Document::with_tree(text, lang, tree));
                 } else {
                     self.documents.insert(uri, Document::new(text));
                 }
@@ -95,8 +98,7 @@ impl DocumentStore {
         })
     }
 
-
-    pub fn update_semantic_tokens(&self, uri: &Url, tokens: SemanticSnapshot) {
+    pub fn update_semantic_tokens(&self, uri: &Url, tokens: SemanticTokens) {
         if let Some(mut doc) = self.documents.get_mut(uri) {
             doc.set_last_semantic_tokens(Some(tokens));
         }
@@ -164,7 +166,12 @@ mod tests {
             .unwrap();
         let tree = parser.parse(&text, None).unwrap();
 
-        store.insert(uri.clone(), text.clone(), Some("rust".to_string()), Some(tree.clone()));
+        store.insert(
+            uri.clone(),
+            text.clone(),
+            Some("rust".to_string()),
+            Some(tree.clone()),
+        );
 
         // Update with new tree
         let new_text = "let x = 2;".to_string();

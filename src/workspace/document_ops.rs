@@ -1,6 +1,6 @@
 use super::ParseOutcome;
 use super::language_ops;
-use crate::document::{Document, DocumentHandle, DocumentStore, SemanticSnapshot};
+use crate::document::{Document, DocumentHandle, DocumentStore};
 use crate::domain::SemanticTokens;
 use crate::language::{DocumentParserPool, LanguageCoordinator};
 use std::sync::Mutex;
@@ -28,9 +28,7 @@ pub fn parse_document(
             let old_tree = if !edits.is_empty() {
                 documents.get_edited_tree(&uri, &edits)
             } else {
-                documents
-                    .get(&uri)
-                    .and_then(|doc| doc.tree().cloned())
+                documents.get(&uri).and_then(|doc| doc.tree().cloned())
             };
 
             let parsed_tree = parser.parse(&text, old_tree.as_ref());
@@ -78,7 +76,7 @@ pub fn document_text(documents: &DocumentStore, uri: &Url) -> Option<String> {
 }
 
 pub fn update_semantic_tokens(documents: &DocumentStore, uri: &Url, tokens: SemanticTokens) {
-    documents.update_semantic_tokens(uri, SemanticSnapshot::new(tokens));
+    documents.update_semantic_tokens(uri, tokens);
 }
 
 pub fn remove_document(documents: &DocumentStore, uri: &Url) -> Option<Document> {

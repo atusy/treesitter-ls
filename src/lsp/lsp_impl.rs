@@ -292,10 +292,7 @@ impl LanguageServer for TreeSitterLs {
         let (language_id, old_text) = {
             let doc = self.workspace.document(&uri);
             match doc {
-                Some(d) => (
-                    d.language_id().map(|s| s.to_string()),
-                    d.text().to_string(),
-                ),
+                Some(d) => (d.language_id().map(|s| s.to_string()), d.text().to_string()),
                 None => {
                     self.client
                         .log_message(MessageType::WARNING, "Document not found for change event")
@@ -519,9 +516,7 @@ impl LanguageServer for TreeSitterLs {
             };
 
             // Get previous tokens from document
-            let previous_tokens = doc
-                .last_semantic_tokens()
-                .map(|snapshot| snapshot.tokens().clone());
+            let previous_tokens = doc.last_semantic_tokens().cloned();
 
             // Get capture mappings
             let capture_mappings = self.workspace.capture_mappings();
@@ -734,15 +729,8 @@ impl LanguageServer for TreeSitterLs {
                 .as_ref()
                 .map(|hq| (hq.as_ref(), locals_query.as_ref().map(|lq| lq.as_ref())));
 
-            handle_code_actions(
-                &uri,
-                text,
-                tree,
-                domain_range,
-                queries,
-                capture_context,
-            )
-            .map(protocol::to_lsp_code_action_response)
+            handle_code_actions(&uri, text, tree, domain_range, queries, capture_context)
+                .map(protocol::to_lsp_code_action_response)
         } else {
             handle_code_actions(&uri, text, tree, domain_range, None, None)
                 .map(protocol::to_lsp_code_action_response)
