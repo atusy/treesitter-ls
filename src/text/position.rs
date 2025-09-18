@@ -163,16 +163,3 @@ pub fn convert_byte_to_utf16_in_line(line_text: &str, byte_pos: usize) -> Option
         None
     }
 }
-
-/// Extract text from document for given ranges
-pub fn extract_text_from_ranges(document_text: &str, ranges: &[(usize, usize)]) -> String {
-    let mut result = String::new();
-
-    for (start, end) in ranges {
-        if *start < document_text.len() && *end <= document_text.len() {
-            result.push_str(&document_text[*start..*end]);
-        }
-    }
-
-    result
-}

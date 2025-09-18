@@ -90,35 +90,31 @@ fn determine_context(node: Node) -> &'static str {
 }
 
 #[derive(Debug, Clone)]
-pub struct DefinitionCandidate {
-    pub start_byte: usize,
-    pub end_byte: usize,
-    pub start_position: tree_sitter::Point,
-    pub end_position: tree_sitter::Point,
-    pub definition_type: String,
-    pub scope_depth: usize,
-    pub distance_to_reference: usize,
-    pub scope_ids: Vec<usize>, // IDs of enclosing scopes from innermost to outermost
+struct DefinitionCandidate {
+    start_byte: usize,
+    end_byte: usize,
+    start_position: tree_sitter::Point,
+    definition_type: String,
+    scope_depth: usize,
+    distance_to_reference: usize,
+    scope_ids: Vec<usize>, // IDs of enclosing scopes from innermost to outermost
 }
 
 #[derive(Debug, Clone)]
-pub struct ReferenceContext {
-    pub start_byte: usize,
-    pub end_byte: usize,
-    pub start_position: tree_sitter::Point,
-    pub end_position: tree_sitter::Point,
-    pub reference_type: String,
-    pub context_type: ContextType,
-    pub scope_ids: Vec<usize>, // IDs of enclosing scopes from innermost to outermost
+struct ReferenceContext {
+    start_byte: usize,
+    end_byte: usize,
+    start_position: tree_sitter::Point,
+    context_type: ContextType,
+    scope_ids: Vec<usize>, // IDs of enclosing scopes from innermost to outermost
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ContextType {
+enum ContextType {
     FunctionCall,
     VariableReference,
     TypeAnnotation,
     FieldAccess,
-    Unknown,
 }
 
 #[derive(Default)]
@@ -130,7 +126,7 @@ impl DefinitionResolver {
     }
 
     /// Resolve definition jump using scope analysis
-    pub fn resolve_definition<'a>(
+    fn resolve_definition<'a>(
         &self,
         text: &'a str,
         tree: &'a Tree,
@@ -189,7 +185,6 @@ impl DefinitionResolver {
                         start_byte,
                         end_byte,
                         start_position: node.start_position(),
-                        end_position: node.end_position(),
                         definition_type,
                         scope_depth: calculate_scope_depth(node),
                         distance_to_reference: 0, // Will be calculated later
@@ -218,8 +213,6 @@ impl DefinitionResolver {
                         start_byte,
                         end_byte,
                         start_position: node.start_position(),
-                        end_position: node.end_position(),
-                        reference_type,
                         context_type,
                         scope_ids: get_scope_ids(node),
                     });
@@ -339,7 +332,7 @@ impl DefinitionResolver {
         }
     }
 
-    pub fn context_matches(&self, definition_type: &str, context_type: &ContextType) -> bool {
+    fn context_matches(&self, definition_type: &str, context_type: &ContextType) -> bool {
         match context_type {
             ContextType::FunctionCall => {
                 matches!(definition_type, "function" | "method" | "macro" | "import")
@@ -356,7 +349,6 @@ impl DefinitionResolver {
                     "var" | "variable" | "parameter" | "let" | "const"
                 )
             }
-            ContextType::Unknown => true, // Don't filter based on unknown context
         }
     }
 
