@@ -75,8 +75,8 @@ impl Document {
     }
 
     /// Get a position mapper for this document
-    pub fn position_mapper(&self) -> crate::text::SimplePositionMapper<'_> {
-        crate::text::SimplePositionMapper::new(self.text())
+    pub fn position_mapper(&self) -> crate::text::PositionMapper<'_> {
+        crate::text::PositionMapper::new(self.text())
     }
 
     /// Get mutable tree

@@ -1,5 +1,5 @@
 use crate::config::CaptureMappings;
-use crate::text::SimplePositionMapper;
+use crate::text::PositionMapper;
 use std::str::FromStr;
 use tower_lsp::lsp_types::{
     CodeAction, CodeActionDisabled, CodeActionKind, CodeActionOrCommand, DocumentChanges, OneOf,
@@ -163,7 +163,7 @@ pub fn handle_code_actions(
     let root = tree.root_node();
 
     // Use the start position of the selection/range as the cursor location
-    let mapper = SimplePositionMapper::new(text);
+    let mapper = PositionMapper::new(text);
     let cursor_byte = mapper.position_to_byte(cursor.start).unwrap_or(text.len());
 
     let node_at_cursor = root.descendant_for_byte_range(cursor_byte, cursor_byte)?;

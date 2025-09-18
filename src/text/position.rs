@@ -2,13 +2,13 @@ use line_index::{LineIndex, WideEncoding, WideLineCol};
 use tower_lsp::lsp_types::{Position, Range};
 
 /// Position mapper for converting between LSP positions and byte offsets
-pub struct SimplePositionMapper<'a> {
+pub struct PositionMapper<'a> {
     _text: &'a str,
     line_index: LineIndex,
 }
 
-impl<'a> SimplePositionMapper<'a> {
-    /// Create a new SimplePositionMapper with pre-computed line starts
+impl<'a> PositionMapper<'a> {
+    /// Create a new PositionMapper with pre-computed line starts
     pub fn new(text: &'a str) -> Self {
         let line_index = LineIndex::new(text);
         Self {
@@ -18,7 +18,7 @@ impl<'a> SimplePositionMapper<'a> {
     }
 }
 
-impl<'a> SimplePositionMapper<'a> {
+impl<'a> PositionMapper<'a> {
     /// Convert LSP Position to byte offset in the document
     pub fn position_to_byte(&self, position: Position) -> Option<usize> {
         // LSP positions are UTF-16 based

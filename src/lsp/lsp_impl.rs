@@ -15,7 +15,7 @@ use crate::language::{DocumentParserPool, LanguageCoordinator};
 use crate::language::{LanguageEvent, LanguageLogLevel};
 use crate::lsp::protocol;
 use crate::lsp::{SettingsEvent, SettingsEventKind, SettingsSource, load_settings};
-use crate::text::SimplePositionMapper;
+use crate::text::PositionMapper;
 use arc_swap::ArcSwap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -383,7 +383,7 @@ impl LanguageServer for TreeSitterLs {
         for change in params.content_changes {
             if let Some(range) = change.range {
                 // Incremental change - create InputEdit for tree editing
-                let mapper = SimplePositionMapper::new(&text);
+                let mapper = PositionMapper::new(&text);
                 let start_offset = mapper
                     .position_to_byte(protocol::to_domain_position(&range.start))
                     .unwrap_or(text.len());
