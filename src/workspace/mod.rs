@@ -3,13 +3,11 @@ mod settings;
 mod state;
 
 use document_ops::{
-    document_language as resolve_document_language, document_reference,
-    document_text as read_document_text, parse_document as process_parse,
-    remove_document as detach_document, update_semantic_tokens as store_semantic_tokens,
+    document_language, document_reference, document_text, parse_document, remove_document,
+    update_semantic_tokens,
 };
 pub use settings::{
-    SettingsEvent, SettingsEventKind, SettingsLoadOutcome, SettingsSource,
-    load_settings as load_settings_from_sources,
+    SettingsEvent, SettingsEventKind, SettingsLoadOutcome, SettingsSource, load_settings,
 };
 use state::WorkspaceState;
 
@@ -72,7 +70,7 @@ impl Workspace {
         language_id: Option<&str>,
         edits: Vec<InputEdit>,
     ) -> ParseOutcome {
-        process_parse(
+        parse_document(
             &self.language,
             &self.parser_pool,
             &self.documents,
@@ -84,7 +82,7 @@ impl Workspace {
     }
 
     pub fn language_for_document(&self, uri: &Url) -> Option<String> {
-        resolve_document_language(&self.language, &self.documents, uri)
+        document_language(&self.language, &self.documents, uri)
     }
 
     pub fn has_queries(&self, language: &str) -> bool {
@@ -108,7 +106,7 @@ impl Workspace {
         override_settings: Option<(SettingsSource, serde_json::Value)>,
     ) -> SettingsLoadOutcome {
         let root_path = self.state.root_path();
-        load_settings_from_sources(root_path.as_deref(), override_settings)
+        load_settings(root_path.as_deref(), override_settings)
     }
 
     pub fn document(&self, uri: &Url) -> Option<DocumentRef<'_>> {
@@ -116,16 +114,16 @@ impl Workspace {
     }
 
     pub fn document_text(&self, uri: &Url) -> Option<String> {
-        read_document_text(&self.documents, uri)
+        document_text(&self.documents, uri)
     }
 
     /// Store the latest domain-level semantic tokens snapshot for the document.
     pub fn update_semantic_tokens(&self, uri: &Url, tokens: SemanticTokens) {
-        store_semantic_tokens(&self.documents, uri, tokens);
+        update_semantic_tokens(&self.documents, uri, tokens);
     }
 
     pub fn remove_document(&self, uri: &Url) -> Option<Document> {
-        detach_document(&self.documents, uri)
+        remove_document(&self.documents, uri)
     }
 
     pub fn ensure_language_loaded(&self, language: &str) -> LanguageLoadResult {

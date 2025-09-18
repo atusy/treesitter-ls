@@ -16,7 +16,8 @@ pub fn parse_document(
     edits: Vec<InputEdit>,
 ) -> ParseOutcome {
     let mut events = Vec::new();
-    let language_name = coordinator.get_language_for_path(uri.path())
+    let language_name = coordinator
+        .get_language_for_path(uri.path())
         .or_else(|| language_id.map(|s| s.to_string()));
 
     if let Some(language_name) = language_name {
@@ -31,7 +32,10 @@ pub fn parse_document(
             };
 
             let parsed_tree = parser.parse(&text, old_tree.as_ref());
-            parser_pool.lock().unwrap().release(language_name.clone(), parser);
+            parser_pool
+                .lock()
+                .unwrap()
+                .release(language_name.clone(), parser);
 
             if let Some(tree) = parsed_tree {
                 if !edits.is_empty() {
