@@ -1,32 +1,22 @@
-mod document_ops;
 mod settings;
 mod state;
 
-use document_ops::{
-    document_language, document_reference, document_text, parse_document, remove_document,
-    update_semantic_tokens,
-};
 pub use settings::{
     SettingsEvent, SettingsEventKind, SettingsLoadOutcome, SettingsSource, load_settings,
 };
 use state::WorkspaceState;
 
-use crate::document::{Document, DocumentHandle, DocumentStore};
-use crate::domain::SemanticTokens;
+use crate::document::{DocumentHandle, DocumentStore};
 use crate::domain::settings::{CaptureMappings, WorkspaceSettings};
 use crate::language::{
-    DocumentParserPool, LanguageCoordinator, LanguageEvent, LanguageLoadResult, LanguageLoadSummary,
+    DocumentParserPool, LanguageCoordinator, LanguageLoadResult, LanguageLoadSummary,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tree_sitter::{InputEdit, Query};
+use tree_sitter::Query;
 use url::Url;
 
 pub type DocumentRef<'a> = DocumentHandle<'a>;
-
-pub struct ParseOutcome {
-    pub events: Vec<LanguageEvent>,
-}
 
 pub struct Workspace {
     language: LanguageCoordinator,
@@ -59,30 +49,23 @@ impl Workspace {
         &self.documents
     }
 
+    pub fn parser_pool(&self) -> &Mutex<DocumentParserPool> {
+        &self.parser_pool
+    }
+
     pub fn load_settings(&self, settings: WorkspaceSettings) -> LanguageLoadSummary {
         self.language.load_settings(settings)
     }
 
-    pub fn parse_document(
-        &self,
-        uri: Url,
-        text: String,
-        language_id: Option<&str>,
-        edits: Vec<InputEdit>,
-    ) -> ParseOutcome {
-        parse_document(
-            &self.language,
-            &self.parser_pool,
-            &self.documents,
-            uri,
-            text,
-            language_id,
-            edits,
-        )
-    }
-
     pub fn language_for_document(&self, uri: &Url) -> Option<String> {
-        document_language(&self.language, &self.documents, uri)
+        // Try path-based detection first
+        if let Some(lang) = self.language.get_language_for_path(uri.path()) {
+            return Some(lang);
+        }
+        // Fall back to document's stored language
+        self.documents
+            .get(uri)
+            .and_then(|doc| doc.language_id().map(|s| s.to_string()))
     }
 
     pub fn has_queries(&self, language: &str) -> bool {
@@ -110,20 +93,7 @@ impl Workspace {
     }
 
     pub fn document(&self, uri: &Url) -> Option<DocumentRef<'_>> {
-        document_reference(&self.documents, uri)
-    }
-
-    pub fn document_text(&self, uri: &Url) -> Option<String> {
-        document_text(&self.documents, uri)
-    }
-
-    /// Store the latest domain-level semantic tokens snapshot for the document.
-    pub fn update_semantic_tokens(&self, uri: &Url, tokens: SemanticTokens) {
-        update_semantic_tokens(&self.documents, uri, tokens);
-    }
-
-    pub fn remove_document(&self, uri: &Url) -> Option<Document> {
-        remove_document(&self.documents, uri)
+        self.documents.get(uri)
     }
 
     pub fn ensure_language_loaded(&self, language: &str) -> LanguageLoadResult {

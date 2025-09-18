@@ -60,8 +60,67 @@ impl TreeSitterLs {
         language_id: Option<&str>,
         edits: Vec<InputEdit>,
     ) {
-        let outcome = self.workspace.parse_document(uri, text, language_id, edits);
-        self.handle_language_events(&outcome.events).await;
+        let mut events = Vec::new();
+
+        // Determine language from path or explicit language_id
+        let language_name = self
+            .workspace
+            .language()
+            .get_language_for_path(uri.path())
+            .or_else(|| language_id.map(|s| s.to_string()));
+
+        if let Some(language_name) = language_name {
+            // Ensure language is loaded
+            let load_result = self
+                .workspace
+                .language()
+                .ensure_language_loaded(&language_name);
+            events.extend(load_result.events.clone());
+
+            // Parse the document
+            let parsed_tree = {
+                let mut pool = self.workspace.parser_pool().lock().unwrap();
+                if let Some(mut parser) = pool.acquire(&language_name) {
+                    let old_tree = if !edits.is_empty() {
+                        self.workspace.documents().get_edited_tree(&uri, &edits)
+                    } else {
+                        self.workspace
+                            .documents()
+                            .get(&uri)
+                            .and_then(|doc| doc.tree().cloned())
+                    };
+
+                    let result = parser.parse(&text, old_tree.as_ref());
+                    pool.release(language_name.clone(), parser);
+                    result
+                } else {
+                    None
+                }
+            };
+
+            // Store the parsed document
+            if let Some(tree) = parsed_tree {
+                if !edits.is_empty() {
+                    self.workspace
+                        .documents()
+                        .update_document(uri.clone(), text, Some(tree));
+                } else {
+                    self.workspace.documents().insert(
+                        uri.clone(),
+                        text,
+                        Some(language_name.clone()),
+                        Some(tree),
+                    );
+                }
+
+                self.handle_language_events(&events).await;
+                return;
+            }
+        }
+
+        // Store unparsed document
+        self.workspace.documents().insert(uri, text, None, None);
+        self.handle_language_events(&events).await;
     }
 
     fn get_language_for_document(&self, uri: &Url) -> Option<String> {
@@ -278,7 +337,7 @@ impl LanguageServer for TreeSitterLs {
 
         // Remove the document from the store when it's closed
         // This ensures that reopening the file will properly reinitialize everything
-        self.workspace.remove_document(&uri);
+        self.workspace.documents().remove(&uri);
 
         self.client
             .log_message(MessageType::INFO, "file closed!")
@@ -465,7 +524,9 @@ impl LanguageServer for TreeSitterLs {
         tokens_with_id.result_id = Some(id);
         let stored_tokens = tokens_with_id.clone();
         let lsp_tokens = protocol::to_lsp_semantic_tokens(tokens_with_id);
-        self.workspace.update_semantic_tokens(&uri, stored_tokens);
+        self.workspace
+            .documents()
+            .update_semantic_tokens(&uri, stored_tokens);
         Ok(Some(SemanticTokensResult::Tokens(lsp_tokens)))
     }
 
@@ -559,7 +620,9 @@ impl LanguageServer for TreeSitterLs {
                 tokens_with_id.result_id = Some(id);
                 let stored_tokens = tokens_with_id.clone();
                 let lsp_tokens = protocol::to_lsp_semantic_tokens(tokens_with_id);
-                self.workspace.update_semantic_tokens(&uri, stored_tokens);
+                self.workspace
+                    .documents()
+                    .update_semantic_tokens(&uri, stored_tokens);
                 Ok(Some(SemanticTokensFullDeltaResult::Tokens(lsp_tokens)))
             }
             other => Ok(Some(protocol::to_lsp_semantic_tokens_full_delta(other))),
