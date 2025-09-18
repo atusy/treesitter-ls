@@ -13,7 +13,7 @@ use crate::domain;
 use crate::domain::settings::WorkspaceSettings;
 use crate::language::{LanguageEvent, LanguageLogLevel};
 use crate::lsp::protocol;
-use crate::text::{PositionMapper, SimplePositionMapper};
+use crate::text::SimplePositionMapper;
 use crate::workspace::Workspace;
 use crate::workspace::{SettingsEvent, SettingsEventKind, SettingsSource};
 

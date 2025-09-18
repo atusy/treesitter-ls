@@ -1,24 +1,6 @@
 use crate::domain::{Position, Range};
 
-/// Trait for mapping between LSP positions and byte offsets
-/// Supports both simple text mapping and complex injection scenarios
-pub trait PositionMapper {
-    /// Convert LSP Position to byte offset in the document
-    fn position_to_byte(&self, position: Position) -> Option<usize>;
-
-    /// Convert byte offset to LSP Position
-    fn byte_to_position(&self, offset: usize) -> Option<Position>;
-
-    /// Convert byte range to LSP Range
-    fn byte_range_to_range(&self, start: usize, end: usize) -> Option<Range> {
-        let start_pos = self.byte_to_position(start)?;
-        let end_pos = self.byte_to_position(end)?;
-        Some(Range::new(start_pos, end_pos))
-    }
-}
-
-/// Simple position mapper for single-language documents
-/// This implements the current position mapping logic
+/// Position mapper for converting between LSP positions and byte offsets
 pub struct SimplePositionMapper<'a> {
     text: &'a str,
     line_starts: Vec<usize>,
@@ -37,8 +19,9 @@ impl<'a> SimplePositionMapper<'a> {
     }
 }
 
-impl<'a> PositionMapper for SimplePositionMapper<'a> {
-    fn position_to_byte(&self, position: Position) -> Option<usize> {
+impl<'a> SimplePositionMapper<'a> {
+    /// Convert LSP Position to byte offset in the document
+    pub fn position_to_byte(&self, position: Position) -> Option<usize> {
         let line = position.line as usize;
         let character = position.character as usize;
 
@@ -65,7 +48,8 @@ impl<'a> PositionMapper for SimplePositionMapper<'a> {
         }
     }
 
-    fn byte_to_position(&self, offset: usize) -> Option<Position> {
+    /// Convert byte offset to LSP Position
+    pub fn byte_to_position(&self, offset: usize) -> Option<Position> {
         // Binary search for the line containing this offset
         let line = match self.line_starts.binary_search(&offset) {
             Ok(line) => line,
@@ -102,6 +86,13 @@ impl<'a> PositionMapper for SimplePositionMapper<'a> {
         };
 
         Some(Position::new(line as u32, character as u32))
+    }
+
+    /// Convert byte range to LSP Range
+    pub fn byte_range_to_range(&self, start: usize, end: usize) -> Option<Range> {
+        let start_pos = self.byte_to_position(start)?;
+        let end_pos = self.byte_to_position(end)?;
+        Some(Range::new(start_pos, end_pos))
     }
 }
 

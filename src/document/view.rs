@@ -12,9 +12,9 @@ pub trait DocumentView {
     /// Access the language ID
     fn language_id(&self) -> Option<&str>;
 
-    /// Build a position mapper suited to the document's layering configuration.
-    fn position_mapper(&self) -> Box<dyn crate::text::PositionMapper + '_> {
-        Box::new(crate::text::SimplePositionMapper::new(self.text()))
+    /// Get a position mapper for this document
+    fn position_mapper(&self) -> crate::text::SimplePositionMapper<'_> {
+        crate::text::SimplePositionMapper::new(self.text())
     }
 }
 

@@ -94,7 +94,7 @@ fn test_document_store_update_preserves_semantic_tokens() {
 
     // Update document (this also resets semantic tokens)
     let text2 = "fn main() { println!(\"hello\"); }";
-    store.update_document(uri.clone(), text2.to_string());
+    store.update_document(uri.clone(), text2.to_string(), None);
 
     // Check that semantic tokens were reset
     {

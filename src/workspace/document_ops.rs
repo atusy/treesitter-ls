@@ -38,7 +38,7 @@ pub fn parse_document(
 
             if let Some(tree) = parsed_tree {
                 if !edits.is_empty() {
-                    documents.update_document_with_tree(uri.clone(), text, tree);
+                    documents.update_document(uri.clone(), text, Some(tree));
                 } else {
                     documents.insert(uri.clone(), text, Some(language_name.clone()), Some(tree));
                 }

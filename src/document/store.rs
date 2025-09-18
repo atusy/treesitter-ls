@@ -55,17 +55,29 @@ impl DocumentStore {
         self.documents.get(uri).map(DocumentHandle::new)
     }
 
-    pub fn update_document(&self, uri: Url, text: String) {
-        // Preserve language and tree from existing document if available
-        let existing = self.documents.get(&uri);
-        let language_id = existing.as_ref().and_then(|doc| doc.language_id().map(String::from));
-        let tree = existing.and_then(|doc| doc.tree().cloned());
+    pub fn update_document(&self, uri: Url, text: String, new_tree: Option<Tree>) {
+        // Preserve language_id from existing document if available
+        let language_id = self
+            .documents
+            .get(&uri)
+            .and_then(|doc| doc.language_id().map(String::from));
 
-        if let (Some(lang), Some(t)) = (language_id, tree) {
-            let new_doc = Document::with_tree(text, lang, t);
-            self.documents.insert(uri, new_doc);
-        } else {
-            self.documents.insert(uri, Document::new(text));
+        match (language_id, new_tree) {
+            (Some(lang), Some(tree)) => {
+                self.documents.insert(uri, Document::with_tree(text, lang, tree));
+            }
+            (Some(lang), None) => {
+                // Preserve existing tree if no new tree provided
+                let existing_tree = self.documents.get(&uri).and_then(|doc| doc.tree().cloned());
+                if let Some(tree) = existing_tree {
+                    self.documents.insert(uri, Document::with_tree(text, lang, tree));
+                } else {
+                    self.documents.insert(uri, Document::new(text));
+                }
+            }
+            _ => {
+                self.documents.insert(uri, Document::new(text));
+            }
         }
     }
 
@@ -83,22 +95,6 @@ impl DocumentStore {
         })
     }
 
-    /// Update document with a new tree after incremental parsing
-    pub fn update_document_with_tree(&self, uri: Url, text: String, tree: Tree) {
-        // Get the language_id from existing document
-        let language_id = self
-            .documents
-            .get(&uri)
-            .and_then(|doc| doc.language_id().map(|s| s.to_string()));
-
-        if let Some(language_id) = language_id {
-            let new_doc = Document::with_tree(text, language_id, tree);
-            self.documents.insert(uri, new_doc);
-        } else {
-            // If no language_id, just update the text
-            self.update_document(uri, text);
-        }
-    }
 
     pub fn update_semantic_tokens(&self, uri: &Url, tokens: SemanticSnapshot) {
         if let Some(mut doc) = self.documents.get_mut(uri) {
@@ -147,7 +143,7 @@ mod tests {
         store.insert(uri.clone(), text1, Some("rust".to_string()), Some(tree));
 
         // Update text
-        store.update_document(uri.clone(), text2.clone());
+        store.update_document(uri.clone(), text2.clone(), None);
 
         // Language info should be preserved
         let doc = store.get(&uri).unwrap();
@@ -173,7 +169,7 @@ mod tests {
         // Update with new tree
         let new_text = "let x = 2;".to_string();
         let new_tree = parser.parse(&new_text, Some(&tree)).unwrap();
-        store.update_document_with_tree(uri.clone(), new_text.clone(), new_tree);
+        store.update_document(uri.clone(), new_text.clone(), Some(new_tree));
 
         let doc = store.get(&uri).unwrap();
         assert_eq!(doc.text(), new_text);
