@@ -224,78 +224,6 @@ fn extract_injection_language(
     None
 }
 
-/// Detect if we're inside an injected language region
-fn detect_injection(node: &Node, _root: &Node, text: &str) -> Option<Vec<String>> {
-    // Check for markdown code blocks
-    if node.kind() == "code_fence_content" {
-        // Look for the language in the info string
-        if let Some(parent) = node.parent()
-            && parent.kind() == "fenced_code_block"
-        {
-            // Find the info_string child
-            for i in 0..parent.child_count() {
-                if let Some(child) = parent.child(i)
-                    && child.kind() == "info_string"
-                {
-                    let lang = text[child.byte_range()].trim();
-                    if !lang.is_empty() {
-                        return Some(vec!["markdown".to_string(), lang.to_string()]);
-                    }
-                }
-            }
-        }
-    }
-
-    // Check if we're in a string_content node (for Rust regex patterns)
-    if node.kind() != "string_content" {
-        return None;
-    }
-
-    // Check if parent is raw_string_literal
-    let raw_string = node.parent()?;
-    if raw_string.kind() != "raw_string_literal" {
-        return None;
-    }
-
-    // Check if this is inside a call_expression
-    let mut current = raw_string.parent()?;
-
-    // Navigate up to find the call_expression
-    // (might be inside array_expression for RegexSet)
-    while current.kind() != "call_expression" {
-        current.parent()?;
-        current = current.parent()?;
-    }
-
-    // Check if this is a Regex::new call
-    let function_node = current.child_by_field_name("function")?;
-
-    // Check for scoped_identifier (Regex::new or regex::Regex::new)
-    if function_node.kind() == "scoped_identifier" {
-        let name_node = function_node.child_by_field_name("name")?;
-        let name = &text[name_node.byte_range()];
-
-        if name == "new" {
-            // Check if the path contains Regex
-            let path_node = function_node.child_by_field_name("path")?;
-            let path_text = &text[path_node.byte_range()];
-
-            if path_text == "Regex"
-                || path_text == "RegexBuilder"
-                || path_text == "RegexSet"
-                || path_text == "RegexSetBuilder"
-                || path_text.ends_with("Regex")
-                || path_text.ends_with("RegexBuilder")
-                || path_text.ends_with("RegexSet")
-                || path_text.ends_with("RegexSetBuilder")
-            {
-                return Some(vec!["rust".to_string(), "regex".to_string()]);
-            }
-        }
-    }
-
-    None
-}
 
 /// Produce code actions that reorder a parameter within a function parameter list.
 /// The implementation is language-agnostic for grammars that use a `parameters` node
@@ -345,8 +273,7 @@ pub fn handle_code_actions_with_injection_query(
             None
         }
     } else {
-        // Fallback to hardcoded detection for backward compatibility
-        detect_injection(&node_at_cursor, &root, text)
+        None
     };
 
     // Always create inspect token action for the node at cursor
@@ -646,7 +573,7 @@ mod tests {
     }
 
     #[test]
-    fn inspect_token_should_detect_regex_injection() {
+    fn inspect_token_without_injection_query_shows_base_language() {
         let mut parser = Parser::new();
         parser
             .set_language(&tree_sitter_rust::LANGUAGE.into())
@@ -667,7 +594,7 @@ mod tests {
             .descendant_for_byte_range(cursor_byte, cursor_byte)
             .unwrap();
 
-        // Create code action with injection detection
+        // Create code action WITHOUT injection query
         let capture_mappings: CaptureMappings = HashMap::new();
         let cursor_range = Range::new(cursor_pos, cursor_pos);
 
@@ -705,10 +632,10 @@ mod tests {
             .reason
             .clone();
 
-        // Should detect regex injection
+        // Without injection query, should only show base language
         assert!(
-            reason.contains("Language: rust -> regex"),
-            "Should detect regex injection, but got: {}",
+            reason.contains("Language: rust") && !reason.contains("Language: rust -> regex"),
+            "Without injection query, should only show base language, but got: {}",
             reason
         );
     }
@@ -791,19 +718,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn inspect_token_should_detect_markdown_code_block_injection() {
-        // This test requires markdown parser which may not be available in CI
-        // So we'll just test the logic with a mock
-        let text = "```lua\nlocal x = 42\n```";
-
-        // Since we can't easily create a markdown tree in tests,
-        // we'll just verify the detection logic works
-        // In real usage, the markdown parser would create the proper nodes
-
-        // For now, just ensure the function compiles and handles markdown
-        assert!(true, "Markdown injection detection is implemented");
-    }
 
     #[test]
     fn inspect_token_should_detect_injection_via_query() {
