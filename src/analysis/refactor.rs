@@ -23,7 +23,6 @@ use tower_lsp::lsp_types::{
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 use url::Url;
 
-
 /// Create an inspect token code action for the node at cursor
 fn create_inspect_token_action(
     node: &Node,
@@ -997,8 +996,6 @@ fn main() {
             );
         }
     }
-
-
 
     #[test]
     fn inspect_token_should_use_injection_query_when_provided() {

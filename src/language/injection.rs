@@ -379,13 +379,18 @@ mod tests {
 
         // Now test our detection from inside the comment
         let node_in_comment = find_node_at_byte(&root, 14).expect("node in comment");
-        let result = detect_injection_with_content(&node_in_comment, &root, text, Some(&query), "rust");
+        let result =
+            detect_injection_with_content(&node_in_comment, &root, text, Some(&query), "rust");
 
         // Should detect only one injection (first pattern takes precedence)
         assert!(result.is_some(), "Should find injection");
         let (hierarchy, _) = result.unwrap();
         // Should only use the first matching pattern, not both
-        assert_eq!(hierarchy, vec!["rust", "doc"], "Should only show first injection");
+        assert_eq!(
+            hierarchy,
+            vec!["rust", "doc"],
+            "Should only show first injection"
+        );
     }
 
     // Helper function to find a node at a specific byte position
