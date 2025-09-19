@@ -117,7 +117,74 @@ fn create_injection_aware_action(
     let result = if let Some(injected_node) =
         injected_root.descendant_for_byte_range(relative_byte, relative_byte)
     {
-        // Successfully found node in injected content
+        // Check if there's another nested injection within this injected content
+        let injection_query = coord.get_injection_query(injected_lang);
+        if let Some(inj_query) = injection_query {
+            // Look for nested injection in the parsed injected content
+            if let Some((nested_hierarchy, nested_content_node)) =
+                injection::detect_injection_with_content(
+                    &injected_node,
+                    &injected_root,
+                    content_text,
+                    Some(inj_query.as_ref()),
+                    injected_lang
+                )
+            {
+                // Found a nested injection! Update the hierarchy
+                let mut full_hierarchy = hierarchy.clone();
+                // Add the nested languages (skip the first one as it's the current injected_lang)
+                for lang in nested_hierarchy.iter().skip(1) {
+                    full_hierarchy.push(lang.clone());
+                }
+
+                // Try to parse the nested content to get the correct node type and captures
+                if let Some(mut nested_parser) = pool.acquire(nested_hierarchy.last().unwrap()) {
+                    let nested_content_text = &content_text[nested_content_node.byte_range()];
+                    if let Some(nested_tree) = nested_parser.parse(nested_content_text, None) {
+                        let nested_relative_byte = relative_byte.saturating_sub(nested_content_node.start_byte());
+                        let nested_root = nested_tree.root_node();
+
+                        if let Some(deeply_nested_node) = nested_root.descendant_for_byte_range(nested_relative_byte, nested_relative_byte) {
+                            // Get queries for the deeply nested language
+                            let nested_lang = nested_hierarchy.last().unwrap();
+                            let nested_highlight = coord.get_highlight_query(nested_lang);
+                            let nested_locals = coord.get_locals_query(nested_lang);
+                            let nested_queries = nested_highlight
+                                .as_ref()
+                                .map(|hq| (hq.as_ref(), nested_locals.as_ref().map(|lq| lq.as_ref())));
+
+                            let action = create_injection_aware_inspect_token_action(
+                                &deeply_nested_node,
+                                &nested_root,
+                                nested_content_text,
+                                nested_queries,
+                                Some((nested_lang, &coord.get_capture_mappings())),
+                                Some(&full_hierarchy),
+                            );
+
+                            pool.release(nested_hierarchy.last().unwrap().to_string(), nested_parser);
+                            pool.release(injected_lang.to_string(), parser);
+                            return action;
+                        }
+                    }
+                    pool.release(nested_hierarchy.last().unwrap().to_string(), nested_parser);
+                }
+
+                // If we couldn't parse the nested content, still show the full hierarchy
+                let action = create_injection_aware_inspect_token_action(
+                    &injected_node,
+                    &injected_root,
+                    content_text,
+                    injected_queries,
+                    Some((injected_lang, &coord.get_capture_mappings())),
+                    Some(&full_hierarchy),
+                );
+                pool.release(injected_lang.to_string(), parser);
+                return action;
+            }
+        }
+
+        // No nested injection found, show the current level
         create_injection_aware_inspect_token_action(
             &injected_node,
             &injected_root,
