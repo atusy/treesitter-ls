@@ -1,4 +1,4 @@
-use crate::language::injection_capture::InjectionCapture;
+use crate::language::injection_capture::{InjectionCapture, InjectionOffset};
 use tree_sitter::{Node, Query, QueryCursor, QueryMatch, StreamingIterator};
 
 /// Detects if a node is inside an injected language region using Tree-sitter injection queries.
@@ -114,13 +114,20 @@ pub fn detect_injection_with_content_and_offset<'a>(
     // Create capture with language and range
     let mut capture = InjectionCapture::new(lang.clone(), *start_byte..*end_byte);
 
-    // Apply hardcoded offset rules based on language transition
-    if base_language == "lua" && lang == "luadoc" {
-        // lua->luadoc: skip first hyphen character
-        capture.offset = (0, 1, 0, 0);
-    }
+    // Apply offset rules based on language transition
+    capture.offset = get_injection_offset(base_language, lang);
 
     Some(capture)
+}
+
+/// Get offset rules for specific language transitions
+fn get_injection_offset(base_language: &str, injected_language: &str) -> InjectionOffset {
+    match (base_language, injected_language) {
+        // lua->luadoc: skip first hyphen character
+        ("lua", "luadoc") => (0, 1, 0, 0),
+        // Default: no offset
+        _ => (0, 0, 0, 0),
+    }
 }
 
 /// Collects all injection regions that contain the given node
