@@ -80,7 +80,18 @@ pub fn detect_injection_with_content<'a>(
     root: &Node<'a>,
     text: &str,
     injection_query: Option<&Query>,
-    _base_language: &str,
+    base_language: &str,
+) -> Option<InjectionCapture> {
+    detect_injection_with_content_and_offset(node, root, text, injection_query, base_language)
+}
+
+/// Detects injection with offset calculation based on language rules
+pub fn detect_injection_with_content_and_offset<'a>(
+    node: &Node<'a>,
+    root: &Node<'a>,
+    text: &str,
+    injection_query: Option<&Query>,
+    base_language: &str,
 ) -> Option<InjectionCapture> {
     let injections = collect_injection_regions(node, root, text, injection_query)?;
 
@@ -100,9 +111,16 @@ pub fn detect_injection_with_content<'a>(
     let innermost = sorted_injections.last()?;
     let (start_byte, end_byte, lang, _node) = innermost;
 
-    // For now, just return the innermost language with default offset
-    // Later steps will add hierarchy support and offset calculation
-    Some(InjectionCapture::new(lang.clone(), *start_byte..*end_byte))
+    // Create capture with language and range
+    let mut capture = InjectionCapture::new(lang.clone(), *start_byte..*end_byte);
+
+    // Apply hardcoded offset rules based on language transition
+    if base_language == "lua" && lang == "luadoc" {
+        // lua->luadoc: skip first hyphen character
+        capture.offset = (0, 1, 0, 0);
+    }
+
+    Some(capture)
 }
 
 /// Collects all injection regions that contain the given node
@@ -190,8 +208,55 @@ mod tests {
     }
 
     #[test]
+    fn test_injection_with_lua_luadoc_offset() {
+        use tree_sitter::Parser;
+
+        // Test that lua->luadoc injection gets proper offset
+        let mut parser = Parser::new();
+        let language = tree_sitter_rust::LANGUAGE.into();
+        parser.set_language(&language).expect("load rust grammar");
+
+        // Using rust string to simulate lua comment "---@param"
+        let text = r#"let comment = "luadoc content here";"#;
+        let tree = parser.parse(text, None).expect("parse rust");
+        let root = tree.root_node();
+
+        // Create a query that simulates lua->luadoc injection
+        let query_str = r#"
+        (string_literal
+          (string_content) @injection.content
+          (#set! injection.language "luadoc"))
+        "#;
+
+        let query = Query::new(&language, query_str).expect("valid query");
+
+        // Get the string content node
+        let string_content_node = root
+            .descendant_for_byte_range(16, 16)
+            .expect("node in string");
+
+        // Call detect_injection_with_content_and_offset which we'll implement
+        let result = detect_injection_with_content_and_offset(
+            &string_content_node,
+            &root,
+            text,
+            Some(&query),
+            "lua",
+        );
+        assert!(result.is_some());
+
+        let capture = result.unwrap();
+
+        // Verify lua->luadoc gets offset (0, 1, 0, 0)
+        assert_eq!(
+            capture.offset,
+            (0, 1, 0, 0),
+            "lua->luadoc should have offset (0, 1, 0, 0)"
+        );
+    }
+
+    #[test]
     fn test_detect_injection_returns_injection_capture() {
-        
         use tree_sitter::Parser;
 
         let mut parser = Parser::new();

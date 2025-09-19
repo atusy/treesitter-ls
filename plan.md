@@ -60,12 +60,12 @@ DoD: InjectionCapture struct has an offset field that stores (0, 0, 0, 0) by def
 
 DoD: Modify `detect_injection_with_content` in `src/language/injection.rs` to return an `InjectionCapture` with offset field (still (0, 0, 0, 0)), and update `refactor.rs` to use this structure. This creates the pipeline for offset data to flow from detection to the inspect action.
 
-* [ ] RED: Write test that `detect_injection_with_content` returns InjectionCapture with offset
-* [ ] GREEN: Modify injection.rs to return InjectionCapture, update refactor.rs to consume it
-* [ ] CHECK: must pass `make format lint test` without errors and warnings
-* [ ] COMMIT
-* [ ] REFACTOR: Simplify the integration if needed
-* [ ] COMMIT
+* [x] RED: Write test that `detect_injection_with_content` returns InjectionCapture with offset
+* [x] GREEN: Modify injection.rs to return InjectionCapture, update refactor.rs to consume it
+* [x] CHECK: must pass `make format lint test` without errors and warnings
+* [x] COMMIT
+* [x] REFACTOR: Simplify the integration if needed
+* [x] COMMIT
 
 ## Step 3: Apply offset when checking cursor position & implement lua/luadoc rule
 
