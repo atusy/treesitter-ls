@@ -192,9 +192,8 @@ fn detect_injection_via_query(
                 if node.start_byte() >= captured_node.start_byte()
                     && node.end_byte() <= captured_node.end_byte()
                 {
-                    // Look for the language in query properties
-                    if let Some(language) = extract_injection_language(query, match_, capture.index)
-                    {
+                    // Look for the language in query properties or captures
+                    if let Some(language) = extract_injection_language(query, match_, text) {
                         return Some(vec![base_language.to_string(), language]);
                     }
                 }
@@ -205,13 +204,13 @@ fn detect_injection_via_query(
     None
 }
 
-/// Extract the injection language from query properties
+/// Extract the injection language from query properties or captures
 fn extract_injection_language(
     query: &Query,
     match_: &QueryMatch,
-    _capture_index: u32,
+    text: &str,
 ) -> Option<String> {
-    // Check for #set! injection.language "..."
+    // First check for #set! injection.language "..."
     for prop in query.property_settings(match_.pattern_index) {
         if prop.key.as_ref() == "injection.language"
             && let Some(value) = &prop.value
@@ -220,7 +219,15 @@ fn extract_injection_language(
         }
     }
 
-    // TODO: Handle dynamic language capture (@injection.language)
+    // Handle dynamic language capture (@injection.language)
+    for capture in match_.captures {
+        let capture_name = query.capture_names().get(capture.index as usize)?;
+        if *capture_name == "injection.language" {
+            let lang_text = &text[capture.node.byte_range()];
+            return Some(lang_text.to_string());
+        }
+    }
+
     None
 }
 
