@@ -114,99 +114,157 @@ fn create_injection_aware_action(
     let relative_byte = cursor_byte.saturating_sub(content_node.start_byte());
     let injected_root = injected_tree.root_node();
 
-    let result = if let Some(injected_node) =
-        injected_root.descendant_for_byte_range(relative_byte, relative_byte)
-    {
-        // Check if there's another nested injection within this injected content
-        let injection_query = coord.get_injection_query(injected_lang);
-        if let Some(inj_query) = injection_query {
-            // Look for nested injection in the parsed injected content
-            if let Some((nested_hierarchy, nested_content_node)) =
-                injection::detect_injection_with_content(
-                    &injected_node,
-                    &injected_root,
-                    content_text,
-                    Some(inj_query.as_ref()),
-                    injected_lang
-                )
-            {
-                // Found a nested injection! Update the hierarchy
-                let mut full_hierarchy = hierarchy.clone();
-                // Add the nested languages (skip the first one as it's the current injected_lang)
-                for lang in nested_hierarchy.iter().skip(1) {
-                    full_hierarchy.push(lang.clone());
-                }
-
-                // Try to parse the nested content to get the correct node type and captures
-                if let Some(mut nested_parser) = pool.acquire(nested_hierarchy.last().unwrap()) {
-                    let nested_content_text = &content_text[nested_content_node.byte_range()];
-                    if let Some(nested_tree) = nested_parser.parse(nested_content_text, None) {
-                        let nested_relative_byte = relative_byte.saturating_sub(nested_content_node.start_byte());
-                        let nested_root = nested_tree.root_node();
-
-                        if let Some(deeply_nested_node) = nested_root.descendant_for_byte_range(nested_relative_byte, nested_relative_byte) {
-                            // Get queries for the deeply nested language
-                            let nested_lang = nested_hierarchy.last().unwrap();
-                            let nested_highlight = coord.get_highlight_query(nested_lang);
-                            let nested_locals = coord.get_locals_query(nested_lang);
-                            let nested_queries = nested_highlight
-                                .as_ref()
-                                .map(|hq| (hq.as_ref(), nested_locals.as_ref().map(|lq| lq.as_ref())));
-
-                            let action = create_injection_aware_inspect_token_action(
-                                &deeply_nested_node,
-                                &nested_root,
-                                nested_content_text,
-                                nested_queries,
-                                Some((nested_lang, &coord.get_capture_mappings())),
-                                Some(&full_hierarchy),
-                            );
-
-                            pool.release(nested_hierarchy.last().unwrap().to_string(), nested_parser);
-                            pool.release(injected_lang.to_string(), parser);
-                            return action;
-                        }
-                    }
-                    pool.release(nested_hierarchy.last().unwrap().to_string(), nested_parser);
-                }
-
-                // If we couldn't parse the nested content, still show the full hierarchy
-                let action = create_injection_aware_inspect_token_action(
-                    &injected_node,
-                    &injected_root,
-                    content_text,
-                    injected_queries,
-                    Some((injected_lang, &coord.get_capture_mappings())),
-                    Some(&full_hierarchy),
-                );
-                pool.release(injected_lang.to_string(), parser);
-                return action;
-            }
-        }
-
-        // No nested injection found, show the current level
-        create_injection_aware_inspect_token_action(
-            &injected_node,
-            &injected_root,
-            content_text,
-            injected_queries,
-            Some((injected_lang, &coord.get_capture_mappings())),
-            Some(&hierarchy),
-        )
-    } else {
-        // Could not find node in injected content, fall back to base language
-        create_inspect_token_action_with_hierarchy(
+    // Find the node at the cursor position in the injected content
+    let Some(injected_node) = injected_root.descendant_for_byte_range(relative_byte, relative_byte)
+    else {
+        pool.release(injected_lang.to_string(), parser);
+        return create_inspect_token_action_with_hierarchy(
             node_at_cursor,
             root,
             text,
             queries,
             capture_context,
             Some(&hierarchy),
-        )
+        );
     };
+
+    // Try to handle nested injection
+    let result = handle_nested_injection(
+        &injected_node,
+        &injected_root,
+        content_text,
+        injected_lang,
+        relative_byte,
+        &hierarchy,
+        coord,
+        pool,
+        injected_queries,
+    );
 
     pool.release(injected_lang.to_string(), parser);
     result
+}
+
+/// Handles nested injection detection and processing
+#[allow(clippy::too_many_arguments)]
+fn handle_nested_injection(
+    injected_node: &Node,
+    injected_root: &Node,
+    content_text: &str,
+    injected_lang: &str,
+    relative_byte: usize,
+    hierarchy: &[String],
+    coord: &crate::language::LanguageCoordinator,
+    pool: &mut crate::language::DocumentParserPool,
+    injected_queries: Option<(&Query, Option<&Query>)>,
+) -> CodeActionOrCommand {
+    // Check for nested injection in the current injected content
+    let injection_query = coord.get_injection_query(injected_lang);
+
+    if let Some(inj_query) = injection_query
+        && let Some((nested_hierarchy, nested_content_node)) =
+            injection::detect_injection_with_content(
+                injected_node,
+                injected_root,
+                content_text,
+                Some(inj_query.as_ref()),
+                injected_lang,
+            )
+    {
+        return process_nested_injection(
+            nested_hierarchy,
+            nested_content_node,
+            hierarchy,
+            content_text,
+            relative_byte,
+            injected_node,
+            injected_root,
+            injected_queries,
+            injected_lang,
+            coord,
+            pool,
+        );
+    }
+
+    // No nested injection found, create action for current level
+    create_injection_aware_inspect_token_action(
+        injected_node,
+        injected_root,
+        content_text,
+        injected_queries,
+        Some((injected_lang, &coord.get_capture_mappings())),
+        Some(hierarchy),
+    )
+}
+
+/// Processes a detected nested injection
+#[allow(clippy::too_many_arguments)]
+fn process_nested_injection(
+    nested_hierarchy: Vec<String>,
+    nested_content_node: Node,
+    hierarchy: &[String],
+    content_text: &str,
+    relative_byte: usize,
+    injected_node: &Node,
+    injected_root: &Node,
+    injected_queries: Option<(&Query, Option<&Query>)>,
+    injected_lang: &str,
+    coord: &crate::language::LanguageCoordinator,
+    pool: &mut crate::language::DocumentParserPool,
+) -> CodeActionOrCommand {
+    // Build full hierarchy
+    let mut full_hierarchy = hierarchy.to_vec();
+    for lang in nested_hierarchy.iter().skip(1) {
+        full_hierarchy.push(lang.clone());
+    }
+
+    let nested_lang = nested_hierarchy.last().unwrap();
+
+    // Try to parse the nested content
+    if let Some(mut nested_parser) = pool.acquire(nested_lang) {
+        let nested_content_text = &content_text[nested_content_node.byte_range()];
+
+        if let Some(nested_tree) = nested_parser.parse(nested_content_text, None) {
+            let nested_relative_byte =
+                relative_byte.saturating_sub(nested_content_node.start_byte());
+            let nested_root = nested_tree.root_node();
+
+            if let Some(deeply_nested_node) =
+                nested_root.descendant_for_byte_range(nested_relative_byte, nested_relative_byte)
+            {
+                // Get queries for the nested language
+                let nested_highlight = coord.get_highlight_query(nested_lang);
+                let nested_locals = coord.get_locals_query(nested_lang);
+                let nested_queries = nested_highlight
+                    .as_ref()
+                    .map(|hq| (hq.as_ref(), nested_locals.as_ref().map(|lq| lq.as_ref())));
+
+                let action = create_injection_aware_inspect_token_action(
+                    &deeply_nested_node,
+                    &nested_root,
+                    nested_content_text,
+                    nested_queries,
+                    Some((nested_lang, &coord.get_capture_mappings())),
+                    Some(&full_hierarchy),
+                );
+
+                pool.release(nested_lang.to_string(), nested_parser);
+                return action;
+            }
+        }
+
+        pool.release(nested_lang.to_string(), nested_parser);
+    }
+
+    // Couldn't parse nested content, but still show full hierarchy
+    create_injection_aware_inspect_token_action(
+        injected_node,
+        injected_root,
+        content_text,
+        injected_queries,
+        Some((injected_lang, &coord.get_capture_mappings())),
+        Some(&full_hierarchy),
+    )
 }
 
 /// Creates an inspect token action with injected language information

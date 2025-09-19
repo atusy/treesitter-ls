@@ -24,45 +24,8 @@ pub fn detect_injection(
     injection_query: Option<&Query>,
     base_language: &str,
 ) -> Option<Vec<String>> {
-    let query = injection_query?;
-
-    // Run the query on the entire tree
-    let mut cursor = QueryCursor::new();
-    let mut matches = cursor.matches(query, *root, text.as_bytes());
-
-    // Look for matches where our node is captured as @injection.content
-    while let Some(match_) = matches.next() {
-        if let Some(language) = check_injection_match(node, match_, query, text) {
-            return Some(vec![base_language.to_string(), language]);
-        }
-    }
-
-    None
-}
-
-/// Checks if a query match represents an injection containing the given node
-fn check_injection_match(
-    node: &Node,
-    match_: &QueryMatch,
-    query: &Query,
-    text: &str,
-) -> Option<String> {
-    // Find @injection.content capture
-    for capture in match_.captures {
-        let capture_name = query.capture_names().get(capture.index as usize)?;
-
-        if *capture_name == "injection.content" {
-            let captured_node = capture.node;
-
-            // Check if our node is within this injection region
-            if is_node_within(node, &captured_node) {
-                // Extract the injection language
-                return extract_injection_language(query, match_, text);
-            }
-        }
-    }
-
-    None
+    detect_injection_with_content(node, root, text, injection_query, base_language)
+        .map(|(hierarchy, _)| hierarchy)
 }
 
 /// Checks if a node is within the bounds of another node
@@ -118,6 +81,39 @@ pub fn detect_injection_with_content<'a>(
     injection_query: Option<&Query>,
     base_language: &str,
 ) -> Option<(Vec<String>, Node<'a>)> {
+    let injections = collect_injection_regions(node, root, text, injection_query)?;
+
+    if injections.is_empty() {
+        return None;
+    }
+
+    // Sort injections by their range (outer to inner)
+    let mut sorted_injections = injections;
+    sorted_injections.sort_by(|a, b| {
+        // Sort by start byte (ascending), then by end byte (descending)
+        // This ensures outer injections come before inner ones
+        a.0.cmp(&b.0).then(b.1.cmp(&a.1))
+    });
+
+    // Build the language hierarchy from outermost to innermost
+    let mut hierarchy = vec![base_language.to_string()];
+    for (_, _, lang, _) in &sorted_injections {
+        hierarchy.push(lang.clone());
+    }
+
+    // Return the innermost content node
+    let innermost_node = sorted_injections.last().map(|(_, _, _, node)| *node)?;
+
+    Some((hierarchy, innermost_node))
+}
+
+/// Collects all injection regions that contain the given node
+fn collect_injection_regions<'a>(
+    node: &Node<'a>,
+    root: &Node<'a>,
+    text: &str,
+    injection_query: Option<&Query>,
+) -> Option<Vec<(usize, usize, String, Node<'a>)>> {
     let query = injection_query?;
 
     // Run the query on the entire tree
@@ -128,45 +124,46 @@ pub fn detect_injection_with_content<'a>(
     let mut injections = Vec::new();
 
     while let Some(match_) = matches.next() {
-        // Find @injection.content capture
-        for capture in match_.captures {
-            if let Some(capture_name) = query.capture_names().get(capture.index as usize)
-                && *capture_name == "injection.content"
-            {
-                let content_node = capture.node;
+        if let Some((content_node, language)) =
+            find_injection_content_and_language(node, match_, query, text)
+        {
+            injections.push((
+                content_node.start_byte(),
+                content_node.end_byte(),
+                language,
+                content_node,
+            ));
+        }
+    }
 
-                // Check if our node is within this injection region
-                if is_node_within(node, &content_node) {
-                    // Extract the injection language
-                    if let Some(language) = extract_injection_language(query, match_, text) {
-                        injections.push((content_node.start_byte(), content_node.end_byte(), language, content_node));
-                    }
+    Some(injections)
+}
+
+/// Finds the injection content node and language if the given node is within it
+fn find_injection_content_and_language<'a>(
+    node: &Node<'a>,
+    match_: &QueryMatch<'_, 'a>,
+    query: &Query,
+    text: &str,
+) -> Option<(Node<'a>, String)> {
+    // Find @injection.content capture
+    for capture in match_.captures {
+        if let Some(capture_name) = query.capture_names().get(capture.index as usize)
+            && *capture_name == "injection.content"
+        {
+            let content_node = capture.node;
+
+            // Check if our node is within this injection region
+            if is_node_within(node, &content_node) {
+                // Extract the injection language
+                if let Some(language) = extract_injection_language(query, match_, text) {
+                    return Some((content_node, language));
                 }
             }
         }
     }
 
-    if injections.is_empty() {
-        return None;
-    }
-
-    // Sort injections by their range (outer to inner)
-    injections.sort_by(|a, b| {
-        // Sort by start byte (ascending), then by end byte (descending)
-        // This ensures outer injections come before inner ones
-        a.0.cmp(&b.0).then(b.1.cmp(&a.1))
-    });
-
-    // Build the language hierarchy from outermost to innermost
-    let mut hierarchy = vec![base_language.to_string()];
-    for (_, _, lang, _) in &injections {
-        hierarchy.push(lang.clone());
-    }
-
-    // Return the innermost content node
-    let innermost_node = injections.last().map(|(_, _, _, node)| *node)?;
-
-    Some((hierarchy, innermost_node))
+    None
 }
 
 #[cfg(test)]
@@ -212,7 +209,8 @@ mod tests {
         let node_in_string = find_node_at_byte(&root, 20).expect("node at position");
 
         // Detect injection with content
-        let result = detect_injection_with_content(&node_in_string, &root, text, Some(&query), "rust");
+        let result =
+            detect_injection_with_content(&node_in_string, &root, text, Some(&query), "rust");
 
         assert!(result.is_some());
         let (hierarchy, _content_node) = result.unwrap();
