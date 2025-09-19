@@ -23,6 +23,7 @@ use tower_lsp::lsp_types::{
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 use url::Url;
 
+
 /// Create an inspect token code action for the node at cursor
 fn create_inspect_token_action(
     node: &Node,
@@ -34,7 +35,11 @@ fn create_inspect_token_action(
     create_inspect_token_action_with_hierarchy(node, root, text, queries, capture_context, None)
 }
 
-/// Helper function to create injection-aware action with clean fallback logic
+/// Creates a code action that understands language injections.
+///
+/// Parses the injected content with the appropriate language parser and
+/// provides accurate token information from the injected language context.
+/// Falls back gracefully if parsing fails at any stage.
 #[allow(clippy::too_many_arguments)]
 fn create_injection_aware_action(
     node_at_cursor: &Node,
@@ -145,7 +150,11 @@ fn create_injection_aware_action(
     result
 }
 
-/// Handles nested injection detection and processing
+/// Recursively detects and processes nested language injections.
+///
+/// Checks if the current injected language has its own injection query
+/// and recursively processes any deeper injections found. Limited to
+/// MAX_INJECTION_DEPTH to prevent stack overflow.
 #[allow(clippy::too_many_arguments)]
 fn handle_nested_injection(
     injected_node: &Node,
@@ -209,7 +218,10 @@ fn handle_nested_injection(
     )
 }
 
-/// Processes a detected nested injection
+/// Processes a detected nested injection by parsing it and checking for deeper injections.
+///
+/// This function is part of the recursion chain: it parses the nested content,
+/// then calls back to `handle_nested_injection` to check for even deeper injections.
 #[allow(clippy::too_many_arguments)]
 fn process_nested_injection(
     nested_hierarchy: Vec<String>,
