@@ -1,3 +1,4 @@
+use crate::language::injection_capture::InjectionCapture;
 use tree_sitter::{Node, Query, QueryCursor, QueryMatch, StreamingIterator};
 
 /// Detects if a node is inside an injected language region using Tree-sitter injection queries.
@@ -25,7 +26,7 @@ pub fn detect_injection(
     base_language: &str,
 ) -> Option<Vec<String>> {
     detect_injection_with_content(node, root, text, injection_query, base_language)
-        .map(|(hierarchy, _)| hierarchy)
+        .map(|capture| vec![base_language.to_string(), capture.language])
 }
 
 /// Checks if a node is within the bounds of another node
@@ -73,14 +74,14 @@ fn extract_dynamic_language(query: &Query, match_: &QueryMatch, text: &str) -> O
     None
 }
 
-/// Detects injection and returns both the language and the content node
+/// Detects injection and returns an InjectionCapture with language hierarchy and content node
 pub fn detect_injection_with_content<'a>(
     node: &Node<'a>,
     root: &Node<'a>,
     text: &str,
     injection_query: Option<&Query>,
-    base_language: &str,
-) -> Option<(Vec<String>, Node<'a>)> {
+    _base_language: &str,
+) -> Option<InjectionCapture> {
     let injections = collect_injection_regions(node, root, text, injection_query)?;
 
     if injections.is_empty() {
@@ -95,16 +96,13 @@ pub fn detect_injection_with_content<'a>(
         a.0.cmp(&b.0).then(b.1.cmp(&a.1))
     });
 
-    // Build the language hierarchy from outermost to innermost
-    let mut hierarchy = vec![base_language.to_string()];
-    for (_, _, lang, _) in &sorted_injections {
-        hierarchy.push(lang.clone());
-    }
+    // Get the innermost injection (last in sorted list)
+    let innermost = sorted_injections.last()?;
+    let (start_byte, end_byte, lang, _node) = innermost;
 
-    // Return the innermost content node
-    let innermost_node = sorted_injections.last().map(|(_, _, _, node)| *node)?;
-
-    Some((hierarchy, innermost_node))
+    // For now, just return the innermost language with default offset
+    // Later steps will add hierarchy support and offset calculation
+    Some(InjectionCapture::new(lang.clone(), *start_byte..*end_byte))
 }
 
 /// Collects all injection regions that contain the given node
@@ -192,7 +190,41 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_injection_returns_injection_capture() {
+        use crate::language::injection_capture::DEFAULT_OFFSET;
+        use tree_sitter::Parser;
+
+        let mut parser = Parser::new();
+        let language = tree_sitter_rust::LANGUAGE.into();
+        parser.set_language(&language).expect("load rust grammar");
+
+        let text = r#"let x = "test string";"#;
+        let tree = parser.parse(text, None).expect("parse rust");
+        let root = tree.root_node();
+
+        let query_str = r#"
+        (string_literal
+          (string_content) @injection.content
+          (#set! injection.language "test_lang"))
+        "#;
+
+        let query = Query::new(&language, query_str).expect("valid query");
+        let node_in_string = find_node_at_byte(&root, 10).expect("node at position");
+
+        let result =
+            detect_injection_with_content(&node_in_string, &root, text, Some(&query), "rust");
+
+        assert!(result.is_some());
+        let capture = result.unwrap();
+
+        // Check that we get an InjectionCapture with offset
+        assert_eq!(capture.language, "test_lang");
+        assert_eq!(capture.offset, (0, 0, 0, 0));
+    }
+
+    #[test]
     fn test_detect_nested_injections() {
+        use crate::language::injection_capture::DEFAULT_OFFSET;
         use tree_sitter::Parser;
 
         // Simulate a markdown file with a code block
@@ -221,10 +253,11 @@ mod tests {
             detect_injection_with_content(&node_in_string, &root, text, Some(&query), "rust");
 
         assert!(result.is_some());
-        let (hierarchy, _content_node) = result.unwrap();
+        let capture = result.unwrap();
 
-        // Should detect rust -> markdown hierarchy
-        assert_eq!(hierarchy, vec!["rust", "markdown"]);
+        // Should detect markdown injection
+        assert_eq!(capture.language, "markdown");
+        assert_eq!(capture.offset, DEFAULT_OFFSET);
     }
 
     #[test]
@@ -335,8 +368,8 @@ mod tests {
         let result = detect_injection_with_content(&node, &root, text, Some(&query), "rust");
 
         assert!(result.is_some());
-        let (hierarchy, _) = result.unwrap();
-        assert_eq!(hierarchy, vec!["rust", "nested_lang"]);
+        let capture = result.unwrap();
+        assert_eq!(capture.language, "nested_lang");
 
         // The actual deep recursion is tested through integration with refactor.rs
         // where handle_nested_injection recursively processes injections
@@ -384,13 +417,9 @@ mod tests {
 
         // Should detect only one injection (first pattern takes precedence)
         assert!(result.is_some(), "Should find injection");
-        let (hierarchy, _) = result.unwrap();
+        let capture = result.unwrap();
         // Should only use the first matching pattern, not both
-        assert_eq!(
-            hierarchy,
-            vec!["rust", "doc"],
-            "Should only show first injection"
-        );
+        assert_eq!(capture.language, "doc", "Should only show first injection");
     }
 
     // Helper function to find a node at a specific byte position

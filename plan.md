@@ -49,25 +49,39 @@ Based on the user request to add `#offset` support for injection captures, I'll 
 
 DoD: InjectionCapture struct has an offset field that stores (0, 0, 0, 0) by default
 
-* [ ] RED: Write test that verifies InjectionCapture has offset field defaulting to (0, 0, 0, 0)
-* [ ] GREEN: Add offset field to InjectionCapture struct
+* [x] RED: Write test that verifies InjectionCapture has offset field defaulting to (0, 0, 0, 0)
+* [x] GREEN: Add offset field to InjectionCapture struct
+* [x] CHECK: must pass `make format lint test` without errors and warnings
+* [x] COMMIT
+* [x] REFACTOR: Extract offset type if needed for clarity
+* [x] COMMIT
+
+## Step 2: Integrate offset tracking into injection detection
+
+DoD: Modify `detect_injection_with_content` in `src/language/injection.rs` to return an `InjectionCapture` with offset field (still (0, 0, 0, 0)), and update `refactor.rs` to use this structure. This creates the pipeline for offset data to flow from detection to the inspect action.
+
+* [ ] RED: Write test that `detect_injection_with_content` returns InjectionCapture with offset
+* [ ] GREEN: Modify injection.rs to return InjectionCapture, update refactor.rs to consume it
 * [ ] CHECK: must pass `make format lint test` without errors and warnings
 * [ ] COMMIT
-* [ ] REFACTOR: Extract offset type if needed for clarity
+* [ ] REFACTOR: Simplify the integration if needed
 * [ ] COMMIT
 
-## Step 2: Implement rule-based offset for lua/luadoc injection
+## Step 3: Apply offset when checking cursor position & implement lua/luadoc rule
 
-DoD: When injected language is luadoc in lua, apply offset (0, 1, 0, 0) so that third hyphen in `---@param` is recognized as lua, not luadoc
+DoD:
+1. Apply offset to injection boundaries when checking if cursor is within injection
+2. Add hardcoded rule: lua->luadoc gets offset (0, 1, 0, 0)
+3. Result: third hyphen in `---@param` is recognized as lua, not luadoc
 
-* [ ] RED: Write test for lua comment with luadoc injection verifying offset application
-* [ ] GREEN: Add hardcoded rule for lua->luadoc offset calculation
+* [ ] RED: Write test for lua comment with luadoc injection verifying third hyphen is lua
+* [ ] GREEN: Add offset application in `is_node_within` check + hardcoded lua->luadoc rule
 * [ ] CHECK: must pass `make format lint test` without errors and warnings
 * [ ] COMMIT
 * [ ] REFACTOR: Extract offset rules to dedicated function
 * [ ] COMMIT
 
-## Step 3: Add rule-based offset calculation for markdown injections
+## Step 4: Add rule-based offset calculation for markdown injections
 
 DoD: Support markdown metadata injections (minus_metadata for YAML and plus_metadata for TOML) with offset (1, 0, -1, 0) to exclude the metadata delimiters
 
@@ -78,7 +92,7 @@ DoD: Support markdown metadata injections (minus_metadata for YAML and plus_meta
 * [ ] REFACTOR: Consolidate rule-based offset logic
 * [ ] COMMIT
 
-## Step 4: Parse #offset! directive from injection queries
+## Step 5: Parse #offset! directive from injection queries
 
 DoD: Extract offset values from `#offset!` directive in injection.scm queries
 
@@ -89,7 +103,7 @@ DoD: Extract offset values from `#offset!` directive in injection.scm queries
 * [ ] REFACTOR: Improve parsing error handling
 * [ ] COMMIT
 
-## Step 5: Apply parsed offset to injection boundaries
+## Step 6: Apply parsed offset to injection boundaries
 
 DoD: Use parsed offset values to adjust injection capture ranges
 
@@ -100,7 +114,7 @@ DoD: Use parsed offset values to adjust injection capture ranges
 * [ ] REFACTOR: Optimize offset calculations
 * [ ] COMMIT
 
-## Step 6: Remove rule-based logic and rely solely on query directives
+## Step 7: Remove rule-based logic and rely solely on query directives
 
 DoD: All offset logic comes from query directives, no hardcoded rules
 
