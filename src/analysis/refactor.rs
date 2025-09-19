@@ -229,17 +229,17 @@ fn detect_injection(node: &Node, _root: &Node, text: &str) -> Option<Vec<String>
     // Check for markdown code blocks
     if node.kind() == "code_fence_content" {
         // Look for the language in the info string
-        if let Some(parent) = node.parent() {
-            if parent.kind() == "fenced_code_block" {
-                // Find the info_string child
-                for i in 0..parent.child_count() {
-                    if let Some(child) = parent.child(i) {
-                        if child.kind() == "info_string" {
-                            let lang = text[child.byte_range()].trim();
-                            if !lang.is_empty() {
-                                return Some(vec!["markdown".to_string(), lang.to_string()]);
-                            }
-                        }
+        if let Some(parent) = node.parent()
+            && parent.kind() == "fenced_code_block"
+        {
+            // Find the info_string child
+            for i in 0..parent.child_count() {
+                if let Some(child) = parent.child(i)
+                    && child.kind() == "info_string"
+                {
+                    let lang = text[child.byte_range()].trim();
+                    if !lang.is_empty() {
+                        return Some(vec!["markdown".to_string(), lang.to_string()]);
                     }
                 }
             }
