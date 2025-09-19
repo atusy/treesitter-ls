@@ -158,6 +158,18 @@ fn handle_nested_injection(
     pool: &mut crate::language::DocumentParserPool,
     injected_queries: Option<(&Query, Option<&Query>)>,
 ) -> CodeActionOrCommand {
+    // Safety: limit recursion depth to prevent stack overflow
+    const MAX_INJECTION_DEPTH: usize = 10;
+    if hierarchy.len() >= MAX_INJECTION_DEPTH {
+        return create_injection_aware_inspect_token_action(
+            injected_node,
+            injected_root,
+            content_text,
+            injected_queries,
+            Some((injected_lang, &coord.get_capture_mappings())),
+            Some(hierarchy),
+        );
+    }
     // Check for nested injection in the current injected content
     let injection_query = coord.get_injection_query(injected_lang);
 
@@ -239,13 +251,17 @@ fn process_nested_injection(
                     .as_ref()
                     .map(|hq| (hq.as_ref(), nested_locals.as_ref().map(|lq| lq.as_ref())));
 
-                let action = create_injection_aware_inspect_token_action(
+                // RECURSIVELY check for even deeper injections
+                let action = handle_nested_injection(
                     &deeply_nested_node,
                     &nested_root,
                     nested_content_text,
+                    nested_lang,
+                    nested_relative_byte,
+                    &full_hierarchy,
+                    coord,
+                    pool,
                     nested_queries,
-                    Some((nested_lang, &coord.get_capture_mappings())),
-                    Some(&full_hierarchy),
                 );
 
                 pool.release(nested_lang.to_string(), nested_parser);
@@ -969,6 +985,8 @@ fn main() {
             );
         }
     }
+
+
 
     #[test]
     fn inspect_token_should_use_injection_query_when_provided() {

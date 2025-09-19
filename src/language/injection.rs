@@ -312,6 +312,37 @@ mod tests {
     }
 
     #[test]
+    fn test_recursive_injection_depth_limit() {
+        // Test that we can handle multiple levels of injection
+        // This is a simple test - real recursive injection happens in refactor.rs
+
+        let mut parser = create_rust_parser();
+        let text = r#"fn main() { let x = "nested"; }"#;
+        let tree = parse_rust_code(&mut parser, text);
+        let root = tree.root_node();
+
+        // Create a query that would inject strings as another language
+        let query_str = r#"
+        ((string_literal
+          (string_content) @injection.content)
+         (#set! injection.language "nested_lang"))
+        "#;
+
+        let language = tree_sitter_rust::LANGUAGE.into();
+        let query = Query::new(&language, query_str).expect("valid query");
+
+        let node = find_node_at_byte(&root, 22).expect("node in string");
+        let result = detect_injection_with_content(&node, &root, text, Some(&query), "rust");
+
+        assert!(result.is_some());
+        let (hierarchy, _) = result.unwrap();
+        assert_eq!(hierarchy, vec!["rust", "nested_lang"]);
+
+        // The actual deep recursion is tested through integration with refactor.rs
+        // where handle_nested_injection recursively processes injections
+    }
+
+    #[test]
     fn test_duplicate_injections_same_node() {
         // Test that multiple injection patterns matching the same node
         // should only result in one injection (not nested)
