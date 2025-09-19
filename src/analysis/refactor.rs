@@ -1,5 +1,5 @@
-use crate::analysis::injection;
 use crate::config::CaptureMappings;
+use crate::language::injection;
 use crate::text::PositionMapper;
 use std::str::FromStr;
 use tower_lsp::lsp_types::{
