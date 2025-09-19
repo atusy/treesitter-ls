@@ -121,13 +121,18 @@ fn collect_injection_regions<'a>(
     let mut matches = cursor.matches(query, *root, text.as_bytes());
 
     // Collect all injection regions that contain our node
-    let mut injections = Vec::new();
+    // Use a map to deduplicate by node range (start, end)
+    let mut injections_map = std::collections::HashMap::new();
 
     while let Some(match_) = matches.next() {
         if let Some((content_node, language)) =
             find_injection_content_and_language(node, match_, query, text)
         {
-            injections.push((
+            let key = (content_node.start_byte(), content_node.end_byte());
+
+            // Only keep the first injection for each unique range
+            // This handles cases where multiple patterns match the same node
+            injections_map.entry(key).or_insert((
                 content_node.start_byte(),
                 content_node.end_byte(),
                 language,
@@ -135,6 +140,9 @@ fn collect_injection_regions<'a>(
             ));
         }
     }
+
+    // Convert to vector
+    let injections: Vec<_> = injections_map.into_values().collect();
 
     Some(injections)
 }
@@ -301,6 +309,52 @@ mod tests {
 
         assert!(is_node_within(&inner, &outer));
         assert!(!is_node_within(&outer, &inner));
+    }
+
+    #[test]
+    fn test_duplicate_injections_same_node() {
+        // Test that multiple injection patterns matching the same node
+        // should only result in one injection (not nested)
+        let mut parser = create_rust_parser();
+        let text = r#"fn main() { /* comment */ }"#;
+        let tree = parse_rust_code(&mut parser, text);
+        let root = tree.root_node();
+
+        // Create a mock query that would inject the same node twice
+        // This simulates what happens with luadoc -> comment
+        let query_str = r#"
+        ((block_comment) @injection.content
+         (#set! injection.language "doc"))
+
+        ((block_comment) @injection.content
+         (#set! injection.language "comment"))
+        "#;
+
+        let language = tree_sitter_rust::LANGUAGE.into();
+        let query = Query::new(&language, query_str).expect("valid query");
+
+        // Find a node inside the comment
+        // The injection query matches on block_comment nodes, so we need to be inside one
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let mut matches = cursor.matches(&query, root, text.as_bytes());
+
+        let mut injection_count = 0;
+        while let Some(_match) = matches.next() {
+            injection_count += 1;
+        }
+
+        // This should find 2 matches (both patterns match the same comment)
+        assert_eq!(injection_count, 2, "Expected 2 injection patterns to match");
+
+        // Now test our detection from inside the comment
+        let node_in_comment = find_node_at_byte(&root, 14).expect("node in comment");
+        let result = detect_injection_with_content(&node_in_comment, &root, text, Some(&query), "rust");
+
+        // Should detect only one injection (first pattern takes precedence)
+        assert!(result.is_some(), "Should find injection");
+        let (hierarchy, _) = result.unwrap();
+        // Should only use the first matching pattern, not both
+        assert_eq!(hierarchy, vec!["rust", "doc"], "Should only show first injection");
     }
 
     // Helper function to find a node at a specific byte position
