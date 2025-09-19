@@ -1,4 +1,5 @@
 pub mod definition;
+pub mod injection;
 pub mod refactor;
 pub mod selection;
 pub mod semantic;

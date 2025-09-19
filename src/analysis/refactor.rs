@@ -1,3 +1,4 @@
+use crate::analysis::injection;
 use crate::config::CaptureMappings;
 use crate::text::PositionMapper;
 use std::str::FromStr;
@@ -6,7 +7,7 @@ use tower_lsp::lsp_types::{
     OptionalVersionedTextDocumentIdentifier, Position, Range, TextDocumentEdit, TextEdit,
     Url as Uri, WorkspaceEdit,
 };
-use tree_sitter::{Node, Query, QueryCursor, QueryMatch, StreamingIterator, Tree};
+use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 use url::Url;
 
 /// Create an inspect token code action for the node at cursor
@@ -166,70 +167,6 @@ fn create_inspect_token_action_with_hierarchy(
     CodeActionOrCommand::CodeAction(action)
 }
 
-/// Detect if we're inside an injected language region using injection queries
-fn detect_injection_via_query(
-    node: &Node,
-    root: &Node,
-    text: &str,
-    injection_query: Option<&Query>,
-    base_language: &str,
-) -> Option<Vec<String>> {
-    let query = injection_query?;
-
-    // Run the query on the entire tree
-    let mut cursor = QueryCursor::new();
-    let mut matches = cursor.matches(query, *root, text.as_bytes());
-
-    // Look for matches where our node is captured as @injection.content
-    while let Some(match_) = matches.next() {
-        for capture in match_.captures {
-            let capture_name = query.capture_names().get(capture.index as usize)?;
-
-            // Check if this capture is @injection.content and contains our node
-            if *capture_name == "injection.content" {
-                // Check if our node is within this capture's range
-                let captured_node = capture.node;
-                if node.start_byte() >= captured_node.start_byte()
-                    && node.end_byte() <= captured_node.end_byte()
-                {
-                    // Look for the language in query properties or captures
-                    if let Some(language) = extract_injection_language(query, match_, text) {
-                        return Some(vec![base_language.to_string(), language]);
-                    }
-                }
-            }
-        }
-    }
-
-    None
-}
-
-/// Extract the injection language from query properties or captures
-fn extract_injection_language(
-    query: &Query,
-    match_: &QueryMatch,
-    text: &str,
-) -> Option<String> {
-    // First check for #set! injection.language "..."
-    for prop in query.property_settings(match_.pattern_index) {
-        if prop.key.as_ref() == "injection.language"
-            && let Some(value) = &prop.value
-        {
-            return Some(value.as_ref().to_string());
-        }
-    }
-
-    // Handle dynamic language capture (@injection.language)
-    for capture in match_.captures {
-        let capture_name = query.capture_names().get(capture.index as usize)?;
-        if *capture_name == "injection.language" {
-            let lang_text = &text[capture.node.byte_range()];
-            return Some(lang_text.to_string());
-        }
-    }
-
-    None
-}
 
 
 /// Produce code actions that reorder a parameter within a function parameter list.
@@ -275,7 +212,7 @@ pub fn handle_code_actions_with_injection_query(
     // Detect language injection using query if available
     let language_hierarchy = if let Some(injection_q) = injection_query {
         if let Some((base_lang, _)) = capture_context {
-            detect_injection_via_query(&node_at_cursor, &root, text, Some(injection_q), base_lang)
+            injection::detect_injection(&node_at_cursor, &root, text, Some(injection_q), base_lang)
         } else {
             None
         }
@@ -675,7 +612,7 @@ mod tests {
         let injection_query = Query::new(&language, injection_query_str).expect("valid query");
 
         // Position inside the regex string
-        let mapper = PositionMapper::new(text);
+        let _mapper = PositionMapper::new(text);
         let cursor_pos = Position::new(1, 32);
         let cursor_range = Range::new(cursor_pos, cursor_pos);
 
@@ -726,54 +663,4 @@ mod tests {
     }
 
 
-    #[test]
-    fn inspect_token_should_detect_injection_via_query() {
-        let mut parser = Parser::new();
-        let language = tree_sitter_rust::LANGUAGE.into();
-        parser.set_language(&language).expect("load rust grammar");
-
-        let text = r#"fn main() {
-    let pattern = Regex::new(r"^\d+$").unwrap();
-}"#;
-        let tree = parser.parse(text, None).expect("parse rust");
-        let root = tree.root_node();
-
-        // Create injection query
-        let injection_query_str = r#"
-(call_expression
-  function: (scoped_identifier
-    path: (identifier) @_regex
-    (#eq? @_regex "Regex")
-    name: (identifier) @_new
-    (#eq? @_new "new"))
-  arguments: (arguments
-    (raw_string_literal
-      (string_content) @injection.content))
-  (#set! injection.language "regex"))
-        "#;
-
-        let injection_query = Query::new(&language, injection_query_str).expect("valid query");
-
-        // Find the string content node inside Regex::new
-        let mapper = PositionMapper::new(text);
-        // Position inside the regex string (the \d part)
-        let cursor_pos = Position::new(1, 32); // Points to \d in the regex
-        let cursor_byte = mapper.position_to_byte(cursor_pos).unwrap();
-        let node_at_cursor = root
-            .descendant_for_byte_range(cursor_byte, cursor_byte)
-            .unwrap();
-
-        // Detect injection using query
-        let hierarchy = detect_injection_via_query(
-            &node_at_cursor,
-            &root,
-            text,
-            Some(&injection_query),
-            "rust",
-        );
-
-        assert!(hierarchy.is_some(), "Should detect injection");
-        let hierarchy = hierarchy.unwrap();
-        assert_eq!(hierarchy, vec!["rust".to_string(), "regex".to_string()]);
-    }
 }
