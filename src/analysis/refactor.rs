@@ -17,6 +17,18 @@ fn create_inspect_token_action(
     queries: Option<(&Query, Option<&Query>)>,
     capture_context: Option<(&str, &CaptureMappings)>,
 ) -> CodeActionOrCommand {
+    create_inspect_token_action_with_hierarchy(node, root, text, queries, capture_context, None)
+}
+
+/// Create an inspect token code action for the node at cursor with language hierarchy
+fn create_inspect_token_action_with_hierarchy(
+    node: &Node,
+    root: &Node,
+    text: &str,
+    queries: Option<(&Query, Option<&Query>)>,
+    capture_context: Option<(&str, &CaptureMappings)>,
+    language_hierarchy: Option<&[String]>,
+) -> CodeActionOrCommand {
     let mut info = format!("* Node Type: {}\n", node.kind());
 
     // If we have queries, show captures
@@ -130,7 +142,12 @@ fn create_inspect_token_action(
         }
     }
 
-    if let Some((filetype, _)) = capture_context {
+    // Display language or language hierarchy
+    if let Some(hierarchy) = language_hierarchy {
+        if !hierarchy.is_empty() {
+            info.push_str(&format!("* Language: {}\n", hierarchy.join(" -> ")));
+        }
+    } else if let Some((filetype, _)) = capture_context {
         info.push_str(&format!("* Language: {}\n", filetype));
     }
 
@@ -147,6 +164,56 @@ fn create_inspect_token_action(
     };
 
     CodeActionOrCommand::CodeAction(action)
+}
+
+/// Detect if we're inside an injected language region
+fn detect_injection(node: &Node, _root: &Node, text: &str) -> Option<Vec<String>> {
+    // Check if we're in a string_content node (for Rust regex patterns)
+    if node.kind() != "string_content" {
+        return None;
+    }
+
+    // Check if parent is raw_string_literal
+    let raw_string = node.parent()?;
+    if raw_string.kind() != "raw_string_literal" {
+        return None;
+    }
+
+    // Check if this is inside a call_expression
+    let mut current = raw_string.parent()?;
+
+    // Navigate up to find the call_expression
+    // (might be inside array_expression for RegexSet)
+    while current.kind() != "call_expression" {
+        if current.parent().is_none() {
+            return None;
+        }
+        current = current.parent()?;
+    }
+
+    // Check if this is a Regex::new call
+    let function_node = current.child_by_field_name("function")?;
+
+    // Check for scoped_identifier (Regex::new or regex::Regex::new)
+    if function_node.kind() == "scoped_identifier" {
+        let name_node = function_node.child_by_field_name("name")?;
+        let name = &text[name_node.byte_range()];
+
+        if name == "new" {
+            // Check if the path contains Regex
+            let path_node = function_node.child_by_field_name("path")?;
+            let path_text = &text[path_node.byte_range()];
+
+            if path_text == "Regex" || path_text == "RegexBuilder"
+                || path_text == "RegexSet" || path_text == "RegexSetBuilder"
+                || path_text.ends_with("Regex") || path_text.ends_with("RegexBuilder")
+                || path_text.ends_with("RegexSet") || path_text.ends_with("RegexSetBuilder") {
+                return Some(vec!["rust".to_string(), "regex".to_string()]);
+            }
+        }
+    }
+
+    None
 }
 
 /// Produce code actions that reorder a parameter within a function parameter list.
@@ -168,15 +235,30 @@ pub fn handle_code_actions(
 
     let node_at_cursor = root.descendant_for_byte_range(cursor_byte, cursor_byte)?;
 
+    // Detect language injection
+    let language_hierarchy = detect_injection(&node_at_cursor, &root, text);
+
     // Always create inspect token action for the node at cursor
     let mut actions: Vec<CodeActionOrCommand> = Vec::new();
-    actions.push(create_inspect_token_action(
-        &node_at_cursor,
-        &root,
-        text,
-        queries,
-        capture_context,
-    ));
+
+    if let Some(hierarchy) = language_hierarchy {
+        actions.push(create_inspect_token_action_with_hierarchy(
+            &node_at_cursor,
+            &root,
+            text,
+            queries,
+            capture_context,
+            Some(&hierarchy),
+        ));
+    } else {
+        actions.push(create_inspect_token_action(
+            &node_at_cursor,
+            &root,
+            text,
+            queries,
+            capture_context,
+        ));
+    }
 
     // Ascend to a `parameters` node for parameter reordering actions
     let mut n: Option<Node> = Some(node_at_cursor);
@@ -410,5 +492,105 @@ mod tests {
             .reason;
 
         assert!(reason.contains("Language: rust"), "info was {reason}");
+    }
+
+    #[test]
+    fn inspect_token_should_display_language_hierarchy() {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .expect("load rust grammar");
+
+        let text = "fn main() {}";
+        let tree = parser.parse(text, None).expect("parse rust");
+        let root = tree.root_node();
+        let node = root.named_child(0).expect("function node should exist");
+
+        let capture_mappings: CaptureMappings = HashMap::new();
+
+        // Pass language hierarchy as a new parameter
+        let language_hierarchy = vec!["rust".to_string(), "sql".to_string()];
+        let action = create_inspect_token_action_with_hierarchy(
+            &node,
+            &root,
+            text,
+            None,
+            Some(("rust", &capture_mappings)),
+            Some(&language_hierarchy)
+        );
+
+        let CodeActionOrCommand::CodeAction(action) = action else {
+            panic!("expected CodeAction variant");
+        };
+
+        let reason = action
+            .disabled
+            .expect("inspect token stores info in disabled reason")
+            .reason;
+
+        assert!(reason.contains("Language: rust -> sql"), "Expected language hierarchy, got: {reason}");
+    }
+
+    #[test]
+    fn inspect_token_should_detect_regex_injection() {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .expect("load rust grammar");
+
+        let text = r#"fn main() {
+    let pattern = Regex::new(r"^\d+$").unwrap();
+}"#;
+        let tree = parser.parse(text, None).expect("parse rust");
+        let root = tree.root_node();
+
+        // Find the string content node inside Regex::new
+        let mapper = PositionMapper::new(text);
+        // Position inside the regex string (the \d part)
+        let cursor_pos = Position::new(1, 32); // Points to \d in the regex
+        let cursor_byte = mapper.position_to_byte(cursor_pos).unwrap();
+        let _node_at_cursor = root.descendant_for_byte_range(cursor_byte, cursor_byte).unwrap();
+
+        // Create code action with injection detection
+        let capture_mappings: CaptureMappings = HashMap::new();
+        let cursor_range = Range::new(cursor_pos, cursor_pos);
+
+        let actions = handle_code_actions(
+            &Url::parse("file:///test.rs").unwrap(),
+            text,
+            &tree,
+            cursor_range,
+            None,
+            Some(("rust", &capture_mappings)),
+        );
+
+        assert!(actions.is_some(), "Should return code actions");
+        let actions = actions.unwrap();
+
+        // Find the inspect token action
+        let inspect_action = actions.iter().find(|a| {
+            if let CodeActionOrCommand::CodeAction(action) = a {
+                action.title.starts_with("Inspect token")
+            } else {
+                false
+            }
+        });
+
+        assert!(inspect_action.is_some(), "Should have inspect token action");
+
+        let CodeActionOrCommand::CodeAction(action) = inspect_action.unwrap() else {
+            panic!("Expected CodeAction variant");
+        };
+
+        let reason = action
+            .disabled
+            .as_ref()
+            .expect("inspect token stores info in disabled reason")
+            .reason
+            .clone();
+
+        // Should detect regex injection
+        assert!(reason.contains("Language: rust -> regex"),
+                "Should detect regex injection, but got: {}", reason);
     }
 }
