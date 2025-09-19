@@ -110,6 +110,43 @@ fn extract_dynamic_language(query: &Query, match_: &QueryMatch, text: &str) -> O
     None
 }
 
+/// Detects injection and returns both the language and the content node
+pub fn detect_injection_with_content<'a>(
+    node: &Node<'a>,
+    root: &Node<'a>,
+    text: &str,
+    injection_query: Option<&Query>,
+    base_language: &str,
+) -> Option<(Vec<String>, Node<'a>)> {
+    let query = injection_query?;
+
+    // Run the query on the entire tree
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(query, *root, text.as_bytes());
+
+    // Look for matches where our node is captured as @injection.content
+    while let Some(match_) = matches.next() {
+        // Find @injection.content capture
+        for capture in match_.captures {
+            if let Some(capture_name) = query.capture_names().get(capture.index as usize) {
+                if *capture_name == "injection.content" {
+                    let content_node = capture.node;
+
+                    // Check if our node is within this injection region
+                    if is_node_within(node, &content_node) {
+                        // Extract the injection language
+                        if let Some(language) = extract_injection_language(query, match_, text) {
+                            return Some((vec![base_language.to_string(), language], content_node));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

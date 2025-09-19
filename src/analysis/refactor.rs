@@ -21,6 +21,25 @@ fn create_inspect_token_action(
     create_inspect_token_action_with_hierarchy(node, root, text, queries, capture_context, None)
 }
 
+/// Creates an inspect token action with injected language information
+fn create_injection_aware_inspect_token_action(
+    node: &Node,
+    root: &Node,
+    text: &str,
+    queries: Option<(&Query, Option<&Query>)>,
+    capture_context: Option<(&str, &CaptureMappings)>,
+    language_hierarchy: Option<&[String]>,
+) -> CodeActionOrCommand {
+    create_inspect_token_action_with_hierarchy(
+        node,
+        root,
+        text,
+        queries,
+        capture_context,
+        language_hierarchy,
+    )
+}
+
 /// Create an inspect token code action for the node at cursor with language hierarchy
 fn create_inspect_token_action_with_hierarchy(
     node: &Node,
@@ -201,6 +220,54 @@ pub fn handle_code_actions_with_injection_query(
     capture_context: Option<(&str, &CaptureMappings)>,
     injection_query: Option<&Query>,
 ) -> Option<Vec<CodeActionOrCommand>> {
+    handle_code_actions_with_injection_internal(
+        uri,
+        text,
+        tree,
+        cursor,
+        queries,
+        capture_context,
+        injection_query,
+        None,
+        None,
+    )
+}
+
+pub fn handle_code_actions_with_injection_and_coordinator(
+    uri: &Url,
+    text: &str,
+    tree: &Tree,
+    cursor: Range,
+    queries: Option<(&Query, Option<&Query>)>,
+    capture_context: Option<(&str, &CaptureMappings)>,
+    injection_query: Option<&Query>,
+    coordinator: &crate::language::LanguageCoordinator,
+    parser_pool: &mut crate::language::DocumentParserPool,
+) -> Option<Vec<CodeActionOrCommand>> {
+    handle_code_actions_with_injection_internal(
+        uri,
+        text,
+        tree,
+        cursor,
+        queries,
+        capture_context,
+        injection_query,
+        Some(coordinator),
+        Some(parser_pool),
+    )
+}
+
+fn handle_code_actions_with_injection_internal(
+    uri: &Url,
+    text: &str,
+    tree: &Tree,
+    cursor: Range,
+    queries: Option<(&Query, Option<&Query>)>,
+    capture_context: Option<(&str, &CaptureMappings)>,
+    injection_query: Option<&Query>,
+    coordinator: Option<&crate::language::LanguageCoordinator>,
+    parser_pool: Option<&mut crate::language::DocumentParserPool>,
+) -> Option<Vec<CodeActionOrCommand>> {
     let root = tree.root_node();
 
     // Use the start position of the selection/range as the cursor location
@@ -209,10 +276,13 @@ pub fn handle_code_actions_with_injection_query(
 
     let node_at_cursor = root.descendant_for_byte_range(cursor_byte, cursor_byte)?;
 
-    // Detect language injection using query if available
-    let language_hierarchy = if let Some(injection_q) = injection_query {
+    // Always create inspect token action for the node at cursor
+    let mut actions: Vec<CodeActionOrCommand> = Vec::new();
+
+    // Try to get injection-aware information
+    let injection_info = if let Some(injection_q) = injection_query {
         if let Some((base_lang, _)) = capture_context {
-            injection::detect_injection(&node_at_cursor, &root, text, Some(injection_q), base_lang)
+            injection::detect_injection_with_content(&node_at_cursor, &root, text, Some(injection_q), base_lang)
         } else {
             None
         }
@@ -220,19 +290,91 @@ pub fn handle_code_actions_with_injection_query(
         None
     };
 
-    // Always create inspect token action for the node at cursor
-    let mut actions: Vec<CodeActionOrCommand> = Vec::new();
+    // If we have injection and a coordinator, use injection-aware inspection
+    if let Some((hierarchy, content_node)) = injection_info {
+        if let Some(coord) = coordinator
+            && let Some(pool) = parser_pool
+            && hierarchy.len() > 1
+        {
+            let injected_lang = &hierarchy[hierarchy.len() - 1];
 
-    if let Some(hierarchy) = language_hierarchy {
-        actions.push(create_inspect_token_action_with_hierarchy(
-            &node_at_cursor,
-            &root,
-            text,
-            queries,
-            capture_context,
-            Some(&hierarchy),
-        ));
+            // Try to parse the injected content
+            if let Some(mut parser) = pool.acquire(injected_lang) {
+                let content_text = &text[content_node.byte_range()];
+
+                if let Some(injected_tree) = parser.parse(content_text, None) {
+                    // Get queries for the injected language
+                    let injected_highlight = coord.get_highlight_query(injected_lang);
+                    let injected_locals = coord.get_locals_query(injected_lang);
+                    let injected_queries = injected_highlight.as_ref().map(|hq| {
+                        (hq.as_ref(), injected_locals.as_ref().map(|lq| lq.as_ref()))
+                    });
+
+                    // Find the relative position in the injected content
+                    let relative_byte = cursor_byte.saturating_sub(content_node.start_byte());
+                    let injected_root = injected_tree.root_node();
+
+                    if let Some(injected_node) = injected_root.descendant_for_byte_range(relative_byte, relative_byte) {
+                        // Create injection-aware inspect action
+                        actions.push(create_injection_aware_inspect_token_action(
+                            &injected_node,
+                            &injected_root,
+                            content_text,
+                            injected_queries,
+                            Some((injected_lang, &coord.get_capture_mappings())),
+                            Some(&hierarchy),
+                        ));
+
+                        // Release the parser back to the pool
+                        pool.release(injected_lang.to_string(), parser);
+                    } else {
+                        pool.release(injected_lang.to_string(), parser);
+                        // Fall back to base language inspection
+                        actions.push(create_inspect_token_action_with_hierarchy(
+                            &node_at_cursor,
+                            &root,
+                            text,
+                            queries,
+                            capture_context,
+                            Some(&hierarchy),
+                        ));
+                    }
+                } else {
+                    pool.release(injected_lang.to_string(), parser);
+                    // Fall back to base language inspection
+                    actions.push(create_inspect_token_action_with_hierarchy(
+                        &node_at_cursor,
+                        &root,
+                        text,
+                        queries,
+                        capture_context,
+                        Some(&hierarchy),
+                    ));
+                }
+            } else {
+                // No parser available, use base language with hierarchy
+                actions.push(create_inspect_token_action_with_hierarchy(
+                    &node_at_cursor,
+                    &root,
+                    text,
+                    queries,
+                    capture_context,
+                    Some(&hierarchy),
+                ));
+            }
+        } else {
+            // No coordinator available, use base language with hierarchy
+            actions.push(create_inspect_token_action_with_hierarchy(
+                &node_at_cursor,
+                &root,
+                text,
+                queries,
+                capture_context,
+                Some(&hierarchy),
+            ));
+        }
     } else {
+        // No injection detected, use base language
         actions.push(create_inspect_token_action(
             &node_at_cursor,
             &root,
