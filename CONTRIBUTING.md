@@ -33,6 +33,23 @@ cargo build --release
 make build
 ```
 
+### Building from Source
+
+```bash
+# Clone the repository
+git clone https://github.com/atusy/treesitter-ls.git
+cd treesitter-ls
+
+# Build release binary
+cargo build --release
+# Binary location: target/release/treesitter-ls
+
+# Build debug binary
+cargo build
+# or
+make debug
+```
+
 ### Running Tests
 
 ```bash
@@ -41,14 +58,43 @@ cargo test
 # or
 make test
 
-# Run with formatting and linting
-make test format lint
+# Run specific test by name
+cargo test test_lua_match
 
-# Run specific test
-cargo test test_name
+# Run only library tests
+cargo test --lib
 
-# Run tests with output
+# Run specific integration test file
+cargo test --test test_lua_match
+
+# Run tests with output visible
 cargo test -- --nocapture
+
+# Run tests sequentially (useful for debugging)
+cargo test -- --test-threads=1
+
+# Run with formatting and linting
+make check  # runs cargo check, clippy, and fmt --check
+```
+
+### Code Quality Commands
+
+```bash
+# Run linter with warnings as errors
+cargo clippy -- -D warnings
+# or
+make lint
+
+# Format code
+cargo fmt
+# or
+make format
+
+# Check formatting without modifying
+cargo fmt --check
+
+# Run all checks (check, clippy, fmt)
+make check
 ```
 
 ## Architecture Overview
@@ -99,44 +145,40 @@ src/
 │   ├── store.rs        # Thread-safe document storage with DashMap
 │   └── view.rs         # DocumentView trait exposing read-only access for analysis
 │
-├── runtime/        # Language runtime services (parsers, queries, config)
-│   ├── config.rs           # Configuration and capture mapping stores
-│   ├── coordinator.rs      # Stateless orchestration of runtime components
-│   ├── events.rs           # Event and result types returned to the LSP layer
-│   ├── filetypes.rs        # File type to language mapping
+├── language/       # Language services (parsers, queries, config)
+│   ├── config_store.rs     # Language configuration storage
+│   ├── coordinator.rs      # Stateless orchestration of language components
+│   ├── events.rs           # LanguageEvent and LanguageLoadResult types
+│   ├── filetypes.rs        # File extension to language mapping
+│   ├── injection.rs        # Language injection support
 │   ├── loader.rs           # Dynamic parser loading (.so/.dylib files)
-│   ├── parser_pool.rs      # Parser pooling and factory helpers
+│   ├── parser_pool.rs      # DocumentParserPool for efficient parser reuse
 │   ├── query_loader.rs     # Query file loading from disk
+│   ├── query_predicates.rs # Shared Tree-sitter predicate filtering
 │   ├── query_store.rs      # Query storage and retrieval
-│   └── registry.rs         # Language registry
-│
-├── workspace/     # Bridge between runtime services and document state
-│   ├── documents.rs       # Thin wrapper around DocumentStore operations
-│   ├── languages.rs       # Runtime access (parsers, queries, settings)
-│   └── mod.rs             # Workspace orchestration and root-path tracking
-│
-├── domain/        # LSP-agnostic data types shared across modules
-│   └── mod.rs            # Positions, ranges, semantic token and code-action models
+│   └── registry.rs         # Language registry and configuration
 │
 ├── lsp/            # LSP server implementation
-│   └── lsp_impl.rs     # LSP protocol handler and orchestration
+│   ├── lsp_impl.rs     # LSP protocol handler and orchestration
+│   └── settings.rs     # LSP-specific configuration
 │
-└── text/           # Text and query utilities shared across slices
-    ├── edits.rs        # Text edit operations and range adjustments
-    ├── position.rs     # Coordinate conversions (byte ↔ Position)
-    └── query.rs        # Tree-sitter predicate helpers (`filter_captures`)
+├── text/           # Text manipulation utilities
+│   └── position.rs     # Byte ↔ Position conversions
+│
+└── error.rs        # Error handling types (LspError, LspResult)
 ```
 
 ### Module Responsibilities
 
 Quick reference summary:
 
-- `domain/`: Protocol-agnostic data structures (positions, ranges, semantic tokens, code actions)
-- `analysis/`: Feature logic expressed in domain types and traits
-- `text/` & `document/`: Text mapping and document lifecycle helpers for analysis
-- `runtime/`: Parser/query/config orchestration, independent of the LSP layer
-- `workspace/`: Facade coordinating runtime and document state exposed to the server
-- `lsp/`: Translates between domain models and `tower-lsp` protocol messages
+- `analysis/`: LSP feature implementations (semantic tokens, go-to-definition, etc.)
+- `document/`: Document lifecycle management with thread-safe storage
+- `language/`: Parser loading, query management, and language configuration
+- `text/`: Text manipulation and coordinate conversion utilities
+- `config/`: Configuration parsing and settings management
+- `lsp/`: LSP protocol handling and module orchestration
+- `error.rs`: Centralized error types for the entire codebase
 
 #### `analysis/` - LSP Features
 Each file implements a complete LSP feature:
@@ -151,44 +193,36 @@ Manages document lifecycle:
 - **store.rs**: Thread-safe document storage with `DashMap`
 - **view.rs**: `DocumentView` trait providing read-only access for analysis code
 
-#### `runtime/` - Language Runtime Services
-Coordinates parser loading, queries, and capture mappings:
+#### `language/` - Language Services
+Coordinates parser loading, queries, and language configuration:
 - **coordinator.rs**: Stateless orchestration returning structured events for the LSP layer
-- **events.rs**: Event/result types consumed by the LSP layer
-- **config.rs**: Language configuration and capture mapping stores
-- **filetypes.rs**: File type to language mapping
-- **query_store.rs**: Query storage and retrieval
+- **events.rs**: LanguageEvent and result types consumed by the LSP layer
+- **config_store.rs**: Language configuration storage
+- **filetypes.rs**: File extension to language mapping
+- **injection.rs**: Language injection support for embedded languages
+- **loader.rs**: Dynamic parser library loading (.so/.dylib files)
+- **parser_pool.rs**: DocumentParserPool for efficient parser reuse
 - **query_loader.rs**: Query file loading from disk
-- **registry.rs**: Language registry
-- **parser_pool.rs**: Parser pooling for efficient reuse
-- **loader.rs**: Dynamic parser library loading
+- **query_predicates.rs**: Shared Tree-sitter predicate filtering
+- **query_store.rs**: Query storage and retrieval
+- **registry.rs**: Central language registry
 
-#### `workspace/` - Workspace Coordination
-Mediates between the LSP layer and runtime/document services:
-- **mod.rs**: Holds `Workspace`, root-path tracking, parse orchestration, and `Workspace::with_runtime` for dependency injection in tests/frontends
-- **languages.rs**: Runtime access (settings, queries, parser pool)
-- **documents.rs**: Safe wrappers around the document store utilities
+#### `text/` - Text Utilities
+Provides text manipulation helpers:
+- **position.rs**: Coordinate conversions between byte offsets and line-column positions
 
-#### `domain/` - Shared Domain Model
-Provides protocol-agnostic data structures:
-- **mod.rs**: Position/Range/SelectionRange, semantic token types, code-action models
-- Serves as the contract between analysis logic and the LSP conversion layer
-
-#### `text/` - Text Operations and Query Utilities
-Shared helpers used by analysis and runtime slices:
-- **edits.rs**: Text edit operations and range adjustments
-- **position.rs**: Coordinate conversions between byte/line-column positions
-- **language/query_predicates.rs**: Tree-sitter predicate filtering (`filter_captures`) reused by analysis and language services
+#### `config/` - Configuration Management
+- **settings.rs**: LSP initialization options parsing and validation
 
 ### Design Rationale
 
 #### Clean Architecture Implementation
-The refactoring implemented clean architecture principles:
-- **Dependency Inversion**: `DocumentView` trait (document/view.rs) lets analysis code depend on a read-only interface instead of the concrete `Document`
+The architecture implements clean architecture principles:
+- **Vertical Slices**: Each module owns a complete feature area from top to bottom
 - **Module Boundaries**: Clear separation between document management, language services, and text operations
-- **Domain Model**: `domain::` defines shared types so analysis/text modules stay decoupled from `tower-lsp`
+- **No Circular Dependencies**: Strict dependency hierarchy with unidirectional flow
 - **Coordinator Pattern**: `LanguageCoordinator` provides stateless coordination between language modules and returns events consumed by the LSP layer
-- **Workspace Facade**: `workspace::Workspace` aggregates runtime and document access so the LSP implementation stays thin, and `lsp_impl` is now the single place that converts between domain and protocol types.
+- **Parser Pooling**: `DocumentParserPool` manages parser instances efficiently across documents
 
 
 #### Parser Pool Unification
@@ -199,11 +233,34 @@ We unified parser management into a single `DocumentParserPool` managed by the L
 
 ## Development Workflow
 
-Always keep the following guardrails in mind:
+### TDD and Development Principles
 
-- Run `make test format lint` before every commit; CI assumes the tree is formatted, linted, and tested.
-- Update `README.md` / `CONTRIBUTING.md` whenever architectural boundaries change.
-- Prefer dependency injection via `Workspace::with_runtime` when tests need fine-grained runtime control.
+This project follows Test-Driven Development (TDD) and Kent Beck's "Tidy First" approach:
+
+#### Core TDD Cycle
+1. **Red**: Write a failing test that defines a small increment of functionality
+2. **Green**: Implement the minimum code needed to make the test pass
+3. **Refactor**: Improve the code structure while keeping tests passing
+
+#### Tidy First Approach
+Separate all changes into two distinct types:
+- **Structural Changes**: Rearranging code without changing behavior (renaming, extracting methods, moving code)
+- **Behavioral Changes**: Adding or modifying actual functionality
+
+Never mix structural and behavioral changes in the same commit. Always make structural changes first when both are needed.
+
+#### Commit Discipline
+Only commit when:
+1. ALL tests are passing
+2. ALL compiler/linter warnings have been resolved (`cargo clippy -- -D warnings`)
+3. The change represents a single logical unit of work
+4. Commit messages clearly state whether structural or behavioral changes
+
+### Pre-commit Checklist
+- Run `cargo test` to ensure all tests pass
+- Run `cargo clippy -- -D warnings` to check for linting issues
+- Run `cargo fmt` to format code
+- Or simply run `make check` to do all of the above
 
 ### Adding a New LSP Feature
 
@@ -215,11 +272,17 @@ Always keep the following guardrails in mind:
 Example structure for a new feature:
 ```rust
 // src/analysis/my_feature.rs
+use crate::document::store::DocumentStore;
+use crate::error::LspResult;
+
 pub fn handle_my_feature(
-    document: &StatefulDocument,
+    store: &DocumentStore,
+    uri: &str,
     params: MyFeatureParams,
-) -> Option<MyFeatureResponse> {
+) -> LspResult<MyFeatureResponse> {
+    let doc = store.get_document(uri)?;
     // Implementation
+    Ok(response)
 }
 
 #[cfg(test)]
@@ -256,7 +319,13 @@ mod tests {
 ### Test Organization
 
 - **Unit tests**: Colocated with implementation in `#[cfg(test)]` modules
-- **Integration tests**: In the `tests/` directory
+- **Integration tests**: In the `tests/` directory:
+  - `test_lua_match.rs` - Tests for lua-match predicate functionality
+  - `test_multiple_file_opening.rs` - Tests for handling multiple file operations
+  - `test_file_reopen.rs` - File reopening scenarios
+  - `test_language_injection.rs` - Language injection support
+  - `test_poison_recovery.rs` - Lock poison recovery tests
+  - `test_runtime_coordinator_api.rs` - Runtime coordinator tests
 - **Test utilities**: Shared test helpers in test modules
 
 ### Writing Tests
@@ -289,11 +358,17 @@ fn test_semantic_tokens() {
 # Run tests for a specific module
 cargo test analysis::
 
-# Run a single test
+# Run a single test by name
 cargo test test_semantic_tokens
+
+# Run a specific integration test file
+cargo test --test test_lua_match
 
 # Run tests with debug output
 cargo test -- --nocapture --test-threads=1
+
+# Run only unit tests (no integration tests)
+cargo test --lib
 ```
 
 ## Code Style
@@ -427,24 +502,70 @@ All tests passing.
 1. **Design Phase**
    - Identify which vertical slice the feature belongs to
    - Define clear interfaces and dependencies
-   - Consider injection and multi-language support
+   - Consider language injection and multi-language support
 
-2. **Implementation Phase**
-   - Write tests first (TDD)
-   - Implement incrementally
-   - Keep commits atomic and well-documented
+2. **Test-First Implementation (TDD)**
+   - Write a failing test that defines the desired behavior
+   - Implement the minimum code to make the test pass
+   - Refactor while keeping tests green
+   - Repeat for each small increment of functionality
 
-3. **Review Phase**
-   - Self-review for code quality
+3. **Code Quality Phase**
+   - Run `cargo clippy -- -D warnings` to check for issues
+   - Run `cargo fmt` to format code
+   - Ensure no `unwrap()` on locks or potential panics
+   - Add error recovery for poisoned locks where needed
+
+4. **Review Phase**
+   - Self-review for code quality and clarity
    - Ensure tests cover edge cases
-   - Update documentation
+   - Update documentation if APIs changed
 
 ### Performance Considerations
 
-- Use parser pools to avoid recreating parsers
-- Cache query compilation results
-- Be mindful of large document performance
-- Profile before optimizing
+- **Parser Pooling**: Use `DocumentParserPool` to avoid recreating parsers
+- **Query Caching**: Queries are compiled once and stored in `QueryStore`
+- **Incremental Parsing**: Use Tree-sitter's incremental parsing for edits
+- **Concurrent Access**: `DashMap` enables lock-free concurrent document access
+- **Large Documents**: Be mindful of performance with very large files
+- **Profile First**: Always profile before optimizing to identify actual bottlenecks
+
+## Obtaining Parser Libraries
+
+To add support for a language, you need its Tree-sitter parser as a shared library:
+
+### Building Parsers
+
+Example: Building the Rust parser
+```bash
+git clone https://github.com/tree-sitter/tree-sitter-rust.git
+cd tree-sitter-rust
+npm install
+npm run build
+# Creates rust.so (Linux) or rust.dylib (macOS)
+```
+
+### Parser Library Formats
+- **Linux**: `.so` files
+- **macOS**: `.dylib` files
+- **Windows**: `.dll` files (experimental)
+
+### Query Files
+
+Tree-sitter queries power the language features. Place them in:
+- `<searchPath>/queries/<language>/highlights.scm` - Syntax highlighting
+- `<searchPath>/queries/<language>/locals.scm` - Go-to-definition support
+
+Queries use Tree-sitter's S-expression syntax:
+```scheme
+; highlights.scm
+(function_item name: (identifier) @function)
+(string_literal) @string
+
+; locals.scm
+(function_item name: (identifier) @local.definition.function)
+(call_expression function: (identifier) @local.reference.function)
+```
 
 ## Questions and Support
 

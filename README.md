@@ -1,3 +1,5 @@
+<!-- README.md should not contain technical details or developer info. They should go to CONTRIBUTING.md -->
+
 # treesitter-ls
 
 A fast and flexible Language Server Protocol (LSP) server that leverages Tree-sitter for accurate parsing and language-aware features across multiple programming languages.
@@ -20,12 +22,6 @@ A fast and flexible Language Server Protocol (LSP) server that leverages Tree-si
 - **Robust error handling** - Graceful recovery from poisoned locks
 - **Zero panics** - All operations use proper error propagation
 - **Comprehensive logging** - Detailed diagnostics with the `log` crate
-
-## Architecture Highlights
-
-- **Domain-first APIs** – Internal crates exchange data via `domain::` types; `lsp/` is the only place that touches `tower_lsp::lsp_types::*` conversions.
-- **Shared query utilities** – Tree-sitter predicate filtering now lives in `language::query_predicates`, keeping analysis and language services aligned.
-- **Injectable language services** – `workspace::Workspace::with_runtime` allows tests and alternate frontends to provide preconfigured `LanguageCoordinator` instances.
 
 ## Installation
 
