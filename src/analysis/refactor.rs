@@ -167,7 +167,6 @@ fn create_inspect_token_action_with_hierarchy(
 }
 
 /// Detect if we're inside an injected language region using injection queries
-#[allow(dead_code)]
 fn detect_injection_via_query(
     node: &Node,
     root: &Node,
@@ -207,7 +206,6 @@ fn detect_injection_via_query(
 }
 
 /// Extract the injection language from query properties
-#[allow(dead_code)]
 fn extract_injection_language(
     query: &Query,
     match_: &QueryMatch,
@@ -290,6 +288,27 @@ pub fn handle_code_actions(
     queries: Option<(&Query, Option<&Query>)>,
     capture_context: Option<(&str, &CaptureMappings)>,
 ) -> Option<Vec<CodeActionOrCommand>> {
+    handle_code_actions_with_injection_query(
+        uri,
+        text,
+        tree,
+        cursor,
+        queries,
+        capture_context,
+        None, // No injection query yet - will be loaded from language module later
+    )
+}
+
+/// Handle code actions with optional injection query for language hierarchy detection
+pub fn handle_code_actions_with_injection_query(
+    uri: &Url,
+    text: &str,
+    tree: &Tree,
+    cursor: Range,
+    queries: Option<(&Query, Option<&Query>)>,
+    capture_context: Option<(&str, &CaptureMappings)>,
+    injection_query: Option<&Query>,
+) -> Option<Vec<CodeActionOrCommand>> {
     let root = tree.root_node();
 
     // Use the start position of the selection/range as the cursor location
@@ -298,8 +317,17 @@ pub fn handle_code_actions(
 
     let node_at_cursor = root.descendant_for_byte_range(cursor_byte, cursor_byte)?;
 
-    // Detect language injection
-    let language_hierarchy = detect_injection(&node_at_cursor, &root, text);
+    // Detect language injection using query if available
+    let language_hierarchy = if let Some(injection_q) = injection_query {
+        if let Some((base_lang, _)) = capture_context {
+            detect_injection_via_query(&node_at_cursor, &root, text, Some(injection_q), base_lang)
+        } else {
+            None
+        }
+    } else {
+        // Fallback to hardcoded detection for backward compatibility
+        detect_injection(&node_at_cursor, &root, text)
+    };
 
     // Always create inspect token action for the node at cursor
     let mut actions: Vec<CodeActionOrCommand> = Vec::new();
@@ -661,6 +689,84 @@ mod tests {
         assert!(
             reason.contains("Language: rust -> regex"),
             "Should detect regex injection, but got: {}",
+            reason
+        );
+    }
+
+    #[test]
+    fn inspect_token_should_use_injection_query_when_provided() {
+        let mut parser = Parser::new();
+        let language = tree_sitter_rust::LANGUAGE.into();
+        parser.set_language(&language).expect("load rust grammar");
+
+        let text = r#"fn main() {
+    let pattern = Regex::new(r"^\d+$").unwrap();
+}"#;
+        let tree = parser.parse(text, None).expect("parse rust");
+
+        // Create injection query
+        let injection_query_str = r#"
+(call_expression
+  function: (scoped_identifier
+    path: (identifier) @_regex
+    (#eq? @_regex "Regex")
+    name: (identifier) @_new
+    (#eq? @_new "new"))
+  arguments: (arguments
+    (raw_string_literal
+      (string_content) @injection.content))
+  (#set! injection.language "regex"))
+        "#;
+
+        let injection_query = Query::new(&language, injection_query_str).expect("valid query");
+
+        // Position inside the regex string
+        let mapper = PositionMapper::new(text);
+        let cursor_pos = Position::new(1, 32);
+        let cursor_range = Range::new(cursor_pos, cursor_pos);
+
+        let capture_mappings: CaptureMappings = HashMap::new();
+
+        // Call with injection query
+        let actions = handle_code_actions_with_injection_query(
+            &Url::parse("file:///test.rs").unwrap(),
+            text,
+            &tree,
+            cursor_range,
+            None,
+            Some(("rust", &capture_mappings)),
+            Some(&injection_query),
+        );
+
+        assert!(actions.is_some(), "Should return code actions");
+        let actions = actions.unwrap();
+
+        // Find the inspect token action
+        let inspect_action = actions.iter().find(|a| {
+            if let CodeActionOrCommand::CodeAction(action) = a {
+                action.title.starts_with("Inspect token")
+            } else {
+                false
+            }
+        });
+
+        assert!(inspect_action.is_some(), "Should have inspect token action");
+
+        let CodeActionOrCommand::CodeAction(action) = inspect_action.unwrap() else {
+            panic!("Expected CodeAction variant");
+        };
+
+        let reason = action
+            .disabled
+            .as_ref()
+            .expect("inspect token stores info in disabled reason")
+            .reason
+            .clone();
+
+        // Should detect regex injection via query
+        assert!(
+            reason.contains("Language: rust -> regex"),
+            "Should detect regex injection via query, but got: {}",
             reason
         );
     }
