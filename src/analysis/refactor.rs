@@ -49,9 +49,8 @@ fn create_injection_aware_action(
     parser_pool: Option<&mut crate::language::DocumentParserPool>,
 ) -> CodeActionOrCommand {
     // Check if we have everything needed for injection-aware processing
-    let can_process_injection = coordinator.is_some()
-        && parser_pool.is_some()
-        && hierarchy.len() > 1;
+    let can_process_injection =
+        coordinator.is_some() && parser_pool.is_some() && hierarchy.len() > 1;
 
     if !can_process_injection {
         return create_inspect_token_action_with_hierarchy(
@@ -66,6 +65,9 @@ fn create_injection_aware_action(
 
     let coord = coordinator.unwrap();
     let pool = parser_pool.unwrap();
+
+    // For now, only process the immediate injection (not nested)
+    // Full nested support would require more complex lifetime management
     let injected_lang = &hierarchy[hierarchy.len() - 1];
 
     // Try to acquire parser for the injected language
@@ -421,20 +423,18 @@ fn handle_code_actions_with_context(
 
     // Create the appropriate inspect token action
     let inspect_action = match injection_info {
-        Some((hierarchy, content_node)) => {
-            create_injection_aware_action(
-                &node_at_cursor,
-                &root,
-                text,
-                queries,
-                capture_context,
-                hierarchy,
-                content_node,
-                cursor_byte,
-                coordinator,
-                parser_pool,
-            )
-        }
+        Some((hierarchy, content_node)) => create_injection_aware_action(
+            &node_at_cursor,
+            &root,
+            text,
+            queries,
+            capture_context,
+            hierarchy,
+            content_node,
+            cursor_byte,
+            coordinator,
+            parser_pool,
+        ),
         None => create_inspect_token_action(&node_at_cursor, &root, text, queries, capture_context),
     };
 

@@ -124,7 +124,9 @@ pub fn detect_injection_with_content<'a>(
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(query, *root, text.as_bytes());
 
-    // Look for matches where our node is captured as @injection.content
+    // Collect all injection regions that contain our node
+    let mut injections = Vec::new();
+
     while let Some(match_) = matches.next() {
         // Find @injection.content capture
         for capture in match_.captures {
@@ -137,14 +139,34 @@ pub fn detect_injection_with_content<'a>(
                 if is_node_within(node, &content_node) {
                     // Extract the injection language
                     if let Some(language) = extract_injection_language(query, match_, text) {
-                        return Some((vec![base_language.to_string(), language], content_node));
+                        injections.push((content_node.start_byte(), content_node.end_byte(), language, content_node));
                     }
                 }
             }
         }
     }
 
-    None
+    if injections.is_empty() {
+        return None;
+    }
+
+    // Sort injections by their range (outer to inner)
+    injections.sort_by(|a, b| {
+        // Sort by start byte (ascending), then by end byte (descending)
+        // This ensures outer injections come before inner ones
+        a.0.cmp(&b.0).then(b.1.cmp(&a.1))
+    });
+
+    // Build the language hierarchy from outermost to innermost
+    let mut hierarchy = vec![base_language.to_string()];
+    for (_, _, lang, _) in &injections {
+        hierarchy.push(lang.clone());
+    }
+
+    // Return the innermost content node
+    let innermost_node = injections.last().map(|(_, _, _, node)| *node)?;
+
+    Some((hierarchy, innermost_node))
 }
 
 #[cfg(test)]
@@ -162,6 +184,41 @@ mod tests {
 
     fn parse_rust_code(parser: &mut Parser, code: &str) -> tree_sitter::Tree {
         parser.parse(code, None).expect("parse rust")
+    }
+
+    #[test]
+    fn test_detect_nested_injections() {
+        use tree_sitter::Parser;
+
+        // Simulate a markdown file with a code block
+        let mut parser = Parser::new();
+        let language = tree_sitter_rust::LANGUAGE.into();
+        parser.set_language(&language).expect("load rust grammar");
+
+        let text = r#"let x = "markdown with ```lua code```";"#;
+        let tree = parser.parse(text, None).expect("parse rust");
+        let root = tree.root_node();
+
+        // Create a mock injection query that simulates nested injections
+        let query_str = r#"
+        (string_literal
+          (string_content) @injection.content
+          (#set! injection.language "markdown"))
+        "#;
+
+        let query = Query::new(&language, query_str).expect("valid query");
+
+        // Find a node within the string content
+        let node_in_string = find_node_at_byte(&root, 20).expect("node at position");
+
+        // Detect injection with content
+        let result = detect_injection_with_content(&node_in_string, &root, text, Some(&query), "rust");
+
+        assert!(result.is_some());
+        let (hierarchy, _content_node) = result.unwrap();
+
+        // Should detect rust -> markdown hierarchy
+        assert_eq!(hierarchy, vec!["rust", "markdown"]);
     }
 
     #[test]
