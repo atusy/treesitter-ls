@@ -787,12 +787,22 @@ impl LanguageServer for TreeSitterLs {
         let lsp_response = if let Some(lang) = language_name.clone() {
             let highlight_query = self.language.get_highlight_query(&lang);
             let locals_query = self.language.get_locals_query(&lang);
+            let injection_query = self.language.get_injection_query(&lang);
 
             let queries = highlight_query
                 .as_ref()
                 .map(|hq| (hq.as_ref(), locals_query.as_ref().map(|lq| lq.as_ref())));
 
-            handle_code_actions(&uri, text, tree, domain_range, queries, capture_context)
+            // Use the injection-aware handler
+            crate::analysis::refactor::handle_code_actions_with_injection_query(
+                &uri,
+                text,
+                tree,
+                domain_range,
+                queries,
+                capture_context,
+                injection_query.as_ref().map(|q| q.as_ref()),
+            )
         } else {
             handle_code_actions(&uri, text, tree, domain_range, None, None)
         };

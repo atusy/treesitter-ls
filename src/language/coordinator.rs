@@ -131,6 +131,20 @@ impl LanguageCoordinator {
             ));
         }
 
+        if let Ok(query) = QueryLoader::load_query_from_search_paths(
+            &language,
+            paths,
+            language_id,
+            "injections.scm",
+        ) {
+            self.query_store
+                .insert_injection_query(language_id.to_string(), Arc::new(query));
+            events.push(LanguageEvent::log(
+                LanguageLogLevel::Info,
+                format!("Dynamically loaded injections for {language_id}"),
+            ));
+        }
+
         events.push(LanguageEvent::log(
             LanguageLogLevel::Info,
             format!("Dynamically loaded language {language_id} from {lib_path}"),
@@ -183,6 +197,10 @@ impl LanguageCoordinator {
     /// Get locals query for a language
     pub fn get_locals_query(&self, lang_name: &str) -> Option<Arc<tree_sitter::Query>> {
         self.query_store.get_locals_query(lang_name)
+    }
+
+    pub fn get_injection_query(&self, lang_name: &str) -> Option<Arc<tree_sitter::Query>> {
+        self.query_store.get_injection_query(lang_name)
     }
 
     /// Get capture mappings
