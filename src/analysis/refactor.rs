@@ -2,6 +2,19 @@ use crate::config::CaptureMappings;
 use crate::language::injection;
 use crate::text::PositionMapper;
 use std::str::FromStr;
+
+/// Context for code action generation with injection support
+pub struct CodeActionContext<'a> {
+    pub uri: &'a Url,
+    pub text: &'a str,
+    pub tree: &'a Tree,
+    pub cursor: Range,
+    pub queries: Option<(&'a Query, Option<&'a Query>)>,
+    pub capture_context: Option<(&'a str, &'a CaptureMappings)>,
+    pub injection_query: Option<&'a Query>,
+    pub coordinator: Option<&'a crate::language::LanguageCoordinator>,
+    pub parser_pool: Option<&'a mut crate::language::DocumentParserPool>,
+}
 use tower_lsp::lsp_types::{
     CodeAction, CodeActionDisabled, CodeActionKind, CodeActionOrCommand, DocumentChanges, OneOf,
     OptionalVersionedTextDocumentIdentifier, Position, Range, TextDocumentEdit, TextEdit,
@@ -186,8 +199,6 @@ fn create_inspect_token_action_with_hierarchy(
     CodeActionOrCommand::CodeAction(action)
 }
 
-
-
 /// Produce code actions that reorder a parameter within a function parameter list.
 /// The implementation is language-agnostic for grammars that use a `parameters` node
 /// with direct child comma tokens and surrounding parentheses.
@@ -220,7 +231,7 @@ pub fn handle_code_actions_with_injection_query(
     capture_context: Option<(&str, &CaptureMappings)>,
     injection_query: Option<&Query>,
 ) -> Option<Vec<CodeActionOrCommand>> {
-    handle_code_actions_with_injection_internal(
+    let context = CodeActionContext {
         uri,
         text,
         tree,
@@ -228,11 +239,13 @@ pub fn handle_code_actions_with_injection_query(
         queries,
         capture_context,
         injection_query,
-        None,
-        None,
-    )
+        coordinator: None,
+        parser_pool: None,
+    };
+    handle_code_actions_with_context(context)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn handle_code_actions_with_injection_and_coordinator(
     uri: &Url,
     text: &str,
@@ -244,7 +257,7 @@ pub fn handle_code_actions_with_injection_and_coordinator(
     coordinator: &crate::language::LanguageCoordinator,
     parser_pool: &mut crate::language::DocumentParserPool,
 ) -> Option<Vec<CodeActionOrCommand>> {
-    handle_code_actions_with_injection_internal(
+    let context = CodeActionContext {
         uri,
         text,
         tree,
@@ -252,22 +265,26 @@ pub fn handle_code_actions_with_injection_and_coordinator(
         queries,
         capture_context,
         injection_query,
-        Some(coordinator),
-        Some(parser_pool),
-    )
+        coordinator: Some(coordinator),
+        parser_pool: Some(parser_pool),
+    };
+    handle_code_actions_with_context(context)
 }
 
-fn handle_code_actions_with_injection_internal(
-    uri: &Url,
-    text: &str,
-    tree: &Tree,
-    cursor: Range,
-    queries: Option<(&Query, Option<&Query>)>,
-    capture_context: Option<(&str, &CaptureMappings)>,
-    injection_query: Option<&Query>,
-    coordinator: Option<&crate::language::LanguageCoordinator>,
-    parser_pool: Option<&mut crate::language::DocumentParserPool>,
+fn handle_code_actions_with_context(
+    context: CodeActionContext,
 ) -> Option<Vec<CodeActionOrCommand>> {
+    let CodeActionContext {
+        uri,
+        text,
+        tree,
+        cursor,
+        queries,
+        capture_context,
+        injection_query,
+        coordinator,
+        parser_pool,
+    } = context;
     let root = tree.root_node();
 
     // Use the start position of the selection/range as the cursor location
@@ -282,7 +299,13 @@ fn handle_code_actions_with_injection_internal(
     // Try to get injection-aware information
     let injection_info = if let Some(injection_q) = injection_query {
         if let Some((base_lang, _)) = capture_context {
-            injection::detect_injection_with_content(&node_at_cursor, &root, text, Some(injection_q), base_lang)
+            injection::detect_injection_with_content(
+                &node_at_cursor,
+                &root,
+                text,
+                Some(injection_q),
+                base_lang,
+            )
         } else {
             None
         }
@@ -306,15 +329,17 @@ fn handle_code_actions_with_injection_internal(
                     // Get queries for the injected language
                     let injected_highlight = coord.get_highlight_query(injected_lang);
                     let injected_locals = coord.get_locals_query(injected_lang);
-                    let injected_queries = injected_highlight.as_ref().map(|hq| {
-                        (hq.as_ref(), injected_locals.as_ref().map(|lq| lq.as_ref()))
-                    });
+                    let injected_queries = injected_highlight
+                        .as_ref()
+                        .map(|hq| (hq.as_ref(), injected_locals.as_ref().map(|lq| lq.as_ref())));
 
                     // Find the relative position in the injected content
                     let relative_byte = cursor_byte.saturating_sub(content_node.start_byte());
                     let injected_root = injected_tree.root_node();
 
-                    if let Some(injected_node) = injected_root.descendant_for_byte_range(relative_byte, relative_byte) {
+                    if let Some(injected_node) =
+                        injected_root.descendant_for_byte_range(relative_byte, relative_byte)
+                    {
                         // Create injection-aware inspect action
                         actions.push(create_injection_aware_inspect_token_action(
                             &injected_node,
@@ -803,6 +828,4 @@ mod tests {
             reason
         );
     }
-
-
 }

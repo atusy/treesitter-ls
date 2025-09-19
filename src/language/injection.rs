@@ -128,16 +128,16 @@ pub fn detect_injection_with_content<'a>(
     while let Some(match_) = matches.next() {
         // Find @injection.content capture
         for capture in match_.captures {
-            if let Some(capture_name) = query.capture_names().get(capture.index as usize) {
-                if *capture_name == "injection.content" {
-                    let content_node = capture.node;
+            if let Some(capture_name) = query.capture_names().get(capture.index as usize)
+                && *capture_name == "injection.content"
+            {
+                let content_node = capture.node;
 
-                    // Check if our node is within this injection region
-                    if is_node_within(node, &content_node) {
-                        // Extract the injection language
-                        if let Some(language) = extract_injection_language(query, match_, text) {
-                            return Some((vec![base_language.to_string(), language], content_node));
-                        }
+                // Check if our node is within this injection region
+                if is_node_within(node, &content_node) {
+                    // Extract the injection language
+                    if let Some(language) = extract_injection_language(query, match_, text) {
+                        return Some((vec![base_language.to_string(), language], content_node));
                     }
                 }
             }
