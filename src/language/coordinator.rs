@@ -326,6 +326,23 @@ impl LanguageCoordinator {
             ));
         }
 
+        // Load injection queries from search paths if available
+        if let Some(paths) = search_paths
+            && let Ok(query) = QueryLoader::load_query_from_search_paths(
+                language,
+                paths,
+                lang_name,
+                "injections.scm",
+            )
+        {
+            self.query_store
+                .insert_injection_query(lang_name.to_string(), Arc::new(query));
+            events.push(LanguageEvent::log(
+                LanguageLogLevel::Info,
+                format!("Injection query loaded from search paths for {lang_name}"),
+            ));
+        }
+
         events
     }
 }

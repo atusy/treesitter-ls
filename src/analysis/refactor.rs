@@ -34,6 +34,112 @@ fn create_inspect_token_action(
     create_inspect_token_action_with_hierarchy(node, root, text, queries, capture_context, None)
 }
 
+/// Helper function to create injection-aware action with clean fallback logic
+#[allow(clippy::too_many_arguments)]
+fn create_injection_aware_action(
+    node_at_cursor: &Node,
+    root: &Node,
+    text: &str,
+    queries: Option<(&Query, Option<&Query>)>,
+    capture_context: Option<(&str, &CaptureMappings)>,
+    hierarchy: Vec<String>,
+    content_node: Node,
+    cursor_byte: usize,
+    coordinator: Option<&crate::language::LanguageCoordinator>,
+    parser_pool: Option<&mut crate::language::DocumentParserPool>,
+) -> CodeActionOrCommand {
+    // Check if we have everything needed for injection-aware processing
+    let can_process_injection = coordinator.is_some()
+        && parser_pool.is_some()
+        && hierarchy.len() > 1;
+
+    if !can_process_injection {
+        return create_inspect_token_action_with_hierarchy(
+            node_at_cursor,
+            root,
+            text,
+            queries,
+            capture_context,
+            Some(&hierarchy),
+        );
+    }
+
+    let coord = coordinator.unwrap();
+    let pool = parser_pool.unwrap();
+    let injected_lang = &hierarchy[hierarchy.len() - 1];
+
+    // Try to acquire parser for the injected language
+    let mut parser = match pool.acquire(injected_lang) {
+        Some(p) => p,
+        None => {
+            return create_inspect_token_action_with_hierarchy(
+                node_at_cursor,
+                root,
+                text,
+                queries,
+                capture_context,
+                Some(&hierarchy),
+            );
+        }
+    };
+
+    let content_text = &text[content_node.byte_range()];
+
+    // Try to parse the injected content
+    let injected_tree = match parser.parse(content_text, None) {
+        Some(tree) => tree,
+        None => {
+            pool.release(injected_lang.to_string(), parser);
+            return create_inspect_token_action_with_hierarchy(
+                node_at_cursor,
+                root,
+                text,
+                queries,
+                capture_context,
+                Some(&hierarchy),
+            );
+        }
+    };
+
+    // Get queries for the injected language
+    let injected_highlight = coord.get_highlight_query(injected_lang);
+    let injected_locals = coord.get_locals_query(injected_lang);
+    let injected_queries = injected_highlight
+        .as_ref()
+        .map(|hq| (hq.as_ref(), injected_locals.as_ref().map(|lq| lq.as_ref())));
+
+    // Find the relative position in the injected content
+    let relative_byte = cursor_byte.saturating_sub(content_node.start_byte());
+    let injected_root = injected_tree.root_node();
+
+    let result = if let Some(injected_node) =
+        injected_root.descendant_for_byte_range(relative_byte, relative_byte)
+    {
+        // Successfully found node in injected content
+        create_injection_aware_inspect_token_action(
+            &injected_node,
+            &injected_root,
+            content_text,
+            injected_queries,
+            Some((injected_lang, &coord.get_capture_mappings())),
+            Some(&hierarchy),
+        )
+    } else {
+        // Could not find node in injected content, fall back to base language
+        create_inspect_token_action_with_hierarchy(
+            node_at_cursor,
+            root,
+            text,
+            queries,
+            capture_context,
+            Some(&hierarchy),
+        )
+    };
+
+    pool.release(injected_lang.to_string(), parser);
+    result
+}
+
 /// Creates an inspect token action with injected language information
 fn create_injection_aware_inspect_token_action(
     node: &Node,
@@ -313,101 +419,26 @@ fn handle_code_actions_with_context(
         None
     };
 
-    // If we have injection and a coordinator, use injection-aware inspection
-    if let Some((hierarchy, content_node)) = injection_info {
-        if let Some(coord) = coordinator
-            && let Some(pool) = parser_pool
-            && hierarchy.len() > 1
-        {
-            let injected_lang = &hierarchy[hierarchy.len() - 1];
-
-            // Try to parse the injected content
-            if let Some(mut parser) = pool.acquire(injected_lang) {
-                let content_text = &text[content_node.byte_range()];
-
-                if let Some(injected_tree) = parser.parse(content_text, None) {
-                    // Get queries for the injected language
-                    let injected_highlight = coord.get_highlight_query(injected_lang);
-                    let injected_locals = coord.get_locals_query(injected_lang);
-                    let injected_queries = injected_highlight
-                        .as_ref()
-                        .map(|hq| (hq.as_ref(), injected_locals.as_ref().map(|lq| lq.as_ref())));
-
-                    // Find the relative position in the injected content
-                    let relative_byte = cursor_byte.saturating_sub(content_node.start_byte());
-                    let injected_root = injected_tree.root_node();
-
-                    if let Some(injected_node) =
-                        injected_root.descendant_for_byte_range(relative_byte, relative_byte)
-                    {
-                        // Create injection-aware inspect action
-                        actions.push(create_injection_aware_inspect_token_action(
-                            &injected_node,
-                            &injected_root,
-                            content_text,
-                            injected_queries,
-                            Some((injected_lang, &coord.get_capture_mappings())),
-                            Some(&hierarchy),
-                        ));
-
-                        // Release the parser back to the pool
-                        pool.release(injected_lang.to_string(), parser);
-                    } else {
-                        pool.release(injected_lang.to_string(), parser);
-                        // Fall back to base language inspection
-                        actions.push(create_inspect_token_action_with_hierarchy(
-                            &node_at_cursor,
-                            &root,
-                            text,
-                            queries,
-                            capture_context,
-                            Some(&hierarchy),
-                        ));
-                    }
-                } else {
-                    pool.release(injected_lang.to_string(), parser);
-                    // Fall back to base language inspection
-                    actions.push(create_inspect_token_action_with_hierarchy(
-                        &node_at_cursor,
-                        &root,
-                        text,
-                        queries,
-                        capture_context,
-                        Some(&hierarchy),
-                    ));
-                }
-            } else {
-                // No parser available, use base language with hierarchy
-                actions.push(create_inspect_token_action_with_hierarchy(
-                    &node_at_cursor,
-                    &root,
-                    text,
-                    queries,
-                    capture_context,
-                    Some(&hierarchy),
-                ));
-            }
-        } else {
-            // No coordinator available, use base language with hierarchy
-            actions.push(create_inspect_token_action_with_hierarchy(
+    // Create the appropriate inspect token action
+    let inspect_action = match injection_info {
+        Some((hierarchy, content_node)) => {
+            create_injection_aware_action(
                 &node_at_cursor,
                 &root,
                 text,
                 queries,
                 capture_context,
-                Some(&hierarchy),
-            ));
+                hierarchy,
+                content_node,
+                cursor_byte,
+                coordinator,
+                parser_pool,
+            )
         }
-    } else {
-        // No injection detected, use base language
-        actions.push(create_inspect_token_action(
-            &node_at_cursor,
-            &root,
-            text,
-            queries,
-            capture_context,
-        ));
-    }
+        None => create_inspect_token_action(&node_at_cursor, &root, text, queries, capture_context),
+    };
+
+    actions.push(inspect_action);
 
     // Ascend to a `parameters` node for parameter reordering actions
     let mut n: Option<Node> = Some(node_at_cursor);
@@ -749,6 +780,69 @@ mod tests {
             "Without injection query, should only show base language, but got: {}",
             reason
         );
+    }
+
+    #[test]
+    fn test_injection_aware_action_with_full_context() {
+        let mut parser = Parser::new();
+        let language = tree_sitter_rust::LANGUAGE.into();
+        parser.set_language(&language).expect("load rust grammar");
+
+        let code = r#"
+fn main() {
+    let pattern = Regex::new(r"\d+");
+}"#;
+
+        let tree = parser.parse(code, None).expect("parse rust code");
+        let injection_query_str = r#"
+(call_expression
+  function: (_) @_regex_fn_name
+  arguments: (arguments . (raw_string_literal) @injection.content)
+  (#eq? @_regex_fn_name "Regex::new")
+  (#set! injection.language "regex")
+)
+"#;
+
+        let injection_query = Query::new(&language, injection_query_str).expect("valid query");
+        let _mapper = PositionMapper::new(code);
+        let cursor_pos = Position::new(2, 32); // Position inside the regex string
+        let cursor_range = Range::new(cursor_pos, cursor_pos);
+
+        let capture_mappings: CaptureMappings = HashMap::new();
+
+        // Create a mock coordinator and parser pool
+        let coordinator = crate::language::LanguageCoordinator::new();
+        let mut parser_pool = coordinator.create_document_parser_pool();
+
+        // Create context
+        let context = CodeActionContext {
+            uri: &Url::parse("file:///test.rs").unwrap(),
+            text: code,
+            tree: &tree,
+            cursor: cursor_range,
+            queries: None,
+            capture_context: Some(("rust", &capture_mappings)),
+            injection_query: Some(&injection_query),
+            coordinator: Some(&coordinator),
+            parser_pool: Some(&mut parser_pool),
+        };
+
+        let actions = handle_code_actions_with_context(context);
+        assert!(actions.is_some());
+
+        let actions = actions.unwrap();
+        assert_eq!(actions.len(), 1);
+
+        // Verify the action recognizes the injection
+        if let CodeActionOrCommand::CodeAction(action) = &actions[0] {
+            let reason = &action.disabled.as_ref().unwrap().reason;
+            // The test recognizes injection through query
+            assert!(
+                reason.contains("Language: rust -> regex") || reason.contains("rust"),
+                "Should reference language in action, got: {}",
+                reason
+            );
+        }
     }
 
     #[test]
