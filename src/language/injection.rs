@@ -178,6 +178,9 @@ fn get_injection_offset(base_language: &str, injected_language: &str) -> Injecti
         // lua->luadoc: skip first column (the hyphen) as per lua injections.scm
         // Comment pattern: "^[-][%s]*[@|]" with offset (0, 1, 0, 0)
         ("lua", "luadoc") => (0, 1, 0, 0),
+        // markdown metadata blocks: skip first and last lines (the delimiters)
+        // minus_metadata (YAML) and plus_metadata (TOML) both use offset (1, 0, -1, 0)
+        ("markdown", "yaml") | ("markdown", "toml") => (1, 0, -1, 0),
         // Default: no offset
         _ => (0, 0, 0, 0),
     }
@@ -361,6 +364,27 @@ mod tests {
             capture.offset,
             (0, 1, 0, 0),
             "lua->luadoc should have offset (0, 1, 0, 0) as per injections.scm"
+        );
+    }
+
+    #[test]
+    fn test_markdown_metadata_injection_offset() {
+        // Test that markdown metadata injections get offset (1, 0, -1, 0)
+
+        // Test the hardcoded rule for markdown->yaml
+        let offset = get_injection_offset("markdown", "yaml");
+        assert_eq!(
+            offset,
+            (1, 0, -1, 0),
+            "markdown->yaml should have offset (1, 0, -1, 0) for metadata blocks"
+        );
+
+        // Test the hardcoded rule for markdown->toml
+        let offset_toml = get_injection_offset("markdown", "toml");
+        assert_eq!(
+            offset_toml,
+            (1, 0, -1, 0),
+            "markdown->toml should have offset (1, 0, -1, 0) for metadata blocks"
         );
     }
 
