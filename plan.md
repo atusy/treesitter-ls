@@ -119,12 +119,12 @@ DoD: The `src/analysis/refactor.rs` module must use the offset-aware injection d
 
 DoD: Support markdown metadata injections (minus_metadata for YAML and plus_metadata for TOML) with offset (1, 0, -1, 0) to exclude the metadata delimiters
 
-* [ ] RED: Write test for markdown minus_metadata (YAML) and plus_metadata (TOML) injections with offset (1, 0, -1, 0)
-* [ ] GREEN: Add hardcoded rules for markdown metadata injection offsets
-* [ ] CHECK: must pass `make format lint test` without errors and warnings
-* [ ] COMMIT
-* [ ] REFACTOR: Consolidate rule-based offset logic
-* [ ] COMMIT
+* [x] RED: Write test for markdown minus_metadata (YAML) and plus_metadata (TOML) injections with offset (1, 0, -1, 0)
+* [x] GREEN: Add hardcoded rules for markdown metadata injection offsets
+* [x] CHECK: must pass `make format lint test` without errors and warnings
+* [x] COMMIT
+* [x] REFACTOR: Consolidate rule-based offset logic (no refactoring needed)
+* [x] COMMIT (skipped, no changes)
 
 ## Step 5: Parse #offset! directive from injection queries
 
@@ -139,10 +139,13 @@ DoD: Extract offset values from `#offset!` directive in injection.scm queries
 
 ## Step 6: Apply parsed offset to injection boundaries
 
-DoD: Use parsed offset values to adjust injection capture ranges
+DoD: Use parsed offset values to adjust injection capture ranges, with logging to show whether offset comes from rules or queries
 
 * [ ] RED: Write test verifying offset application to capture ranges
-* [ ] GREEN: Implement offset application logic
+* [ ] GREEN: Implement offset application logic with logging that shows:
+  - When offset is from hardcoded rules: log::debug!("Using rule-based offset for {}->{}: {:?}", base_lang, injected_lang, offset)
+  - When offset is from parsed query: log::debug!("Using query-based offset for {}->{}: {:?}", base_lang, injected_lang, offset)
+  - When no offset is applied: log::debug!("No offset for {}->{}", base_lang, injected_lang)
 * [ ] CHECK: must pass `make format lint test` without errors and warnings
 * [ ] COMMIT
 * [ ] REFACTOR: Optimize offset calculations

@@ -172,6 +172,56 @@ fn detect_injection_at_byte_position_impl<'a>(
     })
 }
 
+/// Parse offset directive from a Tree-sitter query
+///
+/// Looks for #offset! directive in the query for the given capture index
+/// Returns None if no offset directive is found
+#[allow(dead_code)]
+fn parse_offset_from_query(query: &Query, capture_index: u32) -> Option<InjectionOffset> {
+    use tree_sitter::QueryPredicateArg;
+
+    // The #offset! directive is stored as a predicate
+    // We need to iterate through patterns and check predicates
+    for pattern_idx in 0..query.pattern_count() {
+        // Get predicates for this pattern
+        for predicate in query.general_predicates(pattern_idx) {
+            let predicate_name = &predicate.operator;
+
+            // Check if this is an offset predicate
+            if predicate_name.as_ref() == "offset!" && predicate.args.len() == 5 {
+                // First arg should be the capture (@injection.content)
+                // Next 4 args should be the offset values
+
+                // Check if first arg references our capture index
+                if let Some(QueryPredicateArg::Capture(cap_idx)) = predicate.args.first()
+                    && *cap_idx == capture_index
+                {
+                    // Try to parse the 4 offset values as integers
+                    let mut values = Vec::new();
+                    for arg in &predicate.args[1..5] {
+                        match arg {
+                            QueryPredicateArg::String(s) => {
+                                if let Ok(val) = s.parse::<i32>() {
+                                    values.push(val);
+                                } else {
+                                    return None; // Invalid offset value
+                                }
+                            }
+                            _ => return None, // Offset values must be strings
+                        }
+                    }
+
+                    if values.len() == 4 {
+                        return Some((values[0], values[1], values[2], values[3]));
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// Get offset rules for specific language transitions
 fn get_injection_offset(base_language: &str, injected_language: &str) -> InjectionOffset {
     match (base_language, injected_language) {
@@ -386,6 +436,54 @@ mod tests {
             (1, 0, -1, 0),
             "markdown->toml should have offset (1, 0, -1, 0) for metadata blocks"
         );
+    }
+
+    #[test]
+    fn test_parse_offset_from_query() {
+        use tree_sitter::Query;
+
+        // Test parsing #offset! directive from a query
+        let language = tree_sitter_rust::LANGUAGE.into();
+
+        // Query with offset directive - using rust string_literal as example
+        let query_str = r#"
+        (string_literal
+          (string_content) @injection.content
+          (#set! injection.language "luadoc")
+          (#offset! @injection.content 0 1 0 0))
+        "#;
+
+        let query = Query::new(&language, query_str).expect("valid query");
+
+        // Parse the offset from the query
+        let offset = parse_offset_from_query(&query, 0); // capture index 0
+
+        assert_eq!(
+            offset,
+            Some((0, 1, 0, 0)),
+            "Should parse offset (0, 1, 0, 0) from query"
+        );
+    }
+
+    #[test]
+    fn test_parse_offset_from_query_no_offset() {
+        use tree_sitter::Query;
+
+        // Test query without offset directive
+        let language = tree_sitter_rust::LANGUAGE.into();
+
+        let query_str = r#"
+        (string_literal
+          (string_content) @injection.content
+          (#set! injection.language "luadoc"))
+        "#;
+
+        let query = Query::new(&language, query_str).expect("valid query");
+
+        // Parse the offset from the query - should return None
+        let offset = parse_offset_from_query(&query, 0);
+
+        assert_eq!(offset, None, "Should return None when no offset directive");
     }
 
     #[test]
