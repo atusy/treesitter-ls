@@ -115,6 +115,77 @@ pub fn detect_injection_at_cursor_with_offset<'a>(
     detect_injection_at_byte_position_impl(cursor_byte, root, text, injection_query, base_language)
 }
 
+/// Detects injection at a specific cursor position using query-based offsets if available
+///
+/// This function checks for #offset! directives in the query first, and falls back
+/// to rule-based offsets if no directive is found. Logs which type of offset is used.
+pub fn detect_injection_at_cursor_with_query_offset<'a>(
+    cursor_byte: usize,
+    root: &Node<'a>,
+    text: &str,
+    injection_query: Option<&Query>,
+    base_language: &str,
+) -> Option<InjectionCapture> {
+    let query = injection_query?;
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(query, *root, text.as_bytes());
+
+    while let Some(match_) = matches.next() {
+        // Look for @injection.content capture
+        for capture in match_.captures {
+            if let Some(capture_name) = query.capture_names().get(capture.index as usize)
+                && *capture_name == "injection.content"
+            {
+                let content_range = capture.node.start_byte()..capture.node.end_byte();
+
+                // Extract language (static or dynamic)
+                let injected_language = extract_static_language(query, match_)
+                    .or_else(|| extract_dynamic_language(query, match_, text))?;
+
+                // Try to get offset from query first
+                let offset =
+                    if let Some(query_offset) = parse_offset_from_query(query, capture.index) {
+                        log::debug!(
+                            "Using query-based offset for {}->{}: {:?}",
+                            base_language,
+                            injected_language,
+                            query_offset
+                        );
+                        query_offset
+                    } else {
+                        // Fall back to rule-based offset
+                        let rule_offset = get_injection_offset(base_language, &injected_language);
+                        if rule_offset != (0, 0, 0, 0) {
+                            log::debug!(
+                                "Using rule-based offset for {}->{}: {:?}",
+                                base_language,
+                                injected_language,
+                                rule_offset
+                            );
+                        } else {
+                            log::debug!("No offset for {}->{}", base_language, injected_language);
+                        }
+                        rule_offset
+                    };
+
+                let injection_capture = InjectionCapture {
+                    language: injected_language,
+                    content_range,
+                    offset,
+                    text: Some(text.to_string()),
+                };
+
+                // Check if cursor is within adjusted boundaries
+                if injection_capture.contains_position(cursor_byte) {
+                    return Some(injection_capture);
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// Internal implementation that checks if a byte position is within an injection with offset
 fn detect_injection_at_byte_position_impl<'a>(
     byte_position: usize,
@@ -176,7 +247,6 @@ fn detect_injection_at_byte_position_impl<'a>(
 ///
 /// Looks for #offset! directive in the query for the given capture index
 /// Returns None if no offset directive is found
-#[allow(dead_code)]
 fn parse_offset_from_query(query: &Query, capture_index: u32) -> Option<InjectionOffset> {
     use tree_sitter::QueryPredicateArg;
 
@@ -484,6 +554,53 @@ mod tests {
         let offset = parse_offset_from_query(&query, 0);
 
         assert_eq!(offset, None, "Should return None when no offset directive");
+    }
+
+    #[test]
+    fn test_apply_offset_from_query_with_logging() {
+        use tree_sitter::Query;
+
+        // Test that offsets from queries are applied and logged correctly
+        let language = tree_sitter_rust::LANGUAGE.into();
+
+        // Query with offset directive
+        let query_str = r#"
+        (string_literal
+          (string_content) @injection.content
+          (#set! injection.language "javascript")
+          (#offset! @injection.content 0 2 0 -1))
+        "#;
+
+        let query = Query::new(&language, query_str).expect("valid query");
+
+        // Test text with string
+        let text = r#"let js = "  javascript code here ";"#;
+        let mut parser = Parser::new();
+        parser.set_language(&language).expect("set language");
+        let tree = parser.parse(text, None).expect("parse");
+        let root = tree.root_node();
+
+        // Detect injection with query-based offset
+        let result = detect_injection_at_cursor_with_query_offset(
+            15, // cursor in "javascript"
+            &root,
+            text,
+            Some(&query),
+            "rust", // base language
+        );
+
+        assert!(
+            result.is_some(),
+            "Should detect injection with query offset"
+        );
+        let capture = result.unwrap();
+
+        // Should use query-based offset, not rule-based
+        assert_eq!(
+            capture.offset,
+            (0, 2, 0, -1),
+            "Should use offset from query"
+        );
     }
 
     #[test]
