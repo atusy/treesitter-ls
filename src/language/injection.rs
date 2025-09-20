@@ -216,8 +216,9 @@ fn detect_injection_at_byte_position_impl<'a>(
 
                 // Extract the injection language
                 if let Some(language) = extract_injection_language(query, match_, text) {
-                    // Get the offset for this language transition
-                    let offset = get_injection_offset(base_language, &language);
+                    // Try to get offset from query first, then fall back to rule-based
+                    let offset = parse_offset_from_query(query, capture.index)
+                        .unwrap_or_else(|| get_injection_offset(base_language, &language));
 
                     // Create a capture with offset
                     let mut injection_capture = InjectionCapture::new(
@@ -372,8 +373,9 @@ fn find_injection_content_and_language_with_offset<'a>(
 
             // Extract the injection language first
             if let Some(language) = extract_injection_language(query, match_, text) {
-                // Get the offset for this language transition
-                let offset = get_injection_offset(base_language, &language);
+                // Try to get offset from query first, then fall back to rule-based
+                let offset = parse_offset_from_query(query, capture.index)
+                    .unwrap_or_else(|| get_injection_offset(base_language, &language));
 
                 // If there's no offset, use the regular check
                 if offset == (0, 0, 0, 0) {
