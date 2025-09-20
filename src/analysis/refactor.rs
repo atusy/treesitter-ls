@@ -182,8 +182,8 @@ fn handle_nested_injection(
     let injection_query = coord.get_injection_query(injected_lang);
 
     if let Some(inj_query) = injection_query
-        && let Some(nested_capture) = injection::detect_injection_with_content(
-            injected_node,
+        && let Some(nested_capture) = injection::detect_injection_at_cursor_with_offset(
+            relative_byte,
             injected_root,
             content_text,
             Some(inj_query.as_ref()),
@@ -570,8 +570,8 @@ fn handle_code_actions_with_context(
     // Try to get injection-aware information
     let injection_info = if let Some(injection_q) = injection_query {
         if let Some((base_lang, _)) = capture_context {
-            injection::detect_injection_with_content(
-                &node_at_cursor,
+            injection::detect_injection_at_cursor_with_offset(
+                cursor_byte,
                 &root,
                 text,
                 Some(injection_q),
@@ -1021,6 +1021,74 @@ fn main() {
                 reason
             );
         }
+    }
+
+    #[test]
+    fn inspect_token_respects_injection_offset_boundaries() {
+        // Test that positions outside offset boundaries are not detected as injections
+        // Following the actual lua injections.scm pattern:
+        // - Comment content matching "^[-][%s]*[@|]" gets luadoc injection
+        // - Offset (0, 1, 0, 0) skips the first hyphen
+
+        use crate::language::injection;
+
+        let mut parser = Parser::new();
+        let language = tree_sitter_rust::LANGUAGE.into();
+        parser.set_language(&language).expect("load rust grammar");
+
+        // Simulate lua comment: "-@param x number" (single hyphen + @param)
+        // In real lua, this would be a comment node, but we're using rust string for testing
+        let text = r#"let comment = "-@param x number";"#;
+        let tree = parser.parse(text, None).expect("parse rust");
+        let root = tree.root_node();
+
+        // Create injection query
+        let injection_query_str = r#"
+        (string_literal
+          (string_content) @injection.content
+          (#set! injection.language "luadoc"))
+        "#;
+        let injection_query = Query::new(&language, injection_query_str).expect("valid query");
+
+        // The string content "-@param x number" starts at byte 15
+        // Byte 15: hyphen (should be excluded by offset)
+        // Byte 16: @ (should be start of luadoc with offset applied)
+
+        // Test position at the hyphen (byte 15)
+        let hyphen_byte = 15;
+
+        // With offset-aware detection and lua->luadoc offset (0, 1, 0, 0)
+        let detection_at_hyphen = injection::detect_injection_at_cursor_with_offset(
+            hyphen_byte,
+            &root,
+            text,
+            Some(&injection_query),
+            "lua",
+        );
+
+        // The hyphen should NOT be detected as being in luadoc
+        // because offset (0, 1, 0, 0) skips the first column
+        assert!(
+            detection_at_hyphen.is_none(),
+            "Hyphen at byte 15 should NOT be detected as being in luadoc with offset (0, 1, 0, 0)"
+        );
+
+        // Test position at the @ symbol (byte 16)
+        let at_symbol_byte = 16;
+
+        let detection_at_symbol = injection::detect_injection_at_cursor_with_offset(
+            at_symbol_byte,
+            &root,
+            text,
+            Some(&injection_query),
+            "lua",
+        );
+
+        // The @ symbol SHOULD be detected as being in luadoc
+        assert!(
+            detection_at_symbol.is_some(),
+            "@ symbol at byte 16 should be detected as being in luadoc"
+        );
     }
 
     #[test]
