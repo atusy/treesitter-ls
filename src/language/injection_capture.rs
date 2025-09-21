@@ -1,16 +1,9 @@
-/// Represents offset adjustments for injection boundaries
-/// Format: (start_row, start_col, end_row, end_col)
-pub type InjectionOffset = (i32, i32, i32, i32);
-
-/// Default offset with no adjustments
-pub const DEFAULT_OFFSET: InjectionOffset = (0, 0, 0, 0);
-
 /// Represents an injection capture with optional offset adjustments
 #[derive(Debug, Clone, PartialEq)]
 pub struct InjectionCapture {
     pub language: String,
     pub content_range: std::ops::Range<usize>,
-    pub offset: InjectionOffset,
+    pub offset: (i32, i32, i32, i32),
 }
 
 impl InjectionCapture {
@@ -18,7 +11,7 @@ impl InjectionCapture {
         Self {
             language,
             content_range,
-            offset: DEFAULT_OFFSET,
+            offset: (0, 0, 0, 0),
         }
     }
 }
@@ -31,9 +24,11 @@ mod tests {
     fn test_injection_capture_has_offset_field() {
         let capture = InjectionCapture::new("lua".to_string(), 10..20);
 
+        // This test should fail initially as offset field doesn't exist yet
         assert_eq!(
-            capture.offset, DEFAULT_OFFSET,
-            "offset should default to DEFAULT_OFFSET"
+            capture.offset,
+            (0, 0, 0, 0),
+            "offset should default to (0, 0, 0, 0)"
         );
     }
 }
