@@ -25,7 +25,32 @@ pub fn parse_offset_directive(query: &Query) -> Option<InjectionOffset> {
                     if let Some(capture_name) = query.capture_names().get(*capture_id as usize)
                         && *capture_name == "injection.content"
                     {
-                        // For now, return default offset (parsing will be implemented in Task 1)
+                        // Parse the 4 numeric arguments after the capture
+                        // Format: (#offset! @injection.content start_row start_col end_row end_col)
+                        if predicate.args.len() >= 5 {
+                            // Try to parse each argument as i32
+                            let parse_arg = |idx: usize| -> Option<i32> {
+                                if let Some(tree_sitter::QueryPredicateArg::String(s)) =
+                                    predicate.args.get(idx)
+                                {
+                                    s.parse().ok()
+                                } else {
+                                    None
+                                }
+                            };
+
+                            // Parse all 4 offset values
+                            if let (
+                                Some(start_row),
+                                Some(start_col),
+                                Some(end_row),
+                                Some(end_col),
+                            ) = (parse_arg(1), parse_arg(2), parse_arg(3), parse_arg(4))
+                            {
+                                return Some((start_row, start_col, end_row, end_col));
+                            }
+                        }
+                        // If parsing fails, return default offset
                         return Some(DEFAULT_OFFSET);
                     }
                 }

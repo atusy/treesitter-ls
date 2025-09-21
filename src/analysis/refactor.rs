@@ -54,8 +54,8 @@ fn create_injection_aware_action(
     injection_query: Option<&Query>,
 ) -> CodeActionOrCommand {
     // Parse offset directive from injection query
-    let offset_from_query = injection_query
-        .and_then(crate::language::injection::parse_offset_directive);
+    let offset_from_query =
+        injection_query.and_then(crate::language::injection::parse_offset_directive);
 
     // Check if we have everything needed for injection-aware processing
     let can_process_injection =
@@ -361,7 +361,10 @@ fn create_inspect_token_action_with_hierarchy_and_offset(
         let offset = offset_from_query.unwrap_or(crate::language::injection::DEFAULT_OFFSET);
         let offset_str = format!("({}, {}, {}, {})", offset.0, offset.1, offset.2, offset.3);
         if offset_from_query.is_some() {
-            info.push_str(&format!("* Offset: {} [has #offset! directive]\n", offset_str));
+            info.push_str(&format!(
+                "* Offset: {} [has #offset! directive]\n",
+                offset_str
+            ));
         } else {
             info.push_str(&format!("* Offset: {}\n", offset_str));
         }
@@ -1281,10 +1284,95 @@ fn main() {
             .reason
             .clone();
 
-        // Should detect regex injection and show offset directive presence
+        // Should detect regex injection and show offset directive presence with parsed values
         assert!(
-            reason.contains("Offset: (0, 0, 0, 0) [has #offset! directive]"),
-            "Should indicate offset directive presence, but got: {}",
+            reason.contains("Offset: (0, 1, 0, 0) [has #offset! directive]"),
+            "Should indicate offset directive presence with parsed values, but got: {}",
+            reason
+        );
+    }
+
+    #[test]
+    fn inspect_token_should_display_parsed_offset_values() {
+        let mut parser = Parser::new();
+        let language = tree_sitter_rust::LANGUAGE.into();
+        parser.set_language(&language).expect("load rust grammar");
+
+        let text = r#"fn main() {
+    let pattern = Regex::new(r"^\d+$").unwrap();
+}"#;
+        let tree = parser.parse(text, None).expect("parse rust");
+
+        // Create injection query with offset directive specifying (0, 1, 0, 0)
+        let injection_query_str = r#"
+(call_expression
+  function: (scoped_identifier
+    path: (identifier) @_regex
+    (#eq? @_regex "Regex")
+    name: (identifier) @_new
+    (#eq? @_new "new"))
+  arguments: (arguments
+    (raw_string_literal
+      (string_content) @injection.content))
+  (#set! injection.language "regex")
+  (#offset! @injection.content 0 1 0 0))
+        "#;
+
+        let injection_query = Query::new(&language, injection_query_str).expect("valid query");
+
+        // Position inside the regex string
+        let _mapper = PositionMapper::new(text);
+        let cursor_pos = Position::new(1, 32);
+        let cursor_range = Range::new(cursor_pos, cursor_pos);
+
+        let capture_mappings: CaptureMappings = HashMap::new();
+
+        // Mock coordinator and parser pool for injection detection
+        let coordinator = crate::language::LanguageCoordinator::new();
+        let mut parser_pool = coordinator.create_document_parser_pool();
+
+        // Call with injection query containing offset directive
+        let actions = handle_code_actions_with_injection_and_coordinator(
+            &Url::parse("file:///test.rs").unwrap(),
+            text,
+            &tree,
+            cursor_range,
+            None,
+            Some(("rust", &capture_mappings)),
+            Some(&injection_query),
+            &coordinator,
+            &mut parser_pool,
+        );
+
+        assert!(actions.is_some(), "Should return code actions");
+        let actions = actions.unwrap();
+
+        // Find the inspect token action
+        let inspect_action = actions.iter().find(|a| {
+            if let CodeActionOrCommand::CodeAction(action) = a {
+                action.title.starts_with("Inspect token")
+            } else {
+                false
+            }
+        });
+
+        assert!(inspect_action.is_some(), "Should have inspect token action");
+
+        let CodeActionOrCommand::CodeAction(action) = inspect_action.unwrap() else {
+            panic!("Expected CodeAction variant");
+        };
+
+        let reason = action
+            .disabled
+            .as_ref()
+            .expect("inspect token stores info in disabled reason")
+            .reason
+            .clone();
+
+        // Should show the parsed offset values (0, 1, 0, 0)
+        assert!(
+            reason.contains("Offset: (0, 1, 0, 0)"),
+            "Should display parsed offset values, but got: {}",
             reason
         );
     }
