@@ -80,3 +80,74 @@ DoD: ...
     6. remove rule-based logic
 
 # AI's plan
+
+## Sprint 1: Show offset field in Inspect token action
+
+* User story: As a developer, I want to see "offset: unimplemented" in the Inspect token action so I can verify the offset field is being displayed
+
+### Sprint planning notes
+
+The first sprint will add a placeholder offset field to the Inspect token output. This provides immediate visual feedback without requiring complex offset calculation logic. The field will always display "unimplemented" for now.
+
+### Tasks
+
+#### Task 1: Add offset field display to Inspect token action
+
+DoD: The Inspect token action shows "* Offset: unimplemented" in its disabled reason text
+
+* [ ] RED: Write test `inspect_token_should_display_offset` that verifies offset field appears in inspect token output
+* [ ] GREEN: Add offset field to the info string in `create_inspect_token_action_with_hierarchy`
+* [ ] CHECK: Run `make format lint test`
+* [ ] COMMIT
+* [ ] REFACTOR: Clean up any duplicate code if needed
+* [ ] COMMIT
+
+### Sprint retrospective
+
+#### Inspections of decisions in the previous retrospective
+
+N/A (first sprint)
+
+#### Inspections of the current sprint
+
+(To be filled after sprint completion)
+
+#### Adaption plan
+
+(To be filled after sprint completion)
+
+---
+
+## Sprint 2: Set default offset to (0, 0, 0, 0)
+
+* User story: As a developer, I want to see the actual offset value "(0, 0, 0, 0)" instead of "unimplemented" so I can see the default offset structure
+
+---
+
+## Sprint 3: Add rule-based offset for lua->luadoc injection
+
+* User story: As a developer using lua with luadoc comments, I want the offset to be calculated as (0, 1, 0, 0) for luadoc injections so the positions are correctly adjusted for the comment prefix
+
+---
+
+## Sprint 4: Add rule-based offset for markdown minus_metadata
+
+* User story: As a developer using markdown with YAML frontmatter, I want the offset to be calculated as (1, 0, -1, 0) so the frontmatter delimiters are excluded from the injected content
+
+---
+
+## Sprint 5: Add rule-based offset for markdown plus_metadata
+
+* User story: As a developer using markdown with TOML frontmatter, I want the offset to be calculated as (1, 0, -1, 0) so the frontmatter delimiters are excluded from the injected content
+
+---
+
+## Sprint 6: Add query-based offset calculation
+
+* User story: As a developer, I want offsets to be automatically calculated from `#offset!` directives in injection queries so any language can specify custom offsets
+
+---
+
+## Sprint 7: Remove rule-based logic
+
+* User story: As a developer, I want all offsets to come from queries to maintain consistency and avoid hardcoded rules
