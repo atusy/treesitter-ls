@@ -1,5 +1,9 @@
 use tree_sitter::{Node, Query, QueryCursor, QueryMatch, StreamingIterator};
 
+/// Represents offset adjustments for injection content boundaries
+/// Format: (start_row, start_column, end_row, end_column)
+pub type InjectionOffset = (i32, i32, i32, i32);
+
 /// Checks if a query contains an #offset! directive for @injection.content capture
 pub fn has_offset_directive(query: &Query) -> bool {
     // Check all patterns in the query

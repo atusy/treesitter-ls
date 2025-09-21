@@ -317,6 +317,49 @@ DoD: Inspect token shows "[has #offset! directive]" when the injection query con
 
 * User story: As a developer, I want to see "Offset: (0, 1, 0, 0)" when inspecting luadoc in lua comments where the query has `#offset! @injection.content 0 1 0 0`, showing the system can parse offset values
 
+### Sprint planning notes
+
+Current codebase state from Sprints 1-4:
+- Offset is displayed as hardcoded string "(0, 0, 0, 0)" in `create_inspect_token_action_with_hierarchy_and_offset`
+- `has_offset_directive` in injection.rs only returns bool, not the actual values
+- Offset directive detection works using `general_predicates()`
+- The predicate args after the capture should contain 4 numeric values
+
+Refactoring opportunities from previous sprints:
+1. Extract a proper offset type instead of hardcoded strings
+2. Update `has_offset_directive` to parse and return offset values
+3. Consider simpler function names or a builder pattern for the inspect token actions
+
+The main task: Parse the 4 numeric arguments from `#offset!` directive and display them.
+
+### Tasks
+
+#### Task 0: Refactoring from Sprints 1-4
+
+DoD: Code is cleaner with proper offset type and ready for parsing
+
+* [ ] REFACTOR: Define offset type alias or struct (e.g., `type InjectionOffset = (i32, i32, i32, i32)`)
+* [ ] COMMIT
+* [ ] REFACTOR: Extract constant for default offset `(0, 0, 0, 0)`
+* [ ] COMMIT
+* [ ] REFACTOR: Update `has_offset_directive` to return `Option<InjectionOffset>` instead of bool
+* [ ] COMMIT
+
+#### Task 1: Parse and display offset values from directives
+
+DoD: Inspect token shows actual offset values like "(0, 1, 0, 0)" when directive specifies them
+
+* [ ] RED: Write test `inspect_token_should_display_parsed_offset_values` that verifies "(0, 1, 0, 0)" appears for lua->luadoc injection with that offset directive
+* [ ] GREEN: Implement parsing of 4 numeric arguments from `#offset!` directive in `has_offset_directive` (now returns `Option<InjectionOffset>`)
+* [ ] CHECK: Run `make format lint test`
+* [ ] COMMIT
+* [ ] REFACTOR: Consider extracting argument parsing logic if complex
+* [ ] COMMIT (if refactored)
+
+### Sprint retrospective
+
+(To be filled after sprint completion)
+
 ---
 
 ## Sprint 6: Show source of offset values
