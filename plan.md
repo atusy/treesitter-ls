@@ -536,25 +536,45 @@ Current state from Sprint 7:
 
 DoD: Consider any cleanup from Sprints 1-7
 
-* [ ] SELF-REVIEW: Review offset and range code
-* [ ] REFACTOR if needed
-* [ ] COMMIT if refactored
+* [x] SELF-REVIEW: Review offset and range code
+* [x] No refactoring needed
 
 #### Task 1: Display effective range for injected content
 
 DoD: When offset is present, show "Effective Range: [adjusted_start, adjusted_end]"
 
-* [ ] RED: Write test `inspect_token_should_display_effective_range_with_offset`
-* [ ] GREEN: Calculate and display effective range
-* [ ] CHECK: Run `cargo test`
-* [ ] COMMIT
-* [ ] SELF-REVIEW: Check calculation logic
-* [ ] REFACTOR if needed
-* [ ] COMMIT if refactored
+* [x] RED: Write test `inspect_token_should_display_effective_range_with_offset`
+* [x] GREEN: Calculate and display effective range
+* [x] CHECK: Run `cargo test`
+* [x] COMMIT
+* [x] SELF-REVIEW: Check calculation logic
+* [x] No refactoring needed
 
 ### Sprint retrospective
 
-(To be filled after sprint completion)
+**What worked well:**
+- Clear test expectations helped guide implementation
+- Simple column offset calculation was straightforward
+- All tests continue passing
+
+**What was delivered:**
+- Added "Effective Range: [start+offset, end+offset]" display
+- Shows for all injected content (both with query and default offsets)
+- Currently only applies column offsets (offset.1 and offset.3)
+
+**Technical notes:**
+- Implementation in lines 377-383 of refactor.rs
+- Formula: effective_start = node.start_byte() + offset.1
+- Formula: effective_end = node.end_byte() + offset.3
+- Row offsets (offset.0 and offset.2) not yet applied - needs line calculations
+
+**Limitations:**
+- Only column offsets applied currently
+- Row offsets would require converting bytes to line positions
+- Will be addressed in future enhancements
+
+**Next sprint:**
+- Sprint 9 will use offset in cursor position calculations
 
 ---
 
