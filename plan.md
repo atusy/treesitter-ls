@@ -32,7 +32,6 @@
         * [ ] COMMIT
         ```
 
-    * If you find you need unplaned code changes, insert the plan to plan.md before making any changes.
 
 * My idea of steps
     1. Start adding interfaces to support offset. No calculations are required. offset can be `(0, 0, 0, 0)`
@@ -97,22 +96,11 @@ DoD: Offsets should be applied to row/column positions, not byte positions direc
 
 DoD: The offset should be applied when checking if a node is within injection boundaries during the detection phase, not after. This ensures that positions outside the adjusted boundaries are not detected as being in the injection.
 
-* [x] RED: Write test that verifies position at byte 2 (third hyphen) is NOT detected as being in luadoc injection
-* [x] GREEN: Apply offset during `collect_injection_regions` to check adjusted boundaries
-* [x] CHECK: must pass `make format lint test` without errors and warnings
-* [x] COMMIT
-* [ ] REFACTOR: Clean up the detection flow if needed
-* [ ] COMMIT
-
-## Step 3.7: Fix refactor.rs to use offset-aware injection detection
-
-DoD: The `src/analysis/refactor.rs` module must use the offset-aware injection detection functions to ensure "Inspect token" code action respects offset boundaries.
-
-* [ ] RED: Write test that verifies refactor.rs respects offset boundaries for "Inspect token" action
-* [ ] GREEN: Update refactor.rs to use `detect_injection_with_content_and_offset` and adjusted ranges
+* [ ] RED: Write test that verifies position at byte 2 (third hyphen) is NOT detected as being in luadoc injection
+* [ ] GREEN: Apply offset during `collect_injection_regions` to check adjusted boundaries
 * [ ] CHECK: must pass `make format lint test` without errors and warnings
 * [ ] COMMIT
-* [ ] REFACTOR: Clean up if needed
+* [ ] REFACTOR: Clean up the detection flow if needed
 * [ ] COMMIT
 
 ## Step 4: Add rule-based offset calculation for markdown injections
