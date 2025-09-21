@@ -117,9 +117,6 @@ pub fn detect_injection_with_content_and_offset<'a>(
     // Apply offset rules based on language transition
     capture.offset = get_injection_offset(base_language, lang);
 
-    // Store text for proper row/column offset calculation
-    capture.text = Some(text.to_string());
-
     Some(capture)
 }
 

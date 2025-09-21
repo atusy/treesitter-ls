@@ -74,22 +74,11 @@ DoD:
 2. Add hardcoded rule: lua->luadoc gets offset (0, 1, 0, 0)
 3. Result: third hyphen in `---@param` is recognized as lua, not luadoc
 
-* [x] RED: Write test for lua comment with luadoc injection verifying third hyphen is lua
-* [x] GREEN: Add offset application in `is_node_within` check + hardcoded lua->luadoc rule
-* [x] CHECK: must pass `make format lint test` without errors and warnings
-* [x] COMMIT
-* [x] REFACTOR: Extract offset rules to dedicated function
-* [x] COMMIT
-
-## Step 3.5: Fix offset implementation to use row/column instead of bytes
-
-DoD: Offsets should be applied to row/column positions, not byte positions directly. The offset (0, 1, 0, 0) means "move start forward by 1 column", not "add 1 byte".
-
-* [ ] RED: Write test that verifies offset works correctly with multi-byte characters
-* [ ] GREEN: Implement proper row/column-based offset application using PositionMapper
+* [ ] RED: Write test for lua comment with luadoc injection verifying third hyphen is lua
+* [ ] GREEN: Add offset application in `is_node_within` check + hardcoded lua->luadoc rule
 * [ ] CHECK: must pass `make format lint test` without errors and warnings
 * [ ] COMMIT
-* [ ] REFACTOR: Optimize position conversions if needed
+* [ ] REFACTOR: Extract offset rules to dedicated function
 * [ ] COMMIT
 
 ## Step 4: Add rule-based offset calculation for markdown injections
