@@ -141,15 +141,15 @@ DoD: Extract offset values from `#offset!` directive in injection.scm queries
 
 DoD: Use parsed offset values to adjust injection capture ranges, with logging to show whether offset comes from rules or queries
 
-* [x] RED: Write test verifying offset application to capture ranges
-* [x] GREEN: Implement offset application logic with logging that shows:
+* [ ] RED: Write test verifying offset application to capture ranges
+* [ ] GREEN: Implement offset application logic with logging that shows:
   - When offset is from hardcoded rules: log::debug!("Using rule-based offset for {}->{}: {:?}", base_lang, injected_lang, offset)
   - When offset is from parsed query: log::debug!("Using query-based offset for {}->{}: {:?}", base_lang, injected_lang, offset)
   - When no offset is applied: log::debug!("No offset for {}->{}", base_lang, injected_lang)
-* [x] CHECK: must pass `make format lint test` without errors and warnings
-* [x] COMMIT
-* [x] REFACTOR: Optimize offset calculations
-* [x] COMMIT
+* [ ] CHECK: must pass `make format lint test` without errors and warnings
+* [ ] COMMIT
+* [ ] REFACTOR: Optimize offset calculations
+* [ ] COMMIT
 
 ## Step 7: Remove rule-based logic and rely solely on query directives
 
