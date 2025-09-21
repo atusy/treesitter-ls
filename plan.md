@@ -54,6 +54,7 @@ DoD: ...
 * [ ] GREEN: implement working code that passes test
 * [ ] CHECK: must pass `make format lint test` without errors and warnings
 * [ ] COMMIT
+* [ ] SELF-REVIEW: with Kent-Beck's Tidy First principle in your mind
 * [ ] REFACTOR (tidying)
 * [ ] COMMIT
 * [ ] REFACTOR (tidying)
@@ -338,33 +339,98 @@ The main task: Parse the 4 numeric arguments from `#offset!` directive and displ
 
 DoD: Code is cleaner with proper offset type and ready for parsing
 
-* [ ] REFACTOR: Define offset type alias or struct (e.g., `type InjectionOffset = (i32, i32, i32, i32)`)
-* [ ] COMMIT
-* [ ] REFACTOR: Extract constant for default offset `(0, 0, 0, 0)`
-* [ ] COMMIT
-* [ ] REFACTOR: Update `has_offset_directive` to return `Option<InjectionOffset>` instead of bool
-* [ ] COMMIT
+* [x] REFACTOR: Define offset type alias or struct (e.g., `type InjectionOffset = (i32, i32, i32, i32)`)
+* [x] COMMIT
+* [x] REFACTOR: Extract constant for default offset `(0, 0, 0, 0)`
+* [x] COMMIT
+* [x] REFACTOR: Update `has_offset_directive` to return `Option<InjectionOffset>` instead of bool
+* [x] COMMIT
 
 #### Task 1: Parse and display offset values from directives
 
 DoD: Inspect token shows actual offset values like "(0, 1, 0, 0)" when directive specifies them
 
-* [ ] RED: Write test `inspect_token_should_display_parsed_offset_values` that verifies "(0, 1, 0, 0)" appears for lua->luadoc injection with that offset directive
-* [ ] GREEN: Implement parsing of 4 numeric arguments from `#offset!` directive in `has_offset_directive` (now returns `Option<InjectionOffset>`)
-* [ ] CHECK: Run `make format lint test`
-* [ ] COMMIT
-* [ ] REFACTOR: Consider extracting argument parsing logic if complex
-* [ ] COMMIT (if refactored)
+* [x] RED: Write test `inspect_token_should_display_parsed_offset_values` that verifies "(0, 1, 0, 0)" appears for lua->luadoc injection with that offset directive
+* [x] GREEN: Implement parsing of 4 numeric arguments from `#offset!` directive in `parse_offset_directive` (returns `Option<InjectionOffset>`)
+* [x] CHECK: Run `make format lint test`
+* [x] COMMIT
+* [x] REFACTOR: Consider extracting argument parsing logic if complex (not needed - logic is simple and well-contained)
+* [x] COMMIT (skipped - no refactoring needed)
 
 ### Sprint retrospective
 
-(To be filled after sprint completion)
+#### Inspections of decisions in the previous retrospective
+
+- Sprint 4 identified refactoring needs from all previous sprints
+- Successfully extracted InjectionOffset type and DEFAULT_OFFSET constant
+- Changed has_offset_directive to return Option<InjectionOffset> as planned
+
+#### Inspections of the current sprint (KPT)
+
+**Keep:**
+- Starting with refactoring tasks (Task 0) before new features worked very well
+- Multiple small refactoring commits made the code evolution clear
+- Test-driven development with failing test first
+
+**Problem:**
+- The previous test needed updating when we started parsing actual values (expected behavior change)
+
+**Try:**
+- Consider adding more test cases for edge cases (malformed directives, negative offsets)
+- For Sprint 6, think about how to distinguish between "from query" vs "default" in the display
+
+**Considerations for subsequent sprints:**
+- Sprint 6 (Show source): Need to differentiate between parsed offset from query vs default
+- The current implementation shows "[has #offset! directive]" when offset is from query
+- Future: Consider what happens with nested injections that might have their own offsets
+- The parsing currently silently falls back to DEFAULT_OFFSET if parsing fails - might want to log this
+
+#### Adaption plan
+
+- Continue with "Tidy First" approach - refactoring before new features
+- Sprint 6 can be simplified since we already distinguish query vs default offsets
+- Consider adding validation or logging for malformed offset directives
 
 ---
 
 ## Sprint 6: Show source of offset values
 
 * User story: As a developer, I want to see "Offset: (0, 1, 0, 0) [from query]" or "Offset: (0, 0, 0, 0) [default]" so I understand where each offset value comes from
+
+### Sprint planning notes
+
+Current codebase state from Sprint 5:
+- We already distinguish between offset from query vs default
+- Currently shows "[has #offset! directive]" when offset is from query
+- Shows no annotation when using default offset
+- The logic is in `create_inspect_token_action_with_hierarchy_and_offset` lines 363-370
+
+The change needed: Replace "[has #offset! directive]" with "[from query]" and add "[default]" when no directive.
+
+### Tasks
+
+#### Task 0: Refactoring from previous sprints
+
+DoD: Consider any cleanup from Sprints 1-5
+
+* [ ] SELF-REVIEW: Review offset-related code for any needed tidying
+* [ ] No refactoring identified at this time
+
+#### Task 1: Show clear offset source labels
+
+DoD: Inspect token shows "[from query]" or "[default]" to indicate offset source
+
+* [ ] RED: Write test `inspect_token_should_show_offset_source_labels` that verifies "[from query]" and "[default]" labels
+* [ ] GREEN: Update display logic to show "[from query]" or "[default]"
+* [ ] CHECK: Run `make format lint test`
+* [ ] COMMIT
+* [ ] SELF-REVIEW: with Kent Beck's Tidy First principle in mind
+* [ ] REFACTOR: Consider if the display logic could be clearer
+* [ ] COMMIT (if refactored)
+
+### Sprint retrospective
+
+(To be filled after sprint completion)
 
 ---
 

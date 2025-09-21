@@ -361,12 +361,9 @@ fn create_inspect_token_action_with_hierarchy_and_offset(
         let offset = offset_from_query.unwrap_or(crate::language::injection::DEFAULT_OFFSET);
         let offset_str = format!("({}, {}, {}, {})", offset.0, offset.1, offset.2, offset.3);
         if offset_from_query.is_some() {
-            info.push_str(&format!(
-                "* Offset: {} [has #offset! directive]\n",
-                offset_str
-            ));
+            info.push_str(&format!("* Offset: {} [from query]\n", offset_str));
         } else {
-            info.push_str(&format!("* Offset: {}\n", offset_str));
+            info.push_str(&format!("* Offset: {} [default]\n", offset_str));
         }
     }
 
@@ -1121,7 +1118,7 @@ fn main() {
             .reason;
 
         assert!(
-            reason.contains("Offset: (0, 0, 0, 0)"),
+            reason.contains("Offset: (0, 0, 0, 0) [default]"),
             "Should display default offset for injected content, but got: {reason}"
         );
     }
@@ -1202,7 +1199,7 @@ fn main() {
             .reason;
 
         assert!(
-            reason.contains("Offset: (0, 0, 0, 0)"),
+            reason.contains("Offset: (0, 0, 0, 0) [default]"),
             "Should display offset for injected language, but got: {reason}"
         );
     }
@@ -1286,8 +1283,8 @@ fn main() {
 
         // Should detect regex injection and show offset directive presence with parsed values
         assert!(
-            reason.contains("Offset: (0, 1, 0, 0) [has #offset! directive]"),
-            "Should indicate offset directive presence with parsed values, but got: {}",
+            reason.contains("Offset: (0, 1, 0, 0) [from query]"),
+            "Should indicate offset from query with parsed values, but got: {}",
             reason
         );
     }
