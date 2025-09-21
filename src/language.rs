@@ -3,7 +3,6 @@ pub mod coordinator;
 pub mod events;
 pub mod filetypes;
 pub mod injection;
-pub mod injection_capture;
 pub mod loader;
 pub mod parser_pool;
 pub mod query_loader;
