@@ -95,18 +95,65 @@ The first sprint will add a placeholder offset field to the Inspect token output
 
 DoD: The Inspect token action shows "* Offset: unimplemented" in its disabled reason text
 
-* [ ] RED: Write test `inspect_token_should_display_offset` that verifies offset field appears in inspect token output
-* [ ] GREEN: Add offset field to the info string in `create_inspect_token_action_with_hierarchy`
-* [ ] CHECK: Run `make format lint test`
-* [ ] COMMIT
-* [ ] REFACTOR: Clean up any duplicate code if needed
-* [ ] COMMIT
+* [x] RED: Write test `inspect_token_should_display_offset` that verifies offset field appears in inspect token output
+* [x] GREEN: Add offset field to the info string in `create_inspect_token_action_with_hierarchy`
+* [x] CHECK: Run `make format lint test`
+* [x] COMMIT
+* [x] REFACTOR: Clean up any duplicate code if needed (no refactoring needed)
+* [x] COMMIT (skipped - no refactoring needed)
 
 ### Sprint retrospective
 
 #### Inspections of decisions in the previous retrospective
 
 N/A (first sprint)
+
+#### Inspections of the current sprint (KPT)
+
+**Keep:**
+- TDD approach worked well - test first, then minimal implementation
+- Simple placeholder implementation provides immediate value
+- Clean separation of concerns
+
+**Problem:**
+- None identified
+
+**Try:**
+- Continue with incremental approach for Sprint 2
+
+#### Adaption plan
+
+- Proceed to Sprint 2 with same TDD approach
+- Implement actual offset values instead of placeholder
+
+---
+
+## Sprint 2: Set default offset to (0, 0, 0, 0)
+
+* User story: As a developer, I want to see the actual offset value "(0, 0, 0, 0)" instead of "unimplemented" so I can see the default offset structure
+
+### Sprint planning notes
+
+Based on Sprint 1 retrospective, continuing with TDD approach. This sprint will replace the placeholder with actual offset values, always showing "(0, 0, 0, 0)" for now.
+
+### Tasks
+
+#### Task 1: Display default offset (0, 0, 0, 0)
+
+DoD: The Inspect token action shows "* Offset: (0, 0, 0, 0)" in its disabled reason text
+
+* [ ] RED: Write test `inspect_token_should_display_default_offset` that verifies "(0, 0, 0, 0)" appears
+* [ ] GREEN: Replace "unimplemented" with "(0, 0, 0, 0)" in the info string
+* [ ] CHECK: Run `make format lint test`
+* [ ] COMMIT
+* [ ] REFACTOR: Consider if offset type/struct is needed
+* [ ] COMMIT (if refactored)
+
+### Sprint retrospective
+
+#### Inspections of decisions in the previous retrospective
+
+- TDD approach continued successfully
 
 #### Inspections of the current sprint
 
@@ -115,12 +162,6 @@ N/A (first sprint)
 #### Adaption plan
 
 (To be filled after sprint completion)
-
----
-
-## Sprint 2: Set default offset to (0, 0, 0, 0)
-
-* User story: As a developer, I want to see the actual offset value "(0, 0, 0, 0)" instead of "unimplemented" so I can see the default offset structure
 
 ---
 

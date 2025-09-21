@@ -325,7 +325,7 @@ fn create_inspect_token_action_with_hierarchy(
     let mut info = format!("* Node Type: {}\n", node.kind());
 
     // Add offset field
-    info.push_str("* Offset: unimplemented\n");
+    info.push_str("* Offset: (0, 0, 0, 0)\n");
 
     // If we have queries, show captures
     if let Some((highlights_query, locals_query)) = queries {
@@ -1027,8 +1027,40 @@ fn main() {
             .reason;
 
         assert!(
-            reason.contains("Offset: unimplemented"),
+            reason.contains("Offset:"),
             "Should display offset field, but got: {reason}"
+        );
+    }
+
+    #[test]
+    fn inspect_token_should_display_default_offset() {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .expect("load rust grammar");
+
+        let text = "fn main() {}";
+        let tree = parser.parse(text, None).expect("parse rust");
+        let root = tree.root_node();
+        let node = root.named_child(0).expect("function node should exist");
+
+        let capture_mappings: CaptureMappings = HashMap::new();
+        let capture_context = Some(("rust", &capture_mappings));
+
+        let action = create_inspect_token_action(&node, &root, text, None, capture_context);
+
+        let CodeActionOrCommand::CodeAction(action) = action else {
+            panic!("expected CodeAction variant");
+        };
+
+        let reason = action
+            .disabled
+            .expect("inspect token stores info in disabled reason")
+            .reason;
+
+        assert!(
+            reason.contains("Offset: (0, 0, 0, 0)"),
+            "Should display default offset, but got: {reason}"
         );
     }
 
