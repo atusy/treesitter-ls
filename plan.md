@@ -108,10 +108,10 @@ DoD: The offset should be applied when checking if a node is within injection bo
 
 DoD: The `src/analysis/refactor.rs` module must use the offset-aware injection detection functions to ensure "Inspect token" code action respects offset boundaries.
 
-* [x] RED: Write test that verifies refactor.rs respects offset boundaries for "Inspect token" action
-* [x] GREEN: Update refactor.rs to use `detect_injection_with_content_and_offset` and adjusted ranges
-* [x] CHECK: must pass `make format lint test` without errors and warnings
-* [x] COMMIT
+* [ ] RED: Write test that verifies refactor.rs respects offset boundaries for "Inspect token" action
+* [ ] GREEN: Update refactor.rs to use `detect_injection_with_content_and_offset` and adjusted ranges
+* [ ] CHECK: must pass `make format lint test` without errors and warnings
+* [ ] COMMIT
 * [ ] REFACTOR: Clean up if needed
 * [ ] COMMIT
 
