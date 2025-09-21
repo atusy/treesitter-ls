@@ -7,8 +7,9 @@ pub type InjectionOffset = (i32, i32, i32, i32);
 /// Default offset with no adjustments
 pub const DEFAULT_OFFSET: InjectionOffset = (0, 0, 0, 0);
 
-/// Checks if a query contains an #offset! directive for @injection.content capture
-pub fn has_offset_directive(query: &Query) -> bool {
+/// Parses offset directive from query and returns the offset values if found
+/// Returns None if no #offset! directive exists for @injection.content
+pub fn parse_offset_directive(query: &Query) -> Option<InjectionOffset> {
     // Check all patterns in the query
     for pattern_index in 0..query.pattern_count() {
         // Check general predicates for this pattern
@@ -24,13 +25,19 @@ pub fn has_offset_directive(query: &Query) -> bool {
                     if let Some(capture_name) = query.capture_names().get(*capture_id as usize)
                         && *capture_name == "injection.content"
                     {
-                        return true;
+                        // For now, return default offset (parsing will be implemented in Task 1)
+                        return Some(DEFAULT_OFFSET);
                     }
                 }
             }
         }
     }
-    false
+    None
+}
+
+/// Legacy function for backwards compatibility - checks if offset directive exists
+pub fn has_offset_directive(query: &Query) -> bool {
+    parse_offset_directive(query).is_some()
 }
 
 /// Detects if a node is inside an injected language region using Tree-sitter injection queries.

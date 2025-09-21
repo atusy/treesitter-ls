@@ -53,10 +53,9 @@ fn create_injection_aware_action(
     parser_pool: Option<&mut crate::language::DocumentParserPool>,
     injection_query: Option<&Query>,
 ) -> CodeActionOrCommand {
-    // Check for offset directive in injection query
-    let has_offset_directive = injection_query
-        .map(crate::language::injection::has_offset_directive)
-        .unwrap_or(false);
+    // Parse offset directive from injection query
+    let offset_from_query = injection_query
+        .and_then(crate::language::injection::parse_offset_directive);
 
     // Check if we have everything needed for injection-aware processing
     let can_process_injection =
@@ -70,7 +69,7 @@ fn create_injection_aware_action(
             queries,
             capture_context,
             Some(&hierarchy),
-            has_offset_directive,
+            offset_from_query,
         );
     }
 
@@ -92,7 +91,7 @@ fn create_injection_aware_action(
                 queries,
                 capture_context,
                 Some(&hierarchy),
-                has_offset_directive,
+                offset_from_query,
             );
         }
     };
@@ -111,7 +110,7 @@ fn create_injection_aware_action(
                 queries,
                 capture_context,
                 Some(&hierarchy),
-                has_offset_directive,
+                offset_from_query,
             );
         }
     };
@@ -338,7 +337,7 @@ fn create_inspect_token_action_with_hierarchy(
         queries,
         capture_context,
         language_hierarchy,
-        false, // Default: no offset directive
+        None, // Default: no offset from query
     )
 }
 
@@ -350,7 +349,7 @@ fn create_inspect_token_action_with_hierarchy_and_offset(
     queries: Option<(&Query, Option<&Query>)>,
     capture_context: Option<(&str, &CaptureMappings)>,
     language_hierarchy: Option<&[String]>,
-    has_offset_directive: bool,
+    offset_from_query: Option<crate::language::injection::InjectionOffset>,
 ) -> CodeActionOrCommand {
     let mut info = format!("* Node Type: {}\n", node.kind());
 
@@ -359,9 +358,9 @@ fn create_inspect_token_action_with_hierarchy_and_offset(
         && hierarchy.len() > 1
     {
         // Has injection (base + at least one injected language)
-        let offset = crate::language::injection::DEFAULT_OFFSET;
+        let offset = offset_from_query.unwrap_or(crate::language::injection::DEFAULT_OFFSET);
         let offset_str = format!("({}, {}, {}, {})", offset.0, offset.1, offset.2, offset.3);
-        if has_offset_directive {
+        if offset_from_query.is_some() {
             info.push_str(&format!("* Offset: {} [has #offset! directive]\n", offset_str));
         } else {
             info.push_str(&format!("* Offset: {}\n", offset_str));
