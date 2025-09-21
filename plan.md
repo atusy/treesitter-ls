@@ -413,24 +413,40 @@ The change needed: Replace "[has #offset! directive]" with "[from query]" and ad
 
 DoD: Consider any cleanup from Sprints 1-5
 
-* [ ] SELF-REVIEW: Review offset-related code for any needed tidying
-* [ ] No refactoring identified at this time
+* [x] SELF-REVIEW: Review offset-related code for any needed tidying
+* [x] No refactoring identified at this time
 
 #### Task 1: Show clear offset source labels
 
 DoD: Inspect token shows "[from query]" or "[default]" to indicate offset source
 
-* [ ] RED: Write test `inspect_token_should_show_offset_source_labels` that verifies "[from query]" and "[default]" labels
-* [ ] GREEN: Update display logic to show "[from query]" or "[default]"
-* [ ] CHECK: Run `make format lint test`
-* [ ] COMMIT
-* [ ] SELF-REVIEW: with Kent Beck's Tidy First principle in mind
-* [ ] REFACTOR: Consider if the display logic could be clearer
-* [ ] COMMIT (if refactored)
+* [x] RED: Write test `inspect_token_should_show_offset_source_labels` that verifies "[from query]" and "[default]" labels
+* [x] GREEN: Update display logic to show "[from query]" or "[default]"
+* [x] CHECK: Run `make format lint test`
+* [x] COMMIT
+* [x] SELF-REVIEW: with Kent Beck's Tidy First principle in mind
+* [x] REFACTOR: Consider if the display logic could be clearer
+* [x] COMMIT (if refactored)
 
 ### Sprint retrospective
 
-(To be filled after sprint completion)
+**What worked well:**
+- Task was straightforward - just changing display labels
+- Existing test structure made it easy to update expectations
+- No refactoring needed - code was already clean from previous sprints
+
+**What was delivered:**
+- Changed "[has #offset! directive]" to "[from query]" for clarity
+- Added "[default]" label when using default offset values
+- Updated 4 tests to match new label format
+- All tests passing
+
+**Technical notes:**
+- Implementation in `create_inspect_token_action_with_hierarchy_and_offset` lines 364-366
+- Labels make the offset source immediately clear without implementation knowledge
+
+**Next sprint:**
+- Sprint 7 will add node range to inspect output
 
 ---
 
