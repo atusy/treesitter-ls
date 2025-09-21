@@ -324,8 +324,13 @@ fn create_inspect_token_action_with_hierarchy(
 ) -> CodeActionOrCommand {
     let mut info = format!("* Node Type: {}\n", node.kind());
 
-    // Add offset field
-    info.push_str("* Offset: (0, 0, 0, 0)\n");
+    // Add offset field only for injected languages
+    if let Some(hierarchy) = language_hierarchy
+        && hierarchy.len() > 1
+    {
+        // Has injection (base + at least one injected language)
+        info.push_str("* Offset: (0, 0, 0, 0)\n");
+    }
 
     // If we have queries, show captures
     if let Some((highlights_query, locals_query)) = queries {
@@ -1001,7 +1006,7 @@ fn main() {
     }
 
     #[test]
-    fn inspect_token_should_display_offset() {
+    fn inspect_token_should_display_offset_field() {
         let mut parser = Parser::new();
         parser
             .set_language(&tree_sitter_rust::LANGUAGE.into())
@@ -1015,7 +1020,16 @@ fn main() {
         let capture_mappings: CaptureMappings = HashMap::new();
         let capture_context = Some(("rust", &capture_mappings));
 
-        let action = create_inspect_token_action(&node, &root, text, None, capture_context);
+        // Test with injected language to see offset field
+        let hierarchy = vec!["rust".to_string(), "regex".to_string()];
+        let action = create_inspect_token_action_with_hierarchy(
+            &node,
+            &root,
+            text,
+            None,
+            capture_context,
+            Some(&hierarchy),
+        );
 
         let CodeActionOrCommand::CodeAction(action) = action else {
             panic!("expected CodeAction variant");
@@ -1028,7 +1042,7 @@ fn main() {
 
         assert!(
             reason.contains("Offset:"),
-            "Should display offset field, but got: {reason}"
+            "Should display offset field for injected language, but got: {reason}"
         );
     }
 
@@ -1047,7 +1061,16 @@ fn main() {
         let capture_mappings: CaptureMappings = HashMap::new();
         let capture_context = Some(("rust", &capture_mappings));
 
-        let action = create_inspect_token_action(&node, &root, text, None, capture_context);
+        // Test with injected language to see offset
+        let hierarchy = vec!["rust".to_string(), "regex".to_string()];
+        let action = create_inspect_token_action_with_hierarchy(
+            &node,
+            &root,
+            text,
+            None,
+            capture_context,
+            Some(&hierarchy),
+        );
 
         let CodeActionOrCommand::CodeAction(action) = action else {
             panic!("expected CodeAction variant");
@@ -1060,7 +1083,88 @@ fn main() {
 
         assert!(
             reason.contains("Offset: (0, 0, 0, 0)"),
-            "Should display default offset, but got: {reason}"
+            "Should display default offset for injected content, but got: {reason}"
+        );
+    }
+
+    #[test]
+    fn inspect_token_should_not_show_offset_for_base_language() {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .expect("load rust grammar");
+
+        let text = "fn main() {}";
+        let tree = parser.parse(text, None).expect("parse rust");
+        let root = tree.root_node();
+        let node = root.named_child(0).expect("function node should exist");
+
+        let capture_mappings: CaptureMappings = HashMap::new();
+        let capture_context = Some(("rust", &capture_mappings));
+
+        // Call with no language hierarchy (base language)
+        let action = create_inspect_token_action_with_hierarchy(
+            &node,
+            &root,
+            text,
+            None,
+            capture_context,
+            None, // No hierarchy = base language
+        );
+
+        let CodeActionOrCommand::CodeAction(action) = action else {
+            panic!("expected CodeAction variant");
+        };
+
+        let reason = action
+            .disabled
+            .expect("inspect token stores info in disabled reason")
+            .reason;
+
+        assert!(
+            !reason.contains("Offset:"),
+            "Should NOT display offset for base language, but got: {reason}"
+        );
+    }
+
+    #[test]
+    fn inspect_token_should_show_offset_for_injected_language() {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .expect("load rust grammar");
+
+        let text = "fn main() {}";
+        let tree = parser.parse(text, None).expect("parse rust");
+        let root = tree.root_node();
+        let node = root.named_child(0).expect("function node should exist");
+
+        let capture_mappings: CaptureMappings = HashMap::new();
+        let capture_context = Some(("rust", &capture_mappings));
+
+        // Call with language hierarchy (injected language)
+        let hierarchy = vec!["rust".to_string(), "regex".to_string()];
+        let action = create_inspect_token_action_with_hierarchy(
+            &node,
+            &root,
+            text,
+            None,
+            capture_context,
+            Some(&hierarchy), // Has hierarchy = injected language
+        );
+
+        let CodeActionOrCommand::CodeAction(action) = action else {
+            panic!("expected CodeAction variant");
+        };
+
+        let reason = action
+            .disabled
+            .expect("inspect token stores info in disabled reason")
+            .reason;
+
+        assert!(
+            reason.contains("Offset: (0, 0, 0, 0)"),
+            "Should display offset for injected language, but got: {reason}"
         );
     }
 
