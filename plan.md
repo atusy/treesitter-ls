@@ -523,6 +523,39 @@ DoD: Inspect token shows "Node Range: [start_byte, end_byte]" for all tokens
 
 * User story: As a developer inspecting luadoc with offset (0, 1, 0, 0), I want to see both "Node Range: [10, 25]" and "Effective Range: [11, 25]" to verify the offset is being calculated correctly
 
+### Sprint planning notes
+
+Current state from Sprint 7:
+- Node Range display working for all nodes
+- Offset display working with [from query] and [default] labels
+- Need to calculate and display effective range when offset is present
+
+### Tasks
+
+#### Task 0: Refactoring from previous sprints
+
+DoD: Consider any cleanup from Sprints 1-7
+
+* [ ] SELF-REVIEW: Review offset and range code
+* [ ] REFACTOR if needed
+* [ ] COMMIT if refactored
+
+#### Task 1: Display effective range for injected content
+
+DoD: When offset is present, show "Effective Range: [adjusted_start, adjusted_end]"
+
+* [ ] RED: Write test `inspect_token_should_display_effective_range_with_offset`
+* [ ] GREEN: Calculate and display effective range
+* [ ] CHECK: Run `cargo test`
+* [ ] COMMIT
+* [ ] SELF-REVIEW: Check calculation logic
+* [ ] REFACTOR if needed
+* [ ] COMMIT if refactored
+
+### Sprint retrospective
+
+(To be filled after sprint completion)
+
 ---
 
 ## Sprint 9: Use offset in position calculations

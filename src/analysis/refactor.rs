@@ -372,6 +372,15 @@ fn create_inspect_token_action_with_hierarchy_and_offset(
         } else {
             info.push_str(&format!("* Offset: {} [default]\n", offset_str));
         }
+
+        // Calculate and display effective range when offset is present
+        // For now, only apply column offsets (row offsets would need line calculations)
+        let effective_start = (node.start_byte() as i32 + offset.1) as usize;
+        let effective_end = (node.end_byte() as i32 + offset.3) as usize;
+        info.push_str(&format!(
+            "* Effective Range: [{}, {}]\n",
+            effective_start, effective_end
+        ));
     }
 
     // If we have queries, show captures
@@ -1128,6 +1137,12 @@ fn main() {
             reason.contains("Offset: (0, 0, 0, 0) [default]"),
             "Should display default offset for injected content, but got: {reason}"
         );
+
+        // With default offset (0, 0, 0, 0), effective range should equal node range
+        assert!(
+            reason.contains("Effective Range:"),
+            "Should display effective range for injected content, but got: {reason}"
+        );
     }
 
     #[test]
@@ -1324,6 +1339,85 @@ fn main() {
         assert!(
             reason.contains("Node Range: [20, 22]"),
             "Should display node byte range, but got: {reason}"
+        );
+    }
+
+    #[test]
+    fn inspect_token_should_display_effective_range_with_offset() {
+        let mut parser = Parser::new();
+        let language = tree_sitter_rust::LANGUAGE.into();
+        parser.set_language(&language).expect("load rust grammar");
+
+        let text = r#"fn main() {
+    let pattern = Regex::new(r"^\d+$").unwrap();
+}"#;
+        let tree = parser.parse(text, None).expect("parse rust");
+
+        // Create injection query with offset directive
+        let injection_query_str = r#"
+(call_expression
+  function: (scoped_identifier
+    path: (identifier) @_regex
+    (#eq? @_regex "Regex")
+    name: (identifier) @_new
+    (#eq? @_new "new"))
+  arguments: (arguments
+    (raw_string_literal
+      (string_content) @injection.content))
+  (#set! injection.language "regex")
+  (#offset! @injection.content 0 1 0 0))
+        "#;
+
+        let injection_query = Query::new(&language, injection_query_str).expect("valid query");
+
+        // Position inside the regex string
+        let _mapper = PositionMapper::new(text);
+        let cursor_pos = Position::new(1, 32);
+        let cursor_range = Range::new(cursor_pos, cursor_pos);
+
+        let capture_mappings: CaptureMappings = HashMap::new();
+
+        // Call with injection query
+        let actions = handle_code_actions_with_injection_query(
+            &Url::parse("file:///test.rs").unwrap(),
+            text,
+            &tree,
+            cursor_range,
+            None,
+            Some(("rust", &capture_mappings)),
+            Some(&injection_query),
+        );
+
+        assert!(actions.is_some(), "Should return code actions");
+        let actions = actions.unwrap();
+
+        // Find the inspect token action
+        let inspect_action = actions.iter().find(|a| {
+            if let CodeActionOrCommand::CodeAction(action) = a {
+                action.title.starts_with("Inspect token")
+            } else {
+                false
+            }
+        });
+
+        assert!(inspect_action.is_some(), "Should find inspect token action");
+        let CodeActionOrCommand::CodeAction(action) = inspect_action.unwrap() else {
+            panic!("Expected CodeAction");
+        };
+
+        let reason = action
+            .disabled
+            .as_ref()
+            .expect("inspect token stores info in disabled reason")
+            .reason
+            .clone();
+
+        // The string_content node starts at byte 43 and ends at byte 48
+        // With offset (0, 1, 0, 0), the effective range should be [44, 48]
+        assert!(
+            reason.contains("Effective Range: [44, 48]"),
+            "Should display effective range with offset applied, but got: {}",
+            reason
         );
     }
 
