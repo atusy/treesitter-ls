@@ -353,6 +353,13 @@ fn create_inspect_token_action_with_hierarchy_and_offset(
 ) -> CodeActionOrCommand {
     let mut info = format!("* Node Type: {}\n", node.kind());
 
+    // Add node byte range
+    info.push_str(&format!(
+        "* Node Range: [{}, {}]\n",
+        node.start_byte(),
+        node.end_byte()
+    ));
+
     // Add offset field only for injected languages
     if let Some(hierarchy) = language_hierarchy
         && hierarchy.len() > 1
@@ -1286,6 +1293,37 @@ fn main() {
             reason.contains("Offset: (0, 1, 0, 0) [from query]"),
             "Should indicate offset from query with parsed values, but got: {}",
             reason
+        );
+    }
+
+    #[test]
+    fn inspect_token_should_display_node_range() {
+        let mut parser = tree_sitter::Parser::new();
+        let language = tree_sitter_rust::LANGUAGE.into();
+        parser.set_language(&language).expect("load rust grammar");
+
+        let text = "fn main() { let x = 42; }";
+        let tree = parser.parse(text, None).expect("parse rust");
+        let root = tree.root_node();
+
+        // Find the number literal "42" at byte 20
+        let node = root.descendant_for_byte_range(20, 20).expect("find node");
+
+        let action = create_inspect_token_action(&node, &root, text, None, None);
+
+        // Extract the disabled reason which contains the info
+        let CodeActionOrCommand::CodeAction(action) = action else {
+            panic!("Expected CodeAction");
+        };
+
+        let reason = action
+            .disabled
+            .expect("inspect token stores info in disabled reason")
+            .reason;
+
+        assert!(
+            reason.contains("Node Range: [20, 22]"),
+            "Should display node byte range, but got: {reason}"
         );
     }
 

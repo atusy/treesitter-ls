@@ -470,6 +470,39 @@ DoD: Inspect token shows "[from query]" or "[default]" to indicate offset source
 
 * User story: As a developer, I want to see "Node Range: [start_byte, end_byte]" in the inspect output to understand the current boundaries of the node
 
+### Sprint planning notes
+
+Current state from Sprint 6:
+- Offset display working with [from query] and [default] labels
+- Display logic in `create_inspect_token_action_with_hierarchy_and_offset`
+- Need to add node byte range information
+
+### Tasks
+
+#### Task 0: Refactoring from previous sprints
+
+DoD: Consider any cleanup from Sprints 1-6
+
+* [ ] SELF-REVIEW: Review inspect token code for refactoring needs
+* [ ] REFACTOR if needed
+* [ ] COMMIT if refactored
+
+#### Task 1: Display node byte range
+
+DoD: Inspect token shows "Node Range: [start_byte, end_byte]" for all tokens
+
+* [ ] RED: Write test `inspect_token_should_display_node_range`
+* [ ] GREEN: Add node range display to inspect output
+* [ ] CHECK: Run `make format lint test`
+* [ ] COMMIT
+* [ ] SELF-REVIEW: Check implementation clarity
+* [ ] REFACTOR if needed
+* [ ] COMMIT if refactored
+
+### Sprint retrospective
+
+(To be filled after sprint completion)
+
 ---
 
 ## Sprint 8: Apply offset to displayed range
