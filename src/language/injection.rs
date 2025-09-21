@@ -1,6 +1,39 @@
 use crate::language::injection_capture::{InjectionCapture, InjectionOffset};
 use tree_sitter::{Node, Query, QueryCursor, QueryMatch, StreamingIterator};
 
+/// Detects if a node is inside an injected language region using Tree-sitter injection queries.
+///
+/// This function uses standard Tree-sitter injection queries to detect language boundaries
+/// in a completely language-agnostic way. It supports both:
+/// - Static injection: `#set! injection.language "language_name"`
+/// - Dynamic injection: `@injection.language` captures
+///
+/// # Arguments
+/// * `node` - The node to check for injection
+/// * `root` - The root node of the syntax tree
+/// * `text` - The source text
+/// * `injection_query` - The injection query for the base language
+/// * `base_language` - The name of the base language
+///
+/// # Returns
+/// A vector of language names representing the hierarchy, or None if no injection is detected.
+/// For example: `["rust", "regex"]` for a regex pattern in Rust code.
+pub fn detect_injection(
+    node: &Node,
+    root: &Node,
+    text: &str,
+    injection_query: Option<&Query>,
+    base_language: &str,
+) -> Option<Vec<String>> {
+    detect_injection_with_content(node, root, text, injection_query, base_language)
+        .map(|capture| vec![base_language.to_string(), capture.language])
+}
+
+/// Checks if a node is within the bounds of another node
+fn is_node_within(node: &Node, container: &Node) -> bool {
+    node.start_byte() >= container.start_byte() && node.end_byte() <= container.end_byte()
+}
+
 /// Extracts the injection language from query properties or captures
 ///
 /// Handles two patterns:
@@ -41,10 +74,121 @@ fn extract_dynamic_language(query: &Query, match_: &QueryMatch, text: &str) -> O
     None
 }
 
+/// Detects injection and returns an InjectionCapture with language hierarchy and content node
+pub fn detect_injection_with_content<'a>(
+    node: &Node<'a>,
+    root: &Node<'a>,
+    text: &str,
+    injection_query: Option<&Query>,
+    base_language: &str,
+) -> Option<InjectionCapture> {
+    detect_injection_with_content_and_offset(node, root, text, injection_query, base_language)
+}
+
+/// Detects injection with offset calculation based on language rules
+/// The node parameter is used to determine where the cursor is, but we need the actual
+/// cursor position which might be within the node, not at its start
+pub fn detect_injection_with_content_and_offset<'a>(
+    node: &Node<'a>,
+    root: &Node<'a>,
+    text: &str,
+    injection_query: Option<&Query>,
+    base_language: &str,
+) -> Option<InjectionCapture> {
+    // This function is called with a node at the cursor position.
+    // However, we need to be more precise about the cursor position.
+    // For now, we'll use the node's start byte, but ideally we'd pass
+    // the exact cursor byte position.
+    let cursor_byte = node.start_byte();
+
+    detect_injection_at_byte_position_impl(cursor_byte, root, text, injection_query, base_language)
+}
+
 /// Detects injection at a specific byte position with offset calculation
-/// Internal implementation that checks if a byte position is within an injection with offset
 pub fn detect_injection_at_cursor_with_offset<'a>(
     cursor_byte: usize,
+    root: &Node<'a>,
+    text: &str,
+    injection_query: Option<&Query>,
+    base_language: &str,
+) -> Option<InjectionCapture> {
+    detect_injection_at_byte_position_impl(cursor_byte, root, text, injection_query, base_language)
+}
+
+/// Detects injection at a specific cursor position using query-based offsets if available
+///
+/// This function checks for #offset! directives in the query first, and falls back
+/// to rule-based offsets if no directive is found. Logs which type of offset is used.
+pub fn detect_injection_at_cursor_with_query_offset<'a>(
+    cursor_byte: usize,
+    root: &Node<'a>,
+    text: &str,
+    injection_query: Option<&Query>,
+    base_language: &str,
+) -> Option<InjectionCapture> {
+    let query = injection_query?;
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(query, *root, text.as_bytes());
+
+    while let Some(match_) = matches.next() {
+        // Look for @injection.content capture
+        for capture in match_.captures {
+            if let Some(capture_name) = query.capture_names().get(capture.index as usize)
+                && *capture_name == "injection.content"
+            {
+                let content_range = capture.node.start_byte()..capture.node.end_byte();
+
+                // Extract language (static or dynamic)
+                let injected_language = extract_static_language(query, match_)
+                    .or_else(|| extract_dynamic_language(query, match_, text))?;
+
+                // Try to get offset from query first
+                let offset =
+                    if let Some(query_offset) = parse_offset_from_query(query, capture.index) {
+                        log::debug!(
+                            "Using query-based offset for {}->{}: {:?}",
+                            base_language,
+                            injected_language,
+                            query_offset
+                        );
+                        query_offset
+                    } else {
+                        // Fall back to rule-based offset
+                        let rule_offset = get_injection_offset(base_language, &injected_language);
+                        if rule_offset != (0, 0, 0, 0) {
+                            log::debug!(
+                                "Using rule-based offset for {}->{}: {:?}",
+                                base_language,
+                                injected_language,
+                                rule_offset
+                            );
+                        } else {
+                            log::debug!("No offset for {}->{}", base_language, injected_language);
+                        }
+                        rule_offset
+                    };
+
+                let injection_capture = InjectionCapture {
+                    language: injected_language,
+                    content_range,
+                    offset,
+                    text: Some(text.to_string()),
+                };
+
+                // Check if cursor is within adjusted boundaries
+                if injection_capture.contains_position(cursor_byte) {
+                    return Some(injection_capture);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Internal implementation that checks if a byte position is within an injection with offset
+fn detect_injection_at_byte_position_impl<'a>(
+    byte_position: usize,
     root: &Node<'a>,
     text: &str,
     injection_query: Option<&Query>,
@@ -85,7 +229,7 @@ pub fn detect_injection_at_cursor_with_offset<'a>(
                     injection_capture.text = Some(text.to_string());
 
                     // Check if the byte position is within the adjusted boundaries
-                    if injection_capture.contains_position_with_text(cursor_byte, &mapper) {
+                    if injection_capture.contains_position_with_text(byte_position, &mapper) {
                         injections.push(injection_capture);
                     }
                 }
@@ -163,64 +307,134 @@ fn get_injection_offset(base_language: &str, injected_language: &str) -> Injecti
     }
 }
 
-/// Checks if a node is within the bounds of another node
+/// Collects all injection regions that contain the given node (with offsets applied)
+#[allow(dead_code)]
+fn collect_injection_regions_with_offset<'a>(
+    node: &Node<'a>,
+    root: &Node<'a>,
+    text: &str,
+    injection_query: Option<&Query>,
+    base_language: &str,
+) -> Option<Vec<(usize, usize, String, Node<'a>)>> {
+    let query = injection_query?;
+
+    // Run the query on the entire tree
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(query, *root, text.as_bytes());
+
+    // Collect all injection regions that contain our node
+    // Use a map to deduplicate by node range (start, end)
+    let mut injections_map = std::collections::HashMap::new();
+
+    while let Some(match_) = matches.next() {
+        if let Some((content_node, language)) = find_injection_content_and_language_with_offset(
+            node,
+            match_,
+            query,
+            text,
+            base_language,
+        ) {
+            let key = (content_node.start_byte(), content_node.end_byte());
+
+            // Only keep the first injection for each unique range
+            // This handles cases where multiple patterns match the same node
+            injections_map.entry(key).or_insert((
+                content_node.start_byte(),
+                content_node.end_byte(),
+                language,
+                content_node,
+            ));
+        }
+    }
+
+    // Convert to vector
+    let injections: Vec<_> = injections_map.into_values().collect();
+
+    Some(injections)
+}
+
+/// Finds the injection content node and language if the given node is within it (with offset)
+#[allow(dead_code)]
+fn find_injection_content_and_language_with_offset<'a>(
+    node: &Node<'a>,
+    match_: &QueryMatch<'_, 'a>,
+    query: &Query,
+    text: &str,
+    base_language: &str,
+) -> Option<(Node<'a>, String)> {
+    use crate::text::PositionMapper;
+
+    // Find @injection.content capture
+    for capture in match_.captures {
+        if let Some(capture_name) = query.capture_names().get(capture.index as usize)
+            && *capture_name == "injection.content"
+        {
+            let content_node = capture.node;
+
+            // Extract the injection language first
+            if let Some(language) = extract_injection_language(query, match_, text) {
+                // Try to get offset from query first, then fall back to rule-based
+                let offset = parse_offset_from_query(query, capture.index)
+                    .unwrap_or_else(|| get_injection_offset(base_language, &language));
+
+                // If there's no offset, use the regular check
+                if offset == (0, 0, 0, 0) {
+                    if is_node_within(node, &content_node) {
+                        return Some((content_node, language));
+                    }
+                } else {
+                    // Apply offset and check if node overlaps with adjusted boundaries
+                    let mapper = PositionMapper::new(text);
+
+                    // Create a temporary capture to use the offset checking logic
+                    let mut temp_capture = InjectionCapture::new(
+                        language.clone(),
+                        content_node.start_byte()..content_node.end_byte(),
+                    );
+                    temp_capture.offset = offset;
+                    temp_capture.text = Some(text.to_string());
+
+                    // Get the adjusted range
+                    let adjusted_range = temp_capture.adjusted_range_with_text(&mapper);
+
+                    // Check if the node overlaps with the adjusted boundaries
+                    // A node overlaps if its range intersects with the adjusted range
+                    let node_start = node.start_byte();
+                    let node_end = node.end_byte();
+
+                    if node_start < adjusted_range.end && node_end > adjusted_range.start {
+                        return Some((content_node, language));
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Helper function for testing: detects injection at a specific byte position
+#[cfg(test)]
+fn detect_injection_at_byte_position<'a>(
+    byte_position: usize,
+    root: &Node<'a>,
+    text: &str,
+    injection_query: Option<&Query>,
+    base_language: &str,
+) -> Option<InjectionCapture> {
+    detect_injection_at_byte_position_impl(
+        byte_position,
+        root,
+        text,
+        injection_query,
+        base_language,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tree_sitter::Parser;
-
-    /// Detects if a node is inside an injected language region using Tree-sitter injection queries.
-    ///
-    /// This function uses standard Tree-sitter injection queries to detect language boundaries
-    /// in a completely language-agnostic way. It supports both:
-    /// - Static injection: `#set! injection.language "language_name"`
-    /// - Dynamic injection: `@injection.language` captures
-    ///
-    /// # Arguments
-    /// * `node` - The node to check for injection
-    /// * `root` - The root node of the syntax tree
-    /// * `text` - The source text
-    /// * `injection_query` - The injection query for the base language
-    /// * `base_language` - The name of the base language
-    ///
-    /// # Returns
-    /// A vector of language names representing the hierarchy, or None if no injection is detected.
-    /// For example: `["rust", "regex"]` for a regex pattern in Rust code.
-    fn detect_injection(
-        node: &Node,
-        root: &Node,
-        text: &str,
-        injection_query: Option<&Query>,
-        base_language: &str,
-    ) -> Option<Vec<String>> {
-        detect_injection_with_content(node, root, text, injection_query, base_language)
-            .map(|capture| vec![base_language.to_string(), capture.language])
-    }
-
-    /// Detects injection with offset calculation based on language rules
-    /// The node parameter is used to determine where the cursor is, but we need the actual
-    /// cursor position which might be within the node, not at its start
-    fn detect_injection_with_content<'a>(
-        node: &Node<'a>,
-        root: &Node<'a>,
-        text: &str,
-        injection_query: Option<&Query>,
-        base_language: &str,
-    ) -> Option<InjectionCapture> {
-        // This function is called with a node at the cursor position.
-        // However, we need to be more precise about the cursor position.
-        // For now, we'll use the node's start byte, but ideally we'd pass
-        // the exact cursor byte position.
-        let cursor_byte = node.start_byte();
-
-        detect_injection_at_cursor_with_offset(
-            cursor_byte,
-            root,
-            text,
-            injection_query,
-            base_language,
-        )
-    }
 
     fn create_rust_parser() -> Parser {
         let mut parser = Parser::new();
@@ -232,10 +446,6 @@ mod tests {
 
     fn parse_rust_code(parser: &mut Parser, code: &str) -> tree_sitter::Tree {
         parser.parse(code, None).expect("parse rust")
-    }
-
-    fn is_node_within(node: &Node, container: &Node) -> bool {
-        node.start_byte() >= container.start_byte() && node.end_byte() <= container.end_byte()
     }
 
     #[test]
@@ -349,6 +559,53 @@ mod tests {
     }
 
     #[test]
+    fn test_apply_offset_from_query_with_logging() {
+        use tree_sitter::Query;
+
+        // Test that offsets from queries are applied and logged correctly
+        let language = tree_sitter_rust::LANGUAGE.into();
+
+        // Query with offset directive
+        let query_str = r#"
+        (string_literal
+          (string_content) @injection.content
+          (#set! injection.language "javascript")
+          (#offset! @injection.content 0 2 0 -1))
+        "#;
+
+        let query = Query::new(&language, query_str).expect("valid query");
+
+        // Test text with string
+        let text = r#"let js = "  javascript code here ";"#;
+        let mut parser = Parser::new();
+        parser.set_language(&language).expect("set language");
+        let tree = parser.parse(text, None).expect("parse");
+        let root = tree.root_node();
+
+        // Detect injection with query-based offset
+        let result = detect_injection_at_cursor_with_query_offset(
+            15, // cursor in "javascript"
+            &root,
+            text,
+            Some(&query),
+            "rust", // base language
+        );
+
+        assert!(
+            result.is_some(),
+            "Should detect injection with query offset"
+        );
+        let capture = result.unwrap();
+
+        // Should use query-based offset, not rule-based
+        assert_eq!(
+            capture.offset,
+            (0, 2, 0, -1),
+            "Should use offset from query"
+        );
+    }
+
+    #[test]
     fn test_hyphen_not_in_luadoc_injection_old() {
         use tree_sitter::Parser;
 
@@ -378,13 +635,8 @@ mod tests {
 
         // Hyphen should NOT be in injection
         let cursor_byte_hyphen = 15;
-        let result = detect_injection_at_cursor_with_offset(
-            cursor_byte_hyphen,
-            &root,
-            text,
-            Some(&query),
-            "lua",
-        );
+        let result =
+            detect_injection_at_byte_position(cursor_byte_hyphen, &root, text, Some(&query), "lua");
 
         assert_eq!(
             result, None,
@@ -393,7 +645,7 @@ mod tests {
 
         // @ symbol should be in the injection (start of actual luadoc)
         let cursor_byte_at_symbol = 16;
-        let result2 = detect_injection_at_cursor_with_offset(
+        let result2 = detect_injection_at_byte_position(
             cursor_byte_at_symbol,
             &root,
             text,
