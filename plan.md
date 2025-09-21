@@ -483,25 +483,39 @@ Current state from Sprint 6:
 
 DoD: Consider any cleanup from Sprints 1-6
 
-* [ ] SELF-REVIEW: Review inspect token code for refactoring needs
-* [ ] REFACTOR if needed
-* [ ] COMMIT if refactored
+* [x] SELF-REVIEW: Review inspect token code for refactoring needs
+* [x] No refactoring needed - code is clean
 
 #### Task 1: Display node byte range
 
 DoD: Inspect token shows "Node Range: [start_byte, end_byte]" for all tokens
 
-* [ ] RED: Write test `inspect_token_should_display_node_range`
-* [ ] GREEN: Add node range display to inspect output
-* [ ] CHECK: Run `make format lint test`
-* [ ] COMMIT
-* [ ] SELF-REVIEW: Check implementation clarity
-* [ ] REFACTOR if needed
-* [ ] COMMIT if refactored
+* [x] RED: Write test `inspect_token_should_display_node_range`
+* [x] GREEN: Add node range display to inspect output
+* [x] CHECK: Run `make format lint test`
+* [x] COMMIT
+* [x] SELF-REVIEW: Check implementation clarity
+* [x] No refactoring needed
 
 ### Sprint retrospective
 
-(To be filled after sprint completion)
+**What worked well:**
+- Simple, straightforward implementation
+- Test clearly defined expected behavior
+- All existing tests continued passing
+
+**What was delivered:**
+- Added "Node Range: [start_byte, end_byte]" to inspect output
+- Works for all nodes, not just injected ones
+- Provides foundation for offset calculations in Sprint 8
+
+**Technical notes:**
+- Implementation in lines 357-361 of refactor.rs
+- Uses node.start_byte() and node.end_byte() methods
+- Display appears after Node Type, before Offset (if present)
+
+**Next sprint:**
+- Sprint 8 will apply offset to displayed range for injected content
 
 ---
 
