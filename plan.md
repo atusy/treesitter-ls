@@ -26,6 +26,8 @@
 ``` markdown
 ## Sprint 1
 
+<!-- The planned change must have user-visible increment -->
+
 * User story:
 
 ### Sprint planning notes
@@ -33,6 +35,8 @@
 <!-- 
 Only Sprint 1 requires be filled at the initial planning.
 After that, fill this section after each sprint retrospective.
+
+The content should reflect the actual codebase.
 -->
 
 ### Tasks
@@ -142,18 +146,72 @@ Based on Sprint 1 retrospective, continuing with TDD approach. This sprint will 
 
 DoD: The Inspect token action shows "* Offset: (0, 0, 0, 0)" in its disabled reason text
 
-* [ ] RED: Write test `inspect_token_should_display_default_offset` that verifies "(0, 0, 0, 0)" appears
-* [ ] GREEN: Replace "unimplemented" with "(0, 0, 0, 0)" in the info string
-* [ ] CHECK: Run `make format lint test`
-* [ ] COMMIT
-* [ ] REFACTOR: Consider if offset type/struct is needed
-* [ ] COMMIT (if refactored)
+* [x] RED: Write test `inspect_token_should_display_default_offset` that verifies "(0, 0, 0, 0)" appears
+* [x] GREEN: Replace "unimplemented" with "(0, 0, 0, 0)" in the info string
+* [x] CHECK: Run `make format lint test`
+* [x] COMMIT
+* [x] REFACTOR: Consider if offset type/struct is needed (not needed yet - will introduce when calculating actual offsets)
+* [x] COMMIT (skipped - no refactoring needed)
 
 ### Sprint retrospective
 
 #### Inspections of decisions in the previous retrospective
 
 - TDD approach continued successfully
+
+#### Inspections of the current sprint (KPT)
+
+**Keep:**
+- TDD approach continues to work well
+- Incremental changes building on previous work
+- Tests serve as documentation of expected behavior
+
+**Problem:**
+- None identified
+
+**Try:**
+- In Sprint 3, introduce proper offset data structures to prepare for actual calculations
+
+#### Adaption plan
+
+- Sprint 3 will need to introduce offset structures/types since we'll start calculating actual values
+- Continue TDD approach with more complex test scenarios for injection offsets
+
+---
+
+## Sprint 3: Show offset only for injected tokens
+
+* User story: As a developer, I want to see "Offset: (0, 0, 0, 0)" only when inspecting injected language tokens (like regex inside Rust strings), not for base language tokens, so I know when a token comes from an injection
+
+### Sprint planning notes
+
+Current codebase state:
+- `create_inspect_token_action_with_hierarchy` always shows "Offset: (0, 0, 0, 0)" for all tokens (line 328)
+- The function already receives `language_hierarchy` parameter which is `Some(&[String])` for injections, `None` for base language
+- Injection detection already works: `handle_code_actions_with_context` detects injections and calls `create_injection_aware_action` which eventually calls `create_inspect_token_action_with_hierarchy` with hierarchy
+- Language hierarchy is displayed on line 444 when present, single language on line 447 when not
+
+The change needed: Only show offset field when `language_hierarchy` is `Some` and non-empty (indicating an injection).
+
+### Tasks
+
+#### Task 1: Show offset only for injected tokens
+
+DoD: Offset field appears only when inspecting injected tokens (when language hierarchy shows "base -> injected")
+
+* [ ] RED: Write test `inspect_token_should_not_show_offset_for_base_language` that verifies offset is NOT shown for base language tokens
+* [ ] RED: Write test `inspect_token_should_show_offset_for_injected_language` that verifies offset IS shown for injected tokens
+* [ ] GREEN: Modify `create_inspect_token_action_with_hierarchy` to conditionally show offset based on `language_hierarchy`
+* [ ] CHECK: Run `make format lint test`
+* [ ] COMMIT
+* [ ] REFACTOR: Consider if condition logic needs extraction
+* [ ] COMMIT (if refactored)
+
+### Sprint retrospective
+
+#### Inspections of decisions in the previous retrospective
+
+(To be filled after sprint completion)
 
 #### Inspections of the current sprint
 
@@ -165,30 +223,48 @@ DoD: The Inspect token action shows "* Offset: (0, 0, 0, 0)" in its disabled rea
 
 ---
 
-## Sprint 3: Add rule-based offset for lua->luadoc injection
+## Sprint 4: Detect offset directive presence in queries
 
-* User story: As a developer using lua with luadoc comments, I want the offset to be calculated as (0, 1, 0, 0) for luadoc injections so the positions are correctly adjusted for the comment prefix
-
----
-
-## Sprint 4: Add rule-based offset for markdown minus_metadata
-
-* User story: As a developer using markdown with YAML frontmatter, I want the offset to be calculated as (1, 0, -1, 0) so the frontmatter delimiters are excluded from the injected content
+* User story: As a developer, I want to see "Offset: (0, 0, 0, 0) [has #offset! directive in query]" when an injection query contains an offset directive, even without parsing its values yet
 
 ---
 
-## Sprint 5: Add rule-based offset for markdown plus_metadata
+## Sprint 5: Parse offset values from directives
 
-* User story: As a developer using markdown with TOML frontmatter, I want the offset to be calculated as (1, 0, -1, 0) so the frontmatter delimiters are excluded from the injected content
-
----
-
-## Sprint 6: Add query-based offset calculation
-
-* User story: As a developer, I want offsets to be automatically calculated from `#offset!` directives in injection queries so any language can specify custom offsets
+* User story: As a developer, I want to see "Offset: (0, 1, 0, 0)" when inspecting luadoc in lua comments where the query has `#offset! @injection.content 0 1 0 0`, showing the system can parse offset values
 
 ---
 
-## Sprint 7: Remove rule-based logic
+## Sprint 6: Show source of offset values
 
-* User story: As a developer, I want all offsets to come from queries to maintain consistency and avoid hardcoded rules
+* User story: As a developer, I want to see "Offset: (0, 1, 0, 0) [from query]" or "Offset: (0, 0, 0, 0) [default]" so I understand where each offset value comes from
+
+---
+
+## Sprint 7: Display node range in inspect output
+
+* User story: As a developer, I want to see "Node Range: [start_byte, end_byte]" in the inspect output to understand the current boundaries of the node
+
+---
+
+## Sprint 8: Apply offset to displayed range
+
+* User story: As a developer inspecting luadoc with offset (0, 1, 0, 0), I want to see both "Node Range: [10, 25]" and "Effective Range: [11, 25]" to verify the offset is being calculated correctly
+
+---
+
+## Sprint 9: Use offset in position calculations
+
+* User story: As a developer, when I click on the `@` in a luadoc comment `---@param`, I want the inspect action to correctly identify it as position 0 in the luadoc content (not position 3 in the comment)
+
+---
+
+## Sprint 10: Support markdown frontmatter offsets
+
+* User story: As a developer inspecting markdown YAML frontmatter with offset (1, 0, -1, 0), I want to see the correct adjusted range that excludes the `---` delimiter lines
+
+---
+
+## Sprint 11: Validate all offset calculations
+
+* User story: As a developer, I want to see correct offset-adjusted ranges for all supported injections (lua->luadoc, markdown->yaml, markdown->toml) to confirm the system works universally
