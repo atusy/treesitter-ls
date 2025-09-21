@@ -21,6 +21,10 @@
     * Follow Kent-Beck's tidy first and t-wada's TDD
     * `git commit` on when you achieve GREEN or you make changes on REFACTOR
     * `make format lint test` must pass before `git commit`
+    * **CRITICAL: Sprint is NOT complete until plan.md is updated with:**
+        * All task checkboxes marked as complete [x]
+        * Sprint retrospective section filled in
+        * Never declare a sprint complete without updating plan.md first
     * template of sprint is below. At the initial planning, only Sprint 1 requires 
 
 ``` markdown
