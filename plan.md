@@ -130,12 +130,12 @@ DoD: Support markdown metadata injections (minus_metadata for YAML and plus_meta
 
 DoD: Extract offset values from `#offset!` directive in injection.scm queries
 
-* [x] RED: Write test for parsing #offset! directive from query
-* [x] GREEN: Implement parser for #offset! directive
-* [x] CHECK: must pass `make format lint test` without errors and warnings
-* [x] COMMIT
-* [x] REFACTOR: Improve parsing error handling (no refactoring needed)
-* [x] COMMIT (skipped, no changes)
+* [ ] RED: Write test for parsing #offset! directive from query
+* [ ] GREEN: Implement parser for #offset! directive
+* [ ] CHECK: must pass `make format lint test` without errors and warnings
+* [ ] COMMIT
+* [ ] REFACTOR: Improve parsing error handling
+* [ ] COMMIT
 
 ## Step 6: Apply parsed offset to injection boundaries
 
