@@ -182,26 +182,15 @@ fn handle_nested_injection(
     let injection_query = coord.get_injection_query(injected_lang);
 
     if let Some(inj_query) = injection_query
-        && let Some(nested_capture) = injection::detect_injection_with_content(
-            injected_node,
-            injected_root,
-            content_text,
-            Some(inj_query.as_ref()),
-            injected_lang,
-        )
-    {
-        // Extract nested content node from the capture's range
-        let nested_content_node = injected_root
-            .descendant_for_byte_range(
-                nested_capture.content_range.start,
-                nested_capture.content_range.end,
+        && let Some((nested_hierarchy, nested_content_node)) =
+            injection::detect_injection_with_content(
+                injected_node,
+                injected_root,
+                content_text,
+                Some(inj_query.as_ref()),
+                injected_lang,
             )
-            .unwrap_or(*injected_node);
-
-        // Build nested hierarchy by appending the new language
-        let mut nested_hierarchy = hierarchy.to_vec();
-        nested_hierarchy.push(nested_capture.language.clone());
-
+    {
         return process_nested_injection(
             nested_hierarchy,
             nested_content_node,
@@ -586,33 +575,18 @@ fn handle_code_actions_with_context(
 
     // Create the appropriate inspect token action
     let inspect_action = match injection_info {
-        Some(capture) => {
-            // Extract content node from the capture's range
-            let content_node = root
-                .descendant_for_byte_range(capture.content_range.start, capture.content_range.end)
-                .unwrap_or(node_at_cursor);
-
-            // Build hierarchy - for now just base language and injected language
-            let hierarchy = vec![
-                capture_context
-                    .map(|(lang, _)| lang.to_string())
-                    .unwrap_or_else(|| "unknown".to_string()),
-                capture.language.clone(),
-            ];
-
-            create_injection_aware_action(
-                &node_at_cursor,
-                &root,
-                text,
-                queries,
-                capture_context,
-                hierarchy,
-                content_node,
-                cursor_byte,
-                coordinator,
-                parser_pool,
-            )
-        }
+        Some((hierarchy, content_node)) => create_injection_aware_action(
+            &node_at_cursor,
+            &root,
+            text,
+            queries,
+            capture_context,
+            hierarchy,
+            content_node,
+            cursor_byte,
+            coordinator,
+            parser_pool,
+        ),
         None => create_inspect_token_action(&node_at_cursor, &root, text, queries, capture_context),
     };
 
