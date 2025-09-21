@@ -1,5 +1,31 @@
 use tree_sitter::{Node, Query, QueryCursor, QueryMatch, StreamingIterator};
 
+/// Checks if a query contains an #offset! directive for @injection.content capture
+pub fn has_offset_directive(query: &Query) -> bool {
+    // Check all patterns in the query
+    for pattern_index in 0..query.pattern_count() {
+        // Check general predicates for this pattern
+        let predicates = query.general_predicates(pattern_index);
+        for predicate in predicates {
+            // Check if this is an offset! directive
+            if predicate.operator.as_ref() == "offset!" {
+                // Check if it applies to @injection.content capture
+                if let Some(tree_sitter::QueryPredicateArg::Capture(capture_id)) =
+                    predicate.args.first()
+                {
+                    // Find the capture name
+                    if let Some(capture_name) = query.capture_names().get(*capture_id as usize)
+                        && *capture_name == "injection.content"
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Detects if a node is inside an injected language region using Tree-sitter injection queries.
 ///
 /// This function uses standard Tree-sitter injection queries to detect language boundaries

@@ -51,19 +51,26 @@ fn create_injection_aware_action(
     cursor_byte: usize,
     coordinator: Option<&crate::language::LanguageCoordinator>,
     parser_pool: Option<&mut crate::language::DocumentParserPool>,
+    injection_query: Option<&Query>,
 ) -> CodeActionOrCommand {
+    // Check for offset directive in injection query
+    let has_offset_directive = injection_query
+        .map(crate::language::injection::has_offset_directive)
+        .unwrap_or(false);
+
     // Check if we have everything needed for injection-aware processing
     let can_process_injection =
         coordinator.is_some() && parser_pool.is_some() && hierarchy.len() > 1;
 
     if !can_process_injection {
-        return create_inspect_token_action_with_hierarchy(
+        return create_inspect_token_action_with_hierarchy_and_offset(
             node_at_cursor,
             root,
             text,
             queries,
             capture_context,
             Some(&hierarchy),
+            has_offset_directive,
         );
     }
 
@@ -78,13 +85,14 @@ fn create_injection_aware_action(
     let mut parser = match pool.acquire(injected_lang) {
         Some(p) => p,
         None => {
-            return create_inspect_token_action_with_hierarchy(
+            return create_inspect_token_action_with_hierarchy_and_offset(
                 node_at_cursor,
                 root,
                 text,
                 queries,
                 capture_context,
                 Some(&hierarchy),
+                has_offset_directive,
             );
         }
     };
@@ -96,13 +104,14 @@ fn create_injection_aware_action(
         Some(tree) => tree,
         None => {
             pool.release(injected_lang.to_string(), parser);
-            return create_inspect_token_action_with_hierarchy(
+            return create_inspect_token_action_with_hierarchy_and_offset(
                 node_at_cursor,
                 root,
                 text,
                 queries,
                 capture_context,
                 Some(&hierarchy),
+                has_offset_directive,
             );
         }
     };
@@ -322,6 +331,27 @@ fn create_inspect_token_action_with_hierarchy(
     capture_context: Option<(&str, &CaptureMappings)>,
     language_hierarchy: Option<&[String]>,
 ) -> CodeActionOrCommand {
+    create_inspect_token_action_with_hierarchy_and_offset(
+        node,
+        root,
+        text,
+        queries,
+        capture_context,
+        language_hierarchy,
+        false, // Default: no offset directive
+    )
+}
+
+/// Create an inspect token code action with hierarchy and offset directive info
+fn create_inspect_token_action_with_hierarchy_and_offset(
+    node: &Node,
+    root: &Node,
+    text: &str,
+    queries: Option<(&Query, Option<&Query>)>,
+    capture_context: Option<(&str, &CaptureMappings)>,
+    language_hierarchy: Option<&[String]>,
+    has_offset_directive: bool,
+) -> CodeActionOrCommand {
     let mut info = format!("* Node Type: {}\n", node.kind());
 
     // Add offset field only for injected languages
@@ -329,7 +359,11 @@ fn create_inspect_token_action_with_hierarchy(
         && hierarchy.len() > 1
     {
         // Has injection (base + at least one injected language)
-        info.push_str("* Offset: (0, 0, 0, 0)\n");
+        if has_offset_directive {
+            info.push_str("* Offset: (0, 0, 0, 0) [has #offset! directive]\n");
+        } else {
+            info.push_str("* Offset: (0, 0, 0, 0)\n");
+        }
     }
 
     // If we have queries, show captures
@@ -594,6 +628,7 @@ fn handle_code_actions_with_context(
             cursor_byte,
             coordinator,
             parser_pool,
+            injection_query,
         ),
         None => create_inspect_token_action(&node_at_cursor, &root, text, queries, capture_context),
     };
@@ -1165,6 +1200,91 @@ fn main() {
         assert!(
             reason.contains("Offset: (0, 0, 0, 0)"),
             "Should display offset for injected language, but got: {reason}"
+        );
+    }
+
+    #[test]
+    fn inspect_token_should_indicate_offset_directive_presence() {
+        let mut parser = Parser::new();
+        let language = tree_sitter_rust::LANGUAGE.into();
+        parser.set_language(&language).expect("load rust grammar");
+
+        let text = r#"fn main() {
+    let pattern = Regex::new(r"^\d+$").unwrap();
+}"#;
+        let tree = parser.parse(text, None).expect("parse rust");
+
+        // Create injection query with offset directive
+        let injection_query_str = r#"
+(call_expression
+  function: (scoped_identifier
+    path: (identifier) @_regex
+    (#eq? @_regex "Regex")
+    name: (identifier) @_new
+    (#eq? @_new "new"))
+  arguments: (arguments
+    (raw_string_literal
+      (string_content) @injection.content))
+  (#set! injection.language "regex")
+  (#offset! @injection.content 0 1 0 0))
+        "#;
+
+        let injection_query = Query::new(&language, injection_query_str).expect("valid query");
+
+        // Position inside the regex string
+        let _mapper = PositionMapper::new(text);
+        let cursor_pos = Position::new(1, 32);
+        let cursor_range = Range::new(cursor_pos, cursor_pos);
+
+        let capture_mappings: CaptureMappings = HashMap::new();
+
+        // Mock coordinator and parser pool for injection detection
+        let coordinator = crate::language::LanguageCoordinator::new();
+        let mut parser_pool = coordinator.create_document_parser_pool();
+
+        // Call with injection query containing offset directive
+        let actions = handle_code_actions_with_injection_and_coordinator(
+            &Url::parse("file:///test.rs").unwrap(),
+            text,
+            &tree,
+            cursor_range,
+            None,
+            Some(("rust", &capture_mappings)),
+            Some(&injection_query),
+            &coordinator,
+            &mut parser_pool,
+        );
+
+        assert!(actions.is_some(), "Should return code actions");
+        let actions = actions.unwrap();
+
+        // Find the inspect token action
+        let inspect_action = actions.iter().find(|a| {
+            if let CodeActionOrCommand::CodeAction(action) = a {
+                action.title.starts_with("Inspect token")
+            } else {
+                false
+            }
+        });
+
+        assert!(inspect_action.is_some(), "Should have inspect token action");
+
+        let CodeActionOrCommand::CodeAction(action) = inspect_action.unwrap() else {
+            panic!("Expected CodeAction variant");
+        };
+
+        let reason = action
+            .disabled
+            .as_ref()
+            .expect("inspect token stores info in disabled reason")
+            .reason
+            .clone();
+
+        // Should detect regex injection and show offset directive presence
+        assert!(
+            reason.contains("Offset: (0, 0, 0, 0) [has #offset! directive]"),
+            "Should indicate offset directive presence, but got: {}",
+            reason
         );
     }
 

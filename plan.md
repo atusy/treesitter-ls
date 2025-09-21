@@ -56,12 +56,21 @@ DoD: ...
 * [ ] COMMIT
 * [ ] REFACTOR (tidying)
 * [ ] COMMIT
+* [ ] REFACTOR (tidying)
+* [ ] COMMIT
+* ...
+
+<!-- Add as many REFACTOR-COMMIT-cycle as required anytime during sprint -->
 
 ### Sprint retrospective
 
 #### Inspections of decisions in the previous retrospective
 
 #### Inspections of the current sprint (e.g., by KPT, use adequate method for each sprint)
+
+<--
+This section may include considerations on the requirements to refine (or change) the subsequent sprint
+-->
 
 #### Adaption plan
 
@@ -199,33 +208,108 @@ The change needed: Only show offset field when `language_hierarchy` is `Some` an
 
 DoD: Offset field appears only when inspecting injected tokens (when language hierarchy shows "base -> injected")
 
-* [ ] RED: Write test `inspect_token_should_not_show_offset_for_base_language` that verifies offset is NOT shown for base language tokens
-* [ ] RED: Write test `inspect_token_should_show_offset_for_injected_language` that verifies offset IS shown for injected tokens
-* [ ] GREEN: Modify `create_inspect_token_action_with_hierarchy` to conditionally show offset based on `language_hierarchy`
-* [ ] CHECK: Run `make format lint test`
-* [ ] COMMIT
-* [ ] REFACTOR: Consider if condition logic needs extraction
-* [ ] COMMIT (if refactored)
+* [x] RED: Write test `inspect_token_should_not_show_offset_for_base_language` that verifies offset is NOT shown for base language tokens
+* [x] RED: Write test `inspect_token_should_show_offset_for_injected_language` that verifies offset IS shown for injected tokens
+* [x] GREEN: Modify `create_inspect_token_action_with_hierarchy` to conditionally show offset based on `language_hierarchy`
+* [x] CHECK: Run `make format lint test`
+* [x] COMMIT
+* [x] REFACTOR: Consider if condition logic needs extraction (no refactoring needed - logic is simple)
+* [x] COMMIT (skipped - no refactoring needed)
 
 ### Sprint retrospective
 
 #### Inspections of decisions in the previous retrospective
 
-(To be filled after sprint completion)
+- Sprint 2 suggested introducing offset structures/types for Sprint 3
+- Decision: Postponed structure introduction as current simple condition works well
 
-#### Inspections of the current sprint
+#### Inspections of the current sprint (KPT)
 
-(To be filled after sprint completion)
+**Keep:**
+- Clear sprint planning with current codebase analysis
+- Small, focused changes that deliver visible value
+- Writing both positive and negative test cases
+
+**Problem:**
+- Initial test needed updating after implementation (old tests assumed offset always shows)
+
+**Try:**
+- For Sprint 4, ensure all affected tests are identified upfront during planning
+
+**Considerations for subsequent sprints:**
+- Sprint 4 (Detect offset directive): The implementation will need to check query properties/predicates for `#offset!` directives. This is more complex than initially thought - we need to understand Tree-sitter's query predicate system.
+- Sprint 5 (Parse offset values): Will need a proper offset structure (tuple or struct) to hold the four values. Consider using `(i32, i32, i32, i32)` or a named struct like `InjectionOffset { start_row: i32, start_col: i32, end_row: i32, end_col: i32 }`.
+- Sprint 6 (Show source): Adding "[from query]" or "[default]" labels will help users understand where offsets come from. This is purely display logic.
+- Future sprints may need adjustment based on how complex the query parsing becomes. If parsing `#offset!` is too complex for one sprint, we might split it into: detect presence → parse values → apply values.
 
 #### Adaption plan
 
-(To be filled after sprint completion)
+- Continue with small, focused sprints
+- Sprint 4 will need to detect offset directive presence in queries
+- Consider introducing offset structure when we actually parse offset values (Sprint 5)
 
 ---
 
 ## Sprint 4: Detect offset directive presence in queries
 
 * User story: As a developer, I want to see "Offset: (0, 0, 0, 0) [has #offset! directive in query]" when an injection query contains an offset directive, even without parsing its values yet
+
+### Sprint planning notes
+
+Current codebase understanding:
+- Tree-sitter provides `general_predicates()` method to access predicates/directives with custom operators
+- Our code already uses `general_predicates` in `query_predicates.rs` for handling `#lua-match?`, `#match?`, `#eq?` etc.
+- `#offset!` is a directive (ends with `!`) that takes a capture and 4 numeric arguments: `(#offset! @injection.content 0 1 0 0)`
+- The injection detection happens in `detect_injection_with_content` in `src/language/injection.rs`
+- We need to check if the injection query contains an `#offset!` directive for the `@injection.content` capture
+
+The change needed: In the inspect token action, when showing offset for injected content, check if the injection query has an `#offset!` directive and indicate this in the display.
+
+### Tasks
+
+#### Task 1: Detect offset directive in injection queries
+
+DoD: Inspect token shows "[has #offset! directive]" when the injection query contains an offset directive
+
+* [x] RED: Write test `inspect_token_should_indicate_offset_directive_presence` that verifies the message appears when query has `#offset!`
+* [x] GREEN: Add function to detect `#offset!` directive in queries and update display message
+* [x] CHECK: Run `make format lint test`
+* [x] COMMIT
+* [x] REFACTOR: Extract directive detection logic if needed (no refactoring needed - logic is clean)
+* [x] COMMIT (skipped - no refactoring)
+
+### Sprint retrospective
+
+#### Inspections of decisions in the previous retrospective
+
+- Sprint 3 identified that we need to understand Tree-sitter's query predicate system
+- Confirmed: `general_predicates()` method provides access to directives like `#offset!`
+- Successfully implemented using existing Tree-sitter APIs
+
+#### Inspections of the current sprint (KPT)
+
+**Keep:**
+- Good codebase exploration before implementation
+- Clean separation of concerns (detection logic in injection module)
+- Minimal changes to achieve the goal
+
+**Problem:**
+- Initial confusion about whether `#offset!` is a property or predicate
+- Had to research Tree-sitter API documentation
+
+**Try:**
+- For Sprint 5, prepare data structures for offset values early
+
+**Considerations for subsequent sprints:**
+- Sprint 5 (Parse offset values): Need to extract the 4 numeric arguments from the directive. The `predicate.args` vector contains these after the capture argument.
+- Sprint 6 (Show source): Simple display change to add "[from query]" vs "[default]"
+- Future consideration: The current implementation only checks base injection query. Nested injections might also have offset directives that we'll need to handle.
+
+#### Adaption plan
+
+- Sprint 5 will need to parse the numeric arguments from `predicate.args`
+- Consider using a tuple `(i32, i32, i32, i32)` for offset representation
+- May need to thread offset values through nested injection handling
 
 ---
 
