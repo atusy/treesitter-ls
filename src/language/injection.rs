@@ -191,7 +191,7 @@ mod tests {
 
     #[test]
     fn test_detect_injection_returns_injection_capture() {
-        
+        use crate::language::injection_capture::DEFAULT_OFFSET;
         use tree_sitter::Parser;
 
         let mut parser = Parser::new();
