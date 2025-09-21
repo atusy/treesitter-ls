@@ -359,10 +359,12 @@ fn create_inspect_token_action_with_hierarchy_and_offset(
         && hierarchy.len() > 1
     {
         // Has injection (base + at least one injected language)
+        let offset = crate::language::injection::DEFAULT_OFFSET;
+        let offset_str = format!("({}, {}, {}, {})", offset.0, offset.1, offset.2, offset.3);
         if has_offset_directive {
-            info.push_str("* Offset: (0, 0, 0, 0) [has #offset! directive]\n");
+            info.push_str(&format!("* Offset: {} [has #offset! directive]\n", offset_str));
         } else {
-            info.push_str("* Offset: (0, 0, 0, 0)\n");
+            info.push_str(&format!("* Offset: {}\n", offset_str));
         }
     }
 
