@@ -85,22 +85,11 @@ DoD:
 
 DoD: Offsets should be applied to row/column positions, not byte positions directly. The offset (0, 1, 0, 0) means "move start forward by 1 column", not "add 1 byte".
 
-* [x] RED: Write test that verifies offset works correctly with multi-byte characters
-* [x] GREEN: Implement proper row/column-based offset application using PositionMapper
-* [x] CHECK: must pass `make format lint test` without errors and warnings
-* [x] COMMIT
-* [x] REFACTOR: Optimize position conversions if needed
-* [x] COMMIT
-
-## Step 3.6: Apply offset during injection detection, not after
-
-DoD: The offset should be applied when checking if a node is within injection boundaries during the detection phase, not after. This ensures that positions outside the adjusted boundaries are not detected as being in the injection.
-
-* [ ] RED: Write test that verifies position at byte 2 (third hyphen) is NOT detected as being in luadoc injection
-* [ ] GREEN: Apply offset during `collect_injection_regions` to check adjusted boundaries
+* [ ] RED: Write test that verifies offset works correctly with multi-byte characters
+* [ ] GREEN: Implement proper row/column-based offset application using PositionMapper
 * [ ] CHECK: must pass `make format lint test` without errors and warnings
 * [ ] COMMIT
-* [ ] REFACTOR: Clean up the detection flow if needed
+* [ ] REFACTOR: Optimize position conversions if needed
 * [ ] COMMIT
 
 ## Step 4: Add rule-based offset calculation for markdown injections
