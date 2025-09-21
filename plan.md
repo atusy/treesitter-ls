@@ -441,9 +441,20 @@ DoD: Inspect token shows "[from query]" or "[default]" to indicate offset source
 - Updated 4 tests to match new label format
 - All tests passing
 
+**What went wrong:**
+- **CRITICAL: Failed to update plan.md after completing the sprint**
+- Did not mark tasks as complete in plan.md before declaring sprint done
+- This breaks the sprint tracking workflow and documentation
+- User had to remind me to complete this essential step
+
 **Technical notes:**
 - Implementation in `create_inspect_token_action_with_hierarchy_and_offset` lines 364-366
 - Labels make the offset source immediately clear without implementation knowledge
+
+**Lessons learned:**
+- Sprint completion MUST include updating plan.md as the final step
+- Never declare a sprint complete without updating the planning document
+- Consider adding "Update plan.md" as an explicit task item in future sprints
 
 **Next sprint:**
 - Sprint 7 will add node range to inspect output
