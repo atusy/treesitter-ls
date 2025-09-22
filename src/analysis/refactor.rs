@@ -243,6 +243,18 @@ pub fn create_inspect_token_action(params: InspectTokenParams) -> CodeActionOrCo
     })
 }
 
+/// Helper function to check if a position is within the effective range after applying offset
+fn is_within_effective_range(
+    text: &str,
+    content_node: &Node,
+    position: usize,
+    offset: crate::language::injection::InjectionOffset,
+) -> bool {
+    let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
+    let effective_range = calculate_effective_range_with_text(text, byte_range, offset);
+    position >= effective_range.start && position < effective_range.end
+}
+
 /// Creates a code action that understands language injections.
 ///
 /// Parses the injected content with the appropriate language parser and
@@ -272,11 +284,7 @@ fn create_injection_aware_action(
     // For default offsets (no directive), trust the injection detection from detect_injection_with_content
     if let Some(offset) = offset_from_query {
         // Check if cursor is within the effective range (after applying offset)
-        let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
-        let effective_range = calculate_effective_range_with_text(text, byte_range, offset);
-
-        // If cursor is outside the effective range, don't treat it as an injection
-        if cursor_byte < effective_range.start || cursor_byte >= effective_range.end {
+        if !is_within_effective_range(text, &content_node, cursor_byte, offset) {
             // Show base language only, not the injection hierarchy
             return create_inspect_token_action(
                 InspectTokenParams::new(node_at_cursor, root, text)
@@ -423,20 +431,8 @@ fn handle_nested_injection(
             injection::parse_offset_directive_for_pattern(inj_query.as_ref(), nested_pattern_index);
 
         if let Some(offset) = offset_from_query {
-            // Calculate effective range with offset
-            let byte_range = crate::analysis::offset_calculator::ByteRange::new(
-                nested_content_node.start_byte(),
-                nested_content_node.end_byte(),
-            );
-            let effective_range =
-                crate::analysis::offset_calculator::calculate_effective_range_with_text(
-                    content_text,
-                    byte_range,
-                    offset,
-                );
-
             // If cursor is outside the effective range, don't process as nested injection
-            if relative_byte < effective_range.start || relative_byte >= effective_range.end {
+            if !is_within_effective_range(content_text, &nested_content_node, relative_byte, offset) {
                 // Return action for current level without nested injection
                 return create_inspect_token_action(
                     InspectTokenParams::new(injected_node, injected_root, content_text)
