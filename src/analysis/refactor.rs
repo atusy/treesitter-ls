@@ -84,15 +84,163 @@ impl<'a> InspectTokenParams<'a> {
 
 /// Unified function for creating inspect token actions
 pub fn create_inspect_token_action_unified(params: InspectTokenParams) -> CodeActionOrCommand {
-    create_inspect_token_action_with_hierarchy_and_offset(
-        params.node,
-        params.root,
-        params.text,
-        params.queries,
-        params.capture_context,
-        params.language_hierarchy,
-        params.offset_from_query,
-    )
+    let mut info = format!("* Node Type: {}\n", params.node.kind());
+
+    // Add node byte range
+    info.push_str(&format!(
+        "* Node Range: [{}, {}]\n",
+        params.node.start_byte(),
+        params.node.end_byte()
+    ));
+
+    // Add offset field only for injected languages
+    if let Some(hierarchy) = params.language_hierarchy
+        && hierarchy.len() > 1
+    {
+        // Has injection (base + at least one injected language)
+        let offset = params
+            .offset_from_query
+            .unwrap_or(crate::language::injection::DEFAULT_OFFSET);
+        let offset_str = format_offset(offset);
+        let label = get_offset_label(params.offset_from_query.is_some());
+        info.push_str(&format!("* Offset: {} {}\n", offset_str, label));
+
+        // Calculate and display effective range when offset is present
+        let byte_range = ByteRange::new(params.node.start_byte(), params.node.end_byte());
+        let effective_range = calculate_effective_range(byte_range, offset);
+        info.push_str(&format!(
+            "* Effective Range: [{}, {}]\n",
+            effective_range.start, effective_range.end
+        ));
+    }
+
+    // If we have queries, show captures
+    if let Some((highlights_query, locals_query)) = params.queries {
+        let mut highlight_captures = Vec::new();
+        let mut local_captures = Vec::new();
+
+        // Check highlights query - search from root to find all captures for this node
+        let mut cursor = QueryCursor::new();
+        let mut matches = cursor.matches(highlights_query, *params.root, params.text.as_bytes());
+        while let Some(m) = matches.next() {
+            // Filter captures based on predicates
+            let filtered_captures =
+                crate::language::filter_captures(highlights_query, m, params.text);
+            for c in filtered_captures {
+                if c.node == *params.node {
+                    let capture_name = &highlights_query.capture_names()[c.index as usize];
+                    if !highlight_captures.contains(&capture_name.to_string()) {
+                        highlight_captures.push(capture_name.to_string());
+                    }
+                }
+            }
+        }
+
+        // Check locals query if available - search from root to find all captures for this node
+        if let Some(locals) = locals_query {
+            let mut cursor = QueryCursor::new();
+            let mut matches = cursor.matches(locals, *params.root, params.text.as_bytes());
+            while let Some(m) = matches.next() {
+                // Filter captures based on predicates
+                let filtered_captures = crate::language::filter_captures(locals, m, params.text);
+                for c in filtered_captures {
+                    if c.node == *params.node {
+                        let capture_name = &locals.capture_names()[c.index as usize];
+                        if !local_captures.contains(&capture_name.to_string()) {
+                            local_captures.push(capture_name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add captures section
+        info.push_str("* Captures\n");
+
+        // Add highlights with mappings
+        if !highlight_captures.is_empty() {
+            let mapped_captures: Vec<String> = highlight_captures
+                .iter()
+                .map(|capture| {
+                    // Apply capture mapping if available
+                    if let Some((filetype, mappings)) = params.capture_context {
+                        let lookup_name = capture;
+
+                        if let Some(lang_mappings) = mappings.get(filetype)
+                            && let Some(mapped) = lang_mappings.highlights.get(lookup_name)
+                            && capture != mapped
+                        {
+                            return format!("{}->{}", capture, mapped);
+                        }
+
+                        if let Some(wildcard_mappings) = mappings.get("_")
+                            && let Some(mapped) = wildcard_mappings.highlights.get(lookup_name)
+                            && capture != mapped
+                        {
+                            return format!("{}->{}", capture, mapped);
+                        }
+                    }
+                    capture.clone()
+                })
+                .collect();
+
+            info.push_str(&format!(
+                "    * highlights: {}\n",
+                mapped_captures.join(", ")
+            ));
+        }
+
+        // Add locals with mappings
+        if !local_captures.is_empty() {
+            let mapped_captures: Vec<String> = local_captures
+                .iter()
+                .map(|capture| {
+                    // Apply capture mapping if available
+                    if let Some((filetype, mappings)) = params.capture_context {
+                        let lookup_name = capture;
+
+                        if let Some(lang_mappings) = mappings.get(filetype)
+                            && let Some(mapped) = lang_mappings.locals.get(lookup_name)
+                            && capture != mapped
+                        {
+                            return format!("{}->{}", capture, mapped);
+                        }
+
+                        if let Some(wildcard_mappings) = mappings.get("_")
+                            && let Some(mapped) = wildcard_mappings.locals.get(lookup_name)
+                            && capture != mapped
+                        {
+                            return format!("{}->{}", capture, mapped);
+                        }
+                    }
+                    capture.clone()
+                })
+                .collect();
+
+            info.push_str(&format!("    * locals: {}\n", mapped_captures.join(", ")));
+        }
+
+        // If no captures at all, indicate none
+        if highlight_captures.is_empty() && local_captures.is_empty() {
+            info.push_str("    * (none)\n");
+        }
+    }
+
+    // Display language or language hierarchy
+    if let Some(hierarchy) = params.language_hierarchy {
+        if !hierarchy.is_empty() {
+            info.push_str(&format!("* Language: {}\n", hierarchy.join(" -> ")));
+        }
+    } else if let Some((filetype, _)) = params.capture_context {
+        info.push_str(&format!("* Language: {}\n", filetype));
+    }
+
+    CodeActionOrCommand::CodeAction(CodeAction {
+        title: format!("Inspect token: {}", params.node.kind()),
+        kind: Some(CodeActionKind::from("empty".to_string())),
+        disabled: Some(CodeActionDisabled { reason: info }),
+        ..Default::default()
+    })
 }
 
 /// Creates a code action that understands language injections.
@@ -347,179 +495,6 @@ fn process_nested_injection(
             .with_capture_context(Some((injected_lang, &coord.get_capture_mappings())))
             .with_hierarchy(Some(&full_hierarchy)),
     )
-}
-
-/// Create an inspect token code action with hierarchy and offset directive info
-fn create_inspect_token_action_with_hierarchy_and_offset(
-    node: &Node,
-    root: &Node,
-    text: &str,
-    queries: Option<(&Query, Option<&Query>)>,
-    capture_context: Option<(&str, &CaptureMappings)>,
-    language_hierarchy: Option<&[String]>,
-    offset_from_query: Option<crate::language::injection::InjectionOffset>,
-) -> CodeActionOrCommand {
-    let mut info = format!("* Node Type: {}\n", node.kind());
-
-    // Add node byte range
-    info.push_str(&format!(
-        "* Node Range: [{}, {}]\n",
-        node.start_byte(),
-        node.end_byte()
-    ));
-
-    // Add offset field only for injected languages
-    if let Some(hierarchy) = language_hierarchy
-        && hierarchy.len() > 1
-    {
-        // Has injection (base + at least one injected language)
-        let offset = offset_from_query.unwrap_or(crate::language::injection::DEFAULT_OFFSET);
-        let offset_str = format_offset(offset);
-        let label = get_offset_label(offset_from_query.is_some());
-        info.push_str(&format!("* Offset: {} {}\n", offset_str, label));
-
-        // Calculate and display effective range when offset is present
-        let byte_range = ByteRange::new(node.start_byte(), node.end_byte());
-        let effective_range = calculate_effective_range(byte_range, offset);
-        info.push_str(&format!(
-            "* Effective Range: [{}, {}]\n",
-            effective_range.start, effective_range.end
-        ));
-    }
-
-    // If we have queries, show captures
-    if let Some((highlights_query, locals_query)) = queries {
-        let mut highlight_captures = Vec::new();
-        let mut local_captures = Vec::new();
-
-        // Check highlights query - search from root to find all captures for this node
-        let mut cursor = QueryCursor::new();
-        let mut matches = cursor.matches(highlights_query, *root, text.as_bytes());
-        while let Some(m) = matches.next() {
-            // Filter captures based on predicates
-            let filtered_captures = crate::language::filter_captures(highlights_query, m, text);
-            for c in filtered_captures {
-                if c.node == *node {
-                    let capture_name = &highlights_query.capture_names()[c.index as usize];
-                    if !highlight_captures.contains(&capture_name.to_string()) {
-                        highlight_captures.push(capture_name.to_string());
-                    }
-                }
-            }
-        }
-
-        // Check locals query if available - search from root to find all captures for this node
-        if let Some(locals) = locals_query {
-            let mut cursor = QueryCursor::new();
-            let mut matches = cursor.matches(locals, *root, text.as_bytes());
-            while let Some(m) = matches.next() {
-                // Filter captures based on predicates
-                let filtered_captures = crate::language::filter_captures(locals, m, text);
-                for c in filtered_captures {
-                    if c.node == *node {
-                        let capture_name = &locals.capture_names()[c.index as usize];
-                        if !local_captures.contains(&capture_name.to_string()) {
-                            local_captures.push(capture_name.to_string());
-                        }
-                    }
-                }
-            }
-        }
-
-        // Add captures section
-        info.push_str("* Captures\n");
-
-        // Add highlights with mappings
-        if !highlight_captures.is_empty() {
-            let mapped_captures: Vec<String> = highlight_captures
-                .iter()
-                .map(|capture| {
-                    // Apply capture mapping if available
-                    if let Some((filetype, mappings)) = capture_context {
-                        let lookup_name = capture;
-
-                        if let Some(lang_mappings) = mappings.get(filetype)
-                            && let Some(mapped) = lang_mappings.highlights.get(lookup_name)
-                            && capture != mapped
-                        {
-                            return format!("{}->{}", capture, mapped);
-                        }
-
-                        if let Some(wildcard_mappings) = mappings.get("_")
-                            && let Some(mapped) = wildcard_mappings.highlights.get(lookup_name)
-                            && capture != mapped
-                        {
-                            return format!("{}->{}", capture, mapped);
-                        }
-                    }
-                    capture.clone()
-                })
-                .collect();
-
-            info.push_str(&format!(
-                "    * highlights: {}\n",
-                mapped_captures.join(", ")
-            ));
-        }
-
-        // Add locals with mappings
-        if !local_captures.is_empty() {
-            let mapped_captures: Vec<String> = local_captures
-                .iter()
-                .map(|capture| {
-                    // Apply capture mapping if available
-                    if let Some((filetype, mappings)) = capture_context {
-                        let lookup_name = capture;
-
-                        if let Some(lang_mappings) = mappings.get(filetype)
-                            && let Some(mapped) = lang_mappings.locals.get(lookup_name)
-                            && capture != mapped
-                        {
-                            return format!("{}->{}", capture, mapped);
-                        }
-
-                        if let Some(wildcard_mappings) = mappings.get("_")
-                            && let Some(mapped) = wildcard_mappings.locals.get(lookup_name)
-                            && capture != mapped
-                        {
-                            return format!("{}->{}", capture, mapped);
-                        }
-                    }
-                    capture.clone()
-                })
-                .collect();
-
-            info.push_str(&format!("    * locals: {}\n", mapped_captures.join(", ")));
-        }
-
-        // If no captures at all, indicate none
-        if highlight_captures.is_empty() && local_captures.is_empty() {
-            info.push_str("    * (none)\n");
-        }
-    }
-
-    // Display language or language hierarchy
-    if let Some(hierarchy) = language_hierarchy {
-        if !hierarchy.is_empty() {
-            info.push_str(&format!("* Language: {}\n", hierarchy.join(" -> ")));
-        }
-    } else if let Some((filetype, _)) = capture_context {
-        info.push_str(&format!("* Language: {}\n", filetype));
-    }
-
-    // Create a code action that shows this info (using title as display)
-    let action = CodeAction {
-        title: format!("Inspect token: {}", node.kind()),
-        kind: Some(CodeActionKind::from("empty".to_string())),
-        diagnostics: None,
-        edit: None,
-        command: None,
-        is_preferred: None,
-        disabled: Some(CodeActionDisabled { reason: info }),
-        data: None,
-    };
-
-    CodeActionOrCommand::CodeAction(action)
 }
 
 /// Produce code actions that reorder a parameter within a function parameter list.
