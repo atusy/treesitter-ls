@@ -257,14 +257,16 @@ fn create_injection_aware_action(
     capture_context: Option<(&str, &CaptureMappings)>,
     hierarchy: Vec<String>,
     content_node: Node,
+    pattern_index: usize,
     cursor_byte: usize,
     coordinator: Option<&crate::language::LanguageCoordinator>,
     parser_pool: Option<&mut crate::language::DocumentParserPool>,
     injection_query: Option<&Query>,
 ) -> CodeActionOrCommand {
-    // Parse offset directive from injection query
-    let offset_from_query =
-        injection_query.and_then(crate::language::injection::parse_offset_directive);
+    // Parse offset directive for the SPECIFIC pattern that matched
+    let offset_from_query = injection_query.and_then(|q| {
+        crate::language::injection::parse_offset_directive_for_pattern(q, pattern_index)
+    });
 
     // Only apply offset-based filtering when there's an actual offset directive
     // For default offsets (no directive), trust the injection detection from detect_injection_with_content
@@ -407,7 +409,7 @@ fn handle_nested_injection(
     let injection_query = coord.get_injection_query(injected_lang);
 
     if let Some(inj_query) = injection_query
-        && let Some((nested_hierarchy, nested_content_node)) =
+        && let Some((nested_hierarchy, nested_content_node, _nested_pattern_index)) =
             injection::detect_injection_with_content(
                 injected_node,
                 injected_root,
@@ -612,7 +614,7 @@ fn handle_code_actions_with_context(
     // Always create inspect token action for the node at cursor
     let mut actions: Vec<CodeActionOrCommand> = Vec::new();
 
-    // Try to get injection-aware information
+    // Try to get injection-aware information (now includes pattern index)
     let injection_info = if let Some(injection_q) = injection_query {
         if let Some((base_lang, _)) = capture_context {
             injection::detect_injection_with_content(
@@ -631,7 +633,7 @@ fn handle_code_actions_with_context(
 
     // Create the appropriate inspect token action
     let inspect_action = match injection_info {
-        Some((hierarchy, content_node)) => create_injection_aware_action(
+        Some((hierarchy, content_node, pattern_index)) => create_injection_aware_action(
             &node_at_cursor,
             &root,
             text,
@@ -639,6 +641,7 @@ fn handle_code_actions_with_context(
             capture_context,
             hierarchy,
             content_node,
+            pattern_index,
             cursor_byte,
             coordinator,
             parser_pool,
@@ -1869,6 +1872,61 @@ fn main() {
             reason.contains("Language: rust -> regex"),
             "Should detect regex injection via query, but got: {}",
             reason
+        );
+    }
+
+    #[test]
+    fn test_pattern_aware_offset_parsing() {
+        // This test simulates the markdown scenario where:
+        // - Some patterns have no offset (like fenced code blocks)
+        // - Other patterns have offset (like frontmatter)
+        // The pattern-aware parsing should apply the correct offset for each pattern
+
+        let language = tree_sitter_rust::LANGUAGE.into();
+
+        // Create a query with multiple patterns like markdown
+        let query_str = r#"
+            ; Pattern 0: Regular string (NO offset) - simulates fenced code block
+            (raw_string_literal
+              (string_content) @injection.content
+              (#set! injection.language "test_lang"))
+
+            ; Pattern with offset - simulates frontmatter
+            (line_comment) @injection.content
+            (#set! injection.language "comment_lang")
+            (#offset! @injection.content 2 0 0 0)
+        "#;
+
+        let query = Query::new(&language, query_str).expect("valid query");
+
+        // Test that at least one pattern has no offset
+        let mut found_no_offset = false;
+        let mut found_with_offset = false;
+        let pattern_count = query.pattern_count();
+
+        for i in 0..pattern_count {
+            let offset = crate::language::injection::parse_offset_directive_for_pattern(&query, i);
+            if offset.is_none() {
+                found_no_offset = true;
+            } else if let Some(off) = offset {
+                if off.start_row == 2 {
+                    found_with_offset = true;
+                    // Verify the complete offset
+                    assert_eq!(off.start_row, 2, "Should have start_row offset of 2");
+                    assert_eq!(off.start_column, 0, "Should have start_column offset of 0");
+                    assert_eq!(off.end_row, 0, "Should have end_row offset of 0");
+                    assert_eq!(off.end_column, 0, "Should have end_column offset of 0");
+                }
+            }
+        }
+
+        assert!(
+            found_no_offset,
+            "Should have at least one pattern with no offset (simulating fenced code block)"
+        );
+        assert!(
+            found_with_offset,
+            "Should have at least one pattern with offset (simulating frontmatter)"
         );
     }
 }

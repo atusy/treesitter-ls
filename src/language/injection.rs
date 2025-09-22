@@ -47,52 +47,62 @@ pub const DEFAULT_OFFSET: InjectionOffset = InjectionOffset {
 
 /// Parses offset directive from query and returns the offset values if found
 /// Returns None if no #offset! directive exists for @injection.content
+///
+/// DEPRECATED: This searches ALL patterns and returns the FIRST offset found.
+/// Use parse_offset_directive_for_pattern for pattern-specific offsets.
 pub fn parse_offset_directive(query: &Query) -> Option<InjectionOffset> {
     // Check all patterns in the query
     for pattern_index in 0..query.pattern_count() {
-        // Use unified accessor for predicates
-        for predicate in get_all_predicates(query, pattern_index) {
-            // Check if this is an offset! directive
-            if predicate.operator() == "offset!"
-                && let UnifiedPredicate::General(pred) = predicate
-            {
-                // Check if it applies to @injection.content capture
-                if let Some(tree_sitter::QueryPredicateArg::Capture(capture_id)) = pred.args.first()
-                {
-                    // Find the capture name
-                    if let Some(capture_name) = query.capture_names().get(*capture_id as usize)
-                        && *capture_name == "injection.content"
-                    {
-                        // Parse the 4 numeric arguments after the capture
-                        // Format: (#offset! @injection.content start_row start_col end_row end_col)
-                        if pred.args.len() >= 5 {
-                            // Try to parse each argument as i32
-                            let parse_arg = |idx: usize| -> Option<i32> {
-                                if let Some(tree_sitter::QueryPredicateArg::String(s)) =
-                                    pred.args.get(idx)
-                                {
-                                    s.parse().ok()
-                                } else {
-                                    None
-                                }
-                            };
+        if let Some(offset) = parse_offset_directive_for_pattern(query, pattern_index) {
+            return Some(offset);
+        }
+    }
+    None
+}
 
-                            // Parse all 4 offset values
-                            if let (
-                                Some(start_row),
-                                Some(start_col),
-                                Some(end_row),
-                                Some(end_col),
-                            ) = (parse_arg(1), parse_arg(2), parse_arg(3), parse_arg(4))
+/// Parses offset directive for a specific pattern in the query
+/// Returns None if the specified pattern has no #offset! directive for @injection.content
+pub fn parse_offset_directive_for_pattern(
+    query: &Query,
+    pattern_index: usize,
+) -> Option<InjectionOffset> {
+    // Use unified accessor for predicates
+    for predicate in get_all_predicates(query, pattern_index) {
+        // Check if this is an offset! directive
+        if predicate.operator() == "offset!"
+            && let UnifiedPredicate::General(pred) = predicate
+        {
+            // Check if it applies to @injection.content capture
+            if let Some(tree_sitter::QueryPredicateArg::Capture(capture_id)) = pred.args.first() {
+                // Find the capture name
+                if let Some(capture_name) = query.capture_names().get(*capture_id as usize)
+                    && *capture_name == "injection.content"
+                {
+                    // Parse the 4 numeric arguments after the capture
+                    // Format: (#offset! @injection.content start_row start_col end_row end_col)
+                    if pred.args.len() >= 5 {
+                        // Try to parse each argument as i32
+                        let parse_arg = |idx: usize| -> Option<i32> {
+                            if let Some(tree_sitter::QueryPredicateArg::String(s)) =
+                                pred.args.get(idx)
                             {
-                                return Some(InjectionOffset::new(
-                                    start_row, start_col, end_row, end_col,
-                                ));
+                                s.parse().ok()
+                            } else {
+                                None
                             }
+                        };
+
+                        // Parse all 4 offset values
+                        if let (Some(start_row), Some(start_col), Some(end_row), Some(end_col)) =
+                            (parse_arg(1), parse_arg(2), parse_arg(3), parse_arg(4))
+                        {
+                            return Some(InjectionOffset::new(
+                                start_row, start_col, end_row, end_col,
+                            ));
                         }
-                        // If parsing fails, return default offset
-                        return Some(DEFAULT_OFFSET);
                     }
+                    // If parsing fails, return default offset
+                    return Some(DEFAULT_OFFSET);
                 }
             }
         }
@@ -125,7 +135,7 @@ pub fn detect_injection(
     base_language: &str,
 ) -> Option<Vec<String>> {
     detect_injection_with_content(node, root, text, injection_query, base_language)
-        .map(|(hierarchy, _)| hierarchy)
+        .map(|(hierarchy, _, _)| hierarchy)
 }
 
 /// Checks if a node is within the bounds of another node
@@ -176,13 +186,14 @@ fn extract_dynamic_language(query: &Query, match_: &QueryMatch, text: &str) -> O
 }
 
 /// Detects injection and returns both the language and the content node
+/// Also returns the pattern index of the innermost injection for offset lookups
 pub fn detect_injection_with_content<'a>(
     node: &Node<'a>,
     root: &Node<'a>,
     text: &str,
     injection_query: Option<&Query>,
     base_language: &str,
-) -> Option<(Vec<String>, Node<'a>)> {
+) -> Option<(Vec<String>, Node<'a>, usize)> {
     let injections = collect_injection_regions(node, root, text, injection_query)?;
 
     if injections.is_empty() {
@@ -199,23 +210,27 @@ pub fn detect_injection_with_content<'a>(
 
     // Build the language hierarchy from outermost to innermost
     let mut hierarchy = vec![base_language.to_string()];
-    for (_, _, lang, _) in &sorted_injections {
+    for (_, _, lang, _, _) in &sorted_injections {
         hierarchy.push(lang.clone());
     }
 
-    // Return the innermost content node
-    let innermost_node = sorted_injections.last().map(|(_, _, _, node)| *node)?;
+    // Return the innermost content node and its pattern index
+    let (_, _, _, innermost_node, pattern_index) = sorted_injections.last().cloned()?;
 
-    Some((hierarchy, innermost_node))
+    Some((hierarchy, innermost_node, pattern_index))
 }
 
+/// Represents an injection region with its metadata
+type InjectionRegion<'a> = (usize, usize, String, Node<'a>, usize);
+
 /// Collects all injection regions that contain the given node
+/// Returns tuples of (start_byte, end_byte, language, content_node, pattern_index)
 fn collect_injection_regions<'a>(
     node: &Node<'a>,
     root: &Node<'a>,
     text: &str,
     injection_query: Option<&Query>,
-) -> Option<Vec<(usize, usize, String, Node<'a>)>> {
+) -> Option<Vec<InjectionRegion<'a>>> {
     let query = injection_query?;
 
     // Run the query on the entire tree
@@ -227,7 +242,7 @@ fn collect_injection_regions<'a>(
     let mut injections_map = std::collections::HashMap::new();
 
     while let Some(match_) = matches.next() {
-        if let Some((content_node, language)) =
+        if let Some((content_node, language, pattern_index)) =
             find_injection_content_and_language(node, match_, query, text)
         {
             let key = (content_node.start_byte(), content_node.end_byte());
@@ -239,6 +254,7 @@ fn collect_injection_regions<'a>(
                 content_node.end_byte(),
                 language,
                 content_node,
+                pattern_index,
             ));
         }
     }
@@ -250,12 +266,13 @@ fn collect_injection_regions<'a>(
 }
 
 /// Finds the injection content node and language if the given node is within it
+/// Also returns the pattern index for offset lookups
 fn find_injection_content_and_language<'a>(
     node: &Node<'a>,
     match_: &QueryMatch<'_, 'a>,
     query: &Query,
     text: &str,
-) -> Option<(Node<'a>, String)> {
+) -> Option<(Node<'a>, String, usize)> {
     // Find @injection.content capture
     for capture in match_.captures {
         if let Some(capture_name) = query.capture_names().get(capture.index as usize)
@@ -267,7 +284,8 @@ fn find_injection_content_and_language<'a>(
             if is_node_within(node, &content_node) {
                 // Extract the injection language
                 if let Some(language) = extract_injection_language(query, match_, text) {
-                    return Some((content_node, language));
+                    // Return pattern index along with content node and language
+                    return Some((content_node, language, match_.pattern_index));
                 }
             }
         }
@@ -280,6 +298,48 @@ fn find_injection_content_and_language<'a>(
 mod tests {
     use super::*;
     use tree_sitter::Parser;
+
+    #[test]
+    fn test_parse_offset_directive_pattern_aware() {
+        // Test that the new pattern-aware function correctly returns
+        // offsets only for the specific pattern
+
+        // Create a query similar to markdown's injection.scm with multiple patterns
+        let query_str = r#"
+            ; Pattern 0: Raw string literals - NO OFFSET
+            ((raw_string_literal) @injection.content
+              (#set! injection.language "regex"))
+
+            ; Pattern 1: Comments - HAS OFFSET
+            ((line_comment) @injection.content
+              (#set! injection.language "markdown")
+              (#offset! @injection.content 1 0 -1 0))
+        "#;
+
+        let language = tree_sitter_rust::LANGUAGE.into();
+        let query = Query::new(&language, query_str).expect("valid query");
+
+        // Test the old broken behavior (for documentation)
+        let offset = parse_offset_directive(&query);
+        assert_eq!(
+            offset,
+            Some(InjectionOffset::new(1, 0, -1, 0)),
+            "Old function returns first offset found"
+        );
+
+        // Test the new pattern-aware function
+        // Pattern 0 (raw_string_literal) has NO offset
+        let offset_pattern_0 = parse_offset_directive_for_pattern(&query, 0);
+        assert_eq!(offset_pattern_0, None, "Pattern 0 should have no offset");
+
+        // Pattern 1 (line_comment) HAS offset
+        let offset_pattern_1 = parse_offset_directive_for_pattern(&query, 1);
+        assert_eq!(
+            offset_pattern_1,
+            Some(InjectionOffset::new(1, 0, -1, 0)),
+            "Pattern 1 should have offset (1, 0, -1, 0)"
+        );
+    }
 
     fn create_rust_parser() -> Parser {
         let mut parser = Parser::new();
@@ -323,7 +383,7 @@ mod tests {
             detect_injection_with_content(&node_in_string, &root, text, Some(&query), "rust");
 
         assert!(result.is_some());
-        let (hierarchy, _content_node) = result.unwrap();
+        let (hierarchy, _content_node, _pattern_index) = result.unwrap();
 
         // Should detect rust -> markdown hierarchy
         assert_eq!(hierarchy, vec!["rust", "markdown"]);
@@ -437,7 +497,7 @@ mod tests {
         let result = detect_injection_with_content(&node, &root, text, Some(&query), "rust");
 
         assert!(result.is_some());
-        let (hierarchy, _) = result.unwrap();
+        let (hierarchy, _, _) = result.unwrap();
         assert_eq!(hierarchy, vec!["rust", "nested_lang"]);
 
         // The actual deep recursion is tested through integration with refactor.rs
@@ -486,7 +546,7 @@ mod tests {
 
         // Should detect only one injection (first pattern takes precedence)
         assert!(result.is_some(), "Should find injection");
-        let (hierarchy, _) = result.unwrap();
+        let (hierarchy, _, _) = result.unwrap();
         // Should only use the first matching pattern, not both
         assert_eq!(
             hierarchy,
