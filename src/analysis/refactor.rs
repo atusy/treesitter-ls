@@ -82,8 +82,8 @@ impl<'a> InspectTokenParams<'a> {
     }
 }
 
-/// Unified function for creating inspect token actions
-pub fn create_inspect_token_action_unified(params: InspectTokenParams) -> CodeActionOrCommand {
+/// Create an inspect token code action
+pub fn create_inspect_token_action(params: InspectTokenParams) -> CodeActionOrCommand {
     let mut info = format!("* Node Type: {}\n", params.node.kind());
 
     // Add node byte range
@@ -271,7 +271,7 @@ fn create_injection_aware_action(
         coordinator.is_some() && parser_pool.is_some() && hierarchy.len() > 1;
 
     if !can_process_injection {
-        return create_inspect_token_action_unified(
+        return create_inspect_token_action(
             InspectTokenParams::new(node_at_cursor, root, text)
                 .with_queries(queries)
                 .with_capture_context(capture_context)
@@ -291,7 +291,7 @@ fn create_injection_aware_action(
     let mut parser = match pool.acquire(injected_lang) {
         Some(p) => p,
         None => {
-            return create_inspect_token_action_unified(
+            return create_inspect_token_action(
                 InspectTokenParams::new(node_at_cursor, root, text)
                     .with_queries(queries)
                     .with_capture_context(capture_context)
@@ -308,7 +308,7 @@ fn create_injection_aware_action(
         Some(tree) => tree,
         None => {
             pool.release(injected_lang.to_string(), parser);
-            return create_inspect_token_action_unified(
+            return create_inspect_token_action(
                 InspectTokenParams::new(node_at_cursor, root, text)
                     .with_queries(queries)
                     .with_capture_context(capture_context)
@@ -333,7 +333,7 @@ fn create_injection_aware_action(
     let Some(injected_node) = injected_root.descendant_for_byte_range(relative_byte, relative_byte)
     else {
         pool.release(injected_lang.to_string(), parser);
-        return create_inspect_token_action_unified(
+        return create_inspect_token_action(
             InspectTokenParams::new(node_at_cursor, root, text)
                 .with_queries(queries)
                 .with_capture_context(capture_context)
@@ -378,7 +378,7 @@ fn handle_nested_injection(
     // Safety: limit recursion depth to prevent stack overflow
     const MAX_INJECTION_DEPTH: usize = 10;
     if hierarchy.len() >= MAX_INJECTION_DEPTH {
-        return create_inspect_token_action_unified(
+        return create_inspect_token_action(
             InspectTokenParams::new(injected_node, injected_root, content_text)
                 .with_queries(injected_queries)
                 .with_capture_context(Some((injected_lang, &coord.get_capture_mappings())))
@@ -414,7 +414,7 @@ fn handle_nested_injection(
     }
 
     // No nested injection found, create action for current level
-    create_inspect_token_action_unified(
+    create_inspect_token_action(
         InspectTokenParams::new(injected_node, injected_root, content_text)
             .with_queries(injected_queries)
             .with_capture_context(Some((injected_lang, &coord.get_capture_mappings())))
@@ -489,7 +489,7 @@ fn process_nested_injection(
     }
 
     // Couldn't parse nested content, but still show full hierarchy
-    create_inspect_token_action_unified(
+    create_inspect_token_action(
         InspectTokenParams::new(injected_node, injected_root, content_text)
             .with_queries(injected_queries)
             .with_capture_context(Some((injected_lang, &coord.get_capture_mappings())))
@@ -626,7 +626,7 @@ fn handle_code_actions_with_context(
             parser_pool,
             injection_query,
         ),
-        None => create_inspect_token_action_unified(
+        None => create_inspect_token_action(
             InspectTokenParams::new(&node_at_cursor, &root, text)
                 .with_queries(queries)
                 .with_capture_context(capture_context),
@@ -855,7 +855,7 @@ mod tests {
         let capture_mappings: CaptureMappings = HashMap::new();
         let capture_context = Some(("rust", &capture_mappings));
 
-        let action = create_inspect_token_action_unified(
+        let action = create_inspect_token_action(
             InspectTokenParams::new(&node, &root, text)
                 .with_queries(None)
                 .with_capture_context(capture_context),
@@ -889,7 +889,7 @@ mod tests {
 
         // Pass language hierarchy as a new parameter
         let language_hierarchy = vec!["rust".to_string(), "sql".to_string()];
-        let action = create_inspect_token_action_unified(
+        let action = create_inspect_token_action(
             InspectTokenParams::new(&node, &root, text)
                 .with_queries(None)
                 .with_capture_context(Some(("rust", &capture_mappings)))
@@ -1059,7 +1059,7 @@ fn main() {
 
         // Test with injected language to see offset field
         let hierarchy = vec!["rust".to_string(), "regex".to_string()];
-        let action = create_inspect_token_action_unified(
+        let action = create_inspect_token_action(
             InspectTokenParams::new(&node, &root, text)
                 .with_queries(None)
                 .with_capture_context(capture_context)
@@ -1098,7 +1098,7 @@ fn main() {
 
         // Test with injected language to see offset
         let hierarchy = vec!["rust".to_string(), "regex".to_string()];
-        let action = create_inspect_token_action_unified(
+        let action = create_inspect_token_action(
             InspectTokenParams::new(&node, &root, text)
                 .with_queries(None)
                 .with_capture_context(capture_context)
@@ -1142,7 +1142,7 @@ fn main() {
         let capture_context = Some(("rust", &capture_mappings));
 
         // Call with no language hierarchy (base language)
-        let action = create_inspect_token_action_unified(
+        let action = create_inspect_token_action(
             InspectTokenParams::new(&node, &root, text)
                 .with_queries(None)
                 .with_capture_context(capture_context)
@@ -1181,7 +1181,7 @@ fn main() {
 
         // Call with language hierarchy (injected language)
         let hierarchy = vec!["rust".to_string(), "regex".to_string()];
-        let action = create_inspect_token_action_unified(
+        let action = create_inspect_token_action(
             InspectTokenParams::new(&node, &root, text)
                 .with_queries(None)
                 .with_capture_context(capture_context)
@@ -1301,7 +1301,7 @@ fn main() {
         // Find the number literal "42" at byte 20
         let node = root.descendant_for_byte_range(20, 20).expect("find node");
 
-        let action = create_inspect_token_action_unified(
+        let action = create_inspect_token_action(
             InspectTokenParams::new(&node, &root, text)
                 .with_queries(None)
                 .with_capture_context(None),
