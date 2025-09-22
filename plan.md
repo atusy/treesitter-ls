@@ -141,7 +141,7 @@ When clicking on the third hyphen in `---@param` (Lua comment with luadoc inject
 
 ---
 
-### 🐛 Sprint 13: Fix redundant offset check for default offsets
+### 🐛 Sprint 13: Fix redundant offset check for default offsets ✅
 
 * User story: As a treesitter-ls user, when I inspect content in a markdown fenced code block (which has no offset), I want to see the injected language, not markdown
 
@@ -157,10 +157,26 @@ The Sprint 12 implementation has a logic error:
 
 #### Tasks
 
-* [ ] RED: Write test showing markdown code block incorrectly shows base language
-* [ ] GREEN: Only apply offset check when there's an actual offset directive
-* [ ] CHECK: `make format lint test`
-* [ ] COMMIT
+* [x] RED: Write test showing markdown code block incorrectly shows base language
+* [x] GREEN: Only apply offset check when there's an actual offset directive
+* [x] CHECK: `make format lint test`
+* [x] COMMIT
+
+#### Sprint Retrospective
+
+**What was delivered:**
+- Modified `create_injection_aware_action` to only apply offset check when `offset_from_query` is `Some`
+- For injections without `#offset!` directive, trust the existing injection detection
+- Added comprehensive test covering both cases (with and without offset)
+
+**Technical fix:**
+- Changed from always checking effective range to conditional check: `if let Some(offset) = offset_from_query`
+- This preserves Sprint 12's functionality for actual offsets while fixing the regression
+
+**Impact:**
+- ✅ Markdown code blocks now correctly show injected language
+- ✅ Lua comment offsets still work correctly
+- ✅ All existing tests continue to pass
 
 ---
 
