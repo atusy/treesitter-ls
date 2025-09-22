@@ -89,3 +89,107 @@ This section may include considerations on the requirements to refine (or change
 ```
 
 # AI's plan
+
+## Big Picture Goal
+
+**Make the `Language:` field in Inspect token action respect injection offsets**
+
+When clicking on the third hyphen in `---@param` (Lua comment with luadoc injection), the Language field should show `lua` not `lua -> luadoc`, because the luadoc injection has offset `(0, 1, 0, 0)` meaning it starts after the third hyphen.
+
+## Current State
+
+✅ **What's Done:**
+- Offset values are parsed from `#offset!` directives
+- Offsets are displayed in inspect output
+- Effective ranges are calculated and shown
+
+❌ **What's Missing (THE CORE REQUIREMENT):**
+- Language detection doesn't use the offset to determine which language owns a position
+- Clicking on positions outside the effective range still shows the injected language
+
+## Sprint Priorities (Big Picture → Details)
+
+### 🎯 Sprint 12: CORE - Language field respects offset
+
+* User story: As a treesitter-ls user, when I inspect the third hyphen in `---@param` with luadoc offset (0, 1, 0, 0), I see `Language: lua` not `Language: lua -> luadoc`
+
+**This is THE main deliverable that fulfills the user request**
+
+#### Tasks
+
+* [ ] RED: Test that third hyphen shows `lua` not `lua -> luadoc`
+* [ ] GREEN: Use effective range (with offset) for language detection
+* [ ] CHECK: `make format lint test`
+* [ ] COMMIT
+
+---
+
+### 🔧 Sprint 13: Handle nested injections correctly
+
+* User story: As a treesitter-ls user with nested injections (markdown→html→js), I want Language field to respect all offset layers
+
+**Why this matters:** Without this, nested injections will show wrong languages
+
+#### Tasks
+
+* [ ] RED: Test cumulative offsets in nested injections
+* [ ] GREEN: Track and apply offsets through injection hierarchy
+* [ ] CHECK & COMMIT
+
+---
+
+### ⚠️ Sprint 14: Validate and warn on bad offsets
+
+* User story: As a query author, I want warnings when my offset directives are malformed
+
+**Why this matters:** Silent failures make debugging hard
+
+#### Tasks
+
+* [ ] RED: Test invalid offset handling
+* [ ] GREEN: Add validation and logging
+* [ ] CHECK & COMMIT
+
+---
+
+### 🚀 Sprint 15: Performance - Cache offset calculations
+
+* User story: As a treesitter-ls user with large files, I want fast offset calculations
+
+**Why this matters:** Performance optimization (lower priority than correctness)
+
+#### Tasks
+
+* [ ] RED: Performance test showing repeated calculations
+* [ ] GREEN: Add caching layer
+* [ ] CHECK & COMMIT
+
+---
+
+### 🔮 Sprint 16: Future - Dynamic offset calculations
+
+* User story: As a query author, I want offsets calculated from content patterns
+
+**Why this matters:** Nice to have for variable-length prefixes (e.g., `--`, `---`, `----`)
+
+#### Tasks
+
+* [ ] Design dynamic offset API
+* [ ] Implement pattern-based offsets
+* [ ] CHECK & COMMIT
+
+---
+
+## Success Criteria
+
+The project is successful when:
+1. ✅ Clicking third hyphen in `---@param` shows `Language: lua`
+2. ✅ Clicking `@` or beyond shows `Language: lua -> luadoc`
+3. ✅ Works for all injection types with offsets
+4. ✅ Handles nested injections correctly
+
+## What We're NOT Doing (Out of Scope)
+
+- Applying offsets to other LSP features (go-to-definition, semantic tokens)
+- Complex offset patterns beyond the basic `#offset!` directive
+- Backward compatibility (no need to maintain old behavior)

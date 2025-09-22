@@ -266,6 +266,21 @@ fn create_injection_aware_action(
     let offset_from_query =
         injection_query.and_then(crate::language::injection::parse_offset_directive);
 
+    // Check if cursor is within the effective range (after applying offset)
+    let offset = offset_from_query.unwrap_or(crate::language::injection::DEFAULT_OFFSET);
+    let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
+    let effective_range = calculate_effective_range_with_text(text, byte_range, offset);
+
+    // If cursor is outside the effective range, don't treat it as an injection
+    if cursor_byte < effective_range.start || cursor_byte >= effective_range.end {
+        // Show base language only, not the injection hierarchy
+        return create_inspect_token_action(
+            InspectTokenParams::new(node_at_cursor, root, text)
+                .with_queries(queries)
+                .with_capture_context(capture_context),
+        );
+    }
+
     // Check if we have everything needed for injection-aware processing
     let can_process_injection =
         coordinator.is_some() && parser_pool.is_some() && hierarchy.len() > 1;
@@ -1483,6 +1498,145 @@ fn main() {
         assert!(
             reason.contains("Offset: (0, 1, 0, 0)"),
             "Should display parsed offset values, but got: {}",
+            reason
+        );
+    }
+
+    #[test]
+    fn inspect_token_should_respect_offset_for_language_detection() {
+        // Test that positions outside the effective range (due to offset)
+        // show the base language, not the injected language
+        let mut parser = Parser::new();
+        let language = tree_sitter_rust::LANGUAGE.into();
+        parser.set_language(&language).expect("load rust grammar");
+
+        // Rust code with regex injection - simulating offset scenario
+        let text = r#"fn main() {
+    let pattern = Regex::new(r"_^\d+$").unwrap();
+}"#;
+        let tree = parser.parse(text, None).expect("parse rust");
+
+        // Create injection query with offset directive (0, 2, 0, 0)
+        // This simulates that regex content starts 2 bytes after capture start
+        // So the "_^" part should not be considered regex
+        let injection_query_str = r#"
+(call_expression
+  function: (scoped_identifier
+    path: (identifier) @_regex
+    (#eq? @_regex "Regex")
+    name: (identifier) @_new
+    (#eq? @_new "new"))
+  arguments: (arguments
+    (raw_string_literal
+      (string_content) @injection.content))
+  (#set! injection.language "regex")
+  (#offset! @injection.content 0 2 0 0))
+        "#;
+
+        let injection_query = Query::new(&language, injection_query_str).expect("valid query");
+
+        let _mapper = PositionMapper::new(text);
+
+        // Test position at underscore (should be rust, not rust -> regex due to offset)
+        let underscore_pos = Position::new(1, 31); // Points to _ in r"_^
+        let cursor_range = Range::new(underscore_pos, underscore_pos);
+
+        let capture_mappings: CaptureMappings = HashMap::new();
+        let coordinator = crate::language::LanguageCoordinator::new();
+        let mut parser_pool = coordinator.create_document_parser_pool();
+
+        // Get action at underscore position
+        let actions = handle_code_actions_with_injection_and_coordinator(
+            &Url::parse("file:///test.rs").unwrap(),
+            text,
+            &tree,
+            cursor_range,
+            None,
+            Some(("rust", &capture_mappings)),
+            Some(&injection_query),
+            &coordinator,
+            &mut parser_pool,
+        );
+
+        let actions = actions.expect("Should return code actions");
+        let inspect_action = actions
+            .iter()
+            .find(|a| {
+                if let CodeActionOrCommand::CodeAction(action) = a {
+                    action.title.starts_with("Inspect token")
+                } else {
+                    false
+                }
+            })
+            .expect("Should have inspect token action");
+
+        let CodeActionOrCommand::CodeAction(action) = inspect_action else {
+            panic!("Expected CodeAction variant");
+        };
+
+        let reason = action
+            .disabled
+            .as_ref()
+            .expect("inspect token stores info in disabled reason")
+            .reason
+            .clone();
+
+        // The underscore should show Language: rust (NOT rust -> regex)
+        // because it's outside the effective range due to offset
+        assert!(
+            reason.contains("* Language: rust\n"),
+            "Underscore should show 'Language: rust' not injected language, but got: {}",
+            reason
+        );
+        assert!(
+            !reason.contains("rust -> regex"),
+            "Should NOT show injection hierarchy at underscore, but got: {}",
+            reason
+        );
+
+        // Now test position at ^ symbol (should be rust -> regex after offset)
+        let caret_pos = Position::new(1, 33); // Points to ^ in r"_^\d+$"
+        let cursor_range = Range::new(caret_pos, caret_pos);
+
+        let actions = handle_code_actions_with_injection_and_coordinator(
+            &Url::parse("file:///test.rs").unwrap(),
+            text,
+            &tree,
+            cursor_range,
+            None,
+            Some(("rust", &capture_mappings)),
+            Some(&injection_query),
+            &coordinator,
+            &mut parser_pool,
+        );
+
+        let actions = actions.expect("Should return code actions");
+        let inspect_action = actions
+            .iter()
+            .find(|a| {
+                if let CodeActionOrCommand::CodeAction(action) = a {
+                    action.title.starts_with("Inspect token")
+                } else {
+                    false
+                }
+            })
+            .expect("Should have inspect token action");
+
+        let CodeActionOrCommand::CodeAction(action) = inspect_action else {
+            panic!("Expected CodeAction variant");
+        };
+
+        let reason = action
+            .disabled
+            .as_ref()
+            .expect("inspect token stores info in disabled reason")
+            .reason
+            .clone();
+
+        // The ^ symbol should show injection hierarchy
+        assert!(
+            reason.contains("rust -> regex"),
+            "^ symbol should show injection hierarchy 'rust -> regex', but got: {}",
             reason
         );
     }

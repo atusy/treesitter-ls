@@ -11,10 +11,7 @@ pub fn get_all_predicates(query: &Query, pattern_index: usize) -> PredicateItera
 }
 
 /// Get all predicates for a match
-pub fn get_match_predicates<'a>(
-    query: &'a Query,
-    match_: &QueryMatch,
-) -> PredicateIterator<'a> {
+pub fn get_match_predicates<'a>(query: &'a Query, match_: &QueryMatch) -> PredicateIterator<'a> {
     get_all_predicates(query, match_.pattern_index)
 }
 

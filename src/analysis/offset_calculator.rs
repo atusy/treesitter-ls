@@ -49,14 +49,25 @@ pub fn calculate_effective_range_with_text(
     }
 
     // Calculate line positions for proper row offset application
-    let effective_start = apply_offset_to_position(text, byte_range.start, offset.start_row, offset.start_column);
-    let effective_end = apply_offset_to_position(text, byte_range.end, offset.end_row, offset.end_column);
+    let effective_start = apply_offset_to_position(
+        text,
+        byte_range.start,
+        offset.start_row,
+        offset.start_column,
+    );
+    let effective_end =
+        apply_offset_to_position(text, byte_range.end, offset.end_row, offset.end_column);
 
     EffectiveRange::new(effective_start, effective_end)
 }
 
 /// Apply row and column offset to a byte position in text
-fn apply_offset_to_position(text: &str, byte_pos: usize, row_offset: i32, col_offset: i32) -> usize {
+fn apply_offset_to_position(
+    text: &str,
+    byte_pos: usize,
+    row_offset: i32,
+    col_offset: i32,
+) -> usize {
     if row_offset == 0 {
         // No row offset, just apply column offset
         return (byte_pos as i32 + col_offset).max(0) as usize;
@@ -181,7 +192,7 @@ mod tests {
         let effective = calculate_effective_range_with_text(text, byte_range, offset);
 
         assert_eq!(effective.start, 10); // 7 + 3
-        assert_eq!(effective.end, 12);   // 13 - 1
+        assert_eq!(effective.end, 12); // 13 - 1
     }
 
     #[test]

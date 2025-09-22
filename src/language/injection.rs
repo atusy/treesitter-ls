@@ -1,4 +1,4 @@
-use crate::language::predicate_accessor::{get_all_predicates, UnifiedPredicate};
+use crate::language::predicate_accessor::{UnifiedPredicate, get_all_predicates};
 use tree_sitter::{Node, Query, QueryCursor, QueryMatch, StreamingIterator};
 
 /// Represents offset adjustments for injection content boundaries
@@ -99,7 +99,6 @@ pub fn parse_offset_directive(query: &Query) -> Option<InjectionOffset> {
     }
     None
 }
-
 
 /// Detects if a node is inside an injected language region using Tree-sitter injection queries.
 ///
