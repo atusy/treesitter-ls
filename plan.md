@@ -405,8 +405,8 @@ The `parse_offset_directive` function needs to be pattern-aware:
 
 1. **Unused public function**: `detect_injection` in injection.rs
    - Only used in tests within the same module
-   - Just a thin wrapper around `detect_injection_with_content`
-   - Should be made private or removed
+   - Just a thin wrapper around `detect_injection_with_content` that drops return values
+   - Should be removed entirely - tests can call `detect_injection_with_content` directly
 
 2. **Unused methods in InjectionOffset**:
    - `has_offset()` - Never used anywhere
@@ -423,7 +423,7 @@ The `parse_offset_directive` function needs to be pattern-aware:
 
 #### Tasks
 
-* [ ] Make `detect_injection` private (only used in module tests)
+* [ ] Remove `detect_injection` entirely and update tests to use `detect_injection_with_content`
 * [ ] Remove unused `has_offset()` method from InjectionOffset
 * [ ] Remove unused `as_tuple()` method from InjectionOffset
 * [ ] Move InjectionRegion type alias closer to its usage
