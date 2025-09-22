@@ -289,58 +289,48 @@ The `parse_offset_directive` function needs to be pattern-aware:
 
 ---
 
-### 🔧 Sprint 15: Handle nested injections correctly
+### 📝 Sprint 15: Add integration test with real markdown file
 
-* User story: As a treesitter-ls user with nested injections (markdown→html→js), I want Language field to respect all offset layers
+* User story: As a treesitter-ls maintainer, I want an integration test that verifies the offset fix works with actual markdown files containing both fenced code blocks and frontmatter
 
-**Why this matters:** Without this, nested injections will show wrong languages
+**Why this matters:** Ensures the fix works end-to-end with real-world markdown content
 
 #### Tasks
 
-* [ ] RED: Test cumulative offsets in nested injections
-* [ ] GREEN: Track and apply offsets through injection hierarchy
+* [ ] RED: Create test with markdown file containing both fenced code blocks and frontmatter
+* [ ] Verify fenced code blocks show correct language on all lines
+* [ ] Verify frontmatter shows correct language with offset
+* [ ] GREEN: Ensure test passes with current implementation
 * [ ] CHECK & COMMIT
 
 ---
 
-### ⚠️ Sprint 16: Validate and warn on bad offsets
+### ⚠️ Sprint 16: Validate and warn on malformed offset directives
 
-* User story: As a query author, I want warnings when my offset directives are malformed
+* User story: As a query author, I want clear error messages when my offset directives are malformed (e.g., non-numeric values, wrong argument count)
 
-**Why this matters:** Silent failures make debugging hard
+**Why this matters:** Currently returns DEFAULT_OFFSET silently on parse failure, making debugging difficult
 
 #### Tasks
 
-* [ ] RED: Test invalid offset handling
-* [ ] GREEN: Add validation and logging
+* [ ] RED: Test malformed offset handling (non-numeric, missing args, etc.)
+* [ ] GREEN: Add validation with descriptive error logging
+* [ ] Ensure backward compatibility (still work, but warn)
 * [ ] CHECK & COMMIT
 
 ---
 
-### 🚀 Sprint 17: Performance - Cache offset calculations
+### 🧹 Sprint 17: Clean up deprecated parse_offset_directive function
 
-* User story: As a treesitter-ls user with large files, I want fast offset calculations
+* User story: As a treesitter-ls maintainer, I want to migrate all uses of the deprecated parse_offset_directive to the pattern-aware version
 
-**Why this matters:** Performance optimization (lower priority than correctness)
-
-#### Tasks
-
-* [ ] RED: Performance test showing repeated calculations
-* [ ] GREEN: Add caching layer
-* [ ] CHECK & COMMIT
-
----
-
-### 🔮 Sprint 18: Future - Dynamic offset calculations
-
-* User story: As a query author, I want offsets calculated from content patterns
-
-**Why this matters:** Nice to have for variable-length prefixes (e.g., `--`, `---`, `----`)
+**Why this matters:** Prevents future bugs from using the wrong function
 
 #### Tasks
 
-* [ ] Design dynamic offset API
-* [ ] Implement pattern-based offsets
+* [ ] Find all uses of deprecated parse_offset_directive
+* [ ] Migrate to parse_offset_directive_for_pattern where appropriate
+* [ ] Add deprecation warning or remove if no longer needed
 * [ ] CHECK & COMMIT
 
 ---
