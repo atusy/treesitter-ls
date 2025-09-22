@@ -180,7 +180,7 @@ The Sprint 12 implementation has a logic error:
 
 ---
 
-### 🔍 Sprint 14: Fix pattern-agnostic offset parsing
+### 🔍 Sprint 14: Fix pattern-agnostic offset parsing ✅
 
 * User story: As a treesitter-ls user, when I inspect any line of a markdown fenced code block, I want to see the injected language (e.g., "markdown -> lua"), not just "markdown" on first/last lines
 
@@ -256,14 +256,34 @@ The `parse_offset_directive` function needs to be pattern-aware:
 
 #### Tasks
 
-* [ ] RED: Add test showing wrong offset applied to fenced_code_block
-* [ ] Track pattern_index in injection detection
-* [ ] Make parse_offset_directive pattern-aware
-* [ ] GREEN: Pass pattern_index through the call chain
-* [ ] Verify fenced code blocks get no offset
-* [ ] Verify frontmatter still gets correct offset
-* [ ] CHECK: Run `make format lint test`
-* [ ] COMMIT
+* [x] RED: Add test showing wrong offset applied to fenced_code_block
+* [x] Track pattern_index in injection detection
+* [x] Make parse_offset_directive pattern-aware
+* [x] GREEN: Pass pattern_index through the call chain
+* [x] Verify fenced code blocks get no offset
+* [x] Verify frontmatter still gets correct offset
+* [x] CHECK: Run `make format lint test`
+* [x] COMMIT
+
+#### Sprint Retrospective
+
+**What was delivered:**
+- Created `parse_offset_directive_for_pattern` function for pattern-specific offset parsing
+- Modified `detect_injection_with_content` to return pattern_index (3-tuple instead of 2-tuple)
+- Updated `create_injection_aware_action` to accept and use pattern_index for offset lookup
+- Added comprehensive test demonstrating pattern-aware offset parsing
+- Fixed type complexity warning with `InjectionRegion` type alias
+
+**Technical implementation:**
+- The key insight: Tree-sitter queries can have multiple patterns, and each pattern may have different offset directives
+- Solution: Pass the pattern_index through the entire injection detection chain
+- Now each injection correctly gets the offset for its specific pattern, not just the first offset found
+
+**Impact:**
+- ✅ Markdown fenced code blocks now correctly show injected language on ALL lines
+- ✅ Frontmatter blocks still get their correct offsets
+- ✅ Pattern-aware offset parsing enables correct handling of complex injection queries
+- ✅ All existing tests continue to pass
 
 ---
 
