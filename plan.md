@@ -360,7 +360,7 @@ The `parse_offset_directive` function needs to be pattern-aware:
 
 ---
 
-### 🧹 Sprint 17: Clean up deprecated parse_offset_directive function
+### 🧹 Sprint 17: Clean up deprecated parse_offset_directive function ✅
 
 * User story: As a treesitter-ls maintainer, I want to migrate all uses of the deprecated parse_offset_directive to the pattern-aware version
 
@@ -368,10 +368,30 @@ The `parse_offset_directive` function needs to be pattern-aware:
 
 #### Tasks
 
-* [ ] Find all uses of deprecated parse_offset_directive
-* [ ] Migrate to parse_offset_directive_for_pattern where appropriate
-* [ ] Add deprecation warning or remove if no longer needed
-* [ ] CHECK & COMMIT
+* [x] Find all uses of deprecated parse_offset_directive
+* [x] Migrate to parse_offset_directive_for_pattern where appropriate
+* [x] Add deprecation warning or remove if no longer needed
+* [x] CHECK & COMMIT
+
+#### Sprint Retrospective
+
+**What was delivered:**
+- Analyzed all uses of `parse_offset_directive` - found only in tests
+- Added comprehensive deprecation documentation explaining the flaw
+- Added `#[deprecated]` attribute with migration guidance
+- Added `#[allow(deprecated)]` to test usages that document old behavior
+
+**Technical decision:**
+- Kept the function for historical documentation purposes
+- Tests explicitly document the broken behavior for future reference
+- Clear deprecation message guides developers to use pattern-aware version
+- No production code uses the deprecated function
+
+**Impact:**
+- ✅ Prevents accidental use of broken function
+- ✅ Maintains historical context in tests
+- ✅ Clear migration path for any future code
+- ✅ Technical debt properly documented
 
 ---
 
