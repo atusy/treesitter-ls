@@ -77,7 +77,6 @@ impl<'a> Iterator for PredicateIterator<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn test_predicate_accessor_basic() {
