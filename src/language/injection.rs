@@ -48,8 +48,24 @@ pub const DEFAULT_OFFSET: InjectionOffset = InjectionOffset {
 /// Parses offset directive from query and returns the offset values if found
 /// Returns None if no #offset! directive exists for @injection.content
 ///
-/// DEPRECATED: This searches ALL patterns and returns the FIRST offset found.
-/// Use parse_offset_directive_for_pattern for pattern-specific offsets.
+/// # Deprecated
+///
+/// This function is deprecated and should not be used in new code.
+/// It has a fundamental flaw: it searches ALL patterns and returns the FIRST offset found,
+/// regardless of which pattern actually matched during injection detection.
+///
+/// This causes incorrect offsets to be applied, such as markdown frontmatter offsets
+/// being applied to fenced code blocks.
+///
+/// Use [`parse_offset_directive_for_pattern`] instead, which correctly returns
+/// the offset for a specific pattern.
+///
+/// This function is kept only for testing purposes to document the old broken behavior.
+#[deprecated(
+    since = "0.1.0",
+    note = "This function returns incorrect offsets when queries have multiple patterns. \
+            Use parse_offset_directive_for_pattern instead."
+)]
 pub fn parse_offset_directive(query: &Query) -> Option<InjectionOffset> {
     // Check all patterns in the query
     for pattern_index in 0..query.pattern_count() {
@@ -361,6 +377,7 @@ mod tests {
         let query = Query::new(&language, query_str).expect("valid query");
 
         // Test the old broken behavior (for documentation)
+        #[allow(deprecated)]
         let offset = parse_offset_directive(&query);
         assert_eq!(
             offset,

@@ -1,7 +1,7 @@
 use tree_sitter::Query;
-use treesitter_ls::language::injection::{
-    parse_offset_directive, parse_offset_directive_for_pattern,
-};
+#[allow(deprecated)]
+use treesitter_ls::language::injection::parse_offset_directive;
+use treesitter_ls::language::injection::parse_offset_directive_for_pattern;
 
 /// This integration test verifies that the pattern-aware offset parsing
 /// correctly handles real markdown injection queries with both fenced code
@@ -37,6 +37,7 @@ fn test_markdown_injection_offsets_real_world() {
 
     // The old broken function would return the first offset found (frontmatter offset)
     // even when processing a fenced code block
+    #[allow(deprecated)]
     let first_offset = parse_offset_directive(&query);
     assert!(
         first_offset.is_some(),
