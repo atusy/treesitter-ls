@@ -180,7 +180,109 @@ The Sprint 12 implementation has a logic error:
 
 ---
 
-### 🔧 Sprint 14: Handle nested injections correctly
+### 🔍 Sprint 14: Fix injection detection failing for markdown code blocks
+
+* User story: As a treesitter-ls user, when I inspect content inside a markdown fenced code block, I want to see the injected language (e.g., "markdown -> lua"), not just "markdown"
+
+**Bug Analysis:** The injection is not being detected at all for markdown code blocks.
+
+#### Root Cause Investigation
+
+From the LSP log analysis:
+1. Node at cursor is correctly identified as `code_fence_content`
+2. But the Language field shows only "markdown" - no injection detected
+3. The injection query IS loaded ("Dynamically loaded injections for markdown")
+4. The injection query IS passed to the code action handler
+
+The real issue is in the injection detection logic itself. Possible causes:
+
+1. **Query Match Failure**: The injection query might not match the code block structure
+   - The example uses 5 backticks (`````) which might have different tree structure
+   - The query pattern might not match all code block variants
+
+2. **Language Extraction Failure**: Even if the query matches, language extraction might fail
+   - The `extract_injection_language` returns None if it can't find the language
+   - This causes `find_injection_content_and_language` to return None
+   - The entire injection detection fails silently
+
+3. **Silent Failures**: Multiple points in the detection chain can fail silently:
+   - Query not matching → No injection
+   - Language extraction failing → No injection
+   - Any step returning None → No injection
+
+#### The Core Problem
+
+The injection detection in `find_injection_content_and_language` only succeeds if ALL of:
+1. The query matches the structure
+2. The node is within the content capture
+3. The language extraction succeeds
+
+If ANY step fails, the injection is silently ignored.
+
+#### Proposed Debugging Approach
+
+1. **Add debug logging to trace injection detection**:
+   ```rust
+   // In collect_injection_regions:
+   log::debug!("Running injection query, found {} matches", match_count);
+
+   // In find_injection_content_and_language:
+   log::debug!("Checking injection content, node within: {}", is_within);
+   log::debug!("Language extraction result: {:?}", language);
+   ```
+
+2. **Check if query matches the structure**:
+   - Log what patterns are matched
+   - Log what captures are found
+   - Verify the tree structure matches expectations
+
+3. **Verify language extraction**:
+   - Log the capture name and node type for @injection.language
+   - Log the extracted text
+   - Check if it's empty or malformed
+
+#### Proposed Fix
+
+Based on the most likely cause (language extraction failure):
+
+1. **Make language extraction more robust**:
+   ```rust
+   fn extract_dynamic_language(...) -> Option<String> {
+       // Current: returns None if capture not found
+       // Proposed: log what's happening
+       for capture in match_.captures {
+           if *capture_name == "injection.language" {
+               let lang_text = &text[capture.node.byte_range()].trim();
+               if lang_text.is_empty() {
+                   log::warn!("Empty language in injection");
+                   return None;
+               }
+               return Some(lang_text.to_string());
+           }
+       }
+       log::debug!("No injection.language capture found");
+       None
+   }
+   ```
+
+2. **Alternative: Support fallback patterns**:
+   - If dynamic extraction fails, try other patterns
+   - Check parent nodes for language info
+   - Use info_string content as fallback
+
+#### Tasks
+
+* [ ] RED: Add test that reproduces markdown injection failure
+* [ ] Add comprehensive debug logging to injection detection
+* [ ] Identify the exact failure point from logs
+* [ ] GREEN: Fix the identified issue
+* [ ] Add tests for various markdown code block formats
+* [ ] CHECK: Run `make format lint test`
+* [ ] COMMIT
+
+---
+
+### 🔧 Sprint 15: Handle nested injections correctly
 
 * User story: As a treesitter-ls user with nested injections (markdown→html→js), I want Language field to respect all offset layers
 
