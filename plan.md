@@ -730,55 +730,132 @@ DoD: Single source of truth for injection detection logic
 
 ---
 
-## Refactoring Sprint 4: Simplify query predicate handling
+## Refactoring Sprint 4: Unify predicate API access
 
-* Goal: Clean up the query_predicates.rs module and remove special cases
+* Goal: Consolidate the different APIs used for accessing predicates (#set! vs general predicates)
 
 ### Tasks
 
-#### Task 1: Refactor predicate checking
+#### Task 1: Create unified predicate accessor
 
-DoD: Cleaner, more maintainable predicate handling
+DoD: Single method to access all predicate types
 
-* [ ] Review current predicate handling for offset! directive
-* [ ] Generalize the predicate parsing logic
-* [ ] Remove special-case handling where possible
-* [ ] Add tests for edge cases
+* [ ] Analyze query.property_settings() vs query.general_predicates() usage
+* [ ] Create wrapper that provides unified access
+* [ ] Update callers to use unified accessor
+* [ ] Add tests for unified accessor
 
 ---
 
-## Refactoring Sprint 5: Improve type safety with stronger types
+## Refactoring Sprint 5: Consolidate offset predicate handling
 
-* Goal: Replace tuple types and generic parameters with domain-specific types
+* Goal: Move #offset! handling to be with other predicates instead of separate
 
 ### Tasks
 
-#### Task 1: Replace InjectionOffset tuple with struct
+#### Task 1: Move offset parsing to query_predicates.rs
 
-DoD: Type-safe offset representation
+DoD: All predicate parsing in one module
+
+* [ ] Move parse_offset_directive from injection.rs to query_predicates.rs
+* [ ] Integrate offset checking into filter_captures flow
+* [ ] Update injection.rs to use the consolidated version
+* [ ] Ensure tests still pass
+
+---
+
+## Refactoring Sprint 6: Standardize predicate error handling
+
+* Goal: Create consistent error handling for all predicate types
+
+### Tasks
+
+#### Task 1: Define error handling strategy
+
+DoD: Consistent error reporting across all predicates
+
+* [ ] Define error types for predicate failures
+* [ ] Replace eprintln! with proper logging
+* [ ] Replace silent failures with explicit error handling
+* [ ] Add tests for error cases
+
+---
+
+## Refactoring Sprint 7: Remove hardcoded capture name checks
+
+* Goal: Make predicate system work generically without hardcoded capture names
+
+### Tasks
+
+#### Task 1: Generalize capture handling
+
+DoD: No hardcoded "injection.content" checks
+
+* [ ] Make #offset! work with any capture, not just @injection.content
+* [ ] Create configuration for capture-specific behavior
+* [ ] Update tests to verify generic handling
+* [ ] Document the new flexible approach
+
+---
+
+## Refactoring Sprint 8: Create extensible predicate system
+
+* Goal: Make it easy to add new predicates without modifying core logic
+
+### Tasks
+
+#### Task 1: Create predicate registry
+
+DoD: New predicates can be added without modifying existing code
+
+* [ ] Define predicate trait/interface
+* [ ] Create registry for predicate handlers
+* [ ] Refactor existing predicates to use registry
+* [ ] Add example of adding a new predicate
+
+---
+
+## Refactoring Sprint 9: Replace InjectionOffset tuple with struct
+
+* Goal: Improve type safety by replacing tuple with named struct
+
+### Tasks
+
+#### Task 1: Create InjectionOffset struct
+
+DoD: Type-safe offset representation with named fields
 
 * [ ] Convert InjectionOffset from tuple to struct with named fields
 * [ ] Add methods for offset calculations
 * [ ] Update all usage sites
 * [ ] Add builder pattern if beneficial
 
-#### Task 2: Create domain types for ranges
+---
+
+## Refactoring Sprint 10: Create domain types for ranges
+
+* Goal: Create specific types for different kinds of ranges
+
+### Tasks
+
+#### Task 1: Define range types
 
 DoD: Clear distinction between different range types
 
 * [ ] Create ByteRange type for node ranges
 * [ ] Create EffectiveRange type for offset-adjusted ranges
 * [ ] Update display logic to use these types
+* [ ] Add conversion methods between types
 
 ---
 
-## Refactoring Sprint 6: Clean up test organization
+## Refactoring Sprint 11: Extract test helpers
 
 * Goal: Improve test maintainability and reduce duplication
 
 ### Tasks
 
-#### Task 1: Extract test helpers
+#### Task 1: Create test utility module
 
 DoD: Reusable test utilities
 
@@ -789,7 +866,7 @@ DoD: Reusable test utilities
 
 ---
 
-## Refactoring Sprint 7: Remove legacy code paths
+## Refactoring Sprint 12: Remove legacy code paths
 
 * Goal: Remove code that exists only for backward compatibility
 
