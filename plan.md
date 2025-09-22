@@ -395,7 +395,7 @@ The `parse_offset_directive` function needs to be pattern-aware:
 
 ---
 
-### 🧹 Sprint 18: Remove unused code and unnecessary abstractions
+### 🧹 Sprint 18: Remove unused code and unnecessary abstractions ✅
 
 * User story: As a treesitter-ls maintainer, I want to remove unused public APIs and methods to reduce maintenance burden and improve code clarity
 
@@ -423,14 +423,35 @@ The `parse_offset_directive` function needs to be pattern-aware:
 
 #### Tasks
 
-* [ ] Remove `detect_injection` entirely and update tests to use `detect_injection_with_content`
-* [ ] Remove unused `has_offset()` method from InjectionOffset
-* [ ] Remove unused `as_tuple()` method from InjectionOffset
-* [ ] Move InjectionRegion type alias closer to its usage
-* [ ] Consider moving deprecated `parse_offset_directive` to test module
-* [ ] Run `cargo build --release` to ensure no external dependencies break
-* [ ] CHECK: Run `make format lint test`
-* [ ] COMMIT
+* [x] Remove `detect_injection` entirely and update tests to use `detect_injection_with_content`
+* [x] Remove unused `has_offset()` method from InjectionOffset
+* [x] Remove unused `as_tuple()` method from InjectionOffset
+* [x] Move InjectionRegion type alias closer to its usage
+* [x] Consider moving deprecated `parse_offset_directive` to test module
+* [x] Run `cargo build --release` to ensure no external dependencies break
+* [x] CHECK: Run `make format lint test`
+* [x] COMMIT
+
+#### Sprint Retrospective
+
+**What was delivered:**
+- Completely removed `detect_injection` function (28 lines of code)
+- Removed unused `has_offset()` and `as_tuple()` methods (14 lines)
+- Updated all tests to call `detect_injection_with_content` directly
+- InjectionRegion type alias already positioned correctly (no change needed)
+- Kept deprecated function for documentation (already marked deprecated)
+
+**Technical impact:**
+- Reduced public API surface area
+- Eliminated confusion about which function to use
+- Tests now directly test the actual API
+- Removed 42+ lines of unused code
+
+**Impact:**
+- ✅ Cleaner, more maintainable codebase
+- ✅ Reduced confusion for future contributors
+- ✅ All tests continue to pass
+- ✅ No external dependencies broken
 
 ---
 
