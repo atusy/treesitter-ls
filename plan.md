@@ -289,7 +289,7 @@ The `parse_offset_directive` function needs to be pattern-aware:
 
 ---
 
-### 📝 Sprint 15: Add integration test with real markdown file
+### 📝 Sprint 15: Add integration test with real markdown file ✅
 
 * User story: As a treesitter-ls maintainer, I want an integration test that verifies the offset fix works with actual markdown files containing both fenced code blocks and frontmatter
 
@@ -297,11 +297,31 @@ The `parse_offset_directive` function needs to be pattern-aware:
 
 #### Tasks
 
-* [ ] RED: Create test with markdown file containing both fenced code blocks and frontmatter
-* [ ] Verify fenced code blocks show correct language on all lines
-* [ ] Verify frontmatter shows correct language with offset
-* [ ] GREEN: Ensure test passes with current implementation
-* [ ] CHECK & COMMIT
+* [x] RED: Create test with markdown file containing both fenced code blocks and frontmatter
+* [x] Verify fenced code blocks show correct language on all lines
+* [x] Verify frontmatter shows correct language with offset
+* [x] GREEN: Ensure test passes with current implementation
+* [x] CHECK & COMMIT
+
+#### Sprint Retrospective
+
+**What was delivered:**
+- Created `test_markdown_injection_offsets_real_world` test with actual markdown injection query patterns
+- Created `test_pattern_specific_offsets` test to verify pattern-aware behavior
+- Added tree-sitter-md as dev dependency for realistic testing
+- Created test query file matching nvim-treesitter patterns
+
+**Technical implementation:**
+- Tests use real markdown grammar and injection queries
+- Verifies that fenced_code_block patterns have no offset
+- Confirms frontmatter patterns have (1, 0, -1, 0) offset
+- Tests both the old broken behavior and new fixed behavior
+
+**Impact:**
+- ✅ Integration tests prove the fix works with real markdown content
+- ✅ Prevents regression of the offset bug
+- ✅ Documents the expected behavior for future maintainers
+- ✅ All tests pass without issues
 
 ---
 
