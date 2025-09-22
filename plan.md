@@ -694,6 +694,12 @@ DoD: Single, clean function signature with optional parameters
 * [ ] Remove the old function variants
 * [ ] Ensure all tests pass
 
+### Retrospective
+
+* What went well:
+* What could be improved:
+* Key learnings:
+
 ---
 
 ## Refactoring Sprint 2: Extract offset calculation logic
@@ -710,6 +716,12 @@ DoD: Offset calculations are isolated in a dedicated, testable module
 * [ ] Extract offset application logic from refactor.rs
 * [ ] Add comprehensive unit tests for offset calculations
 * [ ] Update refactor.rs to use the new module
+
+### Retrospective
+
+* What went well:
+* What could be improved:
+* Key learnings:
 
 ---
 
@@ -728,6 +740,12 @@ DoD: Single source of truth for injection detection logic
 * [ ] Remove duplicate implementations
 * [ ] Update all callers
 
+### Retrospective
+
+* What went well:
+* What could be improved:
+* Key learnings:
+
 ---
 
 ## Refactoring Sprint 4: Unify predicate API access
@@ -744,6 +762,12 @@ DoD: Single method to access all predicate types
 * [ ] Create wrapper that provides unified access
 * [ ] Update callers to use unified accessor
 * [ ] Add tests for unified accessor
+
+### Retrospective
+
+* What went well:
+* What could be improved:
+* Key learnings:
 
 ---
 
@@ -762,6 +786,12 @@ DoD: All predicate parsing in one module
 * [ ] Update injection.rs to use the consolidated version
 * [ ] Ensure tests still pass
 
+### Retrospective
+
+* What went well:
+* What could be improved:
+* Key learnings:
+
 ---
 
 ## Refactoring Sprint 6: Standardize predicate error handling
@@ -778,6 +808,12 @@ DoD: Consistent error reporting across all predicates
 * [ ] Replace eprintln! with proper logging
 * [ ] Replace silent failures with explicit error handling
 * [ ] Add tests for error cases
+
+### Retrospective
+
+* What went well:
+* What could be improved:
+* Key learnings:
 
 ---
 
@@ -796,6 +832,12 @@ DoD: No hardcoded "injection.content" checks
 * [ ] Update tests to verify generic handling
 * [ ] Document the new flexible approach
 
+### Retrospective
+
+* What went well:
+* What could be improved:
+* Key learnings:
+
 ---
 
 ## Refactoring Sprint 8: Create extensible predicate system
@@ -812,6 +854,12 @@ DoD: New predicates can be added without modifying existing code
 * [ ] Create registry for predicate handlers
 * [ ] Refactor existing predicates to use registry
 * [ ] Add example of adding a new predicate
+
+### Retrospective
+
+* What went well:
+* What could be improved:
+* Key learnings:
 
 ---
 
@@ -830,6 +878,12 @@ DoD: Type-safe offset representation with named fields
 * [ ] Update all usage sites
 * [ ] Add builder pattern if beneficial
 
+### Retrospective
+
+* What went well:
+* What could be improved:
+* Key learnings:
+
 ---
 
 ## Refactoring Sprint 10: Create domain types for ranges
@@ -846,6 +900,12 @@ DoD: Clear distinction between different range types
 * [ ] Create EffectiveRange type for offset-adjusted ranges
 * [ ] Update display logic to use these types
 * [ ] Add conversion methods between types
+
+### Retrospective
+
+* What went well:
+* What could be improved:
+* Key learnings:
 
 ---
 
@@ -864,6 +924,12 @@ DoD: Reusable test utilities
 * [ ] Create builder patterns for test data
 * [ ] Reduce test code duplication
 
+### Retrospective
+
+* What went well:
+* What could be improved:
+* Key learnings:
+
 ---
 
 ## Refactoring Sprint 12: Remove legacy code paths
@@ -880,3 +946,9 @@ DoD: Codebase free of unnecessary legacy code
 * [ ] Remove legacy function signatures
 * [ ] Clean up conditional compilation flags if any
 * [ ] Update documentation
+
+### Retrospective
+
+* What went well:
+* What could be improved:
+* Key learnings:
