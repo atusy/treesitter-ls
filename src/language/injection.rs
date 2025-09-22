@@ -1,57 +1,92 @@
+use crate::language::predicate_accessor::{PredicateAccessor, UnifiedPredicate};
 use tree_sitter::{Node, Query, QueryCursor, QueryMatch, StreamingIterator};
 
 /// Represents offset adjustments for injection content boundaries
-/// Format: (start_row, start_column, end_row, end_column)
-pub type InjectionOffset = (i32, i32, i32, i32);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct InjectionOffset {
+    pub start_row: i32,
+    pub start_column: i32,
+    pub end_row: i32,
+    pub end_column: i32,
+}
+
+impl InjectionOffset {
+    /// Create a new InjectionOffset
+    pub fn new(start_row: i32, start_column: i32, end_row: i32, end_column: i32) -> Self {
+        Self {
+            start_row,
+            start_column,
+            end_row,
+            end_column,
+        }
+    }
+
+    /// Check if this offset has any non-zero values
+    pub fn has_offset(&self) -> bool {
+        self.start_row != 0 || self.start_column != 0 || self.end_row != 0 || self.end_column != 0
+    }
+
+    /// Convert to tuple for backwards compatibility
+    pub fn as_tuple(&self) -> (i32, i32, i32, i32) {
+        (self.start_row, self.start_column, self.end_row, self.end_column)
+    }
+}
 
 /// Default offset with no adjustments
-pub const DEFAULT_OFFSET: InjectionOffset = (0, 0, 0, 0);
+pub const DEFAULT_OFFSET: InjectionOffset = InjectionOffset {
+    start_row: 0,
+    start_column: 0,
+    end_row: 0,
+    end_column: 0,
+};
 
 /// Parses offset directive from query and returns the offset values if found
 /// Returns None if no #offset! directive exists for @injection.content
 pub fn parse_offset_directive(query: &Query) -> Option<InjectionOffset> {
     // Check all patterns in the query
     for pattern_index in 0..query.pattern_count() {
-        // Check general predicates for this pattern
-        let predicates = query.general_predicates(pattern_index);
-        for predicate in predicates {
+        // Use unified accessor for predicates
+        for predicate in PredicateAccessor::get_all_predicates(query, pattern_index) {
             // Check if this is an offset! directive
-            if predicate.operator.as_ref() == "offset!" {
-                // Check if it applies to @injection.content capture
-                if let Some(tree_sitter::QueryPredicateArg::Capture(capture_id)) =
-                    predicate.args.first()
-                {
-                    // Find the capture name
-                    if let Some(capture_name) = query.capture_names().get(*capture_id as usize)
-                        && *capture_name == "injection.content"
+            if predicate.operator() == "offset!" {
+                // Only process general predicates for offset!
+                if let UnifiedPredicate::General(pred) = predicate {
+                    // Check if it applies to @injection.content capture
+                    if let Some(tree_sitter::QueryPredicateArg::Capture(capture_id)) =
+                        pred.args.first()
                     {
-                        // Parse the 4 numeric arguments after the capture
-                        // Format: (#offset! @injection.content start_row start_col end_row end_col)
-                        if predicate.args.len() >= 5 {
-                            // Try to parse each argument as i32
-                            let parse_arg = |idx: usize| -> Option<i32> {
-                                if let Some(tree_sitter::QueryPredicateArg::String(s)) =
-                                    predicate.args.get(idx)
-                                {
-                                    s.parse().ok()
-                                } else {
-                                    None
-                                }
-                            };
+                        // Find the capture name
+                        if let Some(capture_name) = query.capture_names().get(*capture_id as usize)
+                            && *capture_name == "injection.content"
+                        {
+                            // Parse the 4 numeric arguments after the capture
+                            // Format: (#offset! @injection.content start_row start_col end_row end_col)
+                            if pred.args.len() >= 5 {
+                                // Try to parse each argument as i32
+                                let parse_arg = |idx: usize| -> Option<i32> {
+                                    if let Some(tree_sitter::QueryPredicateArg::String(s)) =
+                                        pred.args.get(idx)
+                                    {
+                                        s.parse().ok()
+                                    } else {
+                                        None
+                                    }
+                                };
 
-                            // Parse all 4 offset values
-                            if let (
-                                Some(start_row),
-                                Some(start_col),
-                                Some(end_row),
-                                Some(end_col),
-                            ) = (parse_arg(1), parse_arg(2), parse_arg(3), parse_arg(4))
-                            {
-                                return Some((start_row, start_col, end_row, end_col));
+                                // Parse all 4 offset values
+                                if let (
+                                    Some(start_row),
+                                    Some(start_col),
+                                    Some(end_row),
+                                    Some(end_col),
+                                ) = (parse_arg(1), parse_arg(2), parse_arg(3), parse_arg(4))
+                                {
+                                    return Some(InjectionOffset::new(start_row, start_col, end_row, end_col));
+                                }
                             }
+                            // If parsing fails, return default offset
+                            return Some(DEFAULT_OFFSET);
                         }
-                        // If parsing fails, return default offset
-                        return Some(DEFAULT_OFFSET);
                     }
                 }
             }
@@ -115,11 +150,14 @@ fn extract_injection_language(query: &Query, match_: &QueryMatch, text: &str) ->
 
 /// Extracts language from #set! injection.language property
 fn extract_static_language(query: &Query, match_: &QueryMatch) -> Option<String> {
-    for prop in query.property_settings(match_.pattern_index) {
-        if prop.key.as_ref() == "injection.language"
-            && let Some(value) = &prop.value
-        {
-            return Some(value.as_ref().to_string());
+    // Use unified accessor to check property settings
+    for predicate in PredicateAccessor::get_all_predicates(query, match_.pattern_index) {
+        if let UnifiedPredicate::Property(prop) = predicate {
+            if prop.key.as_ref() == "injection.language"
+                && let Some(value) = &prop.value
+            {
+                return Some(value.as_ref().to_string());
+            }
         }
     }
     None

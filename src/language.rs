@@ -5,6 +5,7 @@ pub mod filetypes;
 pub mod injection;
 pub mod loader;
 pub mod parser_pool;
+pub mod predicate_accessor;
 pub mod query_loader;
 pub mod query_predicates;
 pub mod query_store;
