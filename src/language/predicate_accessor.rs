@@ -7,8 +7,6 @@ impl PredicateAccessor {
     /// Get all predicates for a pattern, including both general predicates and property settings
     pub fn get_all_predicates(query: &Query, pattern_index: usize) -> PredicateIterator<'_> {
         PredicateIterator {
-            query,
-            pattern_index,
             general_predicates: query.general_predicates(pattern_index),
             property_settings: query.property_settings(pattern_index),
             general_index: 0,
@@ -34,8 +32,6 @@ impl PredicateAccessor {
 
 /// Iterator over all predicates (both general and property-based)
 pub struct PredicateIterator<'a> {
-    query: &'a Query,
-    pattern_index: usize,
     general_predicates: &'a [QueryPredicate],
     property_settings: &'a [QueryProperty],
     general_index: usize,

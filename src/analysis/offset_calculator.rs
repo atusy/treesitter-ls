@@ -1,4 +1,4 @@
-use crate::language::injection::{InjectionOffset, DEFAULT_OFFSET};
+use crate::language::injection::InjectionOffset;
 
 /// Represents a byte range with start and end positions
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +55,7 @@ pub fn get_offset_label(from_query: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::language::injection::DEFAULT_OFFSET;
 
     #[test]
     fn test_calculate_effective_range_with_positive_offset() {
