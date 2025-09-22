@@ -101,21 +101,55 @@ The fix needed:
 
 DoD: Nested injection detection uses pattern_index to apply offsets correctly
 
-* [ ] RED: Write test showing nested injection with offset incorrectly detected
-* [ ] GREEN: Use pattern_index to get offset and check cursor position
-* [ ] CHECK: Run `make format lint test`
-* [ ] COMMIT
-* [ ] SELF-REVIEW: Check for any cleanup needed
-* [ ] REFACTOR (if needed)
-* [ ] COMMIT
+* [x] RED: Write test showing nested injection with offset incorrectly detected
+* [x] GREEN: Use pattern_index to get offset and check cursor position
+* [x] CHECK: Run `make format lint test`
+* [x] COMMIT
+* [x] SELF-REVIEW: Check for any cleanup needed
+* [x] REFACTOR (extracted `is_within_effective_range` helper)
+* [x] COMMIT
 
 ### Sprint retrospective
 
 #### Inspections of decisions in the previous retrospective
 
-#### Inspections of the current sprint
+N/A - This is the first sprint for nested injection offset support.
+
+#### Inspections of the current sprint (KPT)
+
+**Keep:**
+- TDD approach worked well - wrote tests first to document expected behavior
+- Reused existing offset calculation functions effectively
+- Pattern-aware offset detection now works consistently across all injection levels
+
+**Problem:**
+- Initial test for markdown failed due to wrong node selection
+- Some code duplication between parent and nested injection offset checks
+
+**Try:**
+- Extracted helper function to reduce duplication
+- Fixed test to properly find the injection content nodes
+
+**What was delivered:**
+- Nested injection detection now respects offset directives
+- Used pattern_index (was previously ignored with underscore prefix)
+- Added offset checking before processing nested injections
+- Passes pattern_index and injection_query through the recursion chain
+- Extracted `is_within_effective_range` helper to reduce duplication
+- Added comprehensive tests for both with and without offset scenarios
+
+**Technical implementation:**
+- `handle_nested_injection` now uses `nested_pattern_index` instead of `_nested_pattern_index`
+- Calls `parse_offset_directive_for_pattern` with the correct pattern index
+- Checks cursor position against effective range before processing
+- `process_nested_injection` now accepts and propagates offset information
 
 #### Adaption plan
+
+- Sprint 19 successfully completed
+- Core functionality for offset-aware nested injection detection is now working
+- Consider future improvements for semantic tokens and selection ranges with injection support
+- Main goal achieved: Inspect token action now correctly respects offsets at all injection levels
 
 ---
 
