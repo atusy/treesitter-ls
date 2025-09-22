@@ -1,4 +1,6 @@
-use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range, format_offset, get_offset_label};
+use crate::analysis::offset_calculator::{
+    ByteRange, calculate_effective_range, format_offset, get_offset_label,
+};
 use crate::config::CaptureMappings;
 use crate::language::injection;
 use crate::text::PositionMapper;
@@ -56,7 +58,10 @@ impl<'a> InspectTokenParams<'a> {
     }
 
     /// Set capture context
-    pub fn with_capture_context(mut self, capture_context: Option<(&'a str, &'a CaptureMappings)>) -> Self {
+    pub fn with_capture_context(
+        mut self,
+        capture_context: Option<(&'a str, &'a CaptureMappings)>,
+    ) -> Self {
         self.capture_context = capture_context;
         self
     }
@@ -68,7 +73,10 @@ impl<'a> InspectTokenParams<'a> {
     }
 
     /// Set offset from query
-    pub fn with_offset(mut self, offset: Option<crate::language::injection::InjectionOffset>) -> Self {
+    pub fn with_offset(
+        mut self,
+        offset: Option<crate::language::injection::InjectionOffset>,
+    ) -> Self {
         self.offset_from_query = offset;
         self
     }
@@ -86,7 +94,6 @@ pub fn create_inspect_token_action_unified(params: InspectTokenParams) -> CodeAc
         params.offset_from_query,
     )
 }
-
 
 /// Creates a code action that understands language injections.
 ///
@@ -121,7 +128,7 @@ fn create_injection_aware_action(
                 .with_queries(queries)
                 .with_capture_context(capture_context)
                 .with_hierarchy(Some(&hierarchy))
-                .with_offset(offset_from_query)
+                .with_offset(offset_from_query),
         );
     }
 
@@ -141,7 +148,7 @@ fn create_injection_aware_action(
                     .with_queries(queries)
                     .with_capture_context(capture_context)
                     .with_hierarchy(Some(&hierarchy))
-                    .with_offset(offset_from_query)
+                    .with_offset(offset_from_query),
             );
         }
     };
@@ -158,7 +165,7 @@ fn create_injection_aware_action(
                     .with_queries(queries)
                     .with_capture_context(capture_context)
                     .with_hierarchy(Some(&hierarchy))
-                    .with_offset(offset_from_query)
+                    .with_offset(offset_from_query),
             );
         }
     };
@@ -182,7 +189,7 @@ fn create_injection_aware_action(
             InspectTokenParams::new(node_at_cursor, root, text)
                 .with_queries(queries)
                 .with_capture_context(capture_context)
-                .with_hierarchy(Some(&hierarchy))
+                .with_hierarchy(Some(&hierarchy)),
         );
     };
 
@@ -227,7 +234,7 @@ fn handle_nested_injection(
             InspectTokenParams::new(injected_node, injected_root, content_text)
                 .with_queries(injected_queries)
                 .with_capture_context(Some((injected_lang, &coord.get_capture_mappings())))
-                .with_hierarchy(Some(hierarchy))
+                .with_hierarchy(Some(hierarchy)),
         );
     }
     // Check for nested injection in the current injected content
@@ -263,7 +270,7 @@ fn handle_nested_injection(
         InspectTokenParams::new(injected_node, injected_root, content_text)
             .with_queries(injected_queries)
             .with_capture_context(Some((injected_lang, &coord.get_capture_mappings())))
-            .with_hierarchy(Some(hierarchy))
+            .with_hierarchy(Some(hierarchy)),
     )
 }
 
@@ -338,10 +345,9 @@ fn process_nested_injection(
         InspectTokenParams::new(injected_node, injected_root, content_text)
             .with_queries(injected_queries)
             .with_capture_context(Some((injected_lang, &coord.get_capture_mappings())))
-            .with_hierarchy(Some(&full_hierarchy))
+            .with_hierarchy(Some(&full_hierarchy)),
     )
 }
-
 
 /// Create an inspect token code action with hierarchy and offset directive info
 fn create_inspect_token_action_with_hierarchy_and_offset(
@@ -648,7 +654,7 @@ fn handle_code_actions_with_context(
         None => create_inspect_token_action_unified(
             InspectTokenParams::new(&node_at_cursor, &root, text)
                 .with_queries(queries)
-                .with_capture_context(capture_context)
+                .with_capture_context(capture_context),
         ),
     };
 
@@ -877,7 +883,7 @@ mod tests {
         let action = create_inspect_token_action_unified(
             InspectTokenParams::new(&node, &root, text)
                 .with_queries(None)
-                .with_capture_context(capture_context)
+                .with_capture_context(capture_context),
         );
 
         let CodeActionOrCommand::CodeAction(action) = action else {
@@ -912,7 +918,7 @@ mod tests {
             InspectTokenParams::new(&node, &root, text)
                 .with_queries(None)
                 .with_capture_context(Some(("rust", &capture_mappings)))
-                .with_hierarchy(Some(&language_hierarchy))
+                .with_hierarchy(Some(&language_hierarchy)),
         );
 
         let CodeActionOrCommand::CodeAction(action) = action else {
@@ -1082,7 +1088,7 @@ fn main() {
             InspectTokenParams::new(&node, &root, text)
                 .with_queries(None)
                 .with_capture_context(capture_context)
-                .with_hierarchy(Some(&hierarchy))
+                .with_hierarchy(Some(&hierarchy)),
         );
 
         let CodeActionOrCommand::CodeAction(action) = action else {
@@ -1121,7 +1127,7 @@ fn main() {
             InspectTokenParams::new(&node, &root, text)
                 .with_queries(None)
                 .with_capture_context(capture_context)
-                .with_hierarchy(Some(&hierarchy))
+                .with_hierarchy(Some(&hierarchy)),
         );
 
         let CodeActionOrCommand::CodeAction(action) = action else {
@@ -1165,7 +1171,7 @@ fn main() {
             InspectTokenParams::new(&node, &root, text)
                 .with_queries(None)
                 .with_capture_context(capture_context)
-                .with_hierarchy(None) // No hierarchy = base language
+                .with_hierarchy(None), // No hierarchy = base language
         );
 
         let CodeActionOrCommand::CodeAction(action) = action else {
@@ -1204,7 +1210,7 @@ fn main() {
             InspectTokenParams::new(&node, &root, text)
                 .with_queries(None)
                 .with_capture_context(capture_context)
-                .with_hierarchy(Some(&hierarchy)) // Has hierarchy = injected language
+                .with_hierarchy(Some(&hierarchy)), // Has hierarchy = injected language
         );
 
         let CodeActionOrCommand::CodeAction(action) = action else {
@@ -1323,7 +1329,7 @@ fn main() {
         let action = create_inspect_token_action_unified(
             InspectTokenParams::new(&node, &root, text)
                 .with_queries(None)
-                .with_capture_context(None)
+                .with_capture_context(None),
         );
 
         // Extract the disabled reason which contains the info

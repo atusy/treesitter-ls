@@ -25,7 +25,10 @@ impl PredicateAccessor {
     }
 
     /// Get all predicates for a match
-    pub fn get_match_predicates<'a>(query: &'a Query, match_: &QueryMatch) -> PredicateIterator<'a> {
+    pub fn get_match_predicates<'a>(
+        query: &'a Query,
+        match_: &QueryMatch,
+    ) -> PredicateIterator<'a> {
         Self::get_all_predicates(query, match_.pattern_index)
     }
 }

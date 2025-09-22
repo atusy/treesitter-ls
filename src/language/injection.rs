@@ -28,7 +28,12 @@ impl InjectionOffset {
 
     /// Convert to tuple for backwards compatibility
     pub fn as_tuple(&self) -> (i32, i32, i32, i32) {
-        (self.start_row, self.start_column, self.end_row, self.end_column)
+        (
+            self.start_row,
+            self.start_column,
+            self.end_row,
+            self.end_column,
+        )
     }
 }
 
@@ -52,8 +57,7 @@ pub fn parse_offset_directive(query: &Query) -> Option<InjectionOffset> {
                 && let UnifiedPredicate::General(pred) = predicate
             {
                 // Check if it applies to @injection.content capture
-                if let Some(tree_sitter::QueryPredicateArg::Capture(capture_id)) =
-                    pred.args.first()
+                if let Some(tree_sitter::QueryPredicateArg::Capture(capture_id)) = pred.args.first()
                 {
                     // Find the capture name
                     if let Some(capture_name) = query.capture_names().get(*capture_id as usize)
@@ -81,7 +85,9 @@ pub fn parse_offset_directive(query: &Query) -> Option<InjectionOffset> {
                                 Some(end_col),
                             ) = (parse_arg(1), parse_arg(2), parse_arg(3), parse_arg(4))
                             {
-                                return Some(InjectionOffset::new(start_row, start_col, end_row, end_col));
+                                return Some(InjectionOffset::new(
+                                    start_row, start_col, end_row, end_col,
+                                ));
                             }
                         }
                         // If parsing fails, return default offset

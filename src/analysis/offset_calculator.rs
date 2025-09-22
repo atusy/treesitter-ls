@@ -40,7 +40,10 @@ pub fn calculate_effective_range(byte_range: ByteRange, offset: InjectionOffset)
 
 /// Formats an offset as a string representation
 pub fn format_offset(offset: InjectionOffset) -> String {
-    format!("({}, {}, {}, {})", offset.start_row, offset.start_column, offset.end_row, offset.end_column)
+    format!(
+        "({}, {}, {}, {})",
+        offset.start_row, offset.start_column, offset.end_row, offset.end_column
+    )
 }
 
 /// Determines the offset label based on whether it came from a query
