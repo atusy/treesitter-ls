@@ -974,3 +974,57 @@ DoD: Codebase free of unnecessary legacy code
 * What went well:
 * What could be improved:
 * Key learnings:
+
+---
+
+## Post-Project Cleanup Sprint: Remove redundant wrappers and fix row offset support
+
+* Goal: Address technical debt identified during code review
+
+### Tasks completed
+
+#### Task 1: Remove redundant wrapper functions
+
+* Merged `create_inspect_token_action_unified` with `create_inspect_token_action_with_hierarchy_and_offset`
+* Renamed to simple `create_inspect_token_action`
+* Eliminated unnecessary function pyramid
+
+#### Task 2: Convert stateless structs to free functions
+
+* Converted `PredicateAccessor` from stateless struct to free functions
+* Removed unused `has_offset_directive` function
+* Simplified API by removing unnecessary abstraction layers
+
+#### Task 3: Fix row offset support in effective range calculation
+
+* Discovered that row offsets were being completely ignored
+* Implemented `calculate_effective_range_with_text` function that:
+  - Properly handles both row and column offsets
+  - Finds line positions in text for row offset calculations
+  - Applies offsets from the target line position
+* Added comprehensive tests including:
+  - Column-only offsets
+  - Positive row offsets (moving down)
+  - Negative row offsets (moving up)
+  - Combined row and column offsets
+  - Real-world Lua doc comment scenario
+* Updated refactor.rs to use the new function
+
+### Retrospective
+
+* What went well:
+  - Proactively identified and fixed multiple code quality issues
+  - Found and fixed critical bug where row offsets were ignored
+  - Maintained all tests passing throughout refactoring
+  - Added comprehensive test coverage for new functionality
+
+* Key technical improvements:
+  - Cleaner API with single `create_inspect_token_action` function
+  - Proper row offset support for cases like Lua doc comments
+  - Removed unnecessary abstraction layers
+  - Better separation of concerns
+
+* Impact:
+  - Row offsets now work correctly for injections like `---@param` in Lua
+  - Code is more maintainable with fewer layers of indirection
+  - Effective range calculations are now accurate for all offset types
