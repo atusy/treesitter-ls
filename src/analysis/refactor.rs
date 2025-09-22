@@ -409,7 +409,7 @@ fn handle_nested_injection(
     let injection_query = coord.get_injection_query(injected_lang);
 
     if let Some(inj_query) = injection_query
-        && let Some((nested_hierarchy, nested_content_node, _nested_pattern_index)) =
+        && let Some((nested_hierarchy, nested_content_node, nested_pattern_index)) =
             injection::detect_injection_with_content(
                 injected_node,
                 injected_root,
@@ -418,9 +418,39 @@ fn handle_nested_injection(
                 injected_lang,
             )
     {
+        // Check if the cursor is within the effective range after applying offset
+        let offset_from_query =
+            injection::parse_offset_directive_for_pattern(inj_query.as_ref(), nested_pattern_index);
+
+        if let Some(offset) = offset_from_query {
+            // Calculate effective range with offset
+            let byte_range = crate::analysis::offset_calculator::ByteRange::new(
+                nested_content_node.start_byte(),
+                nested_content_node.end_byte(),
+            );
+            let effective_range =
+                crate::analysis::offset_calculator::calculate_effective_range_with_text(
+                    content_text,
+                    byte_range,
+                    offset,
+                );
+
+            // If cursor is outside the effective range, don't process as nested injection
+            if relative_byte < effective_range.start || relative_byte >= effective_range.end {
+                // Return action for current level without nested injection
+                return create_inspect_token_action(
+                    InspectTokenParams::new(injected_node, injected_root, content_text)
+                        .with_queries(injected_queries)
+                        .with_capture_context(Some((injected_lang, &coord.get_capture_mappings())))
+                        .with_hierarchy(Some(hierarchy)),
+                );
+            }
+        }
+
         return process_nested_injection(
             nested_hierarchy,
             nested_content_node,
+            nested_pattern_index,
             hierarchy,
             content_text,
             relative_byte,
@@ -430,6 +460,7 @@ fn handle_nested_injection(
             injected_lang,
             coord,
             pool,
+            inj_query.as_ref(),
         );
     }
 
@@ -450,6 +481,7 @@ fn handle_nested_injection(
 fn process_nested_injection(
     nested_hierarchy: Vec<String>,
     nested_content_node: Node,
+    nested_pattern_index: usize,
     hierarchy: &[String],
     content_text: &str,
     relative_byte: usize,
@@ -459,6 +491,7 @@ fn process_nested_injection(
     injected_lang: &str,
     coord: &crate::language::LanguageCoordinator,
     pool: &mut crate::language::DocumentParserPool,
+    injection_query: &Query,
 ) -> CodeActionOrCommand {
     // Build full hierarchy
     let mut full_hierarchy = hierarchy.to_vec();
@@ -467,6 +500,10 @@ fn process_nested_injection(
     }
 
     let nested_lang = nested_hierarchy.last().unwrap();
+
+    // Get offset for the nested injection if it exists
+    let offset_from_query =
+        injection::parse_offset_directive_for_pattern(injection_query, nested_pattern_index);
 
     // Try to parse the nested content
     if let Some(mut nested_parser) = pool.acquire(nested_lang) {
@@ -513,7 +550,8 @@ fn process_nested_injection(
         InspectTokenParams::new(injected_node, injected_root, content_text)
             .with_queries(injected_queries)
             .with_capture_context(Some((injected_lang, &coord.get_capture_mappings())))
-            .with_hierarchy(Some(&full_hierarchy)),
+            .with_hierarchy(Some(&full_hierarchy))
+            .with_offset(offset_from_query),
     )
 }
 
