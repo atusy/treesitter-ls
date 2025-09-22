@@ -1,36 +1,21 @@
 use tree_sitter::{Query, QueryMatch, QueryPredicate, QueryProperty};
 
-/// Unified interface for accessing query predicates and properties
-pub struct PredicateAccessor;
-
-impl PredicateAccessor {
-    /// Get all predicates for a pattern, including both general predicates and property settings
-    pub fn get_all_predicates(query: &Query, pattern_index: usize) -> PredicateIterator<'_> {
-        PredicateIterator {
-            general_predicates: query.general_predicates(pattern_index),
-            property_settings: query.property_settings(pattern_index),
-            general_index: 0,
-            property_index: 0,
-        }
+/// Get all predicates for a pattern, including both general predicates and property settings
+pub fn get_all_predicates(query: &Query, pattern_index: usize) -> PredicateIterator<'_> {
+    PredicateIterator {
+        general_predicates: query.general_predicates(pattern_index),
+        property_settings: query.property_settings(pattern_index),
+        general_index: 0,
+        property_index: 0,
     }
+}
 
-    /// Get general predicates for a pattern
-    pub fn get_general_predicates(query: &Query, pattern_index: usize) -> &[QueryPredicate] {
-        query.general_predicates(pattern_index)
-    }
-
-    /// Get property settings for a pattern
-    pub fn get_property_settings(query: &Query, pattern_index: usize) -> &[QueryProperty] {
-        query.property_settings(pattern_index)
-    }
-
-    /// Get all predicates for a match
-    pub fn get_match_predicates<'a>(
-        query: &'a Query,
-        match_: &QueryMatch,
-    ) -> PredicateIterator<'a> {
-        Self::get_all_predicates(query, match_.pattern_index)
-    }
+/// Get all predicates for a match
+pub fn get_match_predicates<'a>(
+    query: &'a Query,
+    match_: &QueryMatch,
+) -> PredicateIterator<'a> {
+    get_all_predicates(query, match_.pattern_index)
 }
 
 /// Iterator over all predicates (both general and property-based)
@@ -98,7 +83,6 @@ mod tests {
     fn test_predicate_accessor_basic() {
         // This is a basic test structure - actual testing would require
         // creating a Query with predicates, which requires a language
-        let _accessor = PredicateAccessor;
         // Test would go here with actual query objects
         assert!(true); // Placeholder
     }

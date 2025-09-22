@@ -1,4 +1,4 @@
-use crate::language::predicate_accessor::{PredicateAccessor, UnifiedPredicate};
+use crate::language::predicate_accessor::{get_all_predicates, UnifiedPredicate};
 use tree_sitter::{Node, Query, QueryCursor, QueryMatch, StreamingIterator};
 
 /// Represents offset adjustments for injection content boundaries
@@ -51,7 +51,7 @@ pub fn parse_offset_directive(query: &Query) -> Option<InjectionOffset> {
     // Check all patterns in the query
     for pattern_index in 0..query.pattern_count() {
         // Use unified accessor for predicates
-        for predicate in PredicateAccessor::get_all_predicates(query, pattern_index) {
+        for predicate in get_all_predicates(query, pattern_index) {
             // Check if this is an offset! directive
             if predicate.operator() == "offset!"
                 && let UnifiedPredicate::General(pred) = predicate
@@ -100,10 +100,6 @@ pub fn parse_offset_directive(query: &Query) -> Option<InjectionOffset> {
     None
 }
 
-/// Legacy function for backwards compatibility - checks if offset directive exists
-pub fn has_offset_directive(query: &Query) -> bool {
-    parse_offset_directive(query).is_some()
-}
 
 /// Detects if a node is inside an injected language region using Tree-sitter injection queries.
 ///
@@ -156,7 +152,7 @@ fn extract_injection_language(query: &Query, match_: &QueryMatch, text: &str) ->
 /// Extracts language from #set! injection.language property
 fn extract_static_language(query: &Query, match_: &QueryMatch) -> Option<String> {
     // Use unified accessor to check property settings
-    for predicate in PredicateAccessor::get_all_predicates(query, match_.pattern_index) {
+    for predicate in get_all_predicates(query, match_.pattern_index) {
         if let UnifiedPredicate::Property(prop) = predicate
             && prop.key.as_ref() == "injection.language"
             && let Some(value) = &prop.value
