@@ -180,105 +180,92 @@ The Sprint 12 implementation has a logic error:
 
 ---
 
-### 🔍 Sprint 14: Fix injection detection failing for markdown code blocks
+### 🔍 Sprint 14: Fix pattern-agnostic offset parsing
 
-* User story: As a treesitter-ls user, when I inspect content inside a markdown fenced code block, I want to see the injected language (e.g., "markdown -> lua"), not just "markdown"
+* User story: As a treesitter-ls user, when I inspect any line of a markdown fenced code block, I want to see the injected language (e.g., "markdown -> lua"), not just "markdown" on first/last lines
 
-**Bug Analysis:** The injection is not being detected at all for markdown code blocks.
+**Bug Analysis:** The `parse_offset_directive` function incorrectly returns the FIRST offset found in ANY pattern, not the offset for the MATCHED pattern.
 
-#### Root Cause Investigation
+#### Root Cause (Confirmed by Senior Engineer Review)
 
-From the LSP log analysis:
-1. Node at cursor is correctly identified as `code_fence_content`
-2. But the Language field shows only "markdown" - no injection detected
-3. The injection query IS loaded ("Dynamically loaded injections for markdown")
-4. The injection query IS passed to the code action handler
+The bug is in `src/language/injection.rs:parse_offset_directive`:
 
-The real issue is in the injection detection logic itself. Possible causes:
+```rust
+pub fn parse_offset_directive(query: &Query) -> Option<InjectionOffset> {
+    // Searches ALL patterns and returns FIRST offset found
+    // Has no idea which pattern actually matched!
+}
+```
 
-1. **Query Match Failure**: The injection query might not match the code block structure
-   - The example uses 5 backticks (`````) which might have different tree structure
-   - The query pattern might not match all code block variants
+#### How the Bug Happens
 
-2. **Language Extraction Failure**: Even if the query matches, language extraction might fail
-   - The `extract_injection_language` returns None if it can't find the language
-   - This causes `find_injection_content_and_language` to return None
-   - The entire injection detection fails silently
+1. **Markdown injection query has multiple patterns:**
+   - Fenced code blocks: NO offset
+   - YAML frontmatter: `#offset! @injection.content 1 0 -1 0`
+   - TOML frontmatter: `#offset! @injection.content 1 0 -1 0`
 
-3. **Silent Failures**: Multiple points in the detection chain can fail silently:
-   - Query not matching → No injection
-   - Language extraction failing → No injection
-   - Any step returning None → No injection
+2. **When processing a fenced code block:**
+   - Correctly matches the fenced_code_block pattern
+   - But `parse_offset_directive` scans ALL patterns
+   - Finds and returns the YAML frontmatter offset
+   - This wrong offset is applied to the code block
 
-#### The Core Problem
+3. **Result:**
+   - First line: Outside effective range → shows "markdown"
+   - Middle lines: Inside effective range → shows "markdown -> lua"
+   - Last line: Outside effective range → shows "markdown"
 
-The injection detection in `find_injection_content_and_language` only succeeds if ALL of:
-1. The query matches the structure
-2. The node is within the content capture
-3. The language extraction succeeds
+#### Why This Design is Flawed
 
-If ANY step fails, the injection is silently ignored.
+The function assumes one offset per query file, but different patterns need different offsets:
+- Fenced code blocks: No offset (content is exact)
+- Frontmatter: Needs `(1, 0, -1, 0)` to skip delimiters
+- Other patterns: May need other offsets
 
-#### Proposed Debugging Approach
+#### The Fix Required
 
-1. **Add debug logging to trace injection detection**:
+The `parse_offset_directive` function needs to be pattern-aware:
+
+1. **Current (broken) approach:**
    ```rust
-   // In collect_injection_regions:
-   log::debug!("Running injection query, found {} matches", match_count);
-
-   // In find_injection_content_and_language:
-   log::debug!("Checking injection content, node within: {}", is_within);
-   log::debug!("Language extraction result: {:?}", language);
+   pub fn parse_offset_directive(query: &Query) -> Option<InjectionOffset>
    ```
 
-2. **Check if query matches the structure**:
-   - Log what patterns are matched
-   - Log what captures are found
-   - Verify the tree structure matches expectations
-
-3. **Verify language extraction**:
-   - Log the capture name and node type for @injection.language
-   - Log the extracted text
-   - Check if it's empty or malformed
-
-#### Proposed Fix
-
-Based on the most likely cause (language extraction failure):
-
-1. **Make language extraction more robust**:
+2. **Fixed approach:**
    ```rust
-   fn extract_dynamic_language(...) -> Option<String> {
-       // Current: returns None if capture not found
-       // Proposed: log what's happening
-       for capture in match_.captures {
-           if *capture_name == "injection.language" {
-               let lang_text = &text[capture.node.byte_range()].trim();
-               if lang_text.is_empty() {
-                   log::warn!("Empty language in injection");
-                   return None;
-               }
-               return Some(lang_text.to_string());
-           }
-       }
-       log::debug!("No injection.language capture found");
-       None
-   }
+   pub fn parse_offset_directive(query: &Query, pattern_index: usize) -> Option<InjectionOffset>
    ```
 
-2. **Alternative: Support fallback patterns**:
-   - If dynamic extraction fails, try other patterns
-   - Check parent nodes for language info
-   - Use info_string content as fallback
+3. **Changes needed:**
+   - Track which pattern matched during injection detection
+   - Pass the pattern index to offset parsing
+   - Only look for offset directives in that specific pattern
+
+#### Call Flow That Needs Fixing
+
+1. `detect_injection_with_content` - needs to track pattern_index
+2. `create_injection_aware_action` - needs to receive pattern_index
+3. `parse_offset_directive` - needs to use pattern_index
+
+#### Impact of This Bug
+
+- Incorrect effective range calculations for fenced code blocks
+- First/last lines incorrectly show base language
+- Misleading offset information in Inspect token output
+- Potential issues with other features relying on injection boundaries
 
 #### Tasks
 
-* [ ] RED: Add test that reproduces markdown injection failure
-* [ ] Add comprehensive debug logging to injection detection
-* [ ] Identify the exact failure point from logs
-* [ ] GREEN: Fix the identified issue
-* [ ] Add tests for various markdown code block formats
+* [ ] RED: Add test showing wrong offset applied to fenced_code_block
+* [ ] Track pattern_index in injection detection
+* [ ] Make parse_offset_directive pattern-aware
+* [ ] GREEN: Pass pattern_index through the call chain
+* [ ] Verify fenced code blocks get no offset
+* [ ] Verify frontmatter still gets correct offset
 * [ ] CHECK: Run `make format lint test`
 * [ ] COMMIT
+
+---
 
 ---
 
@@ -296,7 +283,7 @@ Based on the most likely cause (language extraction failure):
 
 ---
 
-### ⚠️ Sprint 14: Validate and warn on bad offsets
+### ⚠️ Sprint 16: Validate and warn on bad offsets
 
 * User story: As a query author, I want warnings when my offset directives are malformed
 
@@ -310,7 +297,7 @@ Based on the most likely cause (language extraction failure):
 
 ---
 
-### 🚀 Sprint 15: Performance - Cache offset calculations
+### 🚀 Sprint 17: Performance - Cache offset calculations
 
 * User story: As a treesitter-ls user with large files, I want fast offset calculations
 
@@ -324,7 +311,7 @@ Based on the most likely cause (language extraction failure):
 
 ---
 
-### 🔮 Sprint 16: Future - Dynamic offset calculations
+### 🔮 Sprint 18: Future - Dynamic offset calculations
 
 * User story: As a query author, I want offsets calculated from content patterns
 
