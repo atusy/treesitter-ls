@@ -141,7 +141,30 @@ When clicking on the third hyphen in `---@param` (Lua comment with luadoc inject
 
 ---
 
-### 🔧 Sprint 13: Handle nested injections correctly
+### 🐛 Sprint 13: Fix redundant offset check for default offsets
+
+* User story: As a treesitter-ls user, when I inspect content in a markdown fenced code block (which has no offset), I want to see the injected language, not markdown
+
+**Bug introduced in Sprint 12:** The offset check is being applied even when there's no actual offset directive, causing incorrect language detection.
+
+#### Root Cause Analysis
+
+The Sprint 12 implementation has a logic error:
+1. `detect_injection_with_content` already confirms the cursor's node is within the injection content
+2. We then redundantly check if cursor_byte is within effective_range
+3. For default offset (0,0,0,0), this creates inconsistency between node-based and byte-based checks
+4. The cursor might be in a node that's within the content, but the byte position check fails
+
+#### Tasks
+
+* [ ] RED: Write test showing markdown code block incorrectly shows base language
+* [ ] GREEN: Only apply offset check when there's an actual offset directive
+* [ ] CHECK: `make format lint test`
+* [ ] COMMIT
+
+---
+
+### 🔧 Sprint 14: Handle nested injections correctly
 
 * User story: As a treesitter-ls user with nested injections (markdown→html→js), I want Language field to respect all offset layers
 

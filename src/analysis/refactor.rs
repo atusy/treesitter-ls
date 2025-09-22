@@ -266,19 +266,22 @@ fn create_injection_aware_action(
     let offset_from_query =
         injection_query.and_then(crate::language::injection::parse_offset_directive);
 
-    // Check if cursor is within the effective range (after applying offset)
-    let offset = offset_from_query.unwrap_or(crate::language::injection::DEFAULT_OFFSET);
-    let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
-    let effective_range = calculate_effective_range_with_text(text, byte_range, offset);
+    // Only apply offset-based filtering when there's an actual offset directive
+    // For default offsets (no directive), trust the injection detection from detect_injection_with_content
+    if let Some(offset) = offset_from_query {
+        // Check if cursor is within the effective range (after applying offset)
+        let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
+        let effective_range = calculate_effective_range_with_text(text, byte_range, offset);
 
-    // If cursor is outside the effective range, don't treat it as an injection
-    if cursor_byte < effective_range.start || cursor_byte >= effective_range.end {
-        // Show base language only, not the injection hierarchy
-        return create_inspect_token_action(
-            InspectTokenParams::new(node_at_cursor, root, text)
-                .with_queries(queries)
-                .with_capture_context(capture_context),
-        );
+        // If cursor is outside the effective range, don't treat it as an injection
+        if cursor_byte < effective_range.start || cursor_byte >= effective_range.end {
+            // Show base language only, not the injection hierarchy
+            return create_inspect_token_action(
+                InspectTokenParams::new(node_at_cursor, root, text)
+                    .with_queries(queries)
+                    .with_capture_context(capture_context),
+            );
+        }
     }
 
     // Check if we have everything needed for injection-aware processing
@@ -1637,6 +1640,156 @@ fn main() {
         assert!(
             reason.contains("rust -> regex"),
             "^ symbol should show injection hierarchy 'rust -> regex', but got: {}",
+            reason
+        );
+    }
+
+    #[test]
+    fn inspect_token_should_only_apply_offset_check_when_offset_exists() {
+        // This test verifies the fix for Sprint 13
+        // The offset check should only be applied when there's an actual offset directive
+        let mut parser = Parser::new();
+        let language = tree_sitter_rust::LANGUAGE.into();
+        parser.set_language(&language).expect("load rust grammar");
+
+        // Test case 1: WITH offset - should apply offset check
+        let text_with_offset = r#"fn main() {
+    let pattern = Regex::new(r"_^\d+$").unwrap();
+}"#;
+        let tree_with_offset = parser.parse(text_with_offset, None).expect("parse rust");
+
+        let injection_query_with_offset = r#"
+(call_expression
+  function: (scoped_identifier
+    path: (identifier) @_regex
+    (#eq? @_regex "Regex")
+    name: (identifier) @_new
+    (#eq? @_new "new"))
+  arguments: (arguments
+    (raw_string_literal
+      (string_content) @injection.content))
+  (#set! injection.language "regex")
+  (#offset! @injection.content 0 2 0 0))
+        "#;
+
+        let query_with_offset =
+            Query::new(&language, injection_query_with_offset).expect("valid query");
+
+        // Position at underscore (outside effective range due to offset)
+        let underscore_pos = Position::new(1, 31); // Points to _ in r"_^\d+$"
+        let cursor_range = Range::new(underscore_pos, underscore_pos);
+
+        let capture_mappings: CaptureMappings = HashMap::new();
+        let coordinator = crate::language::LanguageCoordinator::new();
+        let mut parser_pool = coordinator.create_document_parser_pool();
+
+        let actions = handle_code_actions_with_injection_and_coordinator(
+            &Url::parse("file:///test.rs").unwrap(),
+            text_with_offset,
+            &tree_with_offset,
+            cursor_range,
+            None,
+            Some(("rust", &capture_mappings)),
+            Some(&query_with_offset),
+            &coordinator,
+            &mut parser_pool,
+        );
+
+        let actions = actions.expect("Should return code actions");
+        let inspect_action = actions
+            .iter()
+            .find(|a| {
+                if let CodeActionOrCommand::CodeAction(action) = a {
+                    action.title.starts_with("Inspect token")
+                } else {
+                    false
+                }
+            })
+            .expect("Should have inspect token action");
+
+        let CodeActionOrCommand::CodeAction(action) = inspect_action else {
+            panic!("Expected CodeAction variant");
+        };
+
+        let reason = action
+            .disabled
+            .as_ref()
+            .expect("inspect token stores info in disabled reason")
+            .reason
+            .clone();
+
+        // WITH offset, position outside effective range should show base language
+        assert!(
+            reason.contains("* Language: rust\n") && !reason.contains("regex"),
+            "With offset, position outside effective range should show base language only. Got: {}",
+            reason
+        );
+
+        // Test case 2: WITHOUT offset - should NOT apply offset check
+        let text_no_offset = r#"fn main() {
+    let pattern = Regex::new(r"^\d+$").unwrap();
+}"#;
+        let tree_no_offset = parser.parse(text_no_offset, None).expect("parse rust");
+
+        let injection_query_no_offset = r#"
+(call_expression
+  function: (scoped_identifier
+    path: (identifier) @_regex
+    (#eq? @_regex "Regex")
+    name: (identifier) @_new
+    (#eq? @_new "new"))
+  arguments: (arguments
+    (raw_string_literal
+      (string_content) @injection.content))
+  (#set! injection.language "regex"))
+        "#;
+
+        let query_no_offset =
+            Query::new(&language, injection_query_no_offset).expect("valid query");
+
+        // Position at first character of regex content
+        let regex_start_pos = Position::new(1, 31); // Points to ^ in r"^\d+$"
+        let cursor_range = Range::new(regex_start_pos, regex_start_pos);
+
+        let actions = handle_code_actions_with_injection_and_coordinator(
+            &Url::parse("file:///test.rs").unwrap(),
+            text_no_offset,
+            &tree_no_offset,
+            cursor_range,
+            None,
+            Some(("rust", &capture_mappings)),
+            Some(&query_no_offset),
+            &coordinator,
+            &mut parser_pool,
+        );
+
+        let actions = actions.expect("Should return code actions");
+        let inspect_action = actions
+            .iter()
+            .find(|a| {
+                if let CodeActionOrCommand::CodeAction(action) = a {
+                    action.title.starts_with("Inspect token")
+                } else {
+                    false
+                }
+            })
+            .expect("Should have inspect token action");
+
+        let CodeActionOrCommand::CodeAction(action) = inspect_action else {
+            panic!("Expected CodeAction variant");
+        };
+
+        let reason = action
+            .disabled
+            .as_ref()
+            .expect("inspect token stores info in disabled reason")
+            .reason
+            .clone();
+
+        // WITHOUT offset directive, injection should be detected
+        assert!(
+            reason.contains("rust -> regex"),
+            "Without offset directive, injection should be detected. Got: {}",
             reason
         );
     }
