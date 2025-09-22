@@ -395,6 +395,45 @@ The `parse_offset_directive` function needs to be pattern-aware:
 
 ---
 
+### 🧹 Sprint 18: Remove unused code and unnecessary abstractions
+
+* User story: As a treesitter-ls maintainer, I want to remove unused public APIs and methods to reduce maintenance burden and improve code clarity
+
+**Why this matters:** Unused public APIs create confusion and maintenance overhead
+
+#### Identified Issues
+
+1. **Unused public function**: `detect_injection` in injection.rs
+   - Only used in tests within the same module
+   - Just a thin wrapper around `detect_injection_with_content`
+   - Should be made private or removed
+
+2. **Unused methods in InjectionOffset**:
+   - `has_offset()` - Never used anywhere
+   - `as_tuple()` - Never used anywhere, marked as "for backwards compatibility" but no usage found
+
+3. **Type alias only used locally**: `InjectionRegion`
+   - Only used within injection.rs module
+   - Could be moved closer to usage or inlined
+
+4. **Deprecated function**: `parse_offset_directive`
+   - Already marked as deprecated
+   - Only used in tests for documentation
+   - Consider removing entirely or moving to test module
+
+#### Tasks
+
+* [ ] Make `detect_injection` private (only used in module tests)
+* [ ] Remove unused `has_offset()` method from InjectionOffset
+* [ ] Remove unused `as_tuple()` method from InjectionOffset
+* [ ] Move InjectionRegion type alias closer to its usage
+* [ ] Consider moving deprecated `parse_offset_directive` to test module
+* [ ] Run `cargo build --release` to ensure no external dependencies break
+* [ ] CHECK: Run `make format lint test`
+* [ ] COMMIT
+
+---
+
 ## Success Criteria
 
 The project is successful when:
