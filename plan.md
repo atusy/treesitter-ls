@@ -658,3 +658,148 @@ For a Rust regex injection with `#offset! @injection.content 0 1 0 0`:
 - Core offset support goal has been fully achieved
 
 The implementation successfully enables the LSP to understand and display offset information for injection captures, fulfilling the user's requirement to support cases like lua->luadoc injection where content starts at an offset from the capture boundary.
+
+---
+
+## Special Refactoring Sprints (No User-Visible Changes)
+
+These sprints focus on cleaning up technical debt, removing backward compatibility code, and improving code organization. No backward compatibility is required for release.
+
+---
+
+## Refactoring Sprint 1: Clean up inspect token action function signatures
+
+* Goal: Simplify the multiple `create_inspect_token_action*` functions that have accumulated over time
+
+### Sprint planning notes
+
+Current state:
+- `create_inspect_token_action` - original function
+- `create_inspect_token_action_with_hierarchy` - added for language hierarchy
+- `create_inspect_token_action_with_hierarchy_and_offset` - added for offset support
+- `create_injection_aware_action` - for handling injections
+- `create_injection_aware_inspect_token_action` - another variant
+
+This pyramid of functions exists for backward compatibility but creates unnecessary complexity.
+
+### Tasks
+
+#### Task 1: Consolidate inspect token action functions
+
+DoD: Single, clean function signature with optional parameters
+
+* [ ] Identify all callers of the various create_inspect_token_action variants
+* [ ] Create a single unified function with a clean parameter structure
+* [ ] Migrate all callers to use the new function
+* [ ] Remove the old function variants
+* [ ] Ensure all tests pass
+
+---
+
+## Refactoring Sprint 2: Extract offset calculation logic
+
+* Goal: Move offset calculation logic into a dedicated module for better separation of concerns
+
+### Tasks
+
+#### Task 1: Create offset calculation module
+
+DoD: Offset calculations are isolated in a dedicated, testable module
+
+* [ ] Create new module for offset calculations
+* [ ] Extract offset application logic from refactor.rs
+* [ ] Add comprehensive unit tests for offset calculations
+* [ ] Update refactor.rs to use the new module
+
+---
+
+## Refactoring Sprint 3: Remove duplicate injection detection code
+
+* Goal: Consolidate injection detection logic that appears in multiple places
+
+### Tasks
+
+#### Task 1: Unify injection detection
+
+DoD: Single source of truth for injection detection logic
+
+* [ ] Identify all places where injection detection occurs
+* [ ] Consolidate into injection.rs module
+* [ ] Remove duplicate implementations
+* [ ] Update all callers
+
+---
+
+## Refactoring Sprint 4: Simplify query predicate handling
+
+* Goal: Clean up the query_predicates.rs module and remove special cases
+
+### Tasks
+
+#### Task 1: Refactor predicate checking
+
+DoD: Cleaner, more maintainable predicate handling
+
+* [ ] Review current predicate handling for offset! directive
+* [ ] Generalize the predicate parsing logic
+* [ ] Remove special-case handling where possible
+* [ ] Add tests for edge cases
+
+---
+
+## Refactoring Sprint 5: Improve type safety with stronger types
+
+* Goal: Replace tuple types and generic parameters with domain-specific types
+
+### Tasks
+
+#### Task 1: Replace InjectionOffset tuple with struct
+
+DoD: Type-safe offset representation
+
+* [ ] Convert InjectionOffset from tuple to struct with named fields
+* [ ] Add methods for offset calculations
+* [ ] Update all usage sites
+* [ ] Add builder pattern if beneficial
+
+#### Task 2: Create domain types for ranges
+
+DoD: Clear distinction between different range types
+
+* [ ] Create ByteRange type for node ranges
+* [ ] Create EffectiveRange type for offset-adjusted ranges
+* [ ] Update display logic to use these types
+
+---
+
+## Refactoring Sprint 6: Clean up test organization
+
+* Goal: Improve test maintainability and reduce duplication
+
+### Tasks
+
+#### Task 1: Extract test helpers
+
+DoD: Reusable test utilities
+
+* [ ] Create test helper module
+* [ ] Extract common test setup code
+* [ ] Create builder patterns for test data
+* [ ] Reduce test code duplication
+
+---
+
+## Refactoring Sprint 7: Remove legacy code paths
+
+* Goal: Remove code that exists only for backward compatibility
+
+### Tasks
+
+#### Task 1: Audit and remove legacy code
+
+DoD: Codebase free of unnecessary legacy code
+
+* [ ] Identify backward compatibility code
+* [ ] Remove legacy function signatures
+* [ ] Clean up conditional compilation flags if any
+* [ ] Update documentation
