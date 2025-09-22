@@ -20,21 +20,6 @@ impl InjectionOffset {
             end_column,
         }
     }
-
-    /// Check if this offset has any non-zero values
-    pub fn has_offset(&self) -> bool {
-        self.start_row != 0 || self.start_column != 0 || self.end_row != 0 || self.end_column != 0
-    }
-
-    /// Convert to tuple for backwards compatibility
-    pub fn as_tuple(&self) -> (i32, i32, i32, i32) {
-        (
-            self.start_row,
-            self.start_column,
-            self.end_row,
-            self.end_column,
-        )
-    }
 }
 
 /// Default offset with no adjustments
@@ -165,34 +150,6 @@ pub fn parse_offset_directive_for_pattern(
         }
     }
     None
-}
-
-/// Detects if a node is inside an injected language region using Tree-sitter injection queries.
-///
-/// This function uses standard Tree-sitter injection queries to detect language boundaries
-/// in a completely language-agnostic way. It supports both:
-/// - Static injection: `#set! injection.language "language_name"`
-/// - Dynamic injection: `@injection.language` captures
-///
-/// # Arguments
-/// * `node` - The node to check for injection
-/// * `root` - The root node of the syntax tree
-/// * `text` - The source text
-/// * `injection_query` - The injection query for the base language
-/// * `base_language` - The name of the base language
-///
-/// # Returns
-/// A vector of language names representing the hierarchy, or None if no injection is detected.
-/// For example: `["rust", "regex"]` for a regex pattern in Rust code.
-pub fn detect_injection(
-    node: &Node,
-    root: &Node,
-    text: &str,
-    injection_query: Option<&Query>,
-    base_language: &str,
-) -> Option<Vec<String>> {
-    detect_injection_with_content(node, root, text, injection_query, base_language)
-        .map(|(hierarchy, _, _)| hierarchy)
 }
 
 /// Checks if a node is within the bounds of another node
@@ -475,8 +432,12 @@ mod tests {
         let node = find_node_at_byte(&root, 35); // Position in regex string
         assert!(node.is_some());
 
-        let result = detect_injection(&node.unwrap(), &root, text, Some(&query), "rust");
-        assert_eq!(result, Some(vec!["rust".to_string(), "regex".to_string()]));
+        let result =
+            detect_injection_with_content(&node.unwrap(), &root, text, Some(&query), "rust");
+        assert_eq!(
+            result.map(|(h, _, _)| h),
+            Some(vec!["rust".to_string(), "regex".to_string()])
+        );
     }
 
     #[test]
@@ -501,8 +462,9 @@ mod tests {
         let node = find_node_at_byte(&root, 20); // Position in string
         assert!(node.is_some());
 
-        let result = detect_injection(&node.unwrap(), &root, text, Some(&query), "rust");
-        assert_eq!(result, None);
+        let result =
+            detect_injection_with_content(&node.unwrap(), &root, text, Some(&query), "rust");
+        assert_eq!(result.map(|(h, _, _)| h), None);
     }
 
     #[test]
@@ -513,7 +475,7 @@ mod tests {
         let root = tree.root_node();
 
         let node = root.child(0).unwrap();
-        let result = detect_injection(&node, &root, text, None, "rust");
+        let result = detect_injection_with_content(&node, &root, text, None, "rust");
         assert_eq!(result, None);
     }
 
