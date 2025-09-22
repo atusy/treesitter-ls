@@ -80,29 +80,70 @@ pub fn parse_offset_directive_for_pattern(
                 {
                     // Parse the 4 numeric arguments after the capture
                     // Format: (#offset! @injection.content start_row start_col end_row end_col)
-                    if pred.args.len() >= 5 {
-                        // Try to parse each argument as i32
-                        let parse_arg = |idx: usize| -> Option<i32> {
-                            if let Some(tree_sitter::QueryPredicateArg::String(s)) =
-                                pred.args.get(idx)
-                            {
-                                s.parse().ok()
-                            } else {
-                                None
-                            }
-                        };
+                    let arg_count = pred.args.len();
 
-                        // Parse all 4 offset values
-                        if let (Some(start_row), Some(start_col), Some(end_row), Some(end_col)) =
-                            (parse_arg(1), parse_arg(2), parse_arg(3), parse_arg(4))
-                        {
-                            return Some(InjectionOffset::new(
-                                start_row, start_col, end_row, end_col,
-                            ));
-                        }
+                    // Validate argument count (should be 5: capture + 4 offsets)
+                    if arg_count < 5 {
+                        log::warn!(
+                            "Malformed #offset! directive for pattern {}: expected 4 offset values, got {}. \
+                            Using default offset (0, 0, 0, 0). \
+                            Correct format: (#offset! @injection.content start_row start_col end_row end_col)",
+                            pattern_index,
+                            arg_count - 1 // Subtract 1 for the capture argument
+                        );
+                        return Some(DEFAULT_OFFSET);
                     }
-                    // If parsing fails, return default offset
-                    return Some(DEFAULT_OFFSET);
+
+                    // Try to parse each argument as i32
+                    let parse_arg = |idx: usize| -> Result<i32, String> {
+                        if let Some(tree_sitter::QueryPredicateArg::String(s)) = pred.args.get(idx)
+                        {
+                            s.parse().map_err(|_| s.to_string())
+                        } else {
+                            Err(String::from("missing"))
+                        }
+                    };
+
+                    // Parse all 4 offset values
+                    let parse_results = vec![
+                        (1, "start_row", parse_arg(1)),
+                        (2, "start_col", parse_arg(2)),
+                        (3, "end_row", parse_arg(3)),
+                        (4, "end_col", parse_arg(4)),
+                    ];
+
+                    // Check if all values parsed successfully
+                    let all_valid = parse_results.iter().all(|(_, _, r)| r.is_ok());
+
+                    if all_valid {
+                        // Extract the successfully parsed values
+                        let values: Vec<i32> = parse_results
+                            .into_iter()
+                            .map(|(_, _, r)| r.unwrap())
+                            .collect();
+
+                        return Some(InjectionOffset::new(
+                            values[0], values[1], values[2], values[3],
+                        ));
+                    } else {
+                        // Log which values failed to parse
+                        let error_details: Vec<String> = parse_results
+                            .into_iter()
+                            .filter_map(|(_, name, result)| {
+                                result.err().map(|val| format!("{} = '{}'", name, val))
+                            })
+                            .collect();
+
+                        log::warn!(
+                            "Failed to parse #offset! directive for pattern {}: invalid values [{}]. \
+                            Using default offset (0, 0, 0, 0). \
+                            All offset values must be integers.",
+                            pattern_index,
+                            error_details.join(", ")
+                        );
+
+                        return Some(DEFAULT_OFFSET);
+                    }
                 }
             }
         }
@@ -558,5 +599,93 @@ mod tests {
     // Helper function to find a node at a specific byte position
     fn find_node_at_byte<'a>(root: &Node<'a>, byte: usize) -> Option<Node<'a>> {
         root.descendant_for_byte_range(byte, byte)
+    }
+
+    #[test]
+    fn test_malformed_offset_directives() {
+        // Test various malformed offset directives to ensure proper handling
+        let language = tree_sitter_rust::LANGUAGE.into();
+
+        // Test 1: Non-numeric offset values
+        let query_non_numeric = r#"
+            ((line_comment) @injection.content
+              (#set! injection.language "test")
+              (#offset! @injection.content foo bar baz qux))
+        "#;
+
+        let query = Query::new(&language, query_non_numeric).expect("valid query");
+        let offset = parse_offset_directive_for_pattern(&query, 0);
+
+        // Currently returns DEFAULT_OFFSET (0,0,0,0) on parse failure
+        assert_eq!(
+            offset,
+            Some(super::DEFAULT_OFFSET),
+            "Non-numeric values should return DEFAULT_OFFSET"
+        );
+
+        // Test 2: Missing offset arguments (only 2 instead of 4)
+        let query_missing_args = r#"
+            ((line_comment) @injection.content
+              (#set! injection.language "test")
+              (#offset! @injection.content 1 0))
+        "#;
+
+        let query = Query::new(&language, query_missing_args).expect("valid query");
+        let offset = parse_offset_directive_for_pattern(&query, 0);
+
+        assert_eq!(
+            offset,
+            Some(super::DEFAULT_OFFSET),
+            "Missing arguments should return DEFAULT_OFFSET"
+        );
+
+        // Test 3: Too many offset arguments (5 instead of 4)
+        let query_too_many = r#"
+            ((line_comment) @injection.content
+              (#set! injection.language "test")
+              (#offset! @injection.content 1 0 -1 0 5))
+        "#;
+
+        let query = Query::new(&language, query_too_many).expect("valid query");
+        let offset = parse_offset_directive_for_pattern(&query, 0);
+
+        // Should still parse the first 4 arguments
+        assert_eq!(
+            offset,
+            Some(InjectionOffset::new(1, 0, -1, 0)),
+            "Extra arguments should be ignored, first 4 should be parsed"
+        );
+
+        // Test 4: Mixed valid and invalid values
+        let query_mixed = r#"
+            ((line_comment) @injection.content
+              (#set! injection.language "test")
+              (#offset! @injection.content 1 invalid -1 0))
+        "#;
+
+        let query = Query::new(&language, query_mixed).expect("valid query");
+        let offset = parse_offset_directive_for_pattern(&query, 0);
+
+        assert_eq!(
+            offset,
+            Some(super::DEFAULT_OFFSET),
+            "Mixed valid/invalid values should return DEFAULT_OFFSET"
+        );
+
+        // Test 5: Empty offset directive (no arguments after capture)
+        let query_empty = r#"
+            ((line_comment) @injection.content
+              (#set! injection.language "test")
+              (#offset! @injection.content))
+        "#;
+
+        let query = Query::new(&language, query_empty).expect("valid query");
+        let offset = parse_offset_directive_for_pattern(&query, 0);
+
+        assert_eq!(
+            offset,
+            Some(super::DEFAULT_OFFSET),
+            "Empty offset directive should return DEFAULT_OFFSET"
+        );
     }
 }
