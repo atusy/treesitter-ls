@@ -325,7 +325,7 @@ The `parse_offset_directive` function needs to be pattern-aware:
 
 ---
 
-### ⚠️ Sprint 16: Validate and warn on malformed offset directives
+### ⚠️ Sprint 16: Validate and warn on malformed offset directives ✅
 
 * User story: As a query author, I want clear error messages when my offset directives are malformed (e.g., non-numeric values, wrong argument count)
 
@@ -333,10 +333,30 @@ The `parse_offset_directive` function needs to be pattern-aware:
 
 #### Tasks
 
-* [ ] RED: Test malformed offset handling (non-numeric, missing args, etc.)
-* [ ] GREEN: Add validation with descriptive error logging
-* [ ] Ensure backward compatibility (still work, but warn)
-* [ ] CHECK & COMMIT
+* [x] RED: Test malformed offset handling (non-numeric, missing args, etc.)
+* [x] GREEN: Add validation with descriptive error logging
+* [x] Ensure backward compatibility (still work, but warn)
+* [x] CHECK & COMMIT
+
+#### Sprint Retrospective
+
+**What was delivered:**
+- Added comprehensive test `test_malformed_offset_directives` covering various error cases
+- Enhanced `parse_offset_directive_for_pattern` with detailed validation logic
+- Added descriptive warning messages for different error scenarios
+- Maintained backward compatibility by returning DEFAULT_OFFSET on errors
+
+**Technical implementation:**
+- Validates argument count (must be exactly 4 offset values)
+- Validates each value can be parsed as i32
+- Provides specific error messages identifying which values failed
+- Uses log::warn! to notify developers without breaking functionality
+
+**Impact:**
+- ✅ Query authors get immediate feedback on malformed directives
+- ✅ Easier debugging with specific error messages
+- ✅ Backward compatible - still works with DEFAULT_OFFSET
+- ✅ All existing tests continue to pass
 
 ---
 
