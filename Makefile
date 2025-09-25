@@ -81,15 +81,19 @@ deps/treesitter: deps/nvim/nvim-treesitter
 .PHONY: help
 help:
 	@echo "Available targets:"
-	@echo "  build    - Build the project in release mode (default)"
-	@echo "  debug    - Build the project in debug mode"
-	@echo "  clean    - Clean build artifacts"
-	@echo "  test     - Run tests"
-	@echo "  check    - Run code checks (clippy, fmt)"
-	@echo "  format   - Format code with rustfmt"
-	@echo "  lint     - Run clippy linter"
-	@echo "  install  - Install binary to ~/.cargo/bin"
-	@echo "  help     - Show this help message"
+	@echo "  build         - Build the project in release mode (default)"
+	@echo "  debug         - Build the project in debug mode"
+	@echo "  clean         - Clean build artifacts"
+	@echo "  test          - Run tests"
+	@echo "  check         - Run code checks (clippy, fmt)"
+	@echo "  format        - Format code with rustfmt"
+	@echo "  lint          - Run clippy linter"
+	@echo "  install       - Install binary to ~/.cargo/bin"
+	@echo "  test_nvim     - Run all Neovim test files"
+	@echo "  test_nvim_file - Run test from file at \$$FILE environment variable"
+	@echo "  deps          - Download dependencies for Neovim testing"
+	@echo "  verify        - Check if the binary exists"
+	@echo "  help          - Show this help message"
 
 # Check if the binary exists
 .PHONY: verify
