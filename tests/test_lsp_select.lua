@@ -21,10 +21,10 @@ local T = MiniTest.new_set({
 
 T["selectionRange"] = MiniTest.new_set({})
 T["selectionRange"]["no injection"] = MiniTest.new_set({})
+
 T["selectionRange"]["no injection"]["direction"] = MiniTest.new_set({
 	parametrize = { { 1, "local" }, { 2, "local M = {}" } },
 })
-
 T["selectionRange"]["no injection"]["direction"]["works"] = function(direction, expected)
 	child.cmd(([[lua vim.lsp.buf.selection_range(%d)]]):format(direction))
 	if not helper.wait(5000, function()
