@@ -53,6 +53,30 @@ lint:
 install: build
 	$(CARGO) install --path .
 
+# Run all test files
+test_nvim: deps
+	nvim -es --headless --noplugin -u ./scripts/minimal_init.lua -c "lua MiniTest.run()"
+
+# Run test from file at `$FILE` environment variable
+test_nvim_file: deps
+	nvim --headless --noplugin -u ./scripts/minimal_init.lua -c "lua MiniTest.run_file('$(FILE)')"
+
+# Download 'mini.nvim' to use its 'mini.test' testing module
+deps: deps/nvim deps/treesitter
+
+deps/nvim: deps/nvim/mini.nvim deps/nvim/nvim-treesitter
+
+deps/nvim/mini.nvim:
+	git clone --filter=blob:none https://github.com/nvim-mini/mini.nvim $@
+
+deps/nvim/nvim-treesitter:
+	git clone --filter=blob:none https://github.com/nvim-treesitter/nvim-treesitter --branch main $@
+
+deps/treesitter: deps/nvim/nvim-treesitter
+	@mkdir -p $@
+	nvim -n --clean --headless --cmd "lua (function() vim.opt.rtp:append(vim.uv.cwd() .. '/deps/nvim/nvim-treesitter'); require('nvim-treesitter').setup({ install_dir = vim.uv.cwd() .. '/deps/treesitter' }); require('nvim-treesitter').install({ 'lua', 'luadoc', 'rust', 'markdown', 'markdown_inline', 'yaml' }):wait(300000); vim.cmd.q() end)()"
+
+
 # Show help
 .PHONY: help
 help:
