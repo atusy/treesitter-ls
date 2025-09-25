@@ -5,17 +5,13 @@ local T = MiniTest.new_set({
 		pre_case = function()
 			child.restart({ "-u", "scripts/minimal_init.lua" })
 			child.lua([[vim.cmd.edit("tests/assets/example.lua")]])
-			local clients = 0
-			for _ = 0, 10, 1 do
-				vim.uv.sleep(10)
-				clients = child.lua_get(
+			local attached = helper.wait(5000, function()
+				local clients = child.lua_get(
 					[[#vim.lsp.get_clients({ bufnr = vim.api.nvim_get_current_buf(), name = "treesitter_ls" })]]
 				)
-				if clients > 0 then
-					break
-				end
-			end
-			if clients == 0 then
+				return clients > 0
+			end, 10)
+			if not attached then
 				error("Failed to attach treesitter_ls")
 			end
 		end,
@@ -31,13 +27,14 @@ T["selectionRange"]["no injection"]["direction"] = MiniTest.new_set({
 
 T["selectionRange"]["no injection"]["direction"]["works"] = function(direction, expected)
 	child.cmd(([[lua vim.lsp.buf.selection_range(%d)]]):format(direction))
-	for _ = 0, 10, 1 do
-		vim.uv.sleep(10)
-		if child.api.nvim_get_mode().mode == "v" then
-			break
-		end
+	if not helper.wait(5000, function()
+		return child.api.nvim_get_mode().mode == "v"
+	end, 10) then
+		error("selection_range timed out")
 	end
 	child.cmd([[normal! y]])
 	local reg = child.fn.getreg()
 	MiniTest.expect.equality(reg, expected)
 end
+
+return T

@@ -11,14 +11,11 @@ local T = MiniTest.new_set({
 
 T["LSP starts"] = function()
 	local clients = 0
-	for _ = 0, 10, 1 do
-		vim.uv.sleep(10)
+	helper.wait(5000, function()
 		clients =
 			child.lua_get([[#vim.lsp.get_clients({ bufnr = vim.api.nvim_get_current_buf(), name = "treesitter_ls" })]])
-		if clients > 0 then
-			break
-		end
-	end
+		return clients > 0
+	end, 10)
 	MiniTest.expect.equality(clients, 1)
 end
 

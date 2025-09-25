@@ -24,6 +24,30 @@ vim.api.nvim_create_autocmd("FileType", {
 	end,
 })
 
+_G.helper = {}
+
+---@return boolean true if callback returns true before timeout, false otherwise
+function _G.helper.wait(timeout_ms, callback, interval_ms)
+	timeout_ms = timeout_ms or 5000
+	interval_ms = interval_ms or 10
+
+	local start_time = vim.uv.hrtime()
+	local timeout_ns = timeout_ms * 1000000
+
+	while true do
+		local result = callback()
+		if result then
+			return true
+		end
+
+		if vim.uv.hrtime() - start_time > timeout_ns then
+			return false
+		end
+
+		vim.uv.sleep(interval_ms)
+	end
+end
+
 if #vim.api.nvim_list_uis() == 0 then
 	vim.cmd("set rtp+=deps/nvim/mini.nvim")
 	vim.cmd("set rtp+=deps/nvim/nvim-treesitter")
