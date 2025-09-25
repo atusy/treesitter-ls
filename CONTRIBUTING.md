@@ -52,8 +52,13 @@ make debug
 
 ### Running Tests
 
+#### Rust Tests
+
 ```bash
-# Run all tests
+# Setup test dependencies (recommended for integration tests)
+make deps  # Creates deps/treesitter with parsers and queries
+
+# Run all Rust tests
 cargo test
 # or
 make test
@@ -76,6 +81,31 @@ cargo test -- --test-threads=1
 # Run with formatting and linting
 make check  # runs cargo check, clippy, and fmt --check
 ```
+
+The `deps/treesitter` directory created by `make deps` contains pre-built Tree-sitter parsers and queries that can be used in Rust integration tests by setting appropriate search paths in test configuration.
+
+#### Neovim E2E Tests
+
+The project includes end-to-end testing using Neovim with the `mini.test` framework:
+
+```bash
+# Setup test dependencies (required once)
+make deps
+
+# Run all Neovim tests
+make test_nvim
+
+# Run a specific test file
+make test_nvim_file FILE=tests/test_lsp_select.lua
+
+# Clean test dependencies
+rm -rf deps/
+```
+
+The test infrastructure includes:
+- **deps/nvim/mini.nvim**: Testing framework for Neovim E2E tests
+- **deps/nvim/nvim-treesitter**: Neovim Tree-sitter integration for E2E testing
+- **deps/treesitter**: Pre-built Tree-sitter parsers and queries used by both Rust integration tests and Neovim E2E tests
 
 ### Code Quality Commands
 
@@ -127,6 +157,23 @@ The vertical slice architecture solves these by:
 ## Directory Structure
 
 ```
+.
+├── src/                    # Source code (see below for detailed structure)
+├── tests/                  # Integration and E2E tests
+│   ├── *.rs               # Rust integration tests
+│   ├── *.lua              # Neovim E2E tests
+│   └── assets/            # Test fixtures and sample files
+├── scripts/                # Helper scripts
+│   └── minimal_init.lua   # Neovim configuration for testing
+├── deps/                   # Test dependencies (created by 'make deps')
+│   ├── nvim/              # Neovim plugins for E2E tests
+│   │   ├── mini.nvim/     # Testing framework
+│   │   └── nvim-treesitter/ # Tree-sitter integration
+│   └── treesitter/        # Pre-built parsers and queries (used by both Rust and Neovim tests)
+├── Cargo.toml             # Rust dependencies
+├── Makefile               # Build and test automation
+└── CONTRIBUTING.md        # This file
+
 src/
 ├── analysis/       # LSP feature implementations (vertical slice)
 │   ├── definition.rs   # Go-to-definition functionality
@@ -319,14 +366,19 @@ mod tests {
 ### Test Organization
 
 - **Unit tests**: Colocated with implementation in `#[cfg(test)]` modules
-- **Integration tests**: In the `tests/` directory:
+- **Rust Integration tests**: In the `tests/` directory:
   - `test_lua_match.rs` - Tests for lua-match predicate functionality
   - `test_multiple_file_opening.rs` - Tests for handling multiple file operations
   - `test_file_reopen.rs` - File reopening scenarios
   - `test_language_injection.rs` - Language injection support
   - `test_poison_recovery.rs` - Lock poison recovery tests
   - `test_runtime_coordinator_api.rs` - Runtime coordinator tests
-- **Test utilities**: Shared test helpers in test modules
+- **Neovim E2E tests**: In the `tests/` directory (Lua files):
+  - `test_lsp_attach.lua` - LSP attachment and initialization tests
+  - `test_lsp_select.lua` - Selection range functionality tests
+- **Test utilities**:
+  - Rust: Shared test helpers in test modules
+  - Neovim: Helper functions in `scripts/minimal_init.lua`
 
 ### Writing Tests
 
@@ -350,11 +402,37 @@ fn test_semantic_tokens() {
     assert!(tokens.is_some());
     assert_eq!(tokens.unwrap().data.len(), expected_count);
 }
+
+// Example: Integration test using deps/treesitter parsers
+#[test]
+fn test_with_real_parser() {
+    // Use parsers from deps/treesitter directory
+    let search_paths = vec!["deps/treesitter".to_string()];
+    let settings = TreeSitterSettings {
+        searchPaths: Some(search_paths),
+        languages: /* language config */,
+    };
+
+    // Test with actual Tree-sitter parsers
+    let coordinator = LanguageCoordinator::new();
+    // ... test implementation
+}
 ```
+
+### Writing Neovim E2E Tests
+
+E2E tests use the `mini.test` framework. For detailed documentation on writing tests with mini.test, see `deps/nvim/mini.nvim/TESTING.md`.
+
+Key points for LSP testing:
+- Tests are written in Lua files in the `tests/` directory
+- Use `MiniTest.new_child_neovim()` to create isolated Neovim instances
+- The `helper.wait()` function in `scripts/minimal_init.lua` helps with async LSP operations
+- See existing test files like `tests/test_lsp_select.lua` for examples
 
 ### Running Specific Tests
 
 ```bash
+# Rust tests
 # Run tests for a specific module
 cargo test analysis::
 
@@ -369,6 +447,14 @@ cargo test -- --nocapture --test-threads=1
 
 # Run only unit tests (no integration tests)
 cargo test --lib
+
+# Neovim E2E tests
+# Run a specific test file
+make test_nvim_file FILE=tests/test_lsp_select.lua
+
+# Run tests interactively in Neovim (for debugging)
+nvim -u scripts/minimal_init.lua
+# Then in Neovim: :lua MiniTest.run_file('tests/test_lsp_select.lua')
 ```
 
 ## Code Style
