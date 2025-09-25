@@ -25,9 +25,12 @@ local T = MiniTest.new_set({
 
 T["selectionRange"] = MiniTest.new_set({})
 T["selectionRange"]["no injection"] = MiniTest.new_set({})
+T["selectionRange"]["no injection"]["direction"] = MiniTest.new_set({
+	parametrize = { { 1, "local" }, { 2, "local M = {}" } },
+})
 
-T["selectionRange"]["no injection"]["1"] = function()
-	child.cmd([[lua vim.lsp.buf.selection_range(1)]])
+T["selectionRange"]["no injection"]["direction"]["works"] = function(direction, expected)
+	child.cmd(([[lua vim.lsp.buf.selection_range(%d)]]):format(direction))
 	for _ = 0, 10, 1 do
 		vim.uv.sleep(10)
 		if child.api.nvim_get_mode().mode == "v" then
@@ -36,20 +39,5 @@ T["selectionRange"]["no injection"]["1"] = function()
 	end
 	child.cmd([[normal! y]])
 	local reg = child.fn.getreg()
-	MiniTest.expect.equality(reg, "local")
+	MiniTest.expect.equality(reg, expected)
 end
-
-T["selectionRange"]["no injection"]["2"] = function()
-	child.cmd([[lua vim.lsp.buf.selection_range(2)]])
-	for _ = 0, 10, 1 do
-		vim.uv.sleep(10)
-		if child.api.nvim_get_mode().mode == "v" then
-			break
-		end
-	end
-	child.cmd([[normal! y]])
-	local reg = child.fn.getreg()
-	MiniTest.expect.equality(reg, "local M = {}")
-end
-
-return T
