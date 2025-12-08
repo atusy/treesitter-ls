@@ -1,5 +1,6 @@
+use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range_with_text};
 use crate::document::DocumentHandle;
-use crate::language::injection;
+use crate::language::injection::{self, parse_offset_directive_for_pattern};
 use tower_lsp::lsp_types::{Position, Range, SelectionRange};
 use tree_sitter::{Node, Point, Query};
 
@@ -80,6 +81,84 @@ pub fn build_selection_range_with_injection(
             build_selection_range(node)
         }
     }
+}
+
+/// Build selection range hierarchy with injection awareness and offset support
+///
+/// This version takes a cursor_byte parameter to check if the cursor is within
+/// the effective range of the injection after applying offset directives.
+///
+/// # Arguments
+/// * `node` - The node at cursor position
+/// * `root` - The root node of the document tree
+/// * `text` - The document text
+/// * `injection_query` - Optional injection query for detecting injections
+/// * `base_language` - The base language of the document
+/// * `cursor_byte` - The byte position of the cursor for offset checking
+///
+/// # Returns
+/// SelectionRange that includes injection boundaries when applicable and cursor
+/// is within the effective range (after applying offset)
+pub fn build_selection_range_with_injection_and_offset(
+    node: Node,
+    root: &Node,
+    text: &str,
+    injection_query: Option<&Query>,
+    base_language: &str,
+    cursor_byte: usize,
+) -> SelectionRange {
+    // Try to detect if we're inside an injection region
+    let injection_info =
+        injection::detect_injection_with_content(&node, root, text, injection_query, base_language);
+
+    match injection_info {
+        Some((_hierarchy, content_node, pattern_index)) => {
+            // Check for offset directive on this specific pattern
+            let offset_from_query =
+                injection_query.and_then(|q| parse_offset_directive_for_pattern(q, pattern_index));
+
+            // Only apply offset-based filtering when there's an actual offset directive
+            // (Lesson from Sprint 13 in development record 0002)
+            if let Some(offset) = offset_from_query {
+                // Check if cursor is within the effective range (after applying offset)
+                if !is_cursor_within_effective_range(text, &content_node, cursor_byte, offset) {
+                    // Cursor is outside effective range - return base language selection
+                    return build_selection_range(node);
+                }
+            }
+
+            // We're inside an injection region (and within effective range if offset exists)
+            // Build the selection starting from the current node
+            let inner_selection = build_selection_range(node);
+
+            // Check if content_node is already in the parent chain
+            // If not, we need to insert it
+            if is_node_in_selection_chain(&inner_selection, &content_node) {
+                // content_node is already in the chain, just return as-is
+                inner_selection
+            } else {
+                // Need to splice content_node into the hierarchy
+                // Find where content_node should be inserted (between node's ancestors)
+                splice_injection_content_into_hierarchy(inner_selection, content_node)
+            }
+        }
+        None => {
+            // Not in an injection region, use standard selection
+            build_selection_range(node)
+        }
+    }
+}
+
+/// Check if cursor byte position is within the effective range after applying offset
+fn is_cursor_within_effective_range(
+    text: &str,
+    content_node: &Node,
+    cursor_byte: usize,
+    offset: injection::InjectionOffset,
+) -> bool {
+    let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
+    let effective_range = calculate_effective_range_with_text(text, byte_range, offset);
+    cursor_byte >= effective_range.start && cursor_byte < effective_range.end
 }
 
 /// Check if a node's range is already present in the selection chain
@@ -317,5 +396,125 @@ mod tests {
             found_injection_content,
             "Selection hierarchy should include injection content node (string_content)"
         );
+    }
+
+    #[test]
+    fn test_selection_range_respects_offset_directive() {
+        // Test that the offset directive is correctly parsed and applied
+        // to determine whether cursor is within effective injection range.
+        //
+        // Since both "inside" and "outside" effective range produce similar
+        // selection hierarchies when starting from the injection content node itself,
+        // this test verifies the offset parsing and effective range calculation
+        // by directly testing is_cursor_within_effective_range.
+        use crate::text::PositionMapper;
+        use tree_sitter::{Parser, Query};
+
+        let mut parser = Parser::new();
+        let language = tree_sitter_rust::LANGUAGE.into();
+        parser.set_language(&language).expect("load rust grammar");
+
+        // Rust code with regex injection - the string content is "_^\d+$"
+        let text = r#"fn main() {
+    let pattern = Regex::new(r"_^\d+$").unwrap();
+}"#;
+        let tree = parser.parse(text, None).expect("parse rust");
+        let root = tree.root_node();
+
+        // Create injection query with offset directive (0, 2, 0, 0)
+        // This means effective range starts 2 bytes after capture start
+        // string_content is at bytes 43-49, so effective range is 45-49
+        let injection_query_str = r#"
+(call_expression
+  function: (scoped_identifier
+    path: (identifier) @_regex
+    (#eq? @_regex "Regex")
+    name: (identifier) @_new
+    (#eq? @_new "new"))
+  arguments: (arguments
+    (raw_string_literal
+      (string_content) @injection.content))
+  (#set! injection.language "regex")
+  (#offset! @injection.content 0 2 0 0))
+        "#;
+
+        let injection_query = Query::new(&language, injection_query_str).expect("valid query");
+        let mapper = PositionMapper::new(text);
+
+        // Get the string_content node
+        let underscore_pos = Position::new(1, 31);
+        let underscore_point = position_to_point(&underscore_pos);
+        let underscore_byte = mapper.position_to_byte(underscore_pos).unwrap();
+
+        let string_content_node = root
+            .descendant_for_point_range(underscore_point, underscore_point)
+            .expect("should find node");
+
+        assert_eq!(string_content_node.kind(), "string_content");
+        assert_eq!(string_content_node.start_byte(), 43);
+        assert_eq!(string_content_node.end_byte(), 49);
+
+        // Verify offset directive is correctly parsed for pattern 0
+        let offset = parse_offset_directive_for_pattern(&injection_query, 0);
+        assert!(offset.is_some(), "Offset directive should be found");
+        let offset = offset.unwrap();
+        assert_eq!(offset.start_row, 0);
+        assert_eq!(offset.start_column, 2);
+        assert_eq!(offset.end_row, 0);
+        assert_eq!(offset.end_column, 0);
+
+        // Test effective range checking
+        // Cursor at underscore (byte 43) - should be OUTSIDE effective range (45-49)
+        assert!(
+            !is_cursor_within_effective_range(text, &string_content_node, underscore_byte, offset),
+            "Cursor at byte 43 (underscore) should be OUTSIDE effective range 45-49"
+        );
+
+        // Cursor at caret position (byte 45) - should be INSIDE effective range
+        let caret_pos = Position::new(1, 33);
+        let caret_byte = mapper.position_to_byte(caret_pos).unwrap();
+        assert_eq!(caret_byte, 45, "Caret should be at byte 45");
+
+        assert!(
+            is_cursor_within_effective_range(text, &string_content_node, caret_byte, offset),
+            "Cursor at byte 45 (caret ^) should be INSIDE effective range 45-49"
+        );
+
+        // Cursor at position 44 (between underscore and caret) - should be OUTSIDE
+        assert!(
+            !is_cursor_within_effective_range(text, &string_content_node, 44, offset),
+            "Cursor at byte 44 should be OUTSIDE effective range 45-49"
+        );
+
+        // Test that the full function correctly returns different results
+        // based on whether cursor is inside or outside effective range.
+        // Both return `build_selection_range(node)` when injection is not active,
+        // so we verify through the internal logic: injection detection returns
+        // Some when offset check passes, None-equivalent behavior when it doesn't.
+
+        // Build selection at underscore position (outside effective range)
+        let _selection_at_underscore = build_selection_range_with_injection_and_offset(
+            string_content_node,
+            &root,
+            text,
+            Some(&injection_query),
+            "rust",
+            underscore_byte,
+        );
+
+        // Build selection at caret position (inside effective range)
+        let _selection_at_caret = build_selection_range_with_injection_and_offset(
+            string_content_node,
+            &root,
+            text,
+            Some(&injection_query),
+            "rust",
+            caret_byte,
+        );
+
+        // Both produce valid selection hierarchies - the difference is that
+        // injection-specific processing only occurs when inside effective range.
+        // This test verified the core offset logic; integration tests can
+        // verify observable differences with more complex AST structures.
     }
 }
