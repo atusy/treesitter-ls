@@ -432,7 +432,8 @@ fn handle_nested_injection(
 
         if let Some(offset) = offset_from_query {
             // If cursor is outside the effective range, don't process as nested injection
-            if !is_within_effective_range(content_text, &nested_content_node, relative_byte, offset) {
+            if !is_within_effective_range(content_text, &nested_content_node, relative_byte, offset)
+            {
                 // Return action for current level without nested injection
                 return create_inspect_token_action(
                     InspectTokenParams::new(injected_node, injected_root, content_text)

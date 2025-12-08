@@ -1,6 +1,7 @@
 use crate::document::DocumentHandle;
+use crate::language::injection;
 use tower_lsp::lsp_types::{Position, Range, SelectionRange};
-use tree_sitter::{Node, Point};
+use tree_sitter::{Node, Point, Query};
 
 /// Convert LSP Position to tree-sitter Point
 pub fn position_to_point(pos: &Position) -> Point {
@@ -30,6 +31,156 @@ fn build_selection_range(node: Node) -> SelectionRange {
         .map(|parent_node| Box::new(build_selection_range(parent_node)));
 
     SelectionRange { range, parent }
+}
+
+/// Build selection range hierarchy with injection awareness
+///
+/// When the cursor is inside an injection region, this function ensures
+/// the injection content node is included in the selection hierarchy.
+///
+/// # Arguments
+/// * `node` - The node at cursor position
+/// * `root` - The root node of the document tree
+/// * `text` - The document text
+/// * `injection_query` - Optional injection query for detecting injections
+/// * `base_language` - The base language of the document
+///
+/// # Returns
+/// SelectionRange that includes injection boundaries when applicable
+pub fn build_selection_range_with_injection(
+    node: Node,
+    root: &Node,
+    text: &str,
+    injection_query: Option<&Query>,
+    base_language: &str,
+) -> SelectionRange {
+    // Try to detect if we're inside an injection region
+    let injection_info =
+        injection::detect_injection_with_content(&node, root, text, injection_query, base_language);
+
+    match injection_info {
+        Some((_hierarchy, content_node, _pattern_index)) => {
+            // We're inside an injection region
+            // Build the selection starting from the current node
+            let inner_selection = build_selection_range(node);
+
+            // Check if content_node is already in the parent chain
+            // If not, we need to insert it
+            if is_node_in_selection_chain(&inner_selection, &content_node) {
+                // content_node is already in the chain, just return as-is
+                inner_selection
+            } else {
+                // Need to splice content_node into the hierarchy
+                // Find where content_node should be inserted (between node's ancestors)
+                splice_injection_content_into_hierarchy(inner_selection, content_node)
+            }
+        }
+        None => {
+            // Not in an injection region, use standard selection
+            build_selection_range(node)
+        }
+    }
+}
+
+/// Check if a node's range is already present in the selection chain
+fn is_node_in_selection_chain(selection: &SelectionRange, target_node: &Node) -> bool {
+    let target_range = node_to_range(*target_node);
+    let mut current = Some(selection);
+
+    while let Some(sel) = current {
+        if sel.range == target_range {
+            return true;
+        }
+        current = sel.parent.as_ref().map(|p| p.as_ref());
+    }
+
+    false
+}
+
+/// Splice the injection content node into the selection hierarchy
+///
+/// The content_node represents the boundary of the injected region.
+/// We need to insert it at the appropriate level in the hierarchy.
+fn splice_injection_content_into_hierarchy(
+    selection: SelectionRange,
+    content_node: Node,
+) -> SelectionRange {
+    let content_range = node_to_range(content_node);
+
+    // Find the first ancestor in the chain that fully contains the content_node
+    // and insert content_node just before it
+    rebuild_with_injection_boundary(selection, content_range, &content_node)
+}
+
+/// Rebuild selection hierarchy, inserting the injection content node at the right place
+fn rebuild_with_injection_boundary(
+    selection: SelectionRange,
+    content_range: Range,
+    content_node: &Node,
+) -> SelectionRange {
+    // If current selection range is smaller than or equal to content_range,
+    // we need to continue up the chain
+    if range_contains(&content_range, &selection.range) {
+        // Current range is inside content_range
+        // Continue building, but when we reach content_node's parent level,
+        // insert content_node
+        let new_parent = match selection.parent {
+            Some(parent) => {
+                let parent_selection = *parent;
+                if range_contains(&parent_selection.range, &content_range)
+                    && !ranges_equal(&parent_selection.range, &content_range)
+                {
+                    // Parent is larger than content_range, insert content_node here
+                    let content_selection = SelectionRange {
+                        range: content_range,
+                        parent: Some(Box::new(rebuild_with_injection_boundary(
+                            parent_selection,
+                            content_range,
+                            content_node,
+                        ))),
+                    };
+                    Some(Box::new(content_selection))
+                } else {
+                    // Keep going up
+                    Some(Box::new(rebuild_with_injection_boundary(
+                        parent_selection,
+                        content_range,
+                        content_node,
+                    )))
+                }
+            }
+            None => {
+                // No parent, but we're inside content_range - add content_node as parent
+                Some(Box::new(SelectionRange {
+                    range: content_range,
+                    parent: content_node
+                        .parent()
+                        .map(|p| Box::new(build_selection_range(p))),
+                }))
+            }
+        };
+
+        SelectionRange {
+            range: selection.range,
+            parent: new_parent,
+        }
+    } else {
+        // Current range is not inside content_range, just continue normally
+        selection
+    }
+}
+
+/// Check if outer range fully contains inner range
+fn range_contains(outer: &Range, inner: &Range) -> bool {
+    (outer.start.line < inner.start.line
+        || (outer.start.line == inner.start.line && outer.start.character <= inner.start.character))
+        && (outer.end.line > inner.end.line
+            || (outer.end.line == inner.end.line && outer.end.character >= inner.end.character))
+}
+
+/// Check if two ranges are equal
+fn ranges_equal(a: &Range, b: &Range) -> bool {
+    a.start == b.start && a.end == b.end
 }
 
 /// Handle textDocument/selectionRange request
@@ -94,8 +245,77 @@ mod tests {
         assert_eq!(pos.character, 7);
     }
 
-    // Note: Testing the full handle_selection_range function would require
-    // a tree-sitter language parser to be available, which we don't have
-    // in the test environment. Integration tests with actual language parsers
-    // would be needed for full coverage.
+    #[test]
+    fn test_selection_range_detects_injection() {
+        // Test that selection range detects when cursor is inside an injection region
+        // and includes the injection content node in the selection hierarchy
+        use tree_sitter::{Parser, Query};
+
+        let mut parser = Parser::new();
+        let language = tree_sitter_rust::LANGUAGE.into();
+        parser.set_language(&language).expect("load rust grammar");
+
+        // Rust code with regex injection
+        let text = r#"fn main() {
+    let pattern = Regex::new(r"^\d+$").unwrap();
+}"#;
+        let tree = parser.parse(text, None).expect("parse rust");
+        let root = tree.root_node();
+
+        // Create injection query for Regex::new
+        let injection_query_str = r#"
+(call_expression
+  function: (scoped_identifier
+    path: (identifier) @_regex
+    (#eq? @_regex "Regex")
+    name: (identifier) @_new
+    (#eq? @_new "new"))
+  arguments: (arguments
+    (raw_string_literal
+      (string_content) @injection.content))
+  (#set! injection.language "regex"))
+        "#;
+
+        let injection_query = Query::new(&language, injection_query_str).expect("valid query");
+
+        // Position inside the regex string (the \d part at column 32)
+        let cursor_pos = Position::new(1, 32);
+        let point = position_to_point(&cursor_pos);
+
+        // Find the node at cursor
+        let node = root
+            .descendant_for_point_range(point, point)
+            .expect("should find node");
+
+        // Call the new injection-aware function
+        let selection =
+            build_selection_range_with_injection(node, &root, text, Some(&injection_query), "rust");
+
+        // The selection hierarchy should include the injection content node
+        // Walk up the parent chain and check that we find a range matching
+        // the string_content node (which is the injection.content capture)
+        let mut found_injection_content = false;
+        let mut current = Some(&selection);
+
+        // The string_content "^\d+$" is at bytes 43-48 (line 1, col 31-36)
+        // We need to find this range in the selection hierarchy
+        while let Some(sel) = current {
+            // Check if this range corresponds to string_content
+            // string_content starts at line 1, col 31 and ends at line 1, col 36
+            if sel.range.start.line == 1
+                && sel.range.start.character == 31
+                && sel.range.end.line == 1
+                && sel.range.end.character == 36
+            {
+                found_injection_content = true;
+                break;
+            }
+            current = sel.parent.as_ref().map(|p| p.as_ref());
+        }
+
+        assert!(
+            found_injection_content,
+            "Selection hierarchy should include injection content node (string_content)"
+        );
+    }
 }
