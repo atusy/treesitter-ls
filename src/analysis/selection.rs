@@ -61,25 +61,9 @@ pub fn build_selection_range_with_injection(
 
     match injection_info {
         Some((_hierarchy, content_node, _pattern_index)) => {
-            // We're inside an injection region
-            // Build the selection starting from the current node
-            let inner_selection = build_selection_range(node);
-
-            // Check if content_node is already in the parent chain
-            // If not, we need to insert it
-            if is_node_in_selection_chain(&inner_selection, &content_node) {
-                // content_node is already in the chain, just return as-is
-                inner_selection
-            } else {
-                // Need to splice content_node into the hierarchy
-                // Find where content_node should be inserted (between node's ancestors)
-                splice_injection_content_into_hierarchy(inner_selection, content_node)
-            }
+            build_injection_aware_selection(node, content_node)
         }
-        None => {
-            // Not in an injection region, use standard selection
-            build_selection_range(node)
-        }
+        None => build_selection_range(node),
     }
 }
 
@@ -127,25 +111,25 @@ pub fn build_selection_range_with_injection_and_offset(
                 }
             }
 
-            // We're inside an injection region (and within effective range if offset exists)
-            // Build the selection starting from the current node
-            let inner_selection = build_selection_range(node);
+            build_injection_aware_selection(node, content_node)
+        }
+        None => build_selection_range(node),
+    }
+}
 
-            // Check if content_node is already in the parent chain
-            // If not, we need to insert it
-            if is_node_in_selection_chain(&inner_selection, &content_node) {
-                // content_node is already in the chain, just return as-is
-                inner_selection
-            } else {
-                // Need to splice content_node into the hierarchy
-                // Find where content_node should be inserted (between node's ancestors)
-                splice_injection_content_into_hierarchy(inner_selection, content_node)
-            }
-        }
-        None => {
-            // Not in an injection region, use standard selection
-            build_selection_range(node)
-        }
+/// Build selection hierarchy with injection content node included
+///
+/// Shared logic for injection-aware selection range building.
+fn build_injection_aware_selection(node: Node, content_node: Node) -> SelectionRange {
+    let inner_selection = build_selection_range(node);
+
+    // Check if content_node is already in the parent chain
+    if is_node_in_selection_chain(&inner_selection, &content_node) {
+        // content_node is already in the chain, just return as-is
+        inner_selection
+    } else {
+        // Need to splice content_node into the hierarchy
+        splice_injection_content_into_hierarchy(inner_selection, content_node)
     }
 }
 
