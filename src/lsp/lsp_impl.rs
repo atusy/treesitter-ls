@@ -6,7 +6,7 @@ use tree_sitter::InputEdit;
 use crate::analysis::selection::position_to_point;
 use crate::analysis::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
 use crate::analysis::{
-    handle_code_actions, handle_goto_definition, handle_selection_range_with_injection,
+    handle_code_actions, handle_goto_definition, handle_selection_range_with_parsed_injection,
     handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
 use crate::config::WorkspaceSettings;
@@ -761,12 +761,15 @@ impl LanguageServer for TreeSitterLs {
             .as_ref()
             .and_then(|lang| self.language.get_injection_query(lang));
 
-        // Use injection-aware handler when injection query is available
-        let result = handle_selection_range_with_injection(
+        // Use full injection parsing handler with coordinator and parser pool
+        let mut pool = self.parser_pool.lock().unwrap();
+        let result = handle_selection_range_with_parsed_injection(
             &doc,
             &positions,
             injection_query.as_ref().map(|q| q.as_ref()),
             language_name.as_deref(),
+            &self.language,
+            &mut pool,
         );
 
         Ok(result)

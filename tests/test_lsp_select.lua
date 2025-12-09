@@ -53,8 +53,11 @@ T["assets/example.lua"]["selectionRange"] = MiniTest.new_set({})
 T["assets/example.lua"]["selectionRange"]["with injection"] = MiniTest.new_set({})
 T["assets/example.lua"]["selectionRange"]["with injection"]["direction"] = MiniTest.new_set({
 	parametrize = {
+		-- Direction 1 should select innermost (just "title" key)
+		{ 1, "title" },
+		-- Direction 5 should select the full YAML content (no trailing newline in visual yank)
 		{
-			1,
+			5,
 			table.concat({
 				[==[title: "awesome"]==],
 				[==[array: ["xxxx"]]==],

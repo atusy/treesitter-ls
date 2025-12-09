@@ -253,3 +253,34 @@ mod tests {
         assert_eq!(effective.end, 18);
     }
 }
+
+#[test]
+fn test_markdown_frontmatter_offset() {
+    // Real-world example: Markdown YAML frontmatter
+    // Offset (#offset! @injection.content 1 0 -1 0)
+    // means skip first row (---) and last row (---)
+    let text = "---\ntitle: \"awesome\"\narray: [\"xxxx\"]\n---\n";
+
+    // The minus_metadata node spans the entire frontmatter including ---
+    let byte_range = ByteRange::new(0, 41); // "---\ntitle...\n---\n"
+
+    // Offset: start_row=1, start_col=0, end_row=-1, end_col=0
+    let offset = InjectionOffset::new(1, 0, -1, 0);
+
+    let effective = calculate_effective_range_with_text(text, byte_range, offset);
+
+    // Start should be at byte 4 (after "---\n")
+    assert_eq!(effective.start, 4, "Start should skip the first line");
+
+    // End should be at byte 37 (before "---\n")
+    // Line positions:
+    // byte 0: "---\n" (4 bytes)
+    // byte 4: "title: \"awesome\"\n" (18 bytes) = ends at 21
+    // byte 21+1: "array: [\"xxxx\"]\n" (16 bytes) = ends at 37
+    // byte 37: "---\n" (4 bytes) = ends at 41
+    assert_eq!(effective.end, 37, "End should skip the last line");
+
+    // Verify the content matches expected
+    let effective_text = &text[effective.start..effective.end];
+    assert_eq!(effective_text, "title: \"awesome\"\narray: [\"xxxx\"]\n");
+}

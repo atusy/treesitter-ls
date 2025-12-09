@@ -345,4 +345,15 @@ impl LanguageCoordinator {
 
         events
     }
+
+    /// Register a language directly for testing purposes.
+    ///
+    /// This bypasses the normal loading process and directly registers
+    /// a tree-sitter Language in the registry. Useful for unit tests
+    /// that need to test with specific language parsers.
+    #[cfg(test)]
+    pub fn register_language_for_test(&self, language_id: &str, language: tree_sitter::Language) {
+        self.language_registry
+            .register_unchecked(language_id.to_string(), language);
+    }
 }
