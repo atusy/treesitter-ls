@@ -88,20 +88,24 @@ T["assets/example.lua"]["selectionRange"]["outside injection"]["direction"] = Mi
 		{ 20, 1, 1, "paragraph" },
 	},
 })
-T["assets/example.lua"]["selectionRange"]["outside injection"]["direction"]["works"] =
-	function(line, col, direction, expected)
-		-- Move to specified line and column
-		child.cmd(([[normal! %dG%d|]]):format(line, col))
-		child.cmd(([[lua vim.lsp.buf.selection_range(%d)]]):format(direction))
-		if not helper.wait(5000, function()
-			return child.api.nvim_get_mode().mode == "v"
-		end, 10) then
-			error("selection_range timed out")
-		end
-		child.cmd([[normal! y]])
-		local reg = child.fn.getreg()
-		MiniTest.expect.equality(reg, expected)
+T["assets/example.lua"]["selectionRange"]["outside injection"]["direction"]["works"] = function(
+	line,
+	col,
+	direction,
+	expected
+)
+	-- Move to specified line and column
+	child.cmd(([[normal! %dG%d|]]):format(line, col))
+	child.cmd(([[lua vim.lsp.buf.selection_range(%d)]]):format(direction))
+	if not helper.wait(5000, function()
+		return child.api.nvim_get_mode().mode == "v"
+	end, 10) then
+		error("selection_range timed out")
 	end
+	child.cmd([[normal! y]])
+	local reg = child.fn.getreg()
+	MiniTest.expect.equality(reg, expected)
+end
 
 -- Test nested injection (User Story 5: Markdown → Markdown → Lua)
 -- Line 14 contains "local injection = true" which is Lua inside inner Markdown inside outer Markdown
@@ -116,18 +120,23 @@ T["assets/example.lua"]["selectionRange"]["nested injection"]["direction"] = Min
 		{ 14, 7, 3, "local injection = true" },
 	},
 })
-T["assets/example.lua"]["selectionRange"]["nested injection"]["direction"]["works"] =
-	function(line, col, direction, expected)
-		-- Move to specified line and column
-		child.cmd(([[normal! %dG%d|]]):format(line, col))
-		child.cmd(([[lua vim.lsp.buf.selection_range(%d)]]):format(direction))
-		if not helper.wait(5000, function()
-			return child.api.nvim_get_mode().mode == "v"
-		end, 10) then
-			error("selection_range timed out")
-		end
-		child.cmd([[normal! y]])
-		local reg = child.fn.getreg()
-		MiniTest.expect.equality(reg, expected)
+T["assets/example.lua"]["selectionRange"]["nested injection"]["direction"]["works"] = function(
+	line,
+	col,
+	direction,
+	expected
+)
+	-- Move to specified line and column
+	child.cmd(([[normal! %dG%d|]]):format(line, col))
+	child.cmd(([[lua vim.lsp.buf.selection_range(%d)]]):format(direction))
+	if not helper.wait(5000, function()
+		return child.api.nvim_get_mode().mode == "v"
+	end, 10) then
+		error("selection_range timed out")
 	end
+	child.cmd([[normal! y]])
+	local reg = child.fn.getreg()
+	MiniTest.expect.equality(reg, expected)
+end
+
 return T
