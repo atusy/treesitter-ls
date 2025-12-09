@@ -450,11 +450,12 @@ fn build_nested_injection_selection(
             let effective_text = &text[effective.start..effective.end];
 
             // Calculate effective start position (relative to parent injection)
+            // Use i32 offsets directly - saturating arithmetic handles negative values
             let effective_start_pos = calculate_nested_start_position(
                 parent_start_position,
                 content_node.start_position(),
-                off.start_row as usize,
-                off.start_column as usize,
+                off.start_row,
+                off.start_column,
             );
 
             (effective_text, effective_start_pos, effective.start)
@@ -534,21 +535,30 @@ fn build_nested_injection_selection(
 }
 
 /// Calculate the start position for nested injection relative to host document
+///
+/// This function handles signed offsets from injection directives like
+/// `(#offset! @injection.content -1 0 0 0)` used in markdown frontmatter.
+/// Negative offsets are handled with saturating arithmetic to prevent underflow.
 fn calculate_nested_start_position(
     parent_start: tree_sitter::Point,
     content_start: tree_sitter::Point,
-    offset_rows: usize,
-    offset_cols: usize,
+    offset_rows: i32,
+    offset_cols: i32,
 ) -> tree_sitter::Point {
     // The content_start is relative to the parent injection
     // We need to add the parent's start position and apply any offset
-    let row = parent_start.row + content_start.row + offset_rows;
+    // Use saturating arithmetic to handle negative offsets safely
+    let base_row = (parent_start.row + content_start.row) as i64;
+    let row = (base_row + offset_rows as i64).max(0) as usize;
+
     let col = if content_start.row == 0 {
         // First row of content - add parent's column
-        parent_start.column + content_start.column + offset_cols
+        let base_col = (parent_start.column + content_start.column) as i64;
+        (base_col + offset_cols as i64).max(0) as usize
     } else {
         // Later rows - column is absolute within the parent
-        content_start.column + offset_cols
+        let base_col = content_start.column as i64;
+        (base_col + offset_cols as i64).max(0) as usize
     };
     tree_sitter::Point::new(row, col)
 }
@@ -674,7 +684,10 @@ fn chain_injected_to_host(
 
 /// Skip host selection ranges until we find one that is strictly larger than the tail range.
 /// This ensures LSP selection ranges are strictly expanding (no duplicates or contained ranges).
-fn skip_to_distinct_host(host: Option<SelectionRange>, tail_range: &Range) -> Option<SelectionRange> {
+fn skip_to_distinct_host(
+    host: Option<SelectionRange>,
+    tail_range: &Range,
+) -> Option<SelectionRange> {
     let mut current = host;
     while let Some(selection) = current {
         if is_range_strictly_larger(&selection.range, tail_range) {
@@ -1565,6 +1578,86 @@ array: ["xxxx"]"#;
              This indicates the injected content was not parsed.",
             level_count
         );
+    }
+
+    /// Test that calculate_nested_start_position handles negative offsets correctly.
+    ///
+    /// This is the core test for Issue 1 in review.md: The `InjectionOffset` struct
+    /// uses `i32` for its fields because offset directives like markdown's
+    /// `(#offset! @injection.content -1 0 0 0)` use negative values to trim content.
+    ///
+    /// Previously, the code cast `i32` to `usize`, causing:
+    /// - Debug builds: panic on negative values
+    /// - Release builds: astronomically large values due to two's complement wrapping
+    ///
+    /// After the fix, negative offsets should use saturating arithmetic:
+    /// - Negative row offset with row=0 should result in row=0 (not underflow)
+    /// - Negative column offset with column=0 should result in column=0 (not underflow)
+    #[test]
+    fn test_calculate_nested_start_position_handles_negative_offsets() {
+        // Test case 1: Negative row offset when content starts at row 0
+        // This simulates markdown frontmatter: (#offset! @injection.content -1 0 0 0)
+        // If parent starts at (5, 2) and content starts at (0, 0), applying -1 row offset
+        // should NOT underflow; instead, it should saturate to row 0 or handle gracefully.
+        let parent_start = tree_sitter::Point::new(5, 2);
+        let content_start = tree_sitter::Point::new(0, 0);
+
+        // With offset_rows = -1 and content_start.row = 0, we get effective_row = -1
+        // which should saturate to 0, not panic or produce garbage
+        let result = calculate_nested_start_position(
+            parent_start,
+            content_start,
+            -1, // negative row offset (like markdown frontmatter)
+            0,  // no column offset
+        );
+
+        // The row should be 5 + 0 + (-1) = 4 (valid, but if content_start.row was -1, it would saturate)
+        // Actually in this case: 5 + 0 - 1 = 4, which is fine
+        assert!(
+            result.row < 1000,
+            "Row should not be astronomically large, got {}",
+            result.row
+        );
+
+        // Test case 2: Negative row offset larger than content row - should saturate
+        // If parent is at (2, 0), content at (1, 0), and offset is -5:
+        // Combined = 2 + 1 + (-5) = -2, which should saturate to 0
+        let parent_start2 = tree_sitter::Point::new(2, 0);
+        let content_start2 = tree_sitter::Point::new(1, 0);
+        let result2 = calculate_nested_start_position(parent_start2, content_start2, -5, 0);
+
+        assert_eq!(
+            result2.row, 0,
+            "Row should saturate to 0 when offset causes underflow, got {}",
+            result2.row
+        );
+
+        // Test case 3: Negative column offset - should saturate
+        let parent_start3 = tree_sitter::Point::new(0, 10);
+        let content_start3 = tree_sitter::Point::new(0, 5);
+        let result3 = calculate_nested_start_position(
+            parent_start3,
+            content_start3,
+            0,
+            -20, // negative column offset larger than combined columns
+        );
+
+        assert_eq!(
+            result3.column, 0,
+            "Column should saturate to 0 when offset causes underflow, got {}",
+            result3.column
+        );
+
+        // Test case 4: Valid positive offsets still work
+        let result4 = calculate_nested_start_position(
+            tree_sitter::Point::new(10, 5),
+            tree_sitter::Point::new(0, 3),
+            2,
+            1,
+        );
+        assert_eq!(result4.row, 12, "Row calculation: 10 + 0 + 2 = 12");
+        // For row 0 of content, column adds parent column: 5 + 3 + 1 = 9
+        assert_eq!(result4.column, 9, "Column calculation: 5 + 3 + 1 = 9");
     }
 
     /// Test that build_selection_range deduplicates nodes with identical ranges.
