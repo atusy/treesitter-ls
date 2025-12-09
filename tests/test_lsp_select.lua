@@ -139,4 +139,31 @@ T["assets/example.lua"]["selectionRange"]["nested injection"]["direction"]["work
 	MiniTest.expect.equality(reg, expected)
 end
 
+T["assets/example.lua"]["selectionRange"]["expansion"] = MiniTest.new_set({})
+T["assets/example.lua"]["selectionRange"]["expansion"] = MiniTest.new_set({
+	parametrize = {
+		{ 2, 1, 1, "title" },
+		{ 2, 1, 2, 'title: "awesome"' },
+		{ 2, 1, 3, table.concat({ 'title: "awesome"', 'array: ["xxxx"]' }, "\n") },
+		{ 2, 1, 4, table.concat({ "---", 'title: "awesome"', 'array: ["xxxx"]', "---" }, "\n") },
+		{ 7, 1, 1, "local" },
+		{ 7, 1, 2, "local xyz = 12345" },
+		{ 7, 1, 3, "local xyz = 12345" },
+		{ 7, 1, 4, "```lua\nlocal xyz = 12345\n```" },
+	},
+})
+T["assets/example.lua"]["selectionRange"]["expansion"]["works"] = function(line, col, direction, expected)
+	-- Move to specified line and column
+	child.cmd(([[normal! %dG%d|]]):format(line, col))
+	child.cmd(([[lua vim.lsp.buf.selection_range(%d)]]):format(direction))
+	if not helper.wait(5000, function()
+		return child.api.nvim_get_mode().mode == "v"
+	end, 10) then
+		error("selection_range timed out")
+	end
+	child.cmd([[normal! y]])
+	local reg = child.fn.getreg()
+	MiniTest.expect.equality(reg, expected)
+end
+
 return T
