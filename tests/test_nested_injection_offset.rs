@@ -95,7 +95,7 @@ fn test_nested_injection_respects_offset_boundaries() {
 
     // The key test: Check that position at underscore is NOT in the effective range
     let content_range = detected_content_node.byte_range();
-    let effective_start = content_range.start + offset.start_column as usize;
+    let _effective_start = content_range.start + offset.start_column as usize;
 
     // The underscore in r"_^\d+$" is at the start of the string content
     // With offset (0, 1, 0, 0), effective range starts 1 byte after
