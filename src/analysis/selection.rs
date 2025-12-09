@@ -539,6 +539,12 @@ fn build_nested_injection_selection(
 /// This function handles signed offsets from injection directives like
 /// `(#offset! @injection.content -1 0 0 0)` used in markdown frontmatter.
 /// Negative offsets are handled with saturating arithmetic to prevent underflow.
+///
+/// Column calculation logic:
+/// - If the *effective* row (content_start.row + offset_rows) is 0, we're on the
+///   same row as the parent, so we add parent's column offset.
+/// - If the effective row is > 0, we've moved to a later row (e.g., after skipping
+///   a fence line), so the column is absolute within the content.
 fn calculate_nested_start_position(
     parent_start: tree_sitter::Point,
     content_start: tree_sitter::Point,
@@ -551,8 +557,12 @@ fn calculate_nested_start_position(
     let base_row = (parent_start.row + content_start.row) as i64;
     let row = (base_row + offset_rows as i64).max(0) as usize;
 
-    let col = if content_start.row == 0 {
-        // First row of content - add parent's column
+    // Calculate the effective row relative to the content start
+    // This determines whether we're on the "first line" of effective content
+    let effective_content_row = (content_start.row as i32 + offset_rows).max(0);
+
+    let col = if effective_content_row == 0 {
+        // First row of effective content - add parent's column
         let base_col = (parent_start.column + content_start.column) as i64;
         (base_col + offset_cols as i64).max(0) as usize
     } else {
@@ -1648,7 +1658,9 @@ array: ["xxxx"]"#;
             result3.column
         );
 
-        // Test case 4: Valid positive offsets still work
+        // Test case 4: Positive offsets that move to later rows
+        // When offset_rows > 0, effective row is content_start.row + offset_rows = 0 + 2 = 2
+        // Since effective row > 0, column is absolute (no parent column added)
         let result4 = calculate_nested_start_position(
             tree_sitter::Point::new(10, 5),
             tree_sitter::Point::new(0, 3),
@@ -1656,8 +1668,113 @@ array: ["xxxx"]"#;
             1,
         );
         assert_eq!(result4.row, 12, "Row calculation: 10 + 0 + 2 = 12");
-        // For row 0 of content, column adds parent column: 5 + 3 + 1 = 9
-        assert_eq!(result4.column, 9, "Column calculation: 5 + 3 + 1 = 9");
+        // Effective row is 2 (not 0), so column is absolute: 3 + 1 = 4
+        assert_eq!(
+            result4.column, 4,
+            "Column is absolute when effective row > 0: 3 + 1 = 4"
+        );
+
+        // Test case 5: When content_start.row = 0 and offset = 0, add parent column
+        let result5 = calculate_nested_start_position(
+            tree_sitter::Point::new(10, 5),
+            tree_sitter::Point::new(0, 3),
+            0, // no row offset
+            1,
+        );
+        assert_eq!(result5.row, 10, "Row: 10 + 0 + 0 = 10");
+        // Effective row is 0, so column adds parent: 5 + 3 + 1 = 9
+        assert_eq!(
+            result5.column, 9,
+            "Column adds parent when effective row is 0: 5 + 3 + 1 = 9"
+        );
+    }
+
+    /// Test that column calculation considers the effective row after applying offset.
+    ///
+    /// This is the core test for Issue 2 in review.md: When a row offset is applied
+    /// (e.g., to skip a fence line like ```lua), the effective content starts on a
+    /// different row. The column calculation should NOT add the parent's column
+    /// when the effective row is no longer the first row.
+    ///
+    /// Scenario: Fenced code block in markdown
+    /// ```
+    /// Parent starts at (5, 4)   // indented 4 spaces
+    /// Content node at (0, 0):   // starts at beginning of capture
+    ///   Line 0: ```lua          // fence line
+    ///   Line 1: print("hello")  // actual code
+    /// ```
+    ///
+    /// With offset_rows = 1 (skip the fence), effective content starts at line 1.
+    /// The column should be 0 (absolute), NOT 4+0=4 (parent's column added).
+    #[test]
+    fn test_column_alignment_when_row_offset_skips_lines() {
+        // Case 1: offset_rows = 0, content_start.row = 0
+        // Effective row is 0 (same as parent) → column SHOULD add parent's column
+        let result1 = calculate_nested_start_position(
+            tree_sitter::Point::new(5, 4), // parent at (5, 4)
+            tree_sitter::Point::new(0, 0), // content starts at (0, 0) relative
+            0,                             // no row offset
+            0,                             // no column offset
+        );
+        assert_eq!(result1.row, 5, "Row: 5 + 0 + 0 = 5");
+        assert_eq!(
+            result1.column, 4,
+            "Column should add parent's column when effective row is 0: 4 + 0 + 0 = 4"
+        );
+
+        // Case 2: offset_rows = 1, content_start.row = 0
+        // This means: content node starts at row 0, but offset skips 1 row.
+        // Effective content row = 0 + 1 = 1 (NOT the parent's row!)
+        // So column should NOT add parent's column.
+        let result2 = calculate_nested_start_position(
+            tree_sitter::Point::new(5, 4), // parent at (5, 4)
+            tree_sitter::Point::new(0, 0), // content starts at (0, 0) relative
+            1,                             // skip 1 row (e.g., fence line)
+            0,                             // no column offset
+        );
+        assert_eq!(result2.row, 6, "Row: 5 + 0 + 1 = 6");
+        // THIS IS THE BUG: currently returns 4, should return 0
+        assert_eq!(
+            result2.column, 0,
+            "Column should NOT add parent's column when offset moves us to a later row"
+        );
+
+        // Case 3: offset_rows = 1, content_start.row = 1
+        // Content was already on row 1, offset makes it row 2.
+        // Column should be absolute (not add parent's column).
+        let result3 = calculate_nested_start_position(
+            tree_sitter::Point::new(5, 4), // parent at (5, 4)
+            tree_sitter::Point::new(1, 2), // content starts at (1, 2) relative
+            1,                             // additional row offset
+            0,                             // no column offset
+        );
+        assert_eq!(result3.row, 7, "Row: 5 + 1 + 1 = 7");
+        assert_eq!(
+            result3.column, 2,
+            "Column is absolute when content_start.row > 0: just 2"
+        );
+
+        // Case 4: offset_rows = -1, content_start.row = 1
+        // Negative offset brings us back to row 0 → column SHOULD add parent's column
+        // But wait, is this realistic? Let's think...
+        // Actually if content_start.row = 1 and offset = -1, the effective row is 0.
+        // But the content's column at row 1 might not make sense to add parent's column.
+        // This is an edge case. For now, keep the simpler semantic:
+        // If the *effective* row (content_start.row + offset_rows) is 0, add parent column.
+        let result4 = calculate_nested_start_position(
+            tree_sitter::Point::new(5, 4), // parent at (5, 4)
+            tree_sitter::Point::new(1, 2), // content starts at (1, 2) relative
+            -1,                            // offset moves back 1 row → effective row 0
+            0,                             // no column offset
+        );
+        assert_eq!(result4.row, 5, "Row: 5 + 1 + (-1) = 5");
+        // This is a semantic question. If we're back to "row 0 equivalent", should we add parent column?
+        // The current semantics says yes, but this might be debatable.
+        // For now, assert the behavior we want: effective row 0 → add parent column
+        assert_eq!(
+            result4.column, 6,
+            "Column when effective row is 0: 4 + 2 + 0 = 6"
+        );
     }
 
     /// Test that build_selection_range deduplicates nodes with identical ranges.
