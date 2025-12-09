@@ -1053,18 +1053,18 @@ pub fn handle_selection_range_with_injection(
     let ranges = positions
         .iter()
         .map(|pos| {
-            // Convert position to byte offset
+            // Convert position to byte offset using the mapper.
+            // LSP positions use UTF-16 code units, but tree-sitter uses byte offsets.
+            // We must convert properly to avoid finding wrong nodes with multi-byte chars.
             let byte_offset = mapper.position_to_byte(*pos)?;
 
             // Get the tree
             let tree = document.tree()?;
             let root = tree.root_node();
 
-            // Convert position to point for tree-sitter
-            let point = position_to_point(pos);
-
-            // Find the smallest node containing this position
-            let node = root.descendant_for_point_range(point, point)?;
+            // Find the smallest node containing this position using byte-based lookup.
+            // Using byte range is correct because tree-sitter stores positions as bytes.
+            let node = root.descendant_for_byte_range(byte_offset, byte_offset)?;
 
             // Build the selection range hierarchy with injection awareness
             if let Some(lang) = base_language {
@@ -1120,14 +1120,14 @@ pub fn handle_selection_range_with_parsed_injection(
             let tree = document.tree()?;
             let root = tree.root_node();
 
-            // Convert position to point for tree-sitter
-            let point = position_to_point(pos);
+            // Calculate the byte offset for the cursor position using cached mapper.
+            // LSP positions use UTF-16 code units, but tree-sitter uses byte offsets.
+            // We must convert properly to avoid finding wrong nodes with multi-byte chars.
+            let cursor_byte_offset = mapper.position_to_byte(*pos)?;
 
-            // Find the smallest node containing this position
-            let node = root.descendant_for_point_range(point, point)?;
-
-            // Calculate the byte offset for the cursor position using cached mapper
-            let cursor_byte_offset = mapper.position_to_byte(*pos).unwrap_or(node.start_byte());
+            // Find the smallest node containing this position using byte-based lookup.
+            // Using byte range is correct because tree-sitter stores positions as bytes.
+            let node = root.descendant_for_byte_range(cursor_byte_offset, cursor_byte_offset)?;
 
             // Build the selection range hierarchy with full injection parsing
             if let Some(lang) = base_language {
@@ -1966,6 +1966,90 @@ array: ["xxxx"]"#;
             "Expected at most 8 levels (with deduplication), got {}. Ranges: {:?}",
             ranges.len(),
             ranges
+        );
+    }
+
+    /// Test that selection range correctly handles multi-byte UTF-8 characters.
+    ///
+    /// This is the core test for Issue 1 in the second review.md: LSP positions use
+    /// UTF-16 code units for columns, but tree-sitter uses byte offsets. The functions
+    /// `position_to_point` and `point_to_position` incorrectly cast between these,
+    /// causing selection ranges to jump to wrong positions when multi-byte characters
+    /// are present.
+    ///
+    /// Example: The Japanese character "あ" (hiragana A) is:
+    /// - 3 bytes in UTF-8 (E3 81 82)
+    /// - 1 code unit in UTF-16
+    ///
+    /// So if we have "あx" and request position at UTF-16 column 1 (the 'x'),
+    /// tree-sitter needs byte offset 3, but incorrectly casting gives byte offset 1.
+    ///
+    /// The fix: The handler functions now use byte-based lookup via PositionMapper
+    /// instead of point-based lookup with `position_to_point`.
+    #[test]
+    fn test_selection_range_handles_multibyte_utf8() {
+        use crate::text::PositionMapper;
+        use tree_sitter::Parser;
+
+        let mut parser = Parser::new();
+        let language = tree_sitter_rust::LANGUAGE.into();
+        parser.set_language(&language).expect("load rust grammar");
+
+        // Rust code with Japanese characters before the identifier we want to select.
+        // "あ" is 3 bytes in UTF-8 but 1 UTF-16 code unit
+        // "let あ = 1; let x = 2;"
+        //      ^           ^
+        //      col 4       col 15 (UTF-16)
+        //      byte 4      byte 17 (UTF-8)
+        let text = "let あ = 1; let x = 2;";
+        let tree = parser.parse(text, None).expect("parse rust");
+        let root = tree.root_node();
+
+        // Create position mapper to get correct byte offset
+        let mapper = PositionMapper::new(text);
+
+        // UTF-16 position of 'x': line 0, character 15
+        // "let あ = 1; let " has 15 UTF-16 code units before 'x':
+        // "let " = 4, "あ" = 1, " = 1; let " = 10, total = 15, so 'x' is at col 15
+        let pos_x = Position::new(0, 15);
+
+        // Convert to byte offset using the mapper (this is what the handler now does)
+        let byte_offset = mapper.position_to_byte(pos_x).expect("valid position");
+
+        // Verify the byte offset is correct
+        assert_eq!(byte_offset, 17, "Byte offset of 'x' should be 17");
+
+        // Find node using byte-based lookup (this is what the handler now does)
+        let node = root
+            .descendant_for_byte_range(byte_offset, byte_offset)
+            .expect("should find node by byte");
+
+        // Verify the byte-based lookup finds the correct identifier 'x'
+        assert_eq!(
+            node.kind(),
+            "identifier",
+            "Byte-based lookup should find identifier node"
+        );
+        assert_eq!(
+            &text[node.byte_range()],
+            "x",
+            "Byte-based lookup should find 'x', not some other identifier"
+        );
+
+        // Build selection range for this node
+        let selection = build_selection_range(node);
+
+        // The innermost selection should cover the identifier 'x'
+        // In UTF-16, 'x' is at column 15, not column 17 (which would be wrong)
+        assert_eq!(selection.range.start.line, 0);
+        assert_eq!(selection.range.end.line, 0);
+
+        // Verify the selection range covers exactly one character (the identifier 'x')
+        // The start and end should be one character apart
+        assert_eq!(
+            selection.range.end.character - selection.range.start.character,
+            1,
+            "Selection should cover exactly 1 character (the identifier 'x')"
         );
     }
 }
