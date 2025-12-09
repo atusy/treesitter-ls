@@ -538,6 +538,7 @@ fn calculate_nested_start_position(
 ///
 /// This builds SelectionRange from injected AST nodes, adjusting positions
 /// to be relative to the host document (not the injection slice).
+/// Nodes with identical ranges are deduplicated (LSP spec requires strictly expanding ranges).
 fn build_injected_selection_range(
     node: Node,
     injected_root: &Node,
@@ -545,29 +546,54 @@ fn build_injected_selection_range(
 ) -> SelectionRange {
     // Adjust the node's range to be relative to the host document
     let adjusted_range = adjust_range_to_host(node, content_start_position);
+    let node_byte_range = node.byte_range();
 
-    // Build parent chain within injected content
-    let parent = node.parent().map(|parent_node| {
-        // Stop at the root of the injected content
-        if parent_node.id() == injected_root.id() {
-            // The root of injected content - adjust its range too
-            Box::new(SelectionRange {
-                range: adjust_range_to_host(parent_node, content_start_position),
-                parent: None, // Will be connected to host in chain_injected_to_host
-            })
-        } else {
-            Box::new(build_injected_selection_range(
-                parent_node,
-                injected_root,
-                content_start_position,
-            ))
-        }
-    });
+    // Build parent chain within injected content, skipping nodes with same range
+    let parent =
+        find_next_distinct_parent(node, &node_byte_range, injected_root).map(|parent_node| {
+            // Stop at the root of the injected content
+            if parent_node.id() == injected_root.id() {
+                // The root of injected content - adjust its range too
+                Box::new(SelectionRange {
+                    range: adjust_range_to_host(parent_node, content_start_position),
+                    parent: None, // Will be connected to host in chain_injected_to_host
+                })
+            } else {
+                Box::new(build_injected_selection_range(
+                    parent_node,
+                    injected_root,
+                    content_start_position,
+                ))
+            }
+        });
 
     SelectionRange {
         range: adjusted_range,
         parent,
     }
+}
+
+/// Find the next parent node that has a different (larger) range than the current node.
+/// This ensures the LSP selection range hierarchy is strictly expanding.
+fn find_next_distinct_parent<'a>(
+    node: Node<'a>,
+    current_range: &std::ops::Range<usize>,
+    root: &Node,
+) -> Option<Node<'a>> {
+    let mut current = node.parent();
+    while let Some(parent) = current {
+        let parent_range = parent.byte_range();
+        // If parent has a different range, use it
+        if parent_range != *current_range {
+            return Some(parent);
+        }
+        // If we've reached root, return it even if same range
+        if parent.id() == root.id() {
+            return Some(parent);
+        }
+        current = parent.parent();
+    }
+    None
 }
 
 /// Adjust a node's range from injection-relative to host-document-relative coordinates
@@ -1373,10 +1399,10 @@ mod tests {
         // - Outer Rust nodes: string_content → raw_string_literal → let_declaration → ...
         //
         // We expect significantly more levels than single injection (which had ~8)
-        // With nested injection we should have ~12+ levels
+        // With nested injection we should have ~10+ levels (deduplication removes same-range nodes)
         assert!(
-            level_count >= 12,
-            "Expected at least 12 selection levels with nested injection (Rust → YAML → Rust), got {}. \
+            level_count >= 10,
+            "Expected at least 10 selection levels with nested injection (Rust → YAML → Rust), got {}. \
              This indicates nested injection was not properly handled.",
             level_count
         );

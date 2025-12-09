@@ -9,7 +9,7 @@ local xyz = 12345
 
 # nested injection
 
-`````md
+`````markdown
 ```lua
 local injection = true
 ```
