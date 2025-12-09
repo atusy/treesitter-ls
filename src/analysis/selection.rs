@@ -372,12 +372,11 @@ fn build_selection_range_with_parsed_injection_recursive(
     };
 
     // Now chain the injected selection to the host document's selection
-    // Skip the content_node itself (its range is replaced by the injected hierarchy)
-    // Start from content_node's GRANDPARENT to avoid including content_node's full range
-    let host_selection = content_node
-        .parent()
-        .and_then(|parent| parent.parent())
-        .map(|grandparent| build_selection_range(grandparent));
+    // Include the content_node (e.g., minus_metadata, code_fence_content) in the host selection
+    // so that the full content boundary is available in the selection hierarchy.
+    // For offset cases: content_node's full range (e.g., YAML with --- markers) provides valuable context
+    // For non-offset cases: content_node's parent (e.g., fenced_code_block) wraps the injection
+    let host_selection = Some(build_selection_range(content_node));
 
     // Connect injected hierarchy to host hierarchy
     let result = chain_injected_to_host(injected_selection, host_selection);
@@ -607,9 +606,10 @@ fn find_next_distinct_parent<'a>(
         if parent_range != *current_range {
             return Some(parent);
         }
-        // If we've reached root, return it even if same range
+        // If we've reached root with the same range, return None (no distinct parent)
+        // This prevents duplicate ranges in the selection hierarchy
         if parent.id() == root.id() {
-            return Some(parent);
+            return None;
         }
         current = parent.parent();
     }
@@ -656,11 +656,13 @@ fn chain_injected_to_host(
     mut injected: SelectionRange,
     host: Option<SelectionRange>,
 ) -> SelectionRange {
-    // Find the end of the injected chain (the injected root)
+    // Find the end of the injected chain (the injected root) and connect to host
     fn find_and_connect_tail(selection: &mut SelectionRange, host: Option<SelectionRange>) {
         if selection.parent.is_none() {
-            // This is the tail - connect to host
-            selection.parent = host.map(Box::new);
+            // This is the tail - connect to the first host range that is strictly larger
+            let tail_range = &selection.range;
+            let distinct_host = skip_to_distinct_host(host, tail_range);
+            selection.parent = distinct_host.map(Box::new);
         } else if let Some(ref mut parent) = selection.parent {
             find_and_connect_tail(parent, host);
         }
@@ -668,6 +670,37 @@ fn chain_injected_to_host(
 
     find_and_connect_tail(&mut injected, host);
     injected
+}
+
+/// Skip host selection ranges until we find one that is strictly larger than the tail range.
+/// This ensures LSP selection ranges are strictly expanding (no duplicates or contained ranges).
+fn skip_to_distinct_host(host: Option<SelectionRange>, tail_range: &Range) -> Option<SelectionRange> {
+    let mut current = host;
+    while let Some(selection) = current {
+        if is_range_strictly_larger(&selection.range, tail_range) {
+            return Some(selection);
+        }
+        // This host range is not larger - skip to its parent
+        current = selection.parent.map(|p| *p);
+    }
+    None
+}
+
+/// Check if range `a` is strictly larger than range `b`.
+/// A range is strictly larger if it fully contains b (starts at or before, ends at or after)
+/// AND is not equal to b.
+fn is_range_strictly_larger(a: &Range, b: &Range) -> bool {
+    let a_start = (a.start.line, a.start.character);
+    let a_end = (a.end.line, a.end.character);
+    let b_start = (b.start.line, b.start.character);
+    let b_end = (b.end.line, b.end.character);
+
+    // a contains b: a_start <= b_start && a_end >= b_end
+    let contains = a_start <= b_start && a_end >= b_end;
+    // a is not equal to b
+    let not_equal = a_start != b_start || a_end != b_end;
+
+    contains && not_equal
 }
 
 /// Calculate the effective LSP Range after applying offset to content node
