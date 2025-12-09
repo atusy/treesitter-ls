@@ -25,9 +25,8 @@ pub fn point_to_position(point: Point) -> Position {
 /// Convert tree-sitter Node to LSP Range with proper UTF-16 encoding
 ///
 /// Tree-sitter stores positions as byte offsets, but LSP requires UTF-16 code units.
-/// This function uses PositionMapper to perform the correct conversion.
-fn node_to_range(node: Node, text: &str) -> Range {
-    let mapper = PositionMapper::new(text);
+/// This function uses the provided PositionMapper to perform the correct conversion.
+fn node_to_range(node: Node, mapper: &PositionMapper) -> Range {
     let start = mapper
         .byte_to_position(node.start_byte())
         .unwrap_or_else(|| Position::new(node.start_position().row as u32, 0));
@@ -39,14 +38,14 @@ fn node_to_range(node: Node, text: &str) -> Range {
 
 /// Build selection range hierarchy for a node
 ///
-/// The `text` parameter is needed for proper UTF-16 column conversion.
-fn build_selection_range(node: Node, text: &str) -> SelectionRange {
-    let range = node_to_range(node, text);
+/// The `mapper` parameter provides proper UTF-16 column conversion.
+fn build_selection_range(node: Node, mapper: &PositionMapper) -> SelectionRange {
+    let range = node_to_range(node, mapper);
     let node_byte_range = node.byte_range();
 
     // Build parent chain, skipping nodes with same range (LSP spec requires strictly expanding)
     let parent = find_distinct_parent(node, &node_byte_range)
-        .map(|parent_node| Box::new(build_selection_range(parent_node, text)));
+        .map(|parent_node| Box::new(build_selection_range(parent_node, mapper)));
 
     SelectionRange { range, parent }
 }
@@ -80,6 +79,7 @@ fn find_distinct_parent<'a>(
 /// * `node` - The node at cursor position
 /// * `root` - The root node of the document tree
 /// * `text` - The document text
+/// * `mapper` - PositionMapper for UTF-16 column conversion
 /// * `injection_query` - Optional injection query for detecting injections
 /// * `base_language` - The base language of the document
 ///
@@ -89,6 +89,7 @@ pub fn build_selection_range_with_injection(
     node: Node,
     root: &Node,
     text: &str,
+    mapper: &PositionMapper,
     injection_query: Option<&Query>,
     base_language: &str,
 ) -> SelectionRange {
@@ -98,9 +99,9 @@ pub fn build_selection_range_with_injection(
 
     match injection_info {
         Some((_hierarchy, content_node, _pattern_index)) => {
-            build_injection_aware_selection(node, content_node, text)
+            build_injection_aware_selection(node, content_node, mapper)
         }
-        None => build_selection_range(node, text),
+        None => build_selection_range(node, mapper),
     }
 }
 
@@ -115,6 +116,7 @@ pub fn build_selection_range_with_injection(
 /// * `node` - The node at cursor position
 /// * `root` - The root node of the document tree
 /// * `text` - The document text
+/// * `mapper` - PositionMapper for UTF-16 column conversion
 /// * `injection_query` - Optional injection query for detecting injections
 /// * `base_language` - The base language of the document
 /// * `cursor_byte` - The byte position of the cursor for offset checking
@@ -126,6 +128,7 @@ pub fn build_selection_range_with_injection_and_offset(
     node: Node,
     root: &Node,
     text: &str,
+    mapper: &PositionMapper,
     injection_query: Option<&Query>,
     base_language: &str,
     cursor_byte: usize,
@@ -146,23 +149,24 @@ pub fn build_selection_range_with_injection_and_offset(
                 // Check if cursor is within the effective range (after applying offset)
                 if !is_cursor_within_effective_range(text, &content_node, cursor_byte, offset) {
                     // Cursor is outside effective range - return base language selection
-                    return build_selection_range(node, text);
+                    return build_selection_range(node, mapper);
                 }
 
                 // Use effective range in selection hierarchy instead of full content node range
-                let effective_range = calculate_effective_lsp_range(text, &content_node, offset);
+                let effective_range =
+                    calculate_effective_lsp_range(text, mapper, &content_node, offset);
                 return build_injection_aware_selection_with_effective_range(
                     node,
                     content_node,
                     effective_range,
-                    text,
+                    mapper,
                 );
             }
 
             // No offset directive - use full content node range
-            build_injection_aware_selection(node, content_node, text)
+            build_injection_aware_selection(node, content_node, mapper)
         }
-        None => build_selection_range(node, text),
+        None => build_selection_range(node, mapper),
     }
 }
 
@@ -179,6 +183,7 @@ const MAX_INJECTION_DEPTH: usize = 10;
 /// * `node` - The node at cursor position in the host document
 /// * `root` - The root node of the host document tree
 /// * `text` - The full document text
+/// * `mapper` - PositionMapper for UTF-16 column conversion
 /// * `injection_query` - Optional injection query for detecting injections
 /// * `base_language` - The base language of the document
 /// * `coordinator` - Language coordinator for getting parsers
@@ -192,6 +197,7 @@ pub fn build_selection_range_with_parsed_injection(
     node: Node,
     root: &Node,
     text: &str,
+    mapper: &PositionMapper,
     injection_query: Option<&Query>,
     base_language: &str,
     coordinator: &LanguageCoordinator,
@@ -203,6 +209,7 @@ pub fn build_selection_range_with_parsed_injection(
         node,
         root,
         text,
+        mapper,
         injection_query,
         base_language,
         coordinator,
@@ -218,6 +225,7 @@ fn build_selection_range_with_parsed_injection_recursive(
     node: Node,
     root: &Node,
     text: &str,
+    mapper: &PositionMapper,
     injection_query: Option<&Query>,
     base_language: &str,
     coordinator: &LanguageCoordinator,
@@ -227,7 +235,7 @@ fn build_selection_range_with_parsed_injection_recursive(
 ) -> SelectionRange {
     // Safety: limit recursion depth to prevent stack overflow
     if depth >= MAX_INJECTION_DEPTH {
-        return build_selection_range(node, text);
+        return build_selection_range(node, mapper);
     }
 
     // First, detect if we're inside an injection region
@@ -236,12 +244,12 @@ fn build_selection_range_with_parsed_injection_recursive(
 
     let Some((hierarchy, content_node, pattern_index)) = injection_info else {
         // Not in injection - fall back to normal selection
-        return build_selection_range(node, text);
+        return build_selection_range(node, mapper);
     };
 
     // Need at least 2 entries in hierarchy: base language + injected language
     if hierarchy.len() < 2 {
-        return build_selection_range(node, text);
+        return build_selection_range(node, mapper);
     }
 
     // Check for offset directive on this specific pattern
@@ -253,7 +261,7 @@ fn build_selection_range_with_parsed_injection_recursive(
         && !is_cursor_within_effective_range(text, &content_node, cursor_byte, offset)
     {
         // Cursor is outside effective range - return base language selection
-        return build_selection_range(node, text);
+        return build_selection_range(node, mapper);
     }
 
     // Get the injected language name (last in hierarchy)
@@ -263,15 +271,16 @@ fn build_selection_range_with_parsed_injection_recursive(
     let build_fallback = || {
         if let Some(offset) = offset_from_query {
             // Use effective range in fallback when offset exists
-            let effective_range = calculate_effective_lsp_range(text, &content_node, offset);
+            let effective_range =
+                calculate_effective_lsp_range(text, mapper, &content_node, offset);
             build_injection_aware_selection_with_effective_range(
                 node,
                 content_node,
                 effective_range,
-                text,
+                mapper,
             )
         } else {
-            build_injection_aware_selection(node, content_node, text)
+            build_injection_aware_selection(node, content_node, mapper)
         }
     };
 
@@ -288,6 +297,7 @@ fn build_selection_range_with_parsed_injection_recursive(
     };
 
     // Extract the injected content text - use effective range if offset exists
+    // Reuse the cached mapper instead of creating a new one (Sprint 7 performance fix)
     let (content_text, effective_start_position, effective_start_byte) =
         if let Some(offset) = offset_from_query {
             let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
@@ -295,7 +305,6 @@ fn build_selection_range_with_parsed_injection_recursive(
             let effective_text = &text[effective.start..effective.end];
 
             // Calculate effective start position for coordinate adjustment
-            let mapper = crate::text::PositionMapper::new(text);
             let effective_start_pos = mapper
                 .byte_to_position(effective.start)
                 .map(|p| tree_sitter::Point::new(p.line as usize, p.character as usize))
@@ -394,7 +403,7 @@ fn build_selection_range_with_parsed_injection_recursive(
     // so that the full content boundary is available in the selection hierarchy.
     // For offset cases: content_node's full range (e.g., YAML with --- markers) provides valuable context
     // For non-offset cases: content_node's parent (e.g., fenced_code_block) wraps the injection
-    let host_selection = Some(build_selection_range(content_node, text));
+    let host_selection = Some(build_selection_range(content_node, mapper));
 
     // Connect injected hierarchy to host hierarchy
     let result = chain_injected_to_host(injected_selection, host_selection);
@@ -750,14 +759,14 @@ fn is_range_strictly_larger(a: &Range, b: &Range) -> bool {
 /// Calculate the effective LSP Range after applying offset to content node
 fn calculate_effective_lsp_range(
     text: &str,
+    mapper: &PositionMapper,
     content_node: &Node,
     offset: injection::InjectionOffset,
 ) -> Range {
     let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
     let effective = calculate_effective_range_with_text(text, byte_range, offset);
 
-    // Convert byte positions to LSP positions
-    let mapper = crate::text::PositionMapper::new(text);
+    // Convert byte positions to LSP positions (reusing cached mapper - Sprint 7 perf fix)
     let start_pos = mapper
         .byte_to_position(effective.start)
         .unwrap_or_else(|| Position::new(0, 0));
@@ -771,16 +780,20 @@ fn calculate_effective_lsp_range(
 /// Build selection hierarchy with injection content node included
 ///
 /// Shared logic for injection-aware selection range building.
-fn build_injection_aware_selection(node: Node, content_node: Node, text: &str) -> SelectionRange {
-    let inner_selection = build_selection_range(node, text);
+fn build_injection_aware_selection(
+    node: Node,
+    content_node: Node,
+    mapper: &PositionMapper,
+) -> SelectionRange {
+    let inner_selection = build_selection_range(node, mapper);
 
     // Check if content_node is already in the parent chain
-    if is_node_in_selection_chain(&inner_selection, &content_node, text) {
+    if is_node_in_selection_chain(&inner_selection, &content_node, mapper) {
         // content_node is already in the chain, just return as-is
         inner_selection
     } else {
         // Need to splice content_node into the hierarchy
-        splice_injection_content_into_hierarchy(inner_selection, content_node, text)
+        splice_injection_content_into_hierarchy(inner_selection, content_node, mapper)
     }
 }
 
@@ -793,12 +806,12 @@ fn build_injection_aware_selection_with_effective_range(
     node: Node,
     content_node: Node,
     effective_range: Range,
-    text: &str,
+    mapper: &PositionMapper,
 ) -> SelectionRange {
-    let content_node_range = node_to_range(content_node, text);
+    let content_node_range = node_to_range(content_node, mapper);
 
     // Build base selection from the starting node
-    let inner_selection = build_selection_range(node, text);
+    let inner_selection = build_selection_range(node, mapper);
 
     // If the starting node IS the content node, replace its range with effective range
     if ranges_equal(&inner_selection.range, &content_node_range) {
@@ -815,12 +828,17 @@ fn build_injection_aware_selection_with_effective_range(
     }
 
     // Check if content_node is already in the parent chain
-    if is_node_in_selection_chain(&inner_selection, &content_node, text) {
+    if is_node_in_selection_chain(&inner_selection, &content_node, mapper) {
         // content_node is in the chain - replace its range with effective range
         replace_range_in_chain(inner_selection, content_node_range, effective_range)
     } else {
         // Need to splice effective range into the hierarchy
-        splice_effective_range_into_hierarchy(inner_selection, effective_range, &content_node, text)
+        splice_effective_range_into_hierarchy(
+            inner_selection,
+            effective_range,
+            &content_node,
+            mapper,
+        )
     }
 }
 
@@ -854,10 +872,10 @@ fn splice_effective_range_into_hierarchy(
     selection: SelectionRange,
     effective_range: Range,
     content_node: &Node,
-    text: &str,
+    mapper: &PositionMapper,
 ) -> SelectionRange {
     // Similar to splice_injection_content_into_hierarchy but uses effective_range
-    rebuild_with_effective_range(selection, effective_range, content_node, text)
+    rebuild_with_effective_range(selection, effective_range, content_node, mapper)
 }
 
 /// Rebuild selection hierarchy, inserting the effective range at the right place
@@ -865,7 +883,7 @@ fn rebuild_with_effective_range(
     selection: SelectionRange,
     effective_range: Range,
     content_node: &Node,
-    text: &str,
+    mapper: &PositionMapper,
 ) -> SelectionRange {
     // If current selection range is smaller than or equal to effective_range,
     // we need to continue up the chain
@@ -884,7 +902,7 @@ fn rebuild_with_effective_range(
                             parent_selection,
                             effective_range,
                             content_node,
-                            text,
+                            mapper,
                         ))),
                     };
                     Some(Box::new(effective_selection))
@@ -894,7 +912,7 @@ fn rebuild_with_effective_range(
                         parent_selection,
                         effective_range,
                         content_node,
-                        text,
+                        mapper,
                     )))
                 }
             }
@@ -904,7 +922,7 @@ fn rebuild_with_effective_range(
                     range: effective_range,
                     parent: content_node
                         .parent()
-                        .map(|p| Box::new(build_selection_range(p, text))),
+                        .map(|p| Box::new(build_selection_range(p, mapper))),
                 }))
             }
         };
@@ -932,8 +950,12 @@ fn is_cursor_within_effective_range(
 }
 
 /// Check if a node's range is already present in the selection chain
-fn is_node_in_selection_chain(selection: &SelectionRange, target_node: &Node, text: &str) -> bool {
-    let target_range = node_to_range(*target_node, text);
+fn is_node_in_selection_chain(
+    selection: &SelectionRange,
+    target_node: &Node,
+    mapper: &PositionMapper,
+) -> bool {
+    let target_range = node_to_range(*target_node, mapper);
     let mut current = Some(selection);
 
     while let Some(sel) = current {
@@ -953,13 +975,13 @@ fn is_node_in_selection_chain(selection: &SelectionRange, target_node: &Node, te
 fn splice_injection_content_into_hierarchy(
     selection: SelectionRange,
     content_node: Node,
-    text: &str,
+    mapper: &PositionMapper,
 ) -> SelectionRange {
-    let content_range = node_to_range(content_node, text);
+    let content_range = node_to_range(content_node, mapper);
 
     // Find the first ancestor in the chain that fully contains the content_node
     // and insert content_node just before it
-    rebuild_with_injection_boundary(selection, content_range, &content_node, text)
+    rebuild_with_injection_boundary(selection, content_range, &content_node, mapper)
 }
 
 /// Rebuild selection hierarchy, inserting the injection content node at the right place
@@ -967,7 +989,7 @@ fn rebuild_with_injection_boundary(
     selection: SelectionRange,
     content_range: Range,
     content_node: &Node,
-    text: &str,
+    mapper: &PositionMapper,
 ) -> SelectionRange {
     // If current selection range is smaller than or equal to content_range,
     // we need to continue up the chain
@@ -988,7 +1010,7 @@ fn rebuild_with_injection_boundary(
                             parent_selection,
                             content_range,
                             content_node,
-                            text,
+                            mapper,
                         ))),
                     };
                     Some(Box::new(content_selection))
@@ -998,7 +1020,7 @@ fn rebuild_with_injection_boundary(
                         parent_selection,
                         content_range,
                         content_node,
-                        text,
+                        mapper,
                     )))
                 }
             }
@@ -1008,7 +1030,7 @@ fn rebuild_with_injection_boundary(
                     range: content_range,
                     parent: content_node
                         .parent()
-                        .map(|p| Box::new(build_selection_range(p, text))),
+                        .map(|p| Box::new(build_selection_range(p, mapper))),
                 }))
             }
         };
@@ -1099,12 +1121,13 @@ pub fn handle_selection_range_with_injection(
                     node,
                     &root,
                     text,
+                    &mapper,
                     injection_query,
                     lang,
                     byte_offset,
                 ))
             } else {
-                Some(build_selection_range(node, text))
+                Some(build_selection_range(node, &mapper))
             }
         })
         .collect::<Option<Vec<_>>>()?;
@@ -1162,6 +1185,7 @@ pub fn handle_selection_range_with_parsed_injection(
                     node,
                     &root,
                     text,
+                    &mapper,
                     injection_query,
                     lang,
                     coordinator,
@@ -1169,7 +1193,7 @@ pub fn handle_selection_range_with_parsed_injection(
                     cursor_byte_offset,
                 ))
             } else {
-                Some(build_selection_range(node, text))
+                Some(build_selection_range(node, &mapper))
             }
         })
         .collect::<Option<Vec<_>>>()?;
@@ -1234,6 +1258,7 @@ mod tests {
         // Position inside the regex string (the \d part at column 32)
         let cursor_pos = Position::new(1, 32);
         let point = position_to_point(&cursor_pos);
+        let mapper = PositionMapper::new(text);
 
         // Find the node at cursor
         let node = root
@@ -1241,8 +1266,14 @@ mod tests {
             .expect("should find node");
 
         // Call the new injection-aware function
-        let selection =
-            build_selection_range_with_injection(node, &root, text, Some(&injection_query), "rust");
+        let selection = build_selection_range_with_injection(
+            node,
+            &root,
+            text,
+            &mapper,
+            Some(&injection_query),
+            "rust",
+        );
 
         // The selection hierarchy should include the injection content node
         // Walk up the parent chain and check that we find a range matching
@@ -1371,6 +1402,7 @@ mod tests {
             string_content_node,
             &root,
             text,
+            &mapper,
             Some(&injection_query),
             "rust",
             underscore_byte,
@@ -1381,6 +1413,7 @@ mod tests {
             string_content_node,
             &root,
             text,
+            &mapper,
             Some(&injection_query),
             "rust",
             caret_byte,
@@ -1478,6 +1511,7 @@ mod tests {
             node,
             &root,
             text,
+            &mapper,
             Some(&injection_query),
             "rust",
             &coordinator,
@@ -1580,6 +1614,7 @@ mod tests {
             node,
             &root,
             text,
+            &mapper,
             Some(&injection_query),
             "rust",
             &coordinator,
@@ -1709,6 +1744,7 @@ array: ["xxxx"]"#;
             node,
             &root,
             text,
+            &mapper,
             Some(&injection_query),
             "rust",
             &coordinator,
@@ -1957,7 +1993,8 @@ array: ["xxxx"]"#;
         assert_eq!(node.kind(), "identifier", "Should find identifier node");
 
         // Build selection range
-        let selection = build_selection_range(node, text);
+        let mapper = PositionMapper::new(text);
+        let selection = build_selection_range(node, &mapper);
 
         // Collect all ranges in the hierarchy
         let mut ranges: Vec<(u32, u32, u32, u32)> = Vec::new();
@@ -2064,7 +2101,7 @@ array: ["xxxx"]"#;
         );
 
         // Build selection range for this node
-        let selection = build_selection_range(node, text);
+        let selection = build_selection_range(node, &mapper);
 
         // The innermost selection should cover the identifier 'x'
         // In UTF-16, 'x' is at column 15, not column 17 (which would be wrong)
@@ -2122,8 +2159,9 @@ array: ["xxxx"]"#;
         let tree = parser.parse(text, None).expect("parse rust");
         let root = tree.root_node();
 
-        // Note: We don't need a PositionMapper here because build_selection_range
-        // creates its own internally. The text parameter is sufficient.
+        // Note: We need a PositionMapper because build_selection_range now requires it
+        // This is the Sprint 7 change: pass the cached mapper instead of text
+        let mapper = PositionMapper::new(text);
 
         // Find 'x' using byte offset
         let byte_offset = 17; // 'x' is at byte 17
@@ -2135,7 +2173,7 @@ array: ["xxxx"]"#;
         assert_eq!(&text[node.byte_range()], "x");
 
         // Build selection range - this is what the LSP returns to the client
-        let selection = build_selection_range(node, text);
+        let selection = build_selection_range(node, &mapper);
 
         // CRITICAL ASSERTION: The output range MUST use UTF-16 columns!
         // 'x' starts at UTF-16 column 15, not byte 17
