@@ -249,8 +249,88 @@ The fix: check if `content_start.row as i32 + offset_rows == 0` to determine if 
 
 DoD: Column positions are correctly calculated when offset_rows moves the effective start to a different row.
 
-* [ ] RED: Write test that demonstrates incorrect column when offset_rows > 0
-* [ ] GREEN: Fix the condition to check effective row
+* [x] RED: Write test that demonstrates incorrect column when offset_rows > 0
+* [x] GREEN: Fix the condition to check effective row
+* [x] CHECK: must pass `make format lint test` without errors and warnings
+* [x] COMMIT
+* [x] SELF-REVIEW: with Kent-Beck's Tidy First principle in your mind
+
+### Sprint retrospective
+
+#### Inspections of decisions in the previous retrospective
+
+The Sprint 1 retrospective suggested considering combining Issues 2 and 3. We kept them separate, which was the right call - Issue 2 required updating an existing test's expected behavior, which would have complicated a combined sprint.
+
+#### Inspections of the current sprint (KPT)
+
+**Keep:**
+- The TDD cycle caught an interaction with an existing test (test case 4 in negative offset test)
+- This revealed that the old test was testing incorrect behavior, validating our fix
+- Clear documentation in test comments explaining the semantics
+
+**Problem:**
+- None
+
+**Try:**
+- Issue 3 involves a different code path (`build_nested_injection_selection` at lines 524-529) that chains to `content_node.parent()` instead of including `content_node` itself
+
+#### Adaption plan
+
+Proceed to Sprint 3 for Issue 3. The fix is localized to how we build the host chain for nested injections.
+
+### Product Backlog Refinement
+
+Issue 3 is the last review issue. After this sprint, all three issues from review.md will be resolved.
+
+## Sprint 3
+
+<!-- The planned change must have user-visible increment -->
+
+* User story: Include nested injection content node in selection hierarchy (User Story 3)
+
+### Sprint planning
+
+**Context:**
+Issue 3 from review.md: When chaining a nested injection back into its parent, the code starts the host chain at `content_node.parent()` (lines 524-529):
+
+```rust
+// Chain nested selection to parent injected content
+// Get the parent's selection starting from content_node's parent
+let parent_selection = content_node
+    .parent()
+    .map(|parent| build_injected_selection_range(parent, root, parent_start_position));
+```
+
+This skips the actual `content_node` itself, so users cannot expand to "select the whole nested snippet". In contrast, the top-level path includes the content node via `build_selection_range(content_node)` (lines 374-382).
+
+**Solution approach:**
+Include `content_node` in the chain before its parent, similar to how the top-level path does it:
+```rust
+let content_node_selection = build_injected_selection_range(content_node, root, parent_start_position);
+let parent_selection = content_node
+    .parent()
+    .map(|parent| build_injected_selection_range(parent, root, parent_start_position));
+// Chain: nested → content_node → parent → ...
+```
+
+Or simpler: just start from `content_node` instead of `content_node.parent()`:
+```rust
+let parent_selection = Some(build_injected_selection_range(content_node, root, parent_start_position));
+```
+
+This way `content_node` is included in the chain (with its range adjusted for parent position).
+
+**What is NOT part of this sprint:**
+- All three issues will be complete after this sprint
+
+### Tasks
+
+#### Task 1: Include content_node in nested injection selection chain
+
+DoD: The selection hierarchy for nested injections includes the content node boundary.
+
+* [ ] RED: Write test that verifies content_node range is in the selection chain
+* [ ] GREEN: Change chain start from content_node.parent() to content_node
 * [ ] CHECK: must pass `make format lint test` without errors and warnings
 * [ ] COMMIT
 * [ ] SELF-REVIEW: with Kent-Beck's Tidy First principle in your mind
