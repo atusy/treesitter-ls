@@ -523,12 +523,15 @@ fn build_nested_injection_selection(
     };
 
     // Chain nested selection to parent injected content
-    // Get the parent's selection starting from content_node's parent
-    let parent_selection = content_node
-        .parent()
-        .map(|parent| build_injected_selection_range(parent, root, parent_start_position));
+    // Include content_node itself in the chain (like the top-level path does)
+    // so that users can "select the whole nested snippet"
+    let content_node_selection = Some(build_injected_selection_range(
+        content_node,
+        root,
+        parent_start_position,
+    ));
 
-    let result = chain_injected_to_host(nested_selection, parent_selection);
+    let result = chain_injected_to_host(nested_selection, content_node_selection);
 
     parser_pool.release(nested_lang.to_string(), nested_parser);
     result
@@ -1481,6 +1484,127 @@ mod tests {
             "Expected at least 7 selection levels with nested injection (Rust → YAML → Rust), got {}. \
              This indicates nested injection was not properly handled.",
             level_count
+        );
+    }
+
+    /// Test that nested injection selection includes the content node boundary.
+    ///
+    /// This is the core test for Issue 3 in review.md: When chaining a nested injection
+    /// back to its parent, the selection hierarchy should include the actual content node
+    /// (e.g., double_quote_scalar in YAML) so users can "select the whole nested snippet".
+    ///
+    /// The bug was that build_nested_injection_selection starts from content_node.parent(),
+    /// skipping content_node itself. The top-level path includes it via build_selection_range(content_node).
+    #[test]
+    fn test_nested_injection_includes_content_node_boundary() {
+        use crate::language::LanguageCoordinator;
+        use tree_sitter::{Parser, Query};
+
+        // Setup: Rust → YAML → Rust nested injection (same as test_selection_range_handles_nested_injection)
+        let coordinator = LanguageCoordinator::new();
+        coordinator.register_language_for_test("yaml", tree_sitter_yaml::LANGUAGE.into());
+        coordinator.register_language_for_test("rust", tree_sitter_rust::LANGUAGE.into());
+
+        // YAML injection query that matches double_quote_scalar as Rust
+        let yaml_injection_query_str = r#"
+((double_quote_scalar) @injection.content
+ (#set! injection.language "rust"))
+        "#;
+        let yaml_lang: tree_sitter::Language = tree_sitter_yaml::LANGUAGE.into();
+        let yaml_injection_query =
+            Query::new(&yaml_lang, yaml_injection_query_str).expect("valid yaml injection query");
+        coordinator.register_injection_query_for_test("yaml", yaml_injection_query);
+
+        let mut parser_pool = coordinator.create_document_parser_pool();
+
+        // Host document: Rust → YAML → Rust
+        // The YAML has a double_quote_scalar: "fn nested() {}"
+        let mut parser = Parser::new();
+        let rust_language = tree_sitter_rust::LANGUAGE.into();
+        parser
+            .set_language(&rust_language)
+            .expect("load rust grammar");
+
+        let text = r##"fn main() {
+    let yaml = r#"title: "fn nested() {}""#;
+}"##;
+        let tree = parser.parse(text, None).expect("parse rust");
+        let root = tree.root_node();
+
+        // Rust → YAML injection query
+        let injection_query_str = r#"
+(raw_string_literal
+  (string_content) @injection.content
+  (#set! injection.language "yaml"))
+        "#;
+        let injection_query =
+            Query::new(&rust_language, injection_query_str).expect("valid injection query");
+
+        // Position inside the nested Rust code
+        let cursor_pos = Position::new(1, 33);
+        let mapper = crate::text::PositionMapper::new(text);
+        let cursor_byte = mapper.position_to_byte(cursor_pos).unwrap();
+        let point = position_to_point(&cursor_pos);
+        let node = root
+            .descendant_for_point_range(point, point)
+            .expect("find node");
+
+        let selection = build_selection_range_with_parsed_injection(
+            node,
+            &root,
+            text,
+            Some(&injection_query),
+            "rust",
+            &coordinator,
+            &mut parser_pool,
+            cursor_byte,
+        );
+
+        // Collect all ranges in the selection hierarchy
+        let mut ranges: Vec<Range> = Vec::new();
+        let mut curr = Some(&selection);
+        while let Some(sel) = curr {
+            ranges.push(sel.range);
+            curr = sel.parent.as_ref().map(|p| p.as_ref());
+        }
+
+        // The nested content node is double_quote_scalar in YAML, which contains "fn nested() {}"
+        // Its range in the host document should be around line 1, columns 25-41
+        // (the exact position depends on YAML parsing, but it should be present)
+        //
+        // We need to find a range that corresponds to the nested injection's content node,
+        // which is larger than the innermost Rust nodes but smaller than the YAML block_mapping_pair.
+        //
+        // Since double_quote_scalar includes the quotes, its range in the original document
+        // would be roughly columns 25-41 on line 1 (where the quoted string is).
+        //
+        // For this test, we verify that there exists a range in the selection hierarchy
+        // that matches the nested content node's expected position.
+        //
+        // The double_quote_scalar node (nested content) spans from the opening quote to closing quote.
+        // In YAML context, it's at the beginning of the YAML content.
+        // After adjustment to host coordinates, it should be around:
+        // - start: line 1, col 25 (start of "fn nested() {}")
+        // - end: line 1, col 41 (end of "fn nested() {}")
+
+        // The string_content in YAML starts at col 18: `title: "fn nested() {}"`
+        // The double_quote_scalar starts at col 25: `"fn nested() {}"`
+        // Look for a range that starts around column 25-26 and ends around 40-41
+        let nested_content_found = ranges.iter().any(|r| {
+            r.start.line == 1
+                && r.start.character >= 25
+                && r.start.character <= 26
+                && r.end.line == 1
+                && r.end.character >= 40
+                && r.end.character <= 42
+        });
+
+        assert!(
+            nested_content_found,
+            "Selection hierarchy should include nested injection content node boundary.\n\
+             Ranges in hierarchy: {:?}\n\
+             Expected a range around (1:25-26 to 1:40-42) for the nested content node.",
+            ranges
         );
     }
 
