@@ -47,4 +47,31 @@ T["assets/example.lua"]["selectionRange"]["no injection"]["direction"]["works"] 
 	MiniTest.expect.equality(reg, expected)
 end
 
+T["assets/example.lua"] = create_file_test_set("tests/assets/example.md")
+
+T["assets/example.lua"]["selectionRange"] = MiniTest.new_set({})
+T["assets/example.lua"]["selectionRange"]["with injection"] = MiniTest.new_set({})
+T["assets/example.lua"]["selectionRange"]["with injection"]["direction"] = MiniTest.new_set({
+	parametrize = {
+		{
+			1,
+			table.concat({
+				[==[title: "awesome"]==],
+				[==[array: ["xxxx"]]==],
+			}, "\n"),
+		},
+	},
+})
+T["assets/example.lua"]["selectionRange"]["with injection"]["direction"]["works"] = function(direction, expected)
+	child.cmd([[normal! j]])
+	child.cmd(([[lua vim.lsp.buf.selection_range(%d)]]):format(direction))
+	if not helper.wait(5000, function()
+		return child.api.nvim_get_mode().mode == "v"
+	end, 10) then
+		error("selection_range timed out")
+	end
+	child.cmd([[normal! y]])
+	local reg = child.fn.getreg()
+	MiniTest.expect.equality(reg, expected)
+end
 return T
