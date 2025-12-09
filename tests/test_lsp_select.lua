@@ -47,40 +47,12 @@ T["assets/example.lua"]["selectionRange"]["no injection"]["direction"]["works"] 
 	MiniTest.expect.equality(reg, expected)
 end
 
-T["assets/example.lua"] = create_file_test_set("tests/assets/example.md")
-
-T["assets/example.lua"]["selectionRange"] = MiniTest.new_set({})
-T["assets/example.lua"]["selectionRange"]["with injection"] = MiniTest.new_set({})
-T["assets/example.lua"]["selectionRange"]["with injection"]["direction"] = MiniTest.new_set({
-	parametrize = {
-		-- Direction 1 should select innermost (just "title" key)
-		{ 1, "title" },
-		-- Direction 5 should select the full YAML content (no trailing newline in visual yank)
-		{
-			5,
-			table.concat({
-				[==[title: "awesome"]==],
-				[==[array: ["xxxx"]]==],
-			}, "\n"),
-		},
-	},
-})
-T["assets/example.lua"]["selectionRange"]["with injection"]["direction"]["works"] = function(direction, expected)
-	child.cmd([[normal! j]])
-	child.cmd(([[lua vim.lsp.buf.selection_range(%d)]]):format(direction))
-	if not helper.wait(5000, function()
-		return child.api.nvim_get_mode().mode == "v"
-	end, 10) then
-		error("selection_range timed out")
-	end
-	child.cmd([[normal! y]])
-	local reg = child.fn.getreg()
-	MiniTest.expect.equality(reg, expected)
-end
+T["assets/example.md"] = create_file_test_set("tests/assets/example.md")
+T["assets/example.md"]["selectionRange"] = MiniTest.new_set({})
 
 -- Test selection outside injection region (User Story 4 criterion 4)
-T["assets/example.lua"]["selectionRange"]["outside injection"] = MiniTest.new_set({})
-T["assets/example.lua"]["selectionRange"]["outside injection"]["direction"] = MiniTest.new_set({
+T["assets/example.md"]["selectionRange"]["outside injection"] = MiniTest.new_set({})
+T["assets/example.md"]["selectionRange"]["outside injection"]["direction"] = MiniTest.new_set({
 	parametrize = {
 		-- Cursor on line 18 "# section" - direction 1 should select "section"
 		{ 18, 3, 1, "section" },
@@ -88,7 +60,7 @@ T["assets/example.lua"]["selectionRange"]["outside injection"]["direction"] = Mi
 		{ 20, 1, 1, "paragraph" },
 	},
 })
-T["assets/example.lua"]["selectionRange"]["outside injection"]["direction"]["works"] = function(
+T["assets/example.md"]["selectionRange"]["outside injection"]["direction"]["works"] = function(
 	line,
 	col,
 	direction,
@@ -109,8 +81,8 @@ end
 
 -- Test nested injection (User Story 5: Markdown → Markdown → Lua)
 -- Line 14 contains "local injection = true" which is Lua inside inner Markdown inside outer Markdown
-T["assets/example.lua"]["selectionRange"]["nested injection"] = MiniTest.new_set({})
-T["assets/example.lua"]["selectionRange"]["nested injection"]["direction"] = MiniTest.new_set({
+T["assets/example.md"]["selectionRange"]["nested injection"] = MiniTest.new_set({})
+T["assets/example.md"]["selectionRange"]["nested injection"]["direction"] = MiniTest.new_set({
 	parametrize = {
 		-- Cursor on line 14 inside "injection" - direction 1 should select the identifier
 		{ 14, 7, 1, "injection" },
@@ -120,7 +92,7 @@ T["assets/example.lua"]["selectionRange"]["nested injection"]["direction"] = Min
 		{ 14, 7, 3, "local injection = true" },
 	},
 })
-T["assets/example.lua"]["selectionRange"]["nested injection"]["direction"]["works"] = function(
+T["assets/example.md"]["selectionRange"]["nested injection"]["direction"]["works"] = function(
 	line,
 	col,
 	direction,
@@ -139,8 +111,8 @@ T["assets/example.lua"]["selectionRange"]["nested injection"]["direction"]["work
 	MiniTest.expect.equality(reg, expected)
 end
 
-T["assets/example.lua"]["selectionRange"]["expansion"] = MiniTest.new_set({})
-T["assets/example.lua"]["selectionRange"]["expansion"] = MiniTest.new_set({
+T["assets/example.md"]["selectionRange"]["expansion"] = MiniTest.new_set({})
+T["assets/example.md"]["selectionRange"]["expansion"] = MiniTest.new_set({
 	parametrize = {
 		{ 2, 1, 1, "title" },
 		{ 2, 1, 2, 'title: "awesome"' },
@@ -152,7 +124,7 @@ T["assets/example.lua"]["selectionRange"]["expansion"] = MiniTest.new_set({
 		{ 7, 1, 4, "```lua\nlocal xyz = 12345\n```" },
 	},
 })
-T["assets/example.lua"]["selectionRange"]["expansion"]["works"] = function(line, col, direction, expected)
+T["assets/example.md"]["selectionRange"]["expansion"]["works"] = function(line, col, direction, expected)
 	-- Move to specified line and column
 	child.cmd(([[normal! %dG%d|]]):format(line, col))
 	child.cmd(([[lua vim.lsp.buf.selection_range(%d)]]):format(direction))
