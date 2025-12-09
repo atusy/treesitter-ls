@@ -1109,6 +1109,9 @@ pub fn handle_selection_range_with_parsed_injection(
     parser_pool: &mut DocumentParserPool,
 ) -> Option<Vec<SelectionRange>> {
     let text = document.text();
+    // Reuse the document's cached position mapper instead of creating a new one per position.
+    // This avoids O(file_size × positions) work from rebuilding LineIndex for each cursor.
+    let mapper = document.position_mapper();
 
     let ranges = positions
         .iter()
@@ -1123,11 +1126,8 @@ pub fn handle_selection_range_with_parsed_injection(
             // Find the smallest node containing this position
             let node = root.descendant_for_point_range(point, point)?;
 
-            // Calculate the byte offset for the cursor position
-            let cursor_byte_offset = {
-                let mapper = crate::text::PositionMapper::new(text);
-                mapper.position_to_byte(*pos).unwrap_or(node.start_byte())
-            };
+            // Calculate the byte offset for the cursor position using cached mapper
+            let cursor_byte_offset = mapper.position_to_byte(*pos).unwrap_or(node.start_byte());
 
             // Build the selection range hierarchy with full injection parsing
             if let Some(lang) = base_language {
