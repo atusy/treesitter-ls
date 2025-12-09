@@ -148,35 +148,13 @@ User story numbers are just identifiers and do not indicate priority.
 Each story includes acceptance criteria for clearer Definition of Done.
 -->
 
-## User Story 8: Fix output range conversion to use UTF-16 columns
-As a user editing files with multi-byte UTF-8 characters (emoji, CJK, etc.),
-I want selection range output to use correct UTF-16 column positions,
-so that the editor highlights the correct text regions.
+(Empty - all user stories from review.md are complete)
 
-**Acceptance Criteria:**
-- `node_to_range` is modified to convert tree-sitter byte columns to LSP UTF-16 columns
-- All selection range outputs use correct UTF-16 coordinates
-- Tests with multi-byte characters verify correct column positions in output
+# Completed User Stories
 
-## User Story 9: Unify coordinate systems in range comparisons
-As a user with non-ASCII text before injection regions,
-I want selection range hierarchy to correctly identify containment,
-so that effective ranges are properly spliced into the selection chain.
-
-**Acceptance Criteria:**
-- Range comparison functions (`range_contains`, `is_range_strictly_larger`) operate in consistent coordinate space
-- Either all ranges are in bytes OR all ranges are in UTF-16 (not mixed)
-- Tests demonstrate correct containment with non-ASCII text
-
-## User Story 10: Reuse PositionMapper in offset-aware paths (performance)
-As a user with multiple cursors in a large file with injection offsets,
-I want offset-aware handling to be performant,
-so that the editor doesn't lag.
-
-**Acceptance Criteria:**
-- `calculate_effective_lsp_range` receives a PositionMapper instead of creating one
-- `build_selection_range_with_parsed_injection_recursive` passes the mapper down
-- No fresh `PositionMapper::new()` calls in hot paths
+## ✅ User Story 8: Fix output range conversion to use UTF-16 columns (Sprint 6)
+## ✅ User Story 9: Unify coordinate systems in range comparisons (Auto-fixed by Sprint 6)
+## ✅ User Story 10: Reuse PositionMapper in offset-aware paths (Sprint 7)
 
 # Completed Sprints (Previous Review)
 
@@ -185,6 +163,8 @@ so that the editor doesn't lag.
 ## Sprint 3 ✅ - Include nested injection content node in selection hierarchy
 ## Sprint 4 ✅ - Reuse cached PositionMapper for performance (main handlers)
 ## Sprint 5 ✅ - Fix UTF-16 to byte conversion for cursor lookup
+## Sprint 6 ✅ - Fix output range conversion to use UTF-16 columns
+## Sprint 7 ✅ - Reuse PositionMapper in selection range building (performance)
 
 # Sprints (Current Review)
 
@@ -273,4 +253,81 @@ Sprint 5's decision to fix input conversion first (cursor lookup) before output 
 **Remaining:**
 - User Story 10: Reuse PositionMapper in offset-aware paths (performance optimization)
 
-The performance issue (User Story 10) is lower priority than correctness. The current implementation is correct, just not optimal. Consider addressing in a future sprint if performance is observed to be an issue.
+## Sprint 7
+
+<!-- The planned change must have user-visible increment -->
+
+* User story: Reuse PositionMapper in offset-aware paths (User Story 10)
+
+### Sprint planning
+
+**Context:**
+Sprint 6 fixed the correctness issue but introduced a performance regression: `node_to_range` creates a new `PositionMapper` for every node. For a selection range request, this means:
+- Building hierarchy for a node with N ancestors = N mapper creations
+- Each mapper creation is O(file_size) for line index computation
+
+Current hot spots (non-test code):
+1. `node_to_range` (line 30) - called for every node in selection hierarchy
+2. `calculate_effective_lsp_range` (line 760) - offset-aware path
+3. `build_selection_range_with_parsed_injection_recursive` (line 298) - injection parsing
+
+**Solution approach:**
+1. Change `node_to_range(node, text)` → `node_to_range(node, mapper: &PositionMapper)`
+2. Thread `&PositionMapper` through all functions instead of `&str`
+3. Entry points (`handle_selection_range_*`) create the mapper once and pass it down
+
+This is a STRUCTURAL change (Tidy First) - behavior stays the same, only the API changes.
+
+**What is NOT part of this sprint:**
+- This is the last remaining issue from review.md
+
+### Tasks
+
+#### Task 1: Refactor to pass PositionMapper instead of text
+
+DoD: No `PositionMapper::new()` calls in selection range building (except at entry points).
+
+* [x] STRUCTURAL: Change `node_to_range` signature to accept `&PositionMapper`
+* [x] STRUCTURAL: Update `build_selection_range` and all dependent functions
+* [x] STRUCTURAL: Update `calculate_effective_lsp_range` to accept `&PositionMapper`
+* [x] CHECK: must pass `make format lint test` without errors and warnings
+* [x] COMMIT (7ab0858)
+* [x] SELF-REVIEW: Verify no behavior change, only structural
+
+### Sprint retrospective
+
+#### Inspections of decisions in the previous retrospective
+
+Sprint 6's approach of using `text: &str` to create mappers internally was correct for proving correctness first. The performance concern was known and deferred to Sprint 7.
+
+#### Inspections of the current sprint (KPT)
+
+**Keep:**
+- Pure structural refactoring: All 110 tests pass without modification to test assertions
+- Threading `&PositionMapper` is more ergonomic than `&str` for the caller
+- Entry points (`handle_selection_range_*`) already had the mapper from `document.position_mapper()`
+- Eliminated `PositionMapper::new()` calls in hot paths (Sprint 7 goal achieved)
+
+**Problem:**
+- Many functions now have long parameter lists (8-10 arguments). This is a code smell but acceptable for internal functions.
+- The `build_selection_range_with_parsed_injection_recursive` function has 10 parameters.
+
+**Try:**
+- Consider introducing a context struct to reduce parameter counts in a future refactoring sprint
+- Could group related parameters: `(text, mapper)` into a `TextContext` struct
+
+#### Adaption plan
+
+**All review.md issues are now resolved:**
+- ✅ Issue 1: Fixed in Sprint 6 (UTF-16 output conversion)
+- ✅ Issue 2: Auto-fixed by Sprint 6 (consistent coordinate systems)
+- ✅ Issue 3: Fixed in Sprint 7 (PositionMapper reuse)
+
+No remaining product backlog items from this review cycle.
+
+### Product Backlog Refinement
+
+**Sprint 7 Complete:**
+- ✅ User Story 10: Reuse PositionMapper in offset-aware paths
+
+**All user stories from review.md are complete.**
