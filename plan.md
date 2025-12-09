@@ -357,14 +357,196 @@ The Sprint 2 retrospective noted that Issue 3 involves a different code path. Th
 
 #### Adaption plan
 
-All three issues from review.md have been addressed. The product backlog items for this feature set are complete.
+All three issues from the original review.md have been addressed. A new review has identified 4 additional issues.
 
 ### Product Backlog Refinement
 
-All User Stories (1, 2, 3) have been completed:
+User Stories 1-3 completed:
 1. ✅ Handle negative offsets in nested injections
 2. ✅ Fix column alignment when row offsets skip lines
 3. ✅ Include nested injection content node in selection hierarchy
 
-The selection range feature for nested injections is now robust.
+New issues identified in updated review.md - adding to Product Backlog:
+- User Story 4: Fix UTF-16 to byte conversion (critical - affects all multi-byte chars)
+- User Story 5: Fix offset-aware host point conversion
+- User Story 6: Honor offset directives after injection parsing
+- User Story 7: Reuse cached PositionMapper (performance)
+
+## User Story 4: Fix UTF-16 to byte conversion in position/point helpers
+As a user editing files with multi-byte UTF-8 characters (emoji, CJK, etc.),
+I want selection ranges to correctly identify node positions,
+so that selection expansion works correctly even on emoji-heavy markdown.
+
+**Acceptance Criteria:**
+- `position_to_point` converts LSP UTF-16 columns to tree-sitter byte offsets correctly
+- `point_to_position` converts tree-sitter byte offsets to LSP UTF-16 columns correctly
+- Tests with multi-byte characters demonstrate correct behavior
+
+## User Story 5: Fix offset-aware host point conversion
+As a user with injection content containing multi-byte characters,
+I want the effective start position to be calculated correctly,
+so that injected ranges are not shifted incorrectly.
+
+**Acceptance Criteria:**
+- `effective_start_position` is calculated using byte offsets, not UTF-16 columns
+- `adjust_range_to_host` works correctly with multi-byte characters
+
+## User Story 6: Honor offset directives after injection parsing succeeds
+As a user expanding selection in markdown frontmatter with `#offset!` directives,
+I want the trimmed fences (e.g., `---`) to remain excluded,
+so that selection expansion is consistent between parsed and fallback paths.
+
+**Acceptance Criteria:**
+- After successful injection parsing, the selection chain uses effective range, not full content_node range
+- Tests verify offset directives are honored in the parsed branch
+
+## User Story 7: Reuse cached PositionMapper for performance
+As a user with multiple cursors in a large file,
+I want selection range requests to be performant,
+so that the editor doesn't lag with many cursors.
+
+**Acceptance Criteria:**
+- `handle_selection_range_with_parsed_injection` reuses `document.position_mapper()` instead of creating new mappers
+- Performance is O(positions) not O(file_size × positions)
+
+## Sprint 4
+
+<!-- The planned change must have user-visible increment -->
+
+* User story: Reuse cached PositionMapper for performance (User Story 7)
+
+### Sprint planning
+
+**Context:**
+Issue 4 from review.md is a self-contained performance fix. The current code:
+```rust
+// handle_selection_range_with_parsed_injection (lines 1113-1129)
+let cursor_byte_offset = {
+    let mapper = crate::text::PositionMapper::new(text);  // Creates new mapper per position!
+    mapper.position_to_byte(*pos).unwrap_or(node.start_byte())
+};
+```
+
+This creates O(file_size × positions) work. The fix is simple: use the document's cached mapper.
+
+**Why start with this issue:**
+- It's the simplest to fix (localized change)
+- It's independent of the UTF-16/byte issues (Issues 1, 2, 3 are interconnected)
+- Performance issues affect user experience
+
+**Solution approach:**
+Move the mapper creation outside the position loop, or reuse `document.position_mapper()`.
+
+**What is NOT part of this sprint:**
+- UTF-16/byte conversion issues (Issues 1, 2, 3) - require more analysis
+
+### Tasks
+
+#### Task 1: Reuse cached PositionMapper
+
+DoD: The parsed injection handler reuses the document's cached mapper.
+
+* [x] RED: Write test demonstrating the performance issue (skipped - straightforward fix)
+* [x] GREEN: Modify `handle_selection_range_with_parsed_injection` to reuse mapper
+* [x] CHECK: must pass `make format lint test` without errors and warnings
+* [x] COMMIT
+* [x] SELF-REVIEW: with Kent-Beck's Tidy First principle in your mind
+
+### Sprint retrospective
+
+#### Inspections of decisions in the previous retrospective
+
+N/A - first sprint of the new review cycle.
+
+#### Inspections of the current sprint (KPT)
+
+**Keep:**
+- Simple, focused fix with clear performance benefit
+- Consistent with the other handler function that already did this correctly
+
+**Problem:**
+- None - straightforward fix
+
+**Try:**
+- Proceed with the more complex UTF-16/byte conversion issues
+
+#### Adaption plan
+
+Sprint 5 will tackle Issue 1 (UTF-16 to byte conversion). Issues 1, 2, and 6 are interconnected, but Issue 1 is the foundation. Issue 5 appears to be the same fundamental problem as Issue 2.
+
+### Product Backlog Refinement
+
+Re-analysis of remaining issues:
+- **Issue 1** (position_to_point/point_to_position): Foundation - must fix first
+- **Issue 2** (offset-aware host points): Same root cause as Issue 1
+- **Issue 6** (offset directives dropped): Independent issue about parsed vs fallback path consistency
+- ~~Issue 4~~: ✅ Fixed (PositionMapper performance)
+
+Sprint priority: Issue 1 → Issue 6 → Issue 2 (may be auto-fixed by Issue 1)
+
+## Sprint 5
+
+<!-- The planned change must have user-visible increment -->
+
+* User story: Fix UTF-16 to byte conversion in position/point helpers (User Story 4)
+
+### Sprint planning
+
+**Context:**
+Issue 1 from review.md: The functions `position_to_point` and `point_to_position` incorrectly treat LSP UTF-16 columns as tree-sitter byte offsets.
+
+Current code (`src/analysis/selection.rs:9-23`):
+```rust
+pub fn position_to_point(pos: &Position) -> Point {
+    Point::new(pos.line as usize, pos.character as usize)  // UTF-16 char treated as bytes!
+}
+
+pub fn point_to_position(point: Point) -> Position {
+    Position::new(point.row as u32, point.column as u32)  // Bytes treated as UTF-16 char!
+}
+```
+
+This breaks when lines contain multi-byte UTF-8 characters:
+- LSP Position.character is UTF-16 code units
+- Tree-sitter Point.column is byte offset within the line
+- For ASCII, these happen to be equal, masking the bug
+
+**Solution approach:**
+1. `position_to_point` needs `PositionMapper` to convert UTF-16 column to byte offset
+2. `point_to_position` needs to convert byte column to UTF-16
+
+However, this requires access to the document text, which these functions currently don't have. Options:
+a) Pass `PositionMapper` or text to these functions (API change)
+b) Create new functions that do proper conversion, deprecate the simple ones
+c) Use a different approach for node lookup (byte offset instead of Point)
+
+Let me investigate the usage patterns first.
+
+**What is NOT part of this sprint:**
+- Issue 2 (offset-aware host points) - depends on this
+- Issue 6 (offset directives dropped) - separate concern
+
+### Tasks
+
+#### Task 1: Investigate UTF-16/byte conversion approach
+
+DoD: Determine the best approach for fixing the conversion issue.
+
+* [ ] RESEARCH: Examine how position_to_point is used and what would break
+* [ ] DESIGN: Choose between API change vs new functions vs byte-based lookup
+* [ ] RED: Write test with multi-byte characters that fails
+* [ ] GREEN: Implement the fix
+* [ ] CHECK: must pass `make format lint test` without errors and warnings
+* [ ] COMMIT
+* [ ] SELF-REVIEW: with Kent-Beck's Tidy First principle in your mind
+
+### Sprint retrospective
+
+#### Inspections of decisions in the previous retrospective
+
+#### Inspections of the current sprint (e.g., by KPT, use adequate method for each sprint)
+
+#### Adaption plan
+
+### Product Backlog Refinement
 
