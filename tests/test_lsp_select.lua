@@ -77,4 +77,29 @@ T["assets/example.lua"]["selectionRange"]["with injection"]["direction"]["works"
 	local reg = child.fn.getreg()
 	MiniTest.expect.equality(reg, expected)
 end
+
+-- Test selection outside injection region (User Story 4 criterion 4)
+T["assets/example.lua"]["selectionRange"]["outside injection"] = MiniTest.new_set({})
+T["assets/example.lua"]["selectionRange"]["outside injection"]["direction"] = MiniTest.new_set({
+	parametrize = {
+		-- Cursor on line 10 "# section" - direction 1 should select "section"
+		{ 10, 3, 1, "section" },
+		-- Cursor on line 12 "paragraph" - direction 1 should select "paragraph"
+		{ 12, 1, 1, "paragraph" },
+	},
+})
+T["assets/example.lua"]["selectionRange"]["outside injection"]["direction"]["works"] =
+	function(line, col, direction, expected)
+		-- Move to specified line and column
+		child.cmd(([[normal! %dG%d|]]):format(line, col))
+		child.cmd(([[lua vim.lsp.buf.selection_range(%d)]]):format(direction))
+		if not helper.wait(5000, function()
+			return child.api.nvim_get_mode().mode == "v"
+		end, 10) then
+			error("selection_range timed out")
+		end
+		child.cmd([[normal! y]])
+		local reg = child.fn.getreg()
+		MiniTest.expect.equality(reg, expected)
+	end
 return T
