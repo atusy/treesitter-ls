@@ -1,12 +1,9 @@
 local child = MiniTest.new_child_neovim()
 
-local T = MiniTest.new_set({
-	hooks = {
-		post_once = child.stop,
-	},
-})
+local T = MiniTest.new_set({ hooks = { post_once = child.stop } })
 
--- Helper function to create file-specific test set
+---Helper function to create file-specific test set
+---@param file_path string path to file to open in tests
 local function create_file_test_set(file_path)
 	return MiniTest.new_set({
 		hooks = {
@@ -27,15 +24,15 @@ local function create_file_test_set(file_path)
 	})
 end
 
-T["assets/example.lua"] = create_file_test_set("tests/assets/example.lua")
-
-T["assets/example.lua"]["selectionRange"] = MiniTest.new_set({})
-T["assets/example.lua"]["selectionRange"]["no injection"] = MiniTest.new_set({})
-
-T["assets/example.lua"]["selectionRange"]["no injection"]["direction"] = MiniTest.new_set({
-	parametrize = { { 1, "local" }, { 2, "local M = {}" } },
-})
-T["assets/example.lua"]["selectionRange"]["no injection"]["direction"]["works"] = function(direction, expected)
+---Helper function to test selection range at a given position and direction
+---@param line number? 1-indexed line number (nil to use cursor position)
+---@param col number? 1-indexed column number (nil to use cursor position)
+---@param direction number selection expansion level (1 = smallest, higher = larger)
+---@param expected string expected yanked text after selection
+local function test_selection_range(line, col, direction, expected)
+	if line and col then
+		child.cmd(([[normal! %dG%d|]]):format(line, col))
+	end
 	child.cmd(([[lua vim.lsp.buf.selection_range(%d)]]):format(direction))
 	if not helper.wait(5000, function()
 		return child.api.nvim_get_mode().mode == "v"
@@ -47,95 +44,57 @@ T["assets/example.lua"]["selectionRange"]["no injection"]["direction"]["works"] 
 	MiniTest.expect.equality(reg, expected)
 end
 
+-- ============================================================================
+-- Lua file tests (no injection)
+-- ============================================================================
+T["assets/example.lua"] = create_file_test_set("tests/assets/example.lua")
+T["assets/example.lua"]["selectionRange"] = MiniTest.new_set({})
+T["assets/example.lua"]["selectionRange"]["no injection"] = MiniTest.new_set({
+	parametrize = { { 1, "local" }, { 2, "local M = {}" } },
+})
+T["assets/example.lua"]["selectionRange"]["no injection"]["works"] = function(direction, expected)
+	test_selection_range(nil, nil, direction, expected)
+end
+
+-- ============================================================================
+-- Markdown file tests (with injections)
+-- ============================================================================
 T["assets/example.md"] = create_file_test_set("tests/assets/example.md")
 T["assets/example.md"]["selectionRange"] = MiniTest.new_set({})
 
--- Test selection outside injection region (User Story 4 criterion 4)
-T["assets/example.md"]["selectionRange"]["outside injection"] = MiniTest.new_set({})
-T["assets/example.md"]["selectionRange"]["outside injection"]["direction"] = MiniTest.new_set({
+-- Test selection no injection region (plain Markdown)
+T["assets/example.md"]["selectionRange"]["no injection"] = MiniTest.new_set({
 	parametrize = {
-		-- Cursor on line 18 "# section" - direction 1 should select "section"
-		{ 18, 3, 1, "section" },
-		-- Cursor on line 20 "paragraph" - direction 1 should select "paragraph"
-		{ 20, 1, 1, "paragraph" },
+		{ 20, 1, 1, "paragraph" }, -- line 20 "paragraph"
+		{ 18, 1, 3, "# section\n\nparagraph" }, -- line 18 "# section"
 	},
 })
-T["assets/example.md"]["selectionRange"]["outside injection"]["direction"]["works"] = function(
-	line,
-	col,
-	direction,
-	expected
-)
-	-- Move to specified line and column
-	child.cmd(([[normal! %dG%d|]]):format(line, col))
-	child.cmd(([[lua vim.lsp.buf.selection_range(%d)]]):format(direction))
-	if not helper.wait(5000, function()
-		return child.api.nvim_get_mode().mode == "v"
-	end, 10) then
-		error("selection_range timed out")
-	end
-	child.cmd([[normal! y]])
-	local reg = child.fn.getreg()
-	MiniTest.expect.equality(reg, expected)
+T["assets/example.md"]["selectionRange"]["no injection"]["works"] = function(line, col, direction, expected)
+	test_selection_range(line, col, direction, expected)
 end
 
--- Test nested injection (User Story 5: Markdown → Markdown → Lua)
--- Line 14 contains "local injection = true" which is Lua inside inner Markdown inside outer Markdown
-T["assets/example.md"]["selectionRange"]["nested injection"] = MiniTest.new_set({})
-T["assets/example.md"]["selectionRange"]["nested injection"]["direction"] = MiniTest.new_set({
+-- Test selection expansion through injection boundaries
+-- Verifies that selection properly includes host document ranges (code block delimiters, frontmatter)
+T["assets/example.md"]["selectionRange"]["injection"] = MiniTest.new_set({
 	parametrize = {
-		-- Cursor on line 14 inside "injection" - direction 1 should select the identifier
-		{ 14, 7, 1, "injection" },
-		-- Cursor on line 14 inside "injection" - direction 2 should select larger expression
-		{ 14, 7, 2, "injection = true" },
-		-- Cursor on line 14 inside "injection" - direction 3 should select the full statement
-		{ 14, 7, 3, "local injection = true" },
-	},
-})
-T["assets/example.md"]["selectionRange"]["nested injection"]["direction"]["works"] = function(
-	line,
-	col,
-	direction,
-	expected
-)
-	-- Move to specified line and column
-	child.cmd(([[normal! %dG%d|]]):format(line, col))
-	child.cmd(([[lua vim.lsp.buf.selection_range(%d)]]):format(direction))
-	if not helper.wait(5000, function()
-		return child.api.nvim_get_mode().mode == "v"
-	end, 10) then
-		error("selection_range timed out")
-	end
-	child.cmd([[normal! y]])
-	local reg = child.fn.getreg()
-	MiniTest.expect.equality(reg, expected)
-end
-
-T["assets/example.md"]["selectionRange"]["expansion"] = MiniTest.new_set({})
-T["assets/example.md"]["selectionRange"]["expansion"] = MiniTest.new_set({
-	parametrize = {
+		-- YAML frontmatter expansion
 		{ 2, 1, 1, "title" },
 		{ 2, 1, 2, 'title: "awesome"' },
 		{ 2, 1, 3, table.concat({ 'title: "awesome"', 'array: ["xxxx"]' }, "\n") },
 		{ 2, 1, 4, table.concat({ "---", 'title: "awesome"', 'array: ["xxxx"]', "---" }, "\n") },
+		-- Lua code block expansion
 		{ 7, 1, 1, "local" },
 		{ 7, 1, 2, "local xyz = 12345" },
 		{ 7, 1, 3, "local xyz = 12345" },
 		{ 7, 1, 4, "```lua\nlocal xyz = 12345\n```" },
+		-- nested injection markdown -> markdown -> lua
+		{ 14, 7, 1, "injection" }, -- select identifier
+		{ 14, 7, 2, "injection = true" }, -- select expression
+		{ 14, 7, 3, "local injection = true" }, -- select full statement
 	},
 })
-T["assets/example.md"]["selectionRange"]["expansion"]["works"] = function(line, col, direction, expected)
-	-- Move to specified line and column
-	child.cmd(([[normal! %dG%d|]]):format(line, col))
-	child.cmd(([[lua vim.lsp.buf.selection_range(%d)]]):format(direction))
-	if not helper.wait(5000, function()
-		return child.api.nvim_get_mode().mode == "v"
-	end, 10) then
-		error("selection_range timed out")
-	end
-	child.cmd([[normal! y]])
-	local reg = child.fn.getreg()
-	MiniTest.expect.equality(reg, expected)
+T["assets/example.md"]["selectionRange"]["injection"]["works"] = function(line, col, direction, expected)
+	test_selection_range(line, col, direction, expected)
 end
 
 return T
