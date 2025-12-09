@@ -26,13 +26,33 @@ fn node_to_range(node: Node) -> Range {
 /// Build selection range hierarchy for a node
 fn build_selection_range(node: Node) -> SelectionRange {
     let range = node_to_range(node);
+    let node_byte_range = node.byte_range();
 
-    // Build parent chain
-    let parent = node
-        .parent()
+    // Build parent chain, skipping nodes with same range (LSP spec requires strictly expanding)
+    let parent = find_distinct_parent(node, &node_byte_range)
         .map(|parent_node| Box::new(build_selection_range(parent_node)));
 
     SelectionRange { range, parent }
+}
+
+/// Find the next parent node that has a different (larger) range than the current node.
+/// This ensures the LSP selection range hierarchy is strictly expanding.
+/// Unlike `find_next_distinct_parent`, this version doesn't have a root check
+/// and simply walks up until it finds a parent with a different range.
+fn find_distinct_parent<'a>(
+    node: Node<'a>,
+    current_range: &std::ops::Range<usize>,
+) -> Option<Node<'a>> {
+    let mut current = node.parent();
+    while let Some(parent) = current {
+        let parent_range = parent.byte_range();
+        // If parent has a different range, use it
+        if parent_range != *current_range {
+            return Some(parent);
+        }
+        current = parent.parent();
+    }
+    None
 }
 
 /// Build selection range hierarchy with injection awareness
@@ -1398,11 +1418,11 @@ mod tests {
         // - YAML nodes: double_quote_scalar → flow_node → block_mapping_pair → ...
         // - Outer Rust nodes: string_content → raw_string_literal → let_declaration → ...
         //
-        // We expect significantly more levels than single injection (which had ~8)
-        // With nested injection we should have ~10+ levels (deduplication removes same-range nodes)
+        // We expect significantly more levels than single injection (which had ~7)
+        // With nested injection we should have ~9+ levels (deduplication removes same-range nodes)
         assert!(
-            level_count >= 10,
-            "Expected at least 10 selection levels with nested injection (Rust → YAML → Rust), got {}. \
+            level_count >= 9,
+            "Expected at least 9 selection levels with nested injection (Rust → YAML → Rust), got {}. \
              This indicates nested injection was not properly handled.",
             level_count
         );
@@ -1505,12 +1525,80 @@ array: ["xxxx"]"#;
 
         // Without injection parsing: string_content → raw_string_literal → let_declaration → ... → source_file
         // With injection parsing: double_quote_scalar → flow_node → block_mapping_pair → ... → string_content → ...
-        // We expect MORE levels with injection parsing
+        // We expect MORE levels with injection parsing (deduplication removes same-range nodes)
         assert!(
-            level_count >= 8,
-            "Expected at least 8 selection levels with injected YAML AST, got {}. \
+            level_count >= 7,
+            "Expected at least 7 selection levels with injected YAML AST, got {}. \
              This indicates the injected content was not parsed.",
             level_count
+        );
+    }
+
+    /// Test that build_selection_range deduplicates nodes with identical ranges.
+    ///
+    /// In Tree-sitter ASTs, it's common for a node and its parent to have the same
+    /// byte range (e.g., `identifier` wrapped by `expression` with same range).
+    /// LSP spec requires strictly expanding ranges, so we must skip duplicates.
+    #[test]
+    fn test_selection_range_deduplicates_same_range_nodes() {
+        use tree_sitter::Parser;
+
+        let mut parser = Parser::new();
+        let language = tree_sitter_rust::LANGUAGE.into();
+        parser.set_language(&language).expect("load rust grammar");
+
+        // In Rust, a simple expression like "foo" inside a function creates a chain
+        // where some nodes may have identical ranges (e.g., identifier wrapped by expression)
+        // Let's use a simple variable reference in a return statement
+        let text = "fn f() { x }";
+        let tree = parser.parse(text, None).expect("parse rust");
+        let root = tree.root_node();
+
+        // Find the identifier node for "x"
+        let cursor_byte = 9; // position of "x"
+        let node = root
+            .descendant_for_byte_range(cursor_byte, cursor_byte)
+            .expect("should find node");
+
+        assert_eq!(node.kind(), "identifier", "Should find identifier node");
+
+        // Build selection range
+        let selection = build_selection_range(node);
+
+        // Collect all ranges in the hierarchy
+        let mut ranges: Vec<(u32, u32, u32, u32)> = Vec::new();
+        let mut curr = Some(&selection);
+        while let Some(sel) = curr {
+            ranges.push((
+                sel.range.start.line,
+                sel.range.start.character,
+                sel.range.end.line,
+                sel.range.end.character,
+            ));
+            curr = sel.parent.as_ref().map(|p| p.as_ref());
+        }
+
+        // Check for duplicates - no two consecutive ranges should be identical
+        for i in 1..ranges.len() {
+            assert_ne!(
+                ranges[i - 1],
+                ranges[i],
+                "Found duplicate ranges at positions {} and {}: {:?}. \
+                 Selection range should deduplicate nodes with identical ranges.",
+                i - 1,
+                i,
+                ranges[i]
+            );
+        }
+
+        // Also verify we have reasonable number of levels (not too many due to duplicates)
+        // The exact count depends on grammar, but with deduplication it should be reasonable
+        // If there are duplicates, we'd have extra levels
+        assert!(
+            ranges.len() <= 8,
+            "Expected at most 8 levels (with deduplication), got {}. Ranges: {:?}",
+            ranges.len(),
+            ranges
         );
     }
 }
