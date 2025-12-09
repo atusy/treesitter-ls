@@ -71,6 +71,8 @@ pub fn build_selection_range_with_injection(
 ///
 /// This version takes a cursor_byte parameter to check if the cursor is within
 /// the effective range of the injection after applying offset directives.
+/// When an offset directive exists, the selection hierarchy uses the effective
+/// range (after applying offset) instead of the full content node range.
 ///
 /// # Arguments
 /// * `node` - The node at cursor position
@@ -109,12 +111,42 @@ pub fn build_selection_range_with_injection_and_offset(
                     // Cursor is outside effective range - return base language selection
                     return build_selection_range(node);
                 }
+
+                // Use effective range in selection hierarchy instead of full content node range
+                let effective_range = calculate_effective_lsp_range(text, &content_node, offset);
+                return build_injection_aware_selection_with_effective_range(
+                    node,
+                    content_node,
+                    effective_range,
+                );
             }
 
+            // No offset directive - use full content node range
             build_injection_aware_selection(node, content_node)
         }
         None => build_selection_range(node),
     }
+}
+
+/// Calculate the effective LSP Range after applying offset to content node
+fn calculate_effective_lsp_range(
+    text: &str,
+    content_node: &Node,
+    offset: injection::InjectionOffset,
+) -> Range {
+    let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
+    let effective = calculate_effective_range_with_text(text, byte_range, offset);
+
+    // Convert byte positions to LSP positions
+    let mapper = crate::text::PositionMapper::new(text);
+    let start_pos = mapper
+        .byte_to_position(effective.start)
+        .unwrap_or_else(|| Position::new(0, 0));
+    let end_pos = mapper
+        .byte_to_position(effective.end)
+        .unwrap_or_else(|| Position::new(0, 0));
+
+    Range::new(start_pos, end_pos)
 }
 
 /// Build selection hierarchy with injection content node included
@@ -130,6 +162,136 @@ fn build_injection_aware_selection(node: Node, content_node: Node) -> SelectionR
     } else {
         // Need to splice content_node into the hierarchy
         splice_injection_content_into_hierarchy(inner_selection, content_node)
+    }
+}
+
+/// Build selection hierarchy with effective range instead of full content node range
+///
+/// When an offset directive adjusts the injection boundaries, we use the effective
+/// range in the selection hierarchy. This ensures that excluded regions (like `---`
+/// boundaries in YAML frontmatter) are not included in the selection.
+fn build_injection_aware_selection_with_effective_range(
+    node: Node,
+    content_node: Node,
+    effective_range: Range,
+) -> SelectionRange {
+    let content_node_range = node_to_range(content_node);
+
+    // Build base selection from the starting node
+    let inner_selection = build_selection_range(node);
+
+    // If the starting node IS the content node, replace its range with effective range
+    if ranges_equal(&inner_selection.range, &content_node_range) {
+        return SelectionRange {
+            range: effective_range,
+            parent: inner_selection.parent.map(|p| {
+                Box::new(replace_range_in_chain(
+                    *p,
+                    content_node_range,
+                    effective_range,
+                ))
+            }),
+        };
+    }
+
+    // Check if content_node is already in the parent chain
+    if is_node_in_selection_chain(&inner_selection, &content_node) {
+        // content_node is in the chain - replace its range with effective range
+        replace_range_in_chain(inner_selection, content_node_range, effective_range)
+    } else {
+        // Need to splice effective range into the hierarchy
+        splice_effective_range_into_hierarchy(inner_selection, effective_range, &content_node)
+    }
+}
+
+/// Replace a specific range in the selection chain with the effective range
+fn replace_range_in_chain(
+    selection: SelectionRange,
+    target_range: Range,
+    effective_range: Range,
+) -> SelectionRange {
+    if ranges_equal(&selection.range, &target_range) {
+        // Found the target - replace with effective range
+        SelectionRange {
+            range: effective_range,
+            parent: selection
+                .parent
+                .map(|p| Box::new(replace_range_in_chain(*p, target_range, effective_range))),
+        }
+    } else {
+        // Continue up the chain
+        SelectionRange {
+            range: selection.range,
+            parent: selection
+                .parent
+                .map(|p| Box::new(replace_range_in_chain(*p, target_range, effective_range))),
+        }
+    }
+}
+
+/// Splice effective range into hierarchy at the appropriate level
+fn splice_effective_range_into_hierarchy(
+    selection: SelectionRange,
+    effective_range: Range,
+    content_node: &Node,
+) -> SelectionRange {
+    // Similar to splice_injection_content_into_hierarchy but uses effective_range
+    rebuild_with_effective_range(selection, effective_range, content_node)
+}
+
+/// Rebuild selection hierarchy, inserting the effective range at the right place
+fn rebuild_with_effective_range(
+    selection: SelectionRange,
+    effective_range: Range,
+    content_node: &Node,
+) -> SelectionRange {
+    // If current selection range is smaller than or equal to effective_range,
+    // we need to continue up the chain
+    if range_contains(&effective_range, &selection.range) {
+        // Current range is inside effective_range
+        let new_parent = match selection.parent {
+            Some(parent) => {
+                let parent_selection = *parent;
+                if range_contains(&parent_selection.range, &effective_range)
+                    && !ranges_equal(&parent_selection.range, &effective_range)
+                {
+                    // Parent is larger than effective_range, insert effective_range here
+                    let effective_selection = SelectionRange {
+                        range: effective_range,
+                        parent: Some(Box::new(rebuild_with_effective_range(
+                            parent_selection,
+                            effective_range,
+                            content_node,
+                        ))),
+                    };
+                    Some(Box::new(effective_selection))
+                } else {
+                    // Keep going up
+                    Some(Box::new(rebuild_with_effective_range(
+                        parent_selection,
+                        effective_range,
+                        content_node,
+                    )))
+                }
+            }
+            None => {
+                // No parent, but we're inside effective_range - add effective_range as parent
+                Some(Box::new(SelectionRange {
+                    range: effective_range,
+                    parent: content_node
+                        .parent()
+                        .map(|p| Box::new(build_selection_range(p))),
+                }))
+            }
+        };
+
+        SelectionRange {
+            range: selection.range,
+            parent: new_parent,
+        }
+    } else {
+        // Current range is not inside effective_range, just continue normally
+        selection
     }
 }
 
@@ -260,14 +422,38 @@ pub fn handle_selection_range(
     document: &DocumentHandle,
     positions: &[Position],
 ) -> Option<Vec<SelectionRange>> {
+    // Delegate to the injection-aware version without injection query
+    handle_selection_range_with_injection(document, positions, None, None)
+}
+
+/// Handle textDocument/selectionRange request with injection awareness
+///
+/// Returns selection ranges that expand intelligently by syntax boundaries,
+/// taking into account language injections and their offset directives.
+///
+/// # Arguments
+/// * `document` - The document
+/// * `positions` - The requested positions
+/// * `injection_query` - Optional injection query for detecting language injections
+/// * `base_language` - Optional base language of the document
+///
+/// # Returns
+/// Selection ranges for each position, or None if unable to compute
+pub fn handle_selection_range_with_injection(
+    document: &DocumentHandle,
+    positions: &[Position],
+    injection_query: Option<&Query>,
+    base_language: Option<&str>,
+) -> Option<Vec<SelectionRange>> {
     // Create position mapper via document abstraction
     let mapper = document.position_mapper();
+    let text = document.text();
 
     let ranges = positions
         .iter()
         .map(|pos| {
             // Convert position to byte offset
-            let _byte_offset = mapper.position_to_byte(*pos)?;
+            let byte_offset = mapper.position_to_byte(*pos)?;
 
             // Get the tree
             let tree = document.tree()?;
@@ -279,8 +465,19 @@ pub fn handle_selection_range(
             // Find the smallest node containing this position
             let node = root.descendant_for_point_range(point, point)?;
 
-            // Build the selection range hierarchy
-            Some(build_selection_range(node))
+            // Build the selection range hierarchy with injection awareness
+            if let Some(lang) = base_language {
+                Some(build_selection_range_with_injection_and_offset(
+                    node,
+                    &root,
+                    text,
+                    injection_query,
+                    lang,
+                    byte_offset,
+                ))
+            } else {
+                Some(build_selection_range(node))
+            }
         })
         .collect::<Option<Vec<_>>>()?;
 
