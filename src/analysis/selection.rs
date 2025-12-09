@@ -129,10 +129,14 @@ pub fn build_selection_range_with_injection_and_offset(
     }
 }
 
-/// Build selection range with parsed injection content (Sprint 3)
+/// Maximum depth for nested injection recursion (prevents stack overflow)
+const MAX_INJECTION_DEPTH: usize = 10;
+
+/// Build selection range with parsed injection content (Sprint 3 + Sprint 5 nested support)
 ///
 /// This function parses the injected content using the appropriate language parser
 /// and builds a selection hierarchy that includes nodes from the injected language's AST.
+/// It recursively handles nested injections up to MAX_INJECTION_DEPTH levels.
 ///
 /// # Arguments
 /// * `node` - The node at cursor position in the host document
@@ -157,6 +161,38 @@ pub fn build_selection_range_with_parsed_injection(
     parser_pool: &mut DocumentParserPool,
     cursor_byte: usize,
 ) -> SelectionRange {
+    // Delegate to the recursive implementation with depth 0
+    build_selection_range_with_parsed_injection_recursive(
+        node,
+        root,
+        text,
+        injection_query,
+        base_language,
+        coordinator,
+        parser_pool,
+        cursor_byte,
+        0, // Initial depth
+    )
+}
+
+/// Internal recursive implementation for nested injection support (Sprint 5)
+#[allow(clippy::too_many_arguments)]
+fn build_selection_range_with_parsed_injection_recursive(
+    node: Node,
+    root: &Node,
+    text: &str,
+    injection_query: Option<&Query>,
+    base_language: &str,
+    coordinator: &LanguageCoordinator,
+    parser_pool: &mut DocumentParserPool,
+    cursor_byte: usize,
+    depth: usize,
+) -> SelectionRange {
+    // Safety: limit recursion depth to prevent stack overflow
+    if depth >= MAX_INJECTION_DEPTH {
+        return build_selection_range(node);
+    }
+
     // First, detect if we're inside an injection region
     let injection_info =
         injection::detect_injection_with_content(&node, root, text, injection_query, base_language);
@@ -214,25 +250,27 @@ pub fn build_selection_range_with_parsed_injection(
     };
 
     // Extract the injected content text - use effective range if offset exists
-    let (content_text, effective_start_position) = if let Some(offset) = offset_from_query {
-        let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
-        let effective = calculate_effective_range_with_text(text, byte_range, offset);
-        let effective_text = &text[effective.start..effective.end];
+    let (content_text, effective_start_position, effective_start_byte) =
+        if let Some(offset) = offset_from_query {
+            let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
+            let effective = calculate_effective_range_with_text(text, byte_range, offset);
+            let effective_text = &text[effective.start..effective.end];
 
-        // Calculate effective start position for coordinate adjustment
-        let mapper = crate::text::PositionMapper::new(text);
-        let effective_start_pos = mapper
-            .byte_to_position(effective.start)
-            .map(|p| tree_sitter::Point::new(p.line as usize, p.character as usize))
-            .unwrap_or(content_node.start_position());
+            // Calculate effective start position for coordinate adjustment
+            let mapper = crate::text::PositionMapper::new(text);
+            let effective_start_pos = mapper
+                .byte_to_position(effective.start)
+                .map(|p| tree_sitter::Point::new(p.line as usize, p.character as usize))
+                .unwrap_or(content_node.start_position());
 
-        (effective_text, effective_start_pos)
-    } else {
-        (
-            &text[content_node.byte_range()],
-            content_node.start_position(),
-        )
-    };
+            (effective_text, effective_start_pos, effective.start)
+        } else {
+            (
+                &text[content_node.byte_range()],
+                content_node.start_position(),
+                content_node.start_byte(),
+            )
+        };
 
     // Parse the injected content
     let Some(injected_tree) = parser.parse(content_text, None) else {
@@ -241,12 +279,6 @@ pub fn build_selection_range_with_parsed_injection(
     };
 
     // Calculate cursor position relative to effective injection content
-    let effective_start_byte = if let Some(offset) = offset_from_query {
-        let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
-        calculate_effective_range_with_text(text, byte_range, offset).start
-    } else {
-        content_node.start_byte()
-    };
     let relative_byte = cursor_byte.saturating_sub(effective_start_byte);
 
     // Find the node at cursor position in the injected AST
@@ -257,10 +289,67 @@ pub fn build_selection_range_with_parsed_injection(
         return build_fallback();
     };
 
-    // Build selection from the injected node
-    // This builds the injected language's hierarchy
-    let injected_selection =
-        build_injected_selection_range(injected_node, &injected_root, effective_start_position);
+    // Sprint 5: Check for nested injection within the injected content
+    // Get the injection query for the injected language
+    let nested_injection_query = coordinator.get_injection_query(injected_lang);
+
+    let injected_selection = if let Some(nested_inj_query) = nested_injection_query.as_ref() {
+        // Check if cursor is inside a nested injection
+        let nested_injection_info = injection::detect_injection_with_content(
+            &injected_node,
+            &injected_root,
+            content_text,
+            Some(nested_inj_query.as_ref()),
+            injected_lang,
+        );
+
+        if let Some((nested_hierarchy, nested_content_node, nested_pattern_index)) =
+            nested_injection_info
+        {
+            // Check offset for nested injection
+            let nested_offset =
+                parse_offset_directive_for_pattern(nested_inj_query.as_ref(), nested_pattern_index);
+
+            let cursor_in_nested = match nested_offset {
+                Some(offset) => is_cursor_within_effective_range(
+                    content_text,
+                    &nested_content_node,
+                    relative_byte,
+                    offset,
+                ),
+                None => true, // No offset means cursor is always "inside" if detected
+            };
+
+            if cursor_in_nested && nested_hierarchy.len() >= 2 {
+                // We have a nested injection! Recursively build selection for it
+                build_nested_injection_selection(
+                    &injected_node,
+                    &injected_root,
+                    content_text,
+                    nested_inj_query.as_ref(),
+                    injected_lang,
+                    coordinator,
+                    parser_pool,
+                    relative_byte,
+                    effective_start_position,
+                    depth + 1,
+                )
+            } else {
+                // No valid nested injection - build selection from current injected node
+                build_injected_selection_range(
+                    injected_node,
+                    &injected_root,
+                    effective_start_position,
+                )
+            }
+        } else {
+            // No nested injection detected - build selection from current injected node
+            build_injected_selection_range(injected_node, &injected_root, effective_start_position)
+        }
+    } else {
+        // No injection query for the injected language - build selection from current injected node
+        build_injected_selection_range(injected_node, &injected_root, effective_start_position)
+    };
 
     // Now chain the injected selection to the host document's selection
     // Skip the content_node itself (its range is replaced by the injected hierarchy)
@@ -277,6 +366,172 @@ pub fn build_selection_range_with_parsed_injection(
     parser_pool.release(injected_lang.to_string(), parser);
 
     result
+}
+
+/// Build selection for a nested injection (Sprint 5)
+///
+/// This handles the recursive case where we're inside an injection that itself
+/// contains another injection.
+#[allow(clippy::too_many_arguments)]
+fn build_nested_injection_selection(
+    node: &Node,
+    root: &Node,
+    text: &str,
+    injection_query: &Query,
+    base_language: &str,
+    coordinator: &LanguageCoordinator,
+    parser_pool: &mut DocumentParserPool,
+    cursor_byte: usize,
+    parent_start_position: tree_sitter::Point,
+    depth: usize,
+) -> SelectionRange {
+    // Safety check
+    if depth >= MAX_INJECTION_DEPTH {
+        return build_injected_selection_range(*node, root, parent_start_position);
+    }
+
+    // Detect the nested injection
+    let injection_info = injection::detect_injection_with_content(
+        node,
+        root,
+        text,
+        Some(injection_query),
+        base_language,
+    );
+
+    let Some((hierarchy, content_node, pattern_index)) = injection_info else {
+        return build_injected_selection_range(*node, root, parent_start_position);
+    };
+
+    // Get nested language name from hierarchy (last element)
+    if hierarchy.len() < 2 {
+        return build_injected_selection_range(*node, root, parent_start_position);
+    }
+    let nested_lang = hierarchy.last().unwrap().clone();
+
+    // Check offset
+    let offset = parse_offset_directive_for_pattern(injection_query, pattern_index);
+
+    // Ensure nested language is loaded
+    let load_result = coordinator.ensure_language_loaded(&nested_lang);
+    if !load_result.success {
+        return build_injected_selection_range(*node, root, parent_start_position);
+    }
+
+    // Acquire parser for nested language
+    let Some(mut nested_parser) = parser_pool.acquire(&nested_lang) else {
+        return build_injected_selection_range(*node, root, parent_start_position);
+    };
+
+    // Extract nested content text
+    let (nested_text, nested_effective_start, nested_effective_start_byte) =
+        if let Some(off) = offset {
+            let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
+            let effective = calculate_effective_range_with_text(text, byte_range, off);
+            let effective_text = &text[effective.start..effective.end];
+
+            // Calculate effective start position (relative to parent injection)
+            let effective_start_pos = calculate_nested_start_position(
+                parent_start_position,
+                content_node.start_position(),
+                off.start_row as usize,
+                off.start_column as usize,
+            );
+
+            (effective_text, effective_start_pos, effective.start)
+        } else {
+            let nested_start_pos = calculate_nested_start_position(
+                parent_start_position,
+                content_node.start_position(),
+                0,
+                0,
+            );
+            (
+                &text[content_node.byte_range()],
+                nested_start_pos,
+                content_node.start_byte(),
+            )
+        };
+
+    // Parse nested content
+    let Some(nested_tree) = nested_parser.parse(nested_text, None) else {
+        parser_pool.release(nested_lang.to_string(), nested_parser);
+        return build_injected_selection_range(*node, root, parent_start_position);
+    };
+
+    let nested_relative_byte = cursor_byte.saturating_sub(nested_effective_start_byte);
+    let nested_root = nested_tree.root_node();
+
+    let Some(nested_node) =
+        nested_root.descendant_for_byte_range(nested_relative_byte, nested_relative_byte)
+    else {
+        parser_pool.release(nested_lang.to_string(), nested_parser);
+        return build_injected_selection_range(*node, root, parent_start_position);
+    };
+
+    // Check for even deeper nesting (recursive)
+    let deeply_nested_injection_query = coordinator.get_injection_query(&nested_lang);
+
+    let nested_selection = if let Some(deep_inj_query) = deeply_nested_injection_query.as_ref() {
+        let deep_injection_info = injection::detect_injection_with_content(
+            &nested_node,
+            &nested_root,
+            nested_text,
+            Some(deep_inj_query.as_ref()),
+            &nested_lang,
+        );
+
+        if deep_injection_info.is_some() {
+            // Even deeper nesting - recurse
+            build_nested_injection_selection(
+                &nested_node,
+                &nested_root,
+                nested_text,
+                deep_inj_query.as_ref(),
+                &nested_lang,
+                coordinator,
+                parser_pool,
+                nested_relative_byte,
+                nested_effective_start,
+                depth + 1,
+            )
+        } else {
+            build_injected_selection_range(nested_node, &nested_root, nested_effective_start)
+        }
+    } else {
+        build_injected_selection_range(nested_node, &nested_root, nested_effective_start)
+    };
+
+    // Chain nested selection to parent injected content
+    // Get the parent's selection starting from content_node's parent
+    let parent_selection = content_node
+        .parent()
+        .map(|parent| build_injected_selection_range(parent, root, parent_start_position));
+
+    let result = chain_injected_to_host(nested_selection, parent_selection);
+
+    parser_pool.release(nested_lang.to_string(), nested_parser);
+    result
+}
+
+/// Calculate the start position for nested injection relative to host document
+fn calculate_nested_start_position(
+    parent_start: tree_sitter::Point,
+    content_start: tree_sitter::Point,
+    offset_rows: usize,
+    offset_cols: usize,
+) -> tree_sitter::Point {
+    // The content_start is relative to the parent injection
+    // We need to add the parent's start position and apply any offset
+    let row = parent_start.row + content_start.row + offset_rows;
+    let col = if content_start.row == 0 {
+        // First row of content - add parent's column
+        parent_start.column + content_start.column + offset_cols
+    } else {
+        // Later rows - column is absolute within the parent
+        content_start.column + offset_cols
+    };
+    tree_sitter::Point::new(row, col)
 }
 
 /// Build selection range for nodes in injected content
@@ -1003,6 +1258,128 @@ mod tests {
         // injection-specific processing only occurs when inside effective range.
         // This test verified the core offset logic; integration tests can
         // verify observable differences with more complex AST structures.
+    }
+
+    /// Test that selection range handles nested injections recursively.
+    ///
+    /// This is the core test for Sprint 5: when cursor is inside a nested injection region,
+    /// the selection should expand through ALL injection levels' AST nodes.
+    ///
+    /// Test scenario:
+    /// - Host: Rust code with a raw string literal containing YAML
+    /// - First injection: YAML content
+    /// - Nested injection: JSON embedded in a YAML value (using a custom injection query)
+    /// - Cursor: inside the JSON content
+    /// - Expected: Selection hierarchy includes nodes from JSON, YAML, and Rust
+    ///
+    /// Note: Since we don't have tree-sitter-json, we use a simpler test with YAML
+    /// that contains what could be nested content, and verify the recursion mechanism
+    /// is correctly invoked (by checking it doesn't crash and produces a valid hierarchy).
+    #[test]
+    fn test_selection_range_handles_nested_injection() {
+        use crate::language::LanguageCoordinator;
+        use tree_sitter::{Parser, Query};
+
+        // Setup: Create a coordinator with YAML language registered
+        // We'll also register an injection query for YAML that could match nested content
+        let coordinator = LanguageCoordinator::new();
+        coordinator.register_language_for_test("yaml", tree_sitter_yaml::LANGUAGE.into());
+        coordinator.register_language_for_test("rust", tree_sitter_rust::LANGUAGE.into());
+
+        // Register an injection query for YAML that matches double-quoted scalars as "rust"
+        // This creates a nested injection: Rust → YAML → Rust
+        let yaml_injection_query_str = r#"
+((double_quote_scalar) @injection.content
+ (#set! injection.language "rust"))
+        "#;
+        let yaml_lang: tree_sitter::Language = tree_sitter_yaml::LANGUAGE.into();
+        let yaml_injection_query =
+            Query::new(&yaml_lang, yaml_injection_query_str).expect("valid yaml injection query");
+        coordinator.register_injection_query_for_test("yaml", yaml_injection_query);
+
+        let mut parser_pool = coordinator.create_document_parser_pool();
+
+        // Host document: Rust code with YAML that contains a "rust" string
+        let mut parser = Parser::new();
+        let rust_language = tree_sitter_rust::LANGUAGE.into();
+        parser
+            .set_language(&rust_language)
+            .expect("load rust grammar");
+
+        // The YAML contains a double-quoted string that will be injected as Rust
+        // YAML content: title: "fn nested() {}"
+        // The "fn nested() {}" will be treated as Rust code (nested injection)
+        let text = r##"fn main() {
+    let yaml = r#"title: "fn nested() {}""#;
+}"##;
+        let tree = parser.parse(text, None).expect("parse rust");
+        let root = tree.root_node();
+
+        // Create injection query for Rust → YAML
+        let injection_query_str = r#"
+(raw_string_literal
+  (string_content) @injection.content
+  (#set! injection.language "yaml"))
+        "#;
+        let injection_query =
+            Query::new(&rust_language, injection_query_str).expect("valid injection query");
+
+        // Position inside the nested Rust code: "fn nested() {}"
+        // Line 0: fn main() {
+        // Line 1:     let yaml = r#"title: "fn nested() {}""#;
+        //                          ^------- string_content starts here (col 18)
+        //                                  title: "fn nested() {}"
+        //                                         ^ col 25 is 'f' in 'fn'
+        let cursor_pos = Position::new(1, 33); // Inside "fn nested() {}"
+        let point = position_to_point(&cursor_pos);
+
+        let node = root
+            .descendant_for_point_range(point, point)
+            .expect("should find node");
+
+        // Calculate cursor byte offset
+        let mapper = crate::text::PositionMapper::new(text);
+        let cursor_byte = mapper.position_to_byte(cursor_pos).unwrap();
+
+        // Call the function that should handle nested injections
+        let selection = build_selection_range_with_parsed_injection(
+            node,
+            &root,
+            text,
+            Some(&injection_query),
+            "rust",
+            &coordinator,
+            &mut parser_pool,
+            cursor_byte,
+        );
+
+        // Verify: The selection hierarchy should include nodes from ALL levels:
+        // - Innermost: Rust AST nodes (from "fn nested() {}")
+        // - Middle: YAML AST nodes (from the YAML content)
+        // - Outer: Rust AST nodes (from the host document)
+        //
+        // Count selection levels - with nested injection we should have MORE levels
+        // than single-level injection because we're parsing through multiple ASTs
+        let mut level_count = 0;
+        let mut curr = Some(&selection);
+        while let Some(sel) = curr {
+            level_count += 1;
+            curr = sel.parent.as_ref().map(|p| p.as_ref());
+        }
+
+        // With nested injection (Rust → YAML → Rust):
+        // - Inner Rust nodes: identifier → function_item or similar (depends on cursor position)
+        // - YAML nodes: double_quote_scalar → flow_node → block_mapping_pair → ...
+        // - Outer Rust nodes: string_content → raw_string_literal → let_declaration → ...
+        //
+        // We expect significantly more levels than single injection (which had ~8)
+        // With nested injection we should have ~12+ levels
+        assert!(
+            level_count >= 12,
+            "Expected at least 12 selection levels with nested injection (Rust → YAML → Rust), got {}. \
+             This indicates nested injection was not properly handled.",
+            level_count
+        );
     }
 
     /// Test that selection range parses injected content and builds hierarchy from injected AST.

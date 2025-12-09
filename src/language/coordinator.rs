@@ -356,4 +356,15 @@ impl LanguageCoordinator {
         self.language_registry
             .register_unchecked(language_id.to_string(), language);
     }
+
+    /// Register an injection query directly for testing purposes.
+    ///
+    /// This bypasses the normal loading process and directly registers
+    /// an injection query in the query store. Useful for unit tests
+    /// that need to test nested injection scenarios.
+    #[cfg(test)]
+    pub fn register_injection_query_for_test(&self, language_id: &str, query: tree_sitter::Query) {
+        self.query_store
+            .insert_injection_query(language_id.to_string(), Arc::new(query));
+    }
 }
