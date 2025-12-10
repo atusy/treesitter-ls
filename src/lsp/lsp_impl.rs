@@ -88,7 +88,16 @@ impl TreeSitterLs {
 
             // Parse the document
             let parsed_tree = {
-                let mut pool = self.parser_pool.lock().unwrap();
+                let mut pool = match self.parser_pool.lock() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => {
+                        log::warn!(
+                            target: "treesitter_ls::lock_recovery",
+                            "Recovered from poisoned parser pool lock in did_open"
+                        );
+                        poisoned.into_inner()
+                    }
+                };
                 if let Some(mut parser) = pool.acquire(&language_name) {
                     let old_tree = if !edits.is_empty() {
                         self.documents.get_edited_tree(&uri, &edits)
@@ -777,7 +786,16 @@ impl LanguageServer for TreeSitterLs {
             .and_then(|lang| self.language.get_injection_query(lang));
 
         // Use full injection parsing handler with coordinator and parser pool
-        let mut pool = self.parser_pool.lock().unwrap();
+        let mut pool = match self.parser_pool.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                log::warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned parser pool lock in selection_range"
+                );
+                poisoned.into_inner()
+            }
+        };
         let result = handle_selection_range_with_parsed_injection(
             &doc,
             &positions,
