@@ -115,7 +115,7 @@ const MAX_INJECTION_DEPTH: usize = 10;
 /// # Returns
 /// SelectionRange that includes nodes from both injected and host language ASTs
 #[allow(clippy::too_many_arguments)]
-pub fn build_selection_range_with_parsed_injection(
+fn build_selection_range_with_parsed_injection(
     node: Node,
     root: &Node,
     text: &str,
