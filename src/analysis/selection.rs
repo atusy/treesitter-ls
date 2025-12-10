@@ -571,15 +571,9 @@ mod tests {
     use super::*;
     use tree_sitter::Point;
 
+    /// Verifies offset directive parsing and effective range boundary checking.
     #[test]
     fn test_selection_range_respects_offset_directive() {
-        // Test that the offset directive is correctly parsed and applied
-        // to determine whether cursor is within effective injection range.
-        //
-        // Since both "inside" and "outside" effective range produce similar
-        // selection hierarchies when starting from the injection content node itself,
-        // this test verifies the offset parsing and effective range calculation
-        // by directly testing is_cursor_within_effective_range.
         use crate::text::PositionMapper;
         use tree_sitter::{Parser, Query};
 
@@ -587,16 +581,14 @@ mod tests {
         let language = tree_sitter_rust::LANGUAGE.into();
         parser.set_language(&language).expect("load rust grammar");
 
-        // Rust code with regex injection - the string content is "_^\d+$"
+        // string_content "_^\d+$" is at bytes 43-49
         let text = r#"fn main() {
     let pattern = Regex::new(r"_^\d+$").unwrap();
 }"#;
         let tree = parser.parse(text, None).expect("parse rust");
         let root = tree.root_node();
 
-        // Create injection query with offset directive (0, 2, 0, 0)
-        // This means effective range starts 2 bytes after capture start
-        // string_content is at bytes 43-49, so effective range is 45-49
+        // offset (0, 2, 0, 0) means effective range starts 2 bytes after capture → bytes 45-49
         let injection_query_str = r#"
 (call_expression
   function: (scoped_identifier
@@ -614,7 +606,6 @@ mod tests {
         let injection_query = Query::new(&language, injection_query_str).expect("valid query");
         let mapper = PositionMapper::new(text);
 
-        // Get the string_content node
         let underscore_pos = Position::new(1, 31);
         let underscore_point = Point::new(
             underscore_pos.line as usize,
@@ -630,7 +621,6 @@ mod tests {
         assert_eq!(string_content_node.start_byte(), 43);
         assert_eq!(string_content_node.end_byte(), 49);
 
-        // Verify offset directive is correctly parsed for pattern 0
         let offset = parse_offset_directive_for_pattern(&injection_query, 0);
         assert!(offset.is_some(), "Offset directive should be found");
         let offset = offset.unwrap();
@@ -639,14 +629,13 @@ mod tests {
         assert_eq!(offset.end_row, 0);
         assert_eq!(offset.end_column, 0);
 
-        // Test effective range checking
-        // Cursor at underscore (byte 43) - should be OUTSIDE effective range (45-49)
+        // byte 43 (underscore) is OUTSIDE effective range 45-49
         assert!(
             !is_cursor_within_effective_range(text, &string_content_node, underscore_byte, offset),
             "Cursor at byte 43 (underscore) should be OUTSIDE effective range 45-49"
         );
 
-        // Cursor at caret position (byte 45) - should be INSIDE effective range
+        // byte 45 (caret) is INSIDE effective range
         let caret_pos = Position::new(1, 33);
         let caret_byte = mapper.position_to_byte(caret_pos).unwrap();
         assert_eq!(caret_byte, 45, "Caret should be at byte 45");
@@ -656,37 +645,23 @@ mod tests {
             "Cursor at byte 45 (caret ^) should be INSIDE effective range 45-49"
         );
 
-        // Cursor at position 44 (between underscore and caret) - should be OUTSIDE
+        // byte 44 is OUTSIDE effective range
         assert!(
             !is_cursor_within_effective_range(text, &string_content_node, 44, offset),
             "Cursor at byte 44 should be OUTSIDE effective range 45-49"
         );
     }
 
-    /// Test that selection range handles nested injections recursively and includes content node boundary.
-    ///
-    /// This is the core test for Sprint 5 nested injection support: when cursor is inside
-    /// a nested injection region, the selection should expand through ALL injection levels'
-    /// AST nodes, and include the content node boundary (e.g., double_quote_scalar in YAML)
-    /// so users can "select the whole nested snippet".
-    ///
-    /// Test scenario:
-    /// - Host: Rust code with a raw string literal containing YAML
-    /// - First injection: YAML content
-    /// - Nested injection: Rust embedded in a YAML double-quoted value
-    /// - Cursor: inside the nested Rust code
-    /// - Expected: Selection hierarchy includes nodes from Rust, YAML, and host Rust
+    /// Nested injection (Rust → YAML → Rust) includes content node boundary in hierarchy.
     #[test]
     fn test_nested_injection_includes_content_node_boundary() {
         use crate::language::LanguageCoordinator;
         use tree_sitter::{Parser, Query};
 
-        // Setup: Rust → YAML → Rust nested injection (same as test_selection_range_handles_nested_injection)
         let coordinator = LanguageCoordinator::new();
         coordinator.register_language_for_test("yaml", tree_sitter_yaml::LANGUAGE.into());
         coordinator.register_language_for_test("rust", tree_sitter_rust::LANGUAGE.into());
 
-        // YAML injection query that matches double_quote_scalar as Rust
         let yaml_injection_query_str = r#"
 ((double_quote_scalar) @injection.content
  (#set! injection.language "rust"))
@@ -698,21 +673,19 @@ mod tests {
 
         let mut parser_pool = coordinator.create_document_parser_pool();
 
-        // Host document: Rust → YAML → Rust
-        // The YAML has a double_quote_scalar: "fn nested() {}"
         let mut parser = Parser::new();
         let rust_language = tree_sitter_rust::LANGUAGE.into();
         parser
             .set_language(&rust_language)
             .expect("load rust grammar");
 
+        // Rust → YAML → Rust: double_quote_scalar contains "fn nested() {}"
         let text = r##"fn main() {
     let yaml = r#"title: "fn nested() {}""#;
 }"##;
         let tree = parser.parse(text, None).expect("parse rust");
         let root = tree.root_node();
 
-        // Rust → YAML injection query
         let injection_query_str = r#"
 (raw_string_literal
   (string_content) @injection.content
@@ -721,7 +694,6 @@ mod tests {
         let injection_query =
             Query::new(&rust_language, injection_query_str).expect("valid injection query");
 
-        // Position inside the nested Rust code
         let cursor_pos = Position::new(1, 33);
         let mapper = crate::text::PositionMapper::new(text);
         let cursor_byte = mapper.position_to_byte(cursor_pos).unwrap();
@@ -742,7 +714,6 @@ mod tests {
             cursor_byte,
         );
 
-        // Collect all ranges in the selection hierarchy
         let mut ranges: Vec<Range> = Vec::new();
         let mut curr = Some(&selection);
         while let Some(sel) = curr {
@@ -750,36 +721,13 @@ mod tests {
             curr = sel.parent.as_ref().map(|p| p.as_ref());
         }
 
-        // Verify sufficient nesting depth (from merged test_selection_range_handles_nested_injection)
-        // With nested injection (Rust → YAML → Rust), we expect at least 7 levels
         assert!(
             ranges.len() >= 7,
             "Expected at least 7 selection levels with nested injection, got {}",
             ranges.len()
         );
 
-        // The nested content node is double_quote_scalar in YAML, which contains "fn nested() {}"
-        // Its range in the host document should be around line 1, columns 25-41
-        // (the exact position depends on YAML parsing, but it should be present)
-        //
-        // We need to find a range that corresponds to the nested injection's content node,
-        // which is larger than the innermost Rust nodes but smaller than the YAML block_mapping_pair.
-        //
-        // Since double_quote_scalar includes the quotes, its range in the original document
-        // would be roughly columns 25-41 on line 1 (where the quoted string is).
-        //
-        // For this test, we verify that there exists a range in the selection hierarchy
-        // that matches the nested content node's expected position.
-        //
-        // The double_quote_scalar node (nested content) spans from the opening quote to closing quote.
-        // In YAML context, it's at the beginning of the YAML content.
-        // After adjustment to host coordinates, it should be around:
-        // - start: line 1, col 25 (start of "fn nested() {}")
-        // - end: line 1, col 41 (end of "fn nested() {}")
-
-        // The string_content in YAML starts at col 18: `title: "fn nested() {}"`
-        // The double_quote_scalar starts at col 25: `"fn nested() {}"`
-        // Look for a range that starts around column 25-26 and ends around 40-41
+        // double_quote_scalar boundary should be around (1:25-26 to 1:40-42)
         let nested_content_found = ranges.iter().any(|r| {
             r.start.line == 1
                 && r.start.character >= 25
@@ -798,38 +746,23 @@ mod tests {
         );
     }
 
-    /// Test that selection range parses injected content and builds hierarchy from injected AST.
-    ///
-    /// This is the core test for Sprint 3: when cursor is inside an injection region,
-    /// the selection should expand through the INJECTED language's AST nodes, not just
-    /// the host document's content node.
-    ///
-    /// Test scenario:
-    /// - Host: Rust code with a raw string literal
-    /// - Content: YAML text inside the string
-    /// - Cursor: inside "awesome" in the YAML content
-    /// - Expected: Selection hierarchy includes YAML AST nodes (e.g., `double_quote_scalar`)
+    /// Injected content (YAML in Rust string) produces selection hierarchy from injected AST.
     #[test]
     fn test_selection_range_parses_injected_content() {
         use crate::language::LanguageCoordinator;
         use tree_sitter::{Parser, Query};
 
-        // Setup: Create a coordinator with YAML language registered
         let coordinator = LanguageCoordinator::new();
         coordinator.register_language_for_test("yaml", tree_sitter_yaml::LANGUAGE.into());
 
         let mut parser_pool = coordinator.create_document_parser_pool();
 
-        // Host document: Rust code with a string that we'll treat as YAML injection
-        // Using Rust as host because we have tree-sitter-rust available
         let mut parser = Parser::new();
         let rust_language = tree_sitter_rust::LANGUAGE.into();
         parser
             .set_language(&rust_language)
             .expect("load rust grammar");
 
-        // The string content `title: "awesome"\narray: ["xxxx"]` will be our "injected" YAML
-        // Using r##"..."## to allow r#"..."# inside
         let text = r##"fn main() {
     let yaml = r#"title: "awesome"
 array: ["xxxx"]"#;
@@ -837,7 +770,6 @@ array: ["xxxx"]"#;
         let tree = parser.parse(text, None).expect("parse rust");
         let root = tree.root_node();
 
-        // Create injection query that captures the raw_string_literal content as YAML
         let injection_query_str = r#"
 (raw_string_literal
   (string_content) @injection.content
@@ -846,28 +778,16 @@ array: ["xxxx"]"#;
         let injection_query =
             Query::new(&rust_language, injection_query_str).expect("valid injection query");
 
-        // Position inside the YAML string - at "awesome"
-        // Line 0: fn main() {
-        // Line 1:     let yaml = r#"title: "awesome"
-        //                          ^------- column 18 is start of string_content
-        //                                 ^ column 25 is 't' in 'title', col 32 is 'a' in 'awesome'
-        let cursor_pos = Position::new(1, 32); // line 1, col 32 = 'a' in "awesome"
+        let cursor_pos = Position::new(1, 32); // 'a' in "awesome"
         let point = Point::new(cursor_pos.line as usize, cursor_pos.character as usize);
 
         let node = root
             .descendant_for_point_range(point, point)
             .expect("should find node");
 
-        // Calculate cursor byte offset
         let mapper = crate::text::PositionMapper::new(text);
         let cursor_byte = mapper.position_to_byte(cursor_pos).unwrap();
 
-        // Call the new function that parses injected content
-        // This function should:
-        // 1. Detect the injection (string_content with YAML)
-        // 2. Parse the injected content as YAML
-        // 3. Find the node at cursor in the YAML AST
-        // 4. Build selection from YAML node through to host document
         let selection = build_selection_range_with_parsed_injection(
             node,
             &root,
@@ -880,13 +800,6 @@ array: ["xxxx"]"#;
             cursor_byte,
         );
 
-        // Verify: The selection hierarchy should include YAML-specific nodes
-        // We can't directly check node kinds from SelectionRange, but we can verify
-        // that we have MORE selection levels than the host document alone would provide.
-        // The extra levels come from the injected YAML AST (double_quote_scalar,
-        // flow_node, block_mapping_pair, block_mapping, block_node, document, stream)
-
-        // Count selection levels
         let mut level_count = 0;
         let mut curr = Some(&selection);
         while let Some(sel) = curr {
@@ -894,9 +807,7 @@ array: ["xxxx"]"#;
             curr = sel.parent.as_ref().map(|p| p.as_ref());
         }
 
-        // Without injection parsing: string_content → raw_string_literal → let_declaration → ... → source_file
-        // With injection parsing: double_quote_scalar → flow_node → block_mapping_pair → ... → string_content → ...
-        // We expect MORE levels with injection parsing (deduplication removes same-range nodes)
+        // With injection: YAML AST nodes + host nodes = at least 7 levels
         assert!(
             level_count >= 7,
             "Expected at least 7 selection levels with injected YAML AST, got {}. \
@@ -905,40 +816,28 @@ array: ["xxxx"]"#;
         );
     }
 
-    /// Test that calculate_nested_start_position handles various offset scenarios correctly.
-    ///
-    /// This function calculates the start position for nested injections relative to the
-    /// host document. It handles:
-    /// 1. Negative offsets (like markdown's `(#offset! @injection.content -1 0 0 0)`)
-    /// 2. Column alignment when row offsets skip lines (e.g., fenced code blocks)
-    ///
-    /// Note: This function was used for Point-based calculation before Sprint 9.
-    /// Production code now uses byte-based offsets, but this test validates the logic.
+    /// Nested start position handles negative offsets and column alignment.
     #[test]
     fn test_calculate_nested_start_position() {
-        // === Negative offset handling ===
-
-        // Case 1: Negative row offset larger than combined row - should saturate to 0
+        // Negative row offset saturates to 0
         let result = calculate_nested_start_position(
             tree_sitter::Point::new(2, 0),
             tree_sitter::Point::new(1, 0),
-            -5, // offset causes underflow
+            -5,
             0,
         );
-        assert_eq!(result.row, 0, "Row should saturate to 0 on underflow");
+        assert_eq!(result.row, 0);
 
-        // Case 2: Negative column offset - should saturate to 0
+        // Negative column offset saturates to 0
         let result = calculate_nested_start_position(
             tree_sitter::Point::new(0, 10),
             tree_sitter::Point::new(0, 5),
             0,
-            -20, // offset causes underflow
+            -20,
         );
-        assert_eq!(result.column, 0, "Column should saturate to 0 on underflow");
+        assert_eq!(result.column, 0);
 
-        // === Column alignment with row offsets ===
-
-        // Case 3: No row offset (effective row 0) - add parent's column
+        // Effective row 0: add parent's column
         let result = calculate_nested_start_position(
             tree_sitter::Point::new(5, 4),
             tree_sitter::Point::new(0, 0),
@@ -946,25 +845,19 @@ array: ["xxxx"]"#;
             0,
         );
         assert_eq!(result.row, 5);
-        assert_eq!(
-            result.column, 4,
-            "Add parent column when effective row is 0"
-        );
+        assert_eq!(result.column, 4);
 
-        // Case 4: Row offset moves to later row - column is absolute
+        // Row offset > 0: column is absolute
         let result = calculate_nested_start_position(
             tree_sitter::Point::new(5, 4),
             tree_sitter::Point::new(0, 0),
-            1, // skip fence line
+            1,
             0,
         );
         assert_eq!(result.row, 6);
-        assert_eq!(
-            result.column, 0,
-            "Column is absolute when offset moves to later row"
-        );
+        assert_eq!(result.column, 0);
 
-        // Case 5: Positive offset to later rows - column is absolute
+        // Positive offset: column is absolute
         let result = calculate_nested_start_position(
             tree_sitter::Point::new(10, 5),
             tree_sitter::Point::new(0, 3),
@@ -972,9 +865,9 @@ array: ["xxxx"]"#;
             1,
         );
         assert_eq!(result.row, 12);
-        assert_eq!(result.column, 4, "Column: 3 + 1 = 4 (absolute)");
+        assert_eq!(result.column, 4);
 
-        // Case 6: No row offset, content at row 0 - add parent column
+        // No row offset: add parent column
         let result = calculate_nested_start_position(
             tree_sitter::Point::new(10, 5),
             tree_sitter::Point::new(0, 3),
@@ -982,24 +875,20 @@ array: ["xxxx"]"#;
             1,
         );
         assert_eq!(result.row, 10);
-        assert_eq!(result.column, 9, "Column: 5 + 3 + 1 = 9 (adds parent)");
+        assert_eq!(result.column, 9);
 
-        // Case 7: Negative offset brings effective row back to 0 - add parent column
+        // Negative offset brings effective row to 0: add parent column
         let result = calculate_nested_start_position(
             tree_sitter::Point::new(5, 4),
             tree_sitter::Point::new(1, 2),
-            -1, // effective row becomes 0
+            -1,
             0,
         );
         assert_eq!(result.row, 5);
-        assert_eq!(result.column, 6, "Column: 4 + 2 = 6 (adds parent)");
+        assert_eq!(result.column, 6);
     }
 
-    /// Test that build_selection_range deduplicates nodes with identical ranges.
-    ///
-    /// In Tree-sitter ASTs, it's common for a node and its parent to have the same
-    /// byte range (e.g., `identifier` wrapped by `expression` with same range).
-    /// LSP spec requires strictly expanding ranges, so we must skip duplicates.
+    /// Deduplicates nodes with identical ranges (LSP requires strictly expanding ranges).
     #[test]
     fn test_selection_range_deduplicates_same_range_nodes() {
         use tree_sitter::Parser;
@@ -1008,26 +897,20 @@ array: ["xxxx"]"#;
         let language = tree_sitter_rust::LANGUAGE.into();
         parser.set_language(&language).expect("load rust grammar");
 
-        // In Rust, a simple expression like "foo" inside a function creates a chain
-        // where some nodes may have identical ranges (e.g., identifier wrapped by expression)
-        // Let's use a simple variable reference in a return statement
         let text = "fn f() { x }";
         let tree = parser.parse(text, None).expect("parse rust");
         let root = tree.root_node();
 
-        // Find the identifier node for "x"
         let cursor_byte = 9; // position of "x"
         let node = root
             .descendant_for_byte_range(cursor_byte, cursor_byte)
             .expect("should find node");
 
-        assert_eq!(node.kind(), "identifier", "Should find identifier node");
+        assert_eq!(node.kind(), "identifier");
 
-        // Build selection range
         let mapper = PositionMapper::new(text);
         let selection = build_selection_range(node, &mapper);
 
-        // Collect all ranges in the hierarchy
         let mut ranges: Vec<(u32, u32, u32, u32)> = Vec::new();
         let mut curr = Some(&selection);
         while let Some(sel) = curr {
@@ -1040,22 +923,18 @@ array: ["xxxx"]"#;
             curr = sel.parent.as_ref().map(|p| p.as_ref());
         }
 
-        // Check for duplicates - no two consecutive ranges should be identical
+        // No consecutive duplicates allowed
         for i in 1..ranges.len() {
             assert_ne!(
                 ranges[i - 1],
                 ranges[i],
-                "Found duplicate ranges at positions {} and {}: {:?}. \
-                 Selection range should deduplicate nodes with identical ranges.",
+                "Found duplicate ranges at positions {} and {}: {:?}",
                 i - 1,
                 i,
                 ranges[i]
             );
         }
 
-        // Also verify we have reasonable number of levels (not too many due to duplicates)
-        // The exact count depends on grammar, but with deduplication it should be reasonable
-        // If there are duplicates, we'd have extra levels
         assert!(
             ranges.len() <= 8,
             "Expected at most 8 levels (with deduplication), got {}. Ranges: {:?}",
@@ -1064,17 +943,8 @@ array: ["xxxx"]"#;
         );
     }
 
-    /// Test that selection ranges correctly handle multi-byte UTF-8 characters.
-    ///
-    /// LSP positions use UTF-16 code units for columns, but tree-sitter uses byte offsets.
-    /// The `node_to_range` function must convert tree-sitter byte columns to UTF-16.
-    ///
-    /// Example: "let あ = 1; let x = 2;"
-    /// - "あ" is 3 bytes in UTF-8 but 1 UTF-16 code unit
-    /// - 'x' is at byte 17 (0-indexed) in UTF-8
-    /// - 'x' is at column 15 (0-indexed) in UTF-16
-    /// - If `node_to_range` outputs byte columns, we'd get character=17 (WRONG)
-    /// - Correct output should have character=15
+    /// Selection ranges use UTF-16 columns, not byte offsets.
+    /// "あ" = 3 bytes UTF-8, 1 UTF-16 code unit. 'x' at byte 17 → UTF-16 column 15.
     #[test]
     fn test_selection_range_output_uses_utf16_columns() {
         use tree_sitter::Parser;
@@ -1083,32 +953,13 @@ array: ["xxxx"]"#;
         let language = tree_sitter_rust::LANGUAGE.into();
         parser.set_language(&language).expect("load rust grammar");
 
-        // "あ" is 3 bytes in UTF-8 but 1 UTF-16 code unit
-        // "let あ = 1; let x = 2;"
-        //  0123 4 567890123456789...  (UTF-16 columns)
-        //  0123 456 789...            (UTF-8 bytes, where あ takes 3 bytes at positions 4,5,6)
-        //
-        // UTF-16 breakdown:
-        // "let " = cols 0-3 (4 chars)
-        // "あ"   = col 4 (1 char)
-        // " = 1; let " = cols 5-14 (10 chars)
-        // "x"    = col 15 (1 char)
-        //
-        // UTF-8 byte breakdown:
-        // "let " = bytes 0-3 (4 bytes)
-        // "あ"   = bytes 4-6 (3 bytes: E3 81 82)
-        // " = 1; let " = bytes 7-16 (10 bytes)
-        // "x"    = byte 17 (1 byte)
         let text = "let あ = 1; let x = 2;";
         let tree = parser.parse(text, None).expect("parse rust");
         let root = tree.root_node();
 
-        // Note: We need a PositionMapper because build_selection_range now requires it
-        // This is the Sprint 7 change: pass the cached mapper instead of text
         let mapper = PositionMapper::new(text);
 
-        // Find 'x' using byte offset
-        let byte_offset = 17; // 'x' is at byte 17
+        let byte_offset = 17; // 'x' at byte 17
         let node = root
             .descendant_for_byte_range(byte_offset, byte_offset)
             .expect("should find node");
@@ -1116,34 +967,14 @@ array: ["xxxx"]"#;
         assert_eq!(node.kind(), "identifier");
         assert_eq!(&text[node.byte_range()], "x");
 
-        // Build selection range - this is what the LSP returns to the client
         let selection = build_selection_range(node, &mapper);
 
-        // CRITICAL ASSERTION: The output range MUST use UTF-16 columns!
-        // 'x' starts at UTF-16 column 15, not byte 17
-        assert_eq!(
-            selection.range.start.character, 15,
-            "Selection start should be UTF-16 column 15, not byte offset 17. \
-             node_to_range must convert tree-sitter byte columns to UTF-16."
-        );
-        assert_eq!(
-            selection.range.end.character, 16,
-            "Selection end should be UTF-16 column 16 (one past 'x')"
-        );
+        // UTF-16 column 15, not byte 17
+        assert_eq!(selection.range.start.character, 15);
+        assert_eq!(selection.range.end.character, 16);
     }
 
-    /// Test that injected content selection ranges use UTF-16 columns correctly.
-    ///
-    /// This is the core test for review.md Issue 1 (second review): `adjust_range_to_host`
-    /// creates LSP Positions directly from byte columns, but should use UTF-16.
-    ///
-    /// Scenario: Rust code with a raw string containing Japanese text treated as YAML.
-    /// The YAML content has multi-byte characters, and the selection ranges should
-    /// use UTF-16 columns when reported to the LSP client.
-    ///
-    /// Example: `let yaml = r#"あ: 0"#;`
-    /// The "あ" in the YAML content is at a certain byte position, but the LSP
-    /// should report its UTF-16 column position.
+    /// Injected content uses UTF-16 columns. "0" in `r#"あ: 0"#` is at UTF-16 col 17, not byte 19.
     #[test]
     fn test_injected_selection_range_uses_utf16_columns() {
         use crate::language::LanguageCoordinator;
@@ -1152,7 +983,6 @@ array: ["xxxx"]"#;
         let coordinator = LanguageCoordinator::new();
         coordinator.register_language_for_test("yaml", tree_sitter_yaml::LANGUAGE.into());
 
-        // YAML injection query that matches double_quote_scalar
         let yaml_injection_query_str = r#"
 ((double_quote_scalar) @injection.content
  (#set! injection.language "yaml"))
@@ -1170,26 +1000,12 @@ array: ["xxxx"]"#;
             .set_language(&rust_language)
             .expect("load rust grammar");
 
-        // Rust code with Japanese text in YAML injection
-        // "あ" is 3 bytes in UTF-8 but 1 UTF-16 code unit
-        // The YAML content "あ: 0" has the "0" at:
-        // - Relative to YAML content start: byte 5 (あ=3 bytes + ":"+space = 2)
-        // - In UTF-16 within YAML: column 3 (あ=1 + ":"+space = 2)
-        //
-        // In the host document:
-        // let yaml = r#"あ: 0"#;
-        //  0         1         2
-        //  0123456789012345678901234
-        //               ^-- raw string starts at byte 14
-        //
-        // After r#" the YAML content "あ: 0" starts at byte 17
-        // The "0" is at byte 17 + 5 = 22 in the host document
-        // But in UTF-16, column calculation should account for あ being 1 char
+        // "あ" = 3 bytes UTF-8, 1 UTF-16 code unit
+        // "0" at UTF-16 col 17, byte 19
         let text = "let yaml = r#\"あ: 0\"#;";
         let tree = parser.parse(text, None).expect("parse");
         let root = tree.root_node();
 
-        // Rust to YAML injection query
         let injection_query_str = r#"
 (raw_string_literal
   (string_content) @injection.content
@@ -1197,18 +1013,8 @@ array: ["xxxx"]"#;
         "#;
         let injection_query = Query::new(&rust_language, injection_query_str).expect("valid query");
 
-        // Position the cursor at "0" in the YAML content
-        // In the host document, we need to find the byte position of "0"
-        // let yaml = r#" is 14 bytes (all ASCII), then string_content starts
-        // Then "あ: 0" where:
-        // - "あ" = 3 bytes
-        // - ": " = 2 bytes
-        // - "0" at relative byte 5 within content
-        //
-        // Actually, let's verify by finding the string_content node
         let mapper = crate::text::PositionMapper::new(text);
 
-        // Find the string_content node first
         let mut cursor = root.walk();
         let mut content_node = None;
         loop {
@@ -1231,15 +1037,11 @@ array: ["xxxx"]"#;
         }
         let content_node = content_node.expect("Should find string_content node");
 
-        // The string_content contains "あ: 0"
         let content_text = &text[content_node.byte_range()];
-        assert_eq!(content_text, "あ: 0", "Content should be the YAML text");
+        assert_eq!(content_text, "あ: 0");
 
-        // The "0" is at relative byte 5 within the content (あ=3 + ": "=2)
-        // In host document: content_node.start_byte() + 5
-        let zero_byte_in_host = content_node.start_byte() + 5;
+        let zero_byte_in_host = content_node.start_byte() + 5; // "あ"=3 + ": "=2
 
-        // Now use the handler function
         let selection = build_selection_range_with_parsed_injection(
             content_node,
             &root,
@@ -1252,71 +1054,23 @@ array: ["xxxx"]"#;
             zero_byte_in_host,
         );
 
-        // The innermost selection should be for the "0" in the YAML
-        // CRITICAL: The column should be in UTF-16, not bytes!
-        //
-        // Host document UTF-16 analysis:
-        // let yaml = r#"あ: 0"#;
-        //  0         1         2
-        //  0123456789012345678901
-        //               ^-- r#" starts at col 11
-        //                 ^-- content starts at col 14 (after r#")
-        //                 あ at col 14
-        //                  : at col 15
-        //                    at col 16 (space)
-        //                  0 at col 17
-        //
-        // Wait, let me recalculate:
-        // "let yaml = r#" is 14 characters
-        // Then the string content:
-        // "あ" = 1 UTF-16 code unit at col 14
-        // ":" = 1 at col 15
-        // " " = 1 at col 16
-        // "0" = 1 at col 17
-        //
-        // So "0" should be at UTF-16 column 17 in the host document.
-        // If we incorrectly use bytes:
-        // "let yaml = r#" = 14 bytes
-        // "あ" = 3 bytes at byte 14-16
-        // ": " = 2 bytes at byte 17-18
-        // "0" at byte 19
-        //
-        // So incorrect byte-based would give column 19, correct UTF-16 gives 17.
-
-        // Find the innermost range (for "0")
-        let _innermost_range = selection.range;
-
-        // The selection might be for a larger YAML node. Let's check what we got.
-        // Walk up to verify we have injected content
+        // Find small range in injected content, verify UTF-16 column < 19 (byte offset)
         let mut found_small_range = false;
         let mut current = &selection;
         loop {
-            // Look for a range that could be the "0" node
-            // It should be small (1 character) and on line 0
             if current.range.start.line == 0
                 && current.range.end.line == 0
                 && current.range.end.character - current.range.start.character <= 5
+                && current.range.start.character >= 17
+                && current.range.start.character <= 20
             {
-                // This is likely in the injected content
-                // The column should NOT be the byte offset
-                if current.range.start.character >= 17 && current.range.start.character <= 20 {
-                    // Check that it's using UTF-16, not bytes
-                    // If using bytes incorrectly, we'd see character=19 for "0"
-                    // If correct UTF-16, we'd see character=17 for "0"
-                    // (or similar values for enclosing YAML nodes)
-                    found_small_range = true;
-
-                    // The key assertion: if adjust_range_to_host uses bytes directly,
-                    // we'd get wrong column values. After the fix, columns are UTF-16.
-                    // For "0", the UTF-16 column is 17, byte offset is 19.
-                    assert!(
-                        current.range.start.character < 19,
-                        "Expected UTF-16 column (17 or 18), got byte-based column {}. \
-                         adjust_range_to_host must convert byte columns to UTF-16.",
-                        current.range.start.character
-                    );
-                    break;
-                }
+                found_small_range = true;
+                assert!(
+                    current.range.start.character < 19,
+                    "Expected UTF-16 column (17 or 18), got byte-based column {}",
+                    current.range.start.character
+                );
+                break;
             }
             if let Some(parent) = &current.parent {
                 current = parent.as_ref();
@@ -1327,19 +1081,12 @@ array: ["xxxx"]"#;
 
         assert!(
             found_small_range,
-            "Should find a small range in the injected content. \
-             Selection ranges: {:?}",
+            "Should find a small range in the injected content. Selection ranges: {:?}",
             collect_ranges(&selection)
         );
     }
 
-    /// Test that invalid positions get fallback empty ranges (LSP-compliant alignment)
-    ///
-    /// LSP Spec 3.17 states: "To allow for results where some positions have
-    /// selection ranges and others do not, result[i].range is allowed to be
-    /// the empty range at positions[i]."
-    ///
-    /// This ensures multi-cursor editors receive correctly aligned results.
+    /// Invalid positions get fallback empty ranges (LSP Spec 3.17: 1:1 position-result alignment).
     #[test]
     fn test_selection_range_maintains_position_alignment() {
         use crate::document::store::DocumentStore;
@@ -1354,7 +1101,6 @@ array: ["xxxx"]"#;
         let text = "let x = 1;\nlet y = 2;";
         let tree = parser.parse(text, None).expect("parse rust");
 
-        // Create a document with the parsed tree
         let url = Url::parse("file:///test.rs").unwrap();
         let store = DocumentStore::new();
         store.insert(
@@ -1364,10 +1110,6 @@ array: ["xxxx"]"#;
             Some(tree),
         );
 
-        // Request selection ranges for multiple positions:
-        // - Position 0: valid (line 0, col 4 = 'x')
-        // - Position 1: INVALID (line 100 doesn't exist!)
-        // - Position 2: valid (line 1, col 4 = 'y')
         let positions = vec![
             Position::new(0, 4),   // valid: 'x'
             Position::new(100, 0), // invalid: line 100 doesn't exist
@@ -1386,43 +1128,14 @@ array: ["xxxx"]"#;
             &mut parser_pool,
         );
 
-        // LSP requires 1:1 correspondence between positions and results
-        assert!(
-            result.is_some(),
-            "Request should not fail entirely due to one invalid position"
-        );
-
+        assert!(result.is_some());
         let ranges = result.unwrap();
 
-        // CRITICAL: Result length MUST equal input positions length for alignment
-        assert_eq!(
-            ranges.len(),
-            positions.len(),
-            "Result length must equal input positions length for LSP alignment"
-        );
-
-        // Position 0 (valid): should have a real selection range for 'x'
-        assert!(
-            ranges[0].range.start.line == 0,
-            "First result should be for line 0"
-        );
-
-        // Position 1 (invalid): should have an empty fallback range
-        // LSP spec allows empty range at the requested position
-        assert_eq!(
-            ranges[1].range.start, ranges[1].range.end,
-            "Invalid position should get an empty (zero-length) range"
-        );
-        assert!(
-            ranges[1].parent.is_none(),
-            "Fallback range should have no parent"
-        );
-
-        // Position 2 (valid): should have a real selection range for 'y'
-        assert!(
-            ranges[2].range.start.line == 1,
-            "Third result should be for line 1"
-        );
+        assert_eq!(ranges.len(), positions.len());
+        assert!(ranges[0].range.start.line == 0);
+        assert_eq!(ranges[1].range.start, ranges[1].range.end); // invalid → empty
+        assert!(ranges[1].parent.is_none());
+        assert!(ranges[2].range.start.line == 1);
     }
 
     /// Helper to collect all ranges in a selection hierarchy for debugging
@@ -1436,11 +1149,7 @@ array: ["xxxx"]"#;
         ranges
     }
 
-    /// Test that empty documents return valid fallback ranges
-    ///
-    /// Empty documents are an edge case where tree-sitter produces an empty tree
-    /// (or a tree with only an ERROR node). The selection range handler should
-    /// return a valid empty range at the requested position.
+    /// Empty documents return valid fallback range at (0, 0).
     #[test]
     fn test_selection_range_handles_empty_document() {
         use crate::document::store::DocumentStore;
@@ -1452,11 +1161,9 @@ array: ["xxxx"]"#;
         let language = tree_sitter_rust::LANGUAGE.into();
         parser.set_language(&language).expect("load rust grammar");
 
-        // Empty document
         let text = "";
         let tree = parser.parse(text, None).expect("parse empty document");
 
-        // Create a document with the parsed tree
         let url = Url::parse("file:///empty.rs").unwrap();
         let store = DocumentStore::new();
         store.insert(
@@ -1466,7 +1173,6 @@ array: ["xxxx"]"#;
             Some(tree),
         );
 
-        // Request selection range at position (0, 0) - the only valid position
         let positions = vec![Position::new(0, 0)];
 
         let coordinator = LanguageCoordinator::new();
@@ -1481,28 +1187,10 @@ array: ["xxxx"]"#;
             &mut parser_pool,
         );
 
-        // Should return a result (not fail entirely)
-        assert!(
-            result.is_some(),
-            "Empty document should still return a selection range result"
-        );
-
+        assert!(result.is_some());
         let ranges = result.unwrap();
-
-        // Should return exactly one result for the one position
-        assert_eq!(ranges.len(), 1, "Should return one range for one position");
-
-        // The result should be an empty range at (0, 0) since there are no AST nodes
-        let range = &ranges[0];
-        assert_eq!(
-            range.range.start,
-            Position::new(0, 0),
-            "Empty document range should start at (0, 0)"
-        );
-        assert_eq!(
-            range.range.end,
-            Position::new(0, 0),
-            "Empty document range should end at (0, 0)"
-        );
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].range.start, Position::new(0, 0));
+        assert_eq!(ranges[0].range.end, Position::new(0, 0));
     }
 }
