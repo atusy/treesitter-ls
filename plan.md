@@ -552,9 +552,12 @@ Sprint 8's approach of adding `position_to_point` to PositionMapper was the righ
 **Sprint 9 Complete:**
 - ✅ User Story 11: Fix injected selection ranges to use UTF-16 columns
 
-**Likely Auto-Fixed by Sprint 9:**
-- User Story 12: Fix offset handling (the problematic code was removed)
+**Auto-Fixed by Sprint 9:**
+- ✅ User Story 12: Fix offset handling (the problematic code at line 308-311 was removed)
 
-**Next Step:**
-- Verify Issue 2 is resolved with a test
-- If not, create Sprint 10 to address it
+**All review.md issues are now resolved:**
+- ✅ Issue 1: Injected ranges now use UTF-16 columns (Sprint 9)
+- ✅ Issue 2: Offset handling no longer creates Points from UTF-16 columns (Sprint 9 - auto-fixed)
+- ✅ Issue 3: InputEdit now uses byte-based coordinates (Sprint 8)
+
+The key insight: By switching to a byte-offset-based approach throughout the injection handling code, both Issues 1 and 2 were fixed. The `position_to_point` function is now only used in tests with ASCII-only strings.
