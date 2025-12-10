@@ -155,23 +155,13 @@ fn build_selection_range_with_parsed_injection(
                     1, // depth: first level of nested injection
                 )
             } else {
-                build_injected_selection_range(
-                    injected_node,
-                    &injected_root,
-                    effective_start_byte,
-                    mapper,
-                )
+                build_injected_selection_range(injected_node, effective_start_byte, mapper)
             }
         } else {
-            build_injected_selection_range(
-                injected_node,
-                &injected_root,
-                effective_start_byte,
-                mapper,
-            )
+            build_injected_selection_range(injected_node, effective_start_byte, mapper)
         }
     } else {
-        build_injected_selection_range(injected_node, &injected_root, effective_start_byte, mapper)
+        build_injected_selection_range(injected_node, effective_start_byte, mapper)
     };
 
     let host_selection = Some(build_selection_range(content_node, mapper));
@@ -200,7 +190,7 @@ fn build_recursive_injection_selection(
     depth: usize,
 ) -> SelectionRange {
     if depth >= MAX_INJECTION_DEPTH {
-        return build_injected_selection_range(*node, root, parent_start_byte, mapper);
+        return build_injected_selection_range(*node, parent_start_byte, mapper);
     }
 
     let injection_info = injection::detect_injection_with_content(
@@ -212,16 +202,16 @@ fn build_recursive_injection_selection(
     );
 
     let Some((hierarchy, content_node, pattern_index)) = injection_info else {
-        return build_injected_selection_range(*node, root, parent_start_byte, mapper);
+        return build_injected_selection_range(*node, parent_start_byte, mapper);
     };
 
     if hierarchy.len() < 2 {
-        return build_injected_selection_range(*node, root, parent_start_byte, mapper);
+        return build_injected_selection_range(*node, parent_start_byte, mapper);
     }
     let nested_lang = hierarchy.last().unwrap().clone();
 
     if !coordinator.ensure_language_loaded(&nested_lang).success {
-        return build_injected_selection_range(*node, root, parent_start_byte, mapper);
+        return build_injected_selection_range(*node, parent_start_byte, mapper);
     }
 
     // effective.start is relative to `text`, so host byte = parent_start_byte + effective.start
@@ -241,11 +231,11 @@ fn build_recursive_injection_selection(
     };
 
     let Some(mut nested_parser) = parser_pool.acquire(&nested_lang) else {
-        return build_injected_selection_range(*node, root, parent_start_byte, mapper);
+        return build_injected_selection_range(*node, parent_start_byte, mapper);
     };
     let Some(nested_tree) = nested_parser.parse(nested_text, None) else {
         parser_pool.release(nested_lang.to_string(), nested_parser);
-        return build_injected_selection_range(*node, root, parent_start_byte, mapper);
+        return build_injected_selection_range(*node, parent_start_byte, mapper);
     };
 
     let nested_relative_byte = if let Some(off) = offset {
@@ -262,7 +252,7 @@ fn build_recursive_injection_selection(
         nested_root.descendant_for_byte_range(nested_relative_byte, nested_relative_byte)
     else {
         parser_pool.release(nested_lang.to_string(), nested_parser);
-        return build_injected_selection_range(*node, root, parent_start_byte, mapper);
+        return build_injected_selection_range(*node, parent_start_byte, mapper);
     };
 
     let deeply_nested_injection_query = coordinator.get_injection_query(&nested_lang);
@@ -282,17 +272,11 @@ fn build_recursive_injection_selection(
             depth + 1,
         )
     } else {
-        build_injected_selection_range(
-            nested_node,
-            &nested_root,
-            nested_effective_start_byte,
-            mapper,
-        )
+        build_injected_selection_range(nested_node, nested_effective_start_byte, mapper)
     };
 
     let content_node_selection = Some(build_injected_selection_range(
         content_node,
-        root,
         parent_start_byte,
         mapper,
     ));
@@ -312,24 +296,15 @@ fn build_recursive_injection_selection(
 /// in the host document. The `mapper` is used for proper UTF-16 column conversion.
 fn build_injected_selection_range(
     node: Node,
-    injected_root: &Node,
     content_start_byte: usize,
     mapper: &PositionMapper,
 ) -> SelectionRange {
     let parent = find_distinct_parent(node, &node.byte_range()).map(|parent_node| {
-        if parent_node.id() == injected_root.id() {
-            Box::new(SelectionRange {
-                range: adjust_range_to_host(parent_node, content_start_byte, mapper),
-                parent: None, // Connected to host in chain_injected_to_host
-            })
-        } else {
-            Box::new(build_injected_selection_range(
-                parent_node,
-                injected_root,
-                content_start_byte,
-                mapper,
-            ))
-        }
+        Box::new(build_injected_selection_range(
+            parent_node,
+            content_start_byte,
+            mapper,
+        ))
     });
 
     SelectionRange {

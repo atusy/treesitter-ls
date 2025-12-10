@@ -3,6 +3,7 @@
 //! This module contains functions that build LSP SelectionRange hierarchies
 //! from Tree-sitter AST nodes. These are pure functions with no injection awareness.
 
+pub use super::injection_aware::adjust_range_to_host;
 use tower_lsp::lsp_types::{Position, Range, SelectionRange};
 use tree_sitter::Node;
 
