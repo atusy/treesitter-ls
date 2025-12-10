@@ -4,21 +4,29 @@ use crate::language::injection::{self, parse_offset_directive_for_pattern};
 use crate::language::{DocumentParserPool, LanguageCoordinator};
 use crate::text::PositionMapper;
 use tower_lsp::lsp_types::{Position, Range, SelectionRange};
-use tree_sitter::{Node, Point, Query};
+use tree_sitter::{Node, Query};
+#[cfg(test)]
+use tree_sitter::Point;
 
-/// Convert LSP Position to tree-sitter Point
+/// Convert LSP Position to tree-sitter Point (ASCII-only)
 ///
 /// WARNING: This function treats LSP character (UTF-16 code units) as bytes.
-/// Only use for ASCII-only contexts. For proper conversion, use PositionMapper.
-pub fn position_to_point(pos: &Position) -> Point {
+/// Only safe for ASCII-only text. For proper conversion, use PositionMapper.
+///
+/// This function is restricted to tests to prevent accidental misuse in production code.
+#[cfg(test)]
+fn position_to_point(pos: &Position) -> Point {
     Point::new(pos.line as usize, pos.character as usize)
 }
 
-/// Convert tree-sitter Point to LSP Position
+/// Convert tree-sitter Point to LSP Position (ASCII-only)
 ///
 /// WARNING: This function treats tree-sitter column (bytes) as UTF-16 code units.
-/// Only use for ASCII-only contexts. For proper conversion, use PositionMapper.
-pub fn point_to_position(point: Point) -> Position {
+/// Only safe for ASCII-only text. For proper conversion, use PositionMapper.
+///
+/// This function is restricted to tests to prevent accidental misuse in production code.
+#[cfg(test)]
+fn point_to_position(point: Point) -> Position {
     Position::new(point.row as u32, point.column as u32)
 }
 

@@ -125,25 +125,32 @@ fn test_incremental_edit_with_multibyte_preserves_parsing() {
     assert_eq!(let_decl.kind(), "let_declaration");
 }
 
-/// Test that using the OLD (buggy) position_to_point would cause issues
-/// This test documents the bug behavior
+/// Test that a naive position_to_point (treating UTF-16 as bytes) would cause issues
+/// This test documents the bug behavior that was previously in the codebase
 #[test]
 fn test_old_position_to_point_is_incorrect_for_multibyte() {
-    use treesitter_ls::analysis::position_to_point;
+    use tower_lsp::lsp_types::Position;
+    use tree_sitter::Point;
+
+    // This is the BUGGY implementation that was previously exported.
+    // It's now restricted to tests only and not publicly accessible.
+    fn buggy_position_to_point(pos: &Position) -> Point {
+        Point::new(pos.line as usize, pos.character as usize)
+    }
 
     let text = "あいう";
     // After "あいう" in UTF-16: column 3
     // After "あいう" in bytes: column 9
 
-    let lsp_position = tower_lsp::lsp_types::Position::new(0, 3);
+    let lsp_position = Position::new(0, 3);
 
-    // The OLD function just copies the numeric value - this is WRONG
-    let old_point = position_to_point(&lsp_position);
+    // The BUGGY function just copies the numeric value - this is WRONG
+    let old_point = buggy_position_to_point(&lsp_position);
 
     // This demonstrates the bug: old_point.column is 3 (UTF-16), not 9 (bytes)
     assert_eq!(
         old_point.column, 3,
-        "Old function incorrectly uses UTF-16 column as byte column"
+        "Buggy function incorrectly uses UTF-16 column as byte column"
     );
 
     // The CORRECT value should be 9
@@ -154,6 +161,6 @@ fn test_old_position_to_point_is_incorrect_for_multibyte() {
     // They differ!
     assert_ne!(
         old_point.column, correct_point.column,
-        "This demonstrates the bug: old function gives wrong result for multi-byte chars"
+        "This demonstrates the bug: naive function gives wrong result for multi-byte chars"
     );
 }
