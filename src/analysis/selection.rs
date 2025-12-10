@@ -1127,9 +1127,13 @@ pub fn handle_selection_range_with_injection(
     let mapper = document.position_mapper();
     let text = document.text();
 
-    let ranges = positions
+    // Use filter_map instead of map + collect::<Option<Vec<_>>> to handle
+    // per-position failures gracefully. This allows multi-cursor editors to
+    // get selection ranges for valid positions even if some positions are
+    // stale or invalid (e.g., line number exceeds document lines).
+    let ranges: Vec<SelectionRange> = positions
         .iter()
-        .map(|pos| {
+        .filter_map(|pos| {
             // Convert position to byte offset using the mapper.
             // LSP positions use UTF-16 code units, but tree-sitter uses byte offsets.
             // We must convert properly to avoid finding wrong nodes with multi-byte chars.
@@ -1158,9 +1162,14 @@ pub fn handle_selection_range_with_injection(
                 Some(build_selection_range(node, &mapper))
             }
         })
-        .collect::<Option<Vec<_>>>()?;
+        .collect();
 
-    Some(ranges)
+    // Return None only if no positions could be processed at all
+    if ranges.is_empty() && !positions.is_empty() {
+        None
+    } else {
+        Some(ranges)
+    }
 }
 
 /// Handle textDocument/selectionRange request with full injection parsing support
@@ -1191,9 +1200,13 @@ pub fn handle_selection_range_with_parsed_injection(
     // This avoids O(file_size × positions) work from rebuilding LineIndex for each cursor.
     let mapper = document.position_mapper();
 
-    let ranges = positions
+    // Use filter_map instead of map + collect::<Option<Vec<_>>> to handle
+    // per-position failures gracefully. This allows multi-cursor editors to
+    // get selection ranges for valid positions even if some positions are
+    // stale or invalid (e.g., line number exceeds document lines).
+    let ranges: Vec<SelectionRange> = positions
         .iter()
-        .map(|pos| {
+        .filter_map(|pos| {
             // Get the tree
             let tree = document.tree()?;
             let root = tree.root_node();
@@ -1224,9 +1237,14 @@ pub fn handle_selection_range_with_parsed_injection(
                 Some(build_selection_range(node, &mapper))
             }
         })
-        .collect::<Option<Vec<_>>>()?;
+        .collect();
 
-    Some(ranges)
+    // Return None only if no positions could be processed at all
+    if ranges.is_empty() && !positions.is_empty() {
+        None
+    } else {
+        Some(ranges)
+    }
 }
 
 #[cfg(test)]
@@ -2414,6 +2432,58 @@ array: ["xxxx"]"#;
             "Should find a small range in the injected content. \
              Selection ranges: {:?}",
             collect_ranges(&selection)
+        );
+    }
+
+    /// Test that a single invalid position doesn't cause entire request to fail
+    ///
+    /// This is the fix for review.md Issue 3: multi-cursor editors send multiple
+    /// positions, and a stale cursor position shouldn't prevent selection ranges
+    /// from being computed for the valid positions.
+    #[test]
+    fn test_selection_range_handles_invalid_positions_gracefully() {
+        use crate::document::store::DocumentStore;
+        use tower_lsp::lsp_types::Url;
+        use tree_sitter::Parser;
+
+        let mut parser = Parser::new();
+        let language = tree_sitter_rust::LANGUAGE.into();
+        parser.set_language(&language).expect("load rust grammar");
+
+        let text = "let x = 1;\nlet y = 2;";
+        let tree = parser.parse(text, None).expect("parse rust");
+
+        // Create a document with the parsed tree
+        let url = Url::parse("file:///test.rs").unwrap();
+        let store = DocumentStore::new();
+        store.insert(url.clone(), text.to_string(), Some("rust".to_string()), Some(tree));
+
+        // Request selection ranges for multiple positions:
+        // - Position 0: valid (line 0, col 4 = 'x')
+        // - Position 1: INVALID (line 100 doesn't exist!)
+        // - Position 2: valid (line 1, col 4 = 'y')
+        let positions = vec![
+            Position::new(0, 4),    // valid: 'x'
+            Position::new(100, 0),  // invalid: line 100 doesn't exist
+            Position::new(1, 4),    // valid: 'y'
+        ];
+
+        let document = store.get(&url).expect("document should exist");
+        let result = handle_selection_range_with_injection(&document, &positions, None, None);
+
+        // With the fix, we should get results for valid positions
+        // even if one position is invalid.
+        // The result should contain 2 selection ranges (for positions 0 and 2).
+        assert!(
+            result.is_some(),
+            "Request should not fail entirely due to one invalid position"
+        );
+
+        let ranges = result.unwrap();
+        assert_eq!(
+            ranges.len(),
+            2,
+            "Should return selection ranges for the 2 valid positions only"
         );
     }
 
