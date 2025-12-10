@@ -1,13 +1,50 @@
-# Selection Range Refactoring Plan - Phase 2
+# Selection Range Refactoring Plan - COMPLETED
 
-## Current State Analysis (Post-Phase 1-3.1)
+## Final State Summary
 
-The initial refactoring extracted 13 pure functions into three submodules:
-- `hierarchy_chain.rs` (360 LOC, 6 functions) - Range comparison and chaining
-- `range_builder.rs` (87 LOC, 3 functions) - AST to SelectionRange conversion
-- `injection_aware.rs` (155 LOC, 4 functions) - Coordinate translation utilities
+The refactoring is complete. Here's the final architecture:
 
-**What Remains in `selection.rs` (~460 LOC):**
+```
+src/analysis/
+├── selection.rs              # 59 lines production + 620 lines tests
+└── selection/
+    ├── context.rs            # 236 lines - DocumentContext, InjectionContext
+    ├── hierarchy_chain.rs    # 359 lines - Pure range utilities
+    ├── injection_aware.rs    # 154 lines - Coordinate translation
+    ├── injection_builder.rs  # 428 lines - Injection-aware selection
+    └── range_builder.rs      # 86 lines - Pure AST→SelectionRange
+```
+
+**Total: 1942 lines (was ~1300 monolithic)**
+
+## Key Improvements Achieved
+
+### Parameter Count Reduction
+| Function | Before | After |
+|----------|--------|-------|
+| `handle_selection_range` (public) | 4 | 4 ✓ |
+| `build_with_injection` (was `build_selection_range_with_parsed_injection`) | 8 | 4 |
+| `build_recursive_injection` (was `build_recursive_injection_selection`) | 11 | 9 |
+
+### Code Organization
+- **selection.rs**: Reduced from ~460 LOC to 59 LOC (facade + entry point)
+- **Context structs** encapsulate:
+  - `DocumentContext`: text, mapper, root, base_language
+  - `InjectionContext`: coordinator, parser_pool, depth tracking
+- **#[allow(clippy::too_many_arguments)]**: Reduced from 2 to 1
+
+### Separation of Concerns
+| Module | Responsibility |
+|--------|----------------|
+| `context.rs` | Context struct definitions + depth management |
+| `hierarchy_chain.rs` | Pure range comparison + chain manipulation |
+| `range_builder.rs` | Pure AST → SelectionRange conversion |
+| `injection_aware.rs` | Coordinate translation for injections |
+| `injection_builder.rs` | Injection-aware selection building |
+
+## Original Problem Analysis
+
+**What Remained in `selection.rs` (~460 LOC) before this refactoring:**
 ```
 ├── handle_selection_range()                    # LSP entry point (4 params) ✓ Good
 ├── build_selection_range_with_parsed_injection() # 8 params ⚠️ Too many
@@ -18,21 +55,13 @@ The initial refactoring extracted 13 pure functions into three submodules:
 └── splice_effective_range_into_hierarchy()     # Private helper
 ```
 
-**Key Problems Identified:**
-1. **Parameter Explosion**: Functions with 8-11 parameters indicate missing abstractions
-2. **Mixed Concerns**: Parser acquisition/release mixed with selection building
-3. **Implicit Coupling**: `(coordinator, parser_pool)` always passed together
-4. **Context Repetition**: `(text, mapper, root)` form a logical unit but passed separately
+**Key Problems Solved:**
+1. ✅ **Parameter Explosion**: Reduced 8-11 params to 4-9 using context structs
+2. ✅ **Mixed Concerns**: Parser management encapsulated in InjectionContext
+3. ✅ **Implicit Coupling**: Now explicit via context structs
+4. ✅ **Context Repetition**: DocumentContext bundles text, mapper, root, base_language
 
-## Goal
-
-Introduce context structs to:
-1. Reduce parameter counts from 8-11 to 3-4
-2. Separate resource management from selection logic
-3. Make dependencies explicit through types
-4. Enable easier testing through mock injection
-
-## Target Architecture
+## Architecture Details
 
 ```
 src/analysis/
@@ -41,8 +70,8 @@ src/analysis/
     ├── hierarchy_chain.rs    # Pure range utilities (DONE)
     ├── range_builder.rs      # Pure AST→SelectionRange (DONE)
     ├── injection_aware.rs    # Coordinate translation (DONE)
-    ├── context.rs            # NEW: InjectionContext, DocumentContext
-    └── injection_builder.rs  # NEW: Injection-aware selection building
+    ├── context.rs            # DocumentContext, InjectionContext
+    └── injection_builder.rs  # Injection-aware selection building
 ```
 
 ---
