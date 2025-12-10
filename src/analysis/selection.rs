@@ -495,21 +495,10 @@ fn splice_effective_range_into_hierarchy(
     }
 }
 
-/// Handle textDocument/selectionRange request with full injection parsing support
+/// Handle textDocument/selectionRange request with full injection parsing support.
 ///
-/// This is the most complete version that parses injected content and builds
-/// selection hierarchies from the injected language's AST.
-///
-/// # Arguments
-/// * `document` - The document
-/// * `positions` - The requested positions
-/// * `injection_query` - Optional injection query for detecting language injections
-/// * `base_language` - Optional base language of the document
-/// * `coordinator` - Language coordinator for parser configuration
-/// * `parser_pool` - Parser pool for acquiring/releasing parsers
-///
-/// # Returns
-/// Selection ranges for each position, or None if unable to compute
+/// Parses injected content and builds selection hierarchies from the injected
+/// language's AST. Returns one SelectionRange per position (LSP Spec 3.17 alignment).
 pub fn handle_selection_range(
     document: &DocumentHandle,
     positions: &[Position],
@@ -517,23 +506,20 @@ pub fn handle_selection_range(
     base_language: Option<&str>,
     coordinator: &LanguageCoordinator,
     parser_pool: &mut DocumentParserPool,
-) -> Option<Vec<SelectionRange>> {
+) -> Vec<SelectionRange> {
     let text = document.text();
     let mapper = document.position_mapper();
-
-    // LSP Spec 3.17: use map (not filter_map) to maintain 1:1 position-result alignment
-    let ranges: Vec<SelectionRange> = positions
+    let root = document.tree().map(|t| t.root_node());
+    positions
         .iter()
         .map(|pos| {
-            let real_range = (|| {
-                let tree = document.tree()?;
-                let root = tree.root_node();
-                let cursor_byte_offset = mapper.position_to_byte(*pos)?;
-                let node =
-                    root.descendant_for_byte_range(cursor_byte_offset, cursor_byte_offset)?;
-
+            if let Some(root) = root
+                && let Some(cursor_byte_offset) = mapper.position_to_byte(*pos)
+                && let Some(node) =
+                    root.descendant_for_byte_range(cursor_byte_offset, cursor_byte_offset)
+            {
                 if let Some(lang) = base_language {
-                    Some(build_selection_range_with_parsed_injection(
+                    build_selection_range_with_parsed_injection(
                         node,
                         &root,
                         text,
@@ -543,20 +529,18 @@ pub fn handle_selection_range(
                         coordinator,
                         parser_pool,
                         cursor_byte_offset,
-                    ))
+                    )
                 } else {
-                    Some(build_selection_range(node, &mapper))
+                    build_selection_range(node, &mapper)
                 }
-            })();
-
-            real_range.unwrap_or_else(|| SelectionRange {
-                range: Range::new(*pos, *pos),
-                parent: None,
-            })
+            } else {
+                SelectionRange {
+                    range: Range::new(*pos, *pos),
+                    parent: None,
+                }
+            }
         })
-        .collect();
-
-    Some(ranges)
+        .collect()
 }
 
 #[cfg(test)]
@@ -1112,7 +1096,7 @@ array: ["xxxx"]"#;
         let coordinator = LanguageCoordinator::new();
         let mut parser_pool = coordinator.create_document_parser_pool();
         let document = store.get(&url).expect("document should exist");
-        let result = handle_selection_range(
+        let ranges = handle_selection_range(
             &document,
             &positions,
             None,
@@ -1120,9 +1104,6 @@ array: ["xxxx"]"#;
             &coordinator,
             &mut parser_pool,
         );
-
-        assert!(result.is_some());
-        let ranges = result.unwrap();
 
         assert_eq!(ranges.len(), positions.len());
         assert!(ranges[0].range.start.line == 0);
@@ -1171,7 +1152,7 @@ array: ["xxxx"]"#;
         let coordinator = LanguageCoordinator::new();
         let mut parser_pool = coordinator.create_document_parser_pool();
         let document = store.get(&url).expect("document should exist");
-        let result = handle_selection_range(
+        let ranges = handle_selection_range(
             &document,
             &positions,
             None,
@@ -1180,8 +1161,6 @@ array: ["xxxx"]"#;
             &mut parser_pool,
         );
 
-        assert!(result.is_some());
-        let ranges = result.unwrap();
         assert_eq!(ranges.len(), 1);
         assert_eq!(ranges[0].range.start, Position::new(0, 0));
         assert_eq!(ranges[0].range.end, Position::new(0, 0));

@@ -805,7 +805,7 @@ impl LanguageServer for TreeSitterLs {
             &mut pool,
         );
 
-        Ok(result)
+        Ok(Some(result))
     }
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
