@@ -906,10 +906,28 @@ Lock poisoning occurs when a thread panics while holding a mutex lock. The defau
 
 ---
 
+# Sprint 15 Retrospective
+
+## Goal
+Add empty document edge case test to improve test coverage.
+
+## Completed (Commit ab5f32b)
+
+### Changes
+- Added `test_selection_range_handles_empty_document` test
+- Tests that empty documents return valid fallback ranges at position (0, 0)
+- Verifies the implementation handles edge case correctly
+
+### Key Insight
+Empty documents are a valid edge case where tree-sitter produces an empty tree (or minimal tree with no meaningful nodes). The selection range handler correctly falls back to an empty range at the requested position, maintaining LSP spec compliance.
+
+---
+
 # Fifth Review Cycle Summary
 
-Issue from comprehensive review fixed:
+Issues from comprehensive review addressed:
 
-1. ✅ **Issue 1 (High)**: Lock poisoning in parser pool - Sprint 14
+1. ✅ **P1 (High)**: Lock poisoning in parser pool - Sprint 14
+2. ✅ **P2 (Medium)**: Empty document test - Sprint 15
 
-Total tests: 147 (115 unit + 32 integration)
+Total tests: 148 (116 unit + 32 integration)
