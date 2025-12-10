@@ -3,7 +3,7 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 use tree_sitter::InputEdit;
 
-use crate::analysis::selection::position_to_point;
+// Note: position_to_point from selection.rs is deprecated - use PositionMapper.position_to_point() instead
 use crate::analysis::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
 use crate::analysis::{
     handle_code_actions, handle_goto_definition, handle_selection_range_with_parsed_injection,
@@ -387,20 +387,33 @@ impl LanguageServer for TreeSitterLs {
                 let end_offset = mapper.position_to_byte(range.end).unwrap_or(text.len());
                 let new_end_offset = start_offset + change.text.len();
 
-                // Calculate the new end position
-                let mut lines = change.text.split('\n');
-                let line_count = lines.clone().count();
-                let last_line_len = lines.next_back().map(|l| l.len()).unwrap_or(0);
+                // Calculate the new end position for tree-sitter (using byte columns)
+                let lines: Vec<&str> = change.text.split('\n').collect();
+                let line_count = lines.len();
+                // last_line_len is in BYTES (not UTF-16) because .len() on &str returns byte count
+                let last_line_len = lines.last().map(|l| l.len()).unwrap_or(0);
 
-                let new_end_position = if line_count > 1 {
-                    Position::new(
-                        range.start.line + (line_count - 1) as u32,
-                        last_line_len as u32,
+                // Get start position with proper byte column conversion
+                let start_point =
+                    mapper
+                        .position_to_point(range.start)
+                        .unwrap_or(tree_sitter::Point::new(
+                            range.start.line as usize,
+                            start_offset,
+                        ));
+
+                // Calculate new end Point (tree-sitter uses byte columns)
+                let new_end_point = if line_count > 1 {
+                    // New content spans multiple lines
+                    tree_sitter::Point::new(
+                        start_point.row + line_count - 1,
+                        last_line_len, // byte length of last line
                     )
                 } else {
-                    Position::new(
-                        range.start.line,
-                        range.start.character + last_line_len as u32,
+                    // New content is on same line as start
+                    tree_sitter::Point::new(
+                        start_point.row,
+                        start_point.column + last_line_len, // add byte length
                     )
                 };
 
@@ -409,9 +422,11 @@ impl LanguageServer for TreeSitterLs {
                     start_byte: start_offset,
                     old_end_byte: end_offset,
                     new_end_byte: new_end_offset,
-                    start_position: position_to_point(&range.start),
-                    old_end_position: position_to_point(&range.end),
-                    new_end_position: position_to_point(&new_end_position),
+                    start_position: start_point,
+                    old_end_position: mapper
+                        .position_to_point(range.end)
+                        .unwrap_or(tree_sitter::Point::new(range.end.line as usize, end_offset)),
+                    new_end_position: new_end_point,
                 };
                 edits.push(edit);
 

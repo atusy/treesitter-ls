@@ -52,6 +52,24 @@ impl<'a> PositionMapper<'a> {
         let end_pos = self.byte_to_position(end)?;
         Some(Range::new(start_pos, end_pos))
     }
+
+    /// Convert LSP Position to tree-sitter Point with proper byte column
+    ///
+    /// LSP Position uses UTF-16 code units for the character field.
+    /// Tree-sitter Point uses byte offsets for the column field.
+    /// This method performs the correct conversion.
+    pub fn position_to_point(&self, position: Position) -> Option<tree_sitter::Point> {
+        // First get the byte offset for this position
+        let byte_offset = self.position_to_byte(position)?;
+
+        // Then get the LineCol (which has byte-based column) from the byte offset
+        let line_col = self.line_index.try_line_col(byte_offset.try_into().ok()?)?;
+
+        Some(tree_sitter::Point::new(
+            line_col.line as usize,
+            line_col.col as usize,
+        ))
+    }
 }
 
 /// Compute line start offsets for efficient position mapping
