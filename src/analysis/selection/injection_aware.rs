@@ -28,7 +28,11 @@ use crate::text::position::PositionMapper;
 ///
 /// # Returns
 /// LSP Range in host document coordinates with proper UTF-16 positions
-pub fn adjust_range_to_host(node: Node, content_start_byte: usize, mapper: &PositionMapper) -> Range {
+pub fn adjust_range_to_host(
+    node: Node,
+    content_start_byte: usize,
+    mapper: &PositionMapper,
+) -> Range {
     // Calculate the actual byte offsets in the host document
     // Node's start_byte() and end_byte() are relative to the injection content
     let host_start_byte = content_start_byte + node.start_byte();

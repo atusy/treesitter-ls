@@ -106,7 +106,11 @@ mod tests {
     use tower_lsp::lsp_types::Position;
 
     // Helper to create a simple SelectionRange
-    fn make_selection(start: (u32, u32), end: (u32, u32), parent: Option<SelectionRange>) -> SelectionRange {
+    fn make_selection(
+        start: (u32, u32),
+        end: (u32, u32),
+        parent: Option<SelectionRange>,
+    ) -> SelectionRange {
         SelectionRange {
             range: Range::new(Position::new(start.0, start.1), Position::new(end.0, end.1)),
             parent: parent.map(Box::new),
@@ -314,10 +318,7 @@ mod tests {
         let a = Range::new(Position::new(2, 0), Position::new(5, 0));
         let b = Range::new(Position::new(0, 0), Position::new(10, 0));
 
-        assert!(
-            !is_range_strictly_larger(&a, &b),
-            "a does not contain b"
-        );
+        assert!(!is_range_strictly_larger(&a, &b), "a does not contain b");
     }
 
     #[test]
