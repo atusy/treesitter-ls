@@ -1,6 +1,7 @@
 pub mod context;
 pub mod hierarchy_chain;
 pub mod injection_aware;
+pub mod injection_builder;
 pub mod range_builder;
 
 pub use hierarchy_chain::{
@@ -12,6 +13,7 @@ pub use injection_aware::{
     is_node_in_selection_chain,
 };
 pub use range_builder::{build_selection_range, find_distinct_parent, node_to_range};
+pub use injection_builder::build_injected_selection_range;
 
 use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range_with_text};
 use crate::document::DocumentHandle;
@@ -285,33 +287,6 @@ fn build_recursive_injection_selection(
     let result = chain_injected_to_host(nested_selection, content_node_selection);
     parser_pool.release(nested_lang.to_string(), nested_parser);
     result
-}
-
-/// Build selection range for nodes in injected content
-///
-/// This builds SelectionRange from injected AST nodes, adjusting positions
-/// to be relative to the host document (not the injection slice).
-/// Nodes with identical ranges are deduplicated (LSP spec requires strictly expanding ranges).
-///
-/// The `content_start_byte` is the byte offset where the injection content starts
-/// in the host document. The `mapper` is used for proper UTF-16 column conversion.
-fn build_injected_selection_range(
-    node: Node,
-    content_start_byte: usize,
-    mapper: &PositionMapper,
-) -> SelectionRange {
-    let parent = find_distinct_parent(node, &node.byte_range()).map(|parent_node| {
-        Box::new(build_injected_selection_range(
-            parent_node,
-            content_start_byte,
-            mapper,
-        ))
-    });
-
-    SelectionRange {
-        range: adjust_range_to_host(node, content_start_byte, mapper),
-        parent,
-    }
 }
 
 /// Build selection when injection content cannot be parsed.

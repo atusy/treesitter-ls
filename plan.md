@@ -1,422 +1,310 @@
-# Selection Range Refactoring Plan
+# Selection Range Refactoring Plan - Phase 2
+
+## Current State Analysis (Post-Phase 1-3.1)
+
+The initial refactoring extracted 13 pure functions into three submodules:
+- `hierarchy_chain.rs` (360 LOC, 6 functions) - Range comparison and chaining
+- `range_builder.rs` (87 LOC, 3 functions) - AST to SelectionRange conversion
+- `injection_aware.rs` (155 LOC, 4 functions) - Coordinate translation utilities
+
+**What Remains in `selection.rs` (~460 LOC):**
+```
+├── handle_selection_range()                    # LSP entry point (4 params) ✓ Good
+├── build_selection_range_with_parsed_injection() # 8 params ⚠️ Too many
+├── build_recursive_injection_selection()       # 11 params ⚠️ Too many
+├── build_injected_selection_range()            # 3 params ✓ Good
+├── build_unparsed_injection_selection()        # 4 params ✓ Good
+├── replace_range_in_chain()                    # Private helper
+└── splice_effective_range_into_hierarchy()     # Private helper
+```
+
+**Key Problems Identified:**
+1. **Parameter Explosion**: Functions with 8-11 parameters indicate missing abstractions
+2. **Mixed Concerns**: Parser acquisition/release mixed with selection building
+3. **Implicit Coupling**: `(coordinator, parser_pool)` always passed together
+4. **Context Repetition**: `(text, mapper, root)` form a logical unit but passed separately
 
 ## Goal
 
-Refactor `src/analysis/selection.rs` (~1300 lines) into smaller, cohesive modules following the Single Responsibility Principle, while preserving all existing behavior through TDD.
-
-## Current State Analysis
-
-The monolithic `selection.rs` handles 6 distinct concerns:
-1. AST traversal (finding nodes, building parent chains)
-2. Injection detection orchestration
-3. Parser acquisition/release
-4. Coordinate conversion (byte ↔ UTF-16)
-5. Nested injection recursion
-6. LSP protocol compliance
-
-**Code Smells Identified:**
-- `#[allow(clippy::too_many_arguments)]` on 4 functions
-- 20+ helper functions with mixed abstraction levels
-- 3 public entry points at different abstraction levels
+Introduce context structs to:
+1. Reduce parameter counts from 8-11 to 3-4
+2. Separate resource management from selection logic
+3. Make dependencies explicit through types
+4. Enable easier testing through mock injection
 
 ## Target Architecture
 
-Using Rust 2018+ module style (no `mod.rs`):
-
 ```
 src/analysis/
-├── selection.rs            # Public API facade + re-exports
+├── selection.rs              # Public API: handle_selection_range + re-exports
 └── selection/
-    ├── range_builder.rs    # Pure AST → SelectionRange (no injection)
-    ├── hierarchy_chain.rs  # Hierarchy manipulation utilities
-    └── injection_aware.rs  # Injection-aware selection building
+    ├── hierarchy_chain.rs    # Pure range utilities (DONE)
+    ├── range_builder.rs      # Pure AST→SelectionRange (DONE)
+    ├── injection_aware.rs    # Coordinate translation (DONE)
+    ├── context.rs            # NEW: InjectionContext, DocumentContext
+    └── injection_builder.rs  # NEW: Injection-aware selection building
 ```
-
-In `selection.rs`:
-```rust
-mod selection {
-    pub mod hierarchy_chain;
-    pub mod range_builder;
-    pub mod injection_aware;
-}
-// Re-export public API
-pub use selection::hierarchy_chain::*;
-pub use selection::range_builder::*;
-pub use selection::injection_aware::*;
-```
-
-## TDD Methodology
-
-Each cycle follows the RED-GREEN-REFACTOR pattern. A cycle may contain **multiple iterations** of this pattern for incremental progress:
-
-```
-Cycle N:
-  Iteration 1: RED → GREEN → REFACTOR → COMMIT
-  Iteration 2: RED → GREEN → REFACTOR → COMMIT
-  ...
-  ✓ Cycle complete when all tests pass and code is clean
-```
-
-**Commit Discipline:**
-- **COMMIT after EVERY iteration** (after REFACTOR step)
-- Each commit must have all tests passing
-- Commit message format: `refactor(selection): <iteration description>`
-- Example: `refactor(selection): extract is_range_strictly_larger to hierarchy_chain`
 
 ---
 
-## Phase 1: Extract Hierarchy Chain Utilities (Structural)
+## Phase 4: Introduce Context Structs (Structural)
 
-**Rationale:** These are pure functions with no external dependencies—easiest to extract first.
+**Rationale:** Group related parameters into cohesive structs to reduce function signatures.
 
-### Cycle 1.1: Range Comparison Utilities
+### Cycle 4.1: DocumentContext Struct
 
-Extract `is_range_strictly_larger`, `range_contains`, `ranges_equal` together since they form a cohesive unit.
+Bundle document-level information that's always passed together.
 
-- [x] **Iteration 1: `is_range_strictly_larger`**
-  - [x] RED: Create `src/analysis/selection/hierarchy_chain.rs` with failing test
-  - [x] GREEN: Copy function, make test pass
-  - [x] REFACTOR: Add documentation
-  - [x] COMMIT: `refactor(selection): extract is_range_strictly_larger to hierarchy_chain`
+- [ ] **Iteration 1: Define `DocumentContext` struct**
+  - [ ] RED: Create `src/analysis/selection/context.rs` with struct definition
+  - [ ] GREEN: Define struct with `text`, `mapper`, `root` fields
+  - [ ] REFACTOR: Add documentation and derive traits
+  - [ ] COMMIT: `refactor(selection): add DocumentContext struct`
 
-- [x] **Iteration 2: `range_contains`**
-  - [x] RED: Add test for `range_contains`
-  - [x] GREEN: Copy function
-  - [x] REFACTOR: None needed
-  - [x] COMMIT: `refactor(selection): extract range_contains to hierarchy_chain`
-
-- [x] **Iteration 3: `ranges_equal`**
-  - [x] RED: Add test for `ranges_equal`
-  - [x] GREEN: Copy function
-  - [x] REFACTOR: Consider if this should just use `PartialEq`
-  - [x] COMMIT: `refactor(selection): extract ranges_equal to hierarchy_chain`
-
-- [x] **Iteration 4: Wire up imports**
-  - [x] RED: Change `selection.rs` to use `hierarchy_chain::*`, expect compile errors
-  - [x] GREEN: Fix imports, all tests pass
-  - [x] REFACTOR: Remove duplicated functions from `selection.rs`
-  - [x] COMMIT: `refactor(selection): wire up hierarchy_chain imports in selection.rs`
-
-- [x] Run `cargo test && cargo clippy -- -D warnings`
-
-### Cycle 1.2: Selection Hierarchy Chaining
-
-Extract the functions that manipulate `SelectionRange` parent chains.
-
-- [x] **Iteration 1: `skip_to_distinct_host`**
-  - [x] RED: Add test for finding first strictly-larger host range
-  - [x] GREEN: Move function to `hierarchy_chain.rs`
-  - [x] REFACTOR: Simplify if possible
-  - [x] COMMIT: `refactor(selection): extract skip_to_distinct_host to hierarchy_chain`
-
-- [x] **Iteration 2-3: `chain_injected_to_host`** (combined inner helper + main)
-  - [x] RED: Add tests for `find_and_connect_tail` and full chaining behavior
-  - [x] GREEN: Extract as standalone function with nested helper
-  - [x] REFACTOR: Update `selection.rs` imports
-  - [x] COMMIT: `refactor(selection): extract chain_injected_to_host to hierarchy_chain`
-
-- [x] **Iteration 4: Wire up imports**
-  - [x] Remove duplicate functions from `selection.rs`
-  - [x] COMMIT: `refactor(selection): wire up chain_injected_to_host and skip_to_distinct_host imports`
-
-- [x] Run `cargo test && cargo clippy -- -D warnings`
-
-### Phase 1 Checkpoint ✓
-- [x] `hierarchy_chain.rs` contains all range/chain utilities
-- [x] `selection.rs` imports from `hierarchy_chain`
-- [x] All existing tests pass (161 tests)
-- [x] No new clippy warnings
-
----
-
-## Phase 2: Extract Pure Range Builder (Structural)
-
-**Rationale:** Extract the non-injection selection logic that depends only on Tree-sitter AST.
-
-### Cycle 2.1: Node-to-Range Conversion
-
-- [x] **Iteration 1: `node_to_range`**
-  - [x] RED: Create `src/analysis/selection/range_builder.rs` with test for `node_to_range`
-  - [x] GREEN: Move function
-  - [x] REFACTOR: Document UTF-16 conversion behavior
-  - [x] COMMIT: `refactor(selection): extract node_to_range to range_builder`
-
-- [x] Run `cargo test`
-
-### Cycle 2.2: Parent Chain Traversal
-
-- [x] **Iteration 1: `find_distinct_parent`**
-  - [x] RED: Add test for finding parent with different range
-  - [x] GREEN: Move function
-  - [x] REFACTOR: None needed (pure function)
-  - [x] COMMIT: `refactor(selection): extract find_distinct_parent to range_builder`
-
-- [x] **Iteration 2: `find_next_distinct_parent`**
-  - [x] RED: Add test for root-aware parent finding
-  - [x] GREEN: Move function
-  - [x] REFACTOR: Consider merging with `find_distinct_parent` if similar
-  - [x] COMMIT: `refactor(selection): extract find_next_distinct_parent to range_builder`
-
-- [x] Run `cargo test`
-
-### Cycle 2.3: Core Selection Building
-
-- [x] **Iteration 1: `build_selection_range`**
-  - [x] RED: Add test for building SelectionRange from AST node
-  - [x] GREEN: Move function
-  - [x] REFACTOR: Ensure it uses `hierarchy_chain` utilities
-  - [x] COMMIT: `refactor(selection): extract build_selection_range to range_builder`
-
-- [x] Run `cargo test && cargo clippy -- -D warnings`
-
-### Phase 2 Checkpoint ✓
-- [x] `range_builder.rs` contains pure AST→SelectionRange logic (4 functions)
-- [x] No injection-related code in `range_builder.rs`
-- [x] `selection.rs` imports from `range_builder`
-- [x] All existing tests pass (161 tests)
-
----
-
-## Phase 3: Extract Injection-Aware Builder (Structural)
-
-**Rationale:** Encapsulate injection-related complexity into a dedicated module.
-
-### Cycle 3.1: Coordinate Adjustment Utilities ✓
-
-- [x] **Iteration 1: `adjust_range_to_host`**
-  - [x] Create `src/analysis/selection/injection_aware.rs`
-  - [x] COMMIT: `refactor(selection): extract adjust_range_to_host to injection_aware`
-
-- [x] **Iteration 2: `calculate_effective_lsp_range`**
-  - [x] Move function
-  - [x] COMMIT: `refactor(selection): extract calculate_effective_lsp_range to injection_aware`
-
-- [x] **Iteration 3: `is_cursor_within_effective_range`**
-  - [x] Move function
-  - [x] COMMIT: `refactor(selection): extract is_cursor_within_effective_range to injection_aware`
-
-- [x] **Iteration 4: `is_node_in_selection_chain`**
-  - [x] Move function
-  - [x] COMMIT: `refactor(selection): extract is_node_in_selection_chain to injection_aware`
-
-- [x] Run `cargo test`
-
-### Cycle 3.2-3.4: Remaining Injection Functions (Pending)
-
-The following functions remain in `selection.rs` and can be extracted in future iterations:
-- `build_injection_aware_selection`
-- `build_injection_aware_selection_with_effective_range`
-- `splice_injection_content_into_hierarchy`
-- `rebuild_with_injection_boundary`
-- `splice_effective_range_into_hierarchy`
-- `rebuild_with_effective_range`
-- `replace_range_in_chain`
-
-These functions have complex interdependencies and may be candidates for further refactoring
-once the foundational utilities are stable.
+- [ ] **Iteration 2: Add constructor methods**
+  - [ ] RED: Add test for `DocumentContext::new()`
+  - [ ] GREEN: Implement constructor
+  - [ ] REFACTOR: Consider adding `From<&DocumentHandle>` impl
+  - [ ] COMMIT: `refactor(selection): add DocumentContext constructor`
 
 - [ ] Run `cargo test`
 
-### Cycle 3.3: Hierarchy Splicing
+### Cycle 4.2: InjectionContext Struct
 
-- [ ] **Iteration 1: `is_node_in_selection_chain`**
-  - [ ] RED: Add test for chain membership check
-  - [ ] GREEN: Move function
-  - [ ] REFACTOR: None needed
-  - [ ] COMMIT: `refactor(selection): extract is_node_in_selection_chain to injection_aware`
+Bundle injection-related resources and state.
 
-- [ ] **Iteration 2: `splice_injection_content_into_hierarchy`**
-  - [ ] RED: Add test for splicing injection node
-  - [ ] GREEN: Move function
-  - [ ] REFACTOR: None needed
-  - [ ] COMMIT: `refactor(selection): extract splice_injection_content_into_hierarchy`
+- [ ] **Iteration 1: Define `InjectionContext` struct**
+  - [ ] RED: Add `InjectionContext` struct definition
+  - [ ] GREEN: Define struct with `coordinator`, `parser_pool`, `depth` fields
+  - [ ] REFACTOR: Use lifetime annotations for references
+  - [ ] COMMIT: `refactor(selection): add InjectionContext struct`
 
-- [ ] **Iteration 3: `rebuild_with_injection_boundary`**
-  - [ ] RED: Add test for hierarchy rebuilding
-  - [ ] GREEN: Move function
-  - [ ] REFACTOR: None needed
-  - [ ] COMMIT: `refactor(selection): extract rebuild_with_injection_boundary`
+- [ ] **Iteration 2: Add helper methods**
+  - [ ] RED: Add test for `InjectionContext::acquire_parser()`
+  - [ ] GREEN: Implement parser acquisition wrapper
+  - [ ] REFACTOR: Add `release_parser()` method
+  - [ ] COMMIT: `refactor(selection): add InjectionContext parser methods`
 
-- [ ] **Iteration 4: `splice_effective_range_into_hierarchy`**
-  - [ ] RED: Add test for effective range splicing
-  - [ ] GREEN: Move function
-  - [ ] REFACTOR: None needed
-  - [ ] COMMIT: `refactor(selection): extract splice_effective_range_into_hierarchy`
-
-- [ ] **Iteration 5: `rebuild_with_effective_range`**
-  - [ ] RED: Add test for effective range rebuilding
-  - [ ] GREEN: Move function
-  - [ ] REFACTOR: None needed
-  - [ ] COMMIT: `refactor(selection): extract rebuild_with_effective_range`
-
-- [ ] **Iteration 6: `replace_range_in_chain`**
-  - [ ] RED: Add test for range replacement
-  - [ ] GREEN: Move function
-  - [ ] REFACTOR: None needed
-  - [ ] COMMIT: `refactor(selection): extract replace_range_in_chain to injection_aware`
-
-- [ ] Run `cargo test && cargo clippy -- -D warnings`
-
-### Cycle 3.4: Public Injection-Aware Functions
-
-- [ ] **Iteration 1: `build_selection_range_with_injection`**
-  - [ ] RED: Add integration test
-  - [ ] GREEN: Move function
-  - [ ] REFACTOR: Simplify using extracted helpers
-  - [ ] COMMIT: `refactor(selection): extract build_selection_range_with_injection`
-
-- [ ] **Iteration 2: `build_selection_range_with_injection_and_offset`**
-  - [ ] RED: Add integration test with offset
-  - [ ] GREEN: Move function
-  - [ ] REFACTOR: DRY with iteration 1
-  - [ ] COMMIT: `refactor(selection): extract build_selection_range_with_injection_and_offset`
-
-- [ ] Run `cargo test`
-
-### Cycle 3.5: Nested Injection (Complex)
-
-This is the most complex part—handle carefully with multiple iterations.
-
-- [ ] **Iteration 1: `build_selection_range_with_parsed_injection`**
-  - [ ] RED: Verify existing test covers this
-  - [ ] GREEN: Move function (entry point only)
-  - [ ] REFACTOR: None yet
-  - [ ] COMMIT: `refactor(selection): extract build_selection_range_with_parsed_injection`
-
-- [ ] **Iteration 2: `build_selection_range_with_parsed_injection_recursive`**
-  - [ ] RED: Add test for recursion depth handling
-  - [ ] GREEN: Move function
-  - [ ] REFACTOR: Consider extracting `InjectionContext` struct to reduce parameters
-  - [ ] COMMIT: `refactor(selection): extract recursive injection selection logic`
-
-- [ ] **Iteration 3: `build_nested_injection_selection`**
-  - [ ] RED: Add test for nested injection boundary
-  - [ ] GREEN: Move function
-  - [ ] REFACTOR: Reduce `#[allow(clippy::too_many_arguments)]` by using context struct
-  - [ ] COMMIT: `refactor(selection): extract build_nested_injection_selection`
-
-- [ ] **Iteration 4: Introduce `InjectionContext` struct (optional)**
-  - [ ] RED: Write test using `InjectionContext`
-  - [ ] GREEN: Create struct to bundle (coordinator, parser_pool, mapper, depth)
-  - [ ] REFACTOR: Update functions to use context
-  - [ ] COMMIT: `refactor(selection): introduce InjectionContext to reduce parameter count`
-
-- [ ] Run `cargo test && cargo clippy -- -D warnings`
-
-### Phase 3 Checkpoint
-- [ ] `injection_aware.rs` contains all injection-related selection logic
-- [ ] Reduced `#[allow(clippy::too_many_arguments)]` usage
-- [ ] `selection.rs` imports from `injection_aware`
-- [ ] All existing tests pass
-
----
-
-## Phase 4: Simplify Public API (Behavioral)
-
-**Rationale:** Provide a cleaner interface while maintaining backward compatibility.
-
-### Cycle 4.1: Unified Handler
-
-- [ ] **Iteration 1: Create `SelectionRangeHandler` struct**
-  - [ ] RED: Write test for handler with minimal dependencies
-  - [ ] GREEN: Create struct with `handle()` method
-  - [ ] REFACTOR: Document usage
-  - [ ] COMMIT: `feat(selection): add SelectionRangeHandler struct`
-
-- [ ] **Iteration 2: Add injection support to handler**
-  - [ ] RED: Write test for handler detecting injection
-  - [ ] GREEN: Implement injection detection in `handle()`
-  - [ ] REFACTOR: None needed
-  - [ ] COMMIT: `feat(selection): add injection support to SelectionRangeHandler`
-
-- [ ] **Iteration 3: Add parsed injection support**
-  - [ ] RED: Write test for full injection parsing
-  - [ ] GREEN: Implement `handle_with_injection_parsing()`
-  - [ ] REFACTOR: Consider builder pattern
-  - [ ] COMMIT: `feat(selection): add parsed injection support to handler`
-
-- [ ] Run `cargo test`
-
-### Cycle 4.2: LSP Integration Update
-
-- [ ] **Iteration 1: Update `lsp_impl.rs`**
-  - [ ] RED: Existing LSP tests should still pass
-  - [ ] GREEN: Replace direct calls with `SelectionRangeHandler`
-  - [ ] REFACTOR: Remove redundant code
-  - [ ] COMMIT: `refactor(lsp): use SelectionRangeHandler for selection_range`
-
-- [ ] **Iteration 2: Deprecate old entry points**
-  - [ ] RED: Add `#[deprecated]` attributes
-  - [ ] GREEN: Ensure no deprecation warnings in main code
-  - [ ] REFACTOR: Update any internal usages
-  - [ ] COMMIT: `refactor(selection): deprecate intermediate entry points`
+- [ ] **Iteration 3: Add depth tracking**
+  - [ ] RED: Add test for `InjectionContext::descend()`
+  - [ ] GREEN: Implement depth increment with MAX_DEPTH check
+  - [ ] REFACTOR: Return `Option` to handle depth limit
+  - [ ] COMMIT: `refactor(selection): add InjectionContext depth tracking`
 
 - [ ] Run `cargo test && cargo clippy -- -D warnings`
 
 ### Phase 4 Checkpoint
-- [ ] Single entry point via `SelectionRangeHandler`
-- [ ] LSP layer uses new handler
-- [ ] Old functions deprecated but still work
-- [ ] All tests pass
+- [ ] `context.rs` contains `DocumentContext` and `InjectionContext`
+- [ ] Structs have constructor methods and documentation
+- [ ] All existing tests pass
 
 ---
 
-## Phase 5: Final Cleanup (Structural)
+## Phase 5: Refactor Injection Builder Functions (Behavioral)
 
-### Cycle 5.1: Module Organization
+**Rationale:** Use context structs to simplify function signatures.
 
-- [ ] **Iteration 1: Finalize `selection.rs` as facade**
-  - [ ] RED: Test import `use crate::analysis::selection::*`
-  - [ ] GREEN: Ensure `selection.rs` declares submodules and re-exports
-  - [ ] REFACTOR: Organize public vs internal items
-  - [ ] COMMIT: `refactor(selection): finalize module structure`
+### Cycle 5.1: Extract Injection Builder Module
 
-- [ ] **Iteration 2: Verify backward compatibility**
-  - [ ] RED: Ensure all existing imports still work
-  - [ ] GREEN: Fix any broken imports in `lsp_impl.rs` or tests
-  - [ ] REFACTOR: Keep only necessary re-exports
-  - [ ] COMMIT: `refactor(selection): ensure backward compatible imports`
+- [ ] **Iteration 1: Create injection_builder.rs**
+  - [ ] RED: Create module with placeholder
+  - [ ] GREEN: Add module declaration in selection.rs
+  - [ ] REFACTOR: Add module documentation
+  - [ ] COMMIT: `refactor(selection): create injection_builder module`
+
+### Cycle 5.2: Migrate `build_injected_selection_range`
+
+This function is already small (3 params) but should move to the new module.
+
+- [ ] **Iteration 1: Move function**
+  - [ ] RED: Move to `injection_builder.rs`
+  - [ ] GREEN: Update imports in selection.rs
+  - [ ] REFACTOR: None needed
+  - [ ] COMMIT: `refactor(selection): move build_injected_selection_range to injection_builder`
+
+### Cycle 5.3: Refactor `build_selection_range_with_parsed_injection`
+
+Reduce from 8 params to 3 using context structs.
+
+**Current signature:**
+```rust
+fn build_selection_range_with_parsed_injection(
+    node: Node,
+    root: &Node,
+    text: &str,
+    mapper: &PositionMapper,
+    base_language: &str,
+    coordinator: &LanguageCoordinator,
+    parser_pool: &mut DocumentParserPool,
+    cursor_byte: usize,
+) -> SelectionRange
+```
+
+**Target signature:**
+```rust
+fn build_selection_range_with_parsed_injection(
+    node: Node,
+    doc_ctx: &DocumentContext,
+    inj_ctx: &mut InjectionContext,
+    cursor_byte: usize,
+) -> SelectionRange
+```
+
+- [ ] **Iteration 1: Add new signature alongside old**
+  - [ ] RED: Add `_with_context` variant
+  - [ ] GREEN: Implement by delegating to original
+  - [ ] REFACTOR: None yet
+  - [ ] COMMIT: `refactor(selection): add build_selection_range_with_parsed_injection_with_context`
+
+- [ ] **Iteration 2: Move logic to new function**
+  - [ ] RED: Ensure tests still pass
+  - [ ] GREEN: Move implementation to `_with_context` variant
+  - [ ] REFACTOR: Update original to delegate to new version
+  - [ ] COMMIT: `refactor(selection): migrate build_selection_range_with_parsed_injection to context`
+
+- [ ] **Iteration 3: Remove old signature**
+  - [ ] RED: Update all callers to use context version
+  - [ ] GREEN: Remove deprecated function
+  - [ ] REFACTOR: Rename `_with_context` to original name
+  - [ ] COMMIT: `refactor(selection): complete migration to context-based injection builder`
 
 - [ ] Run `cargo test`
 
-### Cycle 5.2: Dead Code Removal
+### Cycle 5.4: Refactor `build_recursive_injection_selection`
 
-- [ ] **Iteration 1: Identify dead code**
-  - [ ] RED: Run `cargo clippy -- -D dead_code`
-  - [ ] GREEN: Remove unused functions
-  - [ ] REFACTOR: None needed
-  - [ ] COMMIT: `refactor(selection): remove dead code`
+Reduce from 11 params to 4 using context structs.
 
-- [ ] **Iteration 2: Remove test-only helpers**
-  - [ ] RED: Check `#[cfg(test)]` functions still needed
-  - [ ] GREEN: Remove if unused
-  - [ ] REFACTOR: None needed
-  - [ ] COMMIT: `refactor(selection): clean up test-only helpers`
+**Current signature:**
+```rust
+fn build_recursive_injection_selection(
+    node: &Node,
+    root: &Node,
+    text: &str,
+    injection_query: &Query,
+    base_language: &str,
+    coordinator: &LanguageCoordinator,
+    parser_pool: &mut DocumentParserPool,
+    cursor_byte: usize,
+    parent_start_byte: usize,
+    mapper: &PositionMapper,
+    depth: usize,
+) -> SelectionRange
+```
+
+**Target signature:**
+```rust
+fn build_recursive_injection_selection(
+    node: &Node,
+    text: &str,                      // Current injection's text (changes per level)
+    doc_ctx: &DocumentContext,       // Host document context (stable)
+    inj_ctx: &mut InjectionContext,  // Manages coordinator, pool, depth
+    cursor_byte: usize,
+    parent_start_byte: usize,
+) -> SelectionRange
+```
+
+- [ ] **Iteration 1-3: Same pattern as Cycle 5.3**
+  - [ ] Add `_with_context` variant
+  - [ ] Move implementation
+  - [ ] Remove old signature
+  - [ ] COMMIT each step
 
 - [ ] Run `cargo test && cargo clippy -- -D warnings`
 
-### Cycle 5.3: Final Validation
+### Phase 5 Checkpoint
+- [ ] `injection_builder.rs` contains injection-aware selection functions
+- [ ] No functions with >6 parameters
+- [ ] Removed all `#[allow(clippy::too_many_arguments)]`
+- [ ] All existing tests pass
 
-- [ ] **Iteration 1: Full test suite**
-  - [ ] RED: Run all tests including integration
-  - [ ] GREEN: All pass
-  - [ ] REFACTOR: Fix any issues
-  - [ ] COMMIT: `test(selection): verify all tests pass after refactoring`
+---
 
-- [ ] **Iteration 2: Documentation update**
-  - [ ] RED: Check CLAUDE.md accuracy
-  - [ ] GREEN: Update architecture section
-  - [ ] REFACTOR: Final polish
-  - [ ] COMMIT: `docs: update architecture documentation for selection module`
+## Phase 6: Move Hierarchy Splicing Functions (Structural)
+
+**Rationale:** Complete the extraction of injection-related helpers.
+
+### Cycle 6.1: Move `replace_range_in_chain`
+
+- [ ] **Iteration 1: Move to injection_aware.rs**
+  - [ ] RED: Move function
+  - [ ] GREEN: Update imports
+  - [ ] REFACTOR: Make public if needed by injection_builder
+  - [ ] COMMIT: `refactor(selection): move replace_range_in_chain to injection_aware`
+
+### Cycle 6.2: Move `splice_effective_range_into_hierarchy`
+
+- [ ] **Iteration 1: Move to injection_aware.rs**
+  - [ ] RED: Move function
+  - [ ] GREEN: Update imports
+  - [ ] REFACTOR: Consider renaming for clarity
+  - [ ] COMMIT: `refactor(selection): move splice_effective_range_into_hierarchy to injection_aware`
+
+### Cycle 6.3: Move `build_unparsed_injection_selection`
+
+- [ ] **Iteration 1: Move to injection_builder.rs**
+  - [ ] RED: Move function
+  - [ ] GREEN: Update imports
+  - [ ] REFACTOR: None needed
+  - [ ] COMMIT: `refactor(selection): move build_unparsed_injection_selection to injection_builder`
+
+- [ ] Run `cargo test && cargo clippy -- -D warnings`
+
+### Phase 6 Checkpoint
+- [ ] `selection.rs` reduced to <100 lines (facade only)
+- [ ] All helper functions moved to appropriate modules
+- [ ] Clean module hierarchy
+
+---
+
+## Phase 7: Final Cleanup (Structural)
+
+### Cycle 7.1: Organize Exports
+
+- [ ] **Iteration 1: Review public API**
+  - [ ] RED: Check which functions need to be public
+  - [ ] GREEN: Minimize public surface
+  - [ ] REFACTOR: Add `pub(crate)` where appropriate
+  - [ ] COMMIT: `refactor(selection): minimize public API surface`
+
+### Cycle 7.2: Documentation Update
+
+- [ ] **Iteration 1: Module documentation**
+  - [ ] RED: Review all module docs
+  - [ ] GREEN: Update to reflect new architecture
+  - [ ] REFACTOR: Add architecture diagram in selection.rs
+  - [ ] COMMIT: `docs(selection): update module documentation`
+
+### Cycle 7.3: Remove Dead Code
+
+- [ ] **Iteration 1: Check for unused code**
+  - [ ] RED: Run `cargo clippy -- -D dead_code`
+  - [ ] GREEN: Remove any unused functions
+  - [ ] REFACTOR: None needed
+  - [ ] COMMIT: `refactor(selection): remove dead code`
 
 - [ ] Run full validation suite
 
-### Phase 5 Checkpoint
-- [ ] `selection.rs` < 200 lines (facade + submodule declarations)
-- [ ] Clean Rust 2018+ module structure (no `mod.rs`)
-- [ ] Documentation updated
+### Phase 7 Checkpoint
+- [ ] `selection.rs` < 100 lines
+- [ ] No `#[allow(clippy::too_many_arguments)]` remaining
+- [ ] All modules < 200 lines
+- [ ] Clean public API
 
 ---
+
+## Success Criteria
+
+- [ ] `selection.rs` reduced to facade only (< 100 lines)
+- [ ] No functions with > 6 parameters
+- [ ] All `#[allow(clippy::too_many_arguments)]` removed
+- [ ] Each module has single responsibility:
+  - `context.rs`: Context struct definitions
+  - `hierarchy_chain.rs`: Pure range utilities
+  - `range_builder.rs`: Pure AST → SelectionRange
+  - `injection_aware.rs`: Coordinate translation
+  - `injection_builder.rs`: Injection-aware selection building
+- [ ] All 161+ tests pass
+- [ ] No new clippy warnings
 
 ## Validation Commands
 
@@ -427,44 +315,26 @@ cargo clippy -- -D warnings
 cargo fmt --check
 ```
 
-Run after each phase:
-```bash
-cargo test
-cargo clippy -- -D warnings
-cargo fmt --check
-make test_nvim  # if available
+---
+
+## Alternative Approaches Considered
+
+### A. Builder Pattern
+```rust
+SelectionRangeBuilder::new(document)
+    .with_injection_support(coordinator, parser_pool)
+    .at_position(cursor_byte)
+    .build()
 ```
+**Rejected:** Adds complexity for marginal benefit. Context structs are simpler.
 
-## Existing Tests to Preserve
+### B. Trait-based Abstraction
+```rust
+trait SelectionBuilder {
+    fn build(&self, node: Node) -> SelectionRange;
+}
+```
+**Rejected:** Over-engineering for internal module. No external consumers.
 
-### Unit Tests (in `selection.rs` → move to appropriate modules)
-- `test_position_to_point`
-- `test_point_to_position`
-- `test_selection_range_detects_injection`
-- `test_selection_range_respects_offset_directive`
-- `test_selection_range_handles_nested_injection`
-- `test_nested_injection_includes_content_node_boundary`
-- `test_selection_range_parses_injected_content`
-- `test_calculate_nested_start_position_handles_negative_offsets`
-- `test_column_alignment_when_row_offset_skips_lines`
-- `test_selection_range_deduplicates_same_range_nodes`
-- `test_selection_range_handles_multibyte_utf8`
-- `test_selection_range_output_uses_utf16_columns`
-- `test_injected_selection_range_uses_utf16_columns`
-- `test_selection_range_maintains_position_alignment`
-- `test_selection_range_handles_empty_document`
-
-### Integration Tests (in `tests/test_lsp_select.lua`)
-- Lua file selection (no injection)
-- Markdown frontmatter expansion (YAML injection)
-- Lua code block expansion
-- Nested injection (markdown → markdown → lua)
-
-## Success Criteria
-
-- [ ] `selection.rs` reduced to < 200 lines (facade only)
-- [ ] No `#[allow(clippy::too_many_arguments)]` remaining (or reduced to 1)
-- [ ] Each new module < 300 lines
-- [ ] All 15+ unit tests pass
-- [ ] All integration tests pass
-- [ ] No new clippy warnings
+### C. Keep Current Structure
+**Rejected:** 8-11 parameter functions are a maintenance burden and indicate missing abstractions.
