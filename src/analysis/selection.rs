@@ -461,22 +461,20 @@ pub fn handle_selection_range(
                 && let Some(cursor_byte_offset) = mapper.position_to_byte(*pos)
                 && let Some(node) =
                     root.descendant_for_byte_range(cursor_byte_offset, cursor_byte_offset)
+                // lang should be available when node is available
+                && let Some(lang) = base_language
             {
-                if let Some(lang) = base_language {
-                    build_selection_range_with_parsed_injection(
-                        node,
-                        &root,
-                        text,
-                        &mapper,
-                        injection_query,
-                        lang,
-                        coordinator,
-                        parser_pool,
-                        cursor_byte_offset,
-                    )
-                } else {
-                    build_selection_range(node, &mapper)
-                }
+                build_selection_range_with_parsed_injection(
+                    node,
+                    &root,
+                    text,
+                    &mapper,
+                    injection_query,
+                    lang,
+                    coordinator,
+                    parser_pool,
+                    cursor_byte_offset,
+                )
             } else {
                 SelectionRange {
                     range: Range::new(*pos, *pos),
