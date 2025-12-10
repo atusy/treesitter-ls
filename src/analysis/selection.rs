@@ -579,7 +579,8 @@ fn build_injection_aware_selection(
         inner_selection
     } else {
         // Need to splice content_node into the hierarchy
-        splice_injection_content_into_hierarchy(inner_selection, content_node, mapper)
+        let content_range = node_to_range(content_node, mapper);
+        splice_effective_range_into_hierarchy(inner_selection, content_range, &content_node, mapper)
     }
 }
 
@@ -696,64 +697,6 @@ fn splice_effective_range_into_hierarchy(
             // No parent, but we're inside effective_range - add effective_range as parent
             Some(Box::new(SelectionRange {
                 range: effective_range,
-                parent: content_node
-                    .parent()
-                    .map(|p| Box::new(build_selection_range(p, mapper))),
-            }))
-        }
-    };
-
-    SelectionRange {
-        range: selection.range,
-        parent: new_parent,
-    }
-}
-
-/// Splice the injection content node into the selection hierarchy
-///
-/// The content_node represents the boundary of the injected region.
-/// We need to insert it at the appropriate level in the hierarchy.
-fn splice_injection_content_into_hierarchy(
-    selection: SelectionRange,
-    content_node: Node,
-    mapper: &PositionMapper,
-) -> SelectionRange {
-    let content_range = node_to_range(content_node, mapper);
-    if !range_contains(&content_range, &selection.range) {
-        return selection;
-    }
-
-    // If current selection range is smaller than or equal to content_range,
-    // we need to continue up the chain
-    // Continue building, but when we reach content_node's parent level,
-    // insert content_node
-    let new_parent = match selection.parent {
-        Some(parent) => {
-            let parent_selection = *parent;
-            if range_contains(&parent_selection.range, &content_range)
-                && !ranges_equal(&parent_selection.range, &content_range)
-            {
-                Some(Box::new(SelectionRange {
-                    range: content_range,
-                    parent: Some(Box::new(splice_injection_content_into_hierarchy(
-                        parent_selection,
-                        content_node,
-                        mapper,
-                    ))),
-                }))
-            } else {
-                // Keep going up
-                Some(Box::new(splice_injection_content_into_hierarchy(
-                    parent_selection,
-                    content_node,
-                    mapper,
-                )))
-            }
-        }
-        None => {
-            // No parent, but we're inside content_range - add content_node as parent
-            Some(Box::new(SelectionRange {
-                range: content_range,
                 parent: content_node
                     .parent()
                     .map(|p| Box::new(build_selection_range(p, mapper))),
