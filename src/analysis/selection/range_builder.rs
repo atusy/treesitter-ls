@@ -71,13 +71,9 @@ pub fn find_distinct_parent<'a>(
 /// # Returns
 /// A SelectionRange with parent chain representing the AST hierarchy
 pub fn build_selection_range(node: Node, mapper: &PositionMapper) -> SelectionRange {
-    let range = node_to_range(node, mapper);
-    let node_byte_range = node.byte_range();
-
-    // Build parent chain, skipping nodes with same range (LSP spec requires strictly expanding)
-    let parent = find_distinct_parent(node, &node_byte_range)
+    let parent = find_distinct_parent(node, &node.byte_range())
         .map(|parent_node| Box::new(build_selection_range(parent_node, mapper)));
-
+    let range = node_to_range(node, mapper);
     SelectionRange { range, parent }
 }
 
