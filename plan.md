@@ -724,3 +724,50 @@ All three issues from the third review have been fixed:
 3. ✅ **Issue 3 (Medium)**: All-or-nothing error handling - Sprint 12
 
 Total tests: 143 (115 unit + 28 integration)
+
+---
+
+# Review Analysis (Fourth Review Cycle)
+
+## Summary of New review.md Findings
+
+The new review identifies 1 issue with HIGH severity:
+
+### Issue 1 (High): Selection range results no longer align with requested positions
+
+**Location:** `src/analysis/selection.rs:1130-1172`, `src/analysis/selection.rs:1203-1235`
+
+**Problem:**
+- The Sprint 12 fix introduced a regression: `filter_map` silently drops positions that cannot be mapped
+- LSP `textDocument/selectionRange` response MUST return one item per requested position in the same order
+- By shortening the vector, position #3 receives the selection that actually belongs to position #4
+- This causes incorrect behavior in all multi-cursor editors
+
+**Impact:** Multi-cursor selection ranges are misaligned - each cursor gets the wrong selection.
+
+**Fix Options:**
+1. Emit a fallback range (e.g., zero-length range at position) for failed positions ✅
+2. Return `None` for the failed position (if LSP allows nullable entries) ❌
+3. Abort the whole request if any position fails (revert to previous behavior) ❌
+
+**LSP Specification (3.17) explicitly states:**
+> "To allow for results where some positions have selection ranges and others do not, result[i].range is allowed to be the empty range at positions[i]."
+
+The correct approach is Option 1: emit an **empty range at the requested position** for failed lookups. This is explicitly sanctioned by the LSP specification.
+
+## Root Cause Analysis
+
+The Sprint 12 fix addressed "all-or-nothing" error handling but overcorrected. The LSP protocol requires 1:1 correspondence between input positions and output selection ranges. Using `filter_map` breaks this invariant by removing entries rather than substituting fallbacks.
+
+# Product Backlog (Fourth Review Cycle)
+
+## User Story 17: Maintain position alignment in selectionRange response (High)
+As a multi-cursor editor user,
+I want each selection range to correspond to its requested position,
+so that my cursors get the correct selection expansions.
+
+**Acceptance Criteria:**
+- Response vector length equals input positions vector length
+- Each response entry corresponds to the position at the same index
+- Invalid positions get a fallback range (zero-length at document start or similar)
+- Test: Request with invalid position in middle returns correctly aligned results
