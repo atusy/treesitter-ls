@@ -3,23 +3,8 @@
 //! This module provides pure functions for comparing and chaining LSP SelectionRange
 //! hierarchies, including range comparison utilities and parent chain manipulation.
 
-use tower_lsp::lsp_types::Range;
+use tower_lsp::lsp_types::{Range, SelectionRange};
 
-/// Check if range `a` is strictly larger than range `b`.
-///
-/// A range is strictly larger if it fully contains `b` (starts at or before, ends at or after)
-/// AND is not equal to `b`. This is used to ensure LSP selection ranges are strictly expanding.
-///
-/// # Arguments
-/// * `a` - The potentially containing range
-/// * `b` - The range to check containment of
-///
-/// # Returns
-/// `true` if `a` strictly contains `b` (contains but not equal)
-/// Check if outer range fully contains inner range.
-///
-/// Returns true if inner is completely within outer (inclusive boundaries).
-/// Unlike `is_range_strictly_larger`, this returns true for equal ranges.
 /// Check if two ranges are equal.
 ///
 /// This is a simple equality check for Range start and end positions.
@@ -29,6 +14,9 @@ pub fn ranges_equal(a: &Range, b: &Range) -> bool {
 }
 
 /// Check if outer range fully contains inner range.
+///
+/// Returns true if inner is completely within outer (inclusive boundaries).
+/// Unlike `is_range_strictly_larger`, this returns true for equal ranges.
 pub fn range_contains(outer: &Range, inner: &Range) -> bool {
     (outer.start.line < inner.start.line
         || (outer.start.line == inner.start.line && outer.start.character <= inner.start.character))
@@ -36,6 +24,10 @@ pub fn range_contains(outer: &Range, inner: &Range) -> bool {
             || (outer.end.line == inner.end.line && outer.end.character >= inner.end.character))
 }
 
+/// Check if range `a` is strictly larger than range `b`.
+///
+/// A range is strictly larger if it fully contains `b` (starts at or before, ends at or after)
+/// AND is not equal to `b`. This is used to ensure LSP selection ranges are strictly expanding.
 pub fn is_range_strictly_larger(a: &Range, b: &Range) -> bool {
     let a_start = (a.start.line, a.start.character);
     let a_end = (a.end.line, a.end.character);
@@ -50,10 +42,102 @@ pub fn is_range_strictly_larger(a: &Range, b: &Range) -> bool {
     contains && not_equal
 }
 
+/// Skip host selection ranges until we find one that is strictly larger than the tail range.
+///
+/// This ensures LSP selection ranges are strictly expanding (no duplicates or contained ranges).
+/// Used when chaining injected selection hierarchies to host document hierarchies.
+///
+/// # Arguments
+/// * `host` - The starting host selection range (may be None)
+/// * `tail_range` - The range to compare against
+///
+/// # Returns
+/// The first SelectionRange in the host chain that strictly contains `tail_range`, or None
+pub fn skip_to_distinct_host(
+    host: Option<SelectionRange>,
+    tail_range: &Range,
+) -> Option<SelectionRange> {
+    let mut current = host;
+    while let Some(selection) = current {
+        if is_range_strictly_larger(&selection.range, tail_range) {
+            return Some(selection);
+        }
+        // This host range is not larger - skip to its parent
+        current = selection.parent.map(|p| *p);
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tower_lsp::lsp_types::Position;
+
+    // Helper to create a simple SelectionRange
+    fn make_selection(start: (u32, u32), end: (u32, u32), parent: Option<SelectionRange>) -> SelectionRange {
+        SelectionRange {
+            range: Range::new(Position::new(start.0, start.1), Position::new(end.0, end.1)),
+            parent: parent.map(Box::new),
+        }
+    }
+
+    #[test]
+    fn test_skip_to_distinct_host_finds_larger_range() {
+        // Create a chain: small (2,0)-(5,0) -> medium (1,0)-(8,0) -> large (0,0)-(10,0)
+        let large = make_selection((0, 0), (10, 0), None);
+        let medium = make_selection((1, 0), (8, 0), Some(large));
+        let small = make_selection((2, 0), (5, 0), Some(medium));
+
+        // Looking for something strictly larger than (3,0)-(4,0)
+        let tail = Range::new(Position::new(3, 0), Position::new(4, 0));
+
+        let result = skip_to_distinct_host(Some(small), &tail);
+
+        // Should return the first one that strictly contains (3,0)-(4,0), which is small (2,0)-(5,0)
+        assert!(result.is_some());
+        let r = result.unwrap();
+        assert_eq!(r.range.start, Position::new(2, 0));
+        assert_eq!(r.range.end, Position::new(5, 0));
+    }
+
+    #[test]
+    fn test_skip_to_distinct_host_skips_equal_range() {
+        // Create a chain where first element equals the tail
+        let large = make_selection((0, 0), (10, 0), None);
+        let equal_to_tail = make_selection((3, 0), (4, 0), Some(large));
+
+        let tail = Range::new(Position::new(3, 0), Position::new(4, 0));
+
+        let result = skip_to_distinct_host(Some(equal_to_tail), &tail);
+
+        // Should skip the equal range and return large
+        assert!(result.is_some());
+        let r = result.unwrap();
+        assert_eq!(r.range.start, Position::new(0, 0));
+        assert_eq!(r.range.end, Position::new(10, 0));
+    }
+
+    #[test]
+    fn test_skip_to_distinct_host_returns_none_when_no_larger() {
+        // Create a chain where nothing is larger
+        let small = make_selection((5, 0), (6, 0), None);
+
+        // Tail is larger than anything in chain
+        let tail = Range::new(Position::new(0, 0), Position::new(10, 0));
+
+        let result = skip_to_distinct_host(Some(small), &tail);
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_skip_to_distinct_host_handles_none_input() {
+        let tail = Range::new(Position::new(0, 0), Position::new(5, 0));
+
+        let result = skip_to_distinct_host(None, &tail);
+
+        assert!(result.is_none());
+    }
 
     #[test]
     fn test_ranges_equal_when_equal() {
