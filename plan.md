@@ -73,61 +73,59 @@ Cycle N:
 
 Extract `is_range_strictly_larger`, `range_contains`, `ranges_equal` together since they form a cohesive unit.
 
-- [ ] **Iteration 1: `is_range_strictly_larger`**
-  - [ ] RED: Create `src/analysis/selection/hierarchy_chain.rs` with failing test
-  - [ ] GREEN: Copy function, make test pass
-  - [ ] REFACTOR: Add documentation
-  - [ ] COMMIT: `refactor(selection): extract is_range_strictly_larger to hierarchy_chain`
+- [x] **Iteration 1: `is_range_strictly_larger`**
+  - [x] RED: Create `src/analysis/selection/hierarchy_chain.rs` with failing test
+  - [x] GREEN: Copy function, make test pass
+  - [x] REFACTOR: Add documentation
+  - [x] COMMIT: `refactor(selection): extract is_range_strictly_larger to hierarchy_chain`
 
-- [ ] **Iteration 2: `range_contains`**
-  - [ ] RED: Add test for `range_contains`
-  - [ ] GREEN: Copy function
-  - [ ] REFACTOR: None needed
-  - [ ] COMMIT: `refactor(selection): extract range_contains to hierarchy_chain`
+- [x] **Iteration 2: `range_contains`**
+  - [x] RED: Add test for `range_contains`
+  - [x] GREEN: Copy function
+  - [x] REFACTOR: None needed
+  - [x] COMMIT: `refactor(selection): extract range_contains to hierarchy_chain`
 
-- [ ] **Iteration 3: `ranges_equal`**
-  - [ ] RED: Add test for `ranges_equal`
-  - [ ] GREEN: Copy function
-  - [ ] REFACTOR: Consider if this should just use `PartialEq`
-  - [ ] COMMIT: `refactor(selection): extract ranges_equal to hierarchy_chain`
+- [x] **Iteration 3: `ranges_equal`**
+  - [x] RED: Add test for `ranges_equal`
+  - [x] GREEN: Copy function
+  - [x] REFACTOR: Consider if this should just use `PartialEq`
+  - [x] COMMIT: `refactor(selection): extract ranges_equal to hierarchy_chain`
 
-- [ ] **Iteration 4: Wire up imports**
-  - [ ] RED: Change `selection.rs` to use `hierarchy_chain::*`, expect compile errors
-  - [ ] GREEN: Fix imports, all tests pass
-  - [ ] REFACTOR: Remove duplicated functions from `selection.rs`
-  - [ ] COMMIT: `refactor(selection): wire up hierarchy_chain imports in selection.rs`
+- [x] **Iteration 4: Wire up imports**
+  - [x] RED: Change `selection.rs` to use `hierarchy_chain::*`, expect compile errors
+  - [x] GREEN: Fix imports, all tests pass
+  - [x] REFACTOR: Remove duplicated functions from `selection.rs`
+  - [x] COMMIT: `refactor(selection): wire up hierarchy_chain imports in selection.rs`
 
-- [ ] Run `cargo test && cargo clippy -- -D warnings`
+- [x] Run `cargo test && cargo clippy -- -D warnings`
 
 ### Cycle 1.2: Selection Hierarchy Chaining
 
 Extract the functions that manipulate `SelectionRange` parent chains.
 
-- [ ] **Iteration 1: `skip_to_distinct_host`**
-  - [ ] RED: Add test for finding first strictly-larger host range
-  - [ ] GREEN: Move function to `hierarchy_chain.rs`
-  - [ ] REFACTOR: Simplify if possible
-  - [ ] COMMIT: `refactor(selection): extract skip_to_distinct_host to hierarchy_chain`
+- [x] **Iteration 1: `skip_to_distinct_host`**
+  - [x] RED: Add test for finding first strictly-larger host range
+  - [x] GREEN: Move function to `hierarchy_chain.rs`
+  - [x] REFACTOR: Simplify if possible
+  - [x] COMMIT: `refactor(selection): extract skip_to_distinct_host to hierarchy_chain`
 
-- [ ] **Iteration 2: `chain_injected_to_host` (inner helper)**
-  - [ ] RED: Add test for `find_and_connect_tail` behavior
-  - [ ] GREEN: Extract as standalone function
-  - [ ] REFACTOR: Make it non-nested for testability
-  - [ ] COMMIT: `refactor(selection): extract find_and_connect_tail to hierarchy_chain`
+- [x] **Iteration 2-3: `chain_injected_to_host`** (combined inner helper + main)
+  - [x] RED: Add tests for `find_and_connect_tail` and full chaining behavior
+  - [x] GREEN: Extract as standalone function with nested helper
+  - [x] REFACTOR: Update `selection.rs` imports
+  - [x] COMMIT: `refactor(selection): extract chain_injected_to_host to hierarchy_chain`
 
-- [ ] **Iteration 3: `chain_injected_to_host` (main)**
-  - [ ] RED: Add integration test for full chaining
-  - [ ] GREEN: Move function
-  - [ ] REFACTOR: Update `selection.rs` imports
-  - [ ] COMMIT: `refactor(selection): extract chain_injected_to_host to hierarchy_chain`
+- [x] **Iteration 4: Wire up imports**
+  - [x] Remove duplicate functions from `selection.rs`
+  - [x] COMMIT: `refactor(selection): wire up chain_injected_to_host and skip_to_distinct_host imports`
 
-- [ ] Run `cargo test && cargo clippy -- -D warnings`
+- [x] Run `cargo test && cargo clippy -- -D warnings`
 
-### Phase 1 Checkpoint
-- [ ] `hierarchy_chain.rs` contains all range/chain utilities
-- [ ] `selection.rs` imports from `hierarchy_chain`
-- [ ] All existing tests pass
-- [ ] No new clippy warnings
+### Phase 1 Checkpoint ✓
+- [x] `hierarchy_chain.rs` contains all range/chain utilities
+- [x] `selection.rs` imports from `hierarchy_chain`
+- [x] All existing tests pass (161 tests)
+- [x] No new clippy warnings
 
 ---
 
@@ -137,51 +135,45 @@ Extract the functions that manipulate `SelectionRange` parent chains.
 
 ### Cycle 2.1: Node-to-Range Conversion
 
-- [ ] **Iteration 1: `node_to_range`**
-  - [ ] RED: Create `src/analysis/selection/range_builder.rs` with test for `node_to_range`
-  - [ ] GREEN: Move function
-  - [ ] REFACTOR: Document UTF-16 conversion behavior
-  - [ ] COMMIT: `refactor(selection): extract node_to_range to range_builder`
+- [x] **Iteration 1: `node_to_range`**
+  - [x] RED: Create `src/analysis/selection/range_builder.rs` with test for `node_to_range`
+  - [x] GREEN: Move function
+  - [x] REFACTOR: Document UTF-16 conversion behavior
+  - [x] COMMIT: `refactor(selection): extract node_to_range to range_builder`
 
-- [ ] Run `cargo test`
+- [x] Run `cargo test`
 
 ### Cycle 2.2: Parent Chain Traversal
 
-- [ ] **Iteration 1: `find_distinct_parent`**
-  - [ ] RED: Add test for finding parent with different range
-  - [ ] GREEN: Move function
-  - [ ] REFACTOR: None needed (pure function)
-  - [ ] COMMIT: `refactor(selection): extract find_distinct_parent to range_builder`
+- [x] **Iteration 1: `find_distinct_parent`**
+  - [x] RED: Add test for finding parent with different range
+  - [x] GREEN: Move function
+  - [x] REFACTOR: None needed (pure function)
+  - [x] COMMIT: `refactor(selection): extract find_distinct_parent to range_builder`
 
-- [ ] **Iteration 2: `find_next_distinct_parent`**
-  - [ ] RED: Add test for root-aware parent finding
-  - [ ] GREEN: Move function
-  - [ ] REFACTOR: Consider merging with `find_distinct_parent` if similar
-  - [ ] COMMIT: `refactor(selection): extract find_next_distinct_parent to range_builder`
+- [x] **Iteration 2: `find_next_distinct_parent`**
+  - [x] RED: Add test for root-aware parent finding
+  - [x] GREEN: Move function
+  - [x] REFACTOR: Consider merging with `find_distinct_parent` if similar
+  - [x] COMMIT: `refactor(selection): extract find_next_distinct_parent to range_builder`
 
-- [ ] Run `cargo test`
+- [x] Run `cargo test`
 
 ### Cycle 2.3: Core Selection Building
 
-- [ ] **Iteration 1: `build_selection_range`**
-  - [ ] RED: Add test for building SelectionRange from AST node
-  - [ ] GREEN: Move function
-  - [ ] REFACTOR: Ensure it uses `hierarchy_chain` utilities
-  - [ ] COMMIT: `refactor(selection): extract build_selection_range to range_builder`
+- [x] **Iteration 1: `build_selection_range`**
+  - [x] RED: Add test for building SelectionRange from AST node
+  - [x] GREEN: Move function
+  - [x] REFACTOR: Ensure it uses `hierarchy_chain` utilities
+  - [x] COMMIT: `refactor(selection): extract build_selection_range to range_builder`
 
-- [ ] **Iteration 2: Wire up to `selection.rs`**
-  - [ ] RED: Update imports in `selection.rs`
-  - [ ] GREEN: All tests pass
-  - [ ] REFACTOR: Remove duplicates from `selection.rs`
-  - [ ] COMMIT: `refactor(selection): wire up range_builder imports in selection.rs`
+- [x] Run `cargo test && cargo clippy -- -D warnings`
 
-- [ ] Run `cargo test && cargo clippy -- -D warnings`
-
-### Phase 2 Checkpoint
-- [ ] `range_builder.rs` contains pure AST→SelectionRange logic
-- [ ] No injection-related code in `range_builder.rs`
-- [ ] `selection.rs` imports from `range_builder`
-- [ ] All existing tests pass
+### Phase 2 Checkpoint ✓
+- [x] `range_builder.rs` contains pure AST→SelectionRange logic (4 functions)
+- [x] No injection-related code in `range_builder.rs`
+- [x] `selection.rs` imports from `range_builder`
+- [x] All existing tests pass (161 tests)
 
 ---
 
