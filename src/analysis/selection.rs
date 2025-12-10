@@ -1,6 +1,7 @@
 // Submodules (Rust 2018+ style)
 // These are located in src/analysis/selection/*.rs
 pub mod hierarchy_chain;
+pub mod injection_aware;
 pub mod range_builder;
 
 // Re-export from submodules
@@ -8,6 +9,7 @@ pub use hierarchy_chain::{
     chain_injected_to_host, is_range_strictly_larger, range_contains, ranges_equal,
     skip_to_distinct_host,
 };
+pub use injection_aware::adjust_range_to_host;
 pub use range_builder::{
     build_selection_range, find_distinct_parent, find_next_distinct_parent, node_to_range,
 };
@@ -647,28 +649,6 @@ fn build_injected_selection_range(
         range: adjusted_range,
         parent,
     }
-}
-
-/// Adjust a node's range from injection-relative to host-document-relative coordinates
-///
-/// Uses byte offsets and PositionMapper to ensure correct UTF-16 column conversion.
-/// The `content_start_byte` is the byte offset where the injection content starts
-/// in the host document.
-fn adjust_range_to_host(node: Node, content_start_byte: usize, mapper: &PositionMapper) -> Range {
-    // Calculate the actual byte offsets in the host document
-    // Node's start_byte() and end_byte() are relative to the injection content
-    let host_start_byte = content_start_byte + node.start_byte();
-    let host_end_byte = content_start_byte + node.end_byte();
-
-    // Convert byte offsets to UTF-16 positions using the mapper
-    let adjusted_start = mapper
-        .byte_to_position(host_start_byte)
-        .unwrap_or_else(|| Position::new(0, 0));
-    let adjusted_end = mapper
-        .byte_to_position(host_end_byte)
-        .unwrap_or_else(|| Position::new(0, 0));
-
-    Range::new(adjusted_start, adjusted_end)
 }
 
 /// Calculate the effective LSP Range after applying offset to content node
