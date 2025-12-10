@@ -68,6 +68,38 @@ pub fn skip_to_distinct_host(
     None
 }
 
+/// Chain the injected selection hierarchy to the host document hierarchy.
+///
+/// This function finds the tail (root) of the injected selection chain and connects
+/// it to the first host selection range that is strictly larger. This ensures the
+/// combined hierarchy has strictly expanding ranges as required by LSP spec.
+///
+/// # Arguments
+/// * `injected` - The injected selection range (will be modified)
+/// * `host` - The host document's selection range to connect to
+///
+/// # Returns
+/// The injected SelectionRange with its tail connected to the appropriate host range
+pub fn chain_injected_to_host(
+    mut injected: SelectionRange,
+    host: Option<SelectionRange>,
+) -> SelectionRange {
+    // Find the end of the injected chain (the injected root) and connect to host
+    fn find_and_connect_tail(selection: &mut SelectionRange, host: Option<SelectionRange>) {
+        if selection.parent.is_none() {
+            // This is the tail - connect to the first host range that is strictly larger
+            let tail_range = &selection.range;
+            let distinct_host = skip_to_distinct_host(host, tail_range);
+            selection.parent = distinct_host.map(Box::new);
+        } else if let Some(ref mut parent) = selection.parent {
+            find_and_connect_tail(parent, host);
+        }
+    }
+
+    find_and_connect_tail(&mut injected, host);
+    injected
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,6 +169,57 @@ mod tests {
         let result = skip_to_distinct_host(None, &tail);
 
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_chain_injected_to_host_connects_to_larger_range() {
+        // Injected chain: inner (5,0)-(6,0) -> middle (4,0)-(7,0) -> (no parent)
+        let middle = make_selection((4, 0), (7, 0), None);
+        let inner = make_selection((5, 0), (6, 0), Some(middle));
+
+        // Host chain: large (0,0)-(10,0)
+        let host = make_selection((0, 0), (10, 0), None);
+
+        let result = chain_injected_to_host(inner, Some(host));
+
+        // Inner should still be (5,0)-(6,0)
+        assert_eq!(result.range.start, Position::new(5, 0));
+        assert_eq!(result.range.end, Position::new(6, 0));
+
+        // Walk to the tail and check it's connected to host
+        let parent = result.parent.expect("should have parent");
+        assert_eq!(parent.range.start, Position::new(4, 0)); // middle
+
+        let grandparent = parent.parent.expect("should connect to host");
+        assert_eq!(grandparent.range.start, Position::new(0, 0)); // host
+    }
+
+    #[test]
+    fn test_chain_injected_to_host_with_none_host() {
+        let inner = make_selection((5, 0), (6, 0), None);
+
+        let result = chain_injected_to_host(inner, None);
+
+        // Should return unchanged
+        assert_eq!(result.range.start, Position::new(5, 0));
+        assert!(result.parent.is_none());
+    }
+
+    #[test]
+    fn test_chain_injected_to_host_skips_smaller_host() {
+        // Injected: (2,0)-(8,0)
+        let injected = make_selection((2, 0), (8, 0), None);
+
+        // Host chain: small (3,0)-(5,0) -> large (0,0)-(10,0)
+        let large = make_selection((0, 0), (10, 0), None);
+        let small = make_selection((3, 0), (5, 0), Some(large));
+
+        let result = chain_injected_to_host(injected, Some(small));
+
+        // Should skip small and connect to large
+        let parent = result.parent.expect("should connect to host");
+        assert_eq!(parent.range.start, Position::new(0, 0));
+        assert_eq!(parent.range.end, Position::new(10, 0));
     }
 
     #[test]
