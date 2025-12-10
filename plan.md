@@ -90,55 +90,68 @@ This section may include considerations on the requirements to refine (or change
 
 ```
 
-# Review Analysis
+# Review Analysis (Second Review Cycle)
 
-## Summary of review.md Findings
+## Summary of New review.md Findings
 
-The review identifies 3 issues, but after analyzing the codebase:
+The new review identifies 3 HIGH-severity issues that were NOT addressed by the previous sprint cycle:
 
-### Issue 1 (lines 5-6): `position_to_point` / `point_to_position` incorrect conversion
+### Issue 1 (High): Injected ranges report byte columns to LSP
 
-**Review Claim:** These functions simply copy numbers between LSP Position and tree-sitter Point, but tree-sitter columns are bytes while LSP columns are UTF-16 code units.
+**Location:** `src/analysis/selection.rs:606` and `src/analysis/selection.rs:669`
 
-**Current State Analysis:**
-- ✅ **INPUT conversion is FIXED** (Sprint 5): The handler functions `handle_selection_range_with_injection` (line 1059) and `handle_selection_range_with_parsed_injection` (line 1126) now use `mapper.position_to_byte()` for cursor lookup, not `position_to_point`.
-- ❌ **OUTPUT conversion is STILL BROKEN**: The `node_to_range` function (line 19) uses `point_to_position` to create output ranges. Since tree-sitter `Point.column` is in bytes, the returned `Range.start.character` is in bytes, not UTF-16 code units as LSP requires.
+**Problem:**
+- `build_injected_selection_range` converts injected AST nodes via `adjust_range_to_host`
+- `adjust_range_to_host` adds two tree-sitter `Point`s together and wraps raw byte counts in `tower_lsp::Position`
+- Tree-sitter columns are UTF-8 bytes, but LSP requires UTF-16 code units
+- For injected snippets with multi-byte chars (e.g., `let yaml = r#"あ: 0"#;`), selection highlighting jumps to wrong column
 
-**Impact:** Selection ranges returned to the client have byte-based columns instead of UTF-16 columns. For ASCII, this works; for multi-byte UTF-8, ranges are shifted right.
+**Impact:**
+- Injected selection ranges are shifted right for non-ASCII content
+- `skip_to_distinct_host` compares ranges in different units (host=UTF-16, injected=bytes) and may fail to connect hierarchies
 
-### Issue 2 (lines 8-9): Effective-range splicing fails for non-ASCII hosts
+**Fix:** Thread a `PositionMapper` into `build_injected_selection_range`/`adjust_range_to_host` so injected nodes use same conversion as host nodes.
 
-**Review Claim:** `calculate_effective_lsp_range` produces proper UTF-16 coordinates, but comparisons against `node_to_range` (which produces byte coordinates) fail.
+### Issue 2 (High): Offset handling reinterprets UTF-16 columns as bytes
 
-**Current State Analysis:**
-- ✅ `calculate_effective_lsp_range` (lines 732-751) correctly converts bytes → UTF-16 via `PositionMapper`
-- ❌ `node_to_range` (lines 19-24) produces byte-based coordinates
-- ❌ `range_contains` comparisons (lines 851, 856, etc.) mix coordinate systems
+**Location:** `src/analysis/selection.rs:301`
 
-**Impact:** When non-ASCII characters exist before the injection, `range_contains(&parent_selection.range, &effective_range)` returns false because:
-- `parent_selection.range.start.character` = byte offset (larger, e.g., 12)
-- `effective_range.start.character` = UTF-16 offset (smaller, e.g., 8)
+**Problem:**
+```rust
+let effective_start_pos = mapper
+    .byte_to_position(effective.start)
+    .map(|p| tree_sitter::Point::new(p.line as usize, p.character as usize))
+    .unwrap_or(content_node.start_position());
+```
+- `byte_to_position` returns UTF-16 columns in `p.character`
+- `Point::new()` expects byte columns
+- Result: `effective_start_position.column` is too small when multi-byte chars exist before injection
 
-### Issue 3 (lines 11-12): Cached line index discarded in hot paths
+**Impact:** All calculations using `effective_start_position` (`adjust_range_to_host`, nested injections) shift ranges LEFT instead of RIGHT.
 
-**Review Claim:** Fresh `PositionMapper::new(text)` at lines 280-285 and 742-748 defeats the optimization.
+**Fix:** Stop round-tripping through UTF-16. Compute byte column directly or add `byte_to_point` helper.
 
-**Current State Analysis:**
-- ✅ Sprint 4 fixed the main handlers to reuse `document.position_mapper()`
-- ❌ Lines 280 and 742 still create fresh mappers inside offset-aware paths
+### Issue 3 (High): ASCII-only helpers still drive incremental edits
 
-**Impact:** Performance regression for offset-aware injection handling, but less severe than before.
+**Location:** `src/analysis/selection.rs:10` and `src/lsp/lsp_impl.rs:412`
+
+**Problem:**
+- `position_to_point` is `pub` and used in `lsp_impl.rs:412` for `tree_sitter::InputEdit`
+- During `textDocument/didChange`, `InputEdit.start_position` receives UTF-16 columns instead of byte columns
+- Tree-sitter receives corrupt edit coordinates and mis-parses or rejects incremental edits
+
+**Impact:** DATA-LOSS level bug for documents containing non-ASCII characters.
+
+**Fix:** Either remove these helpers or reimplement with proper conversion. LSP layer should not use them until corrected.
 
 ## Root Cause Analysis
 
-**The fundamental issue:** `node_to_range` outputs byte columns, but LSP expects UTF-16 columns.
+**Two separate coordinate systems are being confused:**
+1. **Host document ranges** (via `node_to_range` with mapper) → correct UTF-16
+2. **Injected document ranges** (via `adjust_range_to_host`) → incorrect bytes
+3. **Incremental edits** (via `position_to_point`) → incorrect (UTF-16 treated as bytes)
 
-The fix requires either:
-1. **Option A:** Pass `PositionMapper` to `node_to_range` and convert bytes → UTF-16
-2. **Option B:** Create `node_to_byte_range` for internal use, add `node_to_lsp_range(mapper)` for output
-3. **Option C:** Defer all conversion to the very end, keeping byte coordinates internally
-
-Option A is cleanest: we already have the mapper in scope at all call sites.
+The Sprint 6/7 fixes only addressed the host document path. The injection path and edit path were not updated.
 
 # Product Backlog
 
@@ -148,9 +161,37 @@ User story numbers are just identifiers and do not indicate priority.
 Each story includes acceptance criteria for clearer Definition of Done.
 -->
 
-(Empty - all user stories from review.md are complete)
+## User Story 11: Fix injected selection ranges to use UTF-16 columns (High Priority)
+As a user editing a document with language injections containing non-ASCII characters,
+I want selection ranges in injected content to highlight correctly,
+so that I can select code accurately regardless of character encoding.
 
-# Completed User Stories
+**Acceptance Criteria:**
+- `build_injected_selection_range` and `adjust_range_to_host` use proper UTF-16 conversion
+- Injected ranges connect correctly to host hierarchy even with multi-byte chars before injection
+- Test: Rust raw string with Japanese YAML content shows correct selection highlighting
+
+## User Story 12: Fix offset handling to use byte coordinates internally (High Priority)
+As a user with markdown frontmatter containing non-ASCII characters,
+I want offset-adjusted injection ranges to be positioned correctly,
+so that selection expansion works properly in YAML frontmatter.
+
+**Acceptance Criteria:**
+- `effective_start_position` uses byte columns (not UTF-16) for tree-sitter Point
+- Add `byte_to_point` helper or compute byte column directly
+- Test: Markdown with multi-byte chars before frontmatter fence shows correct offset handling
+
+## User Story 13: Fix incremental edits to use byte coordinates (High Priority - Data Loss)
+As a user editing documents containing non-ASCII characters,
+I want incremental edits to be applied correctly,
+so that tree-sitter parsing remains accurate after edits.
+
+**Acceptance Criteria:**
+- `position_to_point` is fixed or removed from `lsp_impl.rs` usage
+- `InputEdit` receives byte-based coordinates, not UTF-16
+- Test: Edit document with Japanese text and verify tree-sitter parses correctly
+
+# Completed User Stories (Previous Review Cycle)
 
 ## ✅ User Story 8: Fix output range conversion to use UTF-16 columns (Sprint 6)
 ## ✅ User Story 9: Unify coordinate systems in range comparisons (Auto-fixed by Sprint 6)
@@ -330,4 +371,67 @@ No remaining product backlog items from this review cycle.
 **Sprint 7 Complete:**
 - ✅ User Story 10: Reuse PositionMapper in offset-aware paths
 
-**All user stories from review.md are complete.**
+**All user stories from first review.md are complete.**
+
+---
+
+# Sprints (Second Review Cycle)
+
+## Sprint 8
+
+<!-- The planned change must have user-visible increment -->
+
+* User story: Fix incremental edits to use byte coordinates (User Story 13)
+
+### Sprint planning
+
+**Context:**
+This is marked as a DATA-LOSS level bug. The `position_to_point` helper in `src/analysis/selection.rs:10` is used by `src/lsp/lsp_impl.rs:412` to construct `tree_sitter::InputEdit` during `textDocument/didChange`.
+
+```rust
+// lsp_impl.rs:412
+InputEdit {
+    start_position: position_to_point(&range.start),
+    old_end_position: position_to_point(&range.end),
+    new_end_position: position_to_point(&new_end_position),
+    // ...
+}
+```
+
+The problem: `position_to_point` simply copies the numeric values without conversion:
+- LSP Position.character = UTF-16 code unit
+- tree_sitter Point.column = byte offset
+
+For documents with multi-byte characters, tree-sitter receives incorrect edit coordinates.
+
+**Solution approach:**
+1. Create proper conversion using `PositionMapper` to convert UTF-16 columns to byte columns
+2. The `InputEdit` needs byte-based start/end positions
+3. Either fix `position_to_point` to require a mapper, or replace its usage in `lsp_impl.rs`
+
+**What is NOT part of this sprint:**
+- Issues 1 & 2 from new review (injected ranges, offset handling)
+
+### Tasks
+
+#### Task 1: Fix InputEdit to use byte coordinates
+
+DoD: `InputEdit` receives byte-based coordinates derived from LSP UTF-16 positions.
+
+* [ ] RED: Write test that edits a document with multi-byte chars and verifies tree-sitter parses correctly
+* [ ] GREEN: Fix the conversion in `lsp_impl.rs` to use `PositionMapper`
+* [ ] CHECK: must pass `make format lint test` without errors and warnings
+* [ ] COMMIT
+* [ ] SELF-REVIEW: with Kent-Beck's Tidy First principle in your mind
+* [ ] REFACTOR (tidying): Consider deprecating or removing unsafe `position_to_point`
+* [ ] COMMIT
+
+### Sprint retrospective
+
+#### Inspections of decisions in the previous retrospective
+
+#### Inspections of the current sprint (e.g., by KPT, use adequate method for each sprint)
+
+#### Adaption plan
+
+### Product Backlog Refinement
