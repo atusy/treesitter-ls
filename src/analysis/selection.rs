@@ -10,9 +10,7 @@ pub use injection_aware::{
     adjust_range_to_host, calculate_effective_lsp_range, is_cursor_within_effective_range,
     is_node_in_selection_chain,
 };
-pub use range_builder::{
-    build_selection_range, find_distinct_parent, find_next_distinct_parent, node_to_range,
-};
+pub use range_builder::{build_selection_range, find_distinct_parent, node_to_range};
 
 use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range_with_text};
 use crate::document::DocumentHandle;
@@ -372,22 +370,21 @@ fn build_injected_selection_range(
     content_start_byte: usize,
     mapper: &PositionMapper,
 ) -> SelectionRange {
-    let parent =
-        find_next_distinct_parent(node, &node.byte_range(), injected_root).map(|parent_node| {
-            if parent_node.id() == injected_root.id() {
-                Box::new(SelectionRange {
-                    range: adjust_range_to_host(parent_node, content_start_byte, mapper),
-                    parent: None, // Connected to host in chain_injected_to_host
-                })
-            } else {
-                Box::new(build_injected_selection_range(
-                    parent_node,
-                    injected_root,
-                    content_start_byte,
-                    mapper,
-                ))
-            }
-        });
+    let parent = find_distinct_parent(node, &node.byte_range()).map(|parent_node| {
+        if parent_node.id() == injected_root.id() {
+            Box::new(SelectionRange {
+                range: adjust_range_to_host(parent_node, content_start_byte, mapper),
+                parent: None, // Connected to host in chain_injected_to_host
+            })
+        } else {
+            Box::new(build_injected_selection_range(
+                parent_node,
+                injected_root,
+                content_start_byte,
+                mapper,
+            ))
+        }
+    });
 
     SelectionRange {
         range: adjust_range_to_host(node, content_start_byte, mapper),
