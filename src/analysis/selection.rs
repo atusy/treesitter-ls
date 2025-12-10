@@ -746,19 +746,6 @@ fn splice_injection_content_into_hierarchy(
     mapper: &PositionMapper,
 ) -> SelectionRange {
     let content_range = node_to_range(content_node, mapper);
-
-    // Find the first ancestor in the chain that fully contains the content_node
-    // and insert content_node just before it
-    rebuild_with_injection_boundary(selection, content_range, &content_node, mapper)
-}
-
-/// Rebuild selection hierarchy, inserting the injection content node at the right place
-fn rebuild_with_injection_boundary(
-    selection: SelectionRange,
-    content_range: Range,
-    content_node: &Node,
-    mapper: &PositionMapper,
-) -> SelectionRange {
     if !range_contains(&content_range, &selection.range) {
         return selection;
     }
@@ -775,18 +762,16 @@ fn rebuild_with_injection_boundary(
             {
                 Some(Box::new(SelectionRange {
                     range: content_range,
-                    parent: Some(Box::new(rebuild_with_injection_boundary(
+                    parent: Some(Box::new(splice_injection_content_into_hierarchy(
                         parent_selection,
-                        content_range,
                         content_node,
                         mapper,
                     ))),
                 }))
             } else {
                 // Keep going up
-                Some(Box::new(rebuild_with_injection_boundary(
+                Some(Box::new(splice_injection_content_into_hierarchy(
                     parent_selection,
-                    content_range,
                     content_node,
                     mapper,
                 )))
