@@ -701,94 +701,6 @@ mod tests {
     use tree_sitter::Point;
 
     #[test]
-    fn test_selection_range_detects_injection() {
-        // Test that selection range detects when cursor is inside an injection region
-        // and includes the injection content node in the selection hierarchy
-        use crate::language::LanguageCoordinator;
-        use tree_sitter::{Parser, Query};
-
-        let mut parser = Parser::new();
-        let language = tree_sitter_rust::LANGUAGE.into();
-        parser.set_language(&language).expect("load rust grammar");
-
-        // Rust code with regex injection
-        let text = r#"fn main() {
-    let pattern = Regex::new(r"^\d+$").unwrap();
-}"#;
-        let tree = parser.parse(text, None).expect("parse rust");
-        let root = tree.root_node();
-
-        // Create injection query for Regex::new
-        let injection_query_str = r#"
-(call_expression
-  function: (scoped_identifier
-    path: (identifier) @_regex
-    (#eq? @_regex "Regex")
-    name: (identifier) @_new
-    (#eq? @_new "new"))
-  arguments: (arguments
-    (raw_string_literal
-      (string_content) @injection.content))
-  (#set! injection.language "regex"))
-        "#;
-
-        let injection_query = Query::new(&language, injection_query_str).expect("valid query");
-
-        // Position inside the regex string (the \d part at column 32)
-        let cursor_pos = Position::new(1, 32);
-        let point = Point::new(cursor_pos.line as usize, cursor_pos.character as usize);
-        let mapper = PositionMapper::new(text);
-        let cursor_byte = mapper.position_to_byte(cursor_pos).unwrap();
-
-        // Find the node at cursor
-        let node = root
-            .descendant_for_point_range(point, point)
-            .expect("should find node");
-
-        // Call the injection-aware function with parsed injection support
-        let coordinator = LanguageCoordinator::new();
-        let mut parser_pool = coordinator.create_document_parser_pool();
-        let selection = build_selection_range_with_parsed_injection(
-            node,
-            &root,
-            text,
-            &mapper,
-            Some(&injection_query),
-            "rust",
-            &coordinator,
-            &mut parser_pool,
-            cursor_byte,
-        );
-
-        // The selection hierarchy should include the injection content node
-        // Walk up the parent chain and check that we find a range matching
-        // the string_content node (which is the injection.content capture)
-        let mut found_injection_content = false;
-        let mut current = Some(&selection);
-
-        // The string_content "^\d+$" is at bytes 43-48 (line 1, col 31-36)
-        // We need to find this range in the selection hierarchy
-        while let Some(sel) = current {
-            // Check if this range corresponds to string_content
-            // string_content starts at line 1, col 31 and ends at line 1, col 36
-            if sel.range.start.line == 1
-                && sel.range.start.character == 31
-                && sel.range.end.line == 1
-                && sel.range.end.character == 36
-            {
-                found_injection_content = true;
-                break;
-            }
-            current = sel.parent.as_ref().map(|p| p.as_ref());
-        }
-
-        assert!(
-            found_injection_content,
-            "Selection hierarchy should include injection content node (string_content)"
-        );
-    }
-
-    #[test]
     fn test_selection_range_respects_offset_directive() {
         // Test that the offset directive is correctly parsed and applied
         // to determine whether cursor is within effective injection range.
@@ -880,137 +792,19 @@ mod tests {
         );
     }
 
-    /// Test that selection range handles nested injections recursively.
+    /// Test that selection range handles nested injections recursively and includes content node boundary.
     ///
-    /// This is the core test for Sprint 5: when cursor is inside a nested injection region,
-    /// the selection should expand through ALL injection levels' AST nodes.
+    /// This is the core test for Sprint 5 nested injection support: when cursor is inside
+    /// a nested injection region, the selection should expand through ALL injection levels'
+    /// AST nodes, and include the content node boundary (e.g., double_quote_scalar in YAML)
+    /// so users can "select the whole nested snippet".
     ///
     /// Test scenario:
     /// - Host: Rust code with a raw string literal containing YAML
     /// - First injection: YAML content
-    /// - Nested injection: JSON embedded in a YAML value (using a custom injection query)
-    /// - Cursor: inside the JSON content
-    /// - Expected: Selection hierarchy includes nodes from JSON, YAML, and Rust
-    ///
-    /// Note: Since we don't have tree-sitter-json, we use a simpler test with YAML
-    /// that contains what could be nested content, and verify the recursion mechanism
-    /// is correctly invoked (by checking it doesn't crash and produces a valid hierarchy).
-    #[test]
-    fn test_selection_range_handles_nested_injection() {
-        use crate::language::LanguageCoordinator;
-        use tree_sitter::{Parser, Query};
-
-        // Setup: Create a coordinator with YAML language registered
-        // We'll also register an injection query for YAML that could match nested content
-        let coordinator = LanguageCoordinator::new();
-        coordinator.register_language_for_test("yaml", tree_sitter_yaml::LANGUAGE.into());
-        coordinator.register_language_for_test("rust", tree_sitter_rust::LANGUAGE.into());
-
-        // Register an injection query for YAML that matches double-quoted scalars as "rust"
-        // This creates a nested injection: Rust → YAML → Rust
-        let yaml_injection_query_str = r#"
-((double_quote_scalar) @injection.content
- (#set! injection.language "rust"))
-        "#;
-        let yaml_lang: tree_sitter::Language = tree_sitter_yaml::LANGUAGE.into();
-        let yaml_injection_query =
-            Query::new(&yaml_lang, yaml_injection_query_str).expect("valid yaml injection query");
-        coordinator.register_injection_query_for_test("yaml", yaml_injection_query);
-
-        let mut parser_pool = coordinator.create_document_parser_pool();
-
-        // Host document: Rust code with YAML that contains a "rust" string
-        let mut parser = Parser::new();
-        let rust_language = tree_sitter_rust::LANGUAGE.into();
-        parser
-            .set_language(&rust_language)
-            .expect("load rust grammar");
-
-        // The YAML contains a double-quoted string that will be injected as Rust
-        // YAML content: title: "fn nested() {}"
-        // The "fn nested() {}" will be treated as Rust code (nested injection)
-        let text = r##"fn main() {
-    let yaml = r#"title: "fn nested() {}""#;
-}"##;
-        let tree = parser.parse(text, None).expect("parse rust");
-        let root = tree.root_node();
-
-        // Create injection query for Rust → YAML
-        let injection_query_str = r#"
-(raw_string_literal
-  (string_content) @injection.content
-  (#set! injection.language "yaml"))
-        "#;
-        let injection_query =
-            Query::new(&rust_language, injection_query_str).expect("valid injection query");
-
-        // Position inside the nested Rust code: "fn nested() {}"
-        // Line 0: fn main() {
-        // Line 1:     let yaml = r#"title: "fn nested() {}""#;
-        //                          ^------- string_content starts here (col 18)
-        //                                  title: "fn nested() {}"
-        //                                         ^ col 25 is 'f' in 'fn'
-        let cursor_pos = Position::new(1, 33); // Inside "fn nested() {}"
-        let point = Point::new(cursor_pos.line as usize, cursor_pos.character as usize);
-
-        let node = root
-            .descendant_for_point_range(point, point)
-            .expect("should find node");
-
-        // Calculate cursor byte offset
-        let mapper = crate::text::PositionMapper::new(text);
-        let cursor_byte = mapper.position_to_byte(cursor_pos).unwrap();
-
-        // Call the function that should handle nested injections
-        let selection = build_selection_range_with_parsed_injection(
-            node,
-            &root,
-            text,
-            &mapper,
-            Some(&injection_query),
-            "rust",
-            &coordinator,
-            &mut parser_pool,
-            cursor_byte,
-        );
-
-        // Verify: The selection hierarchy should include nodes from ALL levels:
-        // - Innermost: Rust AST nodes (from "fn nested() {}")
-        // - Middle: YAML AST nodes (from the YAML content)
-        // - Outer: Rust AST nodes (from the host document)
-        //
-        // Count selection levels - with nested injection we should have MORE levels
-        // than single-level injection because we're parsing through multiple ASTs
-        let mut level_count = 0;
-        let mut curr = Some(&selection);
-        while let Some(sel) = curr {
-            level_count += 1;
-            curr = sel.parent.as_ref().map(|p| p.as_ref());
-        }
-
-        // With nested injection (Rust → YAML → Rust):
-        // - Inner Rust nodes: identifier → function_item or similar (depends on cursor position)
-        // - YAML nodes: double_quote_scalar → flow_node → block_mapping_pair → ...
-        // - Outer Rust nodes: string_content → raw_string_literal → let_declaration → ...
-        //
-        // With aggressive deduplication of same-range nodes (Sprint 7 fix), we get fewer levels
-        // but each level has a strictly different range. We expect at least 7 levels.
-        assert!(
-            level_count >= 7,
-            "Expected at least 7 selection levels with nested injection (Rust → YAML → Rust), got {}. \
-             This indicates nested injection was not properly handled.",
-            level_count
-        );
-    }
-
-    /// Test that nested injection selection includes the content node boundary.
-    ///
-    /// This is the core test for Issue 3 in review.md: When chaining a nested injection
-    /// back to its parent, the selection hierarchy should include the actual content node
-    /// (e.g., double_quote_scalar in YAML) so users can "select the whole nested snippet".
-    ///
-    /// The bug was that build_nested_injection_selection starts from content_node.parent(),
-    /// skipping content_node itself. The top-level path includes it via build_selection_range(content_node).
+    /// - Nested injection: Rust embedded in a YAML double-quoted value
+    /// - Cursor: inside the nested Rust code
+    /// - Expected: Selection hierarchy includes nodes from Rust, YAML, and host Rust
     #[test]
     fn test_nested_injection_includes_content_node_boundary() {
         use crate::language::LanguageCoordinator;
@@ -1084,6 +878,14 @@ mod tests {
             ranges.push(sel.range);
             curr = sel.parent.as_ref().map(|p| p.as_ref());
         }
+
+        // Verify sufficient nesting depth (from merged test_selection_range_handles_nested_injection)
+        // With nested injection (Rust → YAML → Rust), we expect at least 7 levels
+        assert!(
+            ranges.len() >= 7,
+            "Expected at least 7 selection levels with nested injection, got {}",
+            ranges.len()
+        );
 
         // The nested content node is double_quote_scalar in YAML, which contains "fn nested() {}"
         // Its range in the host document should be around line 1, columns 25-41
@@ -1232,191 +1034,91 @@ array: ["xxxx"]"#;
         );
     }
 
-    /// Test that calculate_nested_start_position handles negative offsets correctly.
+    /// Test that calculate_nested_start_position handles various offset scenarios correctly.
     ///
-    /// This is the core test for Issue 1 in review.md: The `InjectionOffset` struct
-    /// uses `i32` for its fields because offset directives like markdown's
-    /// `(#offset! @injection.content -1 0 0 0)` use negative values to trim content.
+    /// This function calculates the start position for nested injections relative to the
+    /// host document. It handles:
+    /// 1. Negative offsets (like markdown's `(#offset! @injection.content -1 0 0 0)`)
+    /// 2. Column alignment when row offsets skip lines (e.g., fenced code blocks)
     ///
-    /// Previously, the code cast `i32` to `usize`, causing:
-    /// - Debug builds: panic on negative values
-    /// - Release builds: astronomically large values due to two's complement wrapping
-    ///
-    /// After the fix, negative offsets should use saturating arithmetic:
-    /// - Negative row offset with row=0 should result in row=0 (not underflow)
-    /// - Negative column offset with column=0 should result in column=0 (not underflow)
+    /// Note: This function was used for Point-based calculation before Sprint 9.
+    /// Production code now uses byte-based offsets, but this test validates the logic.
     #[test]
-    fn test_calculate_nested_start_position_handles_negative_offsets() {
-        // Test case 1: Negative row offset when content starts at row 0
-        // This simulates markdown frontmatter: (#offset! @injection.content -1 0 0 0)
-        // If parent starts at (5, 2) and content starts at (0, 0), applying -1 row offset
-        // should NOT underflow; instead, it should saturate to row 0 or handle gracefully.
-        let parent_start = tree_sitter::Point::new(5, 2);
-        let content_start = tree_sitter::Point::new(0, 0);
+    fn test_calculate_nested_start_position() {
+        // === Negative offset handling ===
 
-        // With offset_rows = -1 and content_start.row = 0, we get effective_row = -1
-        // which should saturate to 0, not panic or produce garbage
+        // Case 1: Negative row offset larger than combined row - should saturate to 0
         let result = calculate_nested_start_position(
-            parent_start,
-            content_start,
-            -1, // negative row offset (like markdown frontmatter)
-            0,  // no column offset
-        );
-
-        // The row should be 5 + 0 + (-1) = 4 (valid, but if content_start.row was -1, it would saturate)
-        // Actually in this case: 5 + 0 - 1 = 4, which is fine
-        assert!(
-            result.row < 1000,
-            "Row should not be astronomically large, got {}",
-            result.row
-        );
-
-        // Test case 2: Negative row offset larger than content row - should saturate
-        // If parent is at (2, 0), content at (1, 0), and offset is -5:
-        // Combined = 2 + 1 + (-5) = -2, which should saturate to 0
-        let parent_start2 = tree_sitter::Point::new(2, 0);
-        let content_start2 = tree_sitter::Point::new(1, 0);
-        let result2 = calculate_nested_start_position(parent_start2, content_start2, -5, 0);
-
-        assert_eq!(
-            result2.row, 0,
-            "Row should saturate to 0 when offset causes underflow, got {}",
-            result2.row
-        );
-
-        // Test case 3: Negative column offset - should saturate
-        let parent_start3 = tree_sitter::Point::new(0, 10);
-        let content_start3 = tree_sitter::Point::new(0, 5);
-        let result3 = calculate_nested_start_position(
-            parent_start3,
-            content_start3,
+            tree_sitter::Point::new(2, 0),
+            tree_sitter::Point::new(1, 0),
+            -5, // offset causes underflow
             0,
-            -20, // negative column offset larger than combined columns
         );
+        assert_eq!(result.row, 0, "Row should saturate to 0 on underflow");
 
+        // Case 2: Negative column offset - should saturate to 0
+        let result = calculate_nested_start_position(
+            tree_sitter::Point::new(0, 10),
+            tree_sitter::Point::new(0, 5),
+            0,
+            -20, // offset causes underflow
+        );
+        assert_eq!(result.column, 0, "Column should saturate to 0 on underflow");
+
+        // === Column alignment with row offsets ===
+
+        // Case 3: No row offset (effective row 0) - add parent's column
+        let result = calculate_nested_start_position(
+            tree_sitter::Point::new(5, 4),
+            tree_sitter::Point::new(0, 0),
+            0,
+            0,
+        );
+        assert_eq!(result.row, 5);
+        assert_eq!(result.column, 4, "Add parent column when effective row is 0");
+
+        // Case 4: Row offset moves to later row - column is absolute
+        let result = calculate_nested_start_position(
+            tree_sitter::Point::new(5, 4),
+            tree_sitter::Point::new(0, 0),
+            1, // skip fence line
+            0,
+        );
+        assert_eq!(result.row, 6);
         assert_eq!(
-            result3.column, 0,
-            "Column should saturate to 0 when offset causes underflow, got {}",
-            result3.column
+            result.column, 0,
+            "Column is absolute when offset moves to later row"
         );
 
-        // Test case 4: Positive offsets that move to later rows
-        // When offset_rows > 0, effective row is content_start.row + offset_rows = 0 + 2 = 2
-        // Since effective row > 0, column is absolute (no parent column added)
-        let result4 = calculate_nested_start_position(
+        // Case 5: Positive offset to later rows - column is absolute
+        let result = calculate_nested_start_position(
             tree_sitter::Point::new(10, 5),
             tree_sitter::Point::new(0, 3),
             2,
             1,
         );
-        assert_eq!(result4.row, 12, "Row calculation: 10 + 0 + 2 = 12");
-        // Effective row is 2 (not 0), so column is absolute: 3 + 1 = 4
-        assert_eq!(
-            result4.column, 4,
-            "Column is absolute when effective row > 0: 3 + 1 = 4"
-        );
+        assert_eq!(result.row, 12);
+        assert_eq!(result.column, 4, "Column: 3 + 1 = 4 (absolute)");
 
-        // Test case 5: When content_start.row = 0 and offset = 0, add parent column
-        let result5 = calculate_nested_start_position(
+        // Case 6: No row offset, content at row 0 - add parent column
+        let result = calculate_nested_start_position(
             tree_sitter::Point::new(10, 5),
             tree_sitter::Point::new(0, 3),
-            0, // no row offset
+            0,
             1,
         );
-        assert_eq!(result5.row, 10, "Row: 10 + 0 + 0 = 10");
-        // Effective row is 0, so column adds parent: 5 + 3 + 1 = 9
-        assert_eq!(
-            result5.column, 9,
-            "Column adds parent when effective row is 0: 5 + 3 + 1 = 9"
-        );
-    }
+        assert_eq!(result.row, 10);
+        assert_eq!(result.column, 9, "Column: 5 + 3 + 1 = 9 (adds parent)");
 
-    /// Test that column calculation considers the effective row after applying offset.
-    ///
-    /// This is the core test for Issue 2 in review.md: When a row offset is applied
-    /// (e.g., to skip a fence line like ```lua), the effective content starts on a
-    /// different row. The column calculation should NOT add the parent's column
-    /// when the effective row is no longer the first row.
-    ///
-    /// Scenario: Fenced code block in markdown
-    /// ```
-    /// Parent starts at (5, 4)   // indented 4 spaces
-    /// Content node at (0, 0):   // starts at beginning of capture
-    ///   Line 0: ```lua          // fence line
-    ///   Line 1: print("hello")  // actual code
-    /// ```
-    ///
-    /// With offset_rows = 1 (skip the fence), effective content starts at line 1.
-    /// The column should be 0 (absolute), NOT 4+0=4 (parent's column added).
-    #[test]
-    fn test_column_alignment_when_row_offset_skips_lines() {
-        // Case 1: offset_rows = 0, content_start.row = 0
-        // Effective row is 0 (same as parent) → column SHOULD add parent's column
-        let result1 = calculate_nested_start_position(
-            tree_sitter::Point::new(5, 4), // parent at (5, 4)
-            tree_sitter::Point::new(0, 0), // content starts at (0, 0) relative
-            0,                             // no row offset
-            0,                             // no column offset
+        // Case 7: Negative offset brings effective row back to 0 - add parent column
+        let result = calculate_nested_start_position(
+            tree_sitter::Point::new(5, 4),
+            tree_sitter::Point::new(1, 2),
+            -1, // effective row becomes 0
+            0,
         );
-        assert_eq!(result1.row, 5, "Row: 5 + 0 + 0 = 5");
-        assert_eq!(
-            result1.column, 4,
-            "Column should add parent's column when effective row is 0: 4 + 0 + 0 = 4"
-        );
-
-        // Case 2: offset_rows = 1, content_start.row = 0
-        // This means: content node starts at row 0, but offset skips 1 row.
-        // Effective content row = 0 + 1 = 1 (NOT the parent's row!)
-        // So column should NOT add parent's column.
-        let result2 = calculate_nested_start_position(
-            tree_sitter::Point::new(5, 4), // parent at (5, 4)
-            tree_sitter::Point::new(0, 0), // content starts at (0, 0) relative
-            1,                             // skip 1 row (e.g., fence line)
-            0,                             // no column offset
-        );
-        assert_eq!(result2.row, 6, "Row: 5 + 0 + 1 = 6");
-        // THIS IS THE BUG: currently returns 4, should return 0
-        assert_eq!(
-            result2.column, 0,
-            "Column should NOT add parent's column when offset moves us to a later row"
-        );
-
-        // Case 3: offset_rows = 1, content_start.row = 1
-        // Content was already on row 1, offset makes it row 2.
-        // Column should be absolute (not add parent's column).
-        let result3 = calculate_nested_start_position(
-            tree_sitter::Point::new(5, 4), // parent at (5, 4)
-            tree_sitter::Point::new(1, 2), // content starts at (1, 2) relative
-            1,                             // additional row offset
-            0,                             // no column offset
-        );
-        assert_eq!(result3.row, 7, "Row: 5 + 1 + 1 = 7");
-        assert_eq!(
-            result3.column, 2,
-            "Column is absolute when content_start.row > 0: just 2"
-        );
-
-        // Case 4: offset_rows = -1, content_start.row = 1
-        // Negative offset brings us back to row 0 → column SHOULD add parent's column
-        // But wait, is this realistic? Let's think...
-        // Actually if content_start.row = 1 and offset = -1, the effective row is 0.
-        // But the content's column at row 1 might not make sense to add parent's column.
-        // This is an edge case. For now, keep the simpler semantic:
-        // If the *effective* row (content_start.row + offset_rows) is 0, add parent column.
-        let result4 = calculate_nested_start_position(
-            tree_sitter::Point::new(5, 4), // parent at (5, 4)
-            tree_sitter::Point::new(1, 2), // content starts at (1, 2) relative
-            -1,                            // offset moves back 1 row → effective row 0
-            0,                             // no column offset
-        );
-        assert_eq!(result4.row, 5, "Row: 5 + 1 + (-1) = 5");
-        // This is a semantic question. If we're back to "row 0 equivalent", should we add parent column?
-        // The current semantics says yes, but this might be debatable.
-        // For now, assert the behavior we want: effective row 0 → add parent column
-        assert_eq!(
-            result4.column, 6,
-            "Column when effective row is 0: 4 + 2 + 0 = 6"
-        );
+        assert_eq!(result.row, 5);
+        assert_eq!(result.column, 6, "Column: 4 + 2 = 6 (adds parent)");
     }
 
     /// Test that build_selection_range deduplicates nodes with identical ranges.
@@ -1488,100 +1190,13 @@ array: ["xxxx"]"#;
         );
     }
 
-    /// Test that selection range correctly handles multi-byte UTF-8 characters.
+    /// Test that selection ranges correctly handle multi-byte UTF-8 characters.
     ///
-    /// This is the core test for Issue 1 in the second review.md: LSP positions use
-    /// UTF-16 code units for columns, but tree-sitter uses byte offsets. The functions
-    /// `position_to_point` and `point_to_position` incorrectly cast between these,
-    /// causing selection ranges to jump to wrong positions when multi-byte characters
-    /// are present.
-    ///
-    /// Example: The Japanese character "あ" (hiragana A) is:
-    /// - 3 bytes in UTF-8 (E3 81 82)
-    /// - 1 code unit in UTF-16
-    ///
-    /// So if we have "あx" and request position at UTF-16 column 1 (the 'x'),
-    /// tree-sitter needs byte offset 3, but incorrectly casting gives byte offset 1.
-    ///
-    /// The fix: The handler functions now use byte-based lookup via PositionMapper
-    /// instead of point-based lookup with `position_to_point`.
-    #[test]
-    fn test_selection_range_handles_multibyte_utf8() {
-        use crate::text::PositionMapper;
-        use tree_sitter::Parser;
-
-        let mut parser = Parser::new();
-        let language = tree_sitter_rust::LANGUAGE.into();
-        parser.set_language(&language).expect("load rust grammar");
-
-        // Rust code with Japanese characters before the identifier we want to select.
-        // "あ" is 3 bytes in UTF-8 but 1 UTF-16 code unit
-        // "let あ = 1; let x = 2;"
-        //      ^           ^
-        //      col 4       col 15 (UTF-16)
-        //      byte 4      byte 17 (UTF-8)
-        let text = "let あ = 1; let x = 2;";
-        let tree = parser.parse(text, None).expect("parse rust");
-        let root = tree.root_node();
-
-        // Create position mapper to get correct byte offset
-        let mapper = PositionMapper::new(text);
-
-        // UTF-16 position of 'x': line 0, character 15
-        // "let あ = 1; let " has 15 UTF-16 code units before 'x':
-        // "let " = 4, "あ" = 1, " = 1; let " = 10, total = 15, so 'x' is at col 15
-        let pos_x = Position::new(0, 15);
-
-        // Convert to byte offset using the mapper (this is what the handler now does)
-        let byte_offset = mapper.position_to_byte(pos_x).expect("valid position");
-
-        // Verify the byte offset is correct
-        assert_eq!(byte_offset, 17, "Byte offset of 'x' should be 17");
-
-        // Find node using byte-based lookup (this is what the handler now does)
-        let node = root
-            .descendant_for_byte_range(byte_offset, byte_offset)
-            .expect("should find node by byte");
-
-        // Verify the byte-based lookup finds the correct identifier 'x'
-        assert_eq!(
-            node.kind(),
-            "identifier",
-            "Byte-based lookup should find identifier node"
-        );
-        assert_eq!(
-            &text[node.byte_range()],
-            "x",
-            "Byte-based lookup should find 'x', not some other identifier"
-        );
-
-        // Build selection range for this node
-        let selection = build_selection_range(node, &mapper);
-
-        // The innermost selection should cover the identifier 'x'
-        // In UTF-16, 'x' is at column 15, not column 17 (which would be wrong)
-        assert_eq!(selection.range.start.line, 0);
-        assert_eq!(selection.range.end.line, 0);
-
-        // Verify the selection range covers exactly one character (the identifier 'x')
-        // The start and end should be one character apart
-        assert_eq!(
-            selection.range.end.character - selection.range.start.character,
-            1,
-            "Selection should cover exactly 1 character (the identifier 'x')"
-        );
-    }
-
-    /// Test that output selection ranges have correct UTF-16 column positions.
-    ///
-    /// This is the core test for review.md Issue 1 (output side): `node_to_range`
-    /// must convert tree-sitter byte columns to LSP UTF-16 code unit columns.
-    ///
-    /// The previous test `test_selection_range_handles_multibyte_utf8` only verified
-    /// the *width* of the selection (1 character). This test verifies the actual
-    /// *column positions* are correct in UTF-16.
+    /// LSP positions use UTF-16 code units for columns, but tree-sitter uses byte offsets.
+    /// The `node_to_range` function must convert tree-sitter byte columns to UTF-16.
     ///
     /// Example: "let あ = 1; let x = 2;"
+    /// - "あ" is 3 bytes in UTF-8 but 1 UTF-16 code unit
     /// - 'x' is at byte 17 (0-indexed) in UTF-8
     /// - 'x' is at column 15 (0-indexed) in UTF-16
     /// - If `node_to_range` outputs byte columns, we'd get character=17 (WRONG)
