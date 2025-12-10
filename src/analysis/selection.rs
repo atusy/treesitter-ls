@@ -183,40 +183,6 @@ pub fn build_selection_range_with_parsed_injection(
     parser_pool: &mut DocumentParserPool,
     cursor_byte: usize,
 ) -> SelectionRange {
-    // Delegate to the recursive implementation with depth 0
-    build_selection_range_with_parsed_injection_recursive(
-        node,
-        root,
-        text,
-        mapper,
-        injection_query,
-        base_language,
-        coordinator,
-        parser_pool,
-        cursor_byte,
-        0, // Initial depth
-    )
-}
-
-/// Internal recursive implementation for nested injection support (Sprint 5)
-#[allow(clippy::too_many_arguments)]
-fn build_selection_range_with_parsed_injection_recursive(
-    node: Node,
-    root: &Node,
-    text: &str,
-    mapper: &PositionMapper,
-    injection_query: Option<&Query>,
-    base_language: &str,
-    coordinator: &LanguageCoordinator,
-    parser_pool: &mut DocumentParserPool,
-    cursor_byte: usize,
-    depth: usize,
-) -> SelectionRange {
-    // Safety: limit recursion depth to prevent stack overflow
-    if depth >= MAX_INJECTION_DEPTH {
-        return build_selection_range(node, mapper);
-    }
-
     // First, detect if we're inside an injection region
     let injection_info =
         injection::detect_injection_with_content(&node, root, text, injection_query, base_language);
@@ -348,7 +314,7 @@ fn build_selection_range_with_parsed_injection_recursive(
                     relative_byte,
                     effective_start_byte,
                     mapper,
-                    depth + 1,
+                    1, // First level of nested injection
                 )
             } else {
                 // No valid nested injection - build selection from current injected node
