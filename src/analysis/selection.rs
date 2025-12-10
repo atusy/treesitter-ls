@@ -770,84 +770,6 @@ fn splice_injection_content_into_hierarchy(
     }
 }
 
-/// Handle textDocument/selectionRange request with injection awareness
-///
-/// Returns selection ranges that expand intelligently by syntax boundaries,
-/// taking into account language injections and their offset directives.
-///
-/// # Arguments
-/// * `document` - The document
-/// * `positions` - The requested positions
-/// * `injection_query` - Optional injection query for detecting language injections
-/// * `base_language` - Optional base language of the document
-///
-/// # Returns
-/// Selection ranges for each position, or None if unable to compute
-pub fn handle_selection_range(
-    document: &DocumentHandle,
-    positions: &[Position],
-    injection_query: Option<&Query>,
-    base_language: Option<&str>,
-) -> Option<Vec<SelectionRange>> {
-    // Create position mapper via document abstraction
-    let mapper = document.position_mapper();
-    let text = document.text();
-
-    // LSP Spec 3.17 requires 1:1 correspondence between positions and results:
-    // "A selection range in the return array is for the position in the provided
-    // parameters at the same index. Therefore positions[i] must be contained in
-    // result[i].range. To allow for results where some positions have selection
-    // ranges and others do not, result[i].range is allowed to be the empty range
-    // at positions[i]."
-    //
-    // We use map (not filter_map) to maintain alignment, returning an empty
-    // fallback range for positions that cannot be resolved.
-    let ranges: Vec<SelectionRange> = positions
-        .iter()
-        .map(|pos| {
-            // Try to build a real selection range
-            let real_range = (|| {
-                // Convert position to byte offset using the mapper.
-                let byte_offset = mapper.position_to_byte(*pos)?;
-
-                // Get the tree
-                let tree = document.tree()?;
-                let root = tree.root_node();
-
-                // Find the smallest node containing this position
-                let node = root.descendant_for_byte_range(byte_offset, byte_offset)?;
-
-                // Build the selection range hierarchy with injection awareness
-                if let Some(lang) = base_language {
-                    Some(build_selection_range_with_injection_and_offset(
-                        node,
-                        &root,
-                        text,
-                        &mapper,
-                        injection_query,
-                        lang,
-                        byte_offset,
-                    ))
-                } else {
-                    Some(build_selection_range(node, &mapper))
-                }
-            })();
-
-            // Return real range or fallback empty range at the requested position
-            real_range.unwrap_or_else(|| {
-                // LSP allows empty range at the position for failed lookups
-                let fallback_range = Range::new(*pos, *pos);
-                SelectionRange {
-                    range: fallback_range,
-                    parent: None,
-                }
-            })
-        })
-        .collect();
-
-    Some(ranges)
-}
-
 /// Handle textDocument/selectionRange request with full injection parsing support
 ///
 /// This is the most complete version that parses injected content and builds
@@ -2114,6 +2036,7 @@ array: ["xxxx"]"#;
     #[test]
     fn test_selection_range_maintains_position_alignment() {
         use crate::document::store::DocumentStore;
+        use crate::language::LanguageCoordinator;
         use tower_lsp::lsp_types::Url;
         use tree_sitter::Parser;
 
@@ -2144,8 +2067,17 @@ array: ["xxxx"]"#;
             Position::new(1, 4),   // valid: 'y'
         ];
 
+        let coordinator = LanguageCoordinator::new();
+        let mut parser_pool = coordinator.create_document_parser_pool();
         let document = store.get(&url).expect("document should exist");
-        let result = handle_selection_range(&document, &positions, None, None);
+        let result = handle_selection_range_with_parsed_injection(
+            &document,
+            &positions,
+            None,
+            None,
+            &coordinator,
+            &mut parser_pool,
+        );
 
         // LSP requires 1:1 correspondence between positions and results
         assert!(
@@ -2205,6 +2137,7 @@ array: ["xxxx"]"#;
     #[test]
     fn test_selection_range_handles_empty_document() {
         use crate::document::store::DocumentStore;
+        use crate::language::LanguageCoordinator;
         use tower_lsp::lsp_types::Url;
         use tree_sitter::Parser;
 
@@ -2229,8 +2162,17 @@ array: ["xxxx"]"#;
         // Request selection range at position (0, 0) - the only valid position
         let positions = vec![Position::new(0, 0)];
 
+        let coordinator = LanguageCoordinator::new();
+        let mut parser_pool = coordinator.create_document_parser_pool();
         let document = store.get(&url).expect("document should exist");
-        let result = handle_selection_range(&document, &positions, None, None);
+        let result = handle_selection_range_with_parsed_injection(
+            &document,
+            &positions,
+            None,
+            None,
+            &coordinator,
+            &mut parser_pool,
+        );
 
         // Should return a result (not fail entirely)
         assert!(
