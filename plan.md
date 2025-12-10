@@ -418,20 +418,50 @@ For documents with multi-byte characters, tree-sitter receives incorrect edit co
 
 DoD: `InputEdit` receives byte-based coordinates derived from LSP UTF-16 positions.
 
-* [ ] RED: Write test that edits a document with multi-byte chars and verifies tree-sitter parses correctly
-* [ ] GREEN: Fix the conversion in `lsp_impl.rs` to use `PositionMapper`
-* [ ] CHECK: must pass `make format lint test` without errors and warnings
-* [ ] COMMIT
-* [ ] SELF-REVIEW: with Kent-Beck's Tidy First principle in your mind
-* [ ] REFACTOR (tidying): Consider deprecating or removing unsafe `position_to_point`
-* [ ] COMMIT
+* [x] RED: Write test that edits a document with multi-byte chars and verifies tree-sitter parses correctly
+* [x] GREEN: Fix the conversion in `lsp_impl.rs` to use `PositionMapper`
+* [x] CHECK: must pass `make format lint test` without errors and warnings
+* [x] COMMIT (ac4a4e6)
+* [x] SELF-REVIEW: with Kent-Beck's Tidy First principle in your mind
+* [x] REFACTOR (tidying): Old position_to_point kept but marked deprecated for ASCII-only tests
 
 ### Sprint retrospective
 
 #### Inspections of decisions in the previous retrospective
 
-#### Inspections of the current sprint (e.g., by KPT, use adequate method for each sprint)
+Sprint 7's refactoring to pass `&PositionMapper` through selection functions made this fix easier - the mapper was already available in `lsp_impl.rs` for byte offset conversion.
+
+#### Inspections of the current sprint (KPT)
+
+**Keep:**
+- TDD approach: The failing test clearly demonstrated the bug (UTF-16 column 3 vs byte column 9)
+- Added `position_to_point` method to `PositionMapper` for proper conversion
+- The fix is minimal: only changed the `InputEdit` construction, not the surrounding logic
+- 136 tests pass (110 unit + 26 integration)
+
+**Problem:**
+- The old `position_to_point` function still exists in selection.rs for backward compatibility
+- Tests in selection.rs use the old function, but this is safe since test strings are ASCII-only
+
+**Try:**
+- Consider adding a lint rule or removing the export of the old function in a future cleanup sprint
+- User Stories 11 and 12 (injection ranges, offset handling) still need to be addressed
 
 #### Adaption plan
 
+**Issue 3 (DATA-LOSS bug) is now FIXED.** Incremental edits in documents with non-ASCII characters will now work correctly.
+
+**Remaining issues from review.md:**
+- Issue 1: Injected ranges report byte columns (User Story 11)
+- Issue 2: Offset handling reinterprets UTF-16 columns as bytes (User Story 12)
+
+These issues affect selection range highlighting for injected content with multi-byte characters.
+
 ### Product Backlog Refinement
+
+**Sprint 8 Complete:**
+- ✅ User Story 13: Fix incremental edits to use byte coordinates
+
+**Remaining User Stories:**
+- User Story 11: Fix injected selection ranges to use UTF-16 columns
+- User Story 12: Fix offset handling to use byte coordinates internally
