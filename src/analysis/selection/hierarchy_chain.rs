@@ -16,6 +16,17 @@ use tower_lsp::lsp_types::Range;
 ///
 /// # Returns
 /// `true` if `a` strictly contains `b` (contains but not equal)
+/// Check if outer range fully contains inner range.
+///
+/// Returns true if inner is completely within outer (inclusive boundaries).
+/// Unlike `is_range_strictly_larger`, this returns true for equal ranges.
+pub fn range_contains(outer: &Range, inner: &Range) -> bool {
+    (outer.start.line < inner.start.line
+        || (outer.start.line == inner.start.line && outer.start.character <= inner.start.character))
+        && (outer.end.line > inner.end.line
+            || (outer.end.line == inner.end.line && outer.end.character >= inner.end.character))
+}
+
 pub fn is_range_strictly_larger(a: &Range, b: &Range) -> bool {
     let a_start = (a.start.line, a.start.character);
     let a_end = (a.end.line, a.end.character);
@@ -34,6 +45,44 @@ pub fn is_range_strictly_larger(a: &Range, b: &Range) -> bool {
 mod tests {
     use super::*;
     use tower_lsp::lsp_types::Position;
+
+    #[test]
+    fn test_range_contains_when_outer_contains_inner() {
+        let outer = Range::new(Position::new(0, 0), Position::new(10, 0));
+        let inner = Range::new(Position::new(2, 0), Position::new(5, 0));
+
+        assert!(range_contains(&outer, &inner));
+    }
+
+    #[test]
+    fn test_range_contains_when_equal() {
+        let outer = Range::new(Position::new(2, 5), Position::new(5, 10));
+        let inner = Range::new(Position::new(2, 5), Position::new(5, 10));
+
+        assert!(
+            range_contains(&outer, &inner),
+            "equal ranges should be contained"
+        );
+    }
+
+    #[test]
+    fn test_range_contains_when_disjoint() {
+        let outer = Range::new(Position::new(0, 0), Position::new(5, 0));
+        let inner = Range::new(Position::new(10, 0), Position::new(15, 0));
+
+        assert!(!range_contains(&outer, &inner));
+    }
+
+    #[test]
+    fn test_range_contains_when_inner_is_larger() {
+        let outer = Range::new(Position::new(2, 0), Position::new(5, 0));
+        let inner = Range::new(Position::new(0, 0), Position::new(10, 0));
+
+        assert!(
+            !range_contains(&outer, &inner),
+            "outer does not contain larger inner"
+        );
+    }
 
     #[test]
     fn test_is_range_strictly_larger_when_a_contains_b() {
