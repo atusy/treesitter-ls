@@ -14,8 +14,6 @@ pub use injection_aware::{
 pub use range_builder::{
     build, build_from_node, build_from_node_in_injection, find_distinct_parent, node_to_range,
 };
-// Backwards compatibility re-exports
-pub use range_builder::{build_injected_selection_range, build_selection_range};
 
 use crate::document::DocumentHandle;
 use crate::language::{DocumentParserPool, LanguageCoordinator};
@@ -420,7 +418,7 @@ array: ["xxxx"]"#;
         assert_eq!(node.kind(), "identifier");
 
         let mapper = PositionMapper::new(text);
-        let selection = build_selection_range(node, &mapper);
+        let selection = build_from_node(node, &mapper);
 
         let mut ranges: Vec<(u32, u32, u32, u32)> = Vec::new();
         let mut curr = Some(&selection);
@@ -478,7 +476,7 @@ array: ["xxxx"]"#;
         assert_eq!(node.kind(), "identifier");
         assert_eq!(&text[node.byte_range()], "x");
 
-        let selection = build_selection_range(node, &mapper);
+        let selection = build_from_node(node, &mapper);
 
         // UTF-16 column 15, not byte 17
         assert_eq!(selection.range.start.character, 15);

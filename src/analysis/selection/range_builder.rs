@@ -498,9 +498,3 @@ fn splice_effective_range_into_hierarchy(
         parent,
     }
 }
-
-// Backwards compatibility aliases
-#[doc(hidden)]
-pub use build_from_node as build_selection_range;
-#[doc(hidden)]
-pub use build_from_node_in_injection as build_injected_selection_range;
