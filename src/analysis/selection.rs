@@ -684,17 +684,6 @@ fn splice_effective_range_into_hierarchy(
     content_node: &Node,
     mapper: &PositionMapper,
 ) -> SelectionRange {
-    // Similar to splice_injection_content_into_hierarchy but uses effective_range
-    rebuild_with_effective_range(selection, effective_range, content_node, mapper)
-}
-
-/// Rebuild selection hierarchy, inserting the effective range at the right place
-fn rebuild_with_effective_range(
-    selection: SelectionRange,
-    effective_range: Range,
-    content_node: &Node,
-    mapper: &PositionMapper,
-) -> SelectionRange {
     // If current selection range is smaller than or equal to effective_range,
     // we need to continue up the chain
     if range_contains(&effective_range, &selection.range) {
@@ -708,7 +697,7 @@ fn rebuild_with_effective_range(
                     // Parent is larger than effective_range, insert effective_range here
                     let effective_selection = SelectionRange {
                         range: effective_range,
-                        parent: Some(Box::new(rebuild_with_effective_range(
+                        parent: Some(Box::new(splice_effective_range_into_hierarchy(
                             parent_selection,
                             effective_range,
                             content_node,
@@ -718,7 +707,7 @@ fn rebuild_with_effective_range(
                     Some(Box::new(effective_selection))
                 } else {
                     // Keep going up
-                    Some(Box::new(rebuild_with_effective_range(
+                    Some(Box::new(splice_effective_range_into_hierarchy(
                         parent_selection,
                         effective_range,
                         content_node,
