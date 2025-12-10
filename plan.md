@@ -875,7 +875,7 @@ let mut pool = match self.parser_pool.lock() {
 
 # Product Backlog (Fifth Review Cycle)
 
-## User Story 18: Fix lock poisoning in parser pool access (High)
+## User Story 18: Fix lock poisoning in parser pool access (High) ✅
 As an LSP server operator,
 I want the server to recover gracefully from thread panics,
 so that a single parsing failure doesn't crash the entire server.
@@ -885,3 +885,31 @@ so that a single parsing failure doesn't crash the entire server.
 - Both locations in lsp_impl.rs fixed (lines 780 and 91)
 - Log warning on poison recovery
 - Test: Existing poison recovery tests cover this pattern
+
+---
+
+# Sprint 14 Retrospective
+
+## Goal
+Fix lock poisoning vulnerability in parser pool access.
+
+## Completed (Commit d28490b)
+
+### Changes
+- Fixed `parser_pool.lock().unwrap()` in `did_open` handler (line 91)
+- Fixed `parser_pool.lock().unwrap()` in `selection_range` handler (line 780)
+- Both now use poison-recovery pattern with `log::warn!` on recovery
+- Follows project's error handling standards from CLAUDE.md
+
+### Key Insight
+Lock poisoning occurs when a thread panics while holding a mutex lock. The default `unwrap()` behavior would propagate the panic, crashing the entire LSP server. The poison-recovery pattern (`poisoned.into_inner()`) allows the server to continue operating with the last known good state of the parser pool.
+
+---
+
+# Fifth Review Cycle Summary
+
+Issue from comprehensive review fixed:
+
+1. ✅ **Issue 1 (High)**: Lock poisoning in parser pool - Sprint 14
+
+Total tests: 147 (115 unit + 32 integration)
