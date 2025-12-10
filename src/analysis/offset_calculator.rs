@@ -38,27 +38,49 @@ pub fn calculate_effective_range(byte_range: ByteRange, offset: InjectionOffset)
 }
 
 /// Calculates the effective range by applying both row and column offsets
+///
+/// This function clamps the resulting range to `[0, text.len()]` and ensures
+/// `start <= end` to prevent panics when slicing. Malformed or malicious
+/// query offsets cannot crash the server.
 pub fn calculate_effective_range_with_text(
     text: &str,
     byte_range: ByteRange,
     offset: InjectionOffset,
 ) -> EffectiveRange {
-    // If no row offsets, just apply column offsets
-    if offset.start_row == 0 && offset.end_row == 0 {
-        return calculate_effective_range(byte_range, offset);
-    }
+    let text_len = text.len();
 
-    // Calculate line positions for proper row offset application
-    let effective_start = apply_offset_to_position(
-        text,
-        byte_range.start,
-        offset.start_row,
-        offset.start_column,
-    );
-    let effective_end =
-        apply_offset_to_position(text, byte_range.end, offset.end_row, offset.end_column);
+    // Calculate raw effective positions
+    let (raw_start, raw_end) = if offset.start_row == 0 && offset.end_row == 0 {
+        // Column offsets only - apply directly
+        let start = (byte_range.start as i32 + offset.start_column).max(0) as usize;
+        let end = (byte_range.end as i32 + offset.end_column).max(0) as usize;
+        (start, end)
+    } else {
+        // Row offsets require text scanning
+        let start = apply_offset_to_position(
+            text,
+            byte_range.start,
+            offset.start_row,
+            offset.start_column,
+        );
+        let end =
+            apply_offset_to_position(text, byte_range.end, offset.end_row, offset.end_column);
+        (start, end)
+    };
 
-    EffectiveRange::new(effective_start, effective_end)
+    // Clamp to valid range [0, text.len()]
+    let clamped_start = raw_start.min(text_len);
+    let clamped_end = raw_end.min(text_len);
+
+    // Ensure start <= end invariant
+    let (final_start, final_end) = if clamped_start <= clamped_end {
+        (clamped_start, clamped_end)
+    } else {
+        // When start > end, return empty range at clamped_end
+        (clamped_end, clamped_end)
+    };
+
+    EffectiveRange::new(final_start, final_end)
 }
 
 /// Apply row and column offset to a byte position in text
@@ -151,6 +173,80 @@ mod tests {
     use crate::language::injection::DEFAULT_OFFSET;
 
     #[test]
+    fn test_offset_extending_past_eof_should_be_clamped() {
+        // This test verifies that offsets extending past EOF don't cause panics
+        // A malformed query might specify #offset! @injection.content 0 0 0 1
+        // which extends the end past the buffer
+        let text = "hello";
+        let byte_range = ByteRange::new(0, 5); // Entire text
+        let offset = InjectionOffset::new(0, 0, 0, 5); // End column +5 (past EOF)
+
+        let effective = calculate_effective_range_with_text(text, byte_range, offset);
+
+        // End should be clamped to text.len() = 5
+        assert!(
+            effective.end <= text.len(),
+            "End {} should be clamped to text len {}",
+            effective.end,
+            text.len()
+        );
+        // start <= end invariant should hold
+        assert!(
+            effective.start <= effective.end,
+            "Start {} should be <= end {}",
+            effective.start,
+            effective.end
+        );
+        // Slicing should not panic
+        let _ = &text[effective.start..effective.end];
+    }
+
+    #[test]
+    fn test_offset_with_start_past_end_should_be_normalized() {
+        // Edge case: offset makes start > end
+        let text = "hello";
+        let byte_range = ByteRange::new(0, 5);
+        let offset = InjectionOffset::new(0, 10, 0, 0); // Start offset +10, end +0
+
+        let effective = calculate_effective_range_with_text(text, byte_range, offset);
+
+        // start <= end invariant should hold
+        assert!(
+            effective.start <= effective.end,
+            "Start {} should be <= end {}",
+            effective.start,
+            effective.end
+        );
+        // Both should be clamped to text.len()
+        assert!(
+            effective.start <= text.len() && effective.end <= text.len(),
+            "Both start {} and end {} should be <= text len {}",
+            effective.start,
+            effective.end,
+            text.len()
+        );
+    }
+
+    #[test]
+    fn test_row_offset_past_eof_should_be_clamped() {
+        // Row offset moving end beyond last line
+        let text = "line 1\nline 2";
+        let byte_range = ByteRange::new(0, 6); // "line 1"
+        let offset = InjectionOffset::new(0, 0, 5, 0); // End row +5 (way past last line)
+
+        let effective = calculate_effective_range_with_text(text, byte_range, offset);
+
+        assert!(
+            effective.end <= text.len(),
+            "End {} should be clamped to text len {}",
+            effective.end,
+            text.len()
+        );
+        // Slicing should not panic
+        let _ = &text[effective.start..effective.end];
+    }
+
+    #[test]
     fn test_calculate_effective_range_with_positive_offset() {
         let byte_range = ByteRange::new(10, 20);
         let offset = InjectionOffset::new(0, 5, 0, -3); // Column offsets: +5 start, -3 end
@@ -204,9 +300,12 @@ mod tests {
 
         let effective = calculate_effective_range_with_text(text, byte_range, offset);
 
-        // Should move start to byte 14 (start of "line 3")
-        assert_eq!(effective.start, 14);
-        assert_eq!(effective.end, 13); // End unchanged (no row offset for end)
+        // Original raw values: start=14, end=13 (start > end)
+        // With safety clamping: when start > end, we normalize to empty range at end
+        assert_eq!(effective.start, 13);
+        assert_eq!(effective.end, 13);
+        // Slicing should be safe
+        let _ = &text[effective.start..effective.end];
     }
 
     #[test]
@@ -233,9 +332,12 @@ mod tests {
 
         let effective = calculate_effective_range_with_text(text, byte_range, offset);
 
-        // Should move to byte 14 (start of "line 3") + 5 = 19
-        assert_eq!(effective.start, 19);
+        // Original raw values: start=19, end=13 (start > end)
+        // With safety clamping: when start > end, we normalize to empty range at end
+        assert_eq!(effective.start, 13);
         assert_eq!(effective.end, 13);
+        // Slicing should be safe
+        let _ = &text[effective.start..effective.end];
     }
 
     #[test]
