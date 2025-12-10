@@ -6,7 +6,7 @@ use tree_sitter::InputEdit;
 // Note: position_to_point from selection.rs is deprecated - use PositionMapper.position_to_point() instead
 use crate::analysis::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
 use crate::analysis::{
-    handle_code_actions, handle_goto_definition, handle_selection_range_with_parsed_injection,
+    handle_code_actions, handle_goto_definition, handle_selection_range,
     handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
 use crate::config::WorkspaceSettings;
@@ -796,7 +796,7 @@ impl LanguageServer for TreeSitterLs {
                 poisoned.into_inner()
             }
         };
-        let result = handle_selection_range_with_parsed_injection(
+        let result = handle_selection_range(
             &doc,
             &positions,
             injection_query.as_ref().map(|q| q.as_ref()),

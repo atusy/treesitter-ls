@@ -785,7 +785,7 @@ fn splice_injection_content_into_hierarchy(
 ///
 /// # Returns
 /// Selection ranges for each position, or None if unable to compute
-pub fn handle_selection_range_with_parsed_injection(
+pub fn handle_selection_range(
     document: &DocumentHandle,
     positions: &[Position],
     injection_query: Option<&Query>,
@@ -2070,7 +2070,7 @@ array: ["xxxx"]"#;
         let coordinator = LanguageCoordinator::new();
         let mut parser_pool = coordinator.create_document_parser_pool();
         let document = store.get(&url).expect("document should exist");
-        let result = handle_selection_range_with_parsed_injection(
+        let result = handle_selection_range(
             &document,
             &positions,
             None,
@@ -2165,7 +2165,7 @@ array: ["xxxx"]"#;
         let coordinator = LanguageCoordinator::new();
         let mut parser_pool = coordinator.create_document_parser_pool();
         let document = store.get(&url).expect("document should exist");
-        let result = handle_selection_range_with_parsed_injection(
+        let result = handle_selection_range(
             &document,
             &positions,
             None,
