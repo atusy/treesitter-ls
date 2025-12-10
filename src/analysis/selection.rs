@@ -460,25 +460,22 @@ fn splice_effective_range_into_hierarchy(
     let parent = match selection.parent {
         Some(parent) => {
             let parent = *parent;
-            if range_contains(&parent.range, &effective_range)
-                && !ranges_equal(&parent.range, &effective_range)
+            let parent_range = parent.range;
+            let spliced = Some(Box::new(splice_effective_range_into_hierarchy(
+                parent,
+                effective_range,
+                content_node,
+                mapper,
+            )));
+            if range_contains(&parent_range, &effective_range)
+                && !ranges_equal(&parent_range, &effective_range)
             {
                 Some(Box::new(SelectionRange {
                     range: effective_range,
-                    parent: Some(Box::new(splice_effective_range_into_hierarchy(
-                        parent,
-                        effective_range,
-                        content_node,
-                        mapper,
-                    ))),
+                    parent: spliced,
                 }))
             } else {
-                Some(Box::new(splice_effective_range_into_hierarchy(
-                    parent,
-                    effective_range,
-                    content_node,
-                    mapper,
-                )))
+                spliced
             }
         }
         None => Some(Box::new(SelectionRange {
