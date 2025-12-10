@@ -1,12 +1,14 @@
 // Submodules (Rust 2018+ style)
 // These are located in src/analysis/selection/*.rs
 pub mod hierarchy_chain;
+pub mod range_builder;
 
 // Re-export from submodules
 pub use hierarchy_chain::{
     chain_injected_to_host, is_range_strictly_larger, range_contains, ranges_equal,
     skip_to_distinct_host,
 };
+pub use range_builder::node_to_range;
 
 use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range_with_text};
 use crate::document::DocumentHandle;
@@ -38,20 +40,6 @@ fn position_to_point(pos: &Position) -> Point {
 #[cfg(test)]
 fn point_to_position(point: Point) -> Position {
     Position::new(point.row as u32, point.column as u32)
-}
-
-/// Convert tree-sitter Node to LSP Range with proper UTF-16 encoding
-///
-/// Tree-sitter stores positions as byte offsets, but LSP requires UTF-16 code units.
-/// This function uses the provided PositionMapper to perform the correct conversion.
-fn node_to_range(node: Node, mapper: &PositionMapper) -> Range {
-    let start = mapper
-        .byte_to_position(node.start_byte())
-        .unwrap_or_else(|| Position::new(node.start_position().row as u32, 0));
-    let end = mapper
-        .byte_to_position(node.end_byte())
-        .unwrap_or_else(|| Position::new(node.end_position().row as u32, 0));
-    Range::new(start, end)
 }
 
 /// Build selection range hierarchy for a node
