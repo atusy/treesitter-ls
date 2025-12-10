@@ -465,3 +465,59 @@ These issues affect selection range highlighting for injected content with multi
 **Remaining User Stories:**
 - User Story 11: Fix injected selection ranges to use UTF-16 columns
 - User Story 12: Fix offset handling to use byte coordinates internally
+
+## Sprint 9
+
+<!-- The planned change must have user-visible increment -->
+
+* User story: Fix injected selection ranges to use UTF-16 columns (User Story 11)
+
+### Sprint planning
+
+**Context:**
+Issue 1 from review.md identifies that `adjust_range_to_host` (line 669) creates LSP Positions directly from byte columns:
+
+```rust
+fn adjust_range_to_host(node: Node, content_start_position: tree_sitter::Point) -> Range {
+    // ...
+    Position::new(
+        (content_start_position.row + node_start.row) as u32,
+        (content_start_position.column + node_start.column) as u32,  // BUG: bytes, not UTF-16
+    )
+}
+```
+
+For injected content containing multi-byte characters, the selection ranges will be shifted.
+
+**Solution approach:**
+1. Pass a `PositionMapper` (for host document) to `adjust_range_to_host`
+2. Calculate the byte offset in host document by combining:
+   - Content start byte offset
+   - Node's relative byte offset within injection
+3. Use `mapper.byte_to_position()` for proper UTF-16 conversion
+4. Thread the mapper through `build_injected_selection_range` and callers
+
+**What is NOT part of this sprint:**
+- Issue 2 (offset handling) - separate concern, will be Sprint 10
+
+### Tasks
+
+#### Task 1: Fix adjust_range_to_host to use PositionMapper
+
+DoD: `adjust_range_to_host` produces correct UTF-16 column positions for multi-byte characters.
+
+* [ ] RED: Write test with Japanese text in injected content
+* [ ] GREEN: Modify `adjust_range_to_host` to use byte offsets and PositionMapper
+* [ ] CHECK: must pass `make format lint test` without errors and warnings
+* [ ] COMMIT
+* [ ] SELF-REVIEW: with Kent-Beck's Tidy First principle in your mind
+
+### Sprint retrospective
+
+#### Inspections of decisions in the previous retrospective
+
+#### Inspections of the current sprint (e.g., by KPT, use adequate method for each sprint)
+
+#### Adaption plan
+
+### Product Backlog Refinement

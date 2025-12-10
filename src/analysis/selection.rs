@@ -297,27 +297,16 @@ fn build_selection_range_with_parsed_injection_recursive(
     };
 
     // Extract the injected content text - use effective range if offset exists
-    // Reuse the cached mapper instead of creating a new one (Sprint 7 performance fix)
-    let (content_text, effective_start_position, effective_start_byte) =
-        if let Some(offset) = offset_from_query {
-            let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
-            let effective = calculate_effective_range_with_text(text, byte_range, offset);
-            let effective_text = &text[effective.start..effective.end];
+    // Calculate byte offset in host document for proper UTF-16 conversion (Sprint 9 fix)
+    let (content_text, effective_start_byte) = if let Some(offset) = offset_from_query {
+        let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
+        let effective = calculate_effective_range_with_text(text, byte_range, offset);
+        let effective_text = &text[effective.start..effective.end];
 
-            // Calculate effective start position for coordinate adjustment
-            let effective_start_pos = mapper
-                .byte_to_position(effective.start)
-                .map(|p| tree_sitter::Point::new(p.line as usize, p.character as usize))
-                .unwrap_or(content_node.start_position());
-
-            (effective_text, effective_start_pos, effective.start)
-        } else {
-            (
-                &text[content_node.byte_range()],
-                content_node.start_position(),
-                content_node.start_byte(),
-            )
-        };
+        (effective_text, effective.start)
+    } else {
+        (&text[content_node.byte_range()], content_node.start_byte())
+    };
 
     // Parse the injected content
     let Some(injected_tree) = parser.parse(content_text, None) else {
@@ -378,7 +367,8 @@ fn build_selection_range_with_parsed_injection_recursive(
                     coordinator,
                     parser_pool,
                     relative_byte,
-                    effective_start_position,
+                    effective_start_byte,
+                    mapper,
                     depth + 1,
                 )
             } else {
@@ -386,16 +376,22 @@ fn build_selection_range_with_parsed_injection_recursive(
                 build_injected_selection_range(
                     injected_node,
                     &injected_root,
-                    effective_start_position,
+                    effective_start_byte,
+                    mapper,
                 )
             }
         } else {
             // No nested injection detected - build selection from current injected node
-            build_injected_selection_range(injected_node, &injected_root, effective_start_position)
+            build_injected_selection_range(
+                injected_node,
+                &injected_root,
+                effective_start_byte,
+                mapper,
+            )
         }
     } else {
         // No injection query for the injected language - build selection from current injected node
-        build_injected_selection_range(injected_node, &injected_root, effective_start_position)
+        build_injected_selection_range(injected_node, &injected_root, effective_start_byte, mapper)
     };
 
     // Now chain the injected selection to the host document's selection
@@ -418,6 +414,9 @@ fn build_selection_range_with_parsed_injection_recursive(
 ///
 /// This handles the recursive case where we're inside an injection that itself
 /// contains another injection.
+///
+/// The `parent_start_byte` is the byte offset where the parent injection content
+/// starts in the host document. The `mapper` is for the host document.
 #[allow(clippy::too_many_arguments)]
 fn build_nested_injection_selection(
     node: &Node,
@@ -428,12 +427,13 @@ fn build_nested_injection_selection(
     coordinator: &LanguageCoordinator,
     parser_pool: &mut DocumentParserPool,
     cursor_byte: usize,
-    parent_start_position: tree_sitter::Point,
+    parent_start_byte: usize,
+    mapper: &PositionMapper,
     depth: usize,
 ) -> SelectionRange {
     // Safety check
     if depth >= MAX_INJECTION_DEPTH {
-        return build_injected_selection_range(*node, root, parent_start_position);
+        return build_injected_selection_range(*node, root, parent_start_byte, mapper);
     }
 
     // Detect the nested injection
@@ -446,12 +446,12 @@ fn build_nested_injection_selection(
     );
 
     let Some((hierarchy, content_node, pattern_index)) = injection_info else {
-        return build_injected_selection_range(*node, root, parent_start_position);
+        return build_injected_selection_range(*node, root, parent_start_byte, mapper);
     };
 
     // Get nested language name from hierarchy (last element)
     if hierarchy.len() < 2 {
-        return build_injected_selection_range(*node, root, parent_start_position);
+        return build_injected_selection_range(*node, root, parent_start_byte, mapper);
     }
     let nested_lang = hierarchy.last().unwrap().clone();
 
@@ -461,59 +461,71 @@ fn build_nested_injection_selection(
     // Ensure nested language is loaded
     let load_result = coordinator.ensure_language_loaded(&nested_lang);
     if !load_result.success {
-        return build_injected_selection_range(*node, root, parent_start_position);
+        return build_injected_selection_range(*node, root, parent_start_byte, mapper);
     }
 
     // Acquire parser for nested language
     let Some(mut nested_parser) = parser_pool.acquire(&nested_lang) else {
-        return build_injected_selection_range(*node, root, parent_start_position);
+        return build_injected_selection_range(*node, root, parent_start_byte, mapper);
     };
 
-    // Extract nested content text
-    let (nested_text, nested_effective_start, nested_effective_start_byte) =
-        if let Some(off) = offset {
-            let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
-            let effective = calculate_effective_range_with_text(text, byte_range, off);
-            let effective_text = &text[effective.start..effective.end];
+    // Extract nested content text and calculate byte offset in host document
+    let (nested_text, nested_effective_start_byte) = if let Some(off) = offset {
+        let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
+        let effective = calculate_effective_range_with_text(text, byte_range, off);
+        let effective_text = &text[effective.start..effective.end];
 
-            // Calculate effective start position (relative to parent injection)
-            // Use i32 offsets directly - saturating arithmetic handles negative values
-            let effective_start_pos = calculate_nested_start_position(
-                parent_start_position,
-                content_node.start_position(),
-                off.start_row,
-                off.start_column,
-            );
+        // Effective byte in host = parent_start_byte + relative byte in parent content
+        // Since `text` is the parent injection content, effective.start is relative to text start
+        // which is at parent_start_byte in the host document
+        // Actually, for nested injections, we need to track the actual host byte offset
+        // The `text` here is the parent injection's content, not the host document
+        // So we need to add parent_start_byte + effective.start
+        // Wait, effective.start is relative to `text` which starts at parent_start_byte
+        // So host_byte = parent_start_byte + effective.start - content's start relative to text
+        // This is getting complex. Let's simplify:
+        // effective.start is already the byte offset within the parent injection's text slice
+        // So the host document byte = parent_start_byte + effective.start (if text starts at 0)
+        // But wait, text is sliced, so effective.start is already correct relative to text start
+        // We need: parent_start_byte (where parent injection starts) + relative position in parent
+        // Hmm, content_node.start_byte() is relative to `text`, so:
+        // nested_start_in_host = parent_start_byte + effective.start (relative to text)
+        // Actually, effective.start is an absolute byte in text, which started at 0
+        // So we need parent_start_byte + effective.start
+        let nested_start_in_host = parent_start_byte + effective.start;
 
-            (effective_text, effective_start_pos, effective.start)
-        } else {
-            let nested_start_pos = calculate_nested_start_position(
-                parent_start_position,
-                content_node.start_position(),
-                0,
-                0,
-            );
-            (
-                &text[content_node.byte_range()],
-                nested_start_pos,
-                content_node.start_byte(),
-            )
-        };
+        (effective_text, nested_start_in_host)
+    } else {
+        // No offset - nested content starts at content_node position relative to parent text
+        // content_node.start_byte() is relative to `text`
+        let nested_start_in_host = parent_start_byte + content_node.start_byte();
+        (&text[content_node.byte_range()], nested_start_in_host)
+    };
 
     // Parse nested content
     let Some(nested_tree) = nested_parser.parse(nested_text, None) else {
         parser_pool.release(nested_lang.to_string(), nested_parser);
-        return build_injected_selection_range(*node, root, parent_start_position);
+        return build_injected_selection_range(*node, root, parent_start_byte, mapper);
     };
 
-    let nested_relative_byte = cursor_byte.saturating_sub(nested_effective_start_byte);
+    // cursor_byte is relative to the parent injection's text
+    // nested_effective_start_byte is the host document byte offset
+    // We need nested_relative_byte relative to nested_text start
+    let nested_relative_byte = if let Some(off) = offset {
+        let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
+        let effective = calculate_effective_range_with_text(text, byte_range, off);
+        cursor_byte.saturating_sub(effective.start)
+    } else {
+        cursor_byte.saturating_sub(content_node.start_byte())
+    };
+
     let nested_root = nested_tree.root_node();
 
     let Some(nested_node) =
         nested_root.descendant_for_byte_range(nested_relative_byte, nested_relative_byte)
     else {
         parser_pool.release(nested_lang.to_string(), nested_parser);
-        return build_injected_selection_range(*node, root, parent_start_position);
+        return build_injected_selection_range(*node, root, parent_start_byte, mapper);
     };
 
     // Check for even deeper nesting (recursive)
@@ -539,14 +551,25 @@ fn build_nested_injection_selection(
                 coordinator,
                 parser_pool,
                 nested_relative_byte,
-                nested_effective_start,
+                nested_effective_start_byte,
+                mapper,
                 depth + 1,
             )
         } else {
-            build_injected_selection_range(nested_node, &nested_root, nested_effective_start)
+            build_injected_selection_range(
+                nested_node,
+                &nested_root,
+                nested_effective_start_byte,
+                mapper,
+            )
         }
     } else {
-        build_injected_selection_range(nested_node, &nested_root, nested_effective_start)
+        build_injected_selection_range(
+            nested_node,
+            &nested_root,
+            nested_effective_start_byte,
+            mapper,
+        )
     };
 
     // Chain nested selection to parent injected content
@@ -555,7 +578,8 @@ fn build_nested_injection_selection(
     let content_node_selection = Some(build_injected_selection_range(
         content_node,
         root,
-        parent_start_position,
+        parent_start_byte,
+        mapper,
     ));
 
     let result = chain_injected_to_host(nested_selection, content_node_selection);
@@ -575,6 +599,10 @@ fn build_nested_injection_selection(
 ///   same row as the parent, so we add parent's column offset.
 /// - If the effective row is > 0, we've moved to a later row (e.g., after skipping
 ///   a fence line), so the column is absolute within the content.
+///
+/// Note: This function was used for Point-based calculation before Sprint 9.
+/// It's now kept for test coverage but production code uses byte-based offsets.
+#[cfg(test)]
 fn calculate_nested_start_position(
     parent_start: tree_sitter::Point,
     content_start: tree_sitter::Point,
@@ -608,13 +636,17 @@ fn calculate_nested_start_position(
 /// This builds SelectionRange from injected AST nodes, adjusting positions
 /// to be relative to the host document (not the injection slice).
 /// Nodes with identical ranges are deduplicated (LSP spec requires strictly expanding ranges).
+///
+/// The `content_start_byte` is the byte offset where the injection content starts
+/// in the host document. The `mapper` is used for proper UTF-16 column conversion.
 fn build_injected_selection_range(
     node: Node,
     injected_root: &Node,
-    content_start_position: tree_sitter::Point,
+    content_start_byte: usize,
+    mapper: &PositionMapper,
 ) -> SelectionRange {
     // Adjust the node's range to be relative to the host document
-    let adjusted_range = adjust_range_to_host(node, content_start_position);
+    let adjusted_range = adjust_range_to_host(node, content_start_byte, mapper);
     let node_byte_range = node.byte_range();
 
     // Build parent chain within injected content, skipping nodes with same range
@@ -624,14 +656,15 @@ fn build_injected_selection_range(
             if parent_node.id() == injected_root.id() {
                 // The root of injected content - adjust its range too
                 Box::new(SelectionRange {
-                    range: adjust_range_to_host(parent_node, content_start_position),
+                    range: adjust_range_to_host(parent_node, content_start_byte, mapper),
                     parent: None, // Will be connected to host in chain_injected_to_host
                 })
             } else {
                 Box::new(build_injected_selection_range(
                     parent_node,
                     injected_root,
-                    content_start_position,
+                    content_start_byte,
+                    mapper,
                 ))
             }
         });
@@ -667,36 +700,23 @@ fn find_next_distinct_parent<'a>(
 }
 
 /// Adjust a node's range from injection-relative to host-document-relative coordinates
-fn adjust_range_to_host(node: Node, content_start_position: tree_sitter::Point) -> Range {
-    let node_start = node.start_position();
-    let node_end = node.end_position();
+///
+/// Uses byte offsets and PositionMapper to ensure correct UTF-16 column conversion.
+/// The `content_start_byte` is the byte offset where the injection content starts
+/// in the host document.
+fn adjust_range_to_host(node: Node, content_start_byte: usize, mapper: &PositionMapper) -> Range {
+    // Calculate the actual byte offsets in the host document
+    // Node's start_byte() and end_byte() are relative to the injection content
+    let host_start_byte = content_start_byte + node.start_byte();
+    let host_end_byte = content_start_byte + node.end_byte();
 
-    // Add the content node's starting position to the relative positions
-    let adjusted_start = if node_start.row == 0 {
-        // First row - add column offset
-        Position::new(
-            (content_start_position.row + node_start.row) as u32,
-            (content_start_position.column + node_start.column) as u32,
-        )
-    } else {
-        // Subsequent rows - only add row offset, column is absolute within injection
-        Position::new(
-            (content_start_position.row + node_start.row) as u32,
-            node_start.column as u32,
-        )
-    };
-
-    let adjusted_end = if node_end.row == 0 {
-        Position::new(
-            (content_start_position.row + node_end.row) as u32,
-            (content_start_position.column + node_end.column) as u32,
-        )
-    } else {
-        Position::new(
-            (content_start_position.row + node_end.row) as u32,
-            node_end.column as u32,
-        )
-    };
+    // Convert byte offsets to UTF-16 positions using the mapper
+    let adjusted_start = mapper
+        .byte_to_position(host_start_byte)
+        .unwrap_or_else(|| Position::new(0, 0));
+    let adjusted_end = mapper
+        .byte_to_position(host_end_byte)
+        .unwrap_or_else(|| Position::new(0, 0));
 
     Range::new(adjusted_start, adjusted_end)
 }
@@ -2186,5 +2206,217 @@ array: ["xxxx"]"#;
             selection.range.end.character, 16,
             "Selection end should be UTF-16 column 16 (one past 'x')"
         );
+    }
+
+    /// Test that injected content selection ranges use UTF-16 columns correctly.
+    ///
+    /// This is the core test for review.md Issue 1 (second review): `adjust_range_to_host`
+    /// creates LSP Positions directly from byte columns, but should use UTF-16.
+    ///
+    /// Scenario: Rust code with a raw string containing Japanese text treated as YAML.
+    /// The YAML content has multi-byte characters, and the selection ranges should
+    /// use UTF-16 columns when reported to the LSP client.
+    ///
+    /// Example: `let yaml = r#"あ: 0"#;`
+    /// The "あ" in the YAML content is at a certain byte position, but the LSP
+    /// should report its UTF-16 column position.
+    #[test]
+    fn test_injected_selection_range_uses_utf16_columns() {
+        use crate::language::LanguageCoordinator;
+        use tree_sitter::{Parser, Query};
+
+        let coordinator = LanguageCoordinator::new();
+        coordinator.register_language_for_test("yaml", tree_sitter_yaml::LANGUAGE.into());
+
+        // YAML injection query that matches double_quote_scalar
+        let yaml_injection_query_str = r#"
+((double_quote_scalar) @injection.content
+ (#set! injection.language "yaml"))
+        "#;
+        let yaml_lang: tree_sitter::Language = tree_sitter_yaml::LANGUAGE.into();
+        let yaml_injection_query =
+            Query::new(&yaml_lang, yaml_injection_query_str).expect("valid yaml injection query");
+        coordinator.register_injection_query_for_test("yaml", yaml_injection_query);
+
+        let mut parser_pool = coordinator.create_document_parser_pool();
+
+        let mut parser = Parser::new();
+        let rust_language = tree_sitter_rust::LANGUAGE.into();
+        parser
+            .set_language(&rust_language)
+            .expect("load rust grammar");
+
+        // Rust code with Japanese text in YAML injection
+        // "あ" is 3 bytes in UTF-8 but 1 UTF-16 code unit
+        // The YAML content "あ: 0" has the "0" at:
+        // - Relative to YAML content start: byte 5 (あ=3 bytes + ":"+space = 2)
+        // - In UTF-16 within YAML: column 3 (あ=1 + ":"+space = 2)
+        //
+        // In the host document:
+        // let yaml = r#"あ: 0"#;
+        //  0         1         2
+        //  0123456789012345678901234
+        //               ^-- raw string starts at byte 14
+        //
+        // After r#" the YAML content "あ: 0" starts at byte 17
+        // The "0" is at byte 17 + 5 = 22 in the host document
+        // But in UTF-16, column calculation should account for あ being 1 char
+        let text = "let yaml = r#\"あ: 0\"#;";
+        let tree = parser.parse(text, None).expect("parse");
+        let root = tree.root_node();
+
+        // Rust to YAML injection query
+        let injection_query_str = r#"
+(raw_string_literal
+  (string_content) @injection.content
+  (#set! injection.language "yaml"))
+        "#;
+        let injection_query = Query::new(&rust_language, injection_query_str).expect("valid query");
+
+        // Position the cursor at "0" in the YAML content
+        // In the host document, we need to find the byte position of "0"
+        // let yaml = r#" is 14 bytes (all ASCII), then string_content starts
+        // Then "あ: 0" where:
+        // - "あ" = 3 bytes
+        // - ": " = 2 bytes
+        // - "0" at relative byte 5 within content
+        //
+        // Actually, let's verify by finding the string_content node
+        let mapper = crate::text::PositionMapper::new(text);
+
+        // Find the string_content node first
+        let mut cursor = root.walk();
+        let mut content_node = None;
+        loop {
+            let node = cursor.node();
+            if node.kind() == "string_content" {
+                content_node = Some(node);
+                break;
+            }
+            if cursor.goto_first_child() {
+                continue;
+            }
+            while !cursor.goto_next_sibling() {
+                if !cursor.goto_parent() {
+                    break;
+                }
+            }
+            if cursor.node().id() == root.id() {
+                break;
+            }
+        }
+        let content_node = content_node.expect("Should find string_content node");
+
+        // The string_content contains "あ: 0"
+        let content_text = &text[content_node.byte_range()];
+        assert_eq!(content_text, "あ: 0", "Content should be the YAML text");
+
+        // The "0" is at relative byte 5 within the content (あ=3 + ": "=2)
+        // In host document: content_node.start_byte() + 5
+        let zero_byte_in_host = content_node.start_byte() + 5;
+
+        // Now use the handler function
+        let selection = build_selection_range_with_parsed_injection(
+            content_node,
+            &root,
+            text,
+            &mapper,
+            Some(&injection_query),
+            "rust",
+            &coordinator,
+            &mut parser_pool,
+            zero_byte_in_host,
+        );
+
+        // The innermost selection should be for the "0" in the YAML
+        // CRITICAL: The column should be in UTF-16, not bytes!
+        //
+        // Host document UTF-16 analysis:
+        // let yaml = r#"あ: 0"#;
+        //  0         1         2
+        //  0123456789012345678901
+        //               ^-- r#" starts at col 11
+        //                 ^-- content starts at col 14 (after r#")
+        //                 あ at col 14
+        //                  : at col 15
+        //                    at col 16 (space)
+        //                  0 at col 17
+        //
+        // Wait, let me recalculate:
+        // "let yaml = r#" is 14 characters
+        // Then the string content:
+        // "あ" = 1 UTF-16 code unit at col 14
+        // ":" = 1 at col 15
+        // " " = 1 at col 16
+        // "0" = 1 at col 17
+        //
+        // So "0" should be at UTF-16 column 17 in the host document.
+        // If we incorrectly use bytes:
+        // "let yaml = r#" = 14 bytes
+        // "あ" = 3 bytes at byte 14-16
+        // ": " = 2 bytes at byte 17-18
+        // "0" at byte 19
+        //
+        // So incorrect byte-based would give column 19, correct UTF-16 gives 17.
+
+        // Find the innermost range (for "0")
+        let _innermost_range = selection.range;
+
+        // The selection might be for a larger YAML node. Let's check what we got.
+        // Walk up to verify we have injected content
+        let mut found_small_range = false;
+        let mut current = &selection;
+        loop {
+            // Look for a range that could be the "0" node
+            // It should be small (1 character) and on line 0
+            if current.range.start.line == 0
+                && current.range.end.line == 0
+                && current.range.end.character - current.range.start.character <= 5
+            {
+                // This is likely in the injected content
+                // The column should NOT be the byte offset
+                if current.range.start.character >= 17 && current.range.start.character <= 20 {
+                    // Check that it's using UTF-16, not bytes
+                    // If using bytes incorrectly, we'd see character=19 for "0"
+                    // If correct UTF-16, we'd see character=17 for "0"
+                    // (or similar values for enclosing YAML nodes)
+                    found_small_range = true;
+
+                    // The key assertion: if adjust_range_to_host uses bytes directly,
+                    // we'd get wrong column values. After the fix, columns are UTF-16.
+                    // For "0", the UTF-16 column is 17, byte offset is 19.
+                    assert!(
+                        current.range.start.character < 19,
+                        "Expected UTF-16 column (17 or 18), got byte-based column {}. \
+                         adjust_range_to_host must convert byte columns to UTF-16.",
+                        current.range.start.character
+                    );
+                    break;
+                }
+            }
+            if let Some(parent) = &current.parent {
+                current = parent.as_ref();
+            } else {
+                break;
+            }
+        }
+
+        assert!(
+            found_small_range,
+            "Should find a small range in the injected content. \
+             Selection ranges: {:?}",
+            collect_ranges(&selection)
+        );
+    }
+
+    /// Helper to collect all ranges in a selection hierarchy for debugging
+    fn collect_ranges(selection: &SelectionRange) -> Vec<Range> {
+        let mut ranges = vec![selection.range];
+        let mut current = &selection.parent;
+        while let Some(parent) = current {
+            ranges.push(parent.range);
+            current = &parent.parent;
+        }
+        ranges
     }
 }
