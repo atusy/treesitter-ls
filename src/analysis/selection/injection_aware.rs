@@ -8,6 +8,8 @@
 use tower_lsp::lsp_types::{Position, Range};
 use tree_sitter::Node;
 
+use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range_with_text};
+use crate::language::injection::InjectionOffset;
 use crate::text::position::PositionMapper;
 
 /// Adjust a node's range from injection-relative to host-document-relative coordinates.
@@ -42,9 +44,44 @@ pub fn adjust_range_to_host(node: Node, content_start_byte: usize, mapper: &Posi
     Range::new(adjusted_start, adjusted_end)
 }
 
+/// Calculate the effective LSP Range after applying offset to content node.
+///
+/// Offset directives (like `#offset! @injection.content 1 0 -1 0`) adjust where
+/// the injection content actually starts and ends. This function applies those
+/// offsets and converts the result to an LSP Range with proper UTF-16 positions.
+///
+/// # Arguments
+/// * `text` - The full host document text
+/// * `mapper` - PositionMapper for byte-to-UTF16 conversion
+/// * `content_node` - The injection content node
+/// * `offset` - The offset to apply (row and column adjustments)
+///
+/// # Returns
+/// LSP Range representing the effective injection boundaries
+pub fn calculate_effective_lsp_range(
+    text: &str,
+    mapper: &PositionMapper,
+    content_node: &Node,
+    offset: InjectionOffset,
+) -> Range {
+    let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
+    let effective = calculate_effective_range_with_text(text, byte_range, offset);
+
+    // Convert byte positions to LSP positions (reusing cached mapper - Sprint 7 perf fix)
+    let start_pos = mapper
+        .byte_to_position(effective.start)
+        .unwrap_or_else(|| Position::new(0, 0));
+    let end_pos = mapper
+        .byte_to_position(effective.end)
+        .unwrap_or_else(|| Position::new(0, 0));
+
+    Range::new(start_pos, end_pos)
+}
+
 // Note: Unit tests for injection_aware functions require Tree-sitter parsers
 // and injection scenarios which are tested through integration tests in selection.rs.
 // The tests in selection.rs cover:
 // - test_selection_range_handles_nested_injection
 // - test_injected_selection_range_uses_utf16_columns
 // - test_nested_injection_includes_content_node_boundary
+// - test_selection_range_respects_offset_directive (calculate_effective_lsp_range)

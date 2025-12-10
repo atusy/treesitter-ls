@@ -9,7 +9,7 @@ pub use hierarchy_chain::{
     chain_injected_to_host, is_range_strictly_larger, range_contains, ranges_equal,
     skip_to_distinct_host,
 };
-pub use injection_aware::adjust_range_to_host;
+pub use injection_aware::{adjust_range_to_host, calculate_effective_lsp_range};
 pub use range_builder::{
     build_selection_range, find_distinct_parent, find_next_distinct_parent, node_to_range,
 };
@@ -649,27 +649,6 @@ fn build_injected_selection_range(
         range: adjusted_range,
         parent,
     }
-}
-
-/// Calculate the effective LSP Range after applying offset to content node
-fn calculate_effective_lsp_range(
-    text: &str,
-    mapper: &PositionMapper,
-    content_node: &Node,
-    offset: injection::InjectionOffset,
-) -> Range {
-    let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
-    let effective = calculate_effective_range_with_text(text, byte_range, offset);
-
-    // Convert byte positions to LSP positions (reusing cached mapper - Sprint 7 perf fix)
-    let start_pos = mapper
-        .byte_to_position(effective.start)
-        .unwrap_or_else(|| Position::new(0, 0));
-    let end_pos = mapper
-        .byte_to_position(effective.end)
-        .unwrap_or_else(|| Position::new(0, 0));
-
-    Range::new(start_pos, end_pos)
 }
 
 /// Build selection hierarchy with injection content node included
