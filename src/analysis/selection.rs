@@ -9,7 +9,9 @@ pub use hierarchy_chain::{
     chain_injected_to_host, is_range_strictly_larger, range_contains, ranges_equal,
     skip_to_distinct_host,
 };
-pub use injection_aware::{adjust_range_to_host, calculate_effective_lsp_range};
+pub use injection_aware::{
+    adjust_range_to_host, calculate_effective_lsp_range, is_cursor_within_effective_range,
+};
 pub use range_builder::{
     build_selection_range, find_distinct_parent, find_next_distinct_parent, node_to_range,
 };
@@ -809,18 +811,6 @@ fn rebuild_with_effective_range(
         // Current range is not inside effective_range, just continue normally
         selection
     }
-}
-
-/// Check if cursor byte position is within the effective range after applying offset
-fn is_cursor_within_effective_range(
-    text: &str,
-    content_node: &Node,
-    cursor_byte: usize,
-    offset: injection::InjectionOffset,
-) -> bool {
-    let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
-    let effective_range = calculate_effective_range_with_text(text, byte_range, offset);
-    cursor_byte >= effective_range.start && cursor_byte < effective_range.end
 }
 
 /// Check if a node's range is already present in the selection chain

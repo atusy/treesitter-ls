@@ -78,10 +78,41 @@ pub fn calculate_effective_lsp_range(
     Range::new(start_pos, end_pos)
 }
 
+/// Check if cursor byte position is within the effective range after applying offset.
+///
+/// Used to determine if the cursor is inside the actual injection content after
+/// offset directives have been applied. For example, in Markdown frontmatter:
+/// ```markdown
+/// ---
+/// title: "hello"
+/// ---
+/// ```
+/// With offset `(1, 0, -1, 0)`, the cursor must be within `title: "hello"\n`
+/// (excluding the `---` boundary lines) for this to return true.
+///
+/// # Arguments
+/// * `text` - The full host document text
+/// * `content_node` - The injection content node
+/// * `cursor_byte` - The cursor position in bytes
+/// * `offset` - The offset to apply
+///
+/// # Returns
+/// `true` if cursor is within the effective range, `false` otherwise
+pub fn is_cursor_within_effective_range(
+    text: &str,
+    content_node: &Node,
+    cursor_byte: usize,
+    offset: InjectionOffset,
+) -> bool {
+    let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
+    let effective_range = calculate_effective_range_with_text(text, byte_range, offset);
+    cursor_byte >= effective_range.start && cursor_byte < effective_range.end
+}
+
 // Note: Unit tests for injection_aware functions require Tree-sitter parsers
 // and injection scenarios which are tested through integration tests in selection.rs.
 // The tests in selection.rs cover:
 // - test_selection_range_handles_nested_injection
 // - test_injected_selection_range_uses_utf16_columns
 // - test_nested_injection_includes_content_node_boundary
-// - test_selection_range_respects_offset_directive (calculate_effective_lsp_range)
+// - test_selection_range_respects_offset_directive (calculate_effective_lsp_range, is_cursor_within_effective_range)
