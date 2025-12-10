@@ -673,8 +673,7 @@ fn splice_effective_range_into_hierarchy(
             if range_contains(&parent_selection.range, &effective_range)
                 && !ranges_equal(&parent_selection.range, &effective_range)
             {
-                // Parent is larger than effective_range, insert effective_range here
-                let effective_selection = SelectionRange {
+                Some(Box::new(SelectionRange {
                     range: effective_range,
                     parent: Some(Box::new(splice_effective_range_into_hierarchy(
                         parent_selection,
@@ -682,8 +681,7 @@ fn splice_effective_range_into_hierarchy(
                         content_node,
                         mapper,
                     ))),
-                };
-                Some(Box::new(effective_selection))
+                }))
             } else {
                 // Keep going up
                 Some(Box::new(splice_effective_range_into_hierarchy(
