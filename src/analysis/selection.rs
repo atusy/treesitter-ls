@@ -49,44 +49,11 @@ fn point_to_position(point: Point) -> Position {
     Position::new(point.row as u32, point.column as u32)
 }
 
-/// Build selection range hierarchy with injection awareness
+/// Build selection range hierarchy with injection awareness and offset support
 ///
 /// When the cursor is inside an injection region, this function ensures
 /// the injection content node is included in the selection hierarchy.
-///
-/// # Arguments
-/// * `node` - The node at cursor position
-/// * `root` - The root node of the document tree
-/// * `text` - The document text
-/// * `mapper` - PositionMapper for UTF-16 column conversion
-/// * `injection_query` - Optional injection query for detecting injections
-/// * `base_language` - The base language of the document
-///
-/// # Returns
-/// SelectionRange that includes injection boundaries when applicable
-pub fn build_selection_range_with_injection(
-    node: Node,
-    root: &Node,
-    text: &str,
-    mapper: &PositionMapper,
-    injection_query: Option<&Query>,
-    base_language: &str,
-) -> SelectionRange {
-    // Try to detect if we're inside an injection region
-    let injection_info =
-        injection::detect_injection_with_content(&node, root, text, injection_query, base_language);
-
-    match injection_info {
-        Some((_hierarchy, content_node, _pattern_index)) => {
-            build_injection_aware_selection(node, content_node, mapper)
-        }
-        None => build_selection_range(node, mapper),
-    }
-}
-
-/// Build selection range hierarchy with injection awareness and offset support
-///
-/// This version takes a cursor_byte parameter to check if the cursor is within
+/// The cursor_byte parameter is used to check if the cursor is within
 /// the effective range of the injection after applying offset directives.
 /// When an offset directive exists, the selection hierarchy uses the effective
 /// range (after applying offset) instead of the full content node range.
@@ -1090,20 +1057,22 @@ mod tests {
         let cursor_pos = Position::new(1, 32);
         let point = position_to_point(&cursor_pos);
         let mapper = PositionMapper::new(text);
+        let cursor_byte = mapper.position_to_byte(cursor_pos).unwrap();
 
         // Find the node at cursor
         let node = root
             .descendant_for_point_range(point, point)
             .expect("should find node");
 
-        // Call the new injection-aware function
-        let selection = build_selection_range_with_injection(
+        // Call the injection-aware function with offset support
+        let selection = build_selection_range_with_injection_and_offset(
             node,
             &root,
             text,
             &mapper,
             Some(&injection_query),
             "rust",
+            cursor_byte,
         );
 
         // The selection hierarchy should include the injection content node
