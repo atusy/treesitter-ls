@@ -561,3 +561,98 @@ Sprint 8's approach of adding `position_to_point` to PositionMapper was the righ
 - ✅ Issue 3: InputEdit now uses byte-based coordinates (Sprint 8)
 
 The key insight: By switching to a byte-offset-based approach throughout the injection handling code, both Issues 1 and 2 were fixed. The `position_to_point` function is now only used in tests with ASCII-only strings.
+
+---
+
+# Review Analysis (Third Review Cycle)
+
+## Summary of New review.md Findings
+
+The new review identifies 3 issues with different severity levels:
+
+### Issue 1 (Critical): Offset slicing can panic when queries push ranges outside the buffer
+
+**Location:** `src/analysis/selection.rs:301-309`, `src/analysis/selection.rs:472-504`, `src/analysis/selection.rs:514-517`
+
+**Problem:**
+- `calculate_effective_range_with_text` returns raw byte offsets with no clamping
+- When an injection query supplies positive offsets that extend beyond the captured node (e.g., `#offset! @injection.content 0 0 0 1` on a capture ending at EOF)
+- The subsequent slices `&text[effective.start..effective.end]` will panic with "byte index out of bounds"
+- Queries are loaded from workspace files, so a malformed or malicious query crashes the whole server
+
+**Impact:** Server crash (panic) from user-controlled query files - this is a denial-of-service vulnerability.
+
+**Fix:** Clamp computed start/end into `[0, text.len()]`, ensure `start <= end`, and short-circuit (fall back) instead of slicing invalid ranges.
+
+### Issue 2 (High): ASCII-only conversion helpers remain exported, inviting regressions
+
+**Location:** `src/analysis/selection.rs:13-25`, `src/analysis.rs:8-13`
+
+**Problem:**
+- `position_to_point` / `point_to_position` intentionally treat UTF-16 columns as bytes
+- Despite warning comments, `analysis.rs` still re-exports `position_to_point`
+- This makes it trivial for other modules to accidentally use the buggy helper and reintroduce multi-byte issues
+
+**Impact:** Risk of regression - new code can easily use the wrong conversion function.
+
+**Fix:** Either:
+1. Remove from public API entirely
+2. Mark `#[deprecated]` with a compile error
+3. Move behind a clearly named `*_ascii_only` module
+
+### Issue 3 (Medium): Whole selectionRange request fails if any single position is invalid
+
+**Location:** `src/analysis/selection.rs:1122-1154`, `src/analysis/selection.rs:1186-1219`
+
+**Problem:**
+- Both selection range handlers iterate positions and collect into `Option<Vec<_>>`
+- One `None` (e.g., when `mapper.position_to_byte` fails due to stale cursor) causes entire request to return `None`
+- Multi-cursor editors send many locations at once
+
+**Impact:** A single stale cursor position yields no selection ranges anywhere - poor user experience in multi-cursor scenarios.
+
+**Fix:** Handle failures per position (skip, or return zero-length range) instead of failing the entire request.
+
+## Root Cause Analysis
+
+These are **robustness and API hygiene** issues, not coordinate conversion bugs:
+1. **Issue 1**: Missing input validation on query-provided offsets
+2. **Issue 2**: Public API exposes dangerous ASCII-only helpers
+3. **Issue 3**: All-or-nothing error handling doesn't match LSP expectations
+
+# Product Backlog (Third Review Cycle)
+
+<!--
+Order represents priority (top = highest priority).
+-->
+
+## User Story 14: Prevent panic from out-of-bounds offset slicing (Critical)
+As an LSP server operator,
+I want the server to handle malformed injection queries gracefully,
+so that a bad query file cannot crash the entire server.
+
+**Acceptance Criteria:**
+- `calculate_effective_range_with_text` clamps offsets to valid range `[0, text.len()]`
+- Ensure `start <= end` after clamping
+- Fall back gracefully instead of panicking on invalid ranges
+- Test: Query with offset extending past EOF does not crash server
+
+## User Story 15: Remove or deprecate ASCII-only conversion helpers (High)
+As a developer working on treesitter-ls,
+I want dangerous ASCII-only helpers to be clearly marked or removed,
+so that I cannot accidentally introduce multi-byte bugs.
+
+**Acceptance Criteria:**
+- `position_to_point` is either removed from public API or marked `#[deprecated]`
+- No non-test code uses `position_to_point` from `analysis.rs`
+- Consider renaming to `position_to_point_ascii_only` if keeping for tests
+
+## User Story 16: Handle per-position failures in selectionRange requests (Medium)
+As a user with multiple cursors,
+I want selection ranges to work for valid cursor positions even if one is stale,
+so that multi-cursor editing works reliably.
+
+**Acceptance Criteria:**
+- Selection range handlers return results for valid positions even if some fail
+- Failed positions return empty/minimal result instead of causing entire request to fail
+- Test: Request with mix of valid and invalid positions returns partial results
