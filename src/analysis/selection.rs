@@ -759,55 +759,53 @@ fn rebuild_with_injection_boundary(
     content_node: &Node,
     mapper: &PositionMapper,
 ) -> SelectionRange {
+    if !range_contains(&content_range, &selection.range) {
+        return selection;
+    }
+
     // If current selection range is smaller than or equal to content_range,
     // we need to continue up the chain
-    if range_contains(&content_range, &selection.range) {
-        // Current range is inside content_range
-        // Continue building, but when we reach content_node's parent level,
-        // insert content_node
-        let new_parent = match selection.parent {
-            Some(parent) => {
-                let parent_selection = *parent;
-                if range_contains(&parent_selection.range, &content_range)
-                    && !ranges_equal(&parent_selection.range, &content_range)
-                {
-                    Some(Box::new(SelectionRange {
-                        range: content_range,
-                        parent: Some(Box::new(rebuild_with_injection_boundary(
-                            parent_selection,
-                            content_range,
-                            content_node,
-                            mapper,
-                        ))),
-                    }))
-                } else {
-                    // Keep going up
-                    Some(Box::new(rebuild_with_injection_boundary(
+    // Continue building, but when we reach content_node's parent level,
+    // insert content_node
+    let new_parent = match selection.parent {
+        Some(parent) => {
+            let parent_selection = *parent;
+            if range_contains(&parent_selection.range, &content_range)
+                && !ranges_equal(&parent_selection.range, &content_range)
+            {
+                Some(Box::new(SelectionRange {
+                    range: content_range,
+                    parent: Some(Box::new(rebuild_with_injection_boundary(
                         parent_selection,
                         content_range,
                         content_node,
                         mapper,
-                    )))
-                }
-            }
-            None => {
-                // No parent, but we're inside content_range - add content_node as parent
-                Some(Box::new(SelectionRange {
-                    range: content_range,
-                    parent: content_node
-                        .parent()
-                        .map(|p| Box::new(build_selection_range(p, mapper))),
+                    ))),
                 }))
+            } else {
+                // Keep going up
+                Some(Box::new(rebuild_with_injection_boundary(
+                    parent_selection,
+                    content_range,
+                    content_node,
+                    mapper,
+                )))
             }
-        };
-
-        SelectionRange {
-            range: selection.range,
-            parent: new_parent,
         }
-    } else {
-        // Current range is not inside content_range, just continue normally
-        selection
+        None => {
+            // No parent, but we're inside content_range - add content_node as parent
+            Some(Box::new(SelectionRange {
+                range: content_range,
+                parent: content_node
+                    .parent()
+                    .map(|p| Box::new(build_selection_range(p, mapper))),
+            }))
+        }
+    };
+
+    SelectionRange {
+        range: selection.range,
+        parent: new_parent,
     }
 }
 
