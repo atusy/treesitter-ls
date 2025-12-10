@@ -57,6 +57,42 @@ pub fn find_distinct_parent<'a>(
     None
 }
 
+/// Find the next parent node that has a different (larger) byte range, with root check.
+///
+/// Similar to `find_distinct_parent`, but also checks if we've reached the root node.
+/// If the root node has the same range as the current node, returns None to prevent
+/// duplicate ranges in the selection hierarchy.
+///
+/// # Arguments
+/// * `node` - The starting node
+/// * `current_range` - The byte range to compare against
+/// * `root` - The root node of the tree (used for termination check)
+///
+/// # Returns
+/// The first ancestor with a different byte range, or None if no such ancestor exists
+/// or if root has the same range
+pub fn find_next_distinct_parent<'a>(
+    node: Node<'a>,
+    current_range: &std::ops::Range<usize>,
+    root: &Node,
+) -> Option<Node<'a>> {
+    let mut current = node.parent();
+    while let Some(parent) = current {
+        let parent_range = parent.byte_range();
+        // If parent has a different range, use it
+        if parent_range != *current_range {
+            return Some(parent);
+        }
+        // If we've reached root with the same range, return None (no distinct parent)
+        // This prevents duplicate ranges in the selection hierarchy
+        if parent.id() == root.id() {
+            return None;
+        }
+        current = parent.parent();
+    }
+    None
+}
+
 // Note: Unit tests for these functions require a Tree-sitter parser.
 // The project loads parsers dynamically at runtime, so we test these functions
 // through integration tests in selection.rs that use the existing test infrastructure.

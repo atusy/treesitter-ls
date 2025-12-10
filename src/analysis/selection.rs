@@ -8,7 +8,7 @@ pub use hierarchy_chain::{
     chain_injected_to_host, is_range_strictly_larger, range_contains, ranges_equal,
     skip_to_distinct_host,
 };
-pub use range_builder::{find_distinct_parent, node_to_range};
+pub use range_builder::{find_distinct_parent, find_next_distinct_parent, node_to_range};
 
 use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range_with_text};
 use crate::document::DocumentHandle;
@@ -659,30 +659,6 @@ fn build_injected_selection_range(
         range: adjusted_range,
         parent,
     }
-}
-
-/// Find the next parent node that has a different (larger) range than the current node.
-/// This ensures the LSP selection range hierarchy is strictly expanding.
-fn find_next_distinct_parent<'a>(
-    node: Node<'a>,
-    current_range: &std::ops::Range<usize>,
-    root: &Node,
-) -> Option<Node<'a>> {
-    let mut current = node.parent();
-    while let Some(parent) = current {
-        let parent_range = parent.byte_range();
-        // If parent has a different range, use it
-        if parent_range != *current_range {
-            return Some(parent);
-        }
-        // If we've reached root with the same range, return None (no distinct parent)
-        // This prevents duplicate ranges in the selection hierarchy
-        if parent.id() == root.id() {
-            return None;
-        }
-        current = parent.parent();
-    }
-    None
 }
 
 /// Adjust a node's range from injection-relative to host-document-relative coordinates
