@@ -11,6 +11,7 @@ pub use hierarchy_chain::{
 };
 pub use injection_aware::{
     adjust_range_to_host, calculate_effective_lsp_range, is_cursor_within_effective_range,
+    is_node_in_selection_chain,
 };
 pub use range_builder::{
     build_selection_range, find_distinct_parent, find_next_distinct_parent, node_to_range,
@@ -811,25 +812,6 @@ fn rebuild_with_effective_range(
         // Current range is not inside effective_range, just continue normally
         selection
     }
-}
-
-/// Check if a node's range is already present in the selection chain
-fn is_node_in_selection_chain(
-    selection: &SelectionRange,
-    target_node: &Node,
-    mapper: &PositionMapper,
-) -> bool {
-    let target_range = node_to_range(*target_node, mapper);
-    let mut current = Some(selection);
-
-    while let Some(sel) = current {
-        if sel.range == target_range {
-            return true;
-        }
-        current = sel.parent.as_ref().map(|p| p.as_ref());
-    }
-
-    false
 }
 
 /// Splice the injection content node into the selection hierarchy

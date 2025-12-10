@@ -5,9 +5,10 @@
 //! These functions manage coordinate translation between injection and host documents,
 //! and build proper selection hierarchies that respect injection boundaries.
 
-use tower_lsp::lsp_types::{Position, Range};
+use tower_lsp::lsp_types::{Position, Range, SelectionRange};
 use tree_sitter::Node;
 
+use super::range_builder::node_to_range;
 use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range_with_text};
 use crate::language::injection::InjectionOffset;
 use crate::text::position::PositionMapper;
@@ -109,6 +110,36 @@ pub fn is_cursor_within_effective_range(
     cursor_byte >= effective_range.start && cursor_byte < effective_range.end
 }
 
+/// Check if a node's range is already present in the selection chain.
+///
+/// Used to determine if we need to splice the injection content node into
+/// the hierarchy, or if it's already there from a previous traversal.
+///
+/// # Arguments
+/// * `selection` - The root of the SelectionRange chain to search
+/// * `target_node` - The node whose range we're looking for
+/// * `mapper` - PositionMapper for converting node to LSP Range
+///
+/// # Returns
+/// `true` if the node's range appears somewhere in the chain, `false` otherwise
+pub fn is_node_in_selection_chain(
+    selection: &SelectionRange,
+    target_node: &Node,
+    mapper: &PositionMapper,
+) -> bool {
+    let target_range = node_to_range(*target_node, mapper);
+    let mut current = Some(selection);
+
+    while let Some(sel) = current {
+        if sel.range == target_range {
+            return true;
+        }
+        current = sel.parent.as_ref().map(|p| p.as_ref());
+    }
+
+    false
+}
+
 // Note: Unit tests for injection_aware functions require Tree-sitter parsers
 // and injection scenarios which are tested through integration tests in selection.rs.
 // The tests in selection.rs cover:
@@ -116,3 +147,4 @@ pub fn is_cursor_within_effective_range(
 // - test_injected_selection_range_uses_utf16_columns
 // - test_nested_injection_includes_content_node_boundary
 // - test_selection_range_respects_offset_directive (calculate_effective_lsp_range, is_cursor_within_effective_range)
+// - is_node_in_selection_chain is tested implicitly via the injection-aware selection tests
