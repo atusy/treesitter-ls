@@ -626,7 +626,7 @@ These are **robustness and API hygiene** issues, not coordinate conversion bugs:
 Order represents priority (top = highest priority).
 -->
 
-## User Story 14: Prevent panic from out-of-bounds offset slicing (Critical)
+## User Story 14: Prevent panic from out-of-bounds offset slicing (Critical) ✅
 As an LSP server operator,
 I want the server to handle malformed injection queries gracefully,
 so that a bad query file cannot crash the entire server.
@@ -637,7 +637,7 @@ so that a bad query file cannot crash the entire server.
 - Fall back gracefully instead of panicking on invalid ranges
 - Test: Query with offset extending past EOF does not crash server
 
-## User Story 15: Remove or deprecate ASCII-only conversion helpers (High)
+## User Story 15: Remove or deprecate ASCII-only conversion helpers (High) ✅
 As a developer working on treesitter-ls,
 I want dangerous ASCII-only helpers to be clearly marked or removed,
 so that I cannot accidentally introduce multi-byte bugs.
@@ -647,7 +647,7 @@ so that I cannot accidentally introduce multi-byte bugs.
 - No non-test code uses `position_to_point` from `analysis.rs`
 - Consider renaming to `position_to_point_ascii_only` if keeping for tests
 
-## User Story 16: Handle per-position failures in selectionRange requests (Medium)
+## User Story 16: Handle per-position failures in selectionRange requests (Medium) ✅
 As a user with multiple cursors,
 I want selection ranges to work for valid cursor positions even if one is stale,
 so that multi-cursor editing works reliably.
@@ -656,3 +656,71 @@ so that multi-cursor editing works reliably.
 - Selection range handlers return results for valid positions even if some fail
 - Failed positions return empty/minimal result instead of causing entire request to fail
 - Test: Request with mix of valid and invalid positions returns partial results
+
+---
+
+# Sprint 10 Retrospective
+
+## Goal
+Fix Critical security issue: prevent panic from out-of-bounds offset slicing.
+
+## Completed (Commit 76d6c13)
+
+### Changes
+- Modified `calculate_effective_range_with_text` to clamp offsets to `[0, text.len()]`
+- Ensured `start <= end` invariant by normalizing inverted ranges to empty ranges
+- Added three new tests for edge cases:
+  - `test_offset_extending_past_eof_should_be_clamped`
+  - `test_offset_with_start_past_end_should_be_normalized`
+  - `test_row_offset_past_eof_should_be_clamped`
+- Updated two existing tests that expected `start > end` (now normalized to empty range)
+
+### Key Insight
+The fix required distinguishing between input validation (clamp to text bounds) and range normalization (ensure start <= end). Both are now handled in a single function with clear semantics.
+
+---
+
+# Sprint 11 Retrospective
+
+## Goal
+Remove or deprecate ASCII-only conversion helpers to prevent regression.
+
+## Completed (Commit 0bd2bc0)
+
+### Changes
+- Removed `position_to_point` from `analysis.rs` public exports
+- Marked `position_to_point` and `point_to_position` with `#[cfg(test)]`
+- Moved `tree_sitter::Point` import to test-only scope
+- Updated `test_incremental_edit_multibyte.rs` to use local buggy impl for demonstration
+
+### Key Insight
+The ASCII-only helpers were intentionally kept for tests (which use ASCII-only strings), but hiding them from the public API prevents accidental misuse in production code. The correct conversion path is now only through `PositionMapper`.
+
+---
+
+# Sprint 12 Retrospective
+
+## Goal
+Handle per-position failures gracefully in selectionRange requests.
+
+## Completed (Commit 17cb0f5)
+
+### Changes
+- Changed `handle_selection_range_with_injection` and `handle_selection_range_with_parsed_injection` to use `filter_map` instead of `map` + `collect::<Option<Vec<_>>>`
+- Invalid positions are now skipped rather than causing entire request to fail
+- Added test `test_selection_range_handles_invalid_positions_gracefully`
+
+### Key Insight
+The previous `collect::<Option<Vec<_>>>()?` pattern short-circuits on the first `None`, which is problematic for multi-cursor scenarios where some positions may be stale due to race conditions. Using `filter_map` allows partial success.
+
+---
+
+# Third Review Cycle Summary
+
+All three issues from the third review have been fixed:
+
+1. ✅ **Issue 1 (Critical)**: Offset slicing panic - Sprint 10
+2. ✅ **Issue 2 (High)**: ASCII-only helpers exported - Sprint 11
+3. ✅ **Issue 3 (Medium)**: All-or-nothing error handling - Sprint 12
+
+Total tests: 143 (115 unit + 28 integration)
