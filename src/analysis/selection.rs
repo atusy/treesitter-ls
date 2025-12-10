@@ -23,31 +23,7 @@ use crate::language::injection::{self, parse_offset_directive_for_pattern};
 use crate::language::{DocumentParserPool, LanguageCoordinator};
 use crate::text::PositionMapper;
 use tower_lsp::lsp_types::{Position, Range, SelectionRange};
-#[cfg(test)]
-use tree_sitter::Point;
 use tree_sitter::{Node, Query};
-
-/// Convert LSP Position to tree-sitter Point (ASCII-only)
-///
-/// WARNING: This function treats LSP character (UTF-16 code units) as bytes.
-/// Only safe for ASCII-only text. For proper conversion, use PositionMapper.
-///
-/// This function is restricted to tests to prevent accidental misuse in production code.
-#[cfg(test)]
-fn position_to_point(pos: &Position) -> Point {
-    Point::new(pos.line as usize, pos.character as usize)
-}
-
-/// Convert tree-sitter Point to LSP Position (ASCII-only)
-///
-/// WARNING: This function treats tree-sitter column (bytes) as UTF-16 code units.
-/// Only safe for ASCII-only text. For proper conversion, use PositionMapper.
-///
-/// This function is restricted to tests to prevent accidental misuse in production code.
-#[cfg(test)]
-fn point_to_position(point: Point) -> Position {
-    Position::new(point.row as u32, point.column as u32)
-}
 
 /// Build selection range hierarchy with injection awareness and offset support
 ///
@@ -957,22 +933,6 @@ mod tests {
     use tree_sitter::Point;
 
     #[test]
-    fn test_position_to_point() {
-        let pos = Position::new(5, 10);
-        let point = position_to_point(&pos);
-        assert_eq!(point.row, 5);
-        assert_eq!(point.column, 10);
-    }
-
-    #[test]
-    fn test_point_to_position() {
-        let point = Point::new(3, 7);
-        let pos = point_to_position(point);
-        assert_eq!(pos.line, 3);
-        assert_eq!(pos.character, 7);
-    }
-
-    #[test]
     fn test_selection_range_detects_injection() {
         // Test that selection range detects when cursor is inside an injection region
         // and includes the injection content node in the selection hierarchy
@@ -1007,7 +967,7 @@ mod tests {
 
         // Position inside the regex string (the \d part at column 32)
         let cursor_pos = Position::new(1, 32);
-        let point = position_to_point(&cursor_pos);
+        let point = Point::new(cursor_pos.line as usize, cursor_pos.character as usize);
         let mapper = PositionMapper::new(text);
         let cursor_byte = mapper.position_to_byte(cursor_pos).unwrap();
 
@@ -1100,7 +1060,10 @@ mod tests {
 
         // Get the string_content node
         let underscore_pos = Position::new(1, 31);
-        let underscore_point = position_to_point(&underscore_pos);
+        let underscore_point = Point::new(
+            underscore_pos.line as usize,
+            underscore_pos.character as usize,
+        );
         let underscore_byte = mapper.position_to_byte(underscore_pos).unwrap();
 
         let string_content_node = root
@@ -1248,7 +1211,7 @@ mod tests {
         //                                  title: "fn nested() {}"
         //                                         ^ col 25 is 'f' in 'fn'
         let cursor_pos = Position::new(1, 33); // Inside "fn nested() {}"
-        let point = position_to_point(&cursor_pos);
+        let point = Point::new(cursor_pos.line as usize, cursor_pos.character as usize);
 
         let node = root
             .descendant_for_point_range(point, point)
@@ -1357,7 +1320,7 @@ mod tests {
         let cursor_pos = Position::new(1, 33);
         let mapper = crate::text::PositionMapper::new(text);
         let cursor_byte = mapper.position_to_byte(cursor_pos).unwrap();
-        let point = position_to_point(&cursor_pos);
+        let point = Point::new(cursor_pos.line as usize, cursor_pos.character as usize);
         let node = root
             .descendant_for_point_range(point, point)
             .expect("find node");
@@ -1476,7 +1439,7 @@ array: ["xxxx"]"#;
         //                          ^------- column 18 is start of string_content
         //                                 ^ column 25 is 't' in 'title', col 32 is 'a' in 'awesome'
         let cursor_pos = Position::new(1, 32); // line 1, col 32 = 'a' in "awesome"
-        let point = position_to_point(&cursor_pos);
+        let point = Point::new(cursor_pos.line as usize, cursor_pos.character as usize);
 
         let node = root
             .descendant_for_point_range(point, point)
