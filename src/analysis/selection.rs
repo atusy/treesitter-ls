@@ -34,9 +34,8 @@ const MAX_INJECTION_DEPTH: usize = 10;
 /// * `root` - The root node of the host document tree
 /// * `text` - The full document text
 /// * `mapper` - PositionMapper for UTF-16 column conversion
-/// * `injection_query` - Optional injection query for detecting injections
 /// * `base_language` - The base language of the document
-/// * `coordinator` - Language coordinator for getting parsers
+/// * `coordinator` - Language coordinator for getting parsers and injection queries
 /// * `parser_pool` - Parser pool for acquiring/releasing parsers
 /// * `cursor_byte` - The byte offset of cursor position for offset checking
 ///
@@ -48,12 +47,14 @@ fn build_selection_range_with_parsed_injection(
     root: &Node,
     text: &str,
     mapper: &PositionMapper,
-    injection_query: Option<&Query>,
     base_language: &str,
     coordinator: &LanguageCoordinator,
     parser_pool: &mut DocumentParserPool,
     cursor_byte: usize,
 ) -> SelectionRange {
+    let injection_query = coordinator.get_injection_query(base_language);
+    let injection_query = injection_query.as_ref().map(|q| q.as_ref());
+
     let injection_info =
         injection::detect_injection_with_content(&node, root, text, injection_query, base_language);
 
@@ -446,7 +447,6 @@ fn splice_effective_range_into_hierarchy(
 pub fn handle_selection_range(
     document: &DocumentHandle,
     positions: &[Position],
-    injection_query: Option<&Query>,
     coordinator: &LanguageCoordinator,
     parser_pool: &mut DocumentParserPool,
 ) -> Vec<SelectionRange> {
@@ -469,7 +469,6 @@ pub fn handle_selection_range(
                     &root,
                     text,
                     &mapper,
-                    injection_query,
                     lang,
                     coordinator,
                     parser_pool,
@@ -642,6 +641,7 @@ mod tests {
         "#;
         let injection_query =
             Query::new(&rust_language, injection_query_str).expect("valid injection query");
+        coordinator.register_injection_query_for_test("rust", injection_query);
 
         let cursor_pos = Position::new(1, 33);
         let mapper = crate::text::PositionMapper::new(text);
@@ -656,7 +656,6 @@ mod tests {
             &root,
             text,
             &mapper,
-            Some(&injection_query),
             "rust",
             &coordinator,
             &mut parser_pool,
@@ -726,6 +725,7 @@ array: ["xxxx"]"#;
         "#;
         let injection_query =
             Query::new(&rust_language, injection_query_str).expect("valid injection query");
+        coordinator.register_injection_query_for_test("rust", injection_query);
 
         let cursor_pos = Position::new(1, 32); // 'a' in "awesome"
         let point = Point::new(cursor_pos.line as usize, cursor_pos.character as usize);
@@ -742,7 +742,6 @@ array: ["xxxx"]"#;
             &root,
             text,
             &mapper,
-            Some(&injection_query),
             "rust",
             &coordinator,
             &mut parser_pool,
@@ -961,6 +960,7 @@ array: ["xxxx"]"#;
   (#set! injection.language "yaml"))
         "#;
         let injection_query = Query::new(&rust_language, injection_query_str).expect("valid query");
+        coordinator.register_injection_query_for_test("rust", injection_query);
 
         let mapper = crate::text::PositionMapper::new(text);
 
@@ -996,7 +996,6 @@ array: ["xxxx"]"#;
             &root,
             text,
             &mapper,
-            Some(&injection_query),
             "rust",
             &coordinator,
             &mut parser_pool,
@@ -1068,8 +1067,7 @@ array: ["xxxx"]"#;
         let coordinator = LanguageCoordinator::new();
         let mut parser_pool = coordinator.create_document_parser_pool();
         let document = store.get(&url).expect("document should exist");
-        let ranges =
-            handle_selection_range(&document, &positions, None, &coordinator, &mut parser_pool);
+        let ranges = handle_selection_range(&document, &positions, &coordinator, &mut parser_pool);
 
         assert_eq!(ranges.len(), positions.len());
         assert!(ranges[0].range.start.line == 0);
@@ -1118,8 +1116,7 @@ array: ["xxxx"]"#;
         let coordinator = LanguageCoordinator::new();
         let mut parser_pool = coordinator.create_document_parser_pool();
         let document = store.get(&url).expect("document should exist");
-        let ranges =
-            handle_selection_range(&document, &positions, None, &coordinator, &mut parser_pool);
+        let ranges = handle_selection_range(&document, &positions, &coordinator, &mut parser_pool);
 
         assert_eq!(ranges.len(), 1);
         assert_eq!(ranges[0].range.start, Position::new(0, 0));

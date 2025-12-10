@@ -779,11 +779,6 @@ impl LanguageServer for TreeSitterLs {
             return Ok(None);
         };
 
-        // Get injection query from document's language
-        let injection_query = doc
-            .language_id()
-            .and_then(|lang| self.language.get_injection_query(lang));
-
         // Use full injection parsing handler with coordinator and parser pool
         let mut pool = match self.parser_pool.lock() {
             Ok(guard) => guard,
@@ -795,13 +790,7 @@ impl LanguageServer for TreeSitterLs {
                 poisoned.into_inner()
             }
         };
-        let result = handle_selection_range(
-            &doc,
-            &positions,
-            injection_query.as_ref().map(|q| q.as_ref()),
-            &self.language,
-            &mut pool,
-        );
+        let result = handle_selection_range(&doc, &positions, &self.language, &mut pool);
 
         Ok(Some(result))
     }
