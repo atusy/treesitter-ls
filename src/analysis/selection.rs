@@ -794,24 +794,6 @@ fn splice_injection_content_into_hierarchy(
     }
 }
 
-/// Handle textDocument/selectionRange request
-///
-/// Returns selection ranges that expand intelligently by syntax boundaries.
-///
-/// # Arguments
-/// * `document` - The document
-/// * `positions` - The requested positions
-///
-/// # Returns
-/// Selection ranges for each position, or None if unable to compute
-pub fn handle_selection_range(
-    document: &DocumentHandle,
-    positions: &[Position],
-) -> Option<Vec<SelectionRange>> {
-    // Delegate to the injection-aware version without injection query
-    handle_selection_range_with_injection(document, positions, None, None)
-}
-
 /// Handle textDocument/selectionRange request with injection awareness
 ///
 /// Returns selection ranges that expand intelligently by syntax boundaries,
@@ -825,7 +807,7 @@ pub fn handle_selection_range(
 ///
 /// # Returns
 /// Selection ranges for each position, or None if unable to compute
-pub fn handle_selection_range_with_injection(
+pub fn handle_selection_range(
     document: &DocumentHandle,
     positions: &[Position],
     injection_query: Option<&Query>,
@@ -2200,7 +2182,7 @@ array: ["xxxx"]"#;
         ];
 
         let document = store.get(&url).expect("document should exist");
-        let result = handle_selection_range_with_injection(&document, &positions, None, None);
+        let result = handle_selection_range(&document, &positions, None, None);
 
         // LSP requires 1:1 correspondence between positions and results
         assert!(
@@ -2285,7 +2267,7 @@ array: ["xxxx"]"#;
         let positions = vec![Position::new(0, 0)];
 
         let document = store.get(&url).expect("document should exist");
-        let result = handle_selection_range_with_injection(&document, &positions, None, None);
+        let result = handle_selection_range(&document, &positions, None, None);
 
         // Should return a result (not fail entirely)
         assert!(
