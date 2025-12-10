@@ -2541,4 +2541,64 @@ array: ["xxxx"]"#;
         }
         ranges
     }
+
+    /// Test that empty documents return valid fallback ranges
+    ///
+    /// Empty documents are an edge case where tree-sitter produces an empty tree
+    /// (or a tree with only an ERROR node). The selection range handler should
+    /// return a valid empty range at the requested position.
+    #[test]
+    fn test_selection_range_handles_empty_document() {
+        use crate::document::store::DocumentStore;
+        use tower_lsp::lsp_types::Url;
+        use tree_sitter::Parser;
+
+        let mut parser = Parser::new();
+        let language = tree_sitter_rust::LANGUAGE.into();
+        parser.set_language(&language).expect("load rust grammar");
+
+        // Empty document
+        let text = "";
+        let tree = parser.parse(text, None).expect("parse empty document");
+
+        // Create a document with the parsed tree
+        let url = Url::parse("file:///empty.rs").unwrap();
+        let store = DocumentStore::new();
+        store.insert(
+            url.clone(),
+            text.to_string(),
+            Some("rust".to_string()),
+            Some(tree),
+        );
+
+        // Request selection range at position (0, 0) - the only valid position
+        let positions = vec![Position::new(0, 0)];
+
+        let document = store.get(&url).expect("document should exist");
+        let result = handle_selection_range_with_injection(&document, &positions, None, None);
+
+        // Should return a result (not fail entirely)
+        assert!(
+            result.is_some(),
+            "Empty document should still return a selection range result"
+        );
+
+        let ranges = result.unwrap();
+
+        // Should return exactly one result for the one position
+        assert_eq!(ranges.len(), 1, "Should return one range for one position");
+
+        // The result should be an empty range at (0, 0) since there are no AST nodes
+        let range = &ranges[0];
+        assert_eq!(
+            range.range.start,
+            Position::new(0, 0),
+            "Empty document range should start at (0, 0)"
+        );
+        assert_eq!(
+            range.range.end,
+            Position::new(0, 0),
+            "Empty document range should end at (0, 0)"
+        );
+    }
 }
