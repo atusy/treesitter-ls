@@ -15,381 +15,10 @@ pub use injection_aware::{
 pub use range_builder::{build_selection_range, find_distinct_parent, node_to_range};
 pub use injection_builder::build_injected_selection_range;
 
-use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range_with_text};
+use context::{DocumentContext, InjectionContext};
 use crate::document::DocumentHandle;
-use crate::language::injection::{self, parse_offset_directive_for_pattern};
 use crate::language::{DocumentParserPool, LanguageCoordinator};
-use crate::text::PositionMapper;
 use tower_lsp::lsp_types::{Position, Range, SelectionRange};
-use tree_sitter::{Node, Query};
-
-/// Maximum depth for nested injection recursion (prevents stack overflow)
-const MAX_INJECTION_DEPTH: usize = 10;
-
-/// Build selection range with parsed injection content (Sprint 3 + Sprint 5 nested support)
-///
-/// This function parses the injected content using the appropriate language parser
-/// and builds a selection hierarchy that includes nodes from the injected language's AST.
-/// It recursively handles nested injections up to MAX_INJECTION_DEPTH levels.
-///
-/// # Arguments
-/// * `node` - The node at cursor position in the host document
-/// * `root` - The root node of the host document tree
-/// * `text` - The full document text
-/// * `mapper` - PositionMapper for UTF-16 column conversion
-/// * `base_language` - The base language of the document
-/// * `coordinator` - Language coordinator for getting parsers and injection queries
-/// * `parser_pool` - Parser pool for acquiring/releasing parsers
-/// * `cursor_byte` - The byte offset of cursor position for offset checking
-///
-/// # Returns
-/// SelectionRange that includes nodes from both injected and host language ASTs
-#[allow(clippy::too_many_arguments)]
-fn build_selection_range_with_parsed_injection(
-    node: Node,
-    root: &Node,
-    text: &str,
-    mapper: &PositionMapper,
-    base_language: &str,
-    coordinator: &LanguageCoordinator,
-    parser_pool: &mut DocumentParserPool,
-    cursor_byte: usize,
-) -> SelectionRange {
-    let injection_query = coordinator.get_injection_query(base_language);
-    let injection_query = injection_query.as_ref().map(|q| q.as_ref());
-
-    let injection_info =
-        injection::detect_injection_with_content(&node, root, text, injection_query, base_language);
-
-    let Some((hierarchy, content_node, pattern_index)) = injection_info else {
-        return build_selection_range(node, mapper);
-    };
-
-    if hierarchy.len() < 2 {
-        return build_selection_range(node, mapper);
-    }
-
-    let offset_from_query =
-        injection_query.and_then(|q| parse_offset_directive_for_pattern(q, pattern_index));
-
-    if let Some(offset) = offset_from_query
-        && !is_cursor_within_effective_range(text, &content_node, cursor_byte, offset)
-    {
-        return build_selection_range(node, mapper);
-    }
-
-    let injected_lang = &hierarchy[hierarchy.len() - 1];
-
-    let build_fallback = || {
-        let effective_range = offset_from_query
-            .map(|offset| calculate_effective_lsp_range(text, mapper, &content_node, offset));
-        build_unparsed_injection_selection(node, content_node, effective_range, mapper)
-    };
-
-    if !coordinator.ensure_language_loaded(injected_lang).success {
-        return build_fallback();
-    }
-
-    let Some(mut parser) = parser_pool.acquire(injected_lang) else {
-        return build_fallback();
-    };
-
-    let (content_text, effective_start_byte) = if let Some(offset) = offset_from_query {
-        let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
-        let effective = calculate_effective_range_with_text(text, byte_range, offset);
-        (&text[effective.start..effective.end], effective.start)
-    } else {
-        (&text[content_node.byte_range()], content_node.start_byte())
-    };
-
-    let Some(injected_tree) = parser.parse(content_text, None) else {
-        parser_pool.release(injected_lang.to_string(), parser);
-        return build_fallback();
-    };
-
-    let relative_byte = cursor_byte.saturating_sub(effective_start_byte);
-    let injected_root = injected_tree.root_node();
-
-    let Some(injected_node) = injected_root.descendant_for_byte_range(relative_byte, relative_byte)
-    else {
-        parser_pool.release(injected_lang.to_string(), parser);
-        return build_fallback();
-    };
-
-    let nested_injection_query = coordinator.get_injection_query(injected_lang);
-
-    let injected_selection = if let Some(nested_inj_query) = nested_injection_query.as_ref() {
-        let nested_injection_info = injection::detect_injection_with_content(
-            &injected_node,
-            &injected_root,
-            content_text,
-            Some(nested_inj_query.as_ref()),
-            injected_lang,
-        );
-
-        if let Some((nested_hierarchy, nested_content_node, nested_pattern_index)) =
-            nested_injection_info
-        {
-            let nested_offset =
-                parse_offset_directive_for_pattern(nested_inj_query.as_ref(), nested_pattern_index);
-
-            let cursor_in_nested = match nested_offset {
-                Some(offset) => is_cursor_within_effective_range(
-                    content_text,
-                    &nested_content_node,
-                    relative_byte,
-                    offset,
-                ),
-                None => true,
-            };
-
-            if cursor_in_nested && nested_hierarchy.len() >= 2 {
-                build_recursive_injection_selection(
-                    &injected_node,
-                    &injected_root,
-                    content_text,
-                    nested_inj_query.as_ref(),
-                    injected_lang,
-                    coordinator,
-                    parser_pool,
-                    relative_byte,
-                    effective_start_byte,
-                    mapper,
-                    1, // depth: first level of nested injection
-                )
-            } else {
-                build_injected_selection_range(injected_node, effective_start_byte, mapper)
-            }
-        } else {
-            build_injected_selection_range(injected_node, effective_start_byte, mapper)
-        }
-    } else {
-        build_injected_selection_range(injected_node, effective_start_byte, mapper)
-    };
-
-    let host_selection = Some(build_selection_range(content_node, mapper));
-    let result = chain_injected_to_host(injected_selection, host_selection);
-    parser_pool.release(injected_lang.to_string(), parser);
-    result
-}
-
-/// Recursively build selection for deeply nested injections.
-///
-/// Parses injection content and recurses if further injections are detected.
-/// The `parent_start_byte` is the byte offset where the parent injection content
-/// starts in the host document. The `mapper` is for the host document.
-#[allow(clippy::too_many_arguments)]
-fn build_recursive_injection_selection(
-    node: &Node,
-    root: &Node,
-    text: &str,
-    injection_query: &Query,
-    base_language: &str,
-    coordinator: &LanguageCoordinator,
-    parser_pool: &mut DocumentParserPool,
-    cursor_byte: usize,
-    parent_start_byte: usize,
-    mapper: &PositionMapper,
-    depth: usize,
-) -> SelectionRange {
-    if depth >= MAX_INJECTION_DEPTH {
-        return build_injected_selection_range(*node, parent_start_byte, mapper);
-    }
-
-    let injection_info = injection::detect_injection_with_content(
-        node,
-        root,
-        text,
-        Some(injection_query),
-        base_language,
-    );
-
-    let Some((hierarchy, content_node, pattern_index)) = injection_info else {
-        return build_injected_selection_range(*node, parent_start_byte, mapper);
-    };
-
-    if hierarchy.len() < 2 {
-        return build_injected_selection_range(*node, parent_start_byte, mapper);
-    }
-    let nested_lang = hierarchy.last().unwrap().clone();
-
-    if !coordinator.ensure_language_loaded(&nested_lang).success {
-        return build_injected_selection_range(*node, parent_start_byte, mapper);
-    }
-
-    // effective.start is relative to `text`, so host byte = parent_start_byte + effective.start
-    let offset = parse_offset_directive_for_pattern(injection_query, pattern_index);
-    let (nested_text, nested_effective_start_byte) = if let Some(off) = offset {
-        let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
-        let effective = calculate_effective_range_with_text(text, byte_range, off);
-        (
-            &text[effective.start..effective.end],
-            parent_start_byte + effective.start,
-        )
-    } else {
-        (
-            &text[content_node.byte_range()],
-            parent_start_byte + content_node.start_byte(),
-        )
-    };
-
-    let Some(mut nested_parser) = parser_pool.acquire(&nested_lang) else {
-        return build_injected_selection_range(*node, parent_start_byte, mapper);
-    };
-    let Some(nested_tree) = nested_parser.parse(nested_text, None) else {
-        parser_pool.release(nested_lang.to_string(), nested_parser);
-        return build_injected_selection_range(*node, parent_start_byte, mapper);
-    };
-
-    let nested_relative_byte = if let Some(off) = offset {
-        let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
-        let effective = calculate_effective_range_with_text(text, byte_range, off);
-        cursor_byte.saturating_sub(effective.start)
-    } else {
-        cursor_byte.saturating_sub(content_node.start_byte())
-    };
-
-    let nested_root = nested_tree.root_node();
-
-    let Some(nested_node) =
-        nested_root.descendant_for_byte_range(nested_relative_byte, nested_relative_byte)
-    else {
-        parser_pool.release(nested_lang.to_string(), nested_parser);
-        return build_injected_selection_range(*node, parent_start_byte, mapper);
-    };
-
-    let deeply_nested_injection_query = coordinator.get_injection_query(&nested_lang);
-
-    let nested_selection = if let Some(deep_inj_query) = deeply_nested_injection_query.as_ref() {
-        build_recursive_injection_selection(
-            &nested_node,
-            &nested_root,
-            nested_text,
-            deep_inj_query.as_ref(),
-            &nested_lang,
-            coordinator,
-            parser_pool,
-            nested_relative_byte,
-            nested_effective_start_byte,
-            mapper,
-            depth + 1,
-        )
-    } else {
-        build_injected_selection_range(nested_node, nested_effective_start_byte, mapper)
-    };
-
-    let content_node_selection = Some(build_injected_selection_range(
-        content_node,
-        parent_start_byte,
-        mapper,
-    ));
-
-    let result = chain_injected_to_host(nested_selection, content_node_selection);
-    parser_pool.release(nested_lang.to_string(), nested_parser);
-    result
-}
-
-/// Build selection when injection content cannot be parsed.
-///
-/// Used as fallback when injection language is unavailable or parser fails.
-/// Splices the effective_range into the host document's selection hierarchy
-/// without parsing the injection content.
-fn build_unparsed_injection_selection(
-    node: Node,
-    content_node: Node,
-    effective_range: Option<Range>,
-    mapper: &PositionMapper,
-) -> SelectionRange {
-    let content_node_range = node_to_range(content_node, mapper);
-    let inner_selection = build_selection_range(node, mapper);
-
-    if let Some(eff_range) = effective_range {
-        if ranges_equal(&inner_selection.range, &content_node_range) {
-            return SelectionRange {
-                range: eff_range,
-                parent: inner_selection
-                    .parent
-                    .map(|p| Box::new(replace_range_in_chain(*p, content_node_range, eff_range))),
-            };
-        }
-
-        if is_node_in_selection_chain(&inner_selection, &content_node, mapper) {
-            return replace_range_in_chain(inner_selection, content_node_range, eff_range);
-        }
-    } else if is_node_in_selection_chain(&inner_selection, &content_node, mapper) {
-        return inner_selection;
-    }
-
-    splice_effective_range_into_hierarchy(
-        inner_selection,
-        effective_range.unwrap_or(content_node_range),
-        &content_node,
-        mapper,
-    )
-}
-
-/// Replace a specific range in the selection chain with the effective range
-fn replace_range_in_chain(
-    selection: SelectionRange,
-    target_range: Range,
-    effective_range: Range,
-) -> SelectionRange {
-    SelectionRange {
-        range: if ranges_equal(&selection.range, &target_range) {
-            effective_range
-        } else {
-            selection.range
-        },
-        parent: selection
-            .parent
-            .map(|p| Box::new(replace_range_in_chain(*p, target_range, effective_range))),
-    }
-}
-
-fn splice_effective_range_into_hierarchy(
-    selection: SelectionRange,
-    effective_range: Range,
-    content_node: &Node,
-    mapper: &PositionMapper,
-) -> SelectionRange {
-    if !range_contains(&effective_range, &selection.range) {
-        return selection;
-    }
-
-    let parent = match selection.parent {
-        Some(parent) => {
-            let parent = *parent;
-            let parent_range = parent.range;
-            let spliced = Some(Box::new(splice_effective_range_into_hierarchy(
-                parent,
-                effective_range,
-                content_node,
-                mapper,
-            )));
-            if range_contains(&parent_range, &effective_range)
-                && !ranges_equal(&parent_range, &effective_range)
-            {
-                Some(Box::new(SelectionRange {
-                    range: effective_range,
-                    parent: spliced,
-                }))
-            } else {
-                spliced
-            }
-        }
-        None => Some(Box::new(SelectionRange {
-            range: effective_range,
-            parent: content_node
-                .parent()
-                .map(|p| Box::new(build_selection_range(p, mapper))),
-        })),
-    };
-
-    SelectionRange {
-        range: selection.range,
-        parent,
-    }
-}
 
 /// Handle textDocument/selectionRange request with full injection parsing support.
 ///
@@ -405,6 +34,7 @@ pub fn handle_selection_range(
     let mapper = document.position_mapper();
     let root = document.tree().map(|t| t.root_node());
     let lang = document.language_id();
+
     positions
         .iter()
         .map(|pos| {
@@ -412,19 +42,11 @@ pub fn handle_selection_range(
                 && let Some(cursor_byte_offset) = mapper.position_to_byte(*pos)
                 && let Some(node) =
                     root.descendant_for_byte_range(cursor_byte_offset, cursor_byte_offset)
-                // lang should be available when node is available
                 && let Some(lang) = lang
             {
-                build_selection_range_with_parsed_injection(
-                    node,
-                    &root,
-                    text,
-                    &mapper,
-                    lang,
-                    coordinator,
-                    parser_pool,
-                    cursor_byte_offset,
-                )
+                let doc_ctx = DocumentContext::new(text, &mapper, root, lang);
+                let mut inj_ctx = InjectionContext::new(coordinator, parser_pool);
+                injection_builder::build_with_injection(node, &doc_ctx, &mut inj_ctx, cursor_byte_offset)
             } else {
                 SelectionRange {
                     range: Range::new(*pos, *pos),
@@ -438,6 +60,8 @@ pub fn handle_selection_range(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::language::injection::parse_offset_directive_for_pattern;
+    use crate::text::PositionMapper;
     use tree_sitter::Point;
 
     /// Calculate the start position for nested injection relative to host document
@@ -602,16 +226,9 @@ mod tests {
             .descendant_for_point_range(point, point)
             .expect("find node");
 
-        let selection = build_selection_range_with_parsed_injection(
-            node,
-            &root,
-            text,
-            &mapper,
-            "rust",
-            &coordinator,
-            &mut parser_pool,
-            cursor_byte,
-        );
+        let doc_ctx = DocumentContext::new(text, &mapper, root, "rust");
+        let mut inj_ctx = InjectionContext::new(&coordinator, &mut parser_pool);
+        let selection = injection_builder::build_with_injection(node, &doc_ctx, &mut inj_ctx, cursor_byte);
 
         let mut ranges: Vec<Range> = Vec::new();
         let mut curr = Some(&selection);
@@ -688,16 +305,9 @@ array: ["xxxx"]"#;
         let mapper = crate::text::PositionMapper::new(text);
         let cursor_byte = mapper.position_to_byte(cursor_pos).unwrap();
 
-        let selection = build_selection_range_with_parsed_injection(
-            node,
-            &root,
-            text,
-            &mapper,
-            "rust",
-            &coordinator,
-            &mut parser_pool,
-            cursor_byte,
-        );
+        let doc_ctx = DocumentContext::new(text, &mapper, root, "rust");
+        let mut inj_ctx = InjectionContext::new(&coordinator, &mut parser_pool);
+        let selection = injection_builder::build_with_injection(node, &doc_ctx, &mut inj_ctx, cursor_byte);
 
         let mut level_count = 0;
         let mut curr = Some(&selection);
@@ -942,16 +552,9 @@ array: ["xxxx"]"#;
 
         let zero_byte_in_host = content_node.start_byte() + 5; // "あ"=3 + ": "=2
 
-        let selection = build_selection_range_with_parsed_injection(
-            content_node,
-            &root,
-            text,
-            &mapper,
-            "rust",
-            &coordinator,
-            &mut parser_pool,
-            zero_byte_in_host,
-        );
+        let doc_ctx = DocumentContext::new(text, &mapper, root, "rust");
+        let mut inj_ctx = InjectionContext::new(&coordinator, &mut parser_pool);
+        let selection = injection_builder::build_with_injection(content_node, &doc_ctx, &mut inj_ctx, zero_byte_in_host);
 
         // Find small range in injected content, verify UTF-16 column < 19 (byte offset)
         let mut found_small_range = false;
