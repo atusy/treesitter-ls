@@ -8,7 +8,9 @@ pub use hierarchy_chain::{
     chain_injected_to_host, is_range_strictly_larger, range_contains, ranges_equal,
     skip_to_distinct_host,
 };
-pub use range_builder::{find_distinct_parent, find_next_distinct_parent, node_to_range};
+pub use range_builder::{
+    build_selection_range, find_distinct_parent, find_next_distinct_parent, node_to_range,
+};
 
 use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range_with_text};
 use crate::document::DocumentHandle;
@@ -40,20 +42,6 @@ fn position_to_point(pos: &Position) -> Point {
 #[cfg(test)]
 fn point_to_position(point: Point) -> Position {
     Position::new(point.row as u32, point.column as u32)
-}
-
-/// Build selection range hierarchy for a node
-///
-/// The `mapper` parameter provides proper UTF-16 column conversion.
-fn build_selection_range(node: Node, mapper: &PositionMapper) -> SelectionRange {
-    let range = node_to_range(node, mapper);
-    let node_byte_range = node.byte_range();
-
-    // Build parent chain, skipping nodes with same range (LSP spec requires strictly expanding)
-    let parent = find_distinct_parent(node, &node_byte_range)
-        .map(|parent_node| Box::new(build_selection_range(parent_node, mapper)));
-
-    SelectionRange { range, parent }
 }
 
 /// Build selection range hierarchy with injection awareness

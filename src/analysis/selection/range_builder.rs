@@ -3,7 +3,7 @@
 //! This module contains functions that build LSP SelectionRange hierarchies
 //! from Tree-sitter AST nodes. These are pure functions with no injection awareness.
 
-use tower_lsp::lsp_types::{Position, Range};
+use tower_lsp::lsp_types::{Position, Range, SelectionRange};
 use tree_sitter::Node;
 
 use crate::text::position::PositionMapper;
@@ -93,10 +93,33 @@ pub fn find_next_distinct_parent<'a>(
     None
 }
 
+/// Build a complete LSP SelectionRange hierarchy for a node.
+///
+/// Recursively constructs a chain of SelectionRange objects from the given node
+/// up to the root, ensuring each parent range is strictly larger than its child.
+/// Uses `find_distinct_parent` to skip nodes with identical ranges.
+///
+/// # Arguments
+/// * `node` - The starting Tree-sitter node
+/// * `mapper` - PositionMapper for UTF-16 column conversion
+///
+/// # Returns
+/// A SelectionRange with parent chain representing the AST hierarchy
+pub fn build_selection_range(node: Node, mapper: &PositionMapper) -> SelectionRange {
+    let range = node_to_range(node, mapper);
+    let node_byte_range = node.byte_range();
+
+    // Build parent chain, skipping nodes with same range (LSP spec requires strictly expanding)
+    let parent = find_distinct_parent(node, &node_byte_range)
+        .map(|parent_node| Box::new(build_selection_range(parent_node, mapper)));
+
+    SelectionRange { range, parent }
+}
+
 // Note: Unit tests for these functions require a Tree-sitter parser.
 // The project loads parsers dynamically at runtime, so we test these functions
 // through integration tests in selection.rs that use the existing test infrastructure.
 // The tests in selection.rs already cover:
 // - test_selection_range_output_uses_utf16_columns (ASCII)
 // - test_selection_range_handles_multibyte_utf8 (multibyte UTF-8)
-// - test_selection_range_deduplicates_same_range_nodes (find_distinct_parent)
+// - test_selection_range_deduplicates_same_range_nodes (find_distinct_parent, build_selection_range)
