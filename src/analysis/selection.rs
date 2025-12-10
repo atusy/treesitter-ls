@@ -457,16 +457,16 @@ fn splice_effective_range_into_hierarchy(
         return selection;
     }
 
-    let new_parent = match selection.parent {
+    let parent = match selection.parent {
         Some(parent) => {
-            let parent_selection = *parent;
-            if range_contains(&parent_selection.range, &effective_range)
-                && !ranges_equal(&parent_selection.range, &effective_range)
+            let parent = *parent;
+            if range_contains(&parent.range, &effective_range)
+                && !ranges_equal(&parent.range, &effective_range)
             {
                 Some(Box::new(SelectionRange {
                     range: effective_range,
                     parent: Some(Box::new(splice_effective_range_into_hierarchy(
-                        parent_selection,
+                        parent,
                         effective_range,
                         content_node,
                         mapper,
@@ -474,7 +474,7 @@ fn splice_effective_range_into_hierarchy(
                 }))
             } else {
                 Some(Box::new(splice_effective_range_into_hierarchy(
-                    parent_selection,
+                    parent,
                     effective_range,
                     content_node,
                     mapper,
@@ -491,7 +491,7 @@ fn splice_effective_range_into_hierarchy(
 
     SelectionRange {
         range: selection.range,
-        parent: new_parent,
+        parent,
     }
 }
 
