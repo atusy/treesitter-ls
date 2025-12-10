@@ -1,10 +1,7 @@
-// Submodules (Rust 2018+ style)
-// These are located in src/analysis/selection/*.rs
 pub mod hierarchy_chain;
 pub mod injection_aware;
 pub mod range_builder;
 
-// Re-export from submodules
 pub use hierarchy_chain::{
     chain_injected_to_host, is_range_strictly_larger, range_contains, ranges_equal,
     skip_to_distinct_host,
@@ -59,89 +56,68 @@ fn build_selection_range_with_parsed_injection(
     parser_pool: &mut DocumentParserPool,
     cursor_byte: usize,
 ) -> SelectionRange {
-    // First, detect if we're inside an injection region
     let injection_info =
         injection::detect_injection_with_content(&node, root, text, injection_query, base_language);
 
     let Some((hierarchy, content_node, pattern_index)) = injection_info else {
-        // Not in injection - fall back to normal selection
         return build_selection_range(node, mapper);
     };
 
-    // Need at least 2 entries in hierarchy: base language + injected language
     if hierarchy.len() < 2 {
         return build_selection_range(node, mapper);
     }
 
-    // Check for offset directive on this specific pattern
     let offset_from_query =
         injection_query.and_then(|q| parse_offset_directive_for_pattern(q, pattern_index));
 
-    // If offset exists, check if cursor is within effective range
     if let Some(offset) = offset_from_query
         && !is_cursor_within_effective_range(text, &content_node, cursor_byte, offset)
     {
-        // Cursor is outside effective range - return base language selection
         return build_selection_range(node, mapper);
     }
 
-    // Get the injected language name (last in hierarchy)
     let injected_lang = &hierarchy[hierarchy.len() - 1];
 
-    // Helper closure to build fallback selection with or without effective range
     let build_fallback = || {
         let effective_range = offset_from_query
             .map(|offset| calculate_effective_lsp_range(text, mapper, &content_node, offset));
         build_injection_aware_selection(node, content_node, effective_range, mapper)
     };
 
-    // Ensure the injected language is loaded before trying to acquire a parser
-    // This dynamically loads the language from search paths if not already registered
     let load_result = coordinator.ensure_language_loaded(injected_lang);
     if !load_result.success {
         return build_fallback();
     }
 
-    // Try to acquire a parser for the injected language
     let Some(mut parser) = parser_pool.acquire(injected_lang) else {
         return build_fallback();
     };
 
-    // Extract the injected content text - use effective range if offset exists
-    // Calculate byte offset in host document for proper UTF-16 conversion (Sprint 9 fix)
     let (content_text, effective_start_byte) = if let Some(offset) = offset_from_query {
         let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
         let effective = calculate_effective_range_with_text(text, byte_range, offset);
-        let effective_text = &text[effective.start..effective.end];
-
-        (effective_text, effective.start)
+        (&text[effective.start..effective.end], effective.start)
     } else {
         (&text[content_node.byte_range()], content_node.start_byte())
     };
 
-    // Parse the injected content
     let Some(injected_tree) = parser.parse(content_text, None) else {
         parser_pool.release(injected_lang.to_string(), parser);
         return build_fallback();
     };
 
-    // Calculate cursor position relative to effective injection content
     let relative_byte = cursor_byte.saturating_sub(effective_start_byte);
-
-    // Find the node at cursor position in the injected AST
     let injected_root = injected_tree.root_node();
+
     let Some(injected_node) = injected_root.descendant_for_byte_range(relative_byte, relative_byte)
     else {
         parser_pool.release(injected_lang.to_string(), parser);
         return build_fallback();
     };
 
-    // Sprint 5: Check for nested injection within the injected content
-    // Get the injection query for the injected language
     let nested_injection_query = coordinator.get_injection_query(injected_lang);
 
     let injected_selection = if let Some(nested_inj_query) = nested_injection_query.as_ref() {
-        // Check if cursor is inside a nested injection
         let nested_injection_info = injection::detect_injection_with_content(
             &injected_node,
             &injected_root,
@@ -153,7 +129,6 @@ fn build_selection_range_with_parsed_injection(
         if let Some((nested_hierarchy, nested_content_node, nested_pattern_index)) =
             nested_injection_info
         {
-            // Check offset for nested injection
             let nested_offset =
                 parse_offset_directive_for_pattern(nested_inj_query.as_ref(), nested_pattern_index);
 
@@ -164,11 +139,10 @@ fn build_selection_range_with_parsed_injection(
                     relative_byte,
                     offset,
                 ),
-                None => true, // No offset means cursor is always "inside" if detected
+                None => true,
             };
 
             if cursor_in_nested && nested_hierarchy.len() >= 2 {
-                // We have a nested injection! Recursively build selection for it
                 build_nested_injection_selection(
                     &injected_node,
                     &injected_root,
@@ -180,10 +154,9 @@ fn build_selection_range_with_parsed_injection(
                     relative_byte,
                     effective_start_byte,
                     mapper,
-                    1, // First level of nested injection
+                    1, // depth: first level of nested injection
                 )
             } else {
-                // No valid nested injection - build selection from current injected node
                 build_injected_selection_range(
                     injected_node,
                     &injected_root,
@@ -192,7 +165,6 @@ fn build_selection_range_with_parsed_injection(
                 )
             }
         } else {
-            // No nested injection detected - build selection from current injected node
             build_injected_selection_range(
                 injected_node,
                 &injected_root,
@@ -201,23 +173,12 @@ fn build_selection_range_with_parsed_injection(
             )
         }
     } else {
-        // No injection query for the injected language - build selection from current injected node
         build_injected_selection_range(injected_node, &injected_root, effective_start_byte, mapper)
     };
 
-    // Now chain the injected selection to the host document's selection
-    // Include the content_node (e.g., minus_metadata, code_fence_content) in the host selection
-    // so that the full content boundary is available in the selection hierarchy.
-    // For offset cases: content_node's full range (e.g., YAML with --- markers) provides valuable context
-    // For non-offset cases: content_node's parent (e.g., fenced_code_block) wraps the injection
     let host_selection = Some(build_selection_range(content_node, mapper));
-
-    // Connect injected hierarchy to host hierarchy
     let result = chain_injected_to_host(injected_selection, host_selection);
-
-    // Release the parser back to the pool
     parser_pool.release(injected_lang.to_string(), parser);
-
     result
 }
 
@@ -242,12 +203,10 @@ fn build_nested_injection_selection(
     mapper: &PositionMapper,
     depth: usize,
 ) -> SelectionRange {
-    // Safety check
     if depth >= MAX_INJECTION_DEPTH {
         return build_injected_selection_range(*node, root, parent_start_byte, mapper);
     }
 
-    // Detect the nested injection
     let injection_info = injection::detect_injection_with_content(
         node,
         root,
@@ -260,68 +219,42 @@ fn build_nested_injection_selection(
         return build_injected_selection_range(*node, root, parent_start_byte, mapper);
     };
 
-    // Get nested language name from hierarchy (last element)
     if hierarchy.len() < 2 {
         return build_injected_selection_range(*node, root, parent_start_byte, mapper);
     }
     let nested_lang = hierarchy.last().unwrap().clone();
 
-    // Check offset
     let offset = parse_offset_directive_for_pattern(injection_query, pattern_index);
 
-    // Ensure nested language is loaded
     let load_result = coordinator.ensure_language_loaded(&nested_lang);
     if !load_result.success {
         return build_injected_selection_range(*node, root, parent_start_byte, mapper);
     }
 
-    // Acquire parser for nested language
     let Some(mut nested_parser) = parser_pool.acquire(&nested_lang) else {
         return build_injected_selection_range(*node, root, parent_start_byte, mapper);
     };
 
-    // Extract nested content text and calculate byte offset in host document
+    // effective.start is relative to `text`, so host byte = parent_start_byte + effective.start
     let (nested_text, nested_effective_start_byte) = if let Some(off) = offset {
         let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
         let effective = calculate_effective_range_with_text(text, byte_range, off);
-        let effective_text = &text[effective.start..effective.end];
-
-        // Effective byte in host = parent_start_byte + relative byte in parent content
-        // Since `text` is the parent injection content, effective.start is relative to text start
-        // which is at parent_start_byte in the host document
-        // Actually, for nested injections, we need to track the actual host byte offset
-        // The `text` here is the parent injection's content, not the host document
-        // So we need to add parent_start_byte + effective.start
-        // Wait, effective.start is relative to `text` which starts at parent_start_byte
-        // So host_byte = parent_start_byte + effective.start - content's start relative to text
-        // This is getting complex. Let's simplify:
-        // effective.start is already the byte offset within the parent injection's text slice
-        // So the host document byte = parent_start_byte + effective.start (if text starts at 0)
-        // But wait, text is sliced, so effective.start is already correct relative to text start
-        // We need: parent_start_byte (where parent injection starts) + relative position in parent
-        // Hmm, content_node.start_byte() is relative to `text`, so:
-        // nested_start_in_host = parent_start_byte + effective.start (relative to text)
-        // Actually, effective.start is an absolute byte in text, which started at 0
-        // So we need parent_start_byte + effective.start
-        let nested_start_in_host = parent_start_byte + effective.start;
-
-        (effective_text, nested_start_in_host)
+        (
+            &text[effective.start..effective.end],
+            parent_start_byte + effective.start,
+        )
     } else {
-        // No offset - nested content starts at content_node position relative to parent text
-        // content_node.start_byte() is relative to `text`
-        let nested_start_in_host = parent_start_byte + content_node.start_byte();
-        (&text[content_node.byte_range()], nested_start_in_host)
+        (
+            &text[content_node.byte_range()],
+            parent_start_byte + content_node.start_byte(),
+        )
     };
 
-    // Parse nested content
     let Some(nested_tree) = nested_parser.parse(nested_text, None) else {
         parser_pool.release(nested_lang.to_string(), nested_parser);
         return build_injected_selection_range(*node, root, parent_start_byte, mapper);
     };
 
-    // cursor_byte is relative to the parent injection's text
-    // nested_effective_start_byte is the host document byte offset
-    // We need nested_relative_byte relative to nested_text start
     let nested_relative_byte = if let Some(off) = offset {
         let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
         let effective = calculate_effective_range_with_text(text, byte_range, off);
@@ -339,7 +272,6 @@ fn build_nested_injection_selection(
         return build_injected_selection_range(*node, root, parent_start_byte, mapper);
     };
 
-    // Check for even deeper nesting (recursive)
     let deeply_nested_injection_query = coordinator.get_injection_query(&nested_lang);
 
     let nested_selection = if let Some(deep_inj_query) = deeply_nested_injection_query.as_ref() {
@@ -352,7 +284,6 @@ fn build_nested_injection_selection(
         );
 
         if deep_injection_info.is_some() {
-            // Even deeper nesting - recurse
             build_nested_injection_selection(
                 &nested_node,
                 &nested_root,
@@ -383,9 +314,6 @@ fn build_nested_injection_selection(
         )
     };
 
-    // Chain nested selection to parent injected content
-    // Include content_node itself in the chain (like the top-level path does)
-    // so that users can "select the whole nested snippet"
     let content_node_selection = Some(build_injected_selection_range(
         content_node,
         root,
@@ -394,7 +322,6 @@ fn build_nested_injection_selection(
     ));
 
     let result = chain_injected_to_host(nested_selection, content_node_selection);
-
     parser_pool.release(nested_lang.to_string(), nested_parser);
     result
 }
@@ -420,26 +347,15 @@ fn calculate_nested_start_position(
     offset_rows: i32,
     offset_cols: i32,
 ) -> tree_sitter::Point {
-    // The content_start is relative to the parent injection
-    // We need to add the parent's start position and apply any offset
-    // Use saturating arithmetic to handle negative offsets safely
-    let base_row = (parent_start.row + content_start.row) as i64;
-    let row = (base_row + offset_rows as i64).max(0) as usize;
-
-    // Calculate the effective row relative to the content start
-    // This determines whether we're on the "first line" of effective content
-    let effective_content_row = (content_start.row as i32 + offset_rows).max(0);
-
-    let col = if effective_content_row == 0 {
-        // First row of effective content - add parent's column
-        let base_col = (parent_start.column + content_start.column) as i64;
-        (base_col + offset_cols as i64).max(0) as usize
+    let col_parent = if (content_start.row as i32 + offset_rows).max(0) == 0 {
+        parent_start.column as i64
     } else {
-        // Later rows - column is absolute within the parent
-        let base_col = content_start.column as i64;
-        (base_col + offset_cols as i64).max(0) as usize
+        0 as i64
     };
-    tree_sitter::Point::new(row, col)
+    tree_sitter::Point::new(
+        ((parent_start.row + content_start.row) as i64 + offset_rows as i64).max(0) as usize,
+        (col_parent + content_start.column as i64 + offset_cols as i64).max(0) as usize,
+    )
 }
 
 /// Build selection range for nodes in injected content
@@ -456,19 +372,12 @@ fn build_injected_selection_range(
     content_start_byte: usize,
     mapper: &PositionMapper,
 ) -> SelectionRange {
-    // Adjust the node's range to be relative to the host document
-    let adjusted_range = adjust_range_to_host(node, content_start_byte, mapper);
-    let node_byte_range = node.byte_range();
-
-    // Build parent chain within injected content, skipping nodes with same range
     let parent =
-        find_next_distinct_parent(node, &node_byte_range, injected_root).map(|parent_node| {
-            // Stop at the root of the injected content
+        find_next_distinct_parent(node, &node.byte_range(), injected_root).map(|parent_node| {
             if parent_node.id() == injected_root.id() {
-                // The root of injected content - adjust its range too
                 Box::new(SelectionRange {
                     range: adjust_range_to_host(parent_node, content_start_byte, mapper),
-                    parent: None, // Will be connected to host in chain_injected_to_host
+                    parent: None, // Connected to host in chain_injected_to_host
                 })
             } else {
                 Box::new(build_injected_selection_range(
@@ -481,7 +390,7 @@ fn build_injected_selection_range(
         });
 
     SelectionRange {
-        range: adjusted_range,
+        range: adjust_range_to_host(node, content_start_byte, mapper),
         parent,
     }
 }
@@ -500,15 +409,9 @@ fn build_injection_aware_selection(
     mapper: &PositionMapper,
 ) -> SelectionRange {
     let content_node_range = node_to_range(content_node, mapper);
-    let target_range = effective_range.unwrap_or(content_node_range);
-
-    // Build base selection from the starting node
     let inner_selection = build_selection_range(node, mapper);
 
-    // If we have an effective range different from content node range,
-    // we need to handle range replacement
     if let Some(eff_range) = effective_range {
-        // If the starting node IS the content node, replace its range with effective range
         if ranges_equal(&inner_selection.range, &content_node_range) {
             return SelectionRange {
                 range: eff_range,
@@ -518,21 +421,19 @@ fn build_injection_aware_selection(
             };
         }
 
-        // Check if content_node is already in the parent chain
         if is_node_in_selection_chain(&inner_selection, &content_node, mapper) {
-            // content_node is in the chain - replace its range with effective range
             return replace_range_in_chain(inner_selection, content_node_range, eff_range);
         }
-    } else {
-        // No effective range - check if content_node is already in the chain
-        if is_node_in_selection_chain(&inner_selection, &content_node, mapper) {
-            // content_node is already in the chain, just return as-is
-            return inner_selection;
-        }
+    } else if is_node_in_selection_chain(&inner_selection, &content_node, mapper) {
+        return inner_selection;
     }
 
-    // Need to splice the target range into the hierarchy
-    splice_effective_range_into_hierarchy(inner_selection, target_range, &content_node, mapper)
+    splice_effective_range_into_hierarchy(
+        inner_selection,
+        effective_range.unwrap_or(content_node_range),
+        &content_node,
+        mapper,
+    )
 }
 
 /// Replace a specific range in the selection chain with the effective range
@@ -541,26 +442,18 @@ fn replace_range_in_chain(
     target_range: Range,
     effective_range: Range,
 ) -> SelectionRange {
-    if ranges_equal(&selection.range, &target_range) {
-        // Found the target - replace with effective range
-        SelectionRange {
-            range: effective_range,
-            parent: selection
-                .parent
-                .map(|p| Box::new(replace_range_in_chain(*p, target_range, effective_range))),
-        }
-    } else {
-        // Continue up the chain
-        SelectionRange {
-            range: selection.range,
-            parent: selection
-                .parent
-                .map(|p| Box::new(replace_range_in_chain(*p, target_range, effective_range))),
-        }
+    SelectionRange {
+        range: if ranges_equal(&selection.range, &target_range) {
+            effective_range
+        } else {
+            selection.range
+        },
+        parent: selection
+            .parent
+            .map(|p| Box::new(replace_range_in_chain(*p, target_range, effective_range))),
     }
 }
 
-/// Splice effective range into hierarchy at the appropriate level
 fn splice_effective_range_into_hierarchy(
     selection: SelectionRange,
     effective_range: Range,
@@ -571,9 +464,6 @@ fn splice_effective_range_into_hierarchy(
         return selection;
     }
 
-    // If current selection range is smaller than or equal to effective_range,
-    // we need to continue up the chain
-    // Current range is inside effective_range
     let new_parent = match selection.parent {
         Some(parent) => {
             let parent_selection = *parent;
@@ -590,7 +480,6 @@ fn splice_effective_range_into_hierarchy(
                     ))),
                 }))
             } else {
-                // Keep going up
                 Some(Box::new(splice_effective_range_into_hierarchy(
                     parent_selection,
                     effective_range,
@@ -599,15 +488,12 @@ fn splice_effective_range_into_hierarchy(
                 )))
             }
         }
-        None => {
-            // No parent, but we're inside effective_range - add effective_range as parent
-            Some(Box::new(SelectionRange {
-                range: effective_range,
-                parent: content_node
-                    .parent()
-                    .map(|p| Box::new(build_selection_range(p, mapper))),
-            }))
-        }
+        None => Some(Box::new(SelectionRange {
+            range: effective_range,
+            parent: content_node
+                .parent()
+                .map(|p| Box::new(build_selection_range(p, mapper))),
+        })),
     };
 
     SelectionRange {
@@ -640,30 +526,19 @@ pub fn handle_selection_range(
     parser_pool: &mut DocumentParserPool,
 ) -> Option<Vec<SelectionRange>> {
     let text = document.text();
-    // Reuse the document's cached position mapper instead of creating a new one per position.
-    // This avoids O(file_size × positions) work from rebuilding LineIndex for each cursor.
     let mapper = document.position_mapper();
 
-    // LSP Spec 3.17 requires 1:1 correspondence between positions and results.
-    // We use map (not filter_map) to maintain alignment, returning an empty
-    // fallback range for positions that cannot be resolved.
+    // LSP Spec 3.17: use map (not filter_map) to maintain 1:1 position-result alignment
     let ranges: Vec<SelectionRange> = positions
         .iter()
         .map(|pos| {
-            // Try to build a real selection range
             let real_range = (|| {
-                // Get the tree
                 let tree = document.tree()?;
                 let root = tree.root_node();
-
-                // Calculate the byte offset for the cursor position using cached mapper.
                 let cursor_byte_offset = mapper.position_to_byte(*pos)?;
-
-                // Find the smallest node containing this position
                 let node =
                     root.descendant_for_byte_range(cursor_byte_offset, cursor_byte_offset)?;
 
-                // Build the selection range hierarchy with full injection parsing
                 if let Some(lang) = base_language {
                     Some(build_selection_range_with_parsed_injection(
                         node,
@@ -681,13 +556,9 @@ pub fn handle_selection_range(
                 }
             })();
 
-            // Return real range or fallback empty range at the requested position
-            real_range.unwrap_or_else(|| {
-                let fallback_range = Range::new(*pos, *pos);
-                SelectionRange {
-                    range: fallback_range,
-                    parent: None,
-                }
+            real_range.unwrap_or_else(|| SelectionRange {
+                range: Range::new(*pos, *pos),
+                parent: None,
             })
         })
         .collect();
@@ -1075,7 +946,10 @@ array: ["xxxx"]"#;
             0,
         );
         assert_eq!(result.row, 5);
-        assert_eq!(result.column, 4, "Add parent column when effective row is 0");
+        assert_eq!(
+            result.column, 4,
+            "Add parent column when effective row is 0"
+        );
 
         // Case 4: Row offset moves to later row - column is absolute
         let result = calculate_nested_start_position(
