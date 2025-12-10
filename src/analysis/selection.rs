@@ -4,9 +4,9 @@ use crate::language::injection::{self, parse_offset_directive_for_pattern};
 use crate::language::{DocumentParserPool, LanguageCoordinator};
 use crate::text::PositionMapper;
 use tower_lsp::lsp_types::{Position, Range, SelectionRange};
-use tree_sitter::{Node, Query};
 #[cfg(test)]
 use tree_sitter::Point;
+use tree_sitter::{Node, Query};
 
 /// Convert LSP Position to tree-sitter Point (ASCII-only)
 ///
@@ -1226,7 +1226,8 @@ pub fn handle_selection_range_with_parsed_injection(
                 let cursor_byte_offset = mapper.position_to_byte(*pos)?;
 
                 // Find the smallest node containing this position
-                let node = root.descendant_for_byte_range(cursor_byte_offset, cursor_byte_offset)?;
+                let node =
+                    root.descendant_for_byte_range(cursor_byte_offset, cursor_byte_offset)?;
 
                 // Build the selection range hierarchy with full injection parsing
                 if let Some(lang) = base_language {
@@ -2471,16 +2472,21 @@ array: ["xxxx"]"#;
         // Create a document with the parsed tree
         let url = Url::parse("file:///test.rs").unwrap();
         let store = DocumentStore::new();
-        store.insert(url.clone(), text.to_string(), Some("rust".to_string()), Some(tree));
+        store.insert(
+            url.clone(),
+            text.to_string(),
+            Some("rust".to_string()),
+            Some(tree),
+        );
 
         // Request selection ranges for multiple positions:
         // - Position 0: valid (line 0, col 4 = 'x')
         // - Position 1: INVALID (line 100 doesn't exist!)
         // - Position 2: valid (line 1, col 4 = 'y')
         let positions = vec![
-            Position::new(0, 4),    // valid: 'x'
-            Position::new(100, 0),  // invalid: line 100 doesn't exist
-            Position::new(1, 4),    // valid: 'y'
+            Position::new(0, 4),   // valid: 'x'
+            Position::new(100, 0), // invalid: line 100 doesn't exist
+            Position::new(1, 4),   // valid: 'y'
         ];
 
         let document = store.get(&url).expect("document should exist");

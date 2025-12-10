@@ -63,8 +63,7 @@ pub fn calculate_effective_range_with_text(
             offset.start_row,
             offset.start_column,
         );
-        let end =
-            apply_offset_to_position(text, byte_range.end, offset.end_row, offset.end_column);
+        let end = apply_offset_to_position(text, byte_range.end, offset.end_row, offset.end_column);
         (start, end)
     };
 
