@@ -181,47 +181,39 @@ Extract the functions that manipulate `SelectionRange` parent chains.
 
 **Rationale:** Encapsulate injection-related complexity into a dedicated module.
 
-### Cycle 3.1: Coordinate Adjustment Utilities
+### Cycle 3.1: Coordinate Adjustment Utilities ✓
 
-- [ ] **Iteration 1: `adjust_range_to_host`**
-  - [ ] RED: Create `src/analysis/selection/injection_aware.rs` with test
-  - [ ] GREEN: Move function
-  - [ ] REFACTOR: Document byte-to-UTF16 conversion
-  - [ ] COMMIT: `refactor(selection): extract adjust_range_to_host to injection_aware`
+- [x] **Iteration 1: `adjust_range_to_host`**
+  - [x] Create `src/analysis/selection/injection_aware.rs`
+  - [x] COMMIT: `refactor(selection): extract adjust_range_to_host to injection_aware`
 
-- [ ] **Iteration 2: `calculate_effective_lsp_range`**
-  - [ ] RED: Add test for effective range with offset
-  - [ ] GREEN: Move function
-  - [ ] REFACTOR: Verify it uses `offset_calculator` correctly
-  - [ ] COMMIT: `refactor(selection): extract calculate_effective_lsp_range to injection_aware`
+- [x] **Iteration 2: `calculate_effective_lsp_range`**
+  - [x] Move function
+  - [x] COMMIT: `refactor(selection): extract calculate_effective_lsp_range to injection_aware`
 
-- [ ] **Iteration 3: `is_cursor_within_effective_range`**
-  - [ ] RED: Add test for cursor position checking
-  - [ ] GREEN: Move function
-  - [ ] REFACTOR: Keep as pure function
-  - [ ] COMMIT: `refactor(selection): extract is_cursor_within_effective_range to injection_aware`
+- [x] **Iteration 3: `is_cursor_within_effective_range`**
+  - [x] Move function
+  - [x] COMMIT: `refactor(selection): extract is_cursor_within_effective_range to injection_aware`
 
-- [ ] Run `cargo test`
+- [x] **Iteration 4: `is_node_in_selection_chain`**
+  - [x] Move function
+  - [x] COMMIT: `refactor(selection): extract is_node_in_selection_chain to injection_aware`
 
-### Cycle 3.2: Injected Content Selection
+- [x] Run `cargo test`
 
-- [ ] **Iteration 1: `build_injected_selection_range`**
-  - [ ] RED: Add test for building selection within injected content
-  - [ ] GREEN: Move function
-  - [ ] REFACTOR: Ensure it uses `range_builder` utilities
-  - [ ] COMMIT: `refactor(selection): extract build_injected_selection_range to injection_aware`
+### Cycle 3.2-3.4: Remaining Injection Functions (Pending)
 
-- [ ] **Iteration 2: `build_injection_aware_selection`**
-  - [ ] RED: Add test for injection boundary inclusion
-  - [ ] GREEN: Move function
-  - [ ] REFACTOR: None needed
-  - [ ] COMMIT: `refactor(selection): extract build_injection_aware_selection to injection_aware`
+The following functions remain in `selection.rs` and can be extracted in future iterations:
+- `build_injection_aware_selection`
+- `build_injection_aware_selection_with_effective_range`
+- `splice_injection_content_into_hierarchy`
+- `rebuild_with_injection_boundary`
+- `splice_effective_range_into_hierarchy`
+- `rebuild_with_effective_range`
+- `replace_range_in_chain`
 
-- [ ] **Iteration 3: `build_injection_aware_selection_with_effective_range`**
-  - [ ] RED: Add test for offset-adjusted injection selection
-  - [ ] GREEN: Move function
-  - [ ] REFACTOR: Consider DRYing with iteration 2
-  - [ ] COMMIT: `refactor(selection): extract build_injection_aware_selection_with_effective_range`
+These functions have complex interdependencies and may be candidates for further refactoring
+once the foundational utilities are stable.
 
 - [ ] Run `cargo test`
 
