@@ -800,3 +800,88 @@ Issue from fourth review fixed:
 1. ✅ **Issue 1 (High)**: Selection range alignment - Sprint 13
 
 Total tests: 143 (115 unit + 28 integration)
+
+---
+
+# Review Analysis (Fifth Review Cycle - Comprehensive Feature Review)
+
+## Summary of New review.md Findings
+
+This is a **comprehensive feature review** of the entire `selectionRange` implementation, not just incremental fixes. The review rates the implementation as **production-ready with one critical fix needed**.
+
+### Overall Assessment
+
+| Category | Rating | Summary |
+|----------|--------|---------|
+| LSP Protocol Compliance | ✅ Excellent | Full compliance with LSP 3.17 spec |
+| Error Handling | ⚠️ Needs Fix | One critical lock poisoning issue |
+| Edge Cases | ✅ Good | Comprehensive coverage |
+| Performance | ✅ Good | Proper caching, some optimization opportunities |
+| Test Coverage | ✅ Comprehensive | 14 unit tests + integration tests |
+
+### Issue 1 (High): Lock Poison Handling Missing
+
+**Location:** `src/lsp/lsp_impl.rs:780`, `src/lsp/lsp_impl.rs:91`
+
+**Problem:**
+```rust
+let mut pool = self.parser_pool.lock().unwrap();
+```
+This `unwrap()` on a mutex lock will panic if another thread panicked while holding the lock, causing the server to crash.
+
+**Required Fix (per CLAUDE.md error handling standards):**
+```rust
+let mut pool = match self.parser_pool.lock() {
+    Ok(guard) => guard,
+    Err(poisoned) => {
+        log::warn!(target: "treesitter_ls::lock_recovery",
+                   "Recovered from poisoned parser pool lock in selection_range");
+        poisoned.into_inner()
+    }
+};
+```
+
+**Severity:** HIGH - Production code should handle lock poisoning gracefully.
+
+### Positive Findings (No Action Required)
+
+1. **LSP Protocol Compliance**: ✅
+   - 1:1 position alignment with fallback empty ranges
+   - Strictly expanding parent ranges
+   - Proper UTF-16 column positions
+
+2. **Safe unwrap() Usage**: ✅
+   - `hierarchy.last().unwrap()` is preceded by length check
+   - Graceful fallback patterns throughout
+
+3. **Edge Case Handling**: ✅
+   - Invalid positions → empty range fallback
+   - Multi-byte UTF-8 → proper PositionMapper usage
+   - Same-range node deduplication
+   - Maximum recursion depth (10)
+
+4. **Performance**: ✅
+   - PositionMapper caching
+   - Parser pool reuse
+
+### Recommendations from Review
+
+| Priority | Item | Effort | Status |
+|----------|------|--------|--------|
+| P1 | Fix lock poisoning (2 locations) | Small | Pending |
+| P2 | Add empty document test | Small | Optional |
+| P2 | Consider context struct refactor | Medium | Optional |
+| P3 | Add injection tree caching | Large | Future |
+
+# Product Backlog (Fifth Review Cycle)
+
+## User Story 18: Fix lock poisoning in parser pool access (High)
+As an LSP server operator,
+I want the server to recover gracefully from thread panics,
+so that a single parsing failure doesn't crash the entire server.
+
+**Acceptance Criteria:**
+- `parser_pool.lock().unwrap()` replaced with poison-recovery pattern
+- Both locations in lsp_impl.rs fixed (lines 780 and 91)
+- Log warning on poison recovery
+- Test: Existing poison recovery tests cover this pattern
