@@ -1127,49 +1127,59 @@ pub fn handle_selection_range_with_injection(
     let mapper = document.position_mapper();
     let text = document.text();
 
-    // Use filter_map instead of map + collect::<Option<Vec<_>>> to handle
-    // per-position failures gracefully. This allows multi-cursor editors to
-    // get selection ranges for valid positions even if some positions are
-    // stale or invalid (e.g., line number exceeds document lines).
+    // LSP Spec 3.17 requires 1:1 correspondence between positions and results:
+    // "A selection range in the return array is for the position in the provided
+    // parameters at the same index. Therefore positions[i] must be contained in
+    // result[i].range. To allow for results where some positions have selection
+    // ranges and others do not, result[i].range is allowed to be the empty range
+    // at positions[i]."
+    //
+    // We use map (not filter_map) to maintain alignment, returning an empty
+    // fallback range for positions that cannot be resolved.
     let ranges: Vec<SelectionRange> = positions
         .iter()
-        .filter_map(|pos| {
-            // Convert position to byte offset using the mapper.
-            // LSP positions use UTF-16 code units, but tree-sitter uses byte offsets.
-            // We must convert properly to avoid finding wrong nodes with multi-byte chars.
-            let byte_offset = mapper.position_to_byte(*pos)?;
+        .map(|pos| {
+            // Try to build a real selection range
+            let real_range = (|| {
+                // Convert position to byte offset using the mapper.
+                let byte_offset = mapper.position_to_byte(*pos)?;
 
-            // Get the tree
-            let tree = document.tree()?;
-            let root = tree.root_node();
+                // Get the tree
+                let tree = document.tree()?;
+                let root = tree.root_node();
 
-            // Find the smallest node containing this position using byte-based lookup.
-            // Using byte range is correct because tree-sitter stores positions as bytes.
-            let node = root.descendant_for_byte_range(byte_offset, byte_offset)?;
+                // Find the smallest node containing this position
+                let node = root.descendant_for_byte_range(byte_offset, byte_offset)?;
 
-            // Build the selection range hierarchy with injection awareness
-            if let Some(lang) = base_language {
-                Some(build_selection_range_with_injection_and_offset(
-                    node,
-                    &root,
-                    text,
-                    &mapper,
-                    injection_query,
-                    lang,
-                    byte_offset,
-                ))
-            } else {
-                Some(build_selection_range(node, &mapper))
-            }
+                // Build the selection range hierarchy with injection awareness
+                if let Some(lang) = base_language {
+                    Some(build_selection_range_with_injection_and_offset(
+                        node,
+                        &root,
+                        text,
+                        &mapper,
+                        injection_query,
+                        lang,
+                        byte_offset,
+                    ))
+                } else {
+                    Some(build_selection_range(node, &mapper))
+                }
+            })();
+
+            // Return real range or fallback empty range at the requested position
+            real_range.unwrap_or_else(|| {
+                // LSP allows empty range at the position for failed lookups
+                let fallback_range = Range::new(*pos, *pos);
+                SelectionRange {
+                    range: fallback_range,
+                    parent: None,
+                }
+            })
         })
         .collect();
 
-    // Return None only if no positions could be processed at all
-    if ranges.is_empty() && !positions.is_empty() {
-        None
-    } else {
-        Some(ranges)
-    }
+    Some(ranges)
 }
 
 /// Handle textDocument/selectionRange request with full injection parsing support
@@ -1200,51 +1210,54 @@ pub fn handle_selection_range_with_parsed_injection(
     // This avoids O(file_size × positions) work from rebuilding LineIndex for each cursor.
     let mapper = document.position_mapper();
 
-    // Use filter_map instead of map + collect::<Option<Vec<_>>> to handle
-    // per-position failures gracefully. This allows multi-cursor editors to
-    // get selection ranges for valid positions even if some positions are
-    // stale or invalid (e.g., line number exceeds document lines).
+    // LSP Spec 3.17 requires 1:1 correspondence between positions and results.
+    // We use map (not filter_map) to maintain alignment, returning an empty
+    // fallback range for positions that cannot be resolved.
     let ranges: Vec<SelectionRange> = positions
         .iter()
-        .filter_map(|pos| {
-            // Get the tree
-            let tree = document.tree()?;
-            let root = tree.root_node();
+        .map(|pos| {
+            // Try to build a real selection range
+            let real_range = (|| {
+                // Get the tree
+                let tree = document.tree()?;
+                let root = tree.root_node();
 
-            // Calculate the byte offset for the cursor position using cached mapper.
-            // LSP positions use UTF-16 code units, but tree-sitter uses byte offsets.
-            // We must convert properly to avoid finding wrong nodes with multi-byte chars.
-            let cursor_byte_offset = mapper.position_to_byte(*pos)?;
+                // Calculate the byte offset for the cursor position using cached mapper.
+                let cursor_byte_offset = mapper.position_to_byte(*pos)?;
 
-            // Find the smallest node containing this position using byte-based lookup.
-            // Using byte range is correct because tree-sitter stores positions as bytes.
-            let node = root.descendant_for_byte_range(cursor_byte_offset, cursor_byte_offset)?;
+                // Find the smallest node containing this position
+                let node = root.descendant_for_byte_range(cursor_byte_offset, cursor_byte_offset)?;
 
-            // Build the selection range hierarchy with full injection parsing
-            if let Some(lang) = base_language {
-                Some(build_selection_range_with_parsed_injection(
-                    node,
-                    &root,
-                    text,
-                    &mapper,
-                    injection_query,
-                    lang,
-                    coordinator,
-                    parser_pool,
-                    cursor_byte_offset,
-                ))
-            } else {
-                Some(build_selection_range(node, &mapper))
-            }
+                // Build the selection range hierarchy with full injection parsing
+                if let Some(lang) = base_language {
+                    Some(build_selection_range_with_parsed_injection(
+                        node,
+                        &root,
+                        text,
+                        &mapper,
+                        injection_query,
+                        lang,
+                        coordinator,
+                        parser_pool,
+                        cursor_byte_offset,
+                    ))
+                } else {
+                    Some(build_selection_range(node, &mapper))
+                }
+            })();
+
+            // Return real range or fallback empty range at the requested position
+            real_range.unwrap_or_else(|| {
+                let fallback_range = Range::new(*pos, *pos);
+                SelectionRange {
+                    range: fallback_range,
+                    parent: None,
+                }
+            })
         })
         .collect();
 
-    // Return None only if no positions could be processed at all
-    if ranges.is_empty() && !positions.is_empty() {
-        None
-    } else {
-        Some(ranges)
-    }
+    Some(ranges)
 }
 
 #[cfg(test)]
@@ -2435,13 +2448,15 @@ array: ["xxxx"]"#;
         );
     }
 
-    /// Test that a single invalid position doesn't cause entire request to fail
+    /// Test that invalid positions get fallback empty ranges (LSP-compliant alignment)
     ///
-    /// This is the fix for review.md Issue 3: multi-cursor editors send multiple
-    /// positions, and a stale cursor position shouldn't prevent selection ranges
-    /// from being computed for the valid positions.
+    /// LSP Spec 3.17 states: "To allow for results where some positions have
+    /// selection ranges and others do not, result[i].range is allowed to be
+    /// the empty range at positions[i]."
+    ///
+    /// This ensures multi-cursor editors receive correctly aligned results.
     #[test]
-    fn test_selection_range_handles_invalid_positions_gracefully() {
+    fn test_selection_range_maintains_position_alignment() {
         use crate::document::store::DocumentStore;
         use tower_lsp::lsp_types::Url;
         use tree_sitter::Parser;
@@ -2471,19 +2486,42 @@ array: ["xxxx"]"#;
         let document = store.get(&url).expect("document should exist");
         let result = handle_selection_range_with_injection(&document, &positions, None, None);
 
-        // With the fix, we should get results for valid positions
-        // even if one position is invalid.
-        // The result should contain 2 selection ranges (for positions 0 and 2).
+        // LSP requires 1:1 correspondence between positions and results
         assert!(
             result.is_some(),
             "Request should not fail entirely due to one invalid position"
         );
 
         let ranges = result.unwrap();
+
+        // CRITICAL: Result length MUST equal input positions length for alignment
         assert_eq!(
             ranges.len(),
-            2,
-            "Should return selection ranges for the 2 valid positions only"
+            positions.len(),
+            "Result length must equal input positions length for LSP alignment"
+        );
+
+        // Position 0 (valid): should have a real selection range for 'x'
+        assert!(
+            ranges[0].range.start.line == 0,
+            "First result should be for line 0"
+        );
+
+        // Position 1 (invalid): should have an empty fallback range
+        // LSP spec allows empty range at the requested position
+        assert_eq!(
+            ranges[1].range.start, ranges[1].range.end,
+            "Invalid position should get an empty (zero-length) range"
+        );
+        assert!(
+            ranges[1].parent.is_none(),
+            "Fallback range should have no parent"
+        );
+
+        // Position 2 (valid): should have a real selection range for 'y'
+        assert!(
+            ranges[2].range.start.line == 1,
+            "Third result should be for line 1"
         );
     }
 
