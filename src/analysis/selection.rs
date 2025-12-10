@@ -322,38 +322,6 @@ fn build_recursive_injection_selection(
     result
 }
 
-/// Calculate the start position for nested injection relative to host document
-///
-/// This function handles signed offsets from injection directives like
-/// `(#offset! @injection.content -1 0 0 0)` used in markdown frontmatter.
-/// Negative offsets are handled with saturating arithmetic to prevent underflow.
-///
-/// Column calculation logic:
-/// - If the *effective* row (content_start.row + offset_rows) is 0, we're on the
-///   same row as the parent, so we add parent's column offset.
-/// - If the effective row is > 0, we've moved to a later row (e.g., after skipping
-///   a fence line), so the column is absolute within the content.
-///
-/// Note: This function was used for Point-based calculation before Sprint 9.
-/// It's now kept for test coverage but production code uses byte-based offsets.
-#[cfg(test)]
-fn calculate_nested_start_position(
-    parent_start: tree_sitter::Point,
-    content_start: tree_sitter::Point,
-    offset_rows: i32,
-    offset_cols: i32,
-) -> tree_sitter::Point {
-    let col_parent = if (content_start.row as i32 + offset_rows).max(0) == 0 {
-        parent_start.column as i64
-    } else {
-        0 as i64
-    };
-    tree_sitter::Point::new(
-        ((parent_start.row + content_start.row) as i64 + offset_rows as i64).max(0) as usize,
-        (col_parent + content_start.column as i64 + offset_cols as i64).max(0) as usize,
-    )
-}
-
 /// Build selection range for nodes in injected content
 ///
 /// This builds SelectionRange from injected AST nodes, adjusting positions
@@ -545,6 +513,36 @@ mod tests {
     use super::*;
     use tree_sitter::Point;
 
+    /// Calculate the start position for nested injection relative to host document
+    ///
+    /// This function handles signed offsets from injection directives like
+    /// `(#offset! @injection.content -1 0 0 0)` used in markdown frontmatter.
+    /// Negative offsets are handled with saturating arithmetic to prevent underflow.
+    ///
+    /// Column calculation logic:
+    /// - If the *effective* row (content_start.row + offset_rows) is 0, we're on the
+    ///   same row as the parent, so we add parent's column offset.
+    /// - If the effective row is > 0, we've moved to a later row (e.g., after skipping
+    ///   a fence line), so the column is absolute within the content.
+    ///
+    /// Note: This function was used for Point-based calculation before Sprint 9.
+    /// It's now kept for test coverage but production code uses byte-based offsets.
+    fn calculate_nested_start_position(
+        parent_start: tree_sitter::Point,
+        content_start: tree_sitter::Point,
+        offset_rows: i32,
+        offset_cols: i32,
+    ) -> tree_sitter::Point {
+        let col_parent = if (content_start.row as i32 + offset_rows).max(0) == 0 {
+            parent_start.column as i64
+        } else {
+            0 as i64
+        };
+        tree_sitter::Point::new(
+            ((parent_start.row + content_start.row) as i64 + offset_rows as i64).max(0) as usize,
+            (col_parent + content_start.column as i64 + offset_cols as i64).max(0) as usize,
+        )
+    }
     /// Verifies offset directive parsing and effective range boundary checking.
     #[test]
     fn test_selection_range_respects_offset_directive() {
