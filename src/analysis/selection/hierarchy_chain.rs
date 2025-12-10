@@ -20,6 +20,15 @@ use tower_lsp::lsp_types::Range;
 ///
 /// Returns true if inner is completely within outer (inclusive boundaries).
 /// Unlike `is_range_strictly_larger`, this returns true for equal ranges.
+/// Check if two ranges are equal.
+///
+/// This is a simple equality check for Range start and end positions.
+/// Note: Range implements PartialEq, but this explicit function documents the intent.
+pub fn ranges_equal(a: &Range, b: &Range) -> bool {
+    a.start == b.start && a.end == b.end
+}
+
+/// Check if outer range fully contains inner range.
 pub fn range_contains(outer: &Range, inner: &Range) -> bool {
     (outer.start.line < inner.start.line
         || (outer.start.line == inner.start.line && outer.start.character <= inner.start.character))
@@ -45,6 +54,30 @@ pub fn is_range_strictly_larger(a: &Range, b: &Range) -> bool {
 mod tests {
     use super::*;
     use tower_lsp::lsp_types::Position;
+
+    #[test]
+    fn test_ranges_equal_when_equal() {
+        let a = Range::new(Position::new(2, 5), Position::new(10, 3));
+        let b = Range::new(Position::new(2, 5), Position::new(10, 3));
+
+        assert!(ranges_equal(&a, &b));
+    }
+
+    #[test]
+    fn test_ranges_equal_when_different_start() {
+        let a = Range::new(Position::new(2, 5), Position::new(10, 3));
+        let b = Range::new(Position::new(3, 5), Position::new(10, 3));
+
+        assert!(!ranges_equal(&a, &b));
+    }
+
+    #[test]
+    fn test_ranges_equal_when_different_end() {
+        let a = Range::new(Position::new(2, 5), Position::new(10, 3));
+        let b = Range::new(Position::new(2, 5), Position::new(11, 3));
+
+        assert!(!ranges_equal(&a, &b));
+    }
 
     #[test]
     fn test_range_contains_when_outer_contains_inner() {
