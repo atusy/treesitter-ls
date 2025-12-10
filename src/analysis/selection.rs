@@ -453,7 +453,7 @@ pub fn handle_selection_range(
     let text = document.text();
     let mapper = document.position_mapper();
     let root = document.tree().map(|t| t.root_node());
-    let base_language = document.language_id();
+    let lang = document.language_id();
     positions
         .iter()
         .map(|pos| {
@@ -462,7 +462,7 @@ pub fn handle_selection_range(
                 && let Some(node) =
                     root.descendant_for_byte_range(cursor_byte_offset, cursor_byte_offset)
                 // lang should be available when node is available
-                && let Some(lang) = base_language
+                && let Some(lang) = lang
             {
                 build_selection_range_with_parsed_injection(
                     node,
