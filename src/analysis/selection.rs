@@ -90,19 +90,9 @@ fn build_selection_range_with_parsed_injection(
 
     // Helper closure to build fallback selection with or without effective range
     let build_fallback = || {
-        if let Some(offset) = offset_from_query {
-            // Use effective range in fallback when offset exists
-            let effective_range =
-                calculate_effective_lsp_range(text, mapper, &content_node, offset);
-            build_injection_aware_selection_with_effective_range(
-                node,
-                content_node,
-                effective_range,
-                mapper,
-            )
-        } else {
-            build_injection_aware_selection(node, content_node, mapper)
-        }
+        let effective_range = offset_from_query
+            .map(|offset| calculate_effective_lsp_range(text, mapper, &content_node, offset));
+        build_injection_aware_selection(node, content_node, effective_range, mapper)
     };
 
     // Ensure the injected language is loaded before trying to acquire a parser
@@ -498,68 +488,51 @@ fn build_injected_selection_range(
 
 /// Build selection hierarchy with injection content node included
 ///
-/// Shared logic for injection-aware selection range building.
+/// When `effective_range` is provided (from an offset directive), it replaces the
+/// content node's range in the selection hierarchy. This ensures that excluded
+/// regions (like `---` boundaries in YAML frontmatter) are not included.
+///
+/// When `effective_range` is None, uses the full content node range.
 fn build_injection_aware_selection(
     node: Node,
     content_node: Node,
-    mapper: &PositionMapper,
-) -> SelectionRange {
-    let inner_selection = build_selection_range(node, mapper);
-
-    // Check if content_node is already in the parent chain
-    if is_node_in_selection_chain(&inner_selection, &content_node, mapper) {
-        // content_node is already in the chain, just return as-is
-        inner_selection
-    } else {
-        // Need to splice content_node into the hierarchy
-        let content_range = node_to_range(content_node, mapper);
-        splice_effective_range_into_hierarchy(inner_selection, content_range, &content_node, mapper)
-    }
-}
-
-/// Build selection hierarchy with effective range instead of full content node range
-///
-/// When an offset directive adjusts the injection boundaries, we use the effective
-/// range in the selection hierarchy. This ensures that excluded regions (like `---`
-/// boundaries in YAML frontmatter) are not included in the selection.
-fn build_injection_aware_selection_with_effective_range(
-    node: Node,
-    content_node: Node,
-    effective_range: Range,
+    effective_range: Option<Range>,
     mapper: &PositionMapper,
 ) -> SelectionRange {
     let content_node_range = node_to_range(content_node, mapper);
+    let target_range = effective_range.unwrap_or(content_node_range);
 
     // Build base selection from the starting node
     let inner_selection = build_selection_range(node, mapper);
 
-    // If the starting node IS the content node, replace its range with effective range
-    if ranges_equal(&inner_selection.range, &content_node_range) {
-        return SelectionRange {
-            range: effective_range,
-            parent: inner_selection.parent.map(|p| {
-                Box::new(replace_range_in_chain(
-                    *p,
-                    content_node_range,
-                    effective_range,
-                ))
-            }),
-        };
+    // If we have an effective range different from content node range,
+    // we need to handle range replacement
+    if let Some(eff_range) = effective_range {
+        // If the starting node IS the content node, replace its range with effective range
+        if ranges_equal(&inner_selection.range, &content_node_range) {
+            return SelectionRange {
+                range: eff_range,
+                parent: inner_selection
+                    .parent
+                    .map(|p| Box::new(replace_range_in_chain(*p, content_node_range, eff_range))),
+            };
+        }
+
+        // Check if content_node is already in the parent chain
+        if is_node_in_selection_chain(&inner_selection, &content_node, mapper) {
+            // content_node is in the chain - replace its range with effective range
+            return replace_range_in_chain(inner_selection, content_node_range, eff_range);
+        }
+    } else {
+        // No effective range - check if content_node is already in the chain
+        if is_node_in_selection_chain(&inner_selection, &content_node, mapper) {
+            // content_node is already in the chain, just return as-is
+            return inner_selection;
+        }
     }
 
-    // Check if content_node is already in the parent chain
-    if is_node_in_selection_chain(&inner_selection, &content_node, mapper) {
-        // content_node is in the chain - replace its range with effective range
-        replace_range_in_chain(inner_selection, content_node_range, effective_range)
-    } else {
-        // Need to splice effective range into the hierarchy
-        splice_effective_range_into_hierarchy(
-            inner_selection,
-            effective_range,
-            &content_node,
-            mapper,
-        )
-    }
+    // Need to splice the target range into the hierarchy
+    splice_effective_range_into_hierarchy(inner_selection, target_range, &content_node, mapper)
 }
 
 /// Replace a specific range in the selection chain with the effective range
