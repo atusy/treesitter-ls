@@ -660,55 +660,54 @@ fn splice_effective_range_into_hierarchy(
     content_node: &Node,
     mapper: &PositionMapper,
 ) -> SelectionRange {
+    if !range_contains(&effective_range, &selection.range) {
+        return selection;
+    }
+
     // If current selection range is smaller than or equal to effective_range,
     // we need to continue up the chain
-    if range_contains(&effective_range, &selection.range) {
-        // Current range is inside effective_range
-        let new_parent = match selection.parent {
-            Some(parent) => {
-                let parent_selection = *parent;
-                if range_contains(&parent_selection.range, &effective_range)
-                    && !ranges_equal(&parent_selection.range, &effective_range)
-                {
-                    // Parent is larger than effective_range, insert effective_range here
-                    let effective_selection = SelectionRange {
-                        range: effective_range,
-                        parent: Some(Box::new(splice_effective_range_into_hierarchy(
-                            parent_selection,
-                            effective_range,
-                            content_node,
-                            mapper,
-                        ))),
-                    };
-                    Some(Box::new(effective_selection))
-                } else {
-                    // Keep going up
-                    Some(Box::new(splice_effective_range_into_hierarchy(
+    // Current range is inside effective_range
+    let new_parent = match selection.parent {
+        Some(parent) => {
+            let parent_selection = *parent;
+            if range_contains(&parent_selection.range, &effective_range)
+                && !ranges_equal(&parent_selection.range, &effective_range)
+            {
+                // Parent is larger than effective_range, insert effective_range here
+                let effective_selection = SelectionRange {
+                    range: effective_range,
+                    parent: Some(Box::new(splice_effective_range_into_hierarchy(
                         parent_selection,
                         effective_range,
                         content_node,
                         mapper,
-                    )))
-                }
+                    ))),
+                };
+                Some(Box::new(effective_selection))
+            } else {
+                // Keep going up
+                Some(Box::new(splice_effective_range_into_hierarchy(
+                    parent_selection,
+                    effective_range,
+                    content_node,
+                    mapper,
+                )))
             }
-            None => {
-                // No parent, but we're inside effective_range - add effective_range as parent
-                Some(Box::new(SelectionRange {
-                    range: effective_range,
-                    parent: content_node
-                        .parent()
-                        .map(|p| Box::new(build_selection_range(p, mapper))),
-                }))
-            }
-        };
-
-        SelectionRange {
-            range: selection.range,
-            parent: new_parent,
         }
-    } else {
-        // Current range is not inside effective_range, just continue normally
-        selection
+        None => {
+            // No parent, but we're inside effective_range - add effective_range as parent
+            Some(Box::new(SelectionRange {
+                range: effective_range,
+                parent: content_node
+                    .parent()
+                    .map(|p| Box::new(build_selection_range(p, mapper))),
+            }))
+        }
+    };
+
+    SelectionRange {
+        range: selection.range,
+        parent: new_parent,
     }
 }
 
