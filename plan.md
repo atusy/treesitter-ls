@@ -506,18 +506,55 @@ For injected content containing multi-byte characters, the selection ranges will
 
 DoD: `adjust_range_to_host` produces correct UTF-16 column positions for multi-byte characters.
 
-* [ ] RED: Write test with Japanese text in injected content
-* [ ] GREEN: Modify `adjust_range_to_host` to use byte offsets and PositionMapper
-* [ ] CHECK: must pass `make format lint test` without errors and warnings
-* [ ] COMMIT
-* [ ] SELF-REVIEW: with Kent-Beck's Tidy First principle in your mind
+* [x] RED: Write test with Japanese text in injected content
+* [x] GREEN: Modify `adjust_range_to_host` to use byte offsets and PositionMapper
+* [x] CHECK: must pass `make format lint test` without errors and warnings
+* [x] COMMIT (9fafb51)
+* [x] SELF-REVIEW: with Kent-Beck's Tidy First principle in your mind
 
 ### Sprint retrospective
 
 #### Inspections of decisions in the previous retrospective
 
-#### Inspections of the current sprint (e.g., by KPT, use adequate method for each sprint)
+Sprint 8's approach of adding `position_to_point` to PositionMapper was the right pattern. Sprint 9 extends this by using byte offsets throughout the injection handling code.
+
+#### Inspections of the current sprint (KPT)
+
+**Keep:**
+- TDD approach: The failing test (expected column 17, got 19) made the bug crystal clear
+- Using byte offsets instead of Points simplifies the logic significantly
+- The `mapper.byte_to_position()` method handles all UTF-16 conversion centrally
+- 139 tests pass (111 unit + 28 integration)
+
+**Problem:**
+- The `calculate_nested_start_position` function is now dead code (kept for tests only)
+- Large diff due to threading parameters through multiple functions
+- Nested injection logic now has complex comments explaining byte offset calculations
+
+**Try:**
+- Consider removing `calculate_nested_start_position` entirely in a cleanup sprint
+- The byte-based approach should also fix Issue 2 (offset handling) since we no longer create Points with mixed coordinate systems
 
 #### Adaption plan
 
+**Issue 1 is now FIXED.** Injected selection ranges now use UTF-16 columns correctly.
+
+**Issue 2 status:** The Sprint 9 fix likely also addresses Issue 2, because:
+- We removed the problematic code at line 308-311 that created Points from UTF-16 columns
+- Now we pass byte offsets throughout, avoiding the mixed coordinate system issue
+- However, a dedicated test should verify this
+
+**Remaining:**
+- Sprint 10: Verify Issue 2 is fixed or create minimal fix if needed
+
 ### Product Backlog Refinement
+
+**Sprint 9 Complete:**
+- ✅ User Story 11: Fix injected selection ranges to use UTF-16 columns
+
+**Likely Auto-Fixed by Sprint 9:**
+- User Story 12: Fix offset handling (the problematic code was removed)
+
+**Next Step:**
+- Verify Issue 2 is resolved with a test
+- If not, create Sprint 10 to address it
