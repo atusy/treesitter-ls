@@ -2,6 +2,9 @@
 // These are located in src/analysis/selection/*.rs
 pub mod hierarchy_chain;
 
+// Re-export from submodules
+pub use hierarchy_chain::{is_range_strictly_larger, range_contains, ranges_equal};
+
 use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range_with_text};
 use crate::document::DocumentHandle;
 use crate::language::injection::{self, parse_offset_directive_for_pattern};
@@ -771,23 +774,6 @@ fn skip_to_distinct_host(
     None
 }
 
-/// Check if range `a` is strictly larger than range `b`.
-/// A range is strictly larger if it fully contains b (starts at or before, ends at or after)
-/// AND is not equal to b.
-fn is_range_strictly_larger(a: &Range, b: &Range) -> bool {
-    let a_start = (a.start.line, a.start.character);
-    let a_end = (a.end.line, a.end.character);
-    let b_start = (b.start.line, b.start.character);
-    let b_end = (b.end.line, b.end.character);
-
-    // a contains b: a_start <= b_start && a_end >= b_end
-    let contains = a_start <= b_start && a_end >= b_end;
-    // a is not equal to b
-    let not_equal = a_start != b_start || a_end != b_end;
-
-    contains && not_equal
-}
-
 /// Calculate the effective LSP Range after applying offset to content node
 fn calculate_effective_lsp_range(
     text: &str,
@@ -1075,19 +1061,6 @@ fn rebuild_with_injection_boundary(
         // Current range is not inside content_range, just continue normally
         selection
     }
-}
-
-/// Check if outer range fully contains inner range
-fn range_contains(outer: &Range, inner: &Range) -> bool {
-    (outer.start.line < inner.start.line
-        || (outer.start.line == inner.start.line && outer.start.character <= inner.start.character))
-        && (outer.end.line > inner.end.line
-            || (outer.end.line == inner.end.line && outer.end.character >= inner.end.character))
-}
-
-/// Check if two ranges are equal
-fn ranges_equal(a: &Range, b: &Range) -> bool {
-    a.start == b.start && a.end == b.end
 }
 
 /// Handle textDocument/selectionRange request
