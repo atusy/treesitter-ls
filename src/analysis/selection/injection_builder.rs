@@ -116,8 +116,9 @@ pub fn build_with_injection(
     let injected_lang = &hierarchy[hierarchy.len() - 1];
 
     let build_fallback = || {
-        let effective_range = offset_from_query
-            .map(|offset| calculate_effective_lsp_range(doc_ctx.text, doc_ctx.mapper, &content_node, offset));
+        let effective_range = offset_from_query.map(|offset| {
+            calculate_effective_lsp_range(doc_ctx.text, doc_ctx.mapper, &content_node, offset)
+        });
         build_unparsed_injection_selection(node, content_node, effective_range, doc_ctx.mapper)
     };
 
@@ -132,9 +133,15 @@ pub fn build_with_injection(
     let (content_text, effective_start_byte) = if let Some(offset) = offset_from_query {
         let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
         let effective = calculate_effective_range_with_text(doc_ctx.text, byte_range, offset);
-        (&doc_ctx.text[effective.start..effective.end], effective.start)
+        (
+            &doc_ctx.text[effective.start..effective.end],
+            effective.start,
+        )
     } else {
-        (&doc_ctx.text[content_node.byte_range()], content_node.start_byte())
+        (
+            &doc_ctx.text[content_node.byte_range()],
+            content_node.start_byte(),
+        )
     };
 
     let Some(injected_tree) = parser.parse(content_text, None) else {

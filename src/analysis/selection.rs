@@ -12,12 +12,12 @@ pub use injection_aware::{
     adjust_range_to_host, calculate_effective_lsp_range, is_cursor_within_effective_range,
     is_node_in_selection_chain,
 };
-pub use range_builder::{build_selection_range, find_distinct_parent, node_to_range};
 pub use injection_builder::build_injected_selection_range;
+pub use range_builder::{build_selection_range, find_distinct_parent, node_to_range};
 
-use context::{DocumentContext, InjectionContext};
 use crate::document::DocumentHandle;
 use crate::language::{DocumentParserPool, LanguageCoordinator};
+use context::{DocumentContext, InjectionContext};
 use tower_lsp::lsp_types::{Position, Range, SelectionRange};
 
 /// Handle textDocument/selectionRange request with full injection parsing support.
@@ -46,7 +46,12 @@ pub fn handle_selection_range(
             {
                 let doc_ctx = DocumentContext::new(text, &mapper, root, lang);
                 let mut inj_ctx = InjectionContext::new(coordinator, parser_pool);
-                injection_builder::build_with_injection(node, &doc_ctx, &mut inj_ctx, cursor_byte_offset)
+                injection_builder::build_with_injection(
+                    node,
+                    &doc_ctx,
+                    &mut inj_ctx,
+                    cursor_byte_offset,
+                )
             } else {
                 SelectionRange {
                     range: Range::new(*pos, *pos),
@@ -228,7 +233,8 @@ mod tests {
 
         let doc_ctx = DocumentContext::new(text, &mapper, root, "rust");
         let mut inj_ctx = InjectionContext::new(&coordinator, &mut parser_pool);
-        let selection = injection_builder::build_with_injection(node, &doc_ctx, &mut inj_ctx, cursor_byte);
+        let selection =
+            injection_builder::build_with_injection(node, &doc_ctx, &mut inj_ctx, cursor_byte);
 
         let mut ranges: Vec<Range> = Vec::new();
         let mut curr = Some(&selection);
@@ -307,7 +313,8 @@ array: ["xxxx"]"#;
 
         let doc_ctx = DocumentContext::new(text, &mapper, root, "rust");
         let mut inj_ctx = InjectionContext::new(&coordinator, &mut parser_pool);
-        let selection = injection_builder::build_with_injection(node, &doc_ctx, &mut inj_ctx, cursor_byte);
+        let selection =
+            injection_builder::build_with_injection(node, &doc_ctx, &mut inj_ctx, cursor_byte);
 
         let mut level_count = 0;
         let mut curr = Some(&selection);
@@ -554,7 +561,12 @@ array: ["xxxx"]"#;
 
         let doc_ctx = DocumentContext::new(text, &mapper, root, "rust");
         let mut inj_ctx = InjectionContext::new(&coordinator, &mut parser_pool);
-        let selection = injection_builder::build_with_injection(content_node, &doc_ctx, &mut inj_ctx, zero_byte_in_host);
+        let selection = injection_builder::build_with_injection(
+            content_node,
+            &doc_ctx,
+            &mut inj_ctx,
+            zero_byte_in_host,
+        );
 
         // Find small range in injected content, verify UTF-16 column < 19 (byte offset)
         let mut found_small_range = false;

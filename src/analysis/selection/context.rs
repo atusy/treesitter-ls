@@ -92,7 +92,10 @@ impl<'a> InjectionContext<'a> {
     ///
     /// * `coordinator` - Language coordinator for language services
     /// * `parser_pool` - Parser pool for parser acquisition
-    pub fn new(coordinator: &'a LanguageCoordinator, parser_pool: &'a mut DocumentParserPool) -> Self {
+    pub fn new(
+        coordinator: &'a LanguageCoordinator,
+        parser_pool: &'a mut DocumentParserPool,
+    ) -> Self {
         Self {
             coordinator,
             parser_pool,
