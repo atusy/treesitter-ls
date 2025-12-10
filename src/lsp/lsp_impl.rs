@@ -779,10 +779,9 @@ impl LanguageServer for TreeSitterLs {
             return Ok(None);
         };
 
-        // Get language for the document and injection query
-        let language_name = self.get_language_for_document(&uri);
-        let injection_query = language_name
-            .as_ref()
+        // Get injection query from document's language
+        let injection_query = doc
+            .language_id()
             .and_then(|lang| self.language.get_injection_query(lang));
 
         // Use full injection parsing handler with coordinator and parser pool
@@ -800,7 +799,6 @@ impl LanguageServer for TreeSitterLs {
             &doc,
             &positions,
             injection_query.as_ref().map(|q| q.as_ref()),
-            language_name.as_deref(),
             &self.language,
             &mut pool,
         );

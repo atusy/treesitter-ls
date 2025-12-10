@@ -82,8 +82,7 @@ fn build_selection_range_with_parsed_injection(
         build_unparsed_injection_selection(node, content_node, effective_range, mapper)
     };
 
-    let load_result = coordinator.ensure_language_loaded(injected_lang);
-    if !load_result.success {
+    if !coordinator.ensure_language_loaded(injected_lang).success {
         return build_fallback();
     }
 
@@ -220,18 +219,12 @@ fn build_recursive_injection_selection(
     }
     let nested_lang = hierarchy.last().unwrap().clone();
 
-    let offset = parse_offset_directive_for_pattern(injection_query, pattern_index);
-
-    let load_result = coordinator.ensure_language_loaded(&nested_lang);
-    if !load_result.success {
+    if !coordinator.ensure_language_loaded(&nested_lang).success {
         return build_injected_selection_range(*node, root, parent_start_byte, mapper);
     }
 
-    let Some(mut nested_parser) = parser_pool.acquire(&nested_lang) else {
-        return build_injected_selection_range(*node, root, parent_start_byte, mapper);
-    };
-
     // effective.start is relative to `text`, so host byte = parent_start_byte + effective.start
+    let offset = parse_offset_directive_for_pattern(injection_query, pattern_index);
     let (nested_text, nested_effective_start_byte) = if let Some(off) = offset {
         let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
         let effective = calculate_effective_range_with_text(text, byte_range, off);
@@ -246,6 +239,9 @@ fn build_recursive_injection_selection(
         )
     };
 
+    let Some(mut nested_parser) = parser_pool.acquire(&nested_lang) else {
+        return build_injected_selection_range(*node, root, parent_start_byte, mapper);
+    };
     let Some(nested_tree) = nested_parser.parse(nested_text, None) else {
         parser_pool.release(nested_lang.to_string(), nested_parser);
         return build_injected_selection_range(*node, root, parent_start_byte, mapper);
@@ -271,36 +267,19 @@ fn build_recursive_injection_selection(
     let deeply_nested_injection_query = coordinator.get_injection_query(&nested_lang);
 
     let nested_selection = if let Some(deep_inj_query) = deeply_nested_injection_query.as_ref() {
-        let deep_injection_info = injection::detect_injection_with_content(
+        build_recursive_injection_selection(
             &nested_node,
             &nested_root,
             nested_text,
-            Some(deep_inj_query.as_ref()),
+            deep_inj_query.as_ref(),
             &nested_lang,
-        );
-
-        if deep_injection_info.is_some() {
-            build_recursive_injection_selection(
-                &nested_node,
-                &nested_root,
-                nested_text,
-                deep_inj_query.as_ref(),
-                &nested_lang,
-                coordinator,
-                parser_pool,
-                nested_relative_byte,
-                nested_effective_start_byte,
-                mapper,
-                depth + 1,
-            )
-        } else {
-            build_injected_selection_range(
-                nested_node,
-                &nested_root,
-                nested_effective_start_byte,
-                mapper,
-            )
-        }
+            coordinator,
+            parser_pool,
+            nested_relative_byte,
+            nested_effective_start_byte,
+            mapper,
+            depth + 1,
+        )
     } else {
         build_injected_selection_range(
             nested_node,
@@ -468,13 +447,13 @@ pub fn handle_selection_range(
     document: &DocumentHandle,
     positions: &[Position],
     injection_query: Option<&Query>,
-    base_language: Option<&str>,
     coordinator: &LanguageCoordinator,
     parser_pool: &mut DocumentParserPool,
 ) -> Vec<SelectionRange> {
     let text = document.text();
     let mapper = document.position_mapper();
     let root = document.tree().map(|t| t.root_node());
+    let base_language = document.language_id();
     positions
         .iter()
         .map(|pos| {
@@ -1091,14 +1070,8 @@ array: ["xxxx"]"#;
         let coordinator = LanguageCoordinator::new();
         let mut parser_pool = coordinator.create_document_parser_pool();
         let document = store.get(&url).expect("document should exist");
-        let ranges = handle_selection_range(
-            &document,
-            &positions,
-            None,
-            None,
-            &coordinator,
-            &mut parser_pool,
-        );
+        let ranges =
+            handle_selection_range(&document, &positions, None, &coordinator, &mut parser_pool);
 
         assert_eq!(ranges.len(), positions.len());
         assert!(ranges[0].range.start.line == 0);
@@ -1147,14 +1120,8 @@ array: ["xxxx"]"#;
         let coordinator = LanguageCoordinator::new();
         let mut parser_pool = coordinator.create_document_parser_pool();
         let document = store.get(&url).expect("document should exist");
-        let ranges = handle_selection_range(
-            &document,
-            &positions,
-            None,
-            None,
-            &coordinator,
-            &mut parser_pool,
-        );
+        let ranges =
+            handle_selection_range(&document, &positions, None, &coordinator, &mut parser_pool);
 
         assert_eq!(ranges.len(), 1);
         assert_eq!(ranges[0].range.start, Position::new(0, 0));
