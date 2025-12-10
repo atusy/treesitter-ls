@@ -761,7 +761,7 @@ The Sprint 12 fix addressed "all-or-nothing" error handling but overcorrected. T
 
 # Product Backlog (Fourth Review Cycle)
 
-## User Story 17: Maintain position alignment in selectionRange response (High)
+## User Story 17: Maintain position alignment in selectionRange response (High) ✅
 As a multi-cursor editor user,
 I want each selection range to correspond to its requested position,
 so that my cursors get the correct selection expansions.
@@ -771,3 +771,32 @@ so that my cursors get the correct selection expansions.
 - Each response entry corresponds to the position at the same index
 - Invalid positions get a fallback range (zero-length at document start or similar)
 - Test: Request with invalid position in middle returns correctly aligned results
+
+---
+
+# Sprint 13 Retrospective
+
+## Goal
+Fix regression from Sprint 12: maintain LSP position alignment.
+
+## Completed (Commit 2538602)
+
+### Changes
+- Changed `filter_map` back to `map` in both selection range handlers
+- Invalid positions now get a fallback empty range at the requested position
+- Uses closure + `unwrap_or_else` pattern for clean fallback logic
+- Renamed test to `test_selection_range_maintains_position_alignment`
+- Updated test to verify 3 results for 3 positions (not 2)
+
+### Key Insight
+LSP Spec 3.17 explicitly states: "result[i].range is allowed to be the empty range at positions[i]." This is the correct way to handle failed lookups while maintaining alignment. The Sprint 12 fix using `filter_map` was incorrect because it broke this invariant.
+
+---
+
+# Fourth Review Cycle Summary
+
+Issue from fourth review fixed:
+
+1. ✅ **Issue 1 (High)**: Selection range alignment - Sprint 13
+
+Total tests: 143 (115 unit + 28 integration)
