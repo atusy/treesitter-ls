@@ -1,3 +1,7 @@
+// Submodules (Rust 2018+ style)
+// These are located in src/analysis/selection/*.rs
+pub mod hierarchy_chain;
+
 use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range_with_text};
 use crate::document::DocumentHandle;
 use crate::language::injection::{self, parse_offset_directive_for_pattern};
