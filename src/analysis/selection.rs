@@ -771,8 +771,7 @@ fn rebuild_with_injection_boundary(
                 if range_contains(&parent_selection.range, &content_range)
                     && !ranges_equal(&parent_selection.range, &content_range)
                 {
-                    // Parent is larger than content_range, insert content_node here
-                    let content_selection = SelectionRange {
+                    Some(Box::new(SelectionRange {
                         range: content_range,
                         parent: Some(Box::new(rebuild_with_injection_boundary(
                             parent_selection,
@@ -780,8 +779,7 @@ fn rebuild_with_injection_boundary(
                             content_node,
                             mapper,
                         ))),
-                    };
-                    Some(Box::new(content_selection))
+                    }))
                 } else {
                     // Keep going up
                     Some(Box::new(rebuild_with_injection_boundary(
