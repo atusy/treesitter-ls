@@ -79,7 +79,7 @@ fn build_selection_range_with_parsed_injection(
     let build_fallback = || {
         let effective_range = offset_from_query
             .map(|offset| calculate_effective_lsp_range(text, mapper, &content_node, offset));
-        build_injection_aware_selection(node, content_node, effective_range, mapper)
+        build_unparsed_injection_selection(node, content_node, effective_range, mapper)
     };
 
     let load_result = coordinator.ensure_language_loaded(injected_lang);
@@ -141,7 +141,7 @@ fn build_selection_range_with_parsed_injection(
             };
 
             if cursor_in_nested && nested_hierarchy.len() >= 2 {
-                build_nested_injection_selection(
+                build_recursive_injection_selection(
                     &injected_node,
                     &injected_root,
                     content_text,
@@ -180,15 +180,13 @@ fn build_selection_range_with_parsed_injection(
     result
 }
 
-/// Build selection for a nested injection (Sprint 5)
+/// Recursively build selection for deeply nested injections.
 ///
-/// This handles the recursive case where we're inside an injection that itself
-/// contains another injection.
-///
+/// Parses injection content and recurses if further injections are detected.
 /// The `parent_start_byte` is the byte offset where the parent injection content
 /// starts in the host document. The `mapper` is for the host document.
 #[allow(clippy::too_many_arguments)]
-fn build_nested_injection_selection(
+fn build_recursive_injection_selection(
     node: &Node,
     root: &Node,
     text: &str,
@@ -282,7 +280,7 @@ fn build_nested_injection_selection(
         );
 
         if deep_injection_info.is_some() {
-            build_nested_injection_selection(
+            build_recursive_injection_selection(
                 &nested_node,
                 &nested_root,
                 nested_text,
@@ -392,14 +390,12 @@ fn build_injected_selection_range(
     }
 }
 
-/// Build selection hierarchy with injection content node included
+/// Build selection when injection content cannot be parsed.
 ///
-/// When `effective_range` is provided (from an offset directive), it replaces the
-/// content node's range in the selection hierarchy. This ensures that excluded
-/// regions (like `---` boundaries in YAML frontmatter) are not included.
-///
-/// When `effective_range` is None, uses the full content node range.
-fn build_injection_aware_selection(
+/// Used as fallback when injection language is unavailable or parser fails.
+/// Splices the effective_range into the host document's selection hierarchy
+/// without parsing the injection content.
+fn build_unparsed_injection_selection(
     node: Node,
     content_node: Node,
     effective_range: Option<Range>,
