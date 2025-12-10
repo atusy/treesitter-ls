@@ -3,7 +3,10 @@
 pub mod hierarchy_chain;
 
 // Re-export from submodules
-pub use hierarchy_chain::{is_range_strictly_larger, range_contains, ranges_equal};
+pub use hierarchy_chain::{
+    chain_injected_to_host, is_range_strictly_larger, range_contains, ranges_equal,
+    skip_to_distinct_host,
+};
 
 use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range_with_text};
 use crate::document::DocumentHandle;
@@ -734,44 +737,6 @@ fn adjust_range_to_host(node: Node, content_start_byte: usize, mapper: &Position
         .unwrap_or_else(|| Position::new(0, 0));
 
     Range::new(adjusted_start, adjusted_end)
-}
-
-/// Chain the injected selection hierarchy to the host document hierarchy
-fn chain_injected_to_host(
-    mut injected: SelectionRange,
-    host: Option<SelectionRange>,
-) -> SelectionRange {
-    // Find the end of the injected chain (the injected root) and connect to host
-    fn find_and_connect_tail(selection: &mut SelectionRange, host: Option<SelectionRange>) {
-        if selection.parent.is_none() {
-            // This is the tail - connect to the first host range that is strictly larger
-            let tail_range = &selection.range;
-            let distinct_host = skip_to_distinct_host(host, tail_range);
-            selection.parent = distinct_host.map(Box::new);
-        } else if let Some(ref mut parent) = selection.parent {
-            find_and_connect_tail(parent, host);
-        }
-    }
-
-    find_and_connect_tail(&mut injected, host);
-    injected
-}
-
-/// Skip host selection ranges until we find one that is strictly larger than the tail range.
-/// This ensures LSP selection ranges are strictly expanding (no duplicates or contained ranges).
-fn skip_to_distinct_host(
-    host: Option<SelectionRange>,
-    tail_range: &Range,
-) -> Option<SelectionRange> {
-    let mut current = host;
-    while let Some(selection) = current {
-        if is_range_strictly_larger(&selection.range, tail_range) {
-            return Some(selection);
-        }
-        // This host range is not larger - skip to its parent
-        current = selection.parent.map(|p| *p);
-    }
-    None
 }
 
 /// Calculate the effective LSP Range after applying offset to content node
