@@ -25,73 +25,6 @@ use crate::text::PositionMapper;
 use tower_lsp::lsp_types::{Position, Range, SelectionRange};
 use tree_sitter::{Node, Query};
 
-/// Build selection range hierarchy with injection awareness and offset support
-///
-/// When the cursor is inside an injection region, this function ensures
-/// the injection content node is included in the selection hierarchy.
-/// The cursor_byte parameter is used to check if the cursor is within
-/// the effective range of the injection after applying offset directives.
-/// When an offset directive exists, the selection hierarchy uses the effective
-/// range (after applying offset) instead of the full content node range.
-///
-/// # Arguments
-/// * `node` - The node at cursor position
-/// * `root` - The root node of the document tree
-/// * `text` - The document text
-/// * `mapper` - PositionMapper for UTF-16 column conversion
-/// * `injection_query` - Optional injection query for detecting injections
-/// * `base_language` - The base language of the document
-/// * `cursor_byte` - The byte position of the cursor for offset checking
-///
-/// # Returns
-/// SelectionRange that includes injection boundaries when applicable and cursor
-/// is within the effective range (after applying offset)
-pub fn build_selection_range_with_injection_and_offset(
-    node: Node,
-    root: &Node,
-    text: &str,
-    mapper: &PositionMapper,
-    injection_query: Option<&Query>,
-    base_language: &str,
-    cursor_byte: usize,
-) -> SelectionRange {
-    // Try to detect if we're inside an injection region
-    let injection_info =
-        injection::detect_injection_with_content(&node, root, text, injection_query, base_language);
-
-    match injection_info {
-        Some((_hierarchy, content_node, pattern_index)) => {
-            // Check for offset directive on this specific pattern
-            let offset_from_query =
-                injection_query.and_then(|q| parse_offset_directive_for_pattern(q, pattern_index));
-
-            // Only apply offset-based filtering when there's an actual offset directive
-            // (Lesson from Sprint 13 in development record 0002)
-            if let Some(offset) = offset_from_query {
-                // Check if cursor is within the effective range (after applying offset)
-                if !is_cursor_within_effective_range(text, &content_node, cursor_byte, offset) {
-                    // Cursor is outside effective range - return base language selection
-                    return build_selection_range(node, mapper);
-                }
-
-                // Use effective range in selection hierarchy instead of full content node range
-                let effective_range =
-                    calculate_effective_lsp_range(text, mapper, &content_node, offset);
-                return build_injection_aware_selection_with_effective_range(
-                    node,
-                    content_node,
-                    effective_range,
-                    mapper,
-                );
-            }
-
-            // No offset directive - use full content node range
-            build_injection_aware_selection(node, content_node, mapper)
-        }
-        None => build_selection_range(node, mapper),
-    }
-}
-
 /// Maximum depth for nested injection recursion (prevents stack overflow)
 const MAX_INJECTION_DEPTH: usize = 10;
 
@@ -798,6 +731,7 @@ mod tests {
     fn test_selection_range_detects_injection() {
         // Test that selection range detects when cursor is inside an injection region
         // and includes the injection content node in the selection hierarchy
+        use crate::language::LanguageCoordinator;
         use tree_sitter::{Parser, Query};
 
         let mut parser = Parser::new();
@@ -838,14 +772,18 @@ mod tests {
             .descendant_for_point_range(point, point)
             .expect("should find node");
 
-        // Call the injection-aware function with offset support
-        let selection = build_selection_range_with_injection_and_offset(
+        // Call the injection-aware function with parsed injection support
+        let coordinator = LanguageCoordinator::new();
+        let mut parser_pool = coordinator.create_document_parser_pool();
+        let selection = build_selection_range_with_parsed_injection(
             node,
             &root,
             text,
             &mapper,
             Some(&injection_query),
             "rust",
+            &coordinator,
+            &mut parser_pool,
             cursor_byte,
         );
 
@@ -967,39 +905,6 @@ mod tests {
             !is_cursor_within_effective_range(text, &string_content_node, 44, offset),
             "Cursor at byte 44 should be OUTSIDE effective range 45-49"
         );
-
-        // Test that the full function correctly returns different results
-        // based on whether cursor is inside or outside effective range.
-        // Both return `build_selection_range(node)` when injection is not active,
-        // so we verify through the internal logic: injection detection returns
-        // Some when offset check passes, None-equivalent behavior when it doesn't.
-
-        // Build selection at underscore position (outside effective range)
-        let _selection_at_underscore = build_selection_range_with_injection_and_offset(
-            string_content_node,
-            &root,
-            text,
-            &mapper,
-            Some(&injection_query),
-            "rust",
-            underscore_byte,
-        );
-
-        // Build selection at caret position (inside effective range)
-        let _selection_at_caret = build_selection_range_with_injection_and_offset(
-            string_content_node,
-            &root,
-            text,
-            &mapper,
-            Some(&injection_query),
-            "rust",
-            caret_byte,
-        );
-
-        // Both produce valid selection hierarchies - the difference is that
-        // injection-specific processing only occurs when inside effective range.
-        // This test verified the core offset logic; integration tests can
-        // verify observable differences with more complex AST structures.
     }
 
     /// Test that selection range handles nested injections recursively.
