@@ -123,10 +123,10 @@ Sprint Cycle:
 
 `````````yaml
 sprint:
-  number: 1
-  pbi: PBI-001
-  status: accepted
-  subtasks_completed: 8
+  number: 2
+  pbi: PBI-002
+  status: in_progress
+  subtasks_completed: 4
   subtasks_total: 8
   impediments: 0
 `````````
@@ -162,23 +162,30 @@ product_backlog:
       capability: "use a single semantic tokens handler that works with or without injections"
       benefit: "simpler code with better separation of concerns and reduced conditional complexity"
     acceptance_criteria:
-      - criterion: "handle_semantic_tokens_full accepts optional injection_query, coordinator, and parser_pool parameters"
-        verification: "Code inspection: function signature accepts Option types for injection-related params"
-      - criterion: "LSP layer calls only one handler (no branching based on injection query existence)"
-        verification: "grep -n 'handle_semantic_tokens_full' src/lsp/lsp_impl.rs shows single call pattern"
-      - criterion: "When injection_query is None, function returns same tokens as current non-injection handler"
+      - criterion: "Unified handler accepts optional coordinator and parser_pool parameters"
+        verification: "Code inspection: handle_semantic_tokens_full signature accepts Option<&LanguageCoordinator> and Option<&mut DocumentParserPool>"
+      - criterion: "semantic_tokens_full in LSP layer calls only one handler (no if/else branching)"
+        verification: "grep -c 'if let Some(inj_query)' src/lsp/lsp_impl.rs returns 0 for semantic_tokens_full method"
+      - criterion: "semantic_tokens_range in LSP layer calls only one handler (no if/else branching)"
+        verification: "grep -c 'if let Some(inj_query)' src/lsp/lsp_impl.rs returns 0 for semantic_tokens_range method"
+      - criterion: "When coordinator/parser_pool are None, function returns same tokens as current non-injection handler"
         verification: "cargo test test_semantic_tokens_with_japanese passes (existing non-injection test)"
-      - criterion: "When injection_query is Some, function returns tokens including injected content"
+      - criterion: "When coordinator/parser_pool are Some, function returns tokens including injected content"
         verification: "cargo test test_injection_semantic_tokens_basic passes"
       - criterion: "All existing semantic token tests pass"
         verification: "cargo test semantic passes"
-      - criterion: "handle_semantic_tokens_full (non-injection) function is removed or deprecated"
-        verification: "grep -c 'handle_semantic_tokens_full[^_]' src/analysis/semantic.rs returns 0 or shows #[deprecated]"
+      - criterion: "Old non-injection handler functions are removed"
+        verification: "grep -c 'pub fn handle_semantic_tokens_full[^_]' src/analysis/semantic.rs returns 0"
+      - criterion: "Old injection-specific handler functions are removed"
+        verification: "grep -c 'handle_semantic_tokens_full_with_injection' src/analysis/semantic.rs returns 0"
     technical_notes: |
       ## Refactoring Strategy
 
       ### Current State (Design Smell)
-      src/lsp/lsp_impl.rs lines 522-555:
+
+      The design smell exists in THREE places in src/lsp/lsp_impl.rs:
+
+      **1. semantic_tokens_full (lines 522-555):**
       ```rust
       let injection_query = self.language.get_injection_query(&language_name);
       if let Some(inj_query) = injection_query {
@@ -188,40 +195,151 @@ product_backlog:
       }
       ```
 
-      ### Target State
-      The LSP layer should simply call:
+      **2. semantic_tokens_range (lines 735-770):**
       ```rust
       let injection_query = self.language.get_injection_query(&language_name);
-      handle_semantic_tokens(
+      let result = if let Some(inj_query) = injection_query {
+          handle_semantic_tokens_range_with_injection(...)
+      } else {
+          handle_semantic_tokens_range(...)
+      }
+      ```
+
+      **3. semantic_tokens_full_delta (line 648-656):**
+      Currently ONLY calls non-injection handler - this is a BUG (see PBI-003).
+
+      ### Four Handlers to Unify (in src/analysis/semantic.rs)
+
+      1. `handle_semantic_tokens_full` (lines 157-236) - non-injection
+      2. `handle_semantic_tokens_full_with_injection` (lines 430-509) - with injection
+      3. `handle_semantic_tokens_range` (lines 526-621) - non-injection
+      4. `handle_semantic_tokens_range_with_injection` (lines 646-745) - with injection
+
+      **Note:** The `_injection_query` parameter in `handle_semantic_tokens_full_with_injection`
+      (line 436) is unused - the function gets injection query from coordinator internally.
+      This makes unification easier since we don't need to pass injection_query separately.
+
+      ### Target State
+
+      Two unified handlers that work with or without injection support:
+
+      ```rust
+      // Unified full handler
+      pub fn handle_semantic_tokens_full(
+          text: &str,
+          tree: &Tree,
+          query: &Query,
+          filetype: Option<&str>,
+          capture_mappings: Option<&CaptureMappings>,
+          coordinator: Option<&LanguageCoordinator>,  // NEW: None = no injection
+          parser_pool: Option<&mut DocumentParserPool>,  // NEW: None = no injection
+      ) -> Option<SemanticTokensResult>
+
+      // Unified range handler
+      pub fn handle_semantic_tokens_range(
+          text: &str,
+          tree: &Tree,
+          query: &Query,
+          range: &Range,
+          filetype: Option<&str>,
+          capture_mappings: Option<&CaptureMappings>,
+          coordinator: Option<&LanguageCoordinator>,  // NEW: None = no injection
+          parser_pool: Option<&mut DocumentParserPool>,  // NEW: None = no injection
+      ) -> Option<SemanticTokensResult>
+      ```
+
+      **LSP layer becomes simple:**
+      ```rust
+      // semantic_tokens_full - no branching!
+      let mut pool = self.parser_pool.lock()...;
+      handle_semantic_tokens_full(
           text,
           tree,
           &query,
           Some(&language_name),
           Some(&capture_mappings),
-          injection_query.as_ref(),  // Option<&Query>
-          Some(&self.language),       // Option<&LanguageCoordinator>
-          Some(&mut pool),            // Option<&mut DocumentParserPool>
+          Some(&self.language),  // Always pass coordinator
+          Some(&mut pool),       // Always pass pool
       )
       ```
 
       ### Implementation Steps
-      1. Modify handle_semantic_tokens_full_with_injection to handle None injection_query gracefully
-      2. Rename it to handle_semantic_tokens_full (replacing the old function)
-      3. Update lsp_impl.rs to remove the conditional branching
-      4. Update all tests to use the unified function
-      5. Remove the old handle_semantic_tokens_full function
+
+      1. Modify `handle_semantic_tokens_full_with_injection` to accept Option<&LanguageCoordinator>
+         and Option<&mut DocumentParserPool>, handling None case gracefully
+      2. Rename it to `handle_semantic_tokens_full` (replacing the old function)
+      3. Do the same for range handlers
+      4. Update lsp_impl.rs to remove conditional branching in all three methods
+      5. Remove the old handler functions
+      6. Update all tests to use unified functions
+      7. Update re-exports in src/analysis/mod.rs
 
       ### Key Files
-      - src/analysis/semantic.rs: Main implementation
-      - src/lsp/lsp_impl.rs: LSP handler (lines 484-556, 600-680 for range)
+      - src/analysis/semantic.rs: Main implementation (4 handlers to unify into 2)
+      - src/lsp/lsp_impl.rs: LSP handlers (3 places with branching)
       - src/analysis/mod.rs: Re-exports
 
-      ### Alternative Considered
-      Instead of optional params, could use a builder pattern or a SemanticTokensRequest struct.
-      However, optional params are simpler and match the existing pattern in the codebase.
+      ### Risk Mitigation
+      - Keep existing tests passing throughout refactoring
+      - Refactor in small steps with tests after each
+      - The injection handler already works without injections (returns host-only tokens)
+
     dependencies: []
-    estimated_subtasks: 5
+    estimated_subtasks: 7
     origin: "Sprint 1 Retrospective AI-005"
+
+  - id: PBI-003
+    title: "Add injection support to semantic_tokens_full_delta"
+    status: ready
+    story:
+      role: "user editing a file with embedded languages (e.g., Markdown with Lua)"
+      capability: "see syntax highlighting for injected code blocks update correctly when using delta requests"
+      benefit: "consistent syntax highlighting experience when the editor uses delta mode for performance"
+    acceptance_criteria:
+      - criterion: "semantic_tokens_full_delta uses injection-aware handler when coordinator available"
+        verification: "Code inspection: handle_semantic_tokens_full_delta calls injection-aware logic"
+      - criterion: "Delta requests return tokens for injected content"
+        verification: "Manual test: Edit a Markdown file with Lua code block, verify Lua tokens appear in delta response"
+      - criterion: "All existing semantic token tests pass"
+        verification: "cargo test semantic passes"
+      - criterion: "E2E tests pass"
+        verification: "make test_nvim passes"
+    technical_notes: |
+      ## Bug Description
+
+      In src/lsp/lsp_impl.rs, the `semantic_tokens_full_delta` method (lines 595-692) calls
+      `handle_semantic_tokens_full_delta` which internally uses the NON-injection handler
+      (line 774 in semantic.rs):
+
+      ```rust
+      let current_result =
+          handle_semantic_tokens_full(text, tree, query, filetype, capture_mappings)?;
+      ```
+
+      This means when an editor requests delta tokens (for performance), injected language
+      tokens are LOST. This is a regression from the injection feature in Sprint 1.
+
+      ## Solution Options
+
+      **Option A (Quick Fix):** Modify `handle_semantic_tokens_full_delta` to accept
+      coordinator/parser_pool and use injection-aware handler.
+
+      **Option B (After PBI-002):** Once handlers are unified, this bug is automatically
+      fixed because there's only one handler.
+
+      ## Recommendation
+
+      Complete PBI-002 first, which will fix this bug as a side effect. Then verify
+      delta works correctly with injections.
+
+      ## Key Files
+      - src/analysis/semantic.rs: handle_semantic_tokens_full_delta (lines 763-790)
+      - src/lsp/lsp_impl.rs: semantic_tokens_full_delta method (lines 595-692)
+
+    dependencies:
+      - PBI-002  # Fixing PBI-002 will automatically fix this
+    estimated_subtasks: 2
+    origin: "Backlog Refinement - code review of semantic.rs"
 `````````
 
 ### Definition of Ready
@@ -246,120 +364,104 @@ definition_of_ready:
 
 `````````yaml
 sprint:
-  number: 1
-  pbi_id: PBI-001
+  number: 2
+  pbi_id: PBI-002
   story:
-    role: "software engineer using language servers"
-    capability: "read syntax highlighted code including injected languages"
-    benefit: "improved code readability when viewing files with embedded languages (e.g., Lua in Markdown)"
-  status: accepted
+    role: "maintainer of treesitter-ls"
+    capability: "use a single semantic tokens handler that works with or without injections"
+    benefit: "simpler code with better separation of concerns and reduced conditional complexity"
+  status: in_progress
 
   subtasks:
-    # TDD Subtask Format - Each subtask tracks commits through Red-Green-Refactor:
+    # Sprint 2: Unify semantic token handlers
+    # This is primarily a STRUCTURAL refactoring PBI following Tidy First principles.
+    # Strategy: Expand-Contract pattern
+    #   1. Expand: Add new unified interface (coordinator/parser_pool as Option)
+    #   2. Migrate: Update callers to use unified interface
+    #   3. Contract: Remove old interfaces
     #
-    # - test: "User model has email and hashed_password fields"
-    #   implementation: "Create User SQLAlchemy model with fields"
-    #   type: behavioral  # behavioral | structural
-    #   status: completed  # pending | red | green | refactoring | completed
-    #   commits:
-    #     - phase: red
-    #       message: "test: User model has email and hashed_password fields"
-    #     - phase: green
-    #       message: "feat: Create User SQLAlchemy model"
-    #     - phase: refactor
-    #       message: "refactor: Extract field definitions to constants"
-    #     - phase: refactor
-    #       message: "refactor: Add docstring to User model"
-    #
-    # - test: "hash_password returns bcrypt hash"
-    #   implementation: "Implement hash_password utility function"
-    #   type: behavioral
-    #   status: green  # Test passing, no refactor needed yet
-    #   commits:
-    #     - phase: red
-    #       message: "test: hash_password returns bcrypt hash"
-    #     - phase: green
-    #       message: "feat: Implement hash_password utility"
-    #
-    # - test: "verify_password returns True for matching passwords"
-    #   implementation: "Implement verify_password utility function"
-    #   type: behavioral
-    #   status: red  # Failing test committed, implementation pending
-    #   commits:
-    #     - phase: red
-    #       message: "test: verify_password returns True for matching"
-    #
-    # - test: "Extract password validation to separate module"
-    #   implementation: "Move validation logic to validators.py"
-    #   type: structural  # Refactoring - no new behavior, no red phase
-    #   status: pending
-    #   commits: []
-    #
-    # Status meanings:
-    #   pending    -> Not started, no commits yet
-    #   red        -> Failing test committed, ready for implementation
-    #   green      -> Passing implementation committed, ready for refactoring
-    #   refactoring -> One or more refactor commits done, more may come
-    #   completed  -> All commits done, subtask finished
-    #
-    # Commit tracking:
-    #   - Each TDD phase produces exactly one commit (except refactoring which may have many)
-    #   - phase: red | green | refactor
-    #   - message: The actual commit message used
-    #   - Multiple refactor commits are encouraged (Tidy First = small structural changes)
+    # Subtask order ensures tests pass at every step.
 
-    - test: "Semantic tokens for injected content have correct UTF-16 positions relative to host document"
-      implementation: "Add unit test for basic injection semantic tokens (Lua in Markdown line 7)"
+    # --- Phase 1: Unify handle_semantic_tokens_full ---
+
+    - test: "handle_semantic_tokens_full_with_injection works when coordinator is None (returns host-only tokens)"
+      implementation: "Modify handle_semantic_tokens_full_with_injection to accept Option<&LanguageCoordinator> and Option<&mut DocumentParserPool>, returning host-only tokens when None"
       type: behavioral
       status: completed
+      commits:
+        - hash: deee8c9
+          message: "feat(semantic): make handle_semantic_tokens_full_with_injection accept Option parameters"
+          phase: green
+
+    - test: "Existing non-injection semantic token tests still pass after renaming"
+      implementation: "Rename handle_semantic_tokens_full_with_injection to handle_semantic_tokens_full (replacing old function)"
+      type: structural
+      status: completed
+      commits:
+        - hash: 216cf06
+          message: "refactor(semantic): rename handle_semantic_tokens_full_with_injection to handle_semantic_tokens_full"
+          phase: refactor
+
+    - test: "LSP semantic_tokens_full calls unified handler without conditional branching"
+      implementation: "Update lsp_impl.rs semantic_tokens_full to always call unified handle_semantic_tokens_full with Some(coordinator) and Some(pool)"
+      type: structural
+      status: completed
+      commits:
+        - hash: deee8c9
+          message: "feat(semantic): make handle_semantic_tokens_full_with_injection accept Option parameters"
+          phase: green
+          note: "LSP layer updated as part of Subtask 1 to use unified handler"
+
+    # --- Phase 2: Unify handle_semantic_tokens_range ---
+
+    - test: "handle_semantic_tokens_range_with_injection works when coordinator is None (returns host-only tokens)"
+      implementation: "Modify handle_semantic_tokens_range_with_injection to accept Option<&LanguageCoordinator> and Option<&mut DocumentParserPool>, returning host-only tokens when None"
+      type: behavioral
+      status: completed
+      commits:
+        - hash: 7ff8e7d
+          message: "feat(semantic): make handle_semantic_tokens_range_with_injection accept Option parameters"
+          phase: green
+
+    - test: "Existing non-injection range semantic token tests still pass after renaming"
+      implementation: "Rename handle_semantic_tokens_range_with_injection to handle_semantic_tokens_range (replacing old function)"
+      type: structural
+      status: pending
       commits: []
 
-    - test: "Semantic tokens include tokens from injected Lua code in Markdown fenced code blocks"
-      implementation: "Implement handle_semantic_tokens_full_with_injection function in src/analysis/semantic.rs"
-      type: behavioral
-      status: completed
+    - test: "LSP semantic_tokens_range calls unified handler without conditional branching"
+      implementation: "Update lsp_impl.rs semantic_tokens_range to always call unified handle_semantic_tokens_range with Some(coordinator) and Some(pool)"
+      type: structural
+      status: pending
       commits: []
 
-    - test: "Semantic tokens for injected content have correct UTF-16 positions relative to host document"
-      implementation: "Add helper to adjust token positions for injection offset"
+    # --- Phase 3: Update delta and cleanup ---
+
+    - test: "handle_semantic_tokens_full_delta uses unified handler internally"
+      implementation: "Update handle_semantic_tokens_full_delta to call unified handle_semantic_tokens_full (fixes PBI-003 bug)"
       type: behavioral
-      status: completed
+      status: pending
       commits: []
 
-    - test: "Semantic tokens include tokens from injected Lua code in Markdown fenced code blocks"
-      implementation: "Add helper to merge token lists while maintaining sorted order"
-      type: behavioral
-      status: completed
-      commits: []
-
-    - test: "Semantic tokens include tokens from injected Lua code in Markdown fenced code blocks"
-      implementation: "Modify lsp_impl.rs to use injection-aware handler for both full and range requests"
-      type: behavioral
-      status: completed
-      commits: []
-
-    - test: "Nested injections are supported (e.g., Lua in Markdown in Markdown)"
-      implementation: "Add unit test for nested injections (Lua in Markdown in Markdown)"
-      type: behavioral
-      status: completed
-      commits: []
-
-    - test: "Indented injections have correct column positions"
-      implementation: "Add unit test for indented injections (Lua in list item)"
-      type: behavioral
-      status: completed
-      commits: []
-
-    - test: "Semantic tokens include tokens from injected Lua code in Markdown fenced code blocks"
-      implementation: "Update tests/test_lsp_semantic.lua line 64 to expect keyword token"
-      type: behavioral
-      status: completed
+    - test: "All acceptance criteria verified: no old handler functions remain"
+      implementation: "Remove old non-injection handler function bodies (now dead code), update mod.rs re-exports"
+      type: structural
+      status: pending
       commits: []
 
   notes: |
-    Sprint 1 started via Sprint Planning.
-    Sprint Goal: Deliver semantic tokens for injected languages.
-    Following TDD approach: write failing test first, then implement minimum code to pass.
+    Sprint 2 started via Sprint Planning.
+    Sprint Goal: Unify semantic token handlers to remove LSP layer injection awareness.
+
+    Refactoring Strategy (Expand-Contract):
+    - Phase 1: Unify full handlers (subtasks 1-3)
+    - Phase 2: Unify range handlers (subtasks 4-6)
+    - Phase 3: Fix delta handler and cleanup (subtasks 7-8)
+
+    Key constraint: All tests must pass after each subtask completion.
+    This ensures we can safely refactor without breaking existing functionality.
+
+    Note: Subtask 7 will automatically fix the bug identified in PBI-003.
 `````````
 
 ### Impediment Registry

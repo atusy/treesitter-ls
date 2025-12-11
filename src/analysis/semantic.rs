@@ -425,118 +425,6 @@ pub fn handle_semantic_tokens_full(
 
 /// Handle semantic tokens range request
 ///
-/// Analyzes a specific range of the document and returns semantic tokens
-/// only for that range.
-///
-/// # Arguments
-/// * `text` - The source text
-/// * `tree` - The parsed syntax tree
-/// * `query` - The tree-sitter query for semantic highlighting
-/// * `range` - The range to get tokens for (LSP positions)
-/// * `filetype` - The filetype of the document being processed
-/// * `capture_mappings` - The capture mappings to apply
-///
-/// # Returns
-/// Semantic tokens for the specified range of the document
-pub fn handle_semantic_tokens_range(
-    text: &str,
-    tree: &Tree,
-    query: &Query,
-    range: &Range,
-    filetype: Option<&str>,
-    capture_mappings: Option<&CaptureMappings>,
-) -> Option<SemanticTokensResult> {
-    let mut cursor = QueryCursor::new();
-    let mut matches = cursor.matches(query, tree.root_node(), text.as_bytes());
-
-    // Convert LSP range to line numbers for filtering
-    let start_line = range.start.line as usize;
-    let end_line = range.end.line as usize;
-
-    // Pre-calculate line starts for efficient UTF-16 position conversion
-    let lines: Vec<&str> = text.lines().collect();
-
-    // Collect tokens within the range
-    // Pre-allocate with estimated capacity for typical visible range
-    let mut tokens = Vec::with_capacity(200);
-    while let Some(m) = matches.next() {
-        // Filter captures based on predicates
-        let filtered_captures = crate::language::filter_captures(query, m, text);
-
-        for c in filtered_captures {
-            let node = c.node;
-            let start_pos = node.start_position();
-            let end_pos = node.end_position();
-
-            // Check if token is within the requested range
-            if start_pos.row < start_line || start_pos.row > end_line {
-                continue;
-            }
-
-            // Only include single-line tokens
-            if start_pos.row == end_pos.row {
-                let line = lines.get(start_pos.row).unwrap_or(&"");
-
-                // Convert byte columns to UTF-16 columns for proper boundary checking
-                let start_utf16 = byte_to_utf16_col(line, start_pos.column);
-                let end_utf16 = byte_to_utf16_col(line, end_pos.column);
-
-                // For tokens on the boundary lines, check column positions (now in UTF-16)
-                if start_pos.row == end_line && start_utf16 > range.end.character as usize {
-                    continue;
-                }
-                if start_pos.row == start_line && end_utf16 < range.start.character as usize {
-                    continue;
-                }
-
-                tokens.push((start_pos.row, start_utf16, end_utf16 - start_utf16, c.index));
-            }
-        }
-    }
-
-    // Sort tokens by position
-    tokens.sort();
-
-    // Convert to LSP semantic tokens format (relative positions)
-    let mut last_line = 0;
-    let mut last_start = 0;
-    let mut data = Vec::with_capacity(tokens.len());
-
-    for (line, start, length, capture_index) in tokens {
-        let delta_line = line - last_line;
-        let delta_start = if delta_line == 0 {
-            start - last_start
-        } else {
-            start
-        };
-
-        // Map capture name to token type and modifiers
-        let original_capture_name = &query.capture_names()[capture_index as usize];
-        let mapped_capture_name =
-            apply_capture_mapping(original_capture_name, filetype, capture_mappings);
-        let (token_type, token_modifiers_bitset) =
-            map_capture_to_token_type_and_modifiers(&mapped_capture_name);
-
-        data.push(SemanticToken {
-            delta_line: delta_line as u32,
-            delta_start: delta_start as u32,
-            length: length as u32,
-            token_type,
-            token_modifiers_bitset,
-        });
-
-        last_line = line;
-        last_start = start;
-    }
-
-    Some(SemanticTokensResult::Tokens(SemanticTokens {
-        result_id: None,
-        data,
-    }))
-}
-
-/// Handle semantic tokens range request with injection support
-///
 /// Analyzes a specific range of the document including injected language regions
 /// and returns semantic tokens for both the host document and all injected content
 /// within that range.
@@ -560,7 +448,7 @@ pub fn handle_semantic_tokens_range(
 /// # Returns
 /// Semantic tokens for the specified range including injected content (if coordinator/parser_pool provided)
 #[allow(clippy::too_many_arguments)]
-pub fn handle_semantic_tokens_range_with_injection(
+pub fn handle_semantic_tokens_range(
     text: &str,
     tree: &Tree,
     query: &Query,
@@ -1369,10 +1257,10 @@ let y = "hello""#;
     }
 
     #[test]
-    fn test_semantic_tokens_range_with_injection_none_coordinator() {
-        // Test that handle_semantic_tokens_range_with_injection works when
+    fn test_semantic_tokens_range_none_coordinator() {
+        // Test that handle_semantic_tokens_range works when
         // coordinator and parser_pool are None - it should behave like
-        // the non-injection range handler, returning host-only tokens.
+        // returning host-only tokens without injection processing.
         use tower_lsp::lsp_types::Position;
         use tree_sitter::{Parser, Query};
 
@@ -1407,8 +1295,8 @@ let z = 42"#;
             },
         };
 
-        // Call the injection handler with None coordinator and parser_pool
-        let result = handle_semantic_tokens_range_with_injection(
+        // Call the handler with None coordinator and parser_pool
+        let result = handle_semantic_tokens_range(
             text,
             &tree,
             &query,
