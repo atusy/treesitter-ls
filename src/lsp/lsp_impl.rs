@@ -519,14 +519,40 @@ impl LanguageServer for TreeSitterLs {
             // Get capture mappings
             let capture_mappings = self.language.get_capture_mappings();
 
-            // Use the stable semantic tokens handler for the root layer
-            crate::analysis::handle_semantic_tokens_full(
-                text,
-                tree,
-                &query,
-                Some(&language_name),
-                Some(&capture_mappings),
-            )
+            // Try to use injection-aware handler if injection query is available
+            let injection_query = self.language.get_injection_query(&language_name);
+            if let Some(inj_query) = injection_query {
+                // Use injection-aware handler
+                let mut pool = match self.parser_pool.lock() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => {
+                        log::warn!(
+                            target: "treesitter_ls::lock_recovery",
+                            "Recovered from poisoned parser pool lock in semantic_tokens_full"
+                        );
+                        poisoned.into_inner()
+                    }
+                };
+                crate::analysis::handle_semantic_tokens_full_with_injection(
+                    text,
+                    tree,
+                    &query,
+                    Some(&language_name),
+                    Some(&capture_mappings),
+                    &inj_query,
+                    &self.language,
+                    &mut pool,
+                )
+            } else {
+                // Fall back to non-injection handler
+                crate::analysis::handle_semantic_tokens_full(
+                    text,
+                    tree,
+                    &query,
+                    Some(&language_name),
+                    Some(&capture_mappings),
+                )
+            }
         }; // doc reference is dropped here
 
         let mut tokens_with_id = match result.unwrap_or_else(|| {
@@ -702,18 +728,46 @@ impl LanguageServer for TreeSitterLs {
             })));
         };
 
-        // Delegate to handler
         // Get capture mappings
         let capture_mappings = self.language.get_capture_mappings();
 
-        let result = handle_semantic_tokens_range(
-            text,
-            tree,
-            &query,
-            &domain_range,
-            Some(&language_name),
-            Some(&capture_mappings),
-        );
+        // Check if injection query is available for this language
+        let injection_query = self.language.get_injection_query(&language_name);
+
+        let result = if let Some(inj_query) = injection_query {
+            // Use injection-aware handler
+            let mut pool = match self.parser_pool.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    log::warn!(
+                        target: "treesitter_ls::lock_recovery",
+                        "Recovered from poisoned parser pool lock in semantic_tokens_range"
+                    );
+                    poisoned.into_inner()
+                }
+            };
+            crate::analysis::handle_semantic_tokens_range_with_injection(
+                text,
+                tree,
+                &query,
+                &domain_range,
+                Some(&language_name),
+                Some(&capture_mappings),
+                &inj_query,
+                &self.language,
+                &mut pool,
+            )
+        } else {
+            // Fall back to non-injection handler
+            handle_semantic_tokens_range(
+                text,
+                tree,
+                &query,
+                &domain_range,
+                Some(&language_name),
+                Some(&capture_mappings),
+            )
+        };
 
         // Convert to RangeResult, treating partial responses as empty for now
         let domain_range_result = match result.unwrap_or_else(|| {

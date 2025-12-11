@@ -21,3 +21,6 @@ pub use query_loader::QueryLoader;
 pub use query_predicates::filter_captures;
 pub use query_store::QueryStore;
 pub use registry::LanguageRegistry;
+
+// Re-export injection types for semantic tokens
+pub use injection::{InjectionRegionInfo, collect_all_injections};

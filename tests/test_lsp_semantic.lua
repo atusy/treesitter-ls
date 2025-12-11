@@ -61,7 +61,7 @@ end
 T["assets/example.md"] = create_file_test_set("tests/assets/example.md")
 T["assets/example.md"]["semanticToken"] = MiniTest.new_set({
 	parametrize = {
-		{ 6, 1, {} },
+		{ 6, 1, { { type = "keyword" } } }, -- injected Lua `local` keyword at line 7 (0-indexed: 6)
 	},
 })
 T["assets/example.md"]["semanticToken"]["works"] = function(line, col, tokens)

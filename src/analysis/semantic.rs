@@ -235,6 +235,279 @@ pub fn handle_semantic_tokens_full(
     }))
 }
 
+/// Maximum recursion depth for nested injections to prevent stack overflow
+const MAX_INJECTION_DEPTH: usize = 10;
+
+/// Recursively collect semantic tokens from a document and its injections.
+///
+/// This function processes the given text and tree, collecting tokens from both
+/// the current language's highlight query and any language injections found.
+/// Nested injections are processed recursively up to MAX_INJECTION_DEPTH.
+#[allow(clippy::too_many_arguments)]
+fn collect_injection_tokens_recursive(
+    text: &str,
+    tree: &Tree,
+    query: &Query,
+    filetype: Option<&str>,
+    capture_mappings: Option<&crate::config::CaptureMappings>,
+    coordinator: &crate::language::LanguageCoordinator,
+    parser_pool: &mut crate::language::DocumentParserPool,
+    host_text: &str,     // The original host document text (for position conversion)
+    host_lines: &[&str], // Lines from the host document
+    content_start_byte: usize, // Byte offset where this content starts in the host document
+    depth: usize,        // Current recursion depth
+    all_tokens: &mut Vec<(usize, usize, usize, u32, String)>, // Output token buffer
+) {
+    use crate::language::{collect_all_injections, injection::parse_offset_directive_for_pattern};
+
+    // Safety check for recursion depth
+    if depth >= MAX_INJECTION_DEPTH {
+        return;
+    }
+
+    // Calculate position mapping from content-local to host document
+    let content_start_line = if content_start_byte == 0 {
+        0
+    } else {
+        host_text[..content_start_byte]
+            .chars()
+            .filter(|c| *c == '\n')
+            .count()
+    };
+
+    let content_start_col = if content_start_byte == 0 {
+        0
+    } else {
+        let last_newline = host_text[..content_start_byte].rfind('\n');
+        match last_newline {
+            Some(pos) => content_start_byte - pos - 1,
+            None => content_start_byte,
+        }
+    };
+
+    // 1. Collect tokens from this document's highlight query
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(query, tree.root_node(), text.as_bytes());
+
+    while let Some(m) = matches.next() {
+        let filtered_captures = crate::language::filter_captures(query, m, text);
+
+        for c in filtered_captures {
+            let node = c.node;
+            let start_pos = node.start_position();
+            let end_pos = node.end_position();
+
+            if start_pos.row == end_pos.row {
+                // Map position to host document coordinates
+                let host_line = content_start_line + start_pos.row;
+                let host_line_text = host_lines.get(host_line).unwrap_or(&"");
+
+                let byte_offset_in_host = if start_pos.row == 0 {
+                    content_start_col + start_pos.column
+                } else {
+                    start_pos.column
+                };
+                let start_utf16 = byte_to_utf16_col(host_line_text, byte_offset_in_host);
+
+                let end_byte_offset_in_host = if start_pos.row == 0 {
+                    content_start_col + end_pos.column
+                } else {
+                    end_pos.column
+                };
+                let end_utf16 = byte_to_utf16_col(host_line_text, end_byte_offset_in_host);
+
+                let capture_name = &query.capture_names()[c.index as usize];
+                let mapped_name = apply_capture_mapping(capture_name, filetype, capture_mappings);
+
+                all_tokens.push((
+                    host_line,
+                    start_utf16,
+                    end_utf16 - start_utf16,
+                    c.index,
+                    mapped_name,
+                ));
+            }
+        }
+    }
+
+    // 2. Find and process injections in this document
+    let current_lang = filetype.unwrap_or("unknown");
+    let Some(injection_query) = coordinator.get_injection_query(current_lang) else {
+        return; // No injection query for this language
+    };
+
+    let Some(injections) = collect_all_injections(&tree.root_node(), text, Some(&injection_query))
+    else {
+        return; // No injections found
+    };
+
+    for injection in injections {
+        // Ensure the injected language is loaded
+        let load_result = coordinator.ensure_language_loaded(&injection.language);
+        if !load_result.success {
+            continue;
+        }
+
+        // Get highlight query for injected language
+        let Some(inj_highlight_query) = coordinator.get_highlight_query(&injection.language) else {
+            continue;
+        };
+
+        // Get offset directive if any
+        let offset = parse_offset_directive_for_pattern(&injection_query, injection.pattern_index);
+
+        // Calculate effective content range with offset (relative to current text)
+        let content_node = injection.content_node;
+        let (inj_start_byte, inj_end_byte) = if let Some(off) = offset {
+            use crate::analysis::offset_calculator::{
+                ByteRange, calculate_effective_range_with_text,
+            };
+            let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
+            let effective = calculate_effective_range_with_text(text, byte_range, off);
+            (effective.start, effective.end)
+        } else {
+            (content_node.start_byte(), content_node.end_byte())
+        };
+
+        // Extract the content text
+        if inj_start_byte >= text.len() || inj_end_byte > text.len() {
+            continue;
+        }
+        let inj_content_text = &text[inj_start_byte..inj_end_byte];
+
+        // Parse the injected content
+        let Some(mut parser) = parser_pool.acquire(&injection.language) else {
+            continue;
+        };
+        let Some(injected_tree) = parser.parse(inj_content_text, None) else {
+            parser_pool.release(injection.language.clone(), parser);
+            continue;
+        };
+
+        // Calculate the byte offset of this injection in the host document
+        // We need to map from current text position to host text position
+        let inj_host_start_byte = content_start_byte + inj_start_byte;
+
+        // Recursively collect tokens from the injected content
+        collect_injection_tokens_recursive(
+            inj_content_text,
+            &injected_tree,
+            &inj_highlight_query,
+            Some(&injection.language),
+            capture_mappings,
+            coordinator,
+            parser_pool,
+            host_text,
+            host_lines,
+            inj_host_start_byte,
+            depth + 1,
+            all_tokens,
+        );
+
+        parser_pool.release(injection.language.clone(), parser);
+    }
+}
+
+/// Handle semantic tokens full request with injection support
+///
+/// Analyzes the entire document including injected language regions and returns
+/// semantic tokens for both the host document and all injected content.
+/// Supports recursive/nested injections (e.g., Lua inside Markdown inside Markdown).
+///
+/// # Arguments
+/// * `text` - The source text
+/// * `tree` - The parsed syntax tree
+/// * `query` - The tree-sitter query for semantic highlighting (host language)
+/// * `filetype` - The filetype of the document being processed
+/// * `capture_mappings` - The capture mappings to apply
+/// * `injection_query` - The injection query for detecting language injections
+/// * `coordinator` - Language coordinator for loading injected language parsers
+/// * `parser_pool` - Parser pool for efficient parser reuse
+///
+/// # Returns
+/// Semantic tokens for the entire document including injected content
+#[allow(clippy::too_many_arguments)]
+pub fn handle_semantic_tokens_full_with_injection(
+    text: &str,
+    tree: &Tree,
+    query: &Query,
+    filetype: Option<&str>,
+    capture_mappings: Option<&crate::config::CaptureMappings>,
+    _injection_query: &Query, // Not used directly; we get it from coordinator in the recursive fn
+    coordinator: &crate::language::LanguageCoordinator,
+    parser_pool: &mut crate::language::DocumentParserPool,
+) -> Option<SemanticTokensResult> {
+    // Collect all absolute tokens (line, col, length, capture_index, mapped_name)
+    let mut all_tokens: Vec<(usize, usize, usize, u32, String)> = Vec::with_capacity(1000);
+
+    let lines: Vec<&str> = text.lines().collect();
+
+    // Recursively collect tokens from the document and all injections
+    collect_injection_tokens_recursive(
+        text,
+        tree,
+        query,
+        filetype,
+        capture_mappings,
+        coordinator,
+        parser_pool,
+        text,   // host_text = text (we're at the root)
+        &lines, // host_lines
+        0,      // content_start_byte = 0 (we're at the root)
+        0,      // depth = 0 (starting depth)
+        &mut all_tokens,
+    );
+
+    // 3. Filter out zero-length tokens (they don't provide useful highlighting)
+    // This also fixes issues where overlapping injections create duplicate tokens
+    // at the same position (e.g., markdown_inline creates zero-length tokens that
+    // would otherwise shadow real tokens from code block injections)
+    all_tokens.retain(|(_, _, length, _, _)| *length > 0);
+
+    // 4. Sort tokens by position
+    all_tokens.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+
+    // 5. Deduplicate tokens at the same position
+    // When host document and injected content produce tokens at the same position,
+    // keep only the first one (which is typically the one with more context).
+    // This prevents issues with Neovim's semantic token highlighter which may
+    // mishandle multiple tokens at the exact same position.
+    all_tokens.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+
+    // 6. Convert to delta encoding
+    let mut last_line = 0;
+    let mut last_start = 0;
+    let mut data = Vec::with_capacity(all_tokens.len());
+
+    for (line, start, length, _capture_index, mapped_name) in all_tokens {
+        let delta_line = line - last_line;
+        let delta_start = if delta_line == 0 {
+            start - last_start
+        } else {
+            start
+        };
+
+        let (token_type, token_modifiers_bitset) =
+            map_capture_to_token_type_and_modifiers(&mapped_name);
+
+        data.push(SemanticToken {
+            delta_line: delta_line as u32,
+            delta_start: delta_start as u32,
+            length: length as u32,
+            token_type,
+            token_modifiers_bitset,
+        });
+
+        last_line = line;
+        last_start = start;
+    }
+
+    Some(SemanticTokensResult::Tokens(SemanticTokens {
+        result_id: None,
+        data,
+    }))
+}
+
 /// Handle semantic tokens range request
 ///
 /// Analyzes a specific range of the document and returns semantic tokens
@@ -339,6 +612,130 @@ pub fn handle_semantic_tokens_range(
 
         last_line = line;
         last_start = start;
+    }
+
+    Some(SemanticTokensResult::Tokens(SemanticTokens {
+        result_id: None,
+        data,
+    }))
+}
+
+/// Handle semantic tokens range request with injection support
+///
+/// Analyzes a specific range of the document including injected language regions
+/// and returns semantic tokens for both the host document and all injected content
+/// within that range.
+///
+/// This function wraps `handle_semantic_tokens_full_with_injection` and filters
+/// the results to only include tokens within the requested range.
+///
+/// # Arguments
+/// * `text` - The source text
+/// * `tree` - The parsed syntax tree
+/// * `query` - The tree-sitter query for semantic highlighting (host language)
+/// * `range` - The range to get tokens for (LSP positions)
+/// * `filetype` - The filetype of the document being processed
+/// * `capture_mappings` - The capture mappings to apply
+/// * `injection_query` - The injection query for detecting language injections
+/// * `coordinator` - Language coordinator for loading injected language parsers
+/// * `parser_pool` - Parser pool for efficient parser reuse
+///
+/// # Returns
+/// Semantic tokens for the specified range including injected content
+#[allow(clippy::too_many_arguments)]
+pub fn handle_semantic_tokens_range_with_injection(
+    text: &str,
+    tree: &Tree,
+    query: &Query,
+    range: &Range,
+    filetype: Option<&str>,
+    capture_mappings: Option<&crate::config::CaptureMappings>,
+    injection_query: &Query,
+    coordinator: &crate::language::LanguageCoordinator,
+    parser_pool: &mut crate::language::DocumentParserPool,
+) -> Option<SemanticTokensResult> {
+    // Get all tokens using the full handler
+    let full_result = handle_semantic_tokens_full_with_injection(
+        text,
+        tree,
+        query,
+        filetype,
+        capture_mappings,
+        injection_query,
+        coordinator,
+        parser_pool,
+    )?;
+
+    // Extract tokens from result
+    let SemanticTokensResult::Tokens(full_tokens) = full_result else {
+        return Some(full_result);
+    };
+
+    // Convert delta-encoded tokens back to absolute positions, filter by range,
+    // and re-encode as deltas
+    let start_line = range.start.line as usize;
+    let end_line = range.end.line as usize;
+
+    let mut abs_line = 0usize;
+    let mut abs_col = 0usize;
+
+    // Collect tokens that are within the range
+    let mut filtered_tokens: Vec<(usize, usize, u32, u32, u32)> = Vec::new();
+
+    for token in full_tokens.data {
+        // Update absolute position
+        abs_line += token.delta_line as usize;
+        if token.delta_line > 0 {
+            abs_col = token.delta_start as usize;
+        } else {
+            abs_col += token.delta_start as usize;
+        }
+
+        // Check if token is within range
+        if abs_line >= start_line && abs_line <= end_line {
+            // For boundary lines, check column positions
+            if abs_line == end_line && abs_col > range.end.character as usize {
+                continue;
+            }
+            if abs_line == start_line
+                && abs_col + token.length as usize <= range.start.character as usize
+            {
+                continue;
+            }
+
+            filtered_tokens.push((
+                abs_line,
+                abs_col,
+                token.length,
+                token.token_type,
+                token.token_modifiers_bitset,
+            ));
+        }
+    }
+
+    // Re-encode as deltas
+    let mut last_line = 0;
+    let mut last_start = 0;
+    let mut data = Vec::with_capacity(filtered_tokens.len());
+
+    for (line, col, length, token_type, modifiers) in filtered_tokens {
+        let delta_line = line - last_line;
+        let delta_start = if delta_line == 0 {
+            col - last_start
+        } else {
+            col
+        };
+
+        data.push(SemanticToken {
+            delta_line: delta_line as u32,
+            delta_start: delta_start as u32,
+            length,
+            token_type,
+            token_modifiers_bitset: modifiers,
+        });
+
+        last_line = line;
+        last_start = col;
     }
 
     Some(SemanticTokensResult::Tokens(SemanticTokens {
@@ -704,6 +1101,315 @@ let y = "hello""#;
         assert!(
             string_token.is_some(),
             "Japanese string token should have UTF-16 length of 7"
+        );
+    }
+
+    #[test]
+    fn test_injection_semantic_tokens_basic() {
+        // Test semantic tokens for injected Lua code in Markdown
+        // example.md has a lua fenced code block at line 6 (0-indexed):
+        // ```lua
+        // local xyz = 12345
+        // ```
+        //
+        // The `local` keyword should produce a semantic token at line 6, col 0
+        // with token_type = keyword (1)
+
+        use crate::config::WorkspaceSettings;
+        use crate::language::LanguageCoordinator;
+
+        // Read the test fixture
+        let text = include_str!("../../tests/assets/example.md");
+
+        // Set up coordinator and parser pool with search paths
+        let coordinator = LanguageCoordinator::new();
+
+        // Configure with search paths (deps/treesitter is where parsers are)
+        let settings = WorkspaceSettings {
+            search_paths: vec!["deps/treesitter".to_string()],
+            ..Default::default()
+        };
+        let _summary = coordinator.load_settings(settings);
+
+        // Now try to load the languages
+        let load_result = coordinator.ensure_language_loaded("markdown");
+        assert!(load_result.success, "Should load markdown language");
+
+        let load_result = coordinator.ensure_language_loaded("lua");
+        assert!(load_result.success, "Should load lua language");
+
+        let mut parser_pool = coordinator.create_document_parser_pool();
+
+        // Parse the markdown document
+        let tree = {
+            let mut parser = parser_pool
+                .acquire("markdown")
+                .expect("Should get markdown parser");
+            let result = parser.parse(text, None).expect("Should parse markdown");
+            parser_pool.release("markdown".to_string(), parser);
+            result
+        };
+
+        // Get the highlight query for markdown
+        let md_highlight_query = coordinator
+            .get_highlight_query("markdown")
+            .expect("Should have markdown highlight query");
+
+        // Get injection query for markdown
+        let injection_query = coordinator
+            .get_injection_query("markdown")
+            .expect("Should have markdown injection query");
+
+        // Call the injection-aware function
+        let result = handle_semantic_tokens_full_with_injection(
+            text,
+            &tree,
+            &md_highlight_query,
+            Some("markdown"),
+            None, // capture_mappings
+            &injection_query,
+            &coordinator,
+            &mut parser_pool,
+        );
+
+        // Should return some tokens
+        let tokens = result.expect("Should return tokens");
+        let SemanticTokensResult::Tokens(tokens) = tokens else {
+            panic!("Expected full tokens result");
+        };
+
+        // Find the `local` keyword token at line 6 (0-indexed), col 0
+        // SemanticToken uses delta encoding, so we need to reconstruct absolute positions
+        let mut abs_line = 0u32;
+        let mut abs_col = 0u32;
+        let mut found_local_keyword = false;
+
+        for token in &tokens.data {
+            abs_line += token.delta_line;
+            if token.delta_line > 0 {
+                abs_col = token.delta_start;
+            } else {
+                abs_col += token.delta_start;
+            }
+
+            // Line 6 (0-indexed), col 0, keyword type (1), length 5 ("local")
+            if abs_line == 6 && abs_col == 0 && token.token_type == 1 && token.length == 5 {
+                found_local_keyword = true;
+                break;
+            }
+        }
+
+        assert!(
+            found_local_keyword,
+            "Should find `local` keyword token at line 6, col 0 from injected Lua code"
+        );
+    }
+
+    #[test]
+    fn test_nested_injection_semantic_tokens() {
+        // Test semantic tokens for nested injections: Lua inside Markdown inside Markdown
+        // example.md has a nested structure at lines 12-16 (1-indexed):
+        // `````markdown
+        // ```lua
+        // local injection = true
+        // ```
+        // `````
+        //
+        // The `local` keyword at line 14 (1-indexed) / line 13 (0-indexed) should produce
+        // a semantic token with token_type = keyword (1)
+
+        use crate::config::WorkspaceSettings;
+        use crate::language::LanguageCoordinator;
+
+        // Read the test fixture
+        let text = include_str!("../../tests/assets/example.md");
+
+        // Set up coordinator and parser pool with search paths
+        let coordinator = LanguageCoordinator::new();
+
+        // Configure with search paths (deps/treesitter is where parsers are)
+        let settings = WorkspaceSettings {
+            search_paths: vec!["deps/treesitter".to_string()],
+            ..Default::default()
+        };
+        let _summary = coordinator.load_settings(settings);
+
+        // Now try to load the languages
+        let load_result = coordinator.ensure_language_loaded("markdown");
+        assert!(load_result.success, "Should load markdown language");
+
+        let load_result = coordinator.ensure_language_loaded("lua");
+        assert!(load_result.success, "Should load lua language");
+
+        let mut parser_pool = coordinator.create_document_parser_pool();
+
+        // Parse the markdown document
+        let tree = {
+            let mut parser = parser_pool
+                .acquire("markdown")
+                .expect("Should get markdown parser");
+            let result = parser.parse(text, None).expect("Should parse markdown");
+            parser_pool.release("markdown".to_string(), parser);
+            result
+        };
+
+        // Get the highlight query for markdown
+        let md_highlight_query = coordinator
+            .get_highlight_query("markdown")
+            .expect("Should have markdown highlight query");
+
+        // Get injection query for markdown
+        let injection_query = coordinator
+            .get_injection_query("markdown")
+            .expect("Should have markdown injection query");
+
+        // Call the injection-aware function
+        let result = handle_semantic_tokens_full_with_injection(
+            text,
+            &tree,
+            &md_highlight_query,
+            Some("markdown"),
+            None, // capture_mappings
+            &injection_query,
+            &coordinator,
+            &mut parser_pool,
+        );
+
+        // Should return some tokens
+        let tokens = result.expect("Should return tokens");
+        let SemanticTokensResult::Tokens(tokens) = tokens else {
+            panic!("Expected full tokens result");
+        };
+
+        // Find the `local` keyword token at line 13 (0-indexed), col 0
+        // This is inside the nested markdown -> lua injection
+        let mut abs_line = 0u32;
+        let mut abs_col = 0u32;
+        let mut found_nested_keyword = false;
+
+        for token in &tokens.data {
+            abs_line += token.delta_line;
+            if token.delta_line > 0 {
+                abs_col = token.delta_start;
+            } else {
+                abs_col += token.delta_start;
+            }
+
+            // Line 13 (0-indexed), col 0, keyword type (1), length 5 ("local")
+            if abs_line == 13 && abs_col == 0 && token.token_type == 1 && token.length == 5 {
+                found_nested_keyword = true;
+                break;
+            }
+        }
+
+        assert!(
+            found_nested_keyword,
+            "Should find `local` keyword token at line 13, col 0 from nested Lua injection (Lua inside Markdown inside Markdown)"
+        );
+    }
+
+    #[test]
+    fn test_indented_injection_semantic_tokens() {
+        // Test semantic tokens for indented injections: Lua in a list item with 4-space indent
+        // example.md has an indented code block at lines 22-24 (1-indexed):
+        // * item
+        //
+        //     ```lua
+        //     local indent = true
+        //     ```
+        //
+        // The `local` keyword at line 23 (1-indexed) / line 22 (0-indexed) should produce
+        // a semantic token with:
+        // - token_type = keyword (1)
+        // - column = 4 (indented by 4 spaces)
+
+        use crate::config::WorkspaceSettings;
+        use crate::language::LanguageCoordinator;
+
+        // Read the test fixture
+        let text = include_str!("../../tests/assets/example.md");
+
+        // Set up coordinator and parser pool with search paths
+        let coordinator = LanguageCoordinator::new();
+
+        // Configure with search paths (deps/treesitter is where parsers are)
+        let settings = WorkspaceSettings {
+            search_paths: vec!["deps/treesitter".to_string()],
+            ..Default::default()
+        };
+        let _summary = coordinator.load_settings(settings);
+
+        // Now try to load the languages
+        let load_result = coordinator.ensure_language_loaded("markdown");
+        assert!(load_result.success, "Should load markdown language");
+
+        let load_result = coordinator.ensure_language_loaded("lua");
+        assert!(load_result.success, "Should load lua language");
+
+        let mut parser_pool = coordinator.create_document_parser_pool();
+
+        // Parse the markdown document
+        let tree = {
+            let mut parser = parser_pool
+                .acquire("markdown")
+                .expect("Should get markdown parser");
+            let result = parser.parse(text, None).expect("Should parse markdown");
+            parser_pool.release("markdown".to_string(), parser);
+            result
+        };
+
+        // Get the highlight query for markdown
+        let md_highlight_query = coordinator
+            .get_highlight_query("markdown")
+            .expect("Should have markdown highlight query");
+
+        // Get injection query for markdown
+        let injection_query = coordinator
+            .get_injection_query("markdown")
+            .expect("Should have markdown injection query");
+
+        // Call the injection-aware function
+        let result = handle_semantic_tokens_full_with_injection(
+            text,
+            &tree,
+            &md_highlight_query,
+            Some("markdown"),
+            None, // capture_mappings
+            &injection_query,
+            &coordinator,
+            &mut parser_pool,
+        );
+
+        // Should return some tokens
+        let tokens = result.expect("Should return tokens");
+        let SemanticTokensResult::Tokens(tokens) = tokens else {
+            panic!("Expected full tokens result");
+        };
+
+        // Find the `local` keyword token at line 22 (0-indexed), col 4
+        // This is inside the indented lua code block
+        let mut abs_line = 0u32;
+        let mut abs_col = 0u32;
+        let mut found_indented_keyword = false;
+
+        for token in &tokens.data {
+            abs_line += token.delta_line;
+            if token.delta_line > 0 {
+                abs_col = token.delta_start;
+            } else {
+                abs_col += token.delta_start;
+            }
+
+            // Line 22 (0-indexed), col 4 (indented), keyword type (1), length 5 ("local")
+            if abs_line == 22 && abs_col == 4 && token.token_type == 1 && token.length == 5 {
+                found_indented_keyword = true;
+                break;
+            }
+        }
+
+        assert!(
+            found_indented_keyword,
+            "Should find `local` keyword token at line 22, col 4 from indented Lua injection in list item"
         );
     }
 }

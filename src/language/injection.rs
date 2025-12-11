@@ -199,6 +199,65 @@ fn extract_dynamic_language(query: &Query, match_: &QueryMatch, text: &str) -> O
     None
 }
 
+/// Represents an injection region found in the document
+#[derive(Debug, Clone)]
+pub struct InjectionRegionInfo<'a> {
+    /// The injection language (e.g., "lua", "yaml")
+    pub language: String,
+    /// The content node from the injection query
+    pub content_node: Node<'a>,
+    /// The pattern index (for offset directive lookups)
+    pub pattern_index: usize,
+}
+
+/// Collects all injection regions in the document
+///
+/// Unlike `detect_injection_with_content` which requires a specific node,
+/// this function finds ALL injection regions in the entire document.
+/// Used for semantic tokens to highlight all injected content.
+///
+/// # Arguments
+/// * `root` - Root node of the document AST
+/// * `text` - The document text
+/// * `injection_query` - The injection query for detecting injections
+///
+/// # Returns
+/// Vector of injection region information, or None if no query
+pub fn collect_all_injections<'a>(
+    root: &Node<'a>,
+    text: &str,
+    injection_query: Option<&Query>,
+) -> Option<Vec<InjectionRegionInfo<'a>>> {
+    let query = injection_query?;
+
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(query, *root, text.as_bytes());
+
+    // Use a map to deduplicate by content node range
+    let mut injections_map = std::collections::HashMap::new();
+
+    while let Some(match_) = matches.next() {
+        // Find @injection.content capture in this match
+        for capture in match_.captures {
+            if let Some(capture_name) = query.capture_names().get(capture.index as usize)
+                && *capture_name == "injection.content"
+            {
+                // Extract the injection language
+                if let Some(language) = extract_injection_language(query, match_, text) {
+                    let key = (capture.node.start_byte(), capture.node.end_byte());
+                    injections_map.entry(key).or_insert(InjectionRegionInfo {
+                        language,
+                        content_node: capture.node,
+                        pattern_index: match_.pattern_index,
+                    });
+                }
+            }
+        }
+    }
+
+    Some(injections_map.into_values().collect())
+}
+
 /// Detects injection and returns both the language and the content node
 /// Also returns the pattern index of the innermost injection for offset lookups
 pub fn detect_injection_with_content<'a>(
