@@ -141,100 +141,6 @@ fn map_capture_to_token_type_and_modifiers(capture_name: &str) -> (u32, u32) {
     (token_type_index, modifiers_bitset)
 }
 
-/// Handle semantic tokens full request
-///
-/// Analyzes the entire document and returns all semantic tokens.
-///
-/// # Arguments
-/// * `text` - The source text
-/// * `tree` - The parsed syntax tree
-/// * `query` - The tree-sitter query for semantic highlighting
-/// * `filetype` - The filetype of the document being processed
-/// * `capture_mappings` - The capture mappings to apply
-///
-/// # Returns
-/// Semantic tokens for the entire document
-pub fn handle_semantic_tokens_full(
-    text: &str,
-    tree: &Tree,
-    query: &Query,
-    filetype: Option<&str>,
-    capture_mappings: Option<&CaptureMappings>,
-) -> Option<SemanticTokensResult> {
-    let mut cursor = QueryCursor::new();
-    let mut matches = cursor.matches(query, tree.root_node(), text.as_bytes());
-
-    // Collect all tokens with their positions
-    // Pre-allocate with estimated capacity to reduce reallocations
-    let mut tokens = Vec::with_capacity(1000);
-
-    // Pre-calculate line starts for efficient UTF-16 position conversion
-    let lines: Vec<&str> = text.lines().collect();
-
-    while let Some(m) = matches.next() {
-        // Filter captures based on predicates
-        let filtered_captures = crate::language::filter_captures(query, m, text);
-
-        for c in filtered_captures {
-            let node = c.node;
-            let start_pos = node.start_position();
-            let end_pos = node.end_position();
-
-            // Only include single-line tokens
-            if start_pos.row == end_pos.row {
-                // Convert byte columns to UTF-16 columns
-                let line = lines.get(start_pos.row).unwrap_or(&"");
-
-                // Calculate UTF-16 column positions from byte positions
-                let start_utf16 = byte_to_utf16_col(line, start_pos.column);
-                let end_utf16 = byte_to_utf16_col(line, end_pos.column);
-
-                tokens.push((start_pos.row, start_utf16, end_utf16 - start_utf16, c.index));
-            }
-        }
-    }
-
-    // Sort tokens by position
-    tokens.sort();
-
-    // Convert to LSP semantic tokens format (relative positions)
-    let mut last_line = 0;
-    let mut last_start = 0;
-    let mut data = Vec::with_capacity(tokens.len());
-
-    for (line, start, length, capture_index) in tokens {
-        let delta_line = line - last_line;
-        let delta_start = if delta_line == 0 {
-            start - last_start
-        } else {
-            start
-        };
-
-        // Map capture name to token type and modifiers
-        let original_capture_name = &query.capture_names()[capture_index as usize];
-        let mapped_capture_name =
-            apply_capture_mapping(original_capture_name, filetype, capture_mappings);
-        let (token_type, token_modifiers_bitset) =
-            map_capture_to_token_type_and_modifiers(&mapped_capture_name);
-
-        data.push(SemanticToken {
-            delta_line: delta_line as u32,
-            delta_start: delta_start as u32,
-            length: length as u32,
-            token_type,
-            token_modifiers_bitset,
-        });
-
-        last_line = line;
-        last_start = start;
-    }
-
-    Some(SemanticTokensResult::Tokens(SemanticTokens {
-        result_id: None,
-        data,
-    }))
-}
-
 /// Maximum recursion depth for nested injections to prevent stack overflow
 const MAX_INJECTION_DEPTH: usize = 10;
 
@@ -416,14 +322,14 @@ fn collect_injection_tokens_recursive(
     }
 }
 
-/// Handle semantic tokens full request with injection support
+/// Handle semantic tokens full request
 ///
 /// Analyzes the entire document including injected language regions and returns
 /// semantic tokens for both the host document and all injected content.
 /// Supports recursive/nested injections (e.g., Lua inside Markdown inside Markdown).
 ///
-/// When coordinator or parser_pool is None, behaves like the non-injection handler,
-/// returning only host document tokens.
+/// When coordinator or parser_pool is None, only host document tokens are returned
+/// (no injection processing).
 ///
 /// # Arguments
 /// * `text` - The source text
@@ -437,7 +343,7 @@ fn collect_injection_tokens_recursive(
 /// # Returns
 /// Semantic tokens for the entire document including injected content (if coordinator/parser_pool provided)
 #[allow(clippy::too_many_arguments)]
-pub fn handle_semantic_tokens_full_with_injection(
+pub fn handle_semantic_tokens_full(
     text: &str,
     tree: &Tree,
     query: &Query,
@@ -635,7 +541,7 @@ pub fn handle_semantic_tokens_range(
 /// and returns semantic tokens for both the host document and all injected content
 /// within that range.
 ///
-/// This function wraps `handle_semantic_tokens_full_with_injection` and filters
+/// This function wraps `handle_semantic_tokens_full` and filters
 /// the results to only include tokens within the requested range.
 ///
 /// # Arguments
@@ -664,7 +570,7 @@ pub fn handle_semantic_tokens_range_with_injection(
     parser_pool: &mut crate::language::DocumentParserPool,
 ) -> Option<SemanticTokensResult> {
     // Get all tokens using the full handler
-    let full_result = handle_semantic_tokens_full_with_injection(
+    let full_result = handle_semantic_tokens_full(
         text,
         tree,
         query,
@@ -777,9 +683,9 @@ pub fn handle_semantic_tokens_full_delta(
     filetype: Option<&str>,
     capture_mappings: Option<&CaptureMappings>,
 ) -> Option<SemanticTokensFullDeltaResult> {
-    // Get current tokens
+    // Get current tokens (without injection support for now - will be fixed in Subtask 7)
     let current_result =
-        handle_semantic_tokens_full(text, tree, query, filetype, capture_mappings)?;
+        handle_semantic_tokens_full(text, tree, query, filetype, capture_mappings, None, None)?;
     let current_tokens = match current_result {
         SemanticTokensResult::Tokens(tokens) => tokens,
         SemanticTokensResult::Partial(_) => return None,
@@ -1088,7 +994,8 @@ let y = "hello""#;
         "#;
 
         let query = Query::new(&language, query_text).unwrap();
-        let result = handle_semantic_tokens_full(text, &tree, &query, Some("rust"), None);
+        let result =
+            handle_semantic_tokens_full(text, &tree, &query, Some("rust"), None, None, None);
 
         assert!(result.is_some());
 
@@ -1164,7 +1071,7 @@ let y = "hello""#;
             .expect("Should have markdown highlight query");
 
         // Call the injection-aware function with Some(coordinator) and Some(parser_pool)
-        let result = handle_semantic_tokens_full_with_injection(
+        let result = handle_semantic_tokens_full(
             text,
             &tree,
             &md_highlight_query,
@@ -1261,7 +1168,7 @@ let y = "hello""#;
             .expect("Should have markdown highlight query");
 
         // Call the injection-aware function with Some(coordinator) and Some(parser_pool)
-        let result = handle_semantic_tokens_full_with_injection(
+        let result = handle_semantic_tokens_full(
             text,
             &tree,
             &md_highlight_query,
@@ -1360,7 +1267,7 @@ let y = "hello""#;
             .expect("Should have markdown highlight query");
 
         // Call the injection-aware function with Some(coordinator) and Some(parser_pool)
-        let result = handle_semantic_tokens_full_with_injection(
+        let result = handle_semantic_tokens_full(
             text,
             &tree,
             &md_highlight_query,
@@ -1405,7 +1312,7 @@ let y = "hello""#;
 
     #[test]
     fn test_semantic_tokens_full_with_injection_none_coordinator() {
-        // Test that handle_semantic_tokens_full_with_injection works when
+        // Test that handle_semantic_tokens_full works when
         // coordinator and parser_pool are None - it should behave like
         // the non-injection handler, returning host-only tokens.
         use tree_sitter::{Parser, Query};
@@ -1429,7 +1336,7 @@ let y = "hello""#;
 
         // Call the injection handler with None coordinator and parser_pool
         // This should work and return the same tokens as handle_semantic_tokens_full
-        let result = handle_semantic_tokens_full_with_injection(
+        let result = handle_semantic_tokens_full(
             text,
             &tree,
             &query,

@@ -10,6 +10,5 @@ pub use refactor::handle_code_actions;
 pub use selection::handle_selection_range;
 pub use semantic::{
     LEGEND_MODIFIERS, LEGEND_TYPES, handle_semantic_tokens_full, handle_semantic_tokens_full_delta,
-    handle_semantic_tokens_full_with_injection, handle_semantic_tokens_range,
-    handle_semantic_tokens_range_with_injection,
+    handle_semantic_tokens_range, handle_semantic_tokens_range_with_injection,
 };

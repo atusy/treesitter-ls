@@ -530,7 +530,7 @@ impl LanguageServer for TreeSitterLs {
                     poisoned.into_inner()
                 }
             };
-            crate::analysis::handle_semantic_tokens_full_with_injection(
+            crate::analysis::handle_semantic_tokens_full(
                 text,
                 tree,
                 &query,
