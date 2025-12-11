@@ -126,7 +126,7 @@ sprint:
   number: 2
   pbi: PBI-002
   status: in_progress
-  subtasks_completed: 4
+  subtasks_completed: 6
   subtasks_total: 8
   impediments: 0
 `````````
@@ -426,14 +426,21 @@ sprint:
     - test: "Existing non-injection range semantic token tests still pass after renaming"
       implementation: "Rename handle_semantic_tokens_range_with_injection to handle_semantic_tokens_range (replacing old function)"
       type: structural
-      status: pending
-      commits: []
+      status: completed
+      commits:
+        - hash: df08489
+          message: "refactor(semantic): rename handle_semantic_tokens_range_with_injection to handle_semantic_tokens_range"
+          phase: refactor
 
     - test: "LSP semantic_tokens_range calls unified handler without conditional branching"
       implementation: "Update lsp_impl.rs semantic_tokens_range to always call unified handle_semantic_tokens_range with Some(coordinator) and Some(pool)"
       type: structural
-      status: pending
-      commits: []
+      status: completed
+      commits:
+        - hash: 7ff8e7d
+          message: "feat(semantic): make handle_semantic_tokens_range_with_injection accept Option parameters"
+          phase: green
+          note: "LSP layer updated as part of Subtask 4 to use unified handler"
 
     # --- Phase 3: Update delta and cleanup ---
 

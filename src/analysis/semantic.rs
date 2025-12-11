@@ -552,6 +552,9 @@ pub fn handle_semantic_tokens_range(
 /// Analyzes the document and returns either a delta from the previous version
 /// or the full set of semantic tokens if delta cannot be calculated.
 ///
+/// When coordinator and parser_pool are provided, tokens from injected language
+/// regions are included in the result.
+///
 /// # Arguments
 /// * `text` - The current source text
 /// * `tree` - The parsed syntax tree for the current text
@@ -560,9 +563,12 @@ pub fn handle_semantic_tokens_range(
 /// * `previous_tokens` - The previous semantic tokens to calculate delta from
 /// * `filetype` - The filetype of the document being processed
 /// * `capture_mappings` - The capture mappings to apply
+/// * `coordinator` - Language coordinator for loading injected language parsers (None = no injection)
+/// * `parser_pool` - Parser pool for efficient parser reuse (None = no injection)
 ///
 /// # Returns
 /// Either a delta or full semantic tokens for the document
+#[allow(clippy::too_many_arguments)]
 pub fn handle_semantic_tokens_full_delta(
     text: &str,
     tree: &Tree,
@@ -571,10 +577,19 @@ pub fn handle_semantic_tokens_full_delta(
     previous_tokens: Option<&SemanticTokens>,
     filetype: Option<&str>,
     capture_mappings: Option<&CaptureMappings>,
+    coordinator: Option<&crate::language::LanguageCoordinator>,
+    parser_pool: Option<&mut crate::language::DocumentParserPool>,
 ) -> Option<SemanticTokensFullDeltaResult> {
-    // Get current tokens (without injection support for now - will be fixed in Subtask 7)
-    let current_result =
-        handle_semantic_tokens_full(text, tree, query, filetype, capture_mappings, None, None)?;
+    // Get current tokens with injection support
+    let current_result = handle_semantic_tokens_full(
+        text,
+        tree,
+        query,
+        filetype,
+        capture_mappings,
+        coordinator,
+        parser_pool,
+    )?;
     let current_tokens = match current_result {
         SemanticTokensResult::Tokens(tokens) => tokens,
         SemanticTokensResult::Partial(_) => return None,
@@ -1318,6 +1333,101 @@ let z = 42"#;
         assert!(
             tokens.data.len() >= 3,
             "Expected at least 3 tokens for line 1"
+        );
+    }
+
+    #[test]
+    fn test_semantic_tokens_delta_with_injection() {
+        // Test that handle_semantic_tokens_full_delta returns tokens from injected content
+        // when coordinator and parser_pool are provided.
+        //
+        // example.md has a lua fenced code block at line 6 (0-indexed):
+        // ```lua
+        // local xyz = 12345
+        // ```
+        //
+        // The delta handler should return the `local` keyword token from the injected Lua.
+
+        use crate::config::WorkspaceSettings;
+        use crate::language::LanguageCoordinator;
+
+        // Read the test fixture
+        let text = include_str!("../../tests/assets/example.md");
+
+        // Set up coordinator and parser pool
+        let coordinator = LanguageCoordinator::new();
+        let settings = WorkspaceSettings {
+            search_paths: vec!["deps/treesitter".to_string()],
+            ..Default::default()
+        };
+        let _summary = coordinator.load_settings(settings);
+
+        let load_result = coordinator.ensure_language_loaded("markdown");
+        assert!(load_result.success, "Should load markdown language");
+
+        let load_result = coordinator.ensure_language_loaded("lua");
+        assert!(load_result.success, "Should load lua language");
+
+        let mut parser_pool = coordinator.create_document_parser_pool();
+
+        // Parse the markdown document
+        let tree = {
+            let mut parser = parser_pool
+                .acquire("markdown")
+                .expect("Should get markdown parser");
+            let result = parser.parse(text, None).expect("Should parse markdown");
+            parser_pool.release("markdown".to_string(), parser);
+            result
+        };
+
+        // Get the highlight query for markdown
+        let md_highlight_query = coordinator
+            .get_highlight_query("markdown")
+            .expect("Should have markdown highlight query");
+
+        // Call delta handler with coordinator and parser_pool
+        // Use empty previous tokens to get full result back
+        let result = handle_semantic_tokens_full_delta(
+            text,
+            &tree,
+            &md_highlight_query,
+            "no-match", // previous_result_id that won't match
+            None,       // no previous tokens
+            Some("markdown"),
+            None, // capture_mappings
+            Some(&coordinator),
+            Some(&mut parser_pool),
+        );
+
+        // Should return full tokens result
+        let result = result.expect("Should return tokens");
+        let SemanticTokensFullDeltaResult::Tokens(tokens) = result else {
+            panic!("Expected full tokens result when no previous tokens match");
+        };
+
+        // Find the `local` keyword token at line 6 (0-indexed), col 0
+        let mut abs_line = 0u32;
+        let mut abs_col = 0u32;
+        let mut found_local_keyword = false;
+
+        for token in &tokens.data {
+            abs_line += token.delta_line;
+            if token.delta_line > 0 {
+                abs_col = token.delta_start;
+            } else {
+                abs_col += token.delta_start;
+            }
+
+            // Line 6 (0-indexed), col 0, keyword type (1), length 5 ("local")
+            if abs_line == 6 && abs_col == 0 && token.token_type == 1 && token.length == 5 {
+                found_local_keyword = true;
+                break;
+            }
+        }
+
+        assert!(
+            found_local_keyword,
+            "Delta handler should return `local` keyword token at line 6, col 0 from injected Lua code"
         );
     }
 }

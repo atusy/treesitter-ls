@@ -630,7 +630,19 @@ impl LanguageServer for TreeSitterLs {
             // Get capture mappings
             let capture_mappings = self.language.get_capture_mappings();
 
-            // Delegate to handler
+            // Use injection-aware handler (works with or without injection support)
+            let mut pool = match self.parser_pool.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    log::warn!(
+                        target: "treesitter_ls::lock_recovery",
+                        "Recovered from poisoned parser pool lock in semantic_tokens_full_delta"
+                    );
+                    poisoned.into_inner()
+                }
+            };
+
+            // Delegate to handler with injection support
             handle_semantic_tokens_full_delta(
                 text,
                 tree,
@@ -639,6 +651,8 @@ impl LanguageServer for TreeSitterLs {
                 previous_tokens.as_ref(),
                 Some(&language_name),
                 Some(&capture_mappings),
+                Some(&self.language),
+                Some(&mut pool),
             )
         }; // doc reference is dropped here
 
