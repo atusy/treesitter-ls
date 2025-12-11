@@ -123,11 +123,11 @@ Sprint Cycle:
 
 `````````yaml
 sprint:
-  number: 4
-  pbi: PBI-005
+  number: 5
+  pbi: PBI-006
   status: done
-  subtasks_completed: 6
-  subtasks_total: 6
+  subtasks_completed: 5
+  subtasks_total: 5
   impediments: 0
 `````````
 
