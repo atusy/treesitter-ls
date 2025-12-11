@@ -7,7 +7,7 @@ use tree_sitter::InputEdit;
 use crate::analysis::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
 use crate::analysis::{
     handle_code_actions, handle_goto_definition, handle_selection_range,
-    handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
+    handle_semantic_tokens_full_delta,
 };
 use crate::config::WorkspaceSettings;
 use crate::document::DocumentStore;
@@ -717,43 +717,27 @@ impl LanguageServer for TreeSitterLs {
         // Get capture mappings
         let capture_mappings = self.language.get_capture_mappings();
 
-        // Check if injection query is available for this language
-        let injection_query = self.language.get_injection_query(&language_name);
-
-        let result = if let Some(inj_query) = injection_query {
-            // Use injection-aware handler
-            let mut pool = match self.parser_pool.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => {
-                    log::warn!(
-                        target: "treesitter_ls::lock_recovery",
-                        "Recovered from poisoned parser pool lock in semantic_tokens_range"
-                    );
-                    poisoned.into_inner()
-                }
-            };
-            crate::analysis::handle_semantic_tokens_range_with_injection(
-                text,
-                tree,
-                &query,
-                &domain_range,
-                Some(&language_name),
-                Some(&capture_mappings),
-                &inj_query,
-                &self.language,
-                &mut pool,
-            )
-        } else {
-            // Fall back to non-injection handler
-            handle_semantic_tokens_range(
-                text,
-                tree,
-                &query,
-                &domain_range,
-                Some(&language_name),
-                Some(&capture_mappings),
-            )
+        // Use injection-aware handler (works with or without injection support)
+        let mut pool = match self.parser_pool.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                log::warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned parser pool lock in semantic_tokens_range"
+                );
+                poisoned.into_inner()
+            }
         };
+        let result = crate::analysis::handle_semantic_tokens_range_with_injection(
+            text,
+            tree,
+            &query,
+            &domain_range,
+            Some(&language_name),
+            Some(&capture_mappings),
+            Some(&self.language),
+            Some(&mut pool),
+        );
 
         // Convert to RangeResult, treating partial responses as empty for now
         let domain_range_result = match result.unwrap_or_else(|| {

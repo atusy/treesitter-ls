@@ -544,6 +544,9 @@ pub fn handle_semantic_tokens_range(
 /// This function wraps `handle_semantic_tokens_full` and filters
 /// the results to only include tokens within the requested range.
 ///
+/// When coordinator or parser_pool is None, only host document tokens are returned
+/// (no injection processing).
+///
 /// # Arguments
 /// * `text` - The source text
 /// * `tree` - The parsed syntax tree
@@ -551,12 +554,11 @@ pub fn handle_semantic_tokens_range(
 /// * `range` - The range to get tokens for (LSP positions)
 /// * `filetype` - The filetype of the document being processed
 /// * `capture_mappings` - The capture mappings to apply
-/// * `injection_query` - The injection query for detecting language injections
-/// * `coordinator` - Language coordinator for loading injected language parsers
-/// * `parser_pool` - Parser pool for efficient parser reuse
+/// * `coordinator` - Language coordinator for loading injected language parsers (None = no injection)
+/// * `parser_pool` - Parser pool for efficient parser reuse (None = no injection)
 ///
 /// # Returns
-/// Semantic tokens for the specified range including injected content
+/// Semantic tokens for the specified range including injected content (if coordinator/parser_pool provided)
 #[allow(clippy::too_many_arguments)]
 pub fn handle_semantic_tokens_range_with_injection(
     text: &str,
@@ -565,9 +567,8 @@ pub fn handle_semantic_tokens_range_with_injection(
     range: &Range,
     filetype: Option<&str>,
     capture_mappings: Option<&crate::config::CaptureMappings>,
-    _injection_query: &Query, // Not used directly; we get it from coordinator in the full handler
-    coordinator: &crate::language::LanguageCoordinator,
-    parser_pool: &mut crate::language::DocumentParserPool,
+    coordinator: Option<&crate::language::LanguageCoordinator>,
+    parser_pool: Option<&mut crate::language::DocumentParserPool>,
 ) -> Option<SemanticTokensResult> {
     // Get all tokens using the full handler
     let full_result = handle_semantic_tokens_full(
@@ -576,8 +577,8 @@ pub fn handle_semantic_tokens_range_with_injection(
         query,
         filetype,
         capture_mappings,
-        Some(coordinator),
-        Some(parser_pool),
+        coordinator,
+        parser_pool,
     )?;
 
     // Extract tokens from result
@@ -1364,6 +1365,71 @@ let y = "hello""#;
         assert!(
             string_token.is_some(),
             "Japanese string token should have UTF-16 length of 7"
+        );
+    }
+
+    #[test]
+    fn test_semantic_tokens_range_with_injection_none_coordinator() {
+        // Test that handle_semantic_tokens_range_with_injection works when
+        // coordinator and parser_pool are None - it should behave like
+        // the non-injection range handler, returning host-only tokens.
+        use tower_lsp::lsp_types::Position;
+        use tree_sitter::{Parser, Query};
+
+        let text = r#"let x = "あいうえお"
+let y = "hello"
+let z = 42"#;
+
+        let language = tree_sitter_rust::LANGUAGE.into();
+        let mut parser = Parser::new();
+        parser.set_language(&language).unwrap();
+
+        let tree = parser.parse(text, None).unwrap();
+
+        let query_text = r#"
+            "let" @keyword
+            (identifier) @variable
+            (string_literal) @string
+            (integer_literal) @number
+        "#;
+
+        let query = Query::new(&language, query_text).unwrap();
+
+        // Request range that includes only line 1 (0-indexed)
+        let range = Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 100,
+            },
+        };
+
+        // Call the injection handler with None coordinator and parser_pool
+        let result = handle_semantic_tokens_range_with_injection(
+            text,
+            &tree,
+            &query,
+            &range,
+            Some("rust"),
+            None, // capture_mappings
+            None, // coordinator (None = no injection support)
+            None, // parser_pool (None = no injection support)
+        );
+
+        assert!(result.is_some());
+
+        let SemanticTokensResult::Tokens(tokens) = result.unwrap() else {
+            panic!("expected complete semantic tokens result");
+        };
+
+        // Should have tokens only from line 1: let, y, string "hello"
+        // All tokens should be on line 0 in delta encoding since we're starting fresh
+        assert!(
+            tokens.data.len() >= 3,
+            "Expected at least 3 tokens for line 1"
         );
     }
 }
