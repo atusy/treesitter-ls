@@ -1,369 +1,239 @@
-# Selection Range Refactoring Plan - COMPLETED
+# AI-Agentic Scrum Dashboard
 
-## Final State Summary
+## Rules
 
-The refactoring is complete. Here's the final architecture:
+### General Principles
+
+1. **Single Source of Truth**: This dashboard is the only place for Scrum artifacts. All agents read from and write to this file.
+2. **Git as History**: Do not add timestamps. Git tracks when changes were made.
+3. **Order is Priority**: Items higher in lists have higher priority. No separate priority field needed.
+
+### Product Backlog Management
+
+1. **User Story Format**: Every PBI must have a `story` block with `role`, `capability`, and `benefit`.
+2. **Ordering**: Product Owner reorders by moving items up/down in the YAML array.
+3. **Refinement**: Change status from `draft` -> `refining` -> `ready` as stories mature.
+
+### Definition of Ready (AI-Agentic)
+
+**Ready = AI can complete it without asking humans.**
+
+| Status | Meaning |
+|--------|---------|
+| `draft` | Initial idea. Needs elaboration. |
+| `refining` | Being refined. AI may be able to make it `ready`. |
+| `ready` | All information available. AI can execute autonomously. |
+
+**Refinement process**:
+1. AI attempts to refine `draft`/`refining` items autonomously (explore codebase, propose acceptance criteria, identify dependencies)
+2. If AI can fill in all gaps -> change status to `ready`
+3. If story is too big or unclear -> try to split it
+4. If unsplittable item still needs human help -> keep as `refining` and document the question
+
+**Prioritization**: Prefer `ready` items. Work on refinement when no `ready` items exist or while waiting for human input.
+
+### Sprint Structure (AI-Agentic)
+
+**1 Sprint = 1 PBI**
+
+Unlike human Scrum where Sprints are time-boxed to amortize event overhead, AI agents have no such constraint. Scrum events are instant for AI, so we maximize iterations by:
+
+- Each Sprint delivers exactly one PBI
+- Sprint Planning = select top `ready` item from backlog
+- Sprint Review/Retro = run after every PBI completion
+- No fixed duration - Sprint ends when PBI is done
+
+**Benefits**: Faster feedback, simpler planning, cleaner increments, easier rollback.
+
+### Sprint Execution
+
+1. **One PBI per Sprint**: Select the top `ready` item. That's the Sprint Backlog.
+2. **Subtask Breakdown**: Break the PBI into subtasks at Sprint start.
+3. **Update on Completion**: Mark subtasks `completed` immediately when done.
+4. **Full Event Cycle**: After PBI completion, run Review -> Retro -> next Planning.
+
+### Impediment Handling
+
+1. **Log Immediately**: When blocked, add to `impediments.active` right away.
+2. **Escalation Path**: Developer -> Scrum Master -> Human.
+3. **Resolution**: Move resolved impediments to `impediments.resolved`.
+
+### Definition of Done
+
+1. **All Criteria Must Pass**: Every required DoD criterion must be verified.
+2. **Executable Verification**: Run the verification commands, don't just check boxes.
+3. **No Partial Done**: An item is either fully Done or still in_progress.
+
+### Status Transitions
 
 ```
-src/analysis/
-├── selection.rs              # 59 lines production + 620 lines tests
-└── selection/
-    ├── context.rs            # 236 lines - DocumentContext, InjectionContext
-    ├── hierarchy_chain.rs    # 359 lines - Pure range utilities
-    ├── injection_aware.rs    # 154 lines - Coordinate translation
-    ├── injection_builder.rs  # 428 lines - Injection-aware selection
-    └── range_builder.rs      # 86 lines - Pure AST→SelectionRange
+PBI Status (in Product Backlog):
+  draft -> refining -> ready
+
+Sprint Status (1 PBI per Sprint):
+  in_progress -> done
+       |
+    blocked
+
+Sprint Cycle:
+  Planning -> Execution -> Review -> Retro -> (next Planning)
 ```
 
-**Total: 1942 lines (was ~1300 monolithic)**
+### Agent Responsibilities
 
-## Key Improvements Achieved
+| Agent | Reads | Writes |
+|-------|-------|--------|
+| Product Owner | Full dashboard | Product Backlog, Product Goal, Sprint acceptance |
+| Scrum Master | Full dashboard | Sprint config, Impediments, Retrospective, Metrics |
+| Developer | Sprint Backlog, DoD | Subtask status, Progress, Notes, Impediments |
+| Event Agents | Relevant sections | Event-specific outputs |
 
-### Parameter Count Reduction
-| Function | Before | After |
-|----------|--------|-------|
-| `handle_selection_range` (public) | 4 | 4 ✓ |
-| `build_with_injection` (was `build_selection_range_with_parsed_injection`) | 8 | 4 |
-| `build_recursive_injection` (was `build_recursive_injection_selection`) | 11 | 9 |
+---
 
-### Code Organization
-- **selection.rs**: Reduced from ~460 LOC to 59 LOC (facade + entry point)
-- **Context structs** encapsulate:
-  - `DocumentContext`: text, mapper, root, base_language
-  - `InjectionContext`: coordinator, parser_pool, depth tracking
-- **#[allow(clippy::too_many_arguments)]**: Reduced from 2 to 1
+## Quick Status
 
-### Separation of Concerns
-| Module | Responsibility |
-|--------|----------------|
-| `context.rs` | Context struct definitions + depth management |
-| `hierarchy_chain.rs` | Pure range comparison + chain manipulation |
-| `range_builder.rs` | Pure AST → SelectionRange conversion |
-| `injection_aware.rs` | Coordinate translation for injections |
-| `injection_builder.rs` | Injection-aware selection building |
-
-## Original Problem Analysis
-
-**What Remained in `selection.rs` (~460 LOC) before this refactoring:**
-```
-├── handle_selection_range()                    # LSP entry point (4 params) ✓ Good
-├── build_selection_range_with_parsed_injection() # 8 params ⚠️ Too many
-├── build_recursive_injection_selection()       # 11 params ⚠️ Too many
-├── build_injected_selection_range()            # 3 params ✓ Good
-├── build_unparsed_injection_selection()        # 4 params ✓ Good
-├── replace_range_in_chain()                    # Private helper
-└── splice_effective_range_into_hierarchy()     # Private helper
-```
-
-**Key Problems Solved:**
-1. ✅ **Parameter Explosion**: Reduced 8-11 params to 4-9 using context structs
-2. ✅ **Mixed Concerns**: Parser management encapsulated in InjectionContext
-3. ✅ **Implicit Coupling**: Now explicit via context structs
-4. ✅ **Context Repetition**: DocumentContext bundles text, mapper, root, base_language
-
-## Architecture Details
-
-```
-src/analysis/
-├── selection.rs              # Public API: handle_selection_range + re-exports
-└── selection/
-    ├── hierarchy_chain.rs    # Pure range utilities (DONE)
-    ├── range_builder.rs      # Pure AST→SelectionRange (DONE)
-    ├── injection_aware.rs    # Coordinate translation (DONE)
-    ├── context.rs            # DocumentContext, InjectionContext
-    └── injection_builder.rs  # Injection-aware selection building
+```yaml
+sprint:
+  number: 0
+  pbi: null
+  status: not_started
+  subtasks_completed: 0
+  subtasks_total: 0
+  impediments: 0
 ```
 
 ---
 
-## Phase 4: Introduce Context Structs (Structural)
+## 1. Product Backlog
 
-**Rationale:** Group related parameters into cohesive structs to reduce function signatures.
+### Product Goal
 
-### Cycle 4.1: DocumentContext Struct
-
-Bundle document-level information that's always passed together.
-
-- [ ] **Iteration 1: Define `DocumentContext` struct**
-  - [ ] RED: Create `src/analysis/selection/context.rs` with struct definition
-  - [ ] GREEN: Define struct with `text`, `mapper`, `root` fields
-  - [ ] REFACTOR: Add documentation and derive traits
-  - [ ] COMMIT: `refactor(selection): add DocumentContext struct`
-
-- [ ] **Iteration 2: Add constructor methods**
-  - [ ] RED: Add test for `DocumentContext::new()`
-  - [ ] GREEN: Implement constructor
-  - [ ] REFACTOR: Consider adding `From<&DocumentHandle>` impl
-  - [ ] COMMIT: `refactor(selection): add DocumentContext constructor`
-
-- [ ] Run `cargo test`
-
-### Cycle 4.2: InjectionContext Struct
-
-Bundle injection-related resources and state.
-
-- [ ] **Iteration 1: Define `InjectionContext` struct**
-  - [ ] RED: Add `InjectionContext` struct definition
-  - [ ] GREEN: Define struct with `coordinator`, `parser_pool`, `depth` fields
-  - [ ] REFACTOR: Use lifetime annotations for references
-  - [ ] COMMIT: `refactor(selection): add InjectionContext struct`
-
-- [ ] **Iteration 2: Add helper methods**
-  - [ ] RED: Add test for `InjectionContext::acquire_parser()`
-  - [ ] GREEN: Implement parser acquisition wrapper
-  - [ ] REFACTOR: Add `release_parser()` method
-  - [ ] COMMIT: `refactor(selection): add InjectionContext parser methods`
-
-- [ ] **Iteration 3: Add depth tracking**
-  - [ ] RED: Add test for `InjectionContext::descend()`
-  - [ ] GREEN: Implement depth increment with MAX_DEPTH check
-  - [ ] REFACTOR: Return `Option` to handle depth limit
-  - [ ] COMMIT: `refactor(selection): add InjectionContext depth tracking`
-
-- [ ] Run `cargo test && cargo clippy -- -D warnings`
-
-### Phase 4 Checkpoint
-- [ ] `context.rs` contains `DocumentContext` and `InjectionContext`
-- [ ] Structs have constructor methods and documentation
-- [ ] All existing tests pass
-
----
-
-## Phase 5: Refactor Injection Builder Functions (Behavioral)
-
-**Rationale:** Use context structs to simplify function signatures.
-
-### Cycle 5.1: Extract Injection Builder Module
-
-- [ ] **Iteration 1: Create injection_builder.rs**
-  - [ ] RED: Create module with placeholder
-  - [ ] GREEN: Add module declaration in selection.rs
-  - [ ] REFACTOR: Add module documentation
-  - [ ] COMMIT: `refactor(selection): create injection_builder module`
-
-### Cycle 5.2: Migrate `build_injected_selection_range`
-
-This function is already small (3 params) but should move to the new module.
-
-- [ ] **Iteration 1: Move function**
-  - [ ] RED: Move to `injection_builder.rs`
-  - [ ] GREEN: Update imports in selection.rs
-  - [ ] REFACTOR: None needed
-  - [ ] COMMIT: `refactor(selection): move build_injected_selection_range to injection_builder`
-
-### Cycle 5.3: Refactor `build_selection_range_with_parsed_injection`
-
-Reduce from 8 params to 3 using context structs.
-
-**Current signature:**
-```rust
-fn build_selection_range_with_parsed_injection(
-    node: Node,
-    root: &Node,
-    text: &str,
-    mapper: &PositionMapper,
-    base_language: &str,
-    coordinator: &LanguageCoordinator,
-    parser_pool: &mut DocumentParserPool,
-    cursor_byte: usize,
-) -> SelectionRange
+```yaml
+product_goal:
+  statement: "A fast and flexible Language Server Protocol (LSP) server that leverages Tree-sitter for accurate parsing and language-aware features across multiple programming languages."
+  success_metrics:
+    - metric: "E2E tests pass"
+      target: "make test_nvim succeeds"
+    - metric: "Unit tests pass"
+      target: "make test succeeds"
+    - metric: "Code quality"
+      target: "make check succeeds (cargo check, clippy, fmt)"
+  owner: "@scrum-team-product-owner"
 ```
 
-**Target signature:**
-```rust
-fn build_selection_range_with_parsed_injection(
-    node: Node,
-    doc_ctx: &DocumentContext,
-    inj_ctx: &mut InjectionContext,
-    cursor_byte: usize,
-) -> SelectionRange
+### Backlog Items
+
+```yaml
+product_backlog:
+  - id: PBI-001
+    story:
+      role: "software engineer using language servers"
+      capability: "read syntax highlighted code including injected languages"
+      benefit: "improved code readability when viewing files with embedded languages (e.g., Lua in Markdown)"
+    acceptance_criteria:
+      - criterion: "Semantic tokens are returned for injected language regions in Markdown files"
+        verification: "tests/test_lsp_semantic.lua markdown test expects tokens at line 6 col 1"
+      - criterion: "Injected language highlighting matches the host language's semantic token types"
+        verification: "cargo test test_language_injection"
+      - criterion: "All existing semantic token tests continue to pass"
+        verification: "cargo test semantic"
+    dependencies: []
+    status: draft
+    notes: |
+      Current state: tests/test_lsp_semantic.lua line 64 shows markdown test expects empty tokens
+      with comment "to be updated when implementing injection-support".
+      This PBI will implement injection support for semantic tokens.
 ```
 
-- [ ] **Iteration 1: Add new signature alongside old**
-  - [ ] RED: Add `_with_context` variant
-  - [ ] GREEN: Implement by delegating to original
-  - [ ] REFACTOR: None yet
-  - [ ] COMMIT: `refactor(selection): add build_selection_range_with_parsed_injection_with_context`
+### Definition of Ready
 
-- [ ] **Iteration 2: Move logic to new function**
-  - [ ] RED: Ensure tests still pass
-  - [ ] GREEN: Move implementation to `_with_context` variant
-  - [ ] REFACTOR: Update original to delegate to new version
-  - [ ] COMMIT: `refactor(selection): migrate build_selection_range_with_parsed_injection to context`
-
-- [ ] **Iteration 3: Remove old signature**
-  - [ ] RED: Update all callers to use context version
-  - [ ] GREEN: Remove deprecated function
-  - [ ] REFACTOR: Rename `_with_context` to original name
-  - [ ] COMMIT: `refactor(selection): complete migration to context-based injection builder`
-
-- [ ] Run `cargo test`
-
-### Cycle 5.4: Refactor `build_recursive_injection_selection`
-
-Reduce from 11 params to 4 using context structs.
-
-**Current signature:**
-```rust
-fn build_recursive_injection_selection(
-    node: &Node,
-    root: &Node,
-    text: &str,
-    injection_query: &Query,
-    base_language: &str,
-    coordinator: &LanguageCoordinator,
-    parser_pool: &mut DocumentParserPool,
-    cursor_byte: usize,
-    parent_start_byte: usize,
-    mapper: &PositionMapper,
-    depth: usize,
-) -> SelectionRange
-```
-
-**Target signature:**
-```rust
-fn build_recursive_injection_selection(
-    node: &Node,
-    text: &str,                      // Current injection's text (changes per level)
-    doc_ctx: &DocumentContext,       // Host document context (stable)
-    inj_ctx: &mut InjectionContext,  // Manages coordinator, pool, depth
-    cursor_byte: usize,
-    parent_start_byte: usize,
-) -> SelectionRange
-```
-
-- [ ] **Iteration 1-3: Same pattern as Cycle 5.3**
-  - [ ] Add `_with_context` variant
-  - [ ] Move implementation
-  - [ ] Remove old signature
-  - [ ] COMMIT each step
-
-- [ ] Run `cargo test && cargo clippy -- -D warnings`
-
-### Phase 5 Checkpoint
-- [ ] `injection_builder.rs` contains injection-aware selection functions
-- [ ] No functions with >6 parameters
-- [ ] Removed all `#[allow(clippy::too_many_arguments)]`
-- [ ] All existing tests pass
-
----
-
-## Phase 6: Move Hierarchy Splicing Functions (Structural)
-
-**Rationale:** Complete the extraction of injection-related helpers.
-
-### Cycle 6.1: Move `replace_range_in_chain`
-
-- [ ] **Iteration 1: Move to injection_aware.rs**
-  - [ ] RED: Move function
-  - [ ] GREEN: Update imports
-  - [ ] REFACTOR: Make public if needed by injection_builder
-  - [ ] COMMIT: `refactor(selection): move replace_range_in_chain to injection_aware`
-
-### Cycle 6.2: Move `splice_effective_range_into_hierarchy`
-
-- [ ] **Iteration 1: Move to injection_aware.rs**
-  - [ ] RED: Move function
-  - [ ] GREEN: Update imports
-  - [ ] REFACTOR: Consider renaming for clarity
-  - [ ] COMMIT: `refactor(selection): move splice_effective_range_into_hierarchy to injection_aware`
-
-### Cycle 6.3: Move `build_unparsed_injection_selection`
-
-- [ ] **Iteration 1: Move to injection_builder.rs**
-  - [ ] RED: Move function
-  - [ ] GREEN: Update imports
-  - [ ] REFACTOR: None needed
-  - [ ] COMMIT: `refactor(selection): move build_unparsed_injection_selection to injection_builder`
-
-- [ ] Run `cargo test && cargo clippy -- -D warnings`
-
-### Phase 6 Checkpoint
-- [ ] `selection.rs` reduced to <100 lines (facade only)
-- [ ] All helper functions moved to appropriate modules
-- [ ] Clean module hierarchy
-
----
-
-## Phase 7: Final Cleanup (Structural)
-
-### Cycle 7.1: Organize Exports
-
-- [ ] **Iteration 1: Review public API**
-  - [ ] RED: Check which functions need to be public
-  - [ ] GREEN: Minimize public surface
-  - [ ] REFACTOR: Add `pub(crate)` where appropriate
-  - [ ] COMMIT: `refactor(selection): minimize public API surface`
-
-### Cycle 7.2: Documentation Update
-
-- [ ] **Iteration 1: Module documentation**
-  - [ ] RED: Review all module docs
-  - [ ] GREEN: Update to reflect new architecture
-  - [ ] REFACTOR: Add architecture diagram in selection.rs
-  - [ ] COMMIT: `docs(selection): update module documentation`
-
-### Cycle 7.3: Remove Dead Code
-
-- [ ] **Iteration 1: Check for unused code**
-  - [ ] RED: Run `cargo clippy -- -D dead_code`
-  - [ ] GREEN: Remove any unused functions
-  - [ ] REFACTOR: None needed
-  - [ ] COMMIT: `refactor(selection): remove dead code`
-
-- [ ] Run full validation suite
-
-### Phase 7 Checkpoint
-- [ ] `selection.rs` < 100 lines
-- [ ] No `#[allow(clippy::too_many_arguments)]` remaining
-- [ ] All modules < 200 lines
-- [ ] Clean public API
-
----
-
-## Success Criteria
-
-- [ ] `selection.rs` reduced to facade only (< 100 lines)
-- [ ] No functions with > 6 parameters
-- [ ] All `#[allow(clippy::too_many_arguments)]` removed
-- [ ] Each module has single responsibility:
-  - `context.rs`: Context struct definitions
-  - `hierarchy_chain.rs`: Pure range utilities
-  - `range_builder.rs`: Pure AST → SelectionRange
-  - `injection_aware.rs`: Coordinate translation
-  - `injection_builder.rs`: Injection-aware selection building
-- [ ] All 161+ tests pass
-- [ ] No new clippy warnings
-
-## Validation Commands
-
-Run after each cycle:
-```bash
-cargo test
-cargo clippy -- -D warnings
-cargo fmt --check
+```yaml
+definition_of_ready:
+  criteria:
+    - criterion: "AI can complete this story without human input"
+      required: true
+      note: "If human input needed, split or keep as refining"
+    - criterion: "User story has role, capability, and benefit"
+      required: true
+    - criterion: "At least 3 acceptance criteria with verification commands"
+      required: true
+    - criterion: "Dependencies are resolved or not blocking"
+      required: true
 ```
 
 ---
 
-## Alternative Approaches Considered
+## 2. Current Sprint
 
-### A. Builder Pattern
-```rust
-SelectionRangeBuilder::new(document)
-    .with_injection_support(coordinator, parser_pool)
-    .at_position(cursor_byte)
-    .build()
+```yaml
+sprint:
+  number: 0
+  pbi_id: null
+  story: null
+  status: not_started
+
+  subtasks: []
+
+  notes: |
+    No sprint started yet. Run Sprint Planning to begin.
 ```
-**Rejected:** Adds complexity for marginal benefit. Context structs are simpler.
 
-### B. Trait-based Abstraction
-```rust
-trait SelectionBuilder {
-    fn build(&self, node: Node) -> SelectionRange;
-}
+### Impediment Registry
+
+```yaml
+impediments:
+  active: []
+  resolved: []
 ```
-**Rejected:** Over-engineering for internal module. No external consumers.
 
-### C. Keep Current Structure
-**Rejected:** 8-11 parameter functions are a maintenance burden and indicate missing abstractions.
+---
+
+## 3. Definition of Done
+
+```yaml
+definition_of_done:
+  checks:
+    - check: "All unit tests pass"
+      command: "make test"
+      required: true
+    - check: "Code quality checks pass (check, clippy, fmt)"
+      command: "make check"
+      required: true
+    - check: "E2E tests pass"
+      command: "make test_nvim"
+      required: true
+      note: "Runs Neovim integration tests including tests/test_lsp_semantic.lua"
+```
+
+---
+
+## 4. Completed Sprints
+
+```yaml
+completed: []
+```
+
+---
+
+## 5. Retrospective Log
+
+```yaml
+retrospectives: []
+```
+
+---
+
+## 6. Agents
+
+```yaml
+agents:
+  product_owner: "@scrum-team-product-owner"
+  scrum_master: "@scrum-team-scrum-master"
+  developer: "@scrum-team-developer"
+
+events:
+  planning: "@scrum-event-sprint-planning"
+  review: "@scrum-event-sprint-review"
+  retrospective: "@scrum-event-sprint-retrospective"
+  refinement: "@scrum-event-backlog-refinement"
+```

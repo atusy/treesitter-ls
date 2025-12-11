@@ -74,7 +74,7 @@ deps/nvim/nvim-treesitter:
 
 deps/treesitter: deps/nvim/nvim-treesitter
 	@mkdir -p $@
-	nvim -n --clean --headless --cmd "lua (function() vim.opt.rtp:append(vim.uv.cwd() .. '/deps/nvim/nvim-treesitter'); require('nvim-treesitter').setup({ install_dir = vim.uv.cwd() .. '/deps/treesitter' }); require('nvim-treesitter').install({ 'lua', 'luadoc', 'rust', 'markdown', 'markdown_inline', 'yaml' }):wait(300000); vim.cmd.q() end)()"
+	nvim -n --clean --headless --cmd "lua (function() vim.opt.rtp:append(vim.uv.cwd() .. '/deps/nvim/nvim-treesitter'); require('nvim-treesitter').setup({ install_dir = vim.uv.cwd() .. '/deps/treesitter' }); require('nvim-treesitter').install({ 'lua', 'luadoc', 'rust', 'markdown', 'markdown_inline', 'yaml', 'r' }):wait(300000); vim.cmd.q() end)()"
 
 
 # Show help
