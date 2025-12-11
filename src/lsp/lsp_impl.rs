@@ -519,40 +519,26 @@ impl LanguageServer for TreeSitterLs {
             // Get capture mappings
             let capture_mappings = self.language.get_capture_mappings();
 
-            // Try to use injection-aware handler if injection query is available
-            let injection_query = self.language.get_injection_query(&language_name);
-            if let Some(inj_query) = injection_query {
-                // Use injection-aware handler
-                let mut pool = match self.parser_pool.lock() {
-                    Ok(guard) => guard,
-                    Err(poisoned) => {
-                        log::warn!(
-                            target: "treesitter_ls::lock_recovery",
-                            "Recovered from poisoned parser pool lock in semantic_tokens_full"
-                        );
-                        poisoned.into_inner()
-                    }
-                };
-                crate::analysis::handle_semantic_tokens_full_with_injection(
-                    text,
-                    tree,
-                    &query,
-                    Some(&language_name),
-                    Some(&capture_mappings),
-                    &inj_query,
-                    &self.language,
-                    &mut pool,
-                )
-            } else {
-                // Fall back to non-injection handler
-                crate::analysis::handle_semantic_tokens_full(
-                    text,
-                    tree,
-                    &query,
-                    Some(&language_name),
-                    Some(&capture_mappings),
-                )
-            }
+            // Use injection-aware handler (works with or without injection support)
+            let mut pool = match self.parser_pool.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    log::warn!(
+                        target: "treesitter_ls::lock_recovery",
+                        "Recovered from poisoned parser pool lock in semantic_tokens_full"
+                    );
+                    poisoned.into_inner()
+                }
+            };
+            crate::analysis::handle_semantic_tokens_full_with_injection(
+                text,
+                tree,
+                &query,
+                Some(&language_name),
+                Some(&capture_mappings),
+                Some(&self.language),
+                Some(&mut pool),
+            )
         }; // doc reference is dropped here
 
         let mut tokens_with_id = match result.unwrap_or_else(|| {

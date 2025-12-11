@@ -243,6 +243,9 @@ const MAX_INJECTION_DEPTH: usize = 10;
 /// This function processes the given text and tree, collecting tokens from both
 /// the current language's highlight query and any language injections found.
 /// Nested injections are processed recursively up to MAX_INJECTION_DEPTH.
+///
+/// When coordinator or parser_pool is None, only host document tokens are collected
+/// (no injection processing).
 #[allow(clippy::too_many_arguments)]
 fn collect_injection_tokens_recursive(
     text: &str,
@@ -250,8 +253,8 @@ fn collect_injection_tokens_recursive(
     query: &Query,
     filetype: Option<&str>,
     capture_mappings: Option<&crate::config::CaptureMappings>,
-    coordinator: &crate::language::LanguageCoordinator,
-    parser_pool: &mut crate::language::DocumentParserPool,
+    coordinator: Option<&crate::language::LanguageCoordinator>,
+    parser_pool: Option<&mut crate::language::DocumentParserPool>,
     host_text: &str,     // The original host document text (for position conversion)
     host_lines: &[&str], // Lines from the host document
     content_start_byte: usize, // Byte offset where this content starts in the host document
@@ -331,6 +334,11 @@ fn collect_injection_tokens_recursive(
     }
 
     // 2. Find and process injections in this document
+    // Skip injection processing if coordinator or parser_pool is None
+    let (Some(coordinator), Some(parser_pool)) = (coordinator, parser_pool) else {
+        return; // No injection support available
+    };
+
     let current_lang = filetype.unwrap_or("unknown");
     let Some(injection_query) = coordinator.get_injection_query(current_lang) else {
         return; // No injection query for this language
@@ -395,8 +403,8 @@ fn collect_injection_tokens_recursive(
             &inj_highlight_query,
             Some(&injection.language),
             capture_mappings,
-            coordinator,
-            parser_pool,
+            Some(coordinator),
+            Some(parser_pool),
             host_text,
             host_lines,
             inj_host_start_byte,
@@ -414,18 +422,20 @@ fn collect_injection_tokens_recursive(
 /// semantic tokens for both the host document and all injected content.
 /// Supports recursive/nested injections (e.g., Lua inside Markdown inside Markdown).
 ///
+/// When coordinator or parser_pool is None, behaves like the non-injection handler,
+/// returning only host document tokens.
+///
 /// # Arguments
 /// * `text` - The source text
 /// * `tree` - The parsed syntax tree
 /// * `query` - The tree-sitter query for semantic highlighting (host language)
 /// * `filetype` - The filetype of the document being processed
 /// * `capture_mappings` - The capture mappings to apply
-/// * `injection_query` - The injection query for detecting language injections
-/// * `coordinator` - Language coordinator for loading injected language parsers
-/// * `parser_pool` - Parser pool for efficient parser reuse
+/// * `coordinator` - Language coordinator for loading injected language parsers (None = no injection)
+/// * `parser_pool` - Parser pool for efficient parser reuse (None = no injection)
 ///
 /// # Returns
-/// Semantic tokens for the entire document including injected content
+/// Semantic tokens for the entire document including injected content (if coordinator/parser_pool provided)
 #[allow(clippy::too_many_arguments)]
 pub fn handle_semantic_tokens_full_with_injection(
     text: &str,
@@ -433,9 +443,8 @@ pub fn handle_semantic_tokens_full_with_injection(
     query: &Query,
     filetype: Option<&str>,
     capture_mappings: Option<&crate::config::CaptureMappings>,
-    _injection_query: &Query, // Not used directly; we get it from coordinator in the recursive fn
-    coordinator: &crate::language::LanguageCoordinator,
-    parser_pool: &mut crate::language::DocumentParserPool,
+    coordinator: Option<&crate::language::LanguageCoordinator>,
+    parser_pool: Option<&mut crate::language::DocumentParserPool>,
 ) -> Option<SemanticTokensResult> {
     // Collect all absolute tokens (line, col, length, capture_index, mapped_name)
     let mut all_tokens: Vec<(usize, usize, usize, u32, String)> = Vec::with_capacity(1000);
@@ -650,7 +659,7 @@ pub fn handle_semantic_tokens_range_with_injection(
     range: &Range,
     filetype: Option<&str>,
     capture_mappings: Option<&crate::config::CaptureMappings>,
-    injection_query: &Query,
+    _injection_query: &Query, // Not used directly; we get it from coordinator in the full handler
     coordinator: &crate::language::LanguageCoordinator,
     parser_pool: &mut crate::language::DocumentParserPool,
 ) -> Option<SemanticTokensResult> {
@@ -661,9 +670,8 @@ pub fn handle_semantic_tokens_range_with_injection(
         query,
         filetype,
         capture_mappings,
-        injection_query,
-        coordinator,
-        parser_pool,
+        Some(coordinator),
+        Some(parser_pool),
     )?;
 
     // Extract tokens from result
@@ -1155,21 +1163,15 @@ let y = "hello""#;
             .get_highlight_query("markdown")
             .expect("Should have markdown highlight query");
 
-        // Get injection query for markdown
-        let injection_query = coordinator
-            .get_injection_query("markdown")
-            .expect("Should have markdown injection query");
-
-        // Call the injection-aware function
+        // Call the injection-aware function with Some(coordinator) and Some(parser_pool)
         let result = handle_semantic_tokens_full_with_injection(
             text,
             &tree,
             &md_highlight_query,
             Some("markdown"),
             None, // capture_mappings
-            &injection_query,
-            &coordinator,
-            &mut parser_pool,
+            Some(&coordinator),
+            Some(&mut parser_pool),
         );
 
         // Should return some tokens
@@ -1258,21 +1260,15 @@ let y = "hello""#;
             .get_highlight_query("markdown")
             .expect("Should have markdown highlight query");
 
-        // Get injection query for markdown
-        let injection_query = coordinator
-            .get_injection_query("markdown")
-            .expect("Should have markdown injection query");
-
-        // Call the injection-aware function
+        // Call the injection-aware function with Some(coordinator) and Some(parser_pool)
         let result = handle_semantic_tokens_full_with_injection(
             text,
             &tree,
             &md_highlight_query,
             Some("markdown"),
             None, // capture_mappings
-            &injection_query,
-            &coordinator,
-            &mut parser_pool,
+            Some(&coordinator),
+            Some(&mut parser_pool),
         );
 
         // Should return some tokens
@@ -1363,21 +1359,15 @@ let y = "hello""#;
             .get_highlight_query("markdown")
             .expect("Should have markdown highlight query");
 
-        // Get injection query for markdown
-        let injection_query = coordinator
-            .get_injection_query("markdown")
-            .expect("Should have markdown injection query");
-
-        // Call the injection-aware function
+        // Call the injection-aware function with Some(coordinator) and Some(parser_pool)
         let result = handle_semantic_tokens_full_with_injection(
             text,
             &tree,
             &md_highlight_query,
             Some("markdown"),
             None, // capture_mappings
-            &injection_query,
-            &coordinator,
-            &mut parser_pool,
+            Some(&coordinator),
+            Some(&mut parser_pool),
         );
 
         // Should return some tokens
@@ -1410,6 +1400,63 @@ let y = "hello""#;
         assert!(
             found_indented_keyword,
             "Should find `local` keyword token at line 22, col 4 from indented Lua injection in list item"
+        );
+    }
+
+    #[test]
+    fn test_semantic_tokens_full_with_injection_none_coordinator() {
+        // Test that handle_semantic_tokens_full_with_injection works when
+        // coordinator and parser_pool are None - it should behave like
+        // the non-injection handler, returning host-only tokens.
+        use tree_sitter::{Parser, Query};
+
+        let text = r#"let x = "あいうえお"
+let y = "hello""#;
+
+        let language = tree_sitter_rust::LANGUAGE.into();
+        let mut parser = Parser::new();
+        parser.set_language(&language).unwrap();
+
+        let tree = parser.parse(text, None).unwrap();
+
+        let query_text = r#"
+            "let" @keyword
+            (identifier) @variable
+            (string_literal) @string
+        "#;
+
+        let query = Query::new(&language, query_text).unwrap();
+
+        // Call the injection handler with None coordinator and parser_pool
+        // This should work and return the same tokens as handle_semantic_tokens_full
+        let result = handle_semantic_tokens_full_with_injection(
+            text,
+            &tree,
+            &query,
+            Some("rust"),
+            None, // capture_mappings
+            None, // coordinator (None = no injection support)
+            None, // parser_pool (None = no injection support)
+        );
+
+        assert!(result.is_some());
+
+        let SemanticTokensResult::Tokens(tokens) = result.unwrap() else {
+            panic!("expected complete semantic tokens result");
+        };
+
+        // Should have tokens for: let, x, string, let, y, string
+        assert!(tokens.data.len() >= 6);
+
+        // Check that the string token on first line has correct UTF-16 length
+        // "あいうえお" = 5 UTF-16 code units + 2 quotes = 7
+        let string_token = tokens
+            .data
+            .iter()
+            .find(|t| t.token_type == 2 && t.length == 7); // string type = 2
+        assert!(
+            string_token.is_some(),
+            "Japanese string token should have UTF-16 length of 7"
         );
     }
 }
