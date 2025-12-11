@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use tokio::io::{stdin, stdout};
 use tower_lsp::{LspService, Server};
-use treesitter_ls::install::{self, queries};
+use treesitter_ls::install::{self, metadata, parser, queries};
 use treesitter_ls::lsp::TreeSitterLs;
 
 /// A Language Server Protocol (LSP) server using Tree-sitter for parsing
@@ -35,6 +35,25 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
+    /// Compile and install a Tree-sitter parser for a language
+    InstallParser {
+        /// The language to install (e.g., lua, rust, python)
+        language: String,
+
+        /// Custom data directory (default: ~/.local/share/treesitter-ls on Linux)
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+
+        /// Overwrite existing parser if it exists
+        #[arg(long)]
+        force: bool,
+
+        /// Print verbose output including revision info
+        #[arg(long, short)]
+        verbose: bool,
+    },
+    /// List supported languages for installation
+    ListLanguages,
 }
 
 #[tokio::main]
@@ -76,6 +95,47 @@ async fn main() {
                     eprintln!("Error: {}", e);
                     std::process::exit(1);
                 }
+            }
+        }
+        Some(Commands::InstallParser {
+            language,
+            data_dir,
+            force,
+            verbose,
+        }) => {
+            let data_dir = data_dir
+                .or_else(install::default_data_dir)
+                .unwrap_or_else(|| {
+                    eprintln!(
+                        "Error: Could not determine data directory. Please specify --data-dir."
+                    );
+                    std::process::exit(1);
+                });
+
+            eprintln!("Installing parser for '{}' to {:?}...", language, data_dir);
+
+            let options = parser::InstallOptions {
+                data_dir,
+                force,
+                verbose,
+            };
+
+            match parser::install_parser(&language, &options) {
+                Ok(result) => {
+                    eprintln!("Successfully installed parser for '{}'", result.language);
+                    eprintln!("Location: {}", result.install_path.display());
+                    eprintln!("Revision: {}", result.revision);
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Some(Commands::ListLanguages) => {
+            eprintln!("Supported languages:");
+            for lang in metadata::list_supported_languages() {
+                println!("  {}", lang);
             }
         }
         None => {

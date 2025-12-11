@@ -1,8 +1,10 @@
 //! Installation module for Tree-sitter parsers and queries.
 //!
 //! This module provides functionality to download and install Tree-sitter
-//! query files from the nvim-treesitter repository.
+//! query files and compile parser shared libraries.
 
+pub mod metadata;
+pub mod parser;
 pub mod queries;
 
 use std::path::PathBuf;

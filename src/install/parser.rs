@@ -1,0 +1,315 @@
+//! Parser compilation and installation.
+//!
+//! This module handles cloning parser repositories, compiling them with
+//! tree-sitter CLI, and installing the resulting shared library.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use super::metadata::{MetadataError, fetch_parser_metadata};
+
+/// Error types for parser installation.
+#[derive(Debug)]
+pub enum ParserInstallError {
+    /// Metadata fetch failed.
+    MetadataError(MetadataError),
+    /// Git operation failed.
+    GitError(String),
+    /// tree-sitter CLI not found.
+    TreeSitterNotFound,
+    /// Compilation failed.
+    CompileError(String),
+    /// File system operation failed.
+    IoError(std::io::Error),
+    /// Parser already exists.
+    AlreadyExists(PathBuf),
+}
+
+impl std::fmt::Display for ParserInstallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MetadataError(e) => write!(f, "{}", e),
+            Self::GitError(msg) => write!(f, "Git error: {}", msg),
+            Self::TreeSitterNotFound => {
+                write!(
+                    f,
+                    "tree-sitter CLI not found. Install with: cargo install tree-sitter-cli"
+                )
+            }
+            Self::CompileError(msg) => write!(f, "Compilation error: {}", msg),
+            Self::IoError(e) => write!(f, "IO error: {}", e),
+            Self::AlreadyExists(path) => {
+                write!(
+                    f,
+                    "Parser already exists at {}. Use --force to overwrite.",
+                    path.display()
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for ParserInstallError {}
+
+impl From<std::io::Error> for ParserInstallError {
+    fn from(e: std::io::Error) -> Self {
+        Self::IoError(e)
+    }
+}
+
+impl From<MetadataError> for ParserInstallError {
+    fn from(e: MetadataError) -> Self {
+        Self::MetadataError(e)
+    }
+}
+
+/// Result of installing a parser.
+pub struct ParserInstallResult {
+    /// The language that was installed.
+    pub language: String,
+    /// Path where parser was installed.
+    pub install_path: PathBuf,
+    /// Git revision that was used.
+    pub revision: String,
+}
+
+/// Options for parser installation.
+pub struct InstallOptions {
+    /// Base data directory.
+    pub data_dir: PathBuf,
+    /// Whether to overwrite existing parser.
+    pub force: bool,
+    /// Whether to print verbose output.
+    pub verbose: bool,
+}
+
+/// Find the tree-sitter CLI executable.
+fn find_tree_sitter() -> Option<PathBuf> {
+    // Check common locations
+    let paths = [
+        // Cargo bin directory
+        dirs::home_dir().map(|h| h.join(".cargo/bin/tree-sitter")),
+        // System PATH
+        which_tree_sitter(),
+    ];
+
+    paths.into_iter().flatten().find(|path| path.exists())
+}
+
+/// Try to find tree-sitter in PATH.
+fn which_tree_sitter() -> Option<PathBuf> {
+    Command::new("which")
+        .arg("tree-sitter")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()))
+}
+
+/// Get the shared library extension for the current platform.
+fn shared_lib_extension() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "dylib"
+    } else if cfg!(target_os = "windows") {
+        "dll"
+    } else {
+        "so"
+    }
+}
+
+/// Install a Tree-sitter parser for a language.
+pub fn install_parser(
+    language: &str,
+    options: &InstallOptions,
+) -> Result<ParserInstallResult, ParserInstallError> {
+    let parsers_dir = options.data_dir.join("parsers");
+    let parser_file = parsers_dir.join(format!("{}.{}", language, shared_lib_extension()));
+
+    // Check if parser already exists
+    if parser_file.exists() && !options.force {
+        return Err(ParserInstallError::AlreadyExists(parser_file));
+    }
+
+    // Find tree-sitter CLI
+    let tree_sitter = find_tree_sitter().ok_or(ParserInstallError::TreeSitterNotFound)?;
+
+    if options.verbose {
+        eprintln!("Using tree-sitter at: {}", tree_sitter.display());
+    }
+
+    // Fetch metadata
+    if options.verbose {
+        eprintln!("Fetching metadata for '{}'...", language);
+    }
+    let metadata = fetch_parser_metadata(language)?;
+
+    if options.verbose {
+        eprintln!("Repository: {}", metadata.url);
+        eprintln!("Revision: {}", metadata.revision);
+    }
+
+    // Create temp directory for cloning
+    let temp_dir = tempfile::tempdir()?;
+    let clone_dir = temp_dir.path().join("parser");
+
+    // Clone the repository
+    if options.verbose {
+        eprintln!("Cloning repository...");
+    }
+    clone_repo(&metadata.url, &metadata.revision, &clone_dir)?;
+
+    // Determine the source directory (handle monorepos)
+    let source_dir = if let Some(ref location) = metadata.location {
+        clone_dir.join(location)
+    } else {
+        clone_dir.clone()
+    };
+
+    if options.verbose {
+        eprintln!("Building parser in: {}", source_dir.display());
+    }
+
+    // Build the parser
+    build_parser(&tree_sitter, &source_dir, options.verbose)?;
+
+    // Find the built library
+    let built_lib = find_built_library(&source_dir)?;
+
+    if options.verbose {
+        eprintln!("Built library: {}", built_lib.display());
+    }
+
+    // Create parsers directory and copy the library
+    fs::create_dir_all(&parsers_dir)?;
+    fs::copy(&built_lib, &parser_file)?;
+
+    if options.verbose {
+        eprintln!("Installed to: {}", parser_file.display());
+    }
+
+    Ok(ParserInstallResult {
+        language: language.to_string(),
+        install_path: parser_file,
+        revision: metadata.revision,
+    })
+}
+
+/// Clone a git repository at a specific revision.
+fn clone_repo(url: &str, revision: &str, dest: &Path) -> Result<(), ParserInstallError> {
+    // First, clone with depth 1 (we'll fetch the specific revision)
+    let status = Command::new("git")
+        .args(["clone", "--depth", "1", url])
+        .arg(dest)
+        .status()
+        .map_err(|e| ParserInstallError::GitError(e.to_string()))?;
+
+    if !status.success() {
+        return Err(ParserInstallError::GitError(format!(
+            "Failed to clone {}",
+            url
+        )));
+    }
+
+    // Fetch the specific revision
+    let status = Command::new("git")
+        .current_dir(dest)
+        .args(["fetch", "--depth", "1", "origin", revision])
+        .status()
+        .map_err(|e| ParserInstallError::GitError(e.to_string()))?;
+
+    if !status.success() {
+        return Err(ParserInstallError::GitError(format!(
+            "Failed to fetch revision {}",
+            revision
+        )));
+    }
+
+    // Checkout the revision
+    let status = Command::new("git")
+        .current_dir(dest)
+        .args(["checkout", revision])
+        .status()
+        .map_err(|e| ParserInstallError::GitError(e.to_string()))?;
+
+    if !status.success() {
+        return Err(ParserInstallError::GitError(format!(
+            "Failed to checkout revision {}",
+            revision
+        )));
+    }
+
+    Ok(())
+}
+
+/// Build the parser using tree-sitter CLI.
+fn build_parser(
+    tree_sitter: &Path,
+    source_dir: &Path,
+    verbose: bool,
+) -> Result<(), ParserInstallError> {
+    let mut cmd = Command::new(tree_sitter);
+    cmd.current_dir(source_dir).arg("build");
+
+    let output = cmd
+        .output()
+        .map_err(|e| ParserInstallError::CompileError(e.to_string()))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        if verbose {
+            eprintln!("Build stdout: {}", stdout);
+            eprintln!("Build stderr: {}", stderr);
+        }
+
+        return Err(ParserInstallError::CompileError(format!(
+            "tree-sitter build failed: {}",
+            stderr
+        )));
+    }
+
+    Ok(())
+}
+
+/// Find the built shared library in the source directory.
+fn find_built_library(source_dir: &Path) -> Result<PathBuf, ParserInstallError> {
+    let ext = shared_lib_extension();
+
+    // tree-sitter build creates the library in the current directory
+    // with a name like "libtree-sitter-lua.dylib" or just the language name
+    for entry in fs::read_dir(source_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if let Some(extension) = path.extension()
+            && extension == ext
+        {
+            return Ok(path);
+        }
+    }
+
+    Err(ParserInstallError::CompileError(format!(
+        "No .{} file found after build",
+        ext
+    )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_shared_lib_extension() {
+        let ext = shared_lib_extension();
+        assert!(ext == "so" || ext == "dylib" || ext == "dll");
+    }
+
+    #[test]
+    fn test_find_tree_sitter_exists() {
+        // This test may fail if tree-sitter is not installed
+        // but that's okay - it's testing the search logic
+        let _result = find_tree_sitter();
+        // Just verify it doesn't panic
+    }
+}

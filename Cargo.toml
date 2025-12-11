@@ -22,6 +22,7 @@ regex = "1.10"
 reqwest = { version = "0.12", features = ["blocking"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
+tempfile = "3.0"
 thiserror = "2.0"
 tokio = { version = "1.45.1", features = ["macros", "rt-multi-thread", "io-std", "time"] }
 toml = "0.8"
