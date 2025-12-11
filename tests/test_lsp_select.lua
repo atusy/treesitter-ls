@@ -65,8 +65,8 @@ T["assets/example.md"]["selectionRange"] = MiniTest.new_set({})
 -- Test selection no injection region (plain Markdown)
 T["assets/example.md"]["selectionRange"]["no injection"] = MiniTest.new_set({
 	parametrize = {
-		{ 20, 1, 1, "paragraph" }, -- line 20 "paragraph"
-		{ 18, 1, 3, "# section\n\nparagraph" }, -- line 18 "# section"
+		{ 28, 1, 1, "paragraph" }, -- line 20 "paragraph"
+		{ 26, 1, 3, "# section\n\nparagraph" }, -- line 18 "# section"
 	},
 })
 T["assets/example.md"]["selectionRange"]["no injection"]["works"] = function(line, col, direction, expected)
@@ -91,6 +91,9 @@ T["assets/example.md"]["selectionRange"]["injection"] = MiniTest.new_set({
 		{ 14, 7, 1, "injection" }, -- select identifier
 		{ 14, 7, 2, "injection = true" }, -- select expression
 		{ 14, 7, 3, "local injection = true" }, -- select full statement
+		-- indented injection markdown -> lua
+		{ 23, 22, 1, "true" }, -- select identifier
+		{ 23, 22, 2, "indent = true" }, -- select expression
 	},
 })
 T["assets/example.md"]["selectionRange"]["injection"]["works"] = function(line, col, direction, expected)

@@ -15,6 +15,14 @@ local injection = true
 ```
 `````
 
+# indented injection
+
+* item
+
+    ```lua
+    local indent = true
+    ```
+
 # section
 
 paragraph
