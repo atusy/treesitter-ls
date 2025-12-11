@@ -94,11 +94,11 @@ Sprint Cycle:
 
 ```yaml
 sprint:
-  number: 0
-  pbi: null
-  status: not_started
-  subtasks_completed: 0
-  subtasks_total: 0
+  number: 1
+  pbi: PBI-001
+  status: done
+  subtasks_completed: 8
+  subtasks_total: 8
   impediments: 0
 ```
 
@@ -131,18 +131,109 @@ product_backlog:
       capability: "read syntax highlighted code including injected languages"
       benefit: "improved code readability when viewing files with embedded languages (e.g., Lua in Markdown)"
     acceptance_criteria:
-      - criterion: "Semantic tokens are returned for injected language regions in Markdown files"
-        verification: "tests/test_lsp_semantic.lua markdown test expects tokens at line 6 col 1"
-      - criterion: "Injected language highlighting matches the host language's semantic token types"
-        verification: "cargo test test_language_injection"
+      - criterion: "Semantic tokens include tokens from injected Lua code in Markdown fenced code blocks"
+        verification: |
+          Update tests/test_lsp_semantic.lua line 64:
+          Change `{ 6, 1, {} }` to `{ 6, 1, { { type = "keyword" } } }`
+          (line 6 col 1 in example.md is `local` keyword in ```lua block)
+          Run: make test_nvim
+      - criterion: "Semantic tokens for injected content have correct UTF-16 positions relative to host document"
+        verification: |
+          Add unit test in src/analysis/semantic.rs:
+          Test that tokens in injected Lua (line 7: "local xyz = 12345")
+          have delta_line accounting for the fenced code block position.
+          Run: cargo test semantic
+      - criterion: "Nested injections are supported (e.g., Lua in Markdown in Markdown)"
+        verification: |
+          Add test case for example.md lines 12-16 (nested markdown with lua block).
+          Run: cargo test semantic
+      - criterion: "Indented injections have correct column positions"
+        verification: |
+          Add test case for example.md lines 22-24 (indented lua block in list item).
+          The `local` keyword should have column 4 (indented by 4 spaces).
+          Run: cargo test semantic
       - criterion: "All existing semantic token tests continue to pass"
-        verification: "cargo test semantic"
+        verification: "cargo test semantic && cargo test test_lsp_semantic"
+      - criterion: "Code quality checks pass"
+        verification: "make check"
     dependencies: []
-    status: draft
-    notes: |
-      Current state: tests/test_lsp_semantic.lua line 64 shows markdown test expects empty tokens
-      with comment "to be updated when implementing injection-support".
-      This PBI will implement injection support for semantic tokens.
+    status: ready
+    technical_notes: |
+      ## Implementation Pattern
+
+      Follow the pattern established in `src/analysis/selection/range_builder.rs`:
+
+      1. Create new function `handle_semantic_tokens_full_with_injection` in `src/analysis/semantic.rs`
+      2. Use `InjectionContext` and `DocumentContext` from `src/analysis/selection/context.rs`
+      3. Use `injection::detect_injection_with_content` to find injection regions
+      4. For each injection region:
+         - Parse injected content using the coordinator and parser pool
+         - Get highlight query for injected language
+         - Generate tokens for injected content
+         - Adjust token positions to host document coordinates
+         - Merge with host document tokens
+
+      ## Key Files to Modify
+
+      1. `src/analysis/semantic.rs`:
+         - Add `handle_semantic_tokens_full_with_injection` function
+         - Add helper to merge token lists while maintaining sorted order
+         - Add helper to adjust token positions for injection offset
+
+      2. `src/lsp/lsp_impl.rs`:
+         - Modify `semantic_tokens_full` to use injection-aware handler
+         - Pass coordinator and parser_pool to the handler
+
+      3. `tests/test_lsp_semantic.lua`:
+         - Update line 64 to expect `{ type = "keyword" }` instead of `{}`
+
+      ## Position Calculation
+
+      For injected content at host document offset `content_start_byte`:
+      - Token positions from injected parse tree are relative to content start
+      - Add `content_start_byte` to each token's byte offset
+      - Use PositionMapper to convert to UTF-16 LSP positions
+      - Handle offset directives from injection queries (see `parse_offset_directive_for_pattern`)
+
+      ## Test File: tests/assets/example.md
+
+      ```markdown
+      ---
+      title: "awesome"
+      array: ["xxxx"]
+      ---
+
+      ```lua
+      local xyz = 12345     <- Line 7 (0-indexed: 6), col 0: `local` is keyword
+      ```
+
+      # nested injection
+
+      `````markdown
+      ```lua
+      local injection = true
+      ```
+      `````
+
+      # indented injection
+
+      * item
+
+          ```lua
+          local indent = true   <- `local` at col 4
+          ```
+      ```
+
+      ## Recursion Depth
+
+      Use MAX_INJECTION_DEPTH (10) from context.rs to prevent stack overflow.
+
+      ## Token Merging Strategy
+
+      1. Collect host tokens (excluding injection regions)
+      2. Collect injected tokens (with position adjustment)
+      3. Merge by position (line, then column)
+      4. Convert to relative delta format for LSP response
 ```
 
 ### Definition of Ready
@@ -167,15 +258,59 @@ definition_of_ready:
 
 ```yaml
 sprint:
-  number: 0
-  pbi_id: null
-  story: null
-  status: not_started
+  number: 1
+  pbi_id: PBI-001
+  story:
+    role: "software engineer using language servers"
+    capability: "read syntax highlighted code including injected languages"
+    benefit: "improved code readability when viewing files with embedded languages (e.g., Lua in Markdown)"
+  status: in_progress
 
-  subtasks: []
+  subtasks:
+    - id: ST-001
+      description: "Add unit test for basic injection semantic tokens (Lua in Markdown line 7)"
+      status: completed
+      acceptance_criterion: "Semantic tokens for injected content have correct UTF-16 positions relative to host document"
+
+    - id: ST-002
+      description: "Implement handle_semantic_tokens_full_with_injection function in src/analysis/semantic.rs"
+      status: completed
+      acceptance_criterion: "Semantic tokens include tokens from injected Lua code in Markdown fenced code blocks"
+
+    - id: ST-003
+      description: "Add helper to adjust token positions for injection offset"
+      status: completed
+      acceptance_criterion: "Semantic tokens for injected content have correct UTF-16 positions relative to host document"
+
+    - id: ST-004
+      description: "Add helper to merge token lists while maintaining sorted order"
+      status: completed
+      acceptance_criterion: "Semantic tokens include tokens from injected Lua code in Markdown fenced code blocks"
+
+    - id: ST-005
+      description: "Modify lsp_impl.rs to use injection-aware handler for both full and range requests"
+      status: completed
+      acceptance_criterion: "Semantic tokens include tokens from injected Lua code in Markdown fenced code blocks"
+
+    - id: ST-006
+      description: "Add unit test for nested injections (Lua in Markdown in Markdown)"
+      status: completed
+      acceptance_criterion: "Nested injections are supported (e.g., Lua in Markdown in Markdown)"
+
+    - id: ST-007
+      description: "Add unit test for indented injections (Lua in list item)"
+      status: completed
+      acceptance_criterion: "Indented injections have correct column positions"
+
+    - id: ST-008
+      description: "Update tests/test_lsp_semantic.lua line 64 to expect keyword token"
+      status: completed
+      acceptance_criterion: "Semantic tokens include tokens from injected Lua code in Markdown fenced code blocks"
 
   notes: |
-    No sprint started yet. Run Sprint Planning to begin.
+    Sprint 1 started via Sprint Planning.
+    Sprint Goal: Deliver semantic tokens for injected languages.
+    Following TDD approach: write failing test first, then implement minimum code to pass.
 ```
 
 ### Impediment Registry
