@@ -96,7 +96,7 @@ Sprint Cycle:
 sprint:
   number: 1
   pbi: PBI-001
-  status: done
+  status: accepted
   subtasks_completed: 8
   subtasks_total: 8
   impediments: 0
@@ -124,116 +124,8 @@ product_goal:
 ### Backlog Items
 
 ```yaml
-product_backlog:
-  - id: PBI-001
-    story:
-      role: "software engineer using language servers"
-      capability: "read syntax highlighted code including injected languages"
-      benefit: "improved code readability when viewing files with embedded languages (e.g., Lua in Markdown)"
-    acceptance_criteria:
-      - criterion: "Semantic tokens include tokens from injected Lua code in Markdown fenced code blocks"
-        verification: |
-          Update tests/test_lsp_semantic.lua line 64:
-          Change `{ 6, 1, {} }` to `{ 6, 1, { { type = "keyword" } } }`
-          (line 6 col 1 in example.md is `local` keyword in ```lua block)
-          Run: make test_nvim
-      - criterion: "Semantic tokens for injected content have correct UTF-16 positions relative to host document"
-        verification: |
-          Add unit test in src/analysis/semantic.rs:
-          Test that tokens in injected Lua (line 7: "local xyz = 12345")
-          have delta_line accounting for the fenced code block position.
-          Run: cargo test semantic
-      - criterion: "Nested injections are supported (e.g., Lua in Markdown in Markdown)"
-        verification: |
-          Add test case for example.md lines 12-16 (nested markdown with lua block).
-          Run: cargo test semantic
-      - criterion: "Indented injections have correct column positions"
-        verification: |
-          Add test case for example.md lines 22-24 (indented lua block in list item).
-          The `local` keyword should have column 4 (indented by 4 spaces).
-          Run: cargo test semantic
-      - criterion: "All existing semantic token tests continue to pass"
-        verification: "cargo test semantic && cargo test test_lsp_semantic"
-      - criterion: "Code quality checks pass"
-        verification: "make check"
-    dependencies: []
-    status: ready
-    technical_notes: |
-      ## Implementation Pattern
-
-      Follow the pattern established in `src/analysis/selection/range_builder.rs`:
-
-      1. Create new function `handle_semantic_tokens_full_with_injection` in `src/analysis/semantic.rs`
-      2. Use `InjectionContext` and `DocumentContext` from `src/analysis/selection/context.rs`
-      3. Use `injection::detect_injection_with_content` to find injection regions
-      4. For each injection region:
-         - Parse injected content using the coordinator and parser pool
-         - Get highlight query for injected language
-         - Generate tokens for injected content
-         - Adjust token positions to host document coordinates
-         - Merge with host document tokens
-
-      ## Key Files to Modify
-
-      1. `src/analysis/semantic.rs`:
-         - Add `handle_semantic_tokens_full_with_injection` function
-         - Add helper to merge token lists while maintaining sorted order
-         - Add helper to adjust token positions for injection offset
-
-      2. `src/lsp/lsp_impl.rs`:
-         - Modify `semantic_tokens_full` to use injection-aware handler
-         - Pass coordinator and parser_pool to the handler
-
-      3. `tests/test_lsp_semantic.lua`:
-         - Update line 64 to expect `{ type = "keyword" }` instead of `{}`
-
-      ## Position Calculation
-
-      For injected content at host document offset `content_start_byte`:
-      - Token positions from injected parse tree are relative to content start
-      - Add `content_start_byte` to each token's byte offset
-      - Use PositionMapper to convert to UTF-16 LSP positions
-      - Handle offset directives from injection queries (see `parse_offset_directive_for_pattern`)
-
-      ## Test File: tests/assets/example.md
-
-      ```markdown
-      ---
-      title: "awesome"
-      array: ["xxxx"]
-      ---
-
-      ```lua
-      local xyz = 12345     <- Line 7 (0-indexed: 6), col 0: `local` is keyword
-      ```
-
-      # nested injection
-
-      `````markdown
-      ```lua
-      local injection = true
-      ```
-      `````
-
-      # indented injection
-
-      * item
-
-          ```lua
-          local indent = true   <- `local` at col 4
-          ```
-      ```
-
-      ## Recursion Depth
-
-      Use MAX_INJECTION_DEPTH (10) from context.rs to prevent stack overflow.
-
-      ## Token Merging Strategy
-
-      1. Collect host tokens (excluding injection regions)
-      2. Collect injected tokens (with position adjustment)
-      3. Merge by position (line, then column)
-      4. Convert to relative delta format for LSP response
+product_backlog: []
+  # PBI-001 has been accepted and moved to Completed Sprints
 ```
 
 ### Definition of Ready
@@ -264,7 +156,7 @@ sprint:
     role: "software engineer using language servers"
     capability: "read syntax highlighted code including injected languages"
     benefit: "improved code readability when viewing files with embedded languages (e.g., Lua in Markdown)"
-  status: in_progress
+  status: accepted
 
   subtasks:
     - id: ST-001
@@ -345,7 +237,28 @@ definition_of_done:
 ## 4. Completed Sprints
 
 ```yaml
-completed: []
+completed:
+  - sprint: 1
+    pbi: PBI-001
+    story: "As a software engineer using language servers, I want to read syntax highlighted code including injected languages, so that I have improved code readability when viewing files with embedded languages"
+    outcome: "Delivered semantic tokens for injected languages with recursive depth support"
+    acceptance:
+      status: accepted
+      criteria_verified:
+        - "Semantic tokens include tokens from injected Lua code in Markdown fenced code blocks"
+        - "Semantic tokens for injected content have correct UTF-16 positions relative to host document"
+        - "Nested injections are supported (e.g., Lua in Markdown in Markdown)"
+        - "Indented injections have correct column positions"
+        - "All existing semantic token tests continue to pass"
+        - "Code quality checks pass"
+      dod_verified:
+        - "make test: PASSED"
+        - "make check: PASSED"
+        - "make test_nvim: PASSED"
+    subtasks_completed: 8
+    unit_tests: 138
+    e2e_tests: 20
+    impediments: 0
 ```
 
 ---
@@ -353,7 +266,49 @@ completed: []
 ## 5. Retrospective Log
 
 ```yaml
-retrospectives: []
+retrospectives:
+  - sprint: 1
+    pbi: PBI-001
+
+    what_went_well:
+      - item: "TDD Approach Worked"
+        detail: "Writing failing tests first led to clean, focused implementations"
+      - item: "Existing Pattern Reuse"
+        detail: "Following the established selection/range_builder.rs pattern for injection handling accelerated development"
+      - item: "Clear Acceptance Criteria"
+        detail: "The well-defined verification commands made it easy to know when we were done"
+      - item: "Modular Design"
+        detail: "The separation of concerns (position adjustment, token merging, recursive collection) made the code testable and maintainable"
+      - item: "Zero Impediments"
+        detail: "Sprint completed without any blockers"
+
+    what_could_improve:
+      - item: "Technical Notes Quality"
+        detail: "The detailed technical notes in PBI-001 were excellent - future PBIs should aim for the same level of detail"
+      - item: "Subtask Granularity"
+        detail: "Some subtasks could have been combined (e.g., ST-003 and ST-004 were closely related)"
+      - item: "Test File Organization"
+        detail: "The test file tests/assets/example.md serves multiple test purposes; consider whether dedicated test fixtures would be clearer"
+
+    action_items:
+      - id: AI-001
+        action: "Ensure technical notes include implementation pattern and key files to modify"
+        owner: "@scrum-team-product-owner"
+        status: pending
+      - id: AI-002
+        action: "Review subtask breakdown before sprint start to combine closely related items"
+        owner: "@scrum-team-developer"
+        status: pending
+      - id: AI-003
+        action: "Consider dedicated test fixtures for complex scenarios"
+        owner: "@scrum-team-developer"
+        status: pending
+
+    metrics:
+      unit_tests_added: 3
+      subtasks_completed: 8
+      impediments_encountered: 0
+      dod_criteria_met: 3
 ```
 
 ---
