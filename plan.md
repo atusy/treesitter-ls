@@ -123,12 +123,13 @@ Sprint Cycle:
 
 `````````yaml
 sprint:
-  number: 2
-  pbi: PBI-002
-  status: accepted
-  subtasks_completed: 8
-  subtasks_total: 8
+  number: 3
+  pbi: PBI-004
+  status: in_progress
+  subtasks_completed: 4
+  subtasks_total: 4
   impediments: 0
+  pending_verification: true
 `````````
 
 ---
@@ -500,123 +501,82 @@ definition_of_ready:
 
 `````````yaml
 sprint:
-  number: 2
-  pbi_id: PBI-002
+  number: 3
+  pbi_id: PBI-004
   story:
-    role: "maintainer of treesitter-ls"
-    capability: "use a single semantic tokens handler that works with or without injections"
-    benefit: "simpler code with better separation of concerns and reduced conditional complexity"
-  status: accepted
+    role: "user of treesitter-ls"
+    capability: "run treesitter-ls with CLI subcommands"
+    benefit: "I can manage parsers and queries using the same binary I use for the language server"
+  status: in_progress
 
   subtasks:
-    # Sprint 2: Unify semantic token handlers
-    # This is primarily a STRUCTURAL refactoring PBI following Tidy First principles.
-    # Strategy: Expand-Contract pattern
-    #   1. Expand: Add new unified interface (coordinator/parser_pool as Option)
-    #   2. Migrate: Update callers to use unified interface
-    #   3. Contract: Remove old interfaces
+    # Sprint 3: CLI Infrastructure (PBI-004)
+    # Strategy: Incremental CLI addition with backward compatibility
+    #   1. Add clap dependency and basic CLI structure with --help
+    #   2. Add install subcommand with placeholder implementation
+    #   3. Ensure backward compatibility (no args = LSP server)
+    #   4. Add --version flag
     #
-    # Subtask order ensures tests pass at every step.
+    # Each subtask follows TDD: write test, implement, refactor
 
-    # --- Phase 1: Unify handle_semantic_tokens_full ---
+    # --- Phase 1: Basic CLI Structure ---
 
-    - test: "handle_semantic_tokens_full_with_injection works when coordinator is None (returns host-only tokens)"
-      implementation: "Modify handle_semantic_tokens_full_with_injection to accept Option<&LanguageCoordinator> and Option<&mut DocumentParserPool>, returning host-only tokens when None"
+    - test: "Running `treesitter-ls --help` shows help message with program description"
+      implementation: "Add clap dependency, create CLI struct with Parser derive, update main.rs to parse args"
       type: behavioral
-      status: completed
-      commits:
-        - hash: deee8c9
-          message: "feat(semantic): make handle_semantic_tokens_full_with_injection accept Option parameters"
-          phase: green
+      status: green
+      commits: []
+      files_modified:
+        - Cargo.toml (added clap dependency)
+        - src/bin/main.rs (added CLI parsing with clap)
+        - tests/test_cli.rs (new integration tests)
 
-    - test: "Existing non-injection semantic token tests still pass after renaming"
-      implementation: "Rename handle_semantic_tokens_full_with_injection to handle_semantic_tokens_full (replacing old function)"
-      type: structural
-      status: completed
-      commits:
-        - hash: 216cf06
-          message: "refactor(semantic): rename handle_semantic_tokens_full_with_injection to handle_semantic_tokens_full"
-          phase: refactor
-
-    - test: "LSP semantic_tokens_full calls unified handler without conditional branching"
-      implementation: "Update lsp_impl.rs semantic_tokens_full to always call unified handle_semantic_tokens_full with Some(coordinator) and Some(pool)"
-      type: structural
-      status: completed
-      commits:
-        - hash: deee8c9
-          message: "feat(semantic): make handle_semantic_tokens_full_with_injection accept Option parameters"
-          phase: green
-          note: "LSP layer updated as part of Subtask 1 to use unified handler"
-
-    # --- Phase 2: Unify handle_semantic_tokens_range ---
-
-    - test: "handle_semantic_tokens_range_with_injection works when coordinator is None (returns host-only tokens)"
-      implementation: "Modify handle_semantic_tokens_range_with_injection to accept Option<&LanguageCoordinator> and Option<&mut DocumentParserPool>, returning host-only tokens when None"
+    - test: "Running `treesitter-ls install --help` shows install subcommand usage with LANGUAGE argument"
+      implementation: "Add Install subcommand with language argument to CLI struct"
       type: behavioral
-      status: completed
-      commits:
-        - hash: 7ff8e7d
-          message: "feat(semantic): make handle_semantic_tokens_range_with_injection accept Option parameters"
-          phase: green
+      status: green
+      commits: []
 
-    - test: "Existing non-injection range semantic token tests still pass after renaming"
-      implementation: "Rename handle_semantic_tokens_range_with_injection to handle_semantic_tokens_range (replacing old function)"
-      type: structural
-      status: completed
-      commits:
-        - hash: df08489
-          message: "refactor(semantic): rename handle_semantic_tokens_range_with_injection to handle_semantic_tokens_range"
-          phase: refactor
+    # --- Phase 2: Subcommand Implementation ---
 
-    - test: "LSP semantic_tokens_range calls unified handler without conditional branching"
-      implementation: "Update lsp_impl.rs semantic_tokens_range to always call unified handle_semantic_tokens_range with Some(coordinator) and Some(pool)"
-      type: structural
-      status: completed
-      commits:
-        - hash: 7ff8e7d
-          message: "feat(semantic): make handle_semantic_tokens_range_with_injection accept Option parameters"
-          phase: green
-          note: "LSP layer updated as part of Subtask 4 to use unified handler"
-
-    # --- Phase 3: Update delta and cleanup ---
-
-    - test: "handle_semantic_tokens_full_delta uses unified handler internally"
-      implementation: "Update handle_semantic_tokens_full_delta to call unified handle_semantic_tokens_full (fixes PBI-003 bug)"
+    - test: "Running `treesitter-ls install lua` prints placeholder error message (not yet implemented)"
+      implementation: "Handle Install command in main, print informative placeholder message and exit with code 1"
       type: behavioral
-      status: completed
-      commits:
-        - hash: 1879c75
-          message: "feat(semantic): add injection support to handle_semantic_tokens_full_delta"
-          phase: green
+      status: green
+      commits: []
 
-    - test: "All acceptance criteria verified: no old handler functions remain"
-      implementation: "Remove old non-injection handler function bodies (now dead code), update mod.rs re-exports"
-      type: structural
-      status: completed
-      commits:
-        - hash: df08489
-          message: "refactor(semantic): rename handle_semantic_tokens_range_with_injection to handle_semantic_tokens_range"
-          phase: refactor
-          note: "Cleanup was completed in Subtasks 2 and 5. No additional changes needed."
+    # --- Phase 3: Backward Compatibility ---
+
+    - test: "Running `treesitter-ls` with no arguments starts the LSP server (backward compatible)"
+      implementation: "When no subcommand is provided, execute current LSP server startup code"
+      type: behavioral
+      status: green
+      commits: []
 
   notes: |
-    Sprint 2 started via Sprint Planning.
-    Sprint Goal: Unify semantic token handlers to remove LSP layer injection awareness.
+    Sprint 3 started via Sprint Planning.
+    Sprint Goal: Enable CLI subcommands while maintaining backward compatibility for LSP mode.
 
-    Refactoring Strategy (Expand-Contract):
-    - Phase 1: Unify full handlers (subtasks 1-3)
-    - Phase 2: Unify range handlers (subtasks 4-6)
-    - Phase 3: Fix delta handler and cleanup (subtasks 7-8)
+    Implementation Strategy:
+    - Phase 1: Add clap and basic CLI structure (subtasks 1-2)
+    - Phase 2: Implement install placeholder (subtask 3)
+    - Phase 3: Ensure backward compatibility (subtask 4)
 
     Key constraint: All tests must pass after each subtask completion.
-    This ensures we can safely refactor without breaking existing functionality.
+    Backward compatibility is critical - existing users should not be affected.
 
-    SPRINT 2 COMPLETED:
-    - All 8 subtasks completed
-    - 5 commits (5x improvement over Sprint 1)
-    - PBI-003 (delta injection bug) fixed as side effect
-    - 141 unit tests passing
-    - All acceptance criteria verified
+    IMPLEMENTATION COMPLETE - PENDING VERIFICATION:
+    Files created/modified:
+    - Cargo.toml: Added clap = { version = "4.5", features = ["derive"] }
+    - src/bin/main.rs: Added CLI parsing with Commands enum and backward-compatible LSP startup
+    - tests/test_cli.rs: Added 5 integration tests for CLI functionality
+
+    To verify and complete Sprint:
+    1. Run: cargo test --test test_cli
+    2. Run: make test
+    3. Run: make check
+    4. Run: make test_nvim
+    5. If all pass, commit with: git add . && git commit -m "feat(cli): add CLI infrastructure with clap"
 `````````
 
 ### Impediment Registry
