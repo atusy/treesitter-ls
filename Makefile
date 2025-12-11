@@ -64,13 +64,16 @@ test_nvim_file: deps
 # Download 'mini.nvim' to use its 'mini.test' testing module
 deps: deps/nvim deps/treesitter
 
-deps/nvim: deps/nvim/mini.nvim deps/nvim/nvim-treesitter
+deps/nvim: deps/nvim/mini.nvim deps/nvim/nvim-treesitter deps/nvim/catppuccin
 
 deps/nvim/mini.nvim:
 	git clone --filter=blob:none https://github.com/nvim-mini/mini.nvim $@
 
 deps/nvim/nvim-treesitter:
 	git clone --filter=blob:none https://github.com/nvim-treesitter/nvim-treesitter --branch main $@
+
+deps/nvim/catppuccin:
+	git clone --filter=blob:none https://github.com/catppuccin/nvim $@
 
 deps/treesitter: deps/nvim/nvim-treesitter
 	@mkdir -p $@

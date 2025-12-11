@@ -54,4 +54,8 @@ if #vim.api.nvim_list_uis() == 0 then
 	vim.cmd("set rtp+=deps/treesitter")
 
 	require("mini.test").setup()
+else
+	vim.cmd("set rtp+=deps/nvim/catppuccin")
+	require("catppuccin").setup()
+	vim.cmd("colorscheme catppuccin")
 end
