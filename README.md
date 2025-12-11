@@ -9,19 +9,10 @@ A fast and flexible Language Server Protocol (LSP) server that leverages Tree-si
 ### Core Capabilities
 - **🚀 Dynamic Parser Loading** - Load Tree-sitter parsers at runtime from shared libraries
 - **🎨 Semantic Highlighting** - Full, range, and delta semantic tokens with customizable mappings
+- **🌐 Language Injection** - Syntax highlighting for embedded languages (e.g., Lua in Markdown code blocks)
 - **🔍 Go to Definition** - Language-agnostic navigation using Tree-sitter locals queries
-- **📝 Smart Selection** - Expand selection based on AST structure
+- **📝 Smart Selection** - Expand selection based on AST structure with injection awareness
 - **🔧 Code Actions** - Refactoring support (e.g., parameter reordering)
-
-### Performance
-- Async runtime powered by `tokio` and `tower-lsp`
-- Parser pooling for efficient memory usage via per-language pools
-- Incremental parsing support
-
-### Reliability
-- **Robust error handling** - Graceful recovery from poisoned locks
-- **Zero panics** - All operations use proper error propagation
-- **Comprehensive logging** - Detailed diagnostics with the `log` crate
 
 ## Installation
 
@@ -114,17 +105,23 @@ The server is configured via LSP initialization options:
         { "path": "/path/to/highlights.scm" },
         { "query": "(identifier) @variable" }
       ],
-      "locals": [                               // Optional: for go-to-definition
+      "locals": [                              // Optional: for go-to-definition
         { "path": "/path/to/locals.scm" }
+      ]
+    },
+    "markdown": {
+      "filetypes": ["md", "markdown"],
+      "injections": [                          // Optional: for embedded language support
+        { "path": "/path/to/injections.scm" }
       ]
     }
   },
   "captureMappings": {                         // Optional: customize token types
-    "_": {                                      // "_" applies to all languages
+    "_": {                                     // "_" applies to all languages
       "constant": "variable.readonly",
       "keyword.return": "keyword"
     },
-    "rust": {                                   // Language-specific mappings
+    "rust": {                                  // Language-specific mappings
       "lifetime": "label"
     }
   }
@@ -140,6 +137,7 @@ The server is configured via LSP initialization options:
 | `languages.<lang>.filetypes` | File extensions to associate | Required |
 | `languages.<lang>.highlight` | Highlighting query sources | Auto-detect from searchPaths |
 | `languages.<lang>.locals` | Locals query sources for navigation | Auto-detect from searchPaths |
+| `languages.<lang>.injections` | Injection query sources for embedded languages | Auto-detect from searchPaths |
 | `captureMappings` | Map Tree-sitter captures to LSP token types | Built-in mappings |
 
 ## Query Files
@@ -160,25 +158,51 @@ Enables go-to-definition:
 (call_expression function: (identifier) @local.reference.function)
 ```
 
+### Injections Query (`injections.scm`)
+Defines embedded language regions for syntax highlighting:
+```scheme
+; Markdown fenced code blocks with language identifier
+(fenced_code_block
+  (info_string (language) @injection.language)
+  (code_fence_content) @injection.content)
+
+; HTML script tags
+(script_element
+  (raw_text) @injection.content
+  (#set! injection.language "javascript"))
+```
+
+When an injection query matches, treesitter-ls will:
+1. Parse the injected content with the appropriate language parser
+2. Generate semantic tokens for the embedded code
+3. Merge tokens with the host document (with proper position adjustment)
+
+This enables syntax highlighting for code blocks in Markdown, embedded SQL in strings, and similar scenarios.
+
 ### Query Locations
 Queries are searched in this order:
 1. Explicit paths in configuration
 2. `<searchPath>/queries/<language>/highlights.scm`
 3. `<searchPath>/queries/<language>/locals.scm`
+4. `<searchPath>/queries/<language>/injections.scm`
 
 Example directory structure:
 ```
 /path/to/resources/
 ├── parser/
 │   ├── rust.so
-│   └── lua.so
+│   ├── lua.so
+│   └── markdown.so
 └── queries/
     ├── rust/
     │   ├── highlights.scm
     │   └── locals.scm
-    └── lua/
+    ├── lua/
+    │   ├── highlights.scm
+    │   └── locals.scm
+    └── markdown/
         ├── highlights.scm
-        └── locals.scm
+        └── injections.scm    # Enables Lua/Python/etc. highlighting in code blocks
 ```
 
 ## Supported LSP Features
