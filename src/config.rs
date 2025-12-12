@@ -492,6 +492,31 @@ mod tests {
     }
 
     #[test]
+    fn test_search_paths_can_include_default() {
+        // Users can extend default paths by including them explicitly
+        let default_paths = default_search_paths();
+        let mut paths = vec!["/custom/path".to_string()];
+        paths.extend(default_paths.clone());
+
+        let settings = TreeSitterSettings {
+            search_paths: Some(paths.clone()),
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+        };
+
+        let workspace: WorkspaceSettings = WorkspaceSettings::from(&settings);
+
+        // Should use the combined paths
+        assert_eq!(workspace.search_paths.len(), 3); // 1 custom + 2 default
+        assert_eq!(workspace.search_paths[0], "/custom/path");
+        // Default paths follow
+        for (i, default_path) in default_paths.iter().enumerate() {
+            assert_eq!(&workspace.search_paths[i + 1], default_path);
+        }
+    }
+
+    #[test]
     fn test_workspace_settings_exposes_auto_install() {
         // Test that auto_install is exposed in WorkspaceSettings (default false)
         let settings = TreeSitterSettings {
