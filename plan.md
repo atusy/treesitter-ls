@@ -200,7 +200,7 @@ product_backlog:
   # ============================================================================
 
   - id: PBI-017
-    status: ready
+    status: done
     story:
       role: "user of treesitter-ls"
       capability: "use treesitter-ls without configuring searchPaths"
