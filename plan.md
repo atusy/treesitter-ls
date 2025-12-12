@@ -126,7 +126,7 @@ sprint:
   number: 8
   pbi: PBI-013
   status: in_progress
-  subtasks_completed: 0
+  subtasks_completed: 2
   subtasks_total: 4
   impediments: 0
 `````````
@@ -916,7 +916,7 @@ sprint:
     # - reload_language_after_install() for re-parsing after install
 
     # Subtask 1: Create helper function to check auto-install for injected languages
-    - test: "check_injected_languages_auto_install extracts unique languages from injection regions"
+    - test: "get_injected_languages extracts unique languages from injection regions"
       implementation: |
         Create a helper function that:
         1. Gets the injection query for the host language
@@ -925,8 +925,11 @@ sprint:
         4. Extracts unique language names from the regions
         5. Returns the set of languages that need checking
       type: behavioral
-      status: pending
-      commits: []
+      status: completed
+      commits:
+        - hash: "previous"
+          phase: green
+          message: "feat(lsp): add get_injected_languages helper"
       files_to_modify:
         - src/lsp/lsp_impl.rs
 
@@ -939,8 +942,11 @@ sprint:
            - Call maybe_auto_install_language() (InstallingLanguages prevents duplicates)
         3. Skip if parser already loaded or already being installed
       type: behavioral
-      status: pending
-      commits: []
+      status: completed
+      commits:
+        - hash: "c37544f"
+          phase: green
+          message: "feat(lsp): add check_injected_languages_auto_install for missing parsers"
       files_to_modify:
         - src/lsp/lsp_impl.rs
 
