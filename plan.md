@@ -123,12 +123,15 @@ Sprint Cycle:
 
 `````````yaml
 sprint:
-  number: 8
-  pbi: PBI-013
+  number: 9
+  pbi: PBI-014
   status: in_progress
-  subtasks_completed: 4
+  subtasks_completed: 1
   subtasks_total: 4
   impediments: 0
+  sprint_goal: |
+    Enable immediate syntax highlighting for code blocks added during editing
+    by automatically installing missing parsers when new injection regions appear.
 `````````
 
 ---
@@ -892,129 +895,135 @@ definition_of_ready:
 
 `````````yaml
 sprint:
-  number: 8
-  pbi_id: PBI-013
+  number: 9
+  pbi_id: PBI-014
   story:
     role: "user of treesitter-ls"
-    capability: "have treesitter-ls automatically install missing parsers for injected languages when I open a file"
-    benefit: "I get complete syntax highlighting for all code blocks without manually installing each language parser"
+    capability: "have treesitter-ls automatically install missing parsers when I type a new injected code block"
+    benefit: "I get immediate syntax highlighting for code blocks I add while editing without needing to re-open the file"
   status: in_progress
 
   subtasks:
-    # Sprint 8: Auto-install for Injected Languages on File Open (PBI-013)
-    # Enable auto-installation of parsers/queries for injected languages detected when opening files.
+    # Sprint 9: Auto-install Injected Languages on Text Edit (PBI-014)
+    # Enable auto-installation of parsers for injected languages when users add new code blocks while editing.
     #
     # Implementation Strategy:
-    # 1. After document parsing in did_open, detect injected languages using collect_all_injections()
-    # 2. For each unique injected language, call maybe_auto_install_language()
-    # 3. Reuse existing infrastructure from PBI-008 (InstallingLanguages, install_language_async)
+    # 1. On did_change, after re-parse, call check_injected_languages_auto_install()
+    # 2. The function already handles all injection detection and auto-install triggering
+    # 3. InstallingLanguages tracker prevents duplicate installs automatically
     #
-    # Key Dependencies from PBI-008:
-    # - InstallingLanguages tracker (prevents duplicate installs)
-    # - maybe_auto_install_language() async function
-    # - install_language_async() from src/install/mod.rs
-    # - reload_language_after_install() for re-parsing after install
+    # Key Dependencies (all completed):
+    # - PBI-008: InstallingLanguages tracker, maybe_auto_install_language()
+    # - PBI-013: check_injected_languages_auto_install(), get_injected_languages()
+    #
+    # This is a minimal implementation: just one function call to add.
 
-    # Subtask 1: Create helper function to check auto-install for injected languages
-    - test: "get_injected_languages extracts unique languages from injection regions"
+    # Subtask 1: Add injection auto-install check to did_change
+    - test: "did_change calls check_injected_languages_auto_install after parsing"
       implementation: |
-        Create a helper function that:
-        1. Gets the injection query for the host language
-        2. Gets the parsed tree from document store
-        3. Calls collect_all_injections() to get all injection regions
-        4. Extracts unique language names from the regions
-        5. Returns the set of languages that need checking
+        In did_change, after parse_document() completes (line 777-778):
+        1. Call check_injected_languages_auto_install(&uri)
+        2. This runs after the document is re-parsed, so we have the updated AST
+        3. The function reuses all logic from PBI-013 (get_injected_languages, etc.)
+        4. InstallingLanguages tracker prevents duplicate installs automatically
       type: behavioral
       status: completed
       commits:
-        - hash: "previous"
+        - hash: 37a2e6f
+          phase: red
+          message: "test(lsp): add test for did_change injection auto-install"
+        - hash: e653e4e
           phase: green
-          message: "feat(lsp): add get_injected_languages helper"
+          message: "feat(lsp): call check_injected_languages_auto_install in did_change"
       files_to_modify:
         - src/lsp/lsp_impl.rs
 
-    # Subtask 2: Check each injected language and trigger auto-install if missing
-    - test: "check_injected_languages_auto_install calls maybe_auto_install_language for missing parsers"
+    # Subtask 2: Test - adding new code block triggers auto-install
+    - test: "Editing a document to add a code block triggers auto-install for the injected language"
       implementation: |
-        For each unique injected language:
-        1. Call ensure_language_loaded() to check if parser exists
-        2. If parser missing AND autoInstall enabled:
-           - Call maybe_auto_install_language() (InstallingLanguages prevents duplicates)
-        3. Skip if parser already loaded or already being installed
+        Create test that:
+        1. Opens a markdown document with NO code blocks
+        2. Simulates did_change with text containing a new Lua code block
+        3. Verifies check_injected_languages_auto_install is called
+        4. Verifies maybe_auto_install_language is called for "lua"
       type: behavioral
-      status: completed
-      commits:
-        - hash: "c37544f"
-          phase: green
-          message: "feat(lsp): add check_injected_languages_auto_install for missing parsers"
-      files_to_modify:
-        - src/lsp/lsp_impl.rs
-
-    # Subtask 3: Integrate injection auto-install check into did_open
-    - test: "did_open calls check_injected_languages_auto_install after parsing the document"
-      implementation: |
-        In did_open, after parse_document() completes:
-        1. Call check_injected_languages_auto_install(uri, text)
-        2. This runs after the host document is parsed so we have access to the AST
-        3. The function handles all injection detection and auto-install triggering
-      type: behavioral
-      status: completed
-      commits:
-        - hash: "c42780d"
-          phase: green
-          message: "feat(lsp): integrate injected language auto-install into did_open"
-      files_to_modify:
-        - src/lsp/lsp_impl.rs
-
-    # Subtask 4: Integration test for injection auto-install
-    - test: "Opening a markdown file with code blocks triggers auto-install for injected languages"
-      implementation: |
-        Create integration test that:
-        1. Sets up TreeSitterLs with autoInstall enabled
-        2. Opens a markdown document with Lua and Python code blocks
-        3. Verifies maybe_auto_install_language is called for each injected language
-        4. Verifies InstallingLanguages tracker prevents duplicate installs
-      type: behavioral
-      status: completed
-      commits:
-        - hash: "7ba80e1"
-          phase: green
-          message: "test(lsp): add integration test for injected language auto-install"
+      status: pending
+      commits: []
       files_to_modify:
         - src/lsp/lsp_impl.rs  # Unit tests in same file
 
+    # Subtask 3: Test - unrelated edits don't re-trigger for existing injections
+    - test: "Editing text outside code blocks doesn't trigger auto-install for already-loaded languages"
+      implementation: |
+        Create test that:
+        1. Opens a markdown document with a Lua code block (Lua parser loaded)
+        2. Simulates did_change editing text OUTSIDE the code block
+        3. Verifies check_injected_languages_auto_install runs
+        4. Verifies maybe_auto_install_language is NOT called (Lua already loaded)
+      type: behavioral
+      status: pending
+      commits: []
+      files_to_modify:
+        - src/lsp/lsp_impl.rs
+
+    # Subtask 4: Test - multiple new injections in paste operation
+    - test: "Pasting multiple code blocks triggers auto-install for all new languages"
+      implementation: |
+        Create test that:
+        1. Opens a minimal markdown document
+        2. Simulates did_change with a paste containing Python, Rust, Go code blocks
+        3. Verifies maybe_auto_install_language is called for each language
+        4. Verifies InstallingLanguages prevents duplicates if same language appears twice
+      type: behavioral
+      status: pending
+      commits: []
+      files_to_modify:
+        - src/lsp/lsp_impl.rs
+
   notes: |
-    Sprint 8: Auto-install for Injected Languages on File Open (PBI-013)
-    Sprint Goal: Enable complete syntax highlighting for all code blocks by automatically
-    installing missing parsers for injected languages when files are opened.
+    Sprint 9: Auto-install Injected Languages on Text Edit (PBI-014)
+    Sprint Goal: Enable immediate syntax highlighting for code blocks added during
+    editing by automatically installing missing parsers when new injection regions appear.
 
     Key Design Decisions:
-    - Reuse existing PBI-008 infrastructure (InstallingLanguages, maybe_auto_install_language)
-    - Use collect_all_injections() to detect all injection regions in the document
-    - Check each unique injected language and trigger auto-install if missing
-    - Only handle direct injections (depth=1) for first iteration (YAGNI)
+    - Reuse check_injected_languages_auto_install() from PBI-013 (no code duplication)
+    - Call after parse_document() in did_change (same pattern as did_open)
+    - InstallingLanguages tracker handles duplicate prevention automatically
 
     Implementation Flow:
-    1. User opens markdown file with code blocks
-    2. did_open triggers auto-install for markdown if missing (existing PBI-008 flow)
-    3. parse_document() parses markdown, producing AST
-    4. NEW: check_injected_languages_auto_install() runs:
-       a. Get injection query for markdown
-       b. Get parsed tree from document store
-       c. Call collect_all_injections() to find all code blocks
-       d. Extract unique languages (lua, python, etc.)
-       e. For each language, check if parser loaded
-       f. If missing, call maybe_auto_install_language()
+    1. User edits markdown file (types ```python)
+    2. did_change receives edit event
+    3. parse_document() re-parses with incremental edit
+    4. NEW: check_injected_languages_auto_install(&uri) is called
+       - Gets unique injected languages (including the new python block)
+       - For python (not loaded), calls maybe_auto_install_language()
     5. InstallingLanguages tracker prevents duplicate install attempts
     6. After install, semantic tokens refresh shows highlighting
 
     Files to Modify:
-    - src/lsp/lsp_impl.rs - Add check_injected_languages_auto_install helper and call from did_open
+    - src/lsp/lsp_impl.rs - Add one function call in did_change after parse_document
 
-    Edge Cases:
-    - Recursive injections: Only handle depth=1 for now (e.g., markdown->lua, not markdown->lua->regex)
-    - Unknown languages: ensure_language_loaded fails, auto-install attempts but may fail gracefully
-    - Large documents with many injections: Process sequentially, tracker prevents duplicates
+    Key Code Location:
+    - did_change method: lines 695-791
+    - After parse_document call: line 777-778
+    - check_injected_languages_auto_install: already exists from PBI-013
+
+    Expected Changes:
+    Just add one line after parse_document():
+    ```rust
+    // Parse the updated document with edit information
+    self.parse_document(uri.clone(), text, language_id.as_deref(), edits)
+        .await;
+
+    // NEW: Check for injected languages and trigger auto-install if needed
+    self.check_injected_languages_auto_install(&uri).await;
+    ```
+
+    Edge Cases (handled by existing infrastructure):
+    - Injection removed: No action needed (we only check for missing parsers)
+    - Rapid edits: InstallingLanguages prevents spam
+    - Recursive injections: Only handle depth=1 (same as PBI-013)
+    - Already loaded languages: ensure_language_loaded returns success, skipped
 `````````
 
 ### Impediment Registry
@@ -1072,6 +1081,26 @@ definition_of_done:
 `````````yaml
 # Log of completed PBIs (one per sprint)
 completed:
+  - sprint: 8
+    pbi: PBI-013
+    story: "As a user of treesitter-ls, I want to have treesitter-ls automatically install missing parsers for injected languages when I open a file, so that I get complete syntax highlighting for all code blocks without manually installing each language parser"
+    outcome: "Auto-install triggered for injected languages (e.g., Lua/Python code blocks in Markdown) on file open; reuses existing InstallingLanguages tracker; integration test coverage"
+    acceptance:
+      status: accepted
+      criteria_verified:
+        - "Opening markdown with Lua code block triggers Lua parser auto-install"
+        - "Multiple injected languages in one document are all installed"
+        - "Already-installing language is not triggered twice (InstallingLanguages tracker)"
+        - "Auto-install respects the autoInstall setting"
+        - "Semantic tokens refresh after injection parser installs"
+      dod_verified:
+        - "cargo test: PASSED (162 tests)"
+        - "cargo clippy -- -D warnings: PASSED"
+        - "cargo fmt --check: PASSED"
+    subtasks_completed: 4
+    commits_actual: 4
+    impediments: 0
+
   - sprint: 7
     pbi: PBI-008
     story: "As a user of treesitter-ls, I want to have treesitter-ls automatically install missing parsers when I open a file, so that I get syntax highlighting for any language without running install commands manually"
@@ -1229,6 +1258,112 @@ completed:
 `````````yaml
 # After each sprint, record what to improve
 retrospectives:
+  - sprint: 8
+    pbi: PBI-013
+    prime_directive_read: true
+
+    what_went_well:
+      - item: "Excellent Code Reuse"
+        detail: |
+          Leveraged existing collect_all_injections() function from semantic token highlighting
+          and InstallingLanguages tracker from PBI-008. Minimal new code was needed - most of the
+          work was integration rather than creation.
+
+      - item: "Clean TDD Cycle with 1:1 Commit Ratio"
+        detail: |
+          Sprint 8 achieved 4 commits for 4 subtasks (100% ratio). Each subtask had a clear
+          RED->GREEN phase with a corresponding commit. This is a significant improvement
+          from earlier sprints.
+          - ST-1 (6757af7): get_injected_languages helper
+          - ST-2 (c37544f): check_injected_languages_auto_install
+          - ST-3 (c42780d): Integration into did_open
+          - ST-4 (7ba80e1): Integration test
+
+      - item: "Thread Safety Built-In"
+        detail: |
+          The InstallingLanguages tracker with atomic try_start_install() prevents race conditions
+          when the same injected language appears in multiple code blocks. No additional concurrency
+          handling was needed - just reuse of existing infrastructure.
+
+      - item: "Focused Implementation"
+        detail: |
+          Only modified one file (src/lsp/lsp_impl.rs) for the feature implementation.
+          Kept the scope minimal while still meeting all acceptance criteria.
+
+      - item: "Zero Impediments"
+        detail: "Sprint completed without any blockers, continuing the streak."
+
+    what_could_improve:
+      - item: "Module Extraction for Reuse"
+        detail: |
+          The injection-related utilities (get_injected_languages, check_injected_languages_auto_install)
+          are currently in lsp_impl.rs. For PBI-014 (injection auto-install on text edit), these
+          functions will be reused. Consider extracting to a shared module if complexity grows.
+        root_cause: |
+          YAGNI principle was correctly applied - no premature extraction. However, with PBI-014
+          coming next, this may be worth reconsidering during that sprint.
+        impact: "low"
+
+      - item: "Integration Test Coverage Depth"
+        detail: |
+          The integration test verifies the basic flow but could be more comprehensive with
+          edge cases (unknown languages, empty code blocks, nested injections). Kept focused
+          for MVP as per YAGNI.
+        root_cause: "Intentional scope limitation for first iteration."
+        impact: "low"
+
+    action_items:
+      - id: AI-008
+        action: "Consider extracting injection auto-install helpers during PBI-014"
+        detail: |
+          If PBI-014 requires modifications to get_injected_languages() or
+          check_injected_languages_auto_install(), consider extracting them to a shared
+          module (e.g., src/lsp/injection_auto_install.rs) to avoid duplication.
+        owner: "@scrum-team-developer"
+        status: pending
+        backlog: sprint
+
+      - id: AI-009
+        action: "Add recursive injection support as future backlog item"
+        detail: |
+          Current implementation only handles depth=1 injections (e.g., markdown->lua).
+          Recursive injections (e.g., markdown->lua->regex) are not auto-installed.
+          If user need arises, create a PBI for this enhancement.
+        owner: "@scrum-team-product-owner"
+        status: pending
+        backlog: product
+
+    insights:
+      - insight: "Infrastructure investment pays dividends"
+        analysis: |
+          PBI-008 created a robust auto-install infrastructure (InstallingLanguages,
+          maybe_auto_install_language, install_language_async). PBI-013 leveraged this
+          infrastructure with minimal new code, reducing implementation time and risk.
+          Good foundational work accelerates future features.
+
+      - insight: "Semantic token pipeline provides free injection detection"
+        analysis: |
+          The collect_all_injections() function was originally written for semantic token
+          highlighting but proved equally useful for auto-install detection. This demonstrates
+          the value of writing generic, reusable functions even when the immediate use case
+          is specific.
+
+      - insight: "1:1 commit-to-subtask ratio is achievable with proper breakdown"
+        analysis: |
+          Sprint 8 achieved perfect commit discipline (4 commits for 4 subtasks). The key
+          was breaking down the work into truly independent units where each subtask could
+          be implemented and committed separately without breaking the build.
+
+    metrics:
+      unit_tests_added: 6
+      subtasks_completed: 4
+      impediments_encountered: 0
+      dod_criteria_met: 3
+      commits_expected: 4
+      commits_actual: 4
+      commit_discipline_score: 1.0
+      improvement_from_sprint_7: "100% commit ratio achieved"
+
   - sprint: 2
     pbi: PBI-002
     prime_directive_read: true

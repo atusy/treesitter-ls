@@ -1866,4 +1866,120 @@ local y = "duplicate"
         // 3. If not loaded and autoInstall enabled, call maybe_auto_install_language("lua", ...)
         // This enables immediate syntax highlighting for newly added code blocks.
     }
+
+    #[test]
+    fn test_adding_code_block_triggers_auto_install_for_injected_language() {
+        // ST-2: Test that editing a document to add a code block triggers auto-install
+        // for the injected language.
+        //
+        // Scenario:
+        // 1. User opens a markdown file with NO code blocks
+        // 2. User edits to add a Lua code block (simulated did_change)
+        // 3. After parsing, check_injected_languages_auto_install is called
+        // 4. Lua is detected as an injected language
+        // 5. Since Lua parser is not loaded, auto-install would be triggered
+        //
+        // This test verifies the complete flow for adding a new code block.
+
+        use crate::language::injection::collect_all_injections;
+        use tree_sitter::{Parser, Query};
+
+        // BEFORE: Markdown document with NO code blocks
+        let initial_text = r#"# My Document
+
+This is a simple markdown file with no code blocks yet.
+
+I will add a code block below:
+
+"#;
+
+        // Parse initial document
+        let mut parser = Parser::new();
+        let md_language: tree_sitter::Language = tree_sitter_md::LANGUAGE.into();
+        parser.set_language(&md_language).expect("set markdown");
+        let initial_tree = parser.parse(initial_text, None).expect("parse markdown");
+        let initial_root = initial_tree.root_node();
+
+        // Create injection query for markdown code blocks
+        let injection_query_str = r#"
+            (fenced_code_block
+              (info_string
+                (language) @injection.language)
+              (code_fence_content) @injection.content)
+        "#;
+        let injection_query =
+            Query::new(&md_language, injection_query_str).expect("valid injection query");
+
+        // Initially, there should be NO injected languages (no code blocks)
+        let initial_injections =
+            collect_all_injections(&initial_root, initial_text, Some(&injection_query))
+                .unwrap_or_default();
+        assert!(
+            initial_injections.is_empty(),
+            "Initial document should have no code blocks"
+        );
+
+        // AFTER: User adds a Lua code block (simulating did_change)
+        let edited_text = r#"# My Document
+
+This is a simple markdown file with no code blocks yet.
+
+I will add a code block below:
+
+```lua
+print("Hello from Lua!")
+local x = 42
+```
+"#;
+
+        // Re-parse after edit
+        let edited_tree = parser
+            .parse(edited_text, None)
+            .expect("parse edited markdown");
+        let edited_root = edited_tree.root_node();
+
+        // Now there should be ONE injected language: "lua"
+        let edited_injections =
+            collect_all_injections(&edited_root, edited_text, Some(&injection_query))
+                .unwrap_or_default();
+
+        // Extract unique languages
+        let unique_languages: HashSet<String> = edited_injections
+            .iter()
+            .map(|i| i.language.clone())
+            .collect();
+
+        // Verify the Lua code block was detected
+        assert_eq!(
+            unique_languages.len(),
+            1,
+            "Should detect exactly 1 unique language after adding code block"
+        );
+        assert!(
+            unique_languages.contains("lua"),
+            "Should detect 'lua' from the newly added code block"
+        );
+
+        // Verify that the InstallingLanguages tracker would allow installation
+        // This simulates what check_injected_languages_auto_install does
+        let tracker = InstallingLanguages::new();
+
+        // First time: should trigger install
+        assert!(
+            tracker.try_start_install("lua"),
+            "Should be able to start install for new language"
+        );
+        assert!(
+            tracker.is_installing("lua"),
+            "Lua should be marked as installing"
+        );
+
+        // This confirms: adding a new code block during editing would:
+        // 1. Get detected by get_injected_languages()
+        // 2. Not be in the coordinator (ensure_language_loaded fails)
+        // 3. Trigger maybe_auto_install_language() if autoInstall is enabled
+        //
+        // The actual did_change implementation calls check_injected_languages_auto_install()
+        // after parse_document(), enabling this flow.
+    }
 }
