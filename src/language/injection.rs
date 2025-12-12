@@ -159,16 +159,22 @@ fn is_node_within(node: &Node, container: &Node) -> bool {
 
 /// Extracts the injection language from query properties or captures
 ///
-/// Handles two patterns:
+/// Handles three patterns:
 /// 1. Static: `#set! injection.language "language_name"`
-/// 2. Dynamic: `(language) @injection.language`
+/// 2. Dynamic capture: `(language) @injection.language`
+/// 3. nvim-treesitter custom: `#set-lang-from-info-string! @capture` (uses capture text as language)
 fn extract_injection_language(query: &Query, match_: &QueryMatch, text: &str) -> Option<String> {
     // First check for static language via #set! property
     if let Some(language) = extract_static_language(query, match_) {
         return Some(language);
     }
 
-    // Then check for dynamic language via @injection.language capture
+    // Then check for nvim-treesitter's #set-lang-from-info-string! predicate
+    if let Some(language) = extract_language_from_info_string(query, match_, text) {
+        return Some(language);
+    }
+
+    // Finally check for dynamic language via @injection.language capture
     extract_dynamic_language(query, match_, text)
 }
 
@@ -194,6 +200,47 @@ fn extract_dynamic_language(query: &Query, match_: &QueryMatch, text: &str) -> O
         {
             let lang_text = &text[capture.node.byte_range()];
             return Some(lang_text.to_string());
+        }
+    }
+    None
+}
+
+/// Extracts language from nvim-treesitter's #set-lang-from-info-string! predicate
+///
+/// This is a custom nvim-treesitter predicate that uses the text of a capture
+/// as the injection language. It's commonly used for markdown fenced code blocks:
+///
+/// ```scheme
+/// (fenced_code_block
+///   (info_string (language) @_lang)
+///   (code_fence_content) @injection.content
+///   (#set-lang-from-info-string! @_lang))
+/// ```
+fn extract_language_from_info_string(
+    query: &Query,
+    match_: &QueryMatch,
+    text: &str,
+) -> Option<String> {
+    // Look for #set-lang-from-info-string! predicate
+    for predicate in get_all_predicates(query, match_.pattern_index) {
+        if predicate.operator() == "set-lang-from-info-string!"
+            && let UnifiedPredicate::General(pred) = predicate
+        {
+            // The predicate takes a capture reference as argument
+            if let Some(tree_sitter::QueryPredicateArg::Capture(capture_id)) = pred.args.first() {
+                // Find the capture in the match
+                for capture in match_.captures {
+                    if capture.index == *capture_id {
+                        // Extract the text from the captured node as the language
+                        let lang_text = &text[capture.node.byte_range()];
+                        // Normalize the language name (lowercase, trim)
+                        let normalized = lang_text.trim().to_lowercase();
+                        if !normalized.is_empty() {
+                            return Some(normalized);
+                        }
+                    }
+                }
+            }
         }
     }
     None
