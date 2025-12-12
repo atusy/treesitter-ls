@@ -1623,4 +1623,158 @@ print("hello")
         // The actual injection check happens in check_injected_languages_auto_install
         // which calls get_injected_languages -> get_language_for_document -> get_injection_query
     }
+
+    #[test]
+    fn test_opening_markdown_with_code_blocks_triggers_auto_install_for_injected_languages() {
+        // Integration test for ST-4: Opening a markdown file with code blocks
+        // triggers auto-install for injected languages.
+        //
+        // This test verifies the complete flow:
+        // 1. Markdown document with Lua and Python code blocks is parsed
+        // 2. get_injected_languages extracts unique languages from injection regions
+        // 3. For each language, ensure_language_loaded is called
+        // 4. Languages not loaded would trigger maybe_auto_install_language
+        // 5. InstallingLanguages tracker prevents duplicate install attempts
+        //
+        // Since we can't do actual network installs in unit tests, we verify:
+        // - The injection detection correctly identifies languages from code blocks
+        // - The InstallingLanguages tracker properly handles concurrent install attempts
+        // - The flow correctly filters to only languages that need installation
+
+        use crate::language::injection::collect_all_injections;
+        use tree_sitter::{Parser, Query};
+
+        // Create a markdown document with multiple injected languages
+        let markdown_text = r#"# Example Document
+
+This is a markdown file with multiple code blocks.
+
+```lua
+print("Hello from Lua")
+local x = 42
+```
+
+Some text between code blocks.
+
+```python
+def hello():
+    print("Hello from Python")
+```
+
+And another Lua block (should not trigger duplicate install):
+
+```lua
+local y = "duplicate"
+```
+"#;
+
+        // Parse the markdown document
+        let mut parser = Parser::new();
+        let md_language: tree_sitter::Language = tree_sitter_md::LANGUAGE.into();
+        parser.set_language(&md_language).expect("set markdown");
+        let tree = parser.parse(markdown_text, None).expect("parse markdown");
+        let root = tree.root_node();
+
+        // Create an injection query that matches fenced code blocks
+        // This simulates the nvim-treesitter injection query for markdown
+        let injection_query_str = r#"
+            (fenced_code_block
+              (info_string
+                (language) @injection.language)
+              (code_fence_content) @injection.content)
+        "#;
+        let injection_query =
+            Query::new(&md_language, injection_query_str).expect("valid injection query");
+
+        // Collect all injections from the document
+        let injections = collect_all_injections(&root, markdown_text, Some(&injection_query))
+            .unwrap_or_default();
+
+        // Extract unique languages
+        let unique_languages: HashSet<String> =
+            injections.iter().map(|i| i.language.clone()).collect();
+
+        // Verify we detected both Lua and Python (unique, not 3 total)
+        assert_eq!(
+            unique_languages.len(),
+            2,
+            "Should detect exactly 2 unique languages (lua and python), not 3"
+        );
+        assert!(
+            unique_languages.contains("lua"),
+            "Should detect 'lua' from code blocks"
+        );
+        assert!(
+            unique_languages.contains("python"),
+            "Should detect 'python' from code block"
+        );
+
+        // Verify there are 3 injection regions total (2 lua + 1 python)
+        assert_eq!(
+            injections.len(),
+            3,
+            "Should have 3 injection regions (2 lua + 1 python)"
+        );
+
+        // Test InstallingLanguages tracker prevents duplicate install attempts
+        let tracker = InstallingLanguages::new();
+
+        // Simulate the auto-install check for each unique language
+        let mut install_triggered: Vec<String> = Vec::new();
+
+        for lang in &unique_languages {
+            // This is what check_injected_languages_auto_install does:
+            // Call try_start_install to check if we should trigger install
+            if tracker.try_start_install(lang) {
+                install_triggered.push(lang.clone());
+            }
+        }
+
+        // Both languages should trigger install (first time)
+        assert_eq!(
+            install_triggered.len(),
+            2,
+            "Should trigger install for both unique languages"
+        );
+        assert!(install_triggered.contains(&"lua".to_string()));
+        assert!(install_triggered.contains(&"python".to_string()));
+
+        // Simulate opening another file with the same languages
+        // (languages still being installed from first file)
+        let mut second_file_install_triggered: Vec<String> = Vec::new();
+        for lang in &unique_languages {
+            if tracker.try_start_install(lang) {
+                second_file_install_triggered.push(lang.clone());
+            }
+        }
+
+        // Second file should NOT trigger any installs (languages already being installed)
+        assert!(
+            second_file_install_triggered.is_empty(),
+            "Second file should not trigger installs for languages already being installed"
+        );
+
+        // Verify the tracker is tracking both languages as installing
+        assert!(
+            tracker.is_installing("lua"),
+            "Lua should be marked as installing"
+        );
+        assert!(
+            tracker.is_installing("python"),
+            "Python should be marked as installing"
+        );
+
+        // After install completes, languages can be installed again if needed
+        tracker.finish_install("lua");
+        tracker.finish_install("python");
+
+        assert!(
+            !tracker.is_installing("lua"),
+            "Lua should no longer be installing"
+        );
+        assert!(
+            !tracker.is_installing("python"),
+            "Python should no longer be installing"
+        );
+    }
 }
