@@ -75,6 +75,10 @@ pub fn get_parser_url(language: &str) -> Option<&'static str> {
             "https://github.com/tree-sitter-grammars/tree-sitter-markdown",
         ),
         (
+            "markdown_inline",
+            "https://github.com/tree-sitter-grammars/tree-sitter-markdown",
+        ),
+        (
             "python",
             "https://github.com/tree-sitter/tree-sitter-python",
         ),
@@ -170,6 +174,7 @@ pub fn list_supported_languages() -> Vec<&'static str> {
         "json",
         "lua",
         "markdown",
+        "markdown_inline",
         "python",
         "ruby",
         "rust",
