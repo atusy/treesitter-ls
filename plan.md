@@ -142,8 +142,12 @@ sprint:
 
 `````````yaml
 product_goal:
-  statement: "A fast and flexible Language Server Protocol (LSP) server that leverages Tree-sitter for accurate parsing and language-aware features across multiple programming languages."
+  statement: "Enable zero-configuration usage of treesitter-ls: users can start the LSP server and get syntax highlighting for any supported language without manual setup."
   success_metrics:
+    - metric: "Zero-config smoke test"
+      target: "User opens any file in a supported language, syntax highlighting works without any configuration"
+    - metric: "Auto-install works"
+      target: "Opening a file auto-installs the parser and queries if missing"
     - metric: "E2E tests pass"
       target: "make test_nvim succeeds"
     - metric: "Unit tests pass"
@@ -151,6 +155,23 @@ product_goal:
     - metric: "Code quality"
       target: "make check succeeds (cargo check, clippy, fmt)"
   owner: "@scrum-team-product-owner"
+
+  mvp_definition: |
+    Minimum Viable Zero-Config Experience:
+    1. User starts treesitter-ls with no initialization options
+    2. User opens a .lua file (or any supported language)
+    3. treesitter-ls automatically:
+       a. Detects the language from file extension
+       b. Installs the parser and queries if missing
+       c. Adds the install directory to search paths internally
+       d. Provides semantic highlighting
+    5. Power users can still override with explicit configuration
+
+    Key Design Decisions:
+    - Default data directory: ~/.local/share/treesitter-ls/ (platform-appropriate)
+    - Default searchPaths: [<default_data_dir>/parser, <default_data_dir>/queries]
+    - Default autoInstall: true (was false)
+    - Built-in filetype mappings for 300+ languages from nvim-treesitter
 `````````
 
 ### Backlog Items
@@ -161,17 +182,226 @@ product_backlog:
   # PBI-003 resolved as part of Sprint 2 (PBI-002 fix included delta injection support)
 
   # ============================================================================
-  # EPIC: Automatic Parser and Query Installation
+  # EPIC: Zero-Configuration Experience (MVP)
   # ============================================================================
-  # Goal: Users can install Tree-sitter parsers and queries with a single command,
-  #       leveraging nvim-treesitter's metadata without requiring Neovim.
+  # Goal: Users can use treesitter-ls without any configuration. The server
+  #       automatically detects languages, installs missing parsers/queries,
+  #       and provides syntax highlighting out of the box.
   #
-  # Splitting Strategy: By workflow step (Happy Path first, then edge cases)
-  #   PBI-004: CLI infrastructure + basic install command (foundation)
-  #   PBI-005: Query downloading from nvim-treesitter (quick value)
-  #   PBI-006: Parser metadata parsing and compilation (core feature)
-  #   PBI-007: Parser dependency resolution (edge case)
-  #   PBI-008: Auto-install on file open (enhancement - optional)
+  # Splitting Strategy: By capability layer (bottom-up)
+  #   PBI-017: Default data directory in searchPaths (foundation)
+  #   PBI-018: Built-in filetype mappings (language detection)
+  #   PBI-019: Enable autoInstall by default (activation)
+  #   PBI-015: Fix parser installation for tag revisions (bug fix - existing)
+  #
+  # Dependencies:
+  #   - PBI-008 (auto-install on file open) - COMPLETED
+  #   - PBI-013/014 (auto-install for injections) - COMPLETED
+  # ============================================================================
+
+  - id: PBI-017
+    status: ready
+    story:
+      role: "user of treesitter-ls"
+      capability: "use treesitter-ls without configuring searchPaths"
+      benefit: "I get syntax highlighting immediately without setting up directories"
+    acceptance_criteria:
+      - criterion: "Server uses default data directory when no searchPaths configured"
+        verification: |
+          # Start server with empty initializationOptions
+          # Verify ~/.local/share/treesitter-ls/parser and /queries are searched
+          cargo test test_default_search_paths_used -- --nocapture
+      - criterion: "Auto-installed parsers are found without explicit searchPaths"
+        verification: |
+          # Install a parser, then start server with no config
+          # Parser should be discoverable
+          rm -rf ~/.local/share/treesitter-ls/parser/lua
+          ./target/release/treesitter-ls install-parser lua
+          # Start server with empty config, open .lua file - should work
+      - criterion: "Explicit searchPaths override default paths"
+        verification: |
+          # With searchPaths: ["/custom/path"], default paths should NOT be used
+          cargo test test_explicit_search_paths_override -- --nocapture
+      - criterion: "Explicit searchPaths can extend default paths"
+        verification: |
+          # With searchPaths: ["/custom/path", "~/.local/share/treesitter-ls/parser"]
+          # Both should be searched
+          cargo test test_search_paths_can_include_default -- --nocapture
+    dependencies: []
+    technical_notes: |
+      ## Implementation Strategy
+
+      1. Modify WorkspaceSettings::default() to include default data directory paths
+      2. When processing settings, if searchPaths is None or empty:
+         - Add default_data_dir()/parser to search paths
+         - Add default_data_dir()/queries to search paths
+      3. This happens early in settings loading so all downstream code works automatically
+
+      ## Key Files to Modify
+      - src/config/settings.rs - Add default paths logic to WorkspaceSettings
+      - src/lsp/settings.rs - Ensure default paths are applied when settings loaded
+
+      ## Default Paths (platform-specific via dirs crate)
+      - Linux: ~/.local/share/treesitter-ls/{parser,queries}
+      - macOS: ~/Library/Application Support/treesitter-ls/{parser,queries}
+      - Windows: %APPDATA%/treesitter-ls/{parser,queries}
+
+      ## Example Implementation
+      ```rust
+      impl Default for WorkspaceSettings {
+          fn default() -> Self {
+              let default_paths = install::default_data_dir()
+                  .map(|d| vec![
+                      d.join("parser").to_string_lossy().to_string(),
+                      d.join("queries").to_string_lossy().to_string(),
+                  ])
+                  .unwrap_or_default();
+
+              Self {
+                  search_paths: default_paths,
+                  languages: HashMap::new(),
+                  capture_mappings: HashMap::new(),
+                  auto_install: true,  // Will be changed in PBI-019
+              }
+          }
+      }
+      ```
+
+  - id: PBI-018
+    status: ready
+    story:
+      role: "user of treesitter-ls"
+      capability: "have treesitter-ls detect my file's language automatically without configuring filetypes"
+      benefit: "I can open any file and get syntax highlighting without manual language configuration"
+    acceptance_criteria:
+      - criterion: "Opening a .lua file detects language as 'lua' without configuration"
+        verification: |
+          cargo test test_builtin_filetype_lua -- --nocapture
+      - criterion: "Opening a .rs file detects language as 'rust' without configuration"
+        verification: |
+          cargo test test_builtin_filetype_rust -- --nocapture
+      - criterion: "Opening a .py file detects language as 'python' without configuration"
+        verification: |
+          cargo test test_builtin_filetype_python -- --nocapture
+      - criterion: "Opening a .md file detects language as 'markdown' without configuration"
+        verification: |
+          cargo test test_builtin_filetype_markdown -- --nocapture
+      - criterion: "At least 50 common languages have built-in filetype mappings"
+        verification: |
+          cargo test test_builtin_filetype_count -- --nocapture
+      - criterion: "Explicit filetypes configuration overrides built-in mappings"
+        verification: |
+          cargo test test_explicit_filetypes_override_builtin -- --nocapture
+    dependencies: []
+    technical_notes: |
+      ## Implementation Strategy
+
+      1. Create a built-in filetype database in src/language/builtin_filetypes.rs
+      2. Initialize FiletypeResolver with built-in mappings by default
+      3. User configuration overrides/extends built-in mappings
+
+      ## Key Files to Create/Modify
+      - src/language/builtin_filetypes.rs - NEW: Built-in filetype mappings
+      - src/language/filetypes.rs - Load built-in mappings on initialization
+      - src/language/coordinator.rs - Use built-in mappings when no config
+
+      ## Filetype Source
+      Use nvim-treesitter's filetypes as the source of truth:
+      https://github.com/nvim-treesitter/nvim-treesitter/blob/main/lua/nvim-treesitter/parsers.lua
+
+      Each language entry has `filetype` field listing associated extensions.
+
+      ## Example Built-in Mappings (partial)
+      ```rust
+      pub fn get_builtin_filetypes() -> HashMap<String, String> {
+          let mut map = HashMap::new();
+          // Common languages
+          map.insert("rs".to_string(), "rust".to_string());
+          map.insert("lua".to_string(), "lua".to_string());
+          map.insert("py".to_string(), "python".to_string());
+          map.insert("pyi".to_string(), "python".to_string());
+          map.insert("js".to_string(), "javascript".to_string());
+          map.insert("jsx".to_string(), "javascript".to_string());
+          map.insert("ts".to_string(), "typescript".to_string());
+          map.insert("tsx".to_string(), "tsx".to_string());
+          map.insert("go".to_string(), "go".to_string());
+          map.insert("rb".to_string(), "ruby".to_string());
+          map.insert("md".to_string(), "markdown".to_string());
+          map.insert("markdown".to_string(), "markdown".to_string());
+          map.insert("json".to_string(), "json".to_string());
+          map.insert("toml".to_string(), "toml".to_string());
+          map.insert("yaml".to_string(), "yaml".to_string());
+          map.insert("yml".to_string(), "yaml".to_string());
+          // ... 300+ more from nvim-treesitter
+          map
+      }
+      ```
+
+      ## Initialization Order
+      1. Load built-in filetypes into FiletypeResolver
+      2. Apply user configuration (if any) which can override built-in
+      3. Language detection uses merged mappings
+
+  - id: PBI-019
+    status: ready
+    story:
+      role: "user of treesitter-ls"
+      capability: "have autoInstall enabled by default"
+      benefit: "I get parsers installed automatically without having to explicitly enable the feature"
+    acceptance_criteria:
+      - criterion: "autoInstall defaults to true when not specified in configuration"
+        verification: |
+          cargo test test_auto_install_default_true -- --nocapture
+      - criterion: "User can explicitly disable autoInstall with autoInstall: false"
+        verification: |
+          cargo test test_auto_install_explicit_false -- --nocapture
+      - criterion: "Zero-config experience: open file -> parser auto-installs -> highlighting works"
+        verification: |
+          # Full E2E test
+          rm -rf ~/.local/share/treesitter-ls/parser/lua ~/.local/share/treesitter-ls/queries/lua
+          # Start server with NO configuration
+          # Open a .lua file
+          # Verify: parser is installed, highlighting appears
+          cargo test test_zero_config_e2e -- --nocapture
+    dependencies:
+      - PBI-017  # Default searchPaths required for auto-installed parsers to be found
+      - PBI-018  # Built-in filetypes required for language detection
+    technical_notes: |
+      ## Implementation Strategy
+
+      This is a simple default change. Modify the auto_install default from false to true.
+
+      ## Key Files to Modify
+      - src/config/settings.rs - Change WorkspaceSettings::default() auto_install to true
+      - src/lsp/settings.rs - Ensure missing auto_install setting defaults to true
+
+      ## Current Code (to change)
+      ```rust
+      impl WorkspaceSettings {
+          pub fn new(...) -> Self {
+              Self {
+                  ...
+                  auto_install: false,  // <-- Change to true
+              }
+          }
+      }
+      ```
+
+      ## Backward Compatibility
+      - Users who explicitly set autoInstall: false will continue to have it disabled
+      - Users who relied on the implicit default of false will now see auto-install behavior
+      - This is a UX improvement, but document it as a breaking change in release notes
+
+      ## Risk Mitigation
+      - Auto-install only happens if tree-sitter CLI is available
+      - Failed installs show clear error messages
+      - Users can opt-out with autoInstall: false
+
+  # ============================================================================
+  # EPIC: Automatic Parser and Query Installation (Original)
+  # ============================================================================
+  # Note: PBI-004 through PBI-009 are COMPLETED (Sprints 3-6, 7-9)
+  # The infrastructure is in place; the Zero-Config epic above builds on it.
   # ============================================================================
 
   - id: PBI-004
@@ -547,14 +777,22 @@ product_backlog:
       ```
 
   # ============================================================================
-  # PRIORITIZED BACKLOG (Post-Sprint 7 Refinement)
+  # PRIORITIZED BACKLOG (Post-Sprint 9 - Zero-Config MVP)
   # ============================================================================
   # Priority order (top to bottom):
-  #   1. PBI-013: Auto-install for injected languages on file open (USER PRIORITY - ready)
-  #   2. PBI-014: Auto-install for injected languages on text edit (USER PRIORITY - ready)
-  #   3. PBI-010: Cache parsers.lua (performance foundation - ready)
-  #   4. PBI-011: Batch install (UX improvement - draft)
-  #   5. PBI-012: Progress indicators (nice-to-have - draft)
+  #   1. PBI-017: Default searchPaths (foundation for zero-config) - ready
+  #   2. PBI-018: Built-in filetype mappings (language detection) - ready
+  #   3. PBI-019: autoInstall default true (activation) - ready
+  #   4. PBI-015: Fix parser installation for tag revisions (bug fix) - ready
+  #   5. PBI-010: Cache parsers.lua (performance) - ready
+  #   6. PBI-016: Parser crash isolation (robustness) - ready
+  #   7. PBI-011: Batch install (UX improvement) - draft
+  #   8. PBI-012: Progress indicators (nice-to-have) - draft
+  #
+  # COMPLETED:
+  #   - PBI-008: Auto-install on file open (Sprint 7)
+  #   - PBI-013: Auto-install for injected languages on file open (Sprint 8)
+  #   - PBI-014: Auto-install for injected languages on text edit (Sprint 9)
   # ============================================================================
 
   - id: PBI-013
@@ -944,6 +1182,229 @@ product_backlog:
       1. Integration test: Install Python (uses tag v0.25.0)
       2. Integration test: Install Lua (uses commit hash)
       3. Both should succeed with the fixed checkout command
+
+  - id: PBI-016
+    status: ready
+    story:
+      role: "user of treesitter-ls"
+      capability: "continue using the language server even when a parser crashes"
+      benefit: "I don't lose all functionality just because one language parser has a bug"
+    acceptance_criteria:
+      - criterion: "Server remains running when a parser triggers an assertion failure"
+        verification: |
+          # Load a parser that triggers assertion failure (e.g., YAML with specific content)
+          # Verify server process is still running after the crash is handled
+          # Check server responds to subsequent LSP requests
+      - criterion: "Failed parser is marked as unavailable and won't crash again"
+        verification: |
+          # After a parser crash, subsequent requests for that language should gracefully fail
+          # Server should log "Parser 'yaml' is unavailable due to previous crash"
+          # No repeated crash attempts for the same parser
+      - criterion: "Error message is logged with sufficient detail for debugging"
+        verification: |
+          # Check server logs contain:
+          # - Language name that crashed
+          # - Operation that was being performed (parse, semantic tokens, etc.)
+          # - Instruction to report the issue or update parser
+      - criterion: "Other languages continue to work normally after one parser crashes"
+        verification: |
+          # After YAML parser crashes, Lua/Rust/Python semantic tokens still work
+          # New documents in other languages can be opened and parsed
+      - criterion: "Crashed parser can be retried after reinstallation"
+        verification: |
+          # User reinstalls parser with `treesitter-ls install yaml --force`
+          # Server picks up new parser version on next file open
+          # If new parser works, it's no longer marked as unavailable
+    story_points: 8
+    dependencies: []
+    decisions:
+      - question: "How should parser crashes be isolated?"
+        decision: "Use subprocess isolation for parsing operations"
+        rationale: |
+          C `assert()` failures trigger SIGABRT which cannot be caught by Rust's `catch_unwind`.
+          The only reliable way to prevent process termination is to run the parser in a
+          separate process. This adds latency but guarantees server stability.
+
+          Alternative considered: Wrapping with `catch_unwind` - rejected because it only
+          catches Rust panics, not C aborts. The YAML parser crash (assert failure in scanner.c)
+          would still terminate the process.
+
+          Alternative considered: Signal handlers for SIGABRT - rejected because signal handlers
+          for SIGABRT cannot safely recover the process state. The C runtime is in an undefined
+          state after a failed assertion.
+      - question: "Which operations need subprocess isolation?"
+        decision: "Initial parsing and re-parsing operations only"
+        rationale: |
+          Parser crashes occur during the `parser.parse()` call, which invokes the C scanner.
+          Query operations (semantic tokens, selection ranges) use the already-parsed tree
+          and don't invoke the C parser code. Therefore, only parse operations need isolation.
+
+          This minimizes the performance impact - most LSP operations use cached parse trees.
+      - question: "What's the fallback when subprocess parsing fails?"
+        decision: "Graceful degradation with document-level granularity"
+        rationale: |
+          When a parser crashes:
+          1. Mark the parser as "crashed" (not just unavailable - distinct from "not installed")
+          2. Store the document as unparsed (no tree)
+          3. Return empty/minimal results for tree-dependent operations
+          4. Log detailed error for debugging
+          5. Allow parser retry after user reinstalls
+
+          This ensures the LSP continues to work for other documents/languages.
+    technical_notes: |
+      ## Problem Analysis
+
+      Tree-sitter parsers are compiled C code loaded as dynamic libraries. When the C code
+      contains `assert()` calls that fail, they trigger SIGABRT which:
+      1. Cannot be caught by Rust's `catch_unwind` (only catches Rust panics)
+      2. Cannot be reliably handled by signal handlers (C runtime is corrupted)
+      3. Terminates the entire process
+
+      Example from YAML parser:
+      ```
+      Assertion failed: (size == length), function deserialize, file scanner.c, line 217.
+      ```
+
+      ## Implementation Strategy
+
+      ### Option A: Subprocess Isolation (Recommended)
+
+      Run parsing in a subprocess using `std::process::Command` or a dedicated parsing service.
+
+      **Flow**:
+      1. Server receives document text
+      2. Spawn subprocess: `treesitter-ls parse --language yaml --timeout 30`
+      3. Subprocess loads parser and parses text, outputs serialized tree (or error)
+      4. Parent process reads result, stores tree in document store
+      5. If subprocess crashes (exit code != 0), mark parser as crashed
+
+      **Pros**:
+      - 100% reliable isolation - subprocess crash cannot affect parent
+      - Can implement timeout for parser operations
+      - Can detect crash vs timeout vs success
+
+      **Cons**:
+      - IPC overhead for passing document text and tree
+      - Need to serialize/deserialize parse trees
+      - Subprocess startup latency (~50-100ms)
+
+      **Optimization**: Keep parsing subprocess alive for repeated operations (process pool).
+
+      ### Option B: Compile-Time Scanner Validation
+
+      Validate that scanner.c assertions cannot be triggered with arbitrary input.
+
+      **Not viable**: We don't control third-party parser code.
+
+      ### Option C: Runtime Parser Validation
+
+      Before using a new parser, test it with sample content.
+
+      **Limitations**: Cannot predict all inputs that might trigger assertions.
+
+      ## Recommended Implementation (Option A)
+
+      ### Phase 1: Subprocess Parse Command
+
+      Add CLI subcommand:
+      ```
+      treesitter-ls parse --language <lang> --timeout <seconds>
+      ```
+
+      - Reads document text from stdin
+      - Outputs serialized parse tree to stdout (or error JSON)
+      - Exits with code 0 on success, non-zero on failure
+      - Timeout kills subprocess after N seconds
+
+      ### Phase 2: Document Parser Wrapper
+
+      Create `IsolatedParser` that wraps subprocess execution:
+      ```rust
+      pub struct IsolatedParser {
+          timeout: Duration,
+          crashed_parsers: HashSet<String>,
+      }
+
+      impl IsolatedParser {
+          pub fn parse(&mut self, language: &str, text: &str) -> ParseResult {
+              if self.crashed_parsers.contains(language) {
+                  return ParseResult::ParserUnavailable;
+              }
+
+              let result = Command::new("treesitter-ls")
+                  .args(["parse", "--language", language, "--timeout", "30"])
+                  .stdin(Stdio::piped())
+                  .stdout(Stdio::piped())
+                  .spawn();
+
+              // Handle success, timeout, crash...
+          }
+      }
+      ```
+
+      ### Phase 3: Integration with LSP
+
+      Replace direct parser calls in `parse_document()` with `IsolatedParser`:
+      - On subprocess success: deserialize tree, store in document
+      - On subprocess crash: mark parser crashed, log error, store document without tree
+      - On timeout: log warning, store document without tree (don't mark as crashed)
+
+      ## Key Files to Modify
+
+      - src/bin/main.rs - Add `parse` subcommand
+      - src/language/parser_pool.rs - Add subprocess parsing option
+      - src/lsp/lsp_impl.rs - Use isolated parsing in parse_document()
+      - src/language/registry.rs - Track crashed parsers
+
+      ## Serialization Format
+
+      Use tree-sitter's native tree serialization or JSON representation:
+      ```json
+      {
+        "success": true,
+        "tree": {
+          "root": { "kind": "document", "start": [0,0], "end": [10,0], "children": [...] }
+        }
+      }
+      ```
+
+      Or error:
+      ```json
+      {
+        "success": false,
+        "error": "Parser crashed",
+        "exit_code": 134
+      }
+      ```
+
+      ## Performance Considerations
+
+      - Subprocess startup: ~50-100ms (can be amortized with process pool)
+      - IPC overhead: ~1-5ms for typical documents (depends on size)
+      - Memory: Subprocess uses separate memory space
+
+      For incremental parsing, consider keeping subprocess alive:
+      ```rust
+      pub struct ParsingService {
+          processes: HashMap<String, Child>,  // One per language
+      }
+      ```
+
+      ## Alternative: Validation-Only Approach (Simpler, Less Safe)
+
+      If subprocess overhead is unacceptable:
+      1. On parser install, run validation with test inputs
+      2. Mark parser as "validated" or "unvalidated"
+      3. For unvalidated parsers, show warning but use anyway
+      4. If crash occurs, process dies (same as current behavior)
+
+      This provides better UX (warning) but doesn't prevent crashes.
+
+      ## Testing Strategy
+
+      1. Unit test: Mock subprocess for parse success/failure/timeout
+      2. Integration test: Actually crash a parser and verify server recovery
+      3. E2E test: Open file with crash-inducing content, verify server survives
 `````````
 
 ### Definition of Ready

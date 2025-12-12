@@ -426,6 +426,50 @@ mod tests {
     }
 
     #[test]
+    fn test_default_search_paths_used_when_none_configured() {
+        // When search_paths is None in TreeSitterSettings, WorkspaceSettings
+        // should use the default data directory paths (not an empty vector)
+        let settings = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+        };
+
+        let workspace: WorkspaceSettings = WorkspaceSettings::from(&settings);
+
+        // Default paths should be populated (not empty)
+        assert!(
+            !workspace.search_paths.is_empty(),
+            "search_paths should contain default data directory paths when not configured"
+        );
+
+        // Should contain parser and queries subdirectories
+        let paths_str = workspace.search_paths.join("|");
+        assert!(
+            paths_str.contains("treesitter-ls"),
+            "Default paths should include treesitter-ls directory: {:?}",
+            workspace.search_paths
+        );
+    }
+
+    #[test]
+    fn test_explicit_search_paths_override_default() {
+        // When search_paths is explicitly set, it should be used as-is
+        let settings = TreeSitterSettings {
+            search_paths: Some(vec!["/custom/path".to_string()]),
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+        };
+
+        let workspace: WorkspaceSettings = WorkspaceSettings::from(&settings);
+
+        // Should use explicit paths, not default
+        assert_eq!(workspace.search_paths, vec!["/custom/path".to_string()]);
+    }
+
+    #[test]
     fn test_workspace_settings_exposes_auto_install() {
         // Test that auto_install is exposed in WorkspaceSettings (default false)
         let settings = TreeSitterSettings {
