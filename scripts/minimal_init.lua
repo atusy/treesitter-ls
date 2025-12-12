@@ -1,7 +1,10 @@
 local cwd = vim.uv.cwd()
 vim.lsp.config.treesitter_ls = {
 	cmd = { cwd .. "/target/debug/treesitter-ls" },
-	init_options = { searchPaths = { "/Users/atusy/Library/Application Support/treesitter-ls" } },
+	init_options = {
+		searchPaths = { "/Users/atusy/Library/Application Support/treesitter-ls" },
+		autoInstall = true,
+	},
 }
 vim.lsp.enable("treesitter_ls")
 vim.lsp.log.set_level(vim.lsp.log_levels.DEBUG)
