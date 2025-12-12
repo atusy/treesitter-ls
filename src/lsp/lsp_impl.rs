@@ -16,6 +16,7 @@ use crate::language::{LanguageEvent, LanguageLogLevel};
 use crate::lsp::{SettingsEvent, SettingsEventKind, SettingsSource, load_settings};
 use crate::text::PositionMapper;
 use arc_swap::ArcSwap;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -31,6 +32,72 @@ fn lsp_legend_modifiers() -> Vec<SemanticTokenModifier> {
         .iter()
         .map(|m| SemanticTokenModifier::new(m.as_str()))
         .collect()
+}
+
+/// Tracks languages currently being installed to prevent duplicate installs.
+#[allow(dead_code)] // Used in later subtasks (ST-5)
+pub struct InstallingLanguages {
+    languages: Mutex<HashSet<String>>,
+}
+
+#[allow(dead_code)] // Methods used in later subtasks (ST-5)
+impl InstallingLanguages {
+    pub fn new() -> Self {
+        Self {
+            languages: Mutex::new(HashSet::new()),
+        }
+    }
+
+    /// Check if a language is currently being installed.
+    pub fn is_installing(&self, language: &str) -> bool {
+        match self.languages.lock() {
+            Ok(guard) => guard.contains(language),
+            Err(poisoned) => {
+                log::warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned lock in InstallingLanguages::is_installing"
+                );
+                poisoned.into_inner().contains(language)
+            }
+        }
+    }
+
+    /// Try to start installing a language. Returns true if this call started the install,
+    /// false if it was already being installed.
+    pub fn try_start_install(&self, language: &str) -> bool {
+        match self.languages.lock() {
+            Ok(mut guard) => guard.insert(language.to_string()),
+            Err(poisoned) => {
+                log::warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned lock in InstallingLanguages::try_start_install"
+                );
+                poisoned.into_inner().insert(language.to_string())
+            }
+        }
+    }
+
+    /// Mark a language installation as complete.
+    pub fn finish_install(&self, language: &str) {
+        match self.languages.lock() {
+            Ok(mut guard) => {
+                guard.remove(language);
+            }
+            Err(poisoned) => {
+                log::warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned lock in InstallingLanguages::finish_install"
+                );
+                poisoned.into_inner().remove(language);
+            }
+        }
+    }
+}
+
+impl Default for InstallingLanguages {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 pub struct TreeSitterLs {
@@ -957,5 +1024,29 @@ mod tests {
             let url = Url::parse(url_str).unwrap();
             assert_eq!(url.scheme(), "file");
         }
+    }
+
+    #[test]
+    fn should_track_installing_languages() {
+        // Test the InstallingLanguages helper struct
+        let tracker = InstallingLanguages::new();
+
+        // Initially not installing
+        assert!(!tracker.is_installing("lua"));
+
+        // Try to start installation - should succeed
+        assert!(tracker.try_start_install("lua"));
+
+        // Now it's installing
+        assert!(tracker.is_installing("lua"));
+
+        // Second try should fail (already installing)
+        assert!(!tracker.try_start_install("lua"));
+
+        // Mark as complete
+        tracker.finish_install("lua");
+
+        // No longer installing
+        assert!(!tracker.is_installing("lua"));
     }
 }
