@@ -106,6 +106,10 @@ pub struct TreeSitterLs {
     parser_pool: Mutex<DocumentParserPool>,
     documents: DocumentStore,
     root_path: ArcSwap<Option<PathBuf>>,
+    /// Settings including auto_install flag
+    settings: ArcSwap<WorkspaceSettings>,
+    /// Tracks languages currently being installed
+    installing_languages: InstallingLanguages,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -116,6 +120,8 @@ impl std::fmt::Debug for TreeSitterLs {
             .field("parser_pool", &"Mutex<DocumentParserPool>")
             .field("documents", &"DocumentStore")
             .field("root_path", &"ArcSwap<Option<PathBuf>>")
+            .field("settings", &"ArcSwap<WorkspaceSettings>")
+            .field("installing_languages", &"InstallingLanguages")
             .finish_non_exhaustive()
     }
 }
@@ -130,7 +136,14 @@ impl TreeSitterLs {
             parser_pool: Mutex::new(parser_pool),
             documents: DocumentStore::new(),
             root_path: ArcSwap::new(Arc::new(None)),
+            settings: ArcSwap::new(Arc::new(WorkspaceSettings::default())),
+            installing_languages: InstallingLanguages::new(),
         }
+    }
+
+    /// Check if auto-install is enabled.
+    fn is_auto_install_enabled(&self) -> bool {
+        self.settings.load().auto_install
     }
 
     async fn parse_document(
@@ -216,6 +229,8 @@ impl TreeSitterLs {
     }
 
     async fn apply_settings(&self, settings: WorkspaceSettings) {
+        // Store settings for auto_install check
+        self.settings.store(Arc::new(settings.clone()));
         let summary = self.language.load_settings(settings);
         self.handle_language_events(&summary.events).await;
     }
@@ -256,6 +271,136 @@ impl TreeSitterLs {
                     }
                 }
             }
+        }
+    }
+
+    /// Try to auto-install a language if not already being installed.
+    async fn maybe_auto_install_language(&self, language: &str, uri: Url, text: String) {
+        // Try to start installation (returns false if already installing)
+        if !self.installing_languages.try_start_install(language) {
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    format!("Language '{}' is already being installed", language),
+                )
+                .await;
+            return;
+        }
+
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!("Auto-installing language '{}' in background...", language),
+            )
+            .await;
+
+        // Get data directory
+        let data_dir = match crate::install::default_data_dir() {
+            Some(dir) => dir,
+            None => {
+                self.client
+                    .log_message(
+                        MessageType::ERROR,
+                        "Could not determine data directory for auto-install",
+                    )
+                    .await;
+                self.installing_languages.finish_install(language);
+                return;
+            }
+        };
+
+        let lang = language.to_string();
+        let result =
+            crate::install::install_language_async(lang.clone(), data_dir.clone(), false).await;
+
+        // Mark installation as complete
+        self.installing_languages.finish_install(&lang);
+
+        if result.is_success() {
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    format!("Successfully installed language '{}'. Reloading...", lang),
+                )
+                .await;
+
+            // Add the installed paths to search paths and reload
+            self.reload_language_after_install(&lang, &data_dir, uri, text)
+                .await;
+        } else {
+            let mut errors = Vec::new();
+            if let Some(e) = result.parser_error {
+                errors.push(format!("parser: {}", e));
+            }
+            if let Some(e) = result.queries_error {
+                errors.push(format!("queries: {}", e));
+            }
+            self.client
+                .log_message(
+                    MessageType::ERROR,
+                    format!(
+                        "Failed to install language '{}': {}",
+                        lang,
+                        errors.join("; ")
+                    ),
+                )
+                .await;
+        }
+    }
+
+    /// Reload a language after installation and re-parse affected documents.
+    async fn reload_language_after_install(
+        &self,
+        language: &str,
+        data_dir: &std::path::Path,
+        uri: Url,
+        text: String,
+    ) {
+        // The installed files are at:
+        // - Parser: {data_dir}/parsers/{language}/libtree-sitter-{language}.so
+        // - Queries: {data_dir}/queries/{language}/
+
+        // Update settings to include the new paths
+        let current_settings = self.settings.load();
+        let mut new_search_paths = current_settings.search_paths.clone();
+
+        // Add parser directory to search paths
+        let parser_dir = data_dir.join("parsers");
+        let parser_dir_str = parser_dir.to_string_lossy().to_string();
+        if !new_search_paths.contains(&parser_dir_str) {
+            new_search_paths.push(parser_dir_str);
+        }
+
+        // Add queries directory to search paths
+        let queries_dir = data_dir.join("queries");
+        let queries_dir_str = queries_dir.to_string_lossy().to_string();
+        if !new_search_paths.contains(&queries_dir_str) {
+            new_search_paths.push(queries_dir_str);
+        }
+
+        // Create updated settings
+        let updated_settings = WorkspaceSettings::with_auto_install(
+            new_search_paths,
+            current_settings.languages.clone(),
+            current_settings.capture_mappings.clone(),
+            current_settings.auto_install,
+        );
+
+        // Apply the updated settings
+        self.apply_settings(updated_settings).await;
+
+        // Re-parse the document that triggered the install
+        self.parse_document(uri.clone(), text, Some(language), vec![])
+            .await;
+
+        // Request semantic tokens refresh
+        if self.client.semantic_tokens_refresh().await.is_ok() {
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    format!("Language '{}' loaded, semantic tokens refreshed", language),
+                )
+                .await;
         }
     }
 }
@@ -371,8 +516,26 @@ impl LanguageServer for TreeSitterLs {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        let language_id = params.text_document.language_id;
+        let language_id = params.text_document.language_id.clone();
         let uri = params.text_document.uri.clone();
+        let text = params.text_document.text.clone();
+
+        // Try to determine the language
+        let language_name = self
+            .language
+            .get_language_for_path(uri.path())
+            .or_else(|| Some(language_id.clone()));
+
+        // Check if we need to auto-install
+        if let Some(ref lang) = language_name {
+            let load_result = self.language.ensure_language_loaded(lang);
+
+            if !load_result.success && self.is_auto_install_enabled() {
+                // Language failed to load and auto-install is enabled
+                self.maybe_auto_install_language(lang, uri.clone(), text.clone())
+                    .await;
+            }
+        }
 
         self.parse_document(
             params.text_document.uri,
