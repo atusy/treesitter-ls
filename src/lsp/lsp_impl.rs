@@ -777,6 +777,10 @@ impl LanguageServer for TreeSitterLs {
         self.parse_document(uri.clone(), text, language_id.as_deref(), edits)
             .await;
 
+        // Check for injected languages and trigger auto-install for missing parsers
+        // This must be called AFTER parse_document so we have access to the updated AST
+        self.check_injected_languages_auto_install(&uri).await;
+
         // Request the client to refresh semantic tokens
         // This will trigger the client to request new semantic tokens
         if self.client.semantic_tokens_refresh().await.is_ok() {
