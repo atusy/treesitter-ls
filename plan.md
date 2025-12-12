@@ -292,10 +292,11 @@ product_backlog:
 
       ## Query Sources (nvim-treesitter GitHub raw URLs)
       ```
-      https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/master/queries/{lang}/highlights.scm
-      https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/master/queries/{lang}/locals.scm
-      https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/master/queries/{lang}/injections.scm
+      https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/main/runtime/queries/{lang}/highlights.scm
+      https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/main/runtime/queries/{lang}/locals.scm
+      https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/main/runtime/queries/{lang}/injections.scm
       ```
+      NOTE: Uses `main` branch (not `master`) and `runtime/queries/` path.
 
       ## Default Data Directory
       - Linux: ~/.local/share/treesitter-ls/
@@ -370,32 +371,28 @@ product_backlog:
       - src/bin/main.rs - Add install-parser subcommand
       - Cargo.toml - Add git2 dependency (or use git CLI)
 
-      ## nvim-treesitter Metadata Structure (parsers.lua)
+      ## nvim-treesitter Metadata Structure (parsers.lua - main branch format)
       ```lua
-      -- From nvim-treesitter/lua/nvim-treesitter/parsers.lua
-      list.lua = {
-        install_info = {
-          url = "https://github.com/tree-sitter-grammars/tree-sitter-lua",
-          revision = "v0.2.0",
-          branch = "master",  -- optional
+      -- From nvim-treesitter/lua/nvim-treesitter/parsers.lua (main branch)
+      -- NOTE: Uses `main` branch, not `master`
+      return {
+        lua = {
+          install_info = {
+            url = 'https://github.com/tree-sitter-grammars/tree-sitter-lua',
+            revision = 'abc123...',
+            location = 'optional/subdir',  -- optional, for monorepos
+          },
+          maintainers = { '@...' },
+          tier = 1,
         },
-        maintainers = { "@..." },
-        tier = 1,
+        -- 323+ languages supported
       }
       ```
-
-      ## Alternative: lockfile.json (easier to parse)
-      ```json
-      {
-        "lua": {
-          "revision": "abc123..."
-        }
-      }
-      ```
+      NOTE: The implementation dynamically parses parsers.lua to support all languages.
 
       ## Installation Flow
-      1. Read metadata for language
-      2. Create temp directory
+      1. Fetch parsers.lua from nvim-treesitter main branch
+      2. Parse Lua table to extract url, revision, location
       3. Clone repo at revision: `git clone --depth 1 --branch <revision> <url>`
       4. Navigate to parser location (some are in subdirectories)
       5. Run `tree-sitter build`
@@ -407,54 +404,85 @@ product_backlog:
   # Verified: cpp.dylib builds and works without c.dylib installed.
 
   - id: PBI-008
-    status: refining
+    status: ready
     story:
       role: "user of treesitter-ls"
       capability: "have treesitter-ls automatically install missing parsers when I open a file"
       benefit: "I get syntax highlighting for any language without running install commands manually"
     acceptance_criteria:
-      - criterion: "Opening a .lua file when no Lua parser is installed prompts for installation"
+      - criterion: "Opening a .lua file when no Lua parser is installed triggers silent background installation"
         verification: |
-          # This would be tested via LSP integration test
-          # The server should send a notification/prompt to the client
-      - criterion: "Auto-install can be disabled in settings"
+          # Remove existing Lua parser/queries
+          rm -rf ~/.local/share/treesitter-ls/parser/lua.* ~/.local/share/treesitter-ls/queries/lua
+          # Open a .lua file in editor with treesitter-ls running
+          # After ~30s, parser and queries should be installed
+          test -f ~/.local/share/treesitter-ls/parser/lua.dylib || test -f ~/.local/share/treesitter-ls/parser/lua.so
+          test -f ~/.local/share/treesitter-ls/queries/lua/highlights.scm
+      - criterion: "LSP shows progress notification during installation"
         verification: |
-          # Verify setting is respected
+          # Server sends window/showMessage or $/progress notifications
+          # Check LSP log for "Installing parser for..." messages
+      - criterion: "Auto-install can be disabled in initializationOptions"
+        verification: |
+          # With autoInstall: false, opening file with missing parser does NOT trigger install
       - criterion: "Failed auto-install shows clear error message via LSP notification"
         verification: |
-          # The server should report the error to the client
+          # On a system without tree-sitter CLI, should show error notification
+      - criterion: "Auto-install does not block document operations (async)"
+        verification: |
+          # Document should be immediately usable (no syntax highlighting initially)
+          # Syntax highlighting appears after installation completes
+      - criterion: "Already-installing language is not triggered twice"
+        verification: |
+          # Opening multiple .lua files during Lua install doesn't spawn multiple installs
     story_points: 5
     dependencies:
       - PBI-006  # Requires parser installation
       - PBI-005  # Requires query installation
-    questions_for_stakeholder:
+    decisions:
       - question: "How should auto-install be triggered?"
-        options:
-          - "Show window/showMessage notification with install option"
-          - "Silently install in background, show success/error after"
-          - "Use custom LSP notification that client can handle"
-      - question: "Should this be deferred until CLI commands are battle-tested?"
-        context: "The CLI install commands were just implemented. Real-world usage might reveal issues."
+        decision: "Full silent install in background"
+        rationale: |
+          User preference: Seamless experience without prompts. Installation happens
+          automatically when opening a file. Progress/errors shown via LSP notifications.
     technical_notes: |
       ## Implementation Strategy
 
-      This is an enhancement that integrates installation into the LSP flow.
-      Consider deferring until core installation is proven stable.
+      Full silent background installation when opening files with missing parsers.
 
-      1. When document opened, check if parser exists
-      2. If not, check settings for auto_install
-      3. If enabled, trigger async installation
-      4. Send LSP notification with progress/result
+      ### Flow
+      1. On textDocument/didOpen, check if parser exists for the language
+      2. If parser missing and autoInstall enabled:
+         a. Add language to "installing" set (prevent duplicate installs)
+         b. Spawn async task to install parser + queries
+         c. Send window/showMessage with "Installing {lang}..." (info level)
+         d. On completion: send success/error notification, remove from set
+         e. Trigger re-parse of open documents for that language
+      3. If parser exists, proceed normally
 
-      ## Settings Addition
+      ### Key Files to Modify
+      - src/lsp/lsp_impl.rs - Add auto-install check in did_open
+      - src/lsp/settings.rs - Add autoInstall setting
+      - src/install/mod.rs - Expose async install function for LSP use
+
+      ### Settings Addition
       ```json
       {
-        "treesitter": {
-          "autoInstall": true,
-          "autoInstallQueries": true
+        "initializationOptions": {
+          "autoInstall": true
         }
       }
       ```
+
+      ### Concurrency Handling
+      - Use HashSet<String> to track languages currently being installed
+      - Prevent duplicate install attempts for same language
+      - Use tokio::spawn for background installation
+
+      ### Error Handling
+      - Missing tree-sitter CLI: Show error notification with install instructions
+      - Network failure: Show retry suggestion
+      - Compilation failure: Show error with log path
 
   - id: PBI-009
     status: ready
@@ -514,6 +542,140 @@ product_backlog:
       treesitter-ls install lua --parser-only      # Only compile parser
       treesitter-ls install lua --force            # Overwrite existing
       ```
+
+  # ============================================================================
+  # PRIORITIZED BACKLOG (Post-Sprint 6 Refinement)
+  # ============================================================================
+  # Priority order (top to bottom):
+  #   1. PBI-008: Auto-install on file open (USER PRIORITY - ready)
+  #   2. PBI-010: Cache parsers.lua (performance foundation - ready)
+  #   3. PBI-011: Batch install (UX improvement - draft)
+  #   4. PBI-012: Progress indicators (nice-to-have - draft)
+  # ============================================================================
+
+  - id: PBI-010
+    status: ready
+    story:
+      role: "user of treesitter-ls"
+      capability: "have parsers.lua cached locally to avoid repeated HTTP requests"
+      benefit: "I can run multiple install commands quickly without waiting for network requests"
+    acceptance_criteria:
+      - criterion: "Second install command in same session reuses cached parsers.lua"
+        verification: |
+          # Time two consecutive installs - second should be faster
+          time ./target/release/treesitter-ls install lua --data-dir /tmp/test1 --force
+          time ./target/release/treesitter-ls install rust --data-dir /tmp/test2 --force
+      - criterion: "Cache expires after 1 hour (configurable)"
+        verification: |
+          # Verify cache TTL behavior through code review/unit tests
+      - criterion: "Cache can be bypassed with --no-cache flag"
+        verification: |
+          ./target/release/treesitter-ls install lua --no-cache 2>&1 | grep -i "fetch"
+      - criterion: "Cache is stored in data directory"
+        verification: |
+          ./target/release/treesitter-ls install lua --data-dir /tmp/cache-test
+          test -f /tmp/cache-test/cache/parsers.lua
+    story_points: 3
+    dependencies: []
+    technical_notes: |
+      ## Implementation Strategy
+
+      1. Create src/install/cache.rs module
+      2. Store parsers.lua in {data_dir}/cache/parsers.lua with timestamp
+      3. Check cache age before fetching from network
+      4. Default TTL: 1 hour (3600 seconds)
+
+      ## Cache Structure
+      ```
+      ~/.local/share/treesitter-ls/
+        cache/
+          parsers.lua           # Cached content
+          parsers.lua.meta      # Timestamp and TTL info
+      ```
+
+      ## Key Files to Create/Modify
+      - src/install/cache.rs - New cache module
+      - src/install/metadata.rs - Use cache before network fetch
+      - src/bin/main.rs - Add --no-cache flag
+
+  - id: PBI-011
+    status: draft
+    story:
+      role: "user of treesitter-ls"
+      capability: "install multiple languages with a single command"
+      benefit: "I can set up my development environment quickly without running separate commands"
+    acceptance_criteria:
+      - criterion: "Running `treesitter-ls install lua rust python` installs all three languages"
+        verification: |
+          rm -rf /tmp/batch-test
+          ./target/release/treesitter-ls install lua rust python --data-dir /tmp/batch-test
+          test -f /tmp/batch-test/parsers/lua.dylib
+          test -f /tmp/batch-test/parsers/rust.dylib
+          test -f /tmp/batch-test/parsers/python.dylib
+      - criterion: "Progress shows which language is being installed (1/3, 2/3, 3/3)"
+        verification: |
+          ./target/release/treesitter-ls install lua rust --force 2>&1 | grep -E "\[1/2\]|\[2/2\]"
+      - criterion: "If one language fails, others are still attempted"
+        verification: |
+          # Install with one invalid language
+          ./target/release/treesitter-ls install lua invalid_lang rust --force 2>&1 | grep -i "lua.*success"
+      - criterion: "Summary shows success/failure count at the end"
+        verification: |
+          ./target/release/treesitter-ls install lua rust --force 2>&1 | grep -i "2.*success"
+    story_points: 3
+    dependencies:
+      - PBI-010  # Cache makes batch install much faster
+    technical_notes: |
+      ## Implementation Strategy
+
+      1. Change `language: String` to `languages: Vec<String>` in CLI
+      2. Loop through languages, calling install for each
+      3. Track success/failure for each language
+      4. Print summary at end
+
+      ## Key Files to Modify
+      - src/bin/main.rs - Update Install command to accept multiple languages
+
+      ## UX Considerations
+      - Show progress: "[1/3] Installing lua..."
+      - Continue on failure (don't stop at first error)
+      - Summary: "Installed 2/3 languages (1 failed)"
+
+  - id: PBI-012
+    status: draft
+    story:
+      role: "user of treesitter-ls"
+      capability: "see progress indicators during parser compilation"
+      benefit: "I know the install is working and approximately how long it will take"
+    acceptance_criteria:
+      - criterion: "Parser compilation shows phases (cloning, building, installing)"
+        verification: |
+          ./target/release/treesitter-ls install lua --force 2>&1 | grep -i "cloning\|building\|installing"
+      - criterion: "Long operations show spinner or elapsed time"
+        verification: |
+          # Verify through manual testing - compilation shows activity
+      - criterion: "Quiet mode (--quiet) suppresses progress output"
+        verification: |
+          ./target/release/treesitter-ls install lua --quiet --force 2>&1 | wc -l
+    story_points: 2
+    dependencies: []
+    technical_notes: |
+      ## Implementation Strategy
+
+      1. Add indicatif crate for progress bars/spinners
+      2. Update parser.rs to emit progress events
+      3. Show phases: Fetching metadata -> Cloning repo -> Building parser -> Installing
+
+      ## Key Files to Modify
+      - Cargo.toml - Add indicatif dependency
+      - src/install/parser.rs - Add progress callbacks
+      - src/bin/main.rs - Display progress indicators
+
+      ## Progress Phases
+      1. "Fetching parser metadata..." (fast, network)
+      2. "Cloning tree-sitter-{lang}..." (medium, network)
+      3. "Building parser..." (slow, CPU intensive)
+      4. "Installing parser..." (fast, file copy)
 `````````
 
 ### Definition of Ready
