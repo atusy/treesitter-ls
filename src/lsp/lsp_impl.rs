@@ -2142,4 +2142,178 @@ Some updated text below the code block with more content.
         // For already-loaded languages, ensure_language_loaded returns success,
         // so the auto-install code path is never reached.
     }
+
+    #[test]
+    fn test_pasting_multiple_code_blocks_triggers_all_languages() {
+        // ST-4: Test that pasting multiple code blocks triggers auto-install for all
+        // new languages.
+        //
+        // Scenario:
+        // 1. User has a minimal markdown file
+        // 2. User pastes text containing Python, Rust, and Go code blocks
+        // 3. After parsing, check_injected_languages_auto_install is called
+        // 4. All three languages are detected
+        // 5. Auto-install is triggered for each (none are loaded)
+        // 6. InstallingLanguages tracker prevents duplicate attempts for same language
+        //
+        // This test verifies:
+        // - Multiple injected languages are detected in a single paste
+        // - All unique languages trigger auto-install
+        // - Duplicate code blocks of the same language only trigger once
+
+        use crate::language::injection::collect_all_injections;
+        use tree_sitter::{Parser, Query};
+
+        // BEFORE: Minimal markdown document
+        let initial_text = "# My Document\n\nI will paste some code blocks here:\n\n";
+
+        // Parse initial document
+        let mut parser = Parser::new();
+        let md_language: tree_sitter::Language = tree_sitter_md::LANGUAGE.into();
+        parser.set_language(&md_language).expect("set markdown");
+        let initial_tree = parser.parse(initial_text, None).expect("parse markdown");
+        let initial_root = initial_tree.root_node();
+
+        // Create injection query for markdown code blocks
+        let injection_query_str = r#"
+            (fenced_code_block
+              (info_string
+                (language) @injection.language)
+              (code_fence_content) @injection.content)
+        "#;
+        let injection_query =
+            Query::new(&md_language, injection_query_str).expect("valid injection query");
+
+        // Initially, there should be NO injected languages
+        let initial_injections =
+            collect_all_injections(&initial_root, initial_text, Some(&injection_query))
+                .unwrap_or_default();
+        assert!(
+            initial_injections.is_empty(),
+            "Initial document should have no code blocks"
+        );
+
+        // AFTER: User pastes multiple code blocks with Python, Rust, Go
+        // This simulates a paste operation in did_change
+        let pasted_text = r#"# My Document
+
+I will paste some code blocks here:
+
+```python
+def hello():
+    print("Hello from Python!")
+```
+
+```rust
+fn main() {
+    println!("Hello from Rust!");
+}
+```
+
+```go
+package main
+
+func main() {
+    fmt.Println("Hello from Go!")
+}
+```
+
+And another Python block (duplicate language):
+
+```python
+class Foo:
+    pass
+```
+"#;
+
+        // Re-parse after paste
+        let pasted_tree = parser
+            .parse(pasted_text, None)
+            .expect("parse pasted markdown");
+        let pasted_root = pasted_tree.root_node();
+
+        // Detect all injections
+        let pasted_injections =
+            collect_all_injections(&pasted_root, pasted_text, Some(&injection_query))
+                .unwrap_or_default();
+
+        // Should have 4 injection regions total (python, rust, go, python)
+        assert_eq!(
+            pasted_injections.len(),
+            4,
+            "Should detect 4 injection regions (2 python + 1 rust + 1 go)"
+        );
+
+        // Extract unique languages
+        let unique_languages: HashSet<String> = pasted_injections
+            .iter()
+            .map(|i| i.language.clone())
+            .collect();
+
+        // Should have exactly 3 unique languages
+        assert_eq!(
+            unique_languages.len(),
+            3,
+            "Should detect exactly 3 unique languages"
+        );
+        assert!(
+            unique_languages.contains("python"),
+            "Should detect 'python'"
+        );
+        assert!(unique_languages.contains("rust"), "Should detect 'rust'");
+        assert!(unique_languages.contains("go"), "Should detect 'go'");
+
+        // Simulate the check_injected_languages_auto_install behavior
+        // For each unique language, if not loaded, trigger install
+        let tracker = InstallingLanguages::new();
+        let mut installed: Vec<String> = Vec::new();
+
+        for lang in &unique_languages {
+            // Simulate: ensure_language_loaded fails (not configured)
+            // So we try to start install
+            if tracker.try_start_install(lang) {
+                installed.push(lang.clone());
+            }
+        }
+
+        // All 3 languages should trigger install (first time for each)
+        assert_eq!(
+            installed.len(),
+            3,
+            "Should trigger install for all 3 unique languages"
+        );
+
+        // Verify all languages are now marked as installing
+        assert!(
+            tracker.is_installing("python"),
+            "Python should be installing"
+        );
+        assert!(tracker.is_installing("rust"), "Rust should be installing");
+        assert!(tracker.is_installing("go"), "Go should be installing");
+
+        // Simulate: user opens another file with same languages (while still installing)
+        // None should trigger new installs
+        let mut second_file_installed: Vec<String> = Vec::new();
+        for lang in &unique_languages {
+            if tracker.try_start_install(lang) {
+                second_file_installed.push(lang.clone());
+            }
+        }
+
+        assert!(
+            second_file_installed.is_empty(),
+            "Second file should not trigger installs for languages already being installed"
+        );
+
+        // This test confirms:
+        // 1. Multiple code blocks in a single paste are all detected
+        // 2. Unique languages are extracted (python appears twice but only counted once)
+        // 3. Auto-install would be triggered for all 3 unique languages
+        // 4. InstallingLanguages tracker prevents duplicate concurrent installs
+        //
+        // The actual implementation in did_change calls:
+        //   check_injected_languages_auto_install(&uri)
+        // which iterates over unique languages and calls maybe_auto_install_language
+        // for each that ensure_language_loaded reports as not loaded.
+    }
 }
