@@ -65,9 +65,18 @@ fn main() {
             );
         }
         Some(Commands::ListLanguages) => {
-            eprintln!("Supported languages:");
-            for lang in metadata::list_supported_languages() {
-                println!("  {}", lang);
+            eprintln!("Fetching supported languages from nvim-treesitter...");
+            match metadata::list_supported_languages() {
+                Ok(languages) => {
+                    eprintln!("Supported languages ({} total):", languages.len());
+                    for lang in languages {
+                        println!("  {}", lang);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to fetch language list: {}", e);
+                    std::process::exit(1);
+                }
             }
         }
         None => {
