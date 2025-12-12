@@ -101,6 +101,7 @@ pub struct WorkspaceSettings {
     pub search_paths: Vec<String>,
     pub languages: HashMap<String, LanguageSettings>,
     pub capture_mappings: CaptureMappings,
+    pub auto_install: bool,
 }
 
 impl WorkspaceSettings {
@@ -113,6 +114,21 @@ impl WorkspaceSettings {
             search_paths,
             languages,
             capture_mappings,
+            auto_install: false,
+        }
+    }
+
+    pub fn with_auto_install(
+        search_paths: Vec<String>,
+        languages: HashMap<String, LanguageSettings>,
+        capture_mappings: CaptureMappings,
+        auto_install: bool,
+    ) -> Self {
+        Self {
+            search_paths,
+            languages,
+            capture_mappings,
+            auto_install,
         }
     }
 }

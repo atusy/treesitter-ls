@@ -129,10 +129,11 @@ impl From<&TreeSitterSettings> for WorkspaceSettings {
             })
             .collect();
 
-        WorkspaceSettings::new(
+        WorkspaceSettings::with_auto_install(
             settings.search_paths.clone().unwrap_or_default(),
             languages,
             capture_mappings,
+            settings.auto_install.unwrap_or(false),
         )
     }
 }
@@ -422,5 +423,41 @@ mod tests {
             wildcard_mappings.highlights.get("@module.builtin"),
             Some(&"@namespace.defaultLibrary".to_string())
         );
+    }
+
+    #[test]
+    fn test_workspace_settings_exposes_auto_install() {
+        // Test that auto_install is exposed in WorkspaceSettings (default false)
+        let settings = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: Some(true),
+        };
+
+        let workspace: WorkspaceSettings = WorkspaceSettings::from(&settings);
+        assert!(workspace.auto_install);
+
+        // Test with false
+        let settings_false = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: Some(false),
+        };
+
+        let workspace_false: WorkspaceSettings = WorkspaceSettings::from(&settings_false);
+        assert!(!workspace_false.auto_install);
+
+        // Test with None (should default to false)
+        let settings_none = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+        };
+
+        let workspace_none: WorkspaceSettings = WorkspaceSettings::from(&settings_none);
+        assert!(!workspace_none.auto_install);
     }
 }
