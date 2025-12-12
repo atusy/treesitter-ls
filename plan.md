@@ -126,7 +126,7 @@ sprint:
   number: 9
   pbi: PBI-014
   status: in_progress
-  subtasks_completed: 1
+  subtasks_completed: 4
   subtasks_total: 4
   impediments: 0
   sprint_goal: |
@@ -947,8 +947,11 @@ sprint:
         3. Verifies check_injected_languages_auto_install is called
         4. Verifies maybe_auto_install_language is called for "lua"
       type: behavioral
-      status: pending
-      commits: []
+      status: completed
+      commits:
+        - hash: 7b2a872
+          phase: green
+          message: "test(lsp): add test for adding code block triggers auto-install"
       files_to_modify:
         - src/lsp/lsp_impl.rs  # Unit tests in same file
 
@@ -961,8 +964,11 @@ sprint:
         3. Verifies check_injected_languages_auto_install runs
         4. Verifies maybe_auto_install_language is NOT called (Lua already loaded)
       type: behavioral
-      status: pending
-      commits: []
+      status: completed
+      commits:
+        - hash: dc54000
+          phase: green
+          message: "test(lsp): verify unrelated edits don't re-trigger for loaded languages"
       files_to_modify:
         - src/lsp/lsp_impl.rs
 
@@ -975,8 +981,11 @@ sprint:
         3. Verifies maybe_auto_install_language is called for each language
         4. Verifies InstallingLanguages prevents duplicates if same language appears twice
       type: behavioral
-      status: pending
-      commits: []
+      status: completed
+      commits:
+        - hash: dd7ea24
+          phase: green
+          message: "test(lsp): verify pasting multiple code blocks triggers all languages"
       files_to_modify:
         - src/lsp/lsp_impl.rs
 
