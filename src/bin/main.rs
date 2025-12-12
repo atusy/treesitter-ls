@@ -1,9 +1,6 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use tokio::io::{stdin, stdout};
-use tower_lsp::{LspService, Server};
 use treesitter_ls::install::{default_data_dir, metadata, parser, queries};
-use treesitter_ls::lsp::TreeSitterLs;
 
 /// A Language Server Protocol (LSP) server using Tree-sitter for parsing
 #[derive(Parser)]
@@ -46,8 +43,7 @@ enum Commands {
     ListLanguages,
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let cli = Cli::parse();
 
     match cli.command {
@@ -59,67 +55,14 @@ async fn main() {
             queries_only,
             parser_only,
         }) => {
-            let data_dir = data_dir.or_else(default_data_dir).unwrap_or_else(|| {
-                eprintln!("Error: Could not determine data directory. Please specify --data-dir.");
-                std::process::exit(1);
-            });
-
-            // Track success/failure for exit code
-            let mut parser_success = true;
-            let mut queries_success = true;
-
-            // Install parser (unless --queries-only)
-            if !queries_only {
-                eprintln!("Installing parser for '{}' to {:?}...", language, data_dir);
-
-                let options = parser::InstallOptions {
-                    data_dir: data_dir.clone(),
-                    force,
-                    verbose,
-                };
-
-                match parser::install_parser(&language, &options) {
-                    Ok(result) => {
-                        eprintln!("✓ Parser installed: {}", result.install_path.display());
-                        if verbose {
-                            eprintln!("  Revision: {}", result.revision);
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("✗ Parser installation failed: {}", e);
-                        parser_success = false;
-                    }
-                }
-            }
-
-            // Install queries (unless --parser-only)
-            if !parser_only {
-                eprintln!("Installing queries for '{}' to {:?}...", language, data_dir);
-
-                match queries::install_queries(&language, &data_dir, force) {
-                    Ok(result) => {
-                        eprintln!("✓ Queries installed: {}", result.install_path.display());
-                        if verbose {
-                            eprintln!("  Files: {}", result.files_downloaded.join(", "));
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("✗ Query installation failed: {}", e);
-                        queries_success = false;
-                    }
-                }
-            }
-
-            // Summary
-            if parser_success && queries_success {
-                eprintln!("\nSuccessfully installed '{}' language support.", language);
-            } else if !parser_success && !queries_success {
-                eprintln!("\nFailed to install '{}' language support.", language);
-                std::process::exit(1);
-            } else {
-                eprintln!("\nPartially installed '{}' language support.", language);
-                std::process::exit(1);
-            }
+            run_install(
+                &language,
+                data_dir,
+                force,
+                verbose,
+                queries_only,
+                parser_only,
+            );
         }
         Some(Commands::ListLanguages) => {
             eprintln!("Supported languages:");
@@ -129,11 +72,94 @@ async fn main() {
         }
         None => {
             // Start LSP server (backward compatible default behavior)
-            let stdin = stdin();
-            let stdout = stdout();
-
-            let (service, socket) = LspService::new(TreeSitterLs::new);
-            Server::new(stdin, stdout, socket).serve(service).await;
+            // Only create tokio runtime for LSP mode to avoid conflicts with reqwest::blocking
+            run_lsp_server();
         }
     }
+}
+
+/// Run the install command (synchronous - no tokio runtime)
+fn run_install(
+    language: &str,
+    data_dir: Option<PathBuf>,
+    force: bool,
+    verbose: bool,
+    queries_only: bool,
+    parser_only: bool,
+) {
+    let data_dir = data_dir.or_else(default_data_dir).unwrap_or_else(|| {
+        eprintln!("Error: Could not determine data directory. Please specify --data-dir.");
+        std::process::exit(1);
+    });
+
+    // Track success/failure for exit code
+    let mut parser_success = true;
+    let mut queries_success = true;
+
+    // Install parser (unless --queries-only)
+    if !queries_only {
+        eprintln!("Installing parser for '{}' to {:?}...", language, data_dir);
+
+        let options = parser::InstallOptions {
+            data_dir: data_dir.clone(),
+            force,
+            verbose,
+        };
+
+        match parser::install_parser(language, &options) {
+            Ok(result) => {
+                eprintln!("✓ Parser installed: {}", result.install_path.display());
+                if verbose {
+                    eprintln!("  Revision: {}", result.revision);
+                }
+            }
+            Err(e) => {
+                eprintln!("✗ Parser installation failed: {}", e);
+                parser_success = false;
+            }
+        }
+    }
+
+    // Install queries (unless --parser-only)
+    if !parser_only {
+        eprintln!("Installing queries for '{}' to {:?}...", language, data_dir);
+
+        match queries::install_queries(language, &data_dir, force) {
+            Ok(result) => {
+                eprintln!("✓ Queries installed: {}", result.install_path.display());
+                if verbose {
+                    eprintln!("  Files: {}", result.files_downloaded.join(", "));
+                }
+            }
+            Err(e) => {
+                eprintln!("✗ Query installation failed: {}", e);
+                queries_success = false;
+            }
+        }
+    }
+
+    // Summary
+    if parser_success && queries_success {
+        eprintln!("\nSuccessfully installed '{}' language support.", language);
+    } else if !parser_success && !queries_success {
+        eprintln!("\nFailed to install '{}' language support.", language);
+        std::process::exit(1);
+    } else {
+        eprintln!("\nPartially installed '{}' language support.", language);
+        std::process::exit(1);
+    }
+}
+
+/// Run the LSP server (requires tokio runtime)
+#[tokio::main]
+async fn run_lsp_server() {
+    use tokio::io::{stdin, stdout};
+    use tower_lsp::{LspService, Server};
+    use treesitter_ls::lsp::TreeSitterLs;
+
+    let stdin = stdin();
+    let stdout = stdout();
+
+    let (service, socket) = LspService::new(TreeSitterLs::new);
+    Server::new(stdin, stdout, socket).serve(service).await;
 }

@@ -62,28 +62,28 @@ fn test_install_help_shows_language_argument() {
     );
 }
 
-/// Test that install command with a language prints placeholder error
+/// Test that install command with unsupported language shows helpful error
 #[test]
-fn test_install_command_prints_placeholder_error() {
+fn test_install_command_unsupported_language_shows_error() {
     let output = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
-        .args(["install", "lua"])
+        .args(["install", "nonexistent_language_xyz", "--data-dir", "/tmp/test-cli"])
         .output()
         .expect("Failed to execute command");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Should exit with failure (not implemented yet)
+    // Should exit with failure for unsupported language
     assert!(
         !output.status.success(),
-        "Install should exit with failure until implemented"
+        "Install should exit with failure for unsupported language"
     );
 
-    // Should contain error message mentioning the language or not implemented
+    // Should contain error message about the language not being found
     assert!(
-        stderr.to_lowercase().contains("error")
-            || stderr.to_lowercase().contains("not")
-            || stderr.to_lowercase().contains("implement"),
-        "Install should print error message. Got: {}",
+        stderr.to_lowercase().contains("not found")
+            || stderr.to_lowercase().contains("not supported")
+            || stderr.to_lowercase().contains("failed"),
+        "Install should print helpful error for unsupported language. Got: {}",
         stderr
     );
 }
