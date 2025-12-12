@@ -871,6 +871,165 @@ product_backlog:
       2. "Cloning tree-sitter-{lang}..." (medium, network)
       3. "Building parser..." (slow, CPU intensive)
       4. "Installing parser..." (fast, file copy)
+
+  - id: PBI-015
+    status: ready
+    story:
+      role: "user of treesitter-ls"
+      capability: "have parser installation recover gracefully when the specified git revision doesn't exist"
+      benefit: "I can still install parsers even when nvim-treesitter metadata is outdated or incorrect"
+    acceptance_criteria:
+      - criterion: "When git fetch for a revision fails, the installer falls back to the default branch (main or master)"
+        verification: |
+          # Simulate by testing with a known non-existent revision
+          # The installer should succeed by falling back to the default branch
+          ./target/release/treesitter-ls install-parser lua --verbose 2>&1 | grep -i "fallback\|default branch"
+      - criterion: "Error message clearly shows which revision failed and what fallback was used"
+        verification: |
+          # When fallback occurs, the message should be informative
+          ./target/release/treesitter-ls install-parser <lang-with-bad-revision> --verbose 2>&1 | grep -Ei "revision.*not found|falling back"
+      - criterion: "When both specific revision AND fallback fail, show clear error with suggestions"
+        verification: |
+          # Use a completely invalid URL to test full failure path
+          # Should show clear error suggesting manual installation or reporting issue
+          ./target/release/treesitter-ls install-parser nonexistent_parser 2>&1 | grep -Ei "failed|not found|suggestion"
+      - criterion: "Partial success message clearly indicates parser was installed from fallback, not pinned revision"
+        verification: |
+          # When fallback succeeds, user should know they're not on the pinned version
+          ./target/release/treesitter-ls install-parser lua --verbose 2>&1 | grep -Ei "warning|fallback|latest"
+      - criterion: "A --strict flag prevents fallback behavior for users who want exact versions"
+        verification: |
+          # With --strict, revision failures should not fallback
+          ./target/release/treesitter-ls install-parser lua --strict --verbose 2>&1
+          # Should fail cleanly if revision doesn't exist
+    story_points: 5
+    dependencies:
+      - PBI-006  # Requires existing parser installation infrastructure
+    decisions:
+      - question: "What fallback order should we use when the pinned revision fails?"
+        decision: "Try main branch first, then master branch, then give up"
+        rationale: |
+          Most modern repositories use 'main' as the default branch.
+          Some older repos still use 'master'. Trying both covers most cases.
+          More exotic default branch names are rare enough to not warrant additional complexity.
+      - question: "Should fallback be enabled by default?"
+        decision: "Yes, enable fallback by default with a --strict flag to disable"
+        rationale: |
+          Users want parsers to install successfully. A working parser from a slightly
+          different revision is better than no parser at all. Power users who need exact
+          versions can use --strict.
+      - question: "Should we cache the successful fallback info?"
+        decision: "No, just log a warning"
+        rationale: |
+          Keeping it simple for the first iteration. The user sees the warning and can
+          report the issue. Future PBIs could add caching or reporting mechanisms.
+    technical_notes: |
+      ## Root Cause Analysis
+
+      The current `clone_repo()` function in `src/install/parser.rs` uses this flow:
+      1. `git clone --depth 1 <url>` - Clone with default branch
+      2. `git fetch --depth 1 origin <revision>` - Fetch the specific revision
+      3. `git checkout <revision>` - Checkout the revision
+
+      When step 2 fails (revision doesn't exist), the entire install fails.
+      The error observed was: "Failed to checkout revision v0.25.0"
+
+      ## Implementation Strategy
+
+      1. Modify `clone_repo()` to implement fallback logic:
+         ```rust
+         fn clone_repo(url: &str, revision: &str, dest: &Path, strict: bool) -> Result<CloneResult, ParserInstallError> {
+             // Step 1: Clone with depth 1
+             git_clone(url, dest)?;
+
+             // Step 2: Try to fetch/checkout specific revision
+             if let Err(e) = git_fetch_checkout(dest, revision) {
+                 if strict {
+                     return Err(e);
+                 }
+                 // Step 3: Log warning and try fallback
+                 log::warn!("Revision '{}' not found, falling back to default branch", revision);
+
+                 // Try main branch
+                 if git_checkout_branch(dest, "main").is_ok() {
+                     return Ok(CloneResult { revision: "main".to_string(), is_fallback: true });
+                 }
+
+                 // Try master branch
+                 if git_checkout_branch(dest, "master").is_ok() {
+                     return Ok(CloneResult { revision: "master".to_string(), is_fallback: true });
+                 }
+
+                 // All fallbacks failed
+                 return Err(ParserInstallError::GitError(format!(
+                     "Revision '{}' not found and fallback to main/master failed. Repository may be invalid.",
+                     revision
+                 )));
+             }
+
+             Ok(CloneResult { revision: revision.to_string(), is_fallback: false })
+         }
+         ```
+
+      2. Add `--strict` flag to CLI in `src/bin/main.rs`
+
+      3. Update `InstallOptions` struct to include `strict: bool`
+
+      4. Add `CloneResult` struct to capture whether fallback was used:
+         ```rust
+         pub struct CloneResult {
+             pub revision: String,
+             pub is_fallback: bool,
+         }
+         ```
+
+      5. Update `ParserInstallResult` to indicate if fallback was used:
+         ```rust
+         pub struct ParserInstallResult {
+             pub language: String,
+             pub install_path: PathBuf,
+             pub revision: String,
+             pub used_fallback: bool,  // NEW
+         }
+         ```
+
+      6. Update output messages to warn when fallback is used
+
+      ## Key Files to Modify
+      - src/install/parser.rs - Add fallback logic to clone_repo()
+      - src/bin/main.rs - Add --strict flag to install-parser command
+
+      ## Error Messages
+
+      When fallback succeeds:
+      ```
+      Warning: Revision 'v0.25.0' not found in repository.
+      Falling back to 'main' branch.
+      Note: Installed parser may differ from nvim-treesitter's pinned version.
+      ```
+
+      When all fallbacks fail:
+      ```
+      Error: Failed to checkout revision 'v0.25.0'.
+      Fallback to 'main' and 'master' branches also failed.
+      Possible causes:
+        - The repository URL may be incorrect
+        - The repository may have been deleted or renamed
+        - Network issues may be preventing access
+      Suggestion: Try installing manually or report this issue.
+      ```
+
+      ## Edge Cases
+      - Revision exists but is a commit hash (not tag): Should work, no fallback needed
+      - Revision is already "main" or "master": Skip redundant fallback attempts
+      - Repository has unusual default branch (e.g., "develop"): Log warning, fail gracefully
+      - Network timeout during fallback: Propagate error clearly
+
+      ## Testing Strategy
+      1. Unit test: Mock git commands to simulate revision not found
+      2. Unit test: Verify fallback order (main -> master)
+      3. Unit test: Verify --strict prevents fallback
+      4. Integration test: Test with a real repository that has known good/bad revisions
 `````````
 
 ### Definition of Ready
