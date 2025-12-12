@@ -126,7 +126,7 @@ sprint:
   number: 8
   pbi: PBI-013
   status: in_progress
-  subtasks_completed: 3
+  subtasks_completed: 4
   subtasks_total: 4
   impediments: 0
 `````````
@@ -975,8 +975,11 @@ sprint:
         3. Verifies maybe_auto_install_language is called for each injected language
         4. Verifies InstallingLanguages tracker prevents duplicate installs
       type: behavioral
-      status: pending
-      commits: []
+      status: completed
+      commits:
+        - hash: "7ba80e1"
+          phase: green
+          message: "test(lsp): add integration test for injected language auto-install"
       files_to_modify:
         - src/lsp/lsp_impl.rs  # Unit tests in same file
 
