@@ -10,8 +10,7 @@ use regex::Regex;
 use std::collections::HashMap;
 
 /// URL for nvim-treesitter parsers.lua on GitHub (main branch).
-const PARSERS_LUA_URL: &str =
-    "https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/main/lua/nvim-treesitter/parsers.lua";
+const PARSERS_LUA_URL: &str = "https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/main/lua/nvim-treesitter/parsers.lua";
 
 /// Parser metadata containing repository URL and revision.
 #[derive(Debug, Clone)]
@@ -95,8 +94,8 @@ fn parse_parsers_lua(content: &str) -> Result<HashMap<String, ParserMetadata>, M
     // Pattern to match parser entries in main branch format: lang = { ... }
     // The pattern matches language names at the start of a line (with optional indentation)
     // followed by = {
-    let lang_pattern =
-        Regex::new(r#"(?m)^\s*([a-zA-Z][a-zA-Z0-9_]*)\s*=\s*\{"#).expect("valid regex for lang pattern");
+    let lang_pattern = Regex::new(r#"(?m)^\s*([a-zA-Z][a-zA-Z0-9_]*)\s*=\s*\{"#)
+        .expect("valid regex for lang pattern");
 
     // Find all language names first
     let lang_names: Vec<String> = lang_pattern

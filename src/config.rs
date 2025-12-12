@@ -28,6 +28,9 @@ pub fn merge_settings(
                     fallback.capture_mappings,
                     primary.capture_mappings,
                 ),
+
+                // Prefer primary auto_install, fall back to fallback
+                auto_install: primary.auto_install.or(fallback.auto_install),
             };
             Some(merged)
         }
@@ -172,6 +175,7 @@ impl From<&WorkspaceSettings> for TreeSitterSettings {
             search_paths,
             languages,
             capture_mappings,
+            auto_install: None, // WorkspaceSettings doesn't track auto_install
         }
     }
 }
@@ -235,6 +239,7 @@ mod tests {
             search_paths: Some(vec!["/path/to/fallback".to_string()]),
             languages: HashMap::new(),
             capture_mappings: HashMap::new(),
+            auto_install: None,
         };
         let result = merge_settings(Some(fallback.clone()), None).unwrap();
         assert_eq!(
@@ -249,6 +254,7 @@ mod tests {
             search_paths: Some(vec!["/path/to/primary".to_string()]),
             languages: HashMap::new(),
             capture_mappings: HashMap::new(),
+            auto_install: None,
         };
         let result = merge_settings(None, Some(primary.clone())).unwrap();
         assert_eq!(
@@ -274,6 +280,7 @@ mod tests {
             search_paths: Some(vec!["/path/to/fallback".to_string()]),
             languages: fallback_languages,
             capture_mappings: HashMap::new(),
+            auto_install: None,
         };
 
         let mut primary_languages = HashMap::new();
@@ -291,6 +298,7 @@ mod tests {
             search_paths: Some(vec!["/path/to/primary".to_string()]),
             languages: primary_languages,
             capture_mappings: HashMap::new(),
+            auto_install: None,
         };
 
         let result = merge_settings(Some(fallback), Some(primary)).unwrap();
@@ -335,6 +343,7 @@ mod tests {
             search_paths: None,
             languages: HashMap::new(),
             capture_mappings: fallback_mappings,
+            auto_install: None,
         };
 
         let mut primary_mappings = HashMap::new();
@@ -358,6 +367,7 @@ mod tests {
             search_paths: None,
             languages: HashMap::new(),
             capture_mappings: primary_mappings,
+            auto_install: None,
         };
 
         let result = merge_settings(Some(fallback), Some(primary)).unwrap();

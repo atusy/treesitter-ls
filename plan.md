@@ -123,11 +123,11 @@ Sprint Cycle:
 
 `````````yaml
 sprint:
-  number: 6
-  pbi: PBI-009
-  status: done
-  subtasks_completed: 1
-  subtasks_total: 1
+  number: 7
+  pbi: PBI-008
+  status: in_progress
+  subtasks_completed: 0
+  subtasks_total: 7
   impediments: 0
 `````````
 
@@ -700,50 +700,119 @@ definition_of_ready:
 
 `````````yaml
 sprint:
-  number: 6
-  pbi_id: PBI-009
+  number: 7
+  pbi_id: PBI-008
   story:
     role: "user of treesitter-ls"
-    capability: "install both parser and queries with a single command"
-    benefit: "I can set up a language with one command instead of running two separate commands"
-  status: done
+    capability: "have treesitter-ls automatically install missing parsers when I open a file"
+    benefit: "I get syntax highlighting for any language without running install commands manually"
+  status: in_progress
 
   subtasks:
-    # Sprint 6: Combined Install Command (PBI-009)
-    # Simple implementation: Update existing Install command to call both parser and queries
+    # Sprint 7: Auto-install on File Open (PBI-008)
+    # Full silent background installation when opening files with missing parsers.
+    #
+    # Implementation Strategy:
+    # 1. Add autoInstall setting to configuration
+    # 2. Track languages currently being installed (prevent duplicates)
+    # 3. Check parser existence on did_open
+    # 4. Spawn async install task for missing parsers
+    # 5. Send LSP notifications for progress/errors
+    # 6. Re-parse open documents after install completes
 
-    - test: "Running `treesitter-ls install lua` installs both parser and queries"
-      implementation: "Update Install command handler to call parser::install_parser() and queries::install_queries()"
+    # Subtask 1: Add autoInstall setting to configuration
+    - test: "TreeSitterSettings parses autoInstall field from JSON/TOML configuration"
+      implementation: "Add auto_install: Option<bool> field to TreeSitterSettings with serde rename to autoInstall"
       type: behavioral
-      status: completed
-      commits:
-        - hash: "83b9f79"
-          message: "feat(install): implement combined install command (PBI-009)"
-          phase: green
-      files_modified:
-        - src/bin/main.rs (updated Install command with full implementation)
+      status: pending
+      commits: []
+      files_to_modify:
+        - src/config/settings.rs
+
+    # Subtask 2: Propagate autoInstall setting through WorkspaceSettings
+    - test: "WorkspaceSettings exposes auto_install field that defaults to false"
+      implementation: "Add auto_install: bool field to WorkspaceSettings, update From impl for TreeSitterSettings"
+      type: behavioral
+      status: pending
+      commits: []
+      files_to_modify:
+        - src/config/settings.rs
+
+    # Subtask 3: Add installing languages tracker to TreeSitterLs
+    - test: "TreeSitterLs can track which languages are currently being installed"
+      implementation: "Add installing_languages: Mutex<HashSet<String>> field to TreeSitterLs"
+      type: behavioral
+      status: pending
+      commits: []
+      files_to_modify:
+        - src/lsp/lsp_impl.rs
+
+    # Subtask 4: Expose async install function for LSP use
+    - test: "install module exposes async install_language_async function"
+      implementation: "Add async wrapper around parser::install_parser and queries::install_queries"
+      type: behavioral
+      status: pending
+      commits: []
+      files_to_modify:
+        - src/install/mod.rs
+
+    # Subtask 5: Check parser existence on did_open
+    - test: "did_open checks if parser exists for the language and triggers install if missing"
+      implementation: "In did_open, check language coordinator for parser, spawn install if autoInstall enabled and parser missing"
+      type: behavioral
+      status: pending
+      commits: []
+      files_to_modify:
+        - src/lsp/lsp_impl.rs
+
+    # Subtask 6: Send LSP notifications for install progress
+    - test: "Auto-install sends window/showMessage notifications for progress and errors"
+      implementation: "Use client.show_message() to notify user of install start, completion, and errors"
+      type: behavioral
+      status: pending
+      commits: []
+      files_to_modify:
+        - src/lsp/lsp_impl.rs
+
+    # Subtask 7: Re-parse documents and refresh tokens after install
+    - test: "After successful auto-install, open documents are re-parsed and semantic tokens refreshed"
+      implementation: "After install completes, re-load language, re-parse affected documents, call semantic_tokens_refresh"
+      type: behavioral
+      status: pending
+      commits: []
+      files_to_modify:
+        - src/lsp/lsp_impl.rs
 
   notes: |
-    Sprint 6: Combined Install Command (PBI-009)
-    Sprint Goal: Unify parser and query installation into a single command.
+    Sprint 7: Auto-install on File Open (PBI-008)
+    Sprint Goal: Enable seamless syntax highlighting for any language by automatically
+    installing missing parsers when files are opened.
 
-    Implementation:
-    - Updated the Install command to call both parser::install_parser() and queries::install_queries()
-    - Added --queries-only flag to skip parser installation
-    - Added --parser-only flag to skip query installation
-    - Partial failure handling: continues if one fails, reports status at end
+    Key Design Decisions:
+    - Full silent background install (no prompts, async)
+    - HashSet<String> tracks languages currently being installed (prevent duplicates)
+    - Uses tokio::spawn for background installation
+    - LSP notifications via window/showMessage for progress/errors
+    - autoInstall defaults to false for backward compatibility
 
-    Acceptance Criteria Verified:
-    ✓ treesitter-ls install lua --data-dir /tmp/test → installs parser and queries
-    ✓ --queries-only installs only queries (no parsers directory)
-    ✓ --parser-only installs only parser (no queries directory)
-    ✓ Progress shown for both parser and queries
+    Implementation Flow:
+    1. User opens a file (e.g., .lua)
+    2. did_open determines language from path/language_id
+    3. Check if parser exists for language
+    4. If missing AND autoInstall enabled:
+       a. Check if language already being installed (skip if so)
+       b. Add language to installing set
+       c. Send "Installing {lang}..." notification
+       d. Spawn async task to install parser + queries
+       e. On completion: remove from set, send success/error notification
+       f. Trigger re-parse of open documents for that language
+       g. Request semantic tokens refresh
+    5. If parser exists, proceed normally
 
-    DoD Verified:
-    ✓ cargo test: All tests pass
-    ✓ cargo clippy -- -D warnings: No warnings
-    ✓ cargo fmt --check: Formatted
-    ✓ cargo build --release: Success
+    Files to Modify:
+    - src/config/settings.rs - Add autoInstall setting
+    - src/lsp/lsp_impl.rs - Add auto-install logic in did_open
+    - src/install/mod.rs - Expose async install function
 `````````
 
 ### Impediment Registry

@@ -46,6 +46,8 @@ pub struct TreeSitterSettings {
     pub languages: HashMap<String, LanguageConfig>,
     #[serde(rename = "captureMappings", default)]
     pub capture_mappings: CaptureMappings,
+    #[serde(rename = "autoInstall")]
+    pub auto_install: Option<bool>,
 }
 
 // Domain types that were previously in domain::settings
@@ -455,11 +457,38 @@ mod tests {
     }
 
     #[test]
+    fn should_parse_auto_install_setting() {
+        let config_json = r#"{
+            "autoInstall": true,
+            "languages": {}
+        }"#;
+
+        let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
+        assert_eq!(settings.auto_install, Some(true));
+
+        // Test with false
+        let config_false = r#"{
+            "autoInstall": false,
+            "languages": {}
+        }"#;
+        let settings_false: TreeSitterSettings = serde_json::from_str(config_false).unwrap();
+        assert_eq!(settings_false.auto_install, Some(false));
+
+        // Test missing (should be None)
+        let config_missing = r#"{
+            "languages": {}
+        }"#;
+        let settings_missing: TreeSitterSettings = serde_json::from_str(config_missing).unwrap();
+        assert_eq!(settings_missing.auto_install, None);
+    }
+
+    #[test]
     fn should_handle_complex_configurations_efficiently() {
         let mut config = TreeSitterSettings {
             search_paths: None,
             languages: HashMap::new(),
             capture_mappings: HashMap::new(),
+            auto_install: None,
         };
 
         // Add multiple language configurations

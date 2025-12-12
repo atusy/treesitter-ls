@@ -66,7 +66,12 @@ fn test_install_help_shows_language_argument() {
 #[test]
 fn test_install_command_unsupported_language_shows_error() {
     let output = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
-        .args(["install", "nonexistent_language_xyz", "--data-dir", "/tmp/test-cli"])
+        .args([
+            "install",
+            "nonexistent_language_xyz",
+            "--data-dir",
+            "/tmp/test-cli",
+        ])
         .output()
         .expect("Failed to execute command");
 

@@ -233,6 +233,7 @@ mod tests {
             },
             search_paths: None,
             capture_mappings: Default::default(),
+            auto_install: None,
         };
 
         resolver.build_from_settings(&settings);
