@@ -123,8 +123,8 @@ pub fn install_parser(
     language: &str,
     options: &InstallOptions,
 ) -> Result<ParserInstallResult, ParserInstallError> {
-    let parsers_dir = options.data_dir.join("parsers");
-    let parser_file = parsers_dir.join(format!("{}.{}", language, shared_lib_extension()));
+    let parser_dir = options.data_dir.join("parser");
+    let parser_file = parser_dir.join(format!("{}.{}", language, shared_lib_extension()));
 
     // Check if parser already exists
     if parser_file.exists() && !options.force {
@@ -180,8 +180,8 @@ pub fn install_parser(
         eprintln!("Built library: {}", built_lib.display());
     }
 
-    // Create parsers directory and copy the library
-    fs::create_dir_all(&parsers_dir)?;
+    // Create parser directory and copy the library
+    fs::create_dir_all(&parser_dir)?;
     fs::copy(&built_lib, &parser_file)?;
 
     if options.verbose {
