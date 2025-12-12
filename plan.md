@@ -126,7 +126,7 @@ sprint:
   number: 8
   pbi: PBI-013
   status: in_progress
-  subtasks_completed: 2
+  subtasks_completed: 3
   subtasks_total: 4
   impediments: 0
 `````````
@@ -958,8 +958,11 @@ sprint:
         2. This runs after the host document is parsed so we have access to the AST
         3. The function handles all injection detection and auto-install triggering
       type: behavioral
-      status: pending
-      commits: []
+      status: completed
+      commits:
+        - hash: "c42780d"
+          phase: green
+          message: "feat(lsp): integrate injected language auto-install into did_open"
       files_to_modify:
         - src/lsp/lsp_impl.rs
 
