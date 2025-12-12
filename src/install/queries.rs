@@ -4,9 +4,10 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// Base URL for nvim-treesitter query files on GitHub.
+/// Base URL for nvim-treesitter query files on GitHub (main branch).
+/// Note: In the main branch, queries are under runtime/queries instead of queries.
 const NVIM_TREESITTER_QUERIES_URL: &str =
-    "https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/master/queries";
+    "https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/main/runtime/queries";
 
 /// Query file types to download.
 const QUERY_FILES: &[&str] = &["highlights.scm", "locals.scm", "injections.scm"];

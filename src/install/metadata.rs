@@ -1,19 +1,17 @@
 //! Parser metadata fetching from nvim-treesitter.
 //!
 //! This module fetches parser information dynamically from nvim-treesitter's
-//! parsers.lua and lockfile.json files, supporting all languages that
-//! nvim-treesitter supports (200+ languages).
+//! parsers.lua file, supporting all languages that nvim-treesitter supports (300+ languages).
+//!
+//! The main branch of nvim-treesitter uses a consolidated format where each language
+//! entry contains url, revision, and location all in one place.
 
 use regex::Regex;
 use std::collections::HashMap;
 
-/// URL for nvim-treesitter lockfile.json on GitHub.
-const LOCKFILE_URL: &str =
-    "https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/master/lockfile.json";
-
-/// URL for nvim-treesitter parsers.lua on GitHub.
+/// URL for nvim-treesitter parsers.lua on GitHub (main branch).
 const PARSERS_LUA_URL: &str =
-    "https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/master/lua/nvim-treesitter/parsers.lua";
+    "https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/main/lua/nvim-treesitter/parsers.lua";
 
 /// Parser metadata containing repository URL and revision.
 #[derive(Debug, Clone)]
@@ -55,19 +53,22 @@ impl std::fmt::Display for MetadataError {
 
 impl std::error::Error for MetadataError {}
 
-/// Parsed parser information from parsers.lua
-#[derive(Debug, Clone)]
-struct ParsedParserInfo {
-    url: String,
-    location: Option<String>,
-}
-
-/// Fetch and parse parsers.lua to extract URL and location information.
+/// Fetch and parse parsers.lua to extract all parser information.
 ///
-/// This parses the Lua file using regex patterns to extract:
-/// - `url = "..."` - the repository URL
-/// - `location = "..."` - optional subdirectory for monorepos
-fn fetch_parsers_lua() -> Result<HashMap<String, ParsedParserInfo>, MetadataError> {
+/// The main branch format is:
+/// ```lua
+/// return {
+///   lua = {
+///     install_info = {
+///       revision = 'abc123...',
+///       url = 'https://github.com/...',
+///       location = 'optional/subdir',  -- optional
+///     },
+///     ...
+///   },
+/// }
+/// ```
+fn fetch_parsers_lua() -> Result<HashMap<String, ParserMetadata>, MetadataError> {
     let response = reqwest::blocking::get(PARSERS_LUA_URL)
         .map_err(|e| MetadataError::HttpError(e.to_string()))?;
 
@@ -87,33 +88,27 @@ fn fetch_parsers_lua() -> Result<HashMap<String, ParsedParserInfo>, MetadataErro
 
 /// Parse the parsers.lua content to extract parser information.
 ///
-/// The file has entries like:
-/// ```lua
-/// list.lua = {
-///   install_info = {
-///     url = "https://github.com/MunifTanjim/tree-sitter-lua",
-///     files = { "src/parser.c", "src/scanner.c" },
-///   },
-///   ...
-/// }
-/// ```
-fn parse_parsers_lua(content: &str) -> Result<HashMap<String, ParsedParserInfo>, MetadataError> {
+/// Handles the main branch format where languages are direct table keys.
+fn parse_parsers_lua(content: &str) -> Result<HashMap<String, ParserMetadata>, MetadataError> {
     let mut parsers = HashMap::new();
 
-    // Pattern to match parser entries: list.LANG = { ... }
-    // We need to find each language block and extract url and location
+    // Pattern to match parser entries in main branch format: lang = { ... }
+    // The pattern matches language names at the start of a line (with optional indentation)
+    // followed by = {
     let lang_pattern =
-        Regex::new(r#"list\.([a-zA-Z0-9_]+)\s*=\s*\{"#).expect("valid regex for lang pattern");
+        Regex::new(r#"(?m)^\s*([a-zA-Z][a-zA-Z0-9_]*)\s*=\s*\{"#).expect("valid regex for lang pattern");
 
     // Find all language names first
     let lang_names: Vec<String> = lang_pattern
         .captures_iter(content)
         .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
+        // Filter out non-language keys like "return", "install_info", etc.
+        .filter(|name| !is_reserved_key(name))
         .collect();
 
-    // For each language, find its block and extract url/location
+    // For each language, find its block and extract metadata
     for lang in lang_names {
-        if let Some(info) = extract_parser_info(content, &lang) {
+        if let Some(info) = extract_parser_metadata(content, &lang) {
             parsers.insert(lang, info);
         }
     }
@@ -121,10 +116,26 @@ fn parse_parsers_lua(content: &str) -> Result<HashMap<String, ParsedParserInfo>,
     Ok(parsers)
 }
 
-/// Extract parser info (url, location) for a specific language from parsers.lua content.
-fn extract_parser_info(content: &str, language: &str) -> Option<ParsedParserInfo> {
+/// Check if a key is a reserved/internal key (not a language name)
+fn is_reserved_key(name: &str) -> bool {
+    matches!(
+        name,
+        "return"
+            | "install_info"
+            | "maintainers"
+            | "requires"
+            | "tier"
+            | "readme_note"
+            | "experimental"
+            | "filetype"
+    )
+}
+
+/// Extract parser metadata for a specific language from parsers.lua content.
+fn extract_parser_metadata(content: &str, language: &str) -> Option<ParserMetadata> {
     // Find the start of this language's block
-    let block_start_pattern = format!(r#"list\.{}\s*=\s*\{{"#, regex::escape(language));
+    // Use word boundary to avoid matching substrings (e.g., "c" matching "cpp")
+    let block_start_pattern = format!(r#"(?m)^\s*{}\s*=\s*\{{"#, regex::escape(language));
     let block_start_re = Regex::new(&block_start_pattern).ok()?;
 
     let block_start = block_start_re.find(content)?;
@@ -133,21 +144,32 @@ fn extract_parser_info(content: &str, language: &str) -> Option<ParsedParserInfo
     // Find the end of this block by counting braces
     let block_content = find_matching_brace(&content[start_pos..])?;
 
-    // Extract URL
-    let url_re = Regex::new(r#"url\s*=\s*"([^"]+)""#).ok()?;
+    // Extract URL (required)
+    let url_re = Regex::new(r#"url\s*=\s*'([^']+)'"#).ok()?;
     let url = url_re
         .captures(block_content)
         .and_then(|cap| cap.get(1))
         .map(|m| m.as_str().to_string())?;
 
+    // Extract revision (required) - in main branch, revision is inside install_info
+    let revision_re = Regex::new(r#"revision\s*=\s*'([^']+)'"#).ok()?;
+    let revision = revision_re
+        .captures(block_content)
+        .and_then(|cap| cap.get(1))
+        .map(|m| m.as_str().to_string())?;
+
     // Extract location (optional)
-    let location_re = Regex::new(r#"location\s*=\s*"([^"]+)""#).ok()?;
+    let location_re = Regex::new(r#"location\s*=\s*'([^']+)'"#).ok()?;
     let location = location_re
         .captures(block_content)
         .and_then(|cap| cap.get(1))
         .map(|m| m.as_str().to_string());
 
-    Some(ParsedParserInfo { url, location })
+    Some(ParserMetadata {
+        url,
+        revision,
+        location,
+    })
 }
 
 /// Find the content within matching braces starting from the first `{`.
@@ -179,52 +201,20 @@ fn find_matching_brace(s: &str) -> Option<&str> {
 
 /// Fetch parser metadata for a language from nvim-treesitter.
 ///
-/// This fetches both parsers.lua (for URL and location) and lockfile.json
-/// (for revision), supporting all languages that nvim-treesitter supports.
+/// This fetches parsers.lua which contains url, revision, and location
+/// all in one place (main branch format).
 pub fn fetch_parser_metadata(language: &str) -> Result<ParserMetadata, MetadataError> {
-    // Fetch parsers.lua to get URL and location
     let parsers = fetch_parsers_lua()?;
 
-    let parser_info = parsers
+    parsers
         .get(language)
-        .ok_or_else(|| MetadataError::LanguageNotFound(language.to_string()))?;
-
-    // Fetch the lockfile for revision
-    let response = reqwest::blocking::get(LOCKFILE_URL)
-        .map_err(|e| MetadataError::HttpError(e.to_string()))?;
-
-    if !response.status().is_success() {
-        return Err(MetadataError::HttpError(format!(
-            "HTTP {} fetching lockfile",
-            response.status()
-        )));
-    }
-
-    let lockfile_text = response
-        .text()
-        .map_err(|e| MetadataError::HttpError(e.to_string()))?;
-
-    // Parse the lockfile JSON
-    let lockfile: HashMap<String, serde_json::Value> = serde_json::from_str(&lockfile_text)
-        .map_err(|e| MetadataError::ParseError(e.to_string()))?;
-
-    // Get the revision for this language
-    let revision = lockfile
-        .get(language)
-        .and_then(|v| v.get("revision"))
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| MetadataError::LanguageNotFound(language.to_string()))?;
-
-    Ok(ParserMetadata {
-        url: parser_info.url.clone(),
-        revision: revision.to_string(),
-        location: parser_info.location.clone(),
-    })
+        .cloned()
+        .ok_or_else(|| MetadataError::LanguageNotFound(language.to_string()))
 }
 
 /// List all supported languages by fetching from nvim-treesitter.
 ///
-/// This returns all languages that nvim-treesitter supports (200+ languages).
+/// This returns all languages that nvim-treesitter supports (300+ languages).
 pub fn list_supported_languages() -> Result<Vec<String>, MetadataError> {
     let parsers = fetch_parsers_lua()?;
     let mut languages: Vec<String> = parsers.keys().cloned().collect();
@@ -237,20 +227,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_parsers_lua_basic() {
+    fn test_parse_parsers_lua_main_branch_format() {
+        // Test the main branch format (no "list." prefix, single quotes, revision inside)
         let content = r#"
-list.lua = {
-  install_info = {
-    url = "https://github.com/MunifTanjim/tree-sitter-lua",
-    files = { "src/parser.c", "src/scanner.c" },
+return {
+  lua = {
+    install_info = {
+      revision = 'abc123def456',
+      url = 'https://github.com/MunifTanjim/tree-sitter-lua',
+    },
+    maintainers = { '@someone' },
+    tier = 2,
   },
-}
-
-list.typescript = {
-  install_info = {
-    url = "https://github.com/tree-sitter/tree-sitter-typescript",
-    location = "typescript",
-    files = { "src/parser.c", "src/scanner.c" },
+  typescript = {
+    install_info = {
+      location = 'typescript',
+      revision = 'def789ghi012',
+      url = 'https://github.com/tree-sitter/tree-sitter-typescript',
+    },
+    maintainers = { '@someone' },
+    tier = 2,
   },
 }
 "#;
@@ -258,21 +254,19 @@ list.typescript = {
         let result = parse_parsers_lua(content).expect("should parse");
 
         assert!(result.contains_key("lua"));
-        assert_eq!(
-            result.get("lua").unwrap().url,
-            "https://github.com/MunifTanjim/tree-sitter-lua"
-        );
-        assert!(result.get("lua").unwrap().location.is_none());
+        let lua = result.get("lua").unwrap();
+        assert_eq!(lua.url, "https://github.com/MunifTanjim/tree-sitter-lua");
+        assert_eq!(lua.revision, "abc123def456");
+        assert!(lua.location.is_none());
 
         assert!(result.contains_key("typescript"));
+        let ts = result.get("typescript").unwrap();
         assert_eq!(
-            result.get("typescript").unwrap().url,
+            ts.url,
             "https://github.com/tree-sitter/tree-sitter-typescript"
         );
-        assert_eq!(
-            result.get("typescript").unwrap().location,
-            Some("typescript".to_string())
-        );
+        assert_eq!(ts.revision, "def789ghi012");
+        assert_eq!(ts.location, Some("typescript".to_string()));
     }
 
     #[test]
@@ -287,38 +281,51 @@ list.typescript = {
     }
 
     #[test]
-    fn test_extract_parser_info() {
+    fn test_extract_parser_metadata() {
         let content = r#"
-list.rust = {
-  install_info = {
-    url = "https://github.com/tree-sitter/tree-sitter-rust",
-    files = { "src/parser.c", "src/scanner.c" },
+  rust = {
+    install_info = {
+      revision = 'abc123',
+      url = 'https://github.com/tree-sitter/tree-sitter-rust',
+    },
+    tier = 1,
   },
-}
 "#;
 
-        let info = extract_parser_info(content, "rust").expect("should extract");
+        let info = extract_parser_metadata(content, "rust").expect("should extract");
         assert_eq!(info.url, "https://github.com/tree-sitter/tree-sitter-rust");
+        assert_eq!(info.revision, "abc123");
         assert!(info.location.is_none());
     }
 
     #[test]
-    fn test_extract_parser_info_with_location() {
+    fn test_extract_parser_metadata_with_location() {
         let content = r#"
-list.markdown = {
-  install_info = {
-    url = "https://github.com/tree-sitter-grammars/tree-sitter-markdown",
-    location = "tree-sitter-markdown",
-    files = { "src/parser.c" },
+  markdown = {
+    install_info = {
+      location = 'tree-sitter-markdown',
+      revision = 'xyz789',
+      url = 'https://github.com/tree-sitter-grammars/tree-sitter-markdown',
+    },
+    tier = 2,
   },
-}
 "#;
 
-        let info = extract_parser_info(content, "markdown").expect("should extract");
+        let info = extract_parser_metadata(content, "markdown").expect("should extract");
         assert_eq!(
             info.url,
             "https://github.com/tree-sitter-grammars/tree-sitter-markdown"
         );
+        assert_eq!(info.revision, "xyz789");
         assert_eq!(info.location, Some("tree-sitter-markdown".to_string()));
+    }
+
+    #[test]
+    fn test_is_reserved_key() {
+        assert!(is_reserved_key("return"));
+        assert!(is_reserved_key("install_info"));
+        assert!(is_reserved_key("maintainers"));
+        assert!(!is_reserved_key("lua"));
+        assert!(!is_reserved_key("rust"));
     }
 }
