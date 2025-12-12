@@ -123,11 +123,11 @@ Sprint Cycle:
 
 `````````yaml
 sprint:
-  number: 7
-  pbi: PBI-008
-  status: done
-  subtasks_completed: 7
-  subtasks_total: 7
+  number: 8
+  pbi: PBI-013
+  status: in_progress
+  subtasks_completed: 0
+  subtasks_total: 4
   impediments: 0
 `````````
 
@@ -544,14 +544,206 @@ product_backlog:
       ```
 
   # ============================================================================
-  # PRIORITIZED BACKLOG (Post-Sprint 6 Refinement)
+  # PRIORITIZED BACKLOG (Post-Sprint 7 Refinement)
   # ============================================================================
   # Priority order (top to bottom):
-  #   1. PBI-008: Auto-install on file open (USER PRIORITY - ready)
-  #   2. PBI-010: Cache parsers.lua (performance foundation - ready)
-  #   3. PBI-011: Batch install (UX improvement - draft)
-  #   4. PBI-012: Progress indicators (nice-to-have - draft)
+  #   1. PBI-013: Auto-install for injected languages on file open (USER PRIORITY - ready)
+  #   2. PBI-014: Auto-install for injected languages on text edit (USER PRIORITY - ready)
+  #   3. PBI-010: Cache parsers.lua (performance foundation - ready)
+  #   4. PBI-011: Batch install (UX improvement - draft)
+  #   5. PBI-012: Progress indicators (nice-to-have - draft)
   # ============================================================================
+
+  - id: PBI-013
+    status: ready
+    story:
+      role: "user of treesitter-ls"
+      capability: "have treesitter-ls automatically install missing parsers for injected languages when I open a file"
+      benefit: "I get complete syntax highlighting for all code blocks without manually installing each language parser"
+    acceptance_criteria:
+      - criterion: "Opening a markdown file with a Lua code block triggers Lua parser auto-install when missing"
+        verification: |
+          rm -rf ~/.local/share/treesitter-ls/parsers/lua* ~/.local/share/treesitter-ls/queries/lua
+          # Open markdown file with lua code block in editor with treesitter-ls running
+          # After ~30s, parser and queries should be installed
+          test -f ~/.local/share/treesitter-ls/parsers/lua/libtree-sitter-lua.dylib || \
+          test -f ~/.local/share/treesitter-ls/parsers/lua/libtree-sitter-lua.so
+      - criterion: "Multiple injected languages in one document are all installed"
+        verification: |
+          # Create test file with multiple code blocks (lua, python, rust)
+          # Open file, verify all three parsers installed
+          test -f ~/.local/share/treesitter-ls/parsers/lua/libtree-sitter-lua.dylib
+          test -f ~/.local/share/treesitter-ls/parsers/python/libtree-sitter-python.dylib
+      - criterion: "Injected language already being installed is not triggered twice"
+        verification: |
+          # Open two markdown files both containing Lua blocks simultaneously
+          # Should only show one "Installing lua" notification (check LSP logs)
+      - criterion: "Auto-install for injections respects the autoInstall setting"
+        verification: |
+          # With autoInstall: false in settings, opening markdown with missing Lua parser does NOT trigger install
+      - criterion: "After injection parser installs, semantic tokens refresh to show highlighting"
+        verification: |
+          # After Lua parser installs for markdown injection, Lua code blocks get syntax highlighting
+          # Verify by checking semantic tokens include Lua tokens for the code block
+    story_points: 3
+    dependencies:
+      - PBI-008  # Requires auto-install infrastructure (InstallingLanguages, maybe_auto_install_language)
+    technical_notes: |
+      ## Implementation Strategy
+
+      1. After document is parsed in did_open, detect injections and trigger auto-install for missing languages
+      2. Use existing collect_all_injections() to find injection regions
+      3. For each unique injected language, call existing maybe_auto_install_language()
+      4. The InstallingLanguages tracker already prevents duplicate installs
+
+      ## Key Files to Modify
+      - src/lsp/lsp_impl.rs - Add injection detection after initial parse in did_open
+
+      ## Implementation Flow
+      ```
+      1. User opens markdown file
+      2. did_open determines language = "markdown", triggers auto-install if missing
+      3. parse_document() parses markdown
+      4. NEW: After parse, detect injections in the document
+      5. NEW: For each injected language (lua, python, etc.):
+         a. Check if parser exists via ensure_language_loaded()
+         b. If missing and autoInstall enabled, spawn auto-install
+      6. InstallingLanguages tracker prevents duplicates
+      7. After install completes, semantic tokens refresh shows highlighting
+      ```
+
+      ## Detection Approach
+      - Use collect_all_injections() from src/language/injection.rs
+      - Already runs injection query on parsed document
+      - Extracts language from each injection region
+      - Returns list of InjectionRegionInfo with language names
+
+      ## Edge Cases
+      - Recursive injections: Document with markdown containing Lua containing regex.
+        For first iteration, only handle direct injections (depth=1).
+      - Unknown injection languages: Log warning, skip auto-install.
+      - Large documents with many injections: Process sequentially, tracker prevents duplicates.
+
+  - id: PBI-014
+    status: ready
+    story:
+      role: "user of treesitter-ls"
+      capability: "have treesitter-ls automatically install missing parsers when I type a new injected code block"
+      benefit: "I get immediate syntax highlighting for code blocks I add while editing without needing to re-open the file"
+    acceptance_criteria:
+      - criterion: "Adding a new code block triggers auto-install for the injected language"
+        verification: |
+          # Open a markdown file, type a new ```python code block
+          # Check LSP logs for "Auto-installing language 'python'" message
+          # After install, verify syntax highlighting appears
+      - criterion: "Existing injections do not re-trigger auto-install on unrelated edits"
+        verification: |
+          # Open markdown with existing lua block (lua parser installed)
+          # Edit text elsewhere in the document
+          # LSP logs should NOT show install attempts for lua
+      - criterion: "Multiple new injections in a single paste operation all trigger auto-install"
+        verification: |
+          # Paste text containing python, rust, go code blocks
+          # LSP logs should show install attempts for all three languages
+      - criterion: "Auto-install respects the autoInstall setting"
+        verification: |
+          # With autoInstall: false, adding a new code block does NOT trigger install
+      - criterion: "Semantic tokens refresh after injection parser installs"
+        verification: |
+          # After python parser installs for new code block, verify highlighting appears
+      - criterion: "Duplicate install prevention via InstallingLanguages tracker"
+        verification: |
+          # If python is currently installing, adding another python block shows "already being installed"
+    story_points: 3
+    dependencies:
+      - PBI-008  # Requires auto-install infrastructure (InstallingLanguages, maybe_auto_install_language)
+      - PBI-013  # Follows same injection detection pattern
+    technical_notes: |
+      ## Implementation Strategy
+
+      Use the simple scan approach: on did_change, after re-parse, collect all injections
+      and check each language. The InstallingLanguages tracker already prevents duplicate
+      installs, so no need to track injection state ourselves (YAGNI).
+
+      ## Key Files to Modify
+      - src/lsp/lsp_impl.rs - Add injection detection after parse_document in did_change
+
+      ## Implementation Flow
+      ```
+      1. User edits markdown file (types ```python)
+      2. did_change receives edit event
+      3. parse_document() re-parses with incremental edit
+      4. NEW: After parse, detect injections in the document
+         - Get document from store
+         - Get injection query for host language (markdown)
+         - Call collect_all_injections(root, text, injection_query)
+      5. NEW: For each injected language (python, etc.):
+         a. Check if parser exists via ensure_language_loaded()
+         b. If missing AND autoInstall enabled:
+            - Call maybe_auto_install_language(lang, uri, text)
+            - InstallingLanguages tracker prevents duplicates
+      6. After install completes, semantic tokens refresh shows highlighting
+      ```
+
+      ## Reuse from PBI-013
+      - The injection detection logic will be extracted as a shared helper:
+        check_injected_languages_auto_install(&self, uri: &Url, text: &str)
+      - Called from both did_open (PBI-013) and did_change (PBI-014)
+
+      ## Helper Function
+      ```rust
+      async fn check_injected_languages_auto_install(&self, uri: &Url, text: &str) {
+          if !self.is_auto_install_enabled() {
+              return;
+          }
+
+          let language_name = match self.get_language_for_document(uri) {
+              Some(name) => name,
+              None => return,
+          };
+
+          // Get injection query for host language
+          let injection_query = match self.language.get_injection_query(&language_name) {
+              Some(q) => q,
+              None => return, // No injection support for this language
+          };
+
+          // Get parsed tree
+          let doc = match self.documents.get(uri) {
+              Some(d) => d,
+              None => return,
+          };
+          let tree = match doc.tree() {
+              Some(t) => t,
+              None => return,
+          };
+
+          // Collect all injection regions
+          let injections = match collect_all_injections(&tree.root_node(), text, Some(&injection_query)) {
+              Some(i) => i,
+              None => return,
+          };
+
+          // Get unique languages
+          let languages: HashSet<String> = injections.iter().map(|i| i.language.clone()).collect();
+
+          // Check each language
+          for lang in languages {
+              let load_result = self.language.ensure_language_loaded(&lang);
+              if !load_result.success {
+                  // Language not loaded - trigger auto-install
+                  self.maybe_auto_install_language(&lang, uri.clone(), text.to_string()).await;
+              }
+          }
+      }
+      ```
+
+      ## Edge Cases
+      - Injection removed: User deletes a code block. No action needed.
+      - Rapid edits: InstallingLanguages prevents spam.
+      - Recursive injections: Only handle direct injections (depth=1) for now.
+      - Unknown language: ensure_language_loaded fails, auto-install attempts but fails gracefully.
+      - Performance: collect_all_injections runs a query. Consider debouncing if profiling shows issues.
 
   - id: PBI-010
     status: ready
@@ -700,140 +892,117 @@ definition_of_ready:
 
 `````````yaml
 sprint:
-  number: 7
-  pbi_id: PBI-008
+  number: 8
+  pbi_id: PBI-013
   story:
     role: "user of treesitter-ls"
-    capability: "have treesitter-ls automatically install missing parsers when I open a file"
-    benefit: "I get syntax highlighting for any language without running install commands manually"
-  status: done
+    capability: "have treesitter-ls automatically install missing parsers for injected languages when I open a file"
+    benefit: "I get complete syntax highlighting for all code blocks without manually installing each language parser"
+  status: in_progress
 
   subtasks:
-    # Sprint 7: Auto-install on File Open (PBI-008)
-    # Full silent background installation when opening files with missing parsers.
+    # Sprint 8: Auto-install for Injected Languages on File Open (PBI-013)
+    # Enable auto-installation of parsers/queries for injected languages detected when opening files.
     #
     # Implementation Strategy:
-    # 1. Add autoInstall setting to configuration
-    # 2. Track languages currently being installed (prevent duplicates)
-    # 3. Check parser existence on did_open
-    # 4. Spawn async install task for missing parsers
-    # 5. Send LSP notifications for progress/errors
-    # 6. Re-parse open documents after install completes
+    # 1. After document parsing in did_open, detect injected languages using collect_all_injections()
+    # 2. For each unique injected language, call maybe_auto_install_language()
+    # 3. Reuse existing infrastructure from PBI-008 (InstallingLanguages, install_language_async)
+    #
+    # Key Dependencies from PBI-008:
+    # - InstallingLanguages tracker (prevents duplicate installs)
+    # - maybe_auto_install_language() async function
+    # - install_language_async() from src/install/mod.rs
+    # - reload_language_after_install() for re-parsing after install
 
-    # Subtask 1: Add autoInstall setting to configuration
-    - test: "TreeSitterSettings parses autoInstall field from JSON/TOML configuration"
-      implementation: "Add auto_install: Option<bool> field to TreeSitterSettings with serde rename to autoInstall"
+    # Subtask 1: Create helper function to check auto-install for injected languages
+    - test: "check_injected_languages_auto_install extracts unique languages from injection regions"
+      implementation: |
+        Create a helper function that:
+        1. Gets the injection query for the host language
+        2. Gets the parsed tree from document store
+        3. Calls collect_all_injections() to get all injection regions
+        4. Extracts unique language names from the regions
+        5. Returns the set of languages that need checking
       type: behavioral
-      status: completed
-      commits:
-        - hash: "6896b4c"
-          phase: green
-          message: "feat(config): add autoInstall field to TreeSitterSettings"
-      files_to_modify:
-        - src/config/settings.rs
-
-    # Subtask 2: Propagate autoInstall setting through WorkspaceSettings
-    - test: "WorkspaceSettings exposes auto_install field that defaults to false"
-      implementation: "Add auto_install: bool field to WorkspaceSettings, update From impl for TreeSitterSettings"
-      type: behavioral
-      status: completed
-      commits:
-        - hash: "b2934ac"
-          phase: green
-          message: "feat(config): expose auto_install in WorkspaceSettings"
-      files_to_modify:
-        - src/config/settings.rs
-
-    # Subtask 3: Add installing languages tracker to TreeSitterLs
-    - test: "TreeSitterLs can track which languages are currently being installed"
-      implementation: "Add installing_languages: Mutex<HashSet<String>> field to TreeSitterLs"
-      type: behavioral
-      status: completed
-      commits:
-        - hash: "f56e77e"
-          phase: green
-          message: "feat(lsp): add InstallingLanguages tracker"
+      status: pending
+      commits: []
       files_to_modify:
         - src/lsp/lsp_impl.rs
 
-    # Subtask 4: Expose async install function for LSP use
-    - test: "install module exposes async install_language_async function"
-      implementation: "Add async wrapper around parser::install_parser and queries::install_queries"
+    # Subtask 2: Check each injected language and trigger auto-install if missing
+    - test: "check_injected_languages_auto_install calls maybe_auto_install_language for missing parsers"
+      implementation: |
+        For each unique injected language:
+        1. Call ensure_language_loaded() to check if parser exists
+        2. If parser missing AND autoInstall enabled:
+           - Call maybe_auto_install_language() (InstallingLanguages prevents duplicates)
+        3. Skip if parser already loaded or already being installed
       type: behavioral
-      status: completed
-      commits:
-        - hash: "22125a6"
-          phase: green
-          message: "feat(install): add async install function"
-      files_to_modify:
-        - src/install/mod.rs
-
-    # Subtask 5: Check parser existence on did_open
-    - test: "did_open checks if parser exists for the language and triggers install if missing"
-      implementation: "In did_open, check language coordinator for parser, spawn install if autoInstall enabled and parser missing"
-      type: behavioral
-      status: completed
-      commits:
-        - hash: "85fec6c"
-          phase: green
-          message: "feat(lsp): add auto-install on did_open"
+      status: pending
+      commits: []
       files_to_modify:
         - src/lsp/lsp_impl.rs
 
-    # Subtask 6: Send LSP notifications for install progress
-    - test: "Auto-install sends window/showMessage notifications for progress and errors"
-      implementation: "Use client.show_message() to notify user of install start, completion, and errors"
+    # Subtask 3: Integrate injection auto-install check into did_open
+    - test: "did_open calls check_injected_languages_auto_install after parsing the document"
+      implementation: |
+        In did_open, after parse_document() completes:
+        1. Call check_injected_languages_auto_install(uri, text)
+        2. This runs after the host document is parsed so we have access to the AST
+        3. The function handles all injection detection and auto-install triggering
       type: behavioral
-      status: completed
-      commits:
-        - hash: "85fec6c"
-          phase: green
-          message: "feat(lsp): add auto-install on did_open (includes notifications)"
+      status: pending
+      commits: []
       files_to_modify:
         - src/lsp/lsp_impl.rs
 
-    # Subtask 7: Re-parse documents and refresh tokens after install
-    - test: "After successful auto-install, open documents are re-parsed and semantic tokens refreshed"
-      implementation: "After install completes, re-load language, re-parse affected documents, call semantic_tokens_refresh"
+    # Subtask 4: Integration test for injection auto-install
+    - test: "Opening a markdown file with code blocks triggers auto-install for injected languages"
+      implementation: |
+        Create integration test that:
+        1. Sets up TreeSitterLs with autoInstall enabled
+        2. Opens a markdown document with Lua and Python code blocks
+        3. Verifies maybe_auto_install_language is called for each injected language
+        4. Verifies InstallingLanguages tracker prevents duplicate installs
       type: behavioral
-      status: completed
-      commits:
-        - hash: "85fec6c"
-          phase: green
-          message: "feat(lsp): add auto-install on did_open (includes reload)"
+      status: pending
+      commits: []
       files_to_modify:
-        - src/lsp/lsp_impl.rs
+        - src/lsp/lsp_impl.rs  # Unit tests in same file
 
   notes: |
-    Sprint 7: Auto-install on File Open (PBI-008)
-    Sprint Goal: Enable seamless syntax highlighting for any language by automatically
-    installing missing parsers when files are opened.
+    Sprint 8: Auto-install for Injected Languages on File Open (PBI-013)
+    Sprint Goal: Enable complete syntax highlighting for all code blocks by automatically
+    installing missing parsers for injected languages when files are opened.
 
     Key Design Decisions:
-    - Full silent background install (no prompts, async)
-    - HashSet<String> tracks languages currently being installed (prevent duplicates)
-    - Uses tokio::spawn for background installation
-    - LSP notifications via window/showMessage for progress/errors
-    - autoInstall defaults to false for backward compatibility
+    - Reuse existing PBI-008 infrastructure (InstallingLanguages, maybe_auto_install_language)
+    - Use collect_all_injections() to detect all injection regions in the document
+    - Check each unique injected language and trigger auto-install if missing
+    - Only handle direct injections (depth=1) for first iteration (YAGNI)
 
     Implementation Flow:
-    1. User opens a file (e.g., .lua)
-    2. did_open determines language from path/language_id
-    3. Check if parser exists for language
-    4. If missing AND autoInstall enabled:
-       a. Check if language already being installed (skip if so)
-       b. Add language to installing set
-       c. Send "Installing {lang}..." notification
-       d. Spawn async task to install parser + queries
-       e. On completion: remove from set, send success/error notification
-       f. Trigger re-parse of open documents for that language
-       g. Request semantic tokens refresh
-    5. If parser exists, proceed normally
+    1. User opens markdown file with code blocks
+    2. did_open triggers auto-install for markdown if missing (existing PBI-008 flow)
+    3. parse_document() parses markdown, producing AST
+    4. NEW: check_injected_languages_auto_install() runs:
+       a. Get injection query for markdown
+       b. Get parsed tree from document store
+       c. Call collect_all_injections() to find all code blocks
+       d. Extract unique languages (lua, python, etc.)
+       e. For each language, check if parser loaded
+       f. If missing, call maybe_auto_install_language()
+    5. InstallingLanguages tracker prevents duplicate install attempts
+    6. After install, semantic tokens refresh shows highlighting
 
     Files to Modify:
-    - src/config/settings.rs - Add autoInstall setting
-    - src/lsp/lsp_impl.rs - Add auto-install logic in did_open
-    - src/install/mod.rs - Expose async install function
+    - src/lsp/lsp_impl.rs - Add check_injected_languages_auto_install helper and call from did_open
+
+    Edge Cases:
+    - Recursive injections: Only handle depth=1 for now (e.g., markdown->lua, not markdown->lua->regex)
+    - Unknown languages: ensure_language_loaded fails, auto-install attempts but may fail gracefully
+    - Large documents with many injections: Process sequentially, tracker prevents duplicates
 `````````
 
 ### Impediment Registry
@@ -891,6 +1060,27 @@ definition_of_done:
 `````````yaml
 # Log of completed PBIs (one per sprint)
 completed:
+  - sprint: 7
+    pbi: PBI-008
+    story: "As a user of treesitter-ls, I want to have treesitter-ls automatically install missing parsers when I open a file, so that I get syntax highlighting for any language without running install commands manually"
+    outcome: "Silent background auto-install of parsers and queries when opening files with missing languages; InstallingLanguages tracker prevents duplicates; LSP notifications for progress"
+    acceptance:
+      status: accepted
+      criteria_verified:
+        - "Opening a .lua file when no Lua parser is installed triggers silent background installation"
+        - "LSP shows progress notification during installation"
+        - "Auto-install can be disabled in initializationOptions"
+        - "Failed auto-install shows clear error message via LSP notification"
+        - "Auto-install does not block document operations (async)"
+        - "Already-installing language is not triggered twice"
+      dod_verified:
+        - "cargo test: PASSED"
+        - "cargo clippy -- -D warnings: PASSED"
+        - "cargo fmt --check: PASSED"
+    subtasks_completed: 7
+    commits_actual: 4
+    impediments: 0
+
   - sprint: 6
     pbi: PBI-009
     story: "As a user of treesitter-ls, I want to install both parser and queries with a single command, so that I can set up a language with one command instead of running two separate commands"

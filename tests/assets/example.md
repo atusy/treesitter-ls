@@ -26,3 +26,8 @@ local injection = true
 # section
 
 paragraph
+
+```python
+def f():
+    return 1
+```

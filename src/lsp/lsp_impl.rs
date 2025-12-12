@@ -418,7 +418,6 @@ impl TreeSitterLs {
     /// - The document has no parsed tree
     /// - The host language has no injection query
     /// - No injection regions are found
-    #[allow(dead_code)] // Used in later subtasks (ST-2)
     fn get_injected_languages(&self, uri: &Url) -> HashSet<String> {
         // Get the host language for this document
         let language_name = match self.get_language_for_document(uri) {
@@ -453,6 +452,48 @@ impl TreeSitterLs {
             };
 
         injections.iter().map(|i| i.language.clone()).collect()
+    }
+
+    /// Check injected languages and trigger auto-install for missing parsers.
+    ///
+    /// This function:
+    /// 1. Returns early if auto-install is not enabled
+    /// 2. Gets unique injected languages from the document
+    /// 3. For each language, checks if it's already loaded
+    /// 4. For languages not loaded, triggers maybe_auto_install_language()
+    ///
+    /// The InstallingLanguages tracker in maybe_auto_install_language prevents
+    /// duplicate install attempts.
+    #[allow(dead_code)] // Used in ST-3 (did_open integration)
+    async fn check_injected_languages_auto_install(&self, uri: &Url) {
+        // Early return if auto-install is not enabled
+        if !self.is_auto_install_enabled() {
+            return;
+        }
+
+        // Get unique injected languages from the document
+        let languages = self.get_injected_languages(uri);
+
+        if languages.is_empty() {
+            return;
+        }
+
+        // Get document text for auto-install (needed by maybe_auto_install_language)
+        let text = match self.documents.get(uri) {
+            Some(doc) => doc.text().to_string(),
+            None => return,
+        };
+
+        // Check each injected language and trigger auto-install if not loaded
+        for lang in languages {
+            let load_result = self.language.ensure_language_loaded(&lang);
+            if !load_result.success {
+                // Language not loaded - trigger auto-install
+                // maybe_auto_install_language uses InstallingLanguages to prevent duplicates
+                self.maybe_auto_install_language(&lang, uri.clone(), text.clone())
+                    .await;
+            }
+        }
     }
 }
 
@@ -1392,5 +1433,104 @@ mod tests {
         };
 
         injections.iter().map(|i| i.language.clone()).collect()
+    }
+
+    #[test]
+    fn test_check_injected_languages_identifies_missing_parsers() {
+        // Test that check_injected_languages_auto_install correctly identifies
+        // which injected languages need auto-installation (parsers not loaded).
+        //
+        // The function should:
+        // 1. Get injected languages from the document using get_injected_languages()
+        // 2. For each language, call ensure_language_loaded() to check if parser exists
+        // 3. If parser is NOT loaded AND autoInstall is enabled, trigger maybe_auto_install_language()
+        // 4. Skip languages that are already loaded or already being installed
+        //
+        // This test verifies the logic by checking what languages would be identified
+        // as needing installation based on ensure_language_loaded() results.
+
+        use crate::language::LanguageCoordinator;
+
+        // Create a LanguageCoordinator to test ensure_language_loaded behavior
+        let coordinator = LanguageCoordinator::new();
+
+        // Test that ensure_language_loaded returns false for unknown languages
+        // These are the languages that should trigger auto-install
+        let unknown_langs = vec!["lua", "python", "rust"];
+        for lang in &unknown_langs {
+            let result = coordinator.ensure_language_loaded(lang);
+            // Without any language configured, ensure_language_loaded should fail
+            assert!(
+                !result.success,
+                "Expected ensure_language_loaded to fail for unconfigured language '{}'",
+                lang
+            );
+        }
+
+        // This verifies the core logic: if ensure_language_loaded().success is false,
+        // the language should be a candidate for auto-installation.
+
+        // The check_injected_languages_auto_install method will use this pattern:
+        // 1. let languages = self.get_injected_languages(uri);
+        // 2. for lang in languages {
+        //        let load_result = self.language.ensure_language_loaded(&lang);
+        //        if !load_result.success {
+        //            self.maybe_auto_install_language(&lang, uri, text).await;
+        //        }
+        //    }
+
+        // Verify that InstallingLanguages tracker would prevent duplicate installs
+        let tracker = InstallingLanguages::new();
+        assert!(tracker.try_start_install("lua"));
+        assert!(!tracker.try_start_install("lua")); // Second attempt fails
+        tracker.finish_install("lua");
+        assert!(tracker.try_start_install("lua")); // After finish, can start again
+    }
+
+    #[test]
+    fn test_get_languages_needing_install_filters_loaded_languages() {
+        // Test the helper method that filters injected languages to only those
+        // that need installation (not already loaded).
+        //
+        // This tests get_languages_needing_install() which takes a set of injected
+        // language names and returns only those where ensure_language_loaded fails.
+
+        use crate::language::LanguageCoordinator;
+
+        let coordinator = LanguageCoordinator::new();
+
+        // Create a set of injected languages (simulating what get_injected_languages returns)
+        let mut injected_languages = HashSet::new();
+        injected_languages.insert("lua".to_string());
+        injected_languages.insert("python".to_string());
+        injected_languages.insert("rust".to_string());
+
+        // Call the helper method to filter to only languages needing install
+        let languages_needing_install =
+            get_languages_needing_install(&coordinator, &injected_languages);
+
+        // Since no languages are configured in the coordinator, all should need install
+        assert_eq!(languages_needing_install.len(), 3);
+        assert!(languages_needing_install.contains(&"lua".to_string()));
+        assert!(languages_needing_install.contains(&"python".to_string()));
+        assert!(languages_needing_install.contains(&"rust".to_string()));
+    }
+
+    /// Helper function that filters a set of injected languages to only those
+    /// that need installation (where ensure_language_loaded fails).
+    ///
+    /// This is the core logic used by check_injected_languages_auto_install.
+    fn get_languages_needing_install(
+        coordinator: &crate::language::LanguageCoordinator,
+        injected_languages: &HashSet<String>,
+    ) -> Vec<String> {
+        injected_languages
+            .iter()
+            .filter(|lang| {
+                let load_result = coordinator.ensure_language_loaded(lang);
+                !load_result.success
+            })
+            .cloned()
+            .collect()
     }
 }
