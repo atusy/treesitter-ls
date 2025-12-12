@@ -125,8 +125,8 @@ Sprint Cycle:
 sprint:
   number: 7
   pbi: PBI-008
-  status: in_progress
-  subtasks_completed: 0
+  status: done
+  subtasks_completed: 7
   subtasks_total: 7
   impediments: 0
 `````````
@@ -706,7 +706,7 @@ sprint:
     role: "user of treesitter-ls"
     capability: "have treesitter-ls automatically install missing parsers when I open a file"
     benefit: "I get syntax highlighting for any language without running install commands manually"
-  status: in_progress
+  status: done
 
   subtasks:
     # Sprint 7: Auto-install on File Open (PBI-008)
@@ -724,8 +724,11 @@ sprint:
     - test: "TreeSitterSettings parses autoInstall field from JSON/TOML configuration"
       implementation: "Add auto_install: Option<bool> field to TreeSitterSettings with serde rename to autoInstall"
       type: behavioral
-      status: pending
-      commits: []
+      status: completed
+      commits:
+        - hash: "6896b4c"
+          phase: green
+          message: "feat(config): add autoInstall field to TreeSitterSettings"
       files_to_modify:
         - src/config/settings.rs
 
@@ -733,8 +736,11 @@ sprint:
     - test: "WorkspaceSettings exposes auto_install field that defaults to false"
       implementation: "Add auto_install: bool field to WorkspaceSettings, update From impl for TreeSitterSettings"
       type: behavioral
-      status: pending
-      commits: []
+      status: completed
+      commits:
+        - hash: "b2934ac"
+          phase: green
+          message: "feat(config): expose auto_install in WorkspaceSettings"
       files_to_modify:
         - src/config/settings.rs
 
@@ -742,8 +748,11 @@ sprint:
     - test: "TreeSitterLs can track which languages are currently being installed"
       implementation: "Add installing_languages: Mutex<HashSet<String>> field to TreeSitterLs"
       type: behavioral
-      status: pending
-      commits: []
+      status: completed
+      commits:
+        - hash: "f56e77e"
+          phase: green
+          message: "feat(lsp): add InstallingLanguages tracker"
       files_to_modify:
         - src/lsp/lsp_impl.rs
 
@@ -751,8 +760,11 @@ sprint:
     - test: "install module exposes async install_language_async function"
       implementation: "Add async wrapper around parser::install_parser and queries::install_queries"
       type: behavioral
-      status: pending
-      commits: []
+      status: completed
+      commits:
+        - hash: "22125a6"
+          phase: green
+          message: "feat(install): add async install function"
       files_to_modify:
         - src/install/mod.rs
 
@@ -760,8 +772,11 @@ sprint:
     - test: "did_open checks if parser exists for the language and triggers install if missing"
       implementation: "In did_open, check language coordinator for parser, spawn install if autoInstall enabled and parser missing"
       type: behavioral
-      status: pending
-      commits: []
+      status: completed
+      commits:
+        - hash: "85fec6c"
+          phase: green
+          message: "feat(lsp): add auto-install on did_open"
       files_to_modify:
         - src/lsp/lsp_impl.rs
 
@@ -769,8 +784,11 @@ sprint:
     - test: "Auto-install sends window/showMessage notifications for progress and errors"
       implementation: "Use client.show_message() to notify user of install start, completion, and errors"
       type: behavioral
-      status: pending
-      commits: []
+      status: completed
+      commits:
+        - hash: "85fec6c"
+          phase: green
+          message: "feat(lsp): add auto-install on did_open (includes notifications)"
       files_to_modify:
         - src/lsp/lsp_impl.rs
 
@@ -778,8 +796,11 @@ sprint:
     - test: "After successful auto-install, open documents are re-parsed and semantic tokens refreshed"
       implementation: "After install completes, re-load language, re-parse affected documents, call semantic_tokens_refresh"
       type: behavioral
-      status: pending
-      commits: []
+      status: completed
+      commits:
+        - hash: "85fec6c"
+          phase: green
+          message: "feat(lsp): add auto-install on did_open (includes reload)"
       files_to_modify:
         - src/lsp/lsp_impl.rs
 
