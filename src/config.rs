@@ -6,6 +6,22 @@ pub use settings::{
 };
 use std::collections::HashMap;
 
+/// Returns the default search paths for parsers and queries.
+/// Uses the platform-specific data directory (via `dirs` crate):
+/// - Linux: ~/.local/share/treesitter-ls/{parser,queries}
+/// - macOS: ~/Library/Application Support/treesitter-ls/{parser,queries}
+/// - Windows: %APPDATA%/treesitter-ls/{parser,queries}
+pub fn default_search_paths() -> Vec<String> {
+    crate::install::default_data_dir()
+        .map(|d| {
+            vec![
+                d.join("parser").to_string_lossy().to_string(),
+                d.join("queries").to_string_lossy().to_string(),
+            ]
+        })
+        .unwrap_or_default()
+}
+
 /// Merge two TreeSitterSettings, preferring values from `primary` over `fallback`
 pub fn merge_settings(
     fallback: Option<TreeSitterSettings>,
@@ -129,8 +145,14 @@ impl From<&TreeSitterSettings> for WorkspaceSettings {
             })
             .collect();
 
+        // Use explicit search_paths if provided, otherwise use platform defaults
+        let search_paths = settings
+            .search_paths
+            .clone()
+            .unwrap_or_else(default_search_paths);
+
         WorkspaceSettings::with_auto_install(
-            settings.search_paths.clone().unwrap_or_default(),
+            search_paths,
             languages,
             capture_mappings,
             settings.auto_install.unwrap_or(false),
