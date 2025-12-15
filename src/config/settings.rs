@@ -114,7 +114,7 @@ impl WorkspaceSettings {
             search_paths,
             languages,
             capture_mappings,
-            auto_install: false,
+            auto_install: true, // Default to true for zero-config experience
         }
     }
 

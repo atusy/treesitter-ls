@@ -155,7 +155,7 @@ impl From<&TreeSitterSettings> for WorkspaceSettings {
             search_paths,
             languages,
             capture_mappings,
-            settings.auto_install.unwrap_or(false),
+            settings.auto_install.unwrap_or(true), // Default to true for zero-config
         )
     }
 }
