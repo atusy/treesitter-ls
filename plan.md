@@ -328,7 +328,7 @@ product_backlog:
       - It's the correct architectural boundary (editor knows filetypes, LSP server knows parsers)
 
   - id: PBI-019
-    status: ready
+    status: done
     story:
       role: "user of treesitter-ls"
       capability: "have autoInstall enabled by default"
