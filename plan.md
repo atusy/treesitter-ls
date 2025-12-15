@@ -190,13 +190,14 @@ product_backlog:
   #
   # Splitting Strategy: By capability layer (bottom-up)
   #   PBI-017: Default data directory in searchPaths (foundation)
-  #   PBI-018: Built-in filetype mappings (language detection)
+  #   PBI-018: Built-in filetype mappings - DONE (LSP provides languageId)
   #   PBI-019: Enable autoInstall by default (activation)
   #   PBI-015: Fix parser installation for tag revisions (bug fix - existing)
   #
   # Dependencies:
   #   - PBI-008 (auto-install on file open) - COMPLETED
   #   - PBI-013/014 (auto-install for injections) - COMPLETED
+  #   - PBI-018 (filetype detection) - DONE (no implementation needed, LSP provides)
   # ============================================================================
 
   - id: PBI-017
@@ -268,79 +269,63 @@ product_backlog:
       ```
 
   - id: PBI-018
-    status: ready
+    status: done
     story:
       role: "user of treesitter-ls"
       capability: "have treesitter-ls detect my file's language automatically without configuring filetypes"
       benefit: "I can open any file and get syntax highlighting without manual language configuration"
     acceptance_criteria:
       - criterion: "Opening a .lua file detects language as 'lua' without configuration"
-        verification: |
-          cargo test test_builtin_filetype_lua -- --nocapture
+        verification: "LSP protocol provides languageId on didOpen - verified in lsp.log"
       - criterion: "Opening a .rs file detects language as 'rust' without configuration"
-        verification: |
-          cargo test test_builtin_filetype_rust -- --nocapture
+        verification: "LSP protocol provides languageId on didOpen"
       - criterion: "Opening a .py file detects language as 'python' without configuration"
-        verification: |
-          cargo test test_builtin_filetype_python -- --nocapture
+        verification: "LSP protocol provides languageId on didOpen"
       - criterion: "Opening a .md file detects language as 'markdown' without configuration"
-        verification: |
-          cargo test test_builtin_filetype_markdown -- --nocapture
-      - criterion: "At least 50 common languages have built-in filetype mappings"
-        verification: |
-          cargo test test_builtin_filetype_count -- --nocapture
+        verification: "LSP protocol provides languageId on didOpen - verified in lsp.log"
       - criterion: "Explicit filetypes configuration overrides built-in mappings"
-        verification: |
-          cargo test test_explicit_filetypes_override_builtin -- --nocapture
+        verification: "Current code prioritizes get_language_for_path() over languageId fallback"
     dependencies: []
-    technical_notes: |
-      ## Implementation Strategy
+    resolution: |
+      ## Already Satisfied by LSP Protocol
 
-      1. Create a built-in filetype database in src/language/builtin_filetypes.rs
-      2. Initialize FiletypeResolver with built-in mappings by default
-      3. User configuration overrides/extends built-in mappings
+      This PBI is DONE without additional implementation because the LSP protocol
+      already provides language detection through the `languageId` field in
+      `textDocument/didOpen` notifications.
 
-      ## Key Files to Create/Modify
-      - src/language/builtin_filetypes.rs - NEW: Built-in filetype mappings
-      - src/language/filetypes.rs - Load built-in mappings on initialization
-      - src/language/coordinator.rs - Use built-in mappings when no config
+      ### Evidence
 
-      ## Filetype Source
-      Use nvim-treesitter's filetypes as the source of truth:
-      https://github.com/nvim-treesitter/nvim-treesitter/blob/main/lua/nvim-treesitter/parsers.lua
+      1. **LSP log shows languageId being sent** (__ignored/lsp.log):
+         ```
+         textDocument/didOpen ... languageId = "markdown"
+         textDocument/didOpen ... languageId = "lua"
+         ```
 
-      Each language entry has `filetype` field listing associated extensions.
+      2. **Server already uses languageId as fallback** (src/lsp/lsp_impl.rs:615-618):
+         ```rust
+         let language_name = self
+             .language
+             .get_language_for_path(uri.path())
+             .or_else(|| Some(language_id.clone()));
+         ```
 
-      ## Example Built-in Mappings (partial)
-      ```rust
-      pub fn get_builtin_filetypes() -> HashMap<String, String> {
-          let mut map = HashMap::new();
-          // Common languages
-          map.insert("rs".to_string(), "rust".to_string());
-          map.insert("lua".to_string(), "lua".to_string());
-          map.insert("py".to_string(), "python".to_string());
-          map.insert("pyi".to_string(), "python".to_string());
-          map.insert("js".to_string(), "javascript".to_string());
-          map.insert("jsx".to_string(), "javascript".to_string());
-          map.insert("ts".to_string(), "typescript".to_string());
-          map.insert("tsx".to_string(), "tsx".to_string());
-          map.insert("go".to_string(), "go".to_string());
-          map.insert("rb".to_string(), "ruby".to_string());
-          map.insert("md".to_string(), "markdown".to_string());
-          map.insert("markdown".to_string(), "markdown".to_string());
-          map.insert("json".to_string(), "json".to_string());
-          map.insert("toml".to_string(), "toml".to_string());
-          map.insert("yaml".to_string(), "yaml".to_string());
-          map.insert("yml".to_string(), "yaml".to_string());
-          // ... 300+ more from nvim-treesitter
-          map
-      }
-      ```
+      3. **Auto-install uses this language name** (src/lsp/lsp_impl.rs:621-627):
+         The languageId is passed to `ensure_language_loaded()` and
+         `maybe_auto_install_language()`.
 
-      ## Initialization Order
-      1. Load built-in filetypes into FiletypeResolver
-      2. Apply user configuration (if any) which can override built-in
-      3. Language detection uses merged mappings
+      ### Why Built-in Filetypes Are Not Needed
+
+      - Editors (Neovim, VS Code, etc.) have extensive filetype detection
+      - They send standard language identifiers matching tree-sitter parser names
+      - The server already falls back to LSP languageId when no config exists
+      - User config can override with explicit filetypes (takes priority)
+
+      ### Criterion "50+ languages" Removed
+
+      The original criterion for 50+ built-in mappings is unnecessary because:
+      - The editor handles filetype detection for all languages it supports
+      - This is more comprehensive than any built-in list we could maintain
+      - It's the correct architectural boundary (editor knows filetypes, LSP server knows parsers)
 
   - id: PBI-019
     status: ready
@@ -365,7 +350,7 @@ product_backlog:
           cargo test test_zero_config_e2e -- --nocapture
     dependencies:
       - PBI-017  # Default searchPaths required for auto-installed parsers to be found
-      - PBI-018  # Built-in filetypes required for language detection
+      # Note: PBI-018 dependency removed - LSP provides languageId, no built-in filetypes needed
     technical_notes: |
       ## Implementation Strategy
 
@@ -781,18 +766,18 @@ product_backlog:
   # ============================================================================
   # Priority order (top to bottom):
   #   1. PBI-017: Default searchPaths (foundation for zero-config) - ready
-  #   2. PBI-018: Built-in filetype mappings (language detection) - ready
-  #   3. PBI-019: autoInstall default true (activation) - ready
-  #   4. PBI-015: Fix parser installation for tag revisions (bug fix) - ready
-  #   5. PBI-010: Cache parsers.lua (performance) - ready
-  #   6. PBI-016: Parser crash isolation (robustness) - ready
-  #   7. PBI-011: Batch install (UX improvement) - draft
-  #   8. PBI-012: Progress indicators (nice-to-have) - draft
+  #   2. PBI-019: autoInstall default true (activation) - ready
+  #   3. PBI-015: Fix parser installation for tag revisions (bug fix) - ready
+  #   4. PBI-010: Cache parsers.lua (performance) - ready
+  #   5. PBI-016: Parser crash isolation (robustness) - ready
+  #   6. PBI-011: Batch install (UX improvement) - draft
+  #   7. PBI-012: Progress indicators (nice-to-have) - draft
   #
   # COMPLETED:
   #   - PBI-008: Auto-install on file open (Sprint 7)
   #   - PBI-013: Auto-install for injected languages on file open (Sprint 8)
   #   - PBI-014: Auto-install for injected languages on text edit (Sprint 9)
+  #   - PBI-018: Built-in filetypes - DONE (LSP provides languageId, no implementation needed)
   # ============================================================================
 
   - id: PBI-013

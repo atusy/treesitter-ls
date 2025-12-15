@@ -517,8 +517,27 @@ mod tests {
     }
 
     #[test]
-    fn test_workspace_settings_exposes_auto_install() {
-        // Test that auto_install is exposed in WorkspaceSettings (default false)
+    fn test_auto_install_default_true() {
+        // PBI-019: autoInstall should default to true for zero-config experience
+        // When auto_install is None (not specified), it should be true
+        let settings = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: None, // Not specified
+        };
+
+        let workspace: WorkspaceSettings = WorkspaceSettings::from(&settings);
+
+        assert!(
+            workspace.auto_install,
+            "auto_install should default to true when not specified"
+        );
+    }
+
+    #[test]
+    fn test_auto_install_explicit_true() {
+        // Explicit true should be honored
         let settings = TreeSitterSettings {
             search_paths: None,
             languages: HashMap::new(),
@@ -528,27 +547,23 @@ mod tests {
 
         let workspace: WorkspaceSettings = WorkspaceSettings::from(&settings);
         assert!(workspace.auto_install);
+    }
 
-        // Test with false
-        let settings_false = TreeSitterSettings {
+    #[test]
+    fn test_auto_install_explicit_false() {
+        // PBI-019: Users can explicitly disable autoInstall
+        let settings = TreeSitterSettings {
             search_paths: None,
             languages: HashMap::new(),
             capture_mappings: HashMap::new(),
             auto_install: Some(false),
         };
 
-        let workspace_false: WorkspaceSettings = WorkspaceSettings::from(&settings_false);
-        assert!(!workspace_false.auto_install);
+        let workspace: WorkspaceSettings = WorkspaceSettings::from(&settings);
 
-        // Test with None (should default to false)
-        let settings_none = TreeSitterSettings {
-            search_paths: None,
-            languages: HashMap::new(),
-            capture_mappings: HashMap::new(),
-            auto_install: None,
-        };
-
-        let workspace_none: WorkspaceSettings = WorkspaceSettings::from(&settings_none);
-        assert!(!workspace_none.auto_install);
+        assert!(
+            !workspace.auto_install,
+            "explicit autoInstall: false should be honored"
+        );
     }
 }
