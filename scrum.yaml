@@ -36,10 +36,10 @@ rules:
 
 quick_status:
   current_sprint:
-    number: 18
-    pbi: PBI-023
+    number: 19
+    pbi: PBI-024
     status: in_progress
-    goal: "Add treesitter-ls language status command"
+    goal: "Add treesitter-ls language uninstall command"
   impediments: 0
 
 ---
@@ -255,7 +255,7 @@ product_backlog:
 
   # Priority 4: Status command for debugging (depends on PBI-026)
   - id: PBI-023
-    status: ready
+    status: done
     story:
       role: "user troubleshooting treesitter-ls"
       capability: "see which languages are installed and their status"
@@ -497,19 +497,19 @@ definition_of_done:
 # ==============================================================================
 
 current_sprint:
-  number: 18
-  pbi: PBI-023
+  number: 19
+  pbi: PBI-024
   status: in_progress
-  goal: "Add treesitter-ls language status command"
+  goal: "Add treesitter-ls language uninstall command"
   subtasks:
-    - id: S18.1
-      task: "Add Status action to LanguageAction enum"
+    - id: S19.1
+      task: "Add Uninstall action to LanguageAction enum"
       status: pending
-    - id: S18.2
-      task: "Implement run_language_status() to scan installed parsers/queries"
+    - id: S19.2
+      task: "Implement run_language_uninstall() to remove parser and queries"
       status: pending
-    - id: S18.3
-      task: "Add --verbose flag for detailed output"
+    - id: S19.3
+      task: "Add confirmation prompt and --force flag"
       status: pending
 
 ---
@@ -519,6 +519,9 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 18
+    pbi: PBI-023
+    outcome: "Added language status command to show installed languages and missing components"
   - sprint: 17
     pbi: PBI-022
     outcome: "Added config init command to generate treesitter-ls.toml template"
