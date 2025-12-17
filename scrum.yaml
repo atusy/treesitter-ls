@@ -36,10 +36,10 @@ rules:
 
 quick_status:
   current_sprint:
-    number: 16
-    pbi: PBI-021
+    number: 17
+    pbi: PBI-022
     status: in_progress
-    goal: "Document external dependencies required for treesitter-ls"
+    goal: "Add treesitter-ls config init command to generate default configuration"
   impediments: 0
 
 ---
@@ -163,7 +163,7 @@ product_backlog:
 
   # Priority 2: Documentation - Dependencies
   - id: PBI-021
-    status: ready
+    status: done
     story:
       role: "new user of treesitter-ls"
       capability: "know what external tools I need to install before using treesitter-ls"
@@ -497,16 +497,19 @@ definition_of_done:
 # ==============================================================================
 
 current_sprint:
-  number: 16
-  pbi: PBI-021
+  number: 17
+  pbi: PBI-022
   status: in_progress
-  goal: "Document external dependencies required for treesitter-ls"
+  goal: "Add treesitter-ls config init command to generate default configuration"
   subtasks:
-    - id: S16.1
-      task: "Add Prerequisites section to docs/README.md listing all dependencies"
+    - id: S17.1
+      task: "Add Config subcommand with Init action to CLI"
       status: pending
-    - id: S16.2
-      task: "Include installation instructions for major platforms (macOS, Linux, Windows)"
+    - id: S17.2
+      task: "Implement run_config_init() function that writes template TOML"
+      status: pending
+    - id: S17.3
+      task: "Add --force flag to overwrite existing config"
       status: pending
 
 ---
@@ -516,6 +519,9 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 16
+    pbi: PBI-021
+    outcome: "Added Prerequisites section to docs/README.md with dependency requirements"
   - sprint: 15
     pbi: PBI-026
     outcome: "CLI migrated to hierarchical structure: treesitter-ls language {install,list}"
