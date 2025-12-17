@@ -8,9 +8,21 @@
 
 use regex::Regex;
 use std::collections::HashMap;
+use std::path::Path;
+
+use super::cache::MetadataCache;
 
 /// URL for nvim-treesitter parsers.lua on GitHub (main branch).
 const PARSERS_LUA_URL: &str = "https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/main/lua/nvim-treesitter/parsers.lua";
+
+/// Options for fetching metadata.
+#[derive(Debug, Clone)]
+pub struct FetchOptions<'a> {
+    /// Data directory for caching (if None, no caching is used).
+    pub data_dir: Option<&'a Path>,
+    /// Whether to use the cache (if false, always fetch fresh).
+    pub use_cache: bool,
+}
 
 /// Parser metadata containing repository URL and revision.
 #[derive(Debug, Clone)]
@@ -68,6 +80,36 @@ impl std::error::Error for MetadataError {}
 /// }
 /// ```
 fn fetch_parsers_lua() -> Result<HashMap<String, ParserMetadata>, MetadataError> {
+    fetch_parsers_lua_with_options(None)
+}
+
+/// Fetch parsers.lua with optional caching support.
+///
+/// If `options` is provided and caching is enabled, the function will:
+/// 1. Check for a fresh cached copy
+/// 2. If cache hit, use cached content
+/// 3. If cache miss, fetch from network and update cache
+fn fetch_parsers_lua_with_options(
+    options: Option<&FetchOptions>,
+) -> Result<HashMap<String, ParserMetadata>, MetadataError> {
+    // Try to get cache if options provided with caching enabled
+    let cache = options.and_then(|opts| {
+        if opts.use_cache {
+            opts.data_dir
+                .map(|dir| MetadataCache::with_default_ttl(dir))
+        } else {
+            None
+        }
+    });
+
+    // Try cache first
+    if let Some(ref cache) = cache {
+        if let Some(cached_content) = cache.read() {
+            return parse_parsers_lua(&cached_content);
+        }
+    }
+
+    // Cache miss or no cache - fetch from network
     let response = reqwest::blocking::get(PARSERS_LUA_URL)
         .map_err(|e| MetadataError::HttpError(e.to_string()))?;
 
@@ -81,6 +123,12 @@ fn fetch_parsers_lua() -> Result<HashMap<String, ParserMetadata>, MetadataError>
     let content = response
         .text()
         .map_err(|e| MetadataError::HttpError(e.to_string()))?;
+
+    // Update cache if available
+    if let Some(cache) = cache {
+        // Ignore cache write errors - caching is best-effort
+        let _ = cache.write(&content);
+    }
 
     parse_parsers_lua(&content)
 }
@@ -224,6 +272,37 @@ pub fn list_supported_languages() -> Result<Vec<String>, MetadataError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_fetch_parser_metadata_with_caching() {
+        // This test verifies that FetchOptions can be used to enable caching
+        let temp = tempdir().expect("Failed to create temp dir");
+        let options = FetchOptions {
+            data_dir: Some(temp.path()),
+            use_cache: true,
+        };
+
+        // Fetch metadata with caching enabled - this should write to cache
+        let result = fetch_parser_metadata_with_options("lua", Some(&options));
+
+        // The function should either succeed (if network available)
+        // or fail with HttpError (if offline), but not crash
+        match result {
+            Ok(metadata) => {
+                assert!(!metadata.url.is_empty());
+                assert!(!metadata.revision.is_empty());
+
+                // Verify cache was written
+                let cache = MetadataCache::with_default_ttl(temp.path());
+                assert!(cache.exists(), "Cache file should exist after fetch");
+            }
+            Err(MetadataError::HttpError(_)) => {
+                // Network unavailable - that's acceptable in tests
+            }
+            Err(e) => panic!("Unexpected error: {:?}", e),
+        }
+    }
 
     #[test]
     fn test_parse_parsers_lua_main_branch_format() {
