@@ -1,3 +1,4 @@
+pub mod auto_install;
 mod lsp_impl;
 mod settings;
 
