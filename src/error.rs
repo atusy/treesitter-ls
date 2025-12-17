@@ -58,7 +58,10 @@ impl<T> LockResultExt<T> for Result<T, PoisonError<T>> {
         match self {
             Ok(guard) => Ok(guard),
             Err(poisoned) => {
-                log::warn!("Recovered from poisoned lock");
+                log::warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned lock"
+                );
                 Ok(poisoned.into_inner())
             }
         }
