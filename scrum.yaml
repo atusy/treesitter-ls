@@ -214,7 +214,7 @@ product_backlog:
       Estimated time: 20-30 minutes
 
   - id: PBI-031
-    status: ready
+    status: done
     story:
       role: "developer maintaining treesitter-ls"
       capability: "read dense functions with clear visual grouping"

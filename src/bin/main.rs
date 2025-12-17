@@ -504,9 +504,16 @@ fn run_install(
 /// Run the LSP server (requires tokio runtime)
 #[tokio::main]
 async fn run_lsp_server() {
+    use env_logger::Builder;
     use tokio::io::{stdin, stdout};
     use tower_lsp::{LspService, Server};
     use treesitter_ls::lsp::TreeSitterLs;
+
+    // Initialize logging to stderr (CRITICAL: stdout is used for LSP JSON-RPC)
+    // Configure via RUST_LOG, e.g.: RUST_LOG=treesitter_ls=debug
+    Builder::from_default_env()
+        .target(env_logger::Target::Stderr)
+        .init();
 
     let stdin = stdin();
     let stdout = stdout();
