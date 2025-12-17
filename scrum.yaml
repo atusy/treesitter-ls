@@ -36,10 +36,10 @@ rules:
 
 quick_status:
   current_sprint:
-    number: 14
-    pbi: PBI-025
-    status: done
-    goal: "Architecture Decision Records documentation"
+    number: 16
+    pbi: PBI-021
+    status: in_progress
+    goal: "Document external dependencies required for treesitter-ls"
   impediments: 0
 
 ---
@@ -119,7 +119,7 @@ product_backlog:
 
   # Priority 1: Migrate existing CLI to hierarchical structure (FOUNDATIONAL)
   - id: PBI-026
-    status: ready
+    status: done
     story:
       role: "user of treesitter-ls"
       capability: "use consistent hierarchical CLI commands"
@@ -497,17 +497,17 @@ definition_of_done:
 # ==============================================================================
 
 current_sprint:
-  number: 14
-  pbi: PBI-025
-  status: done
-  goal: "Architecture Decision Records documentation"
+  number: 16
+  pbi: PBI-021
+  status: in_progress
+  goal: "Document external dependencies required for treesitter-ls"
   subtasks:
-    - id: S14.1
-      task: "Create docs/adr/ directory with ADR template"
-      status: done
-    - id: S14.2
-      task: "Create ADR-0001: Hierarchical CLI Subcommands"
-      status: done
+    - id: S16.1
+      task: "Add Prerequisites section to docs/README.md listing all dependencies"
+      status: pending
+    - id: S16.2
+      task: "Include installation instructions for major platforms (macOS, Linux, Windows)"
+      status: pending
 
 ---
 # ==============================================================================
@@ -516,6 +516,9 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 15
+    pbi: PBI-026
+    outcome: "CLI migrated to hierarchical structure: treesitter-ls language {install,list}"
   - sprint: 14
     pbi: PBI-025
     outcome: "ADR documentation with template and ADR-0001 (hierarchical CLI subcommands)"
