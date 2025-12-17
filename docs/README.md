@@ -162,12 +162,6 @@ treesitter-ls install rust --verbose
 # Force reinstall
 treesitter-ls install python --force
 
-# Install only queries (skip parser compilation)
-treesitter-ls install markdown --queries-only
-
-# Install only parser (skip query download)
-treesitter-ls install c --parser-only
-
 # Custom data directory
 treesitter-ls install go --data-dir /custom/path
 
@@ -179,21 +173,6 @@ treesitter-ls install ruby --no-cache
 
 ```bash
 treesitter-ls list-languages
-```
-
-### Crash Recovery
-
-If a parser crashes, treesitter-ls marks it as failed and skips it to prevent repeated crashes.
-
-```bash
-# List failed parsers
-treesitter-ls crash-recovery list
-
-# Clear a failed parser (after reinstalling)
-treesitter-ls crash-recovery clear lua
-
-# Clear all failed parsers
-treesitter-ls crash-recovery clear --all
 ```
 
 ## Editor Integration
@@ -277,12 +256,6 @@ When you install a language with inheritance, the base queries are automatically
 1. Verify queries exist: `ls ~/.local/share/treesitter-ls/queries/<language>/`
 2. Check LSP logs for errors
 3. Ensure your editor has semantic tokens enabled
-
-### Parser keeps crashing
-
-1. Check failed parsers: `treesitter-ls crash-recovery list`
-2. Reinstall the parser: `treesitter-ls install <language> --force`
-3. Clear the crash state: `treesitter-ls crash-recovery clear <language>`
 
 ### Queries not working for TypeScript/JavaScript
 
