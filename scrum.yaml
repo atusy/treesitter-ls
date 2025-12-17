@@ -125,7 +125,7 @@ product_backlog:
   # TIDYING PBIs (Technical Debt Reduction)
   # ============================================================================
   - id: PBI-029
-    status: draft
+    status: ready
     story:
       role: "developer maintaining treesitter-ls"
       capability: "work with a codebase free of dead and deprecated code"
@@ -140,28 +140,34 @@ product_backlog:
       - criterion: "No placeholder tests with assert!(true)"
         verification: |
           ! grep -r "assert!(true)" src/ --include="*.rs"
+      - criterion: "All tests pass after removal"
+        verification: |
+          cargo test
     story_points: 1
     technical_notes: |
       Quick Wins - Dead Code Removal (Tidy First candidates)
 
-      1. src/language/failed_parsers.rs:
-         - Remove is_parser_failed() marked #[allow(dead_code)]
-         - Remove clear_failed_parser() marked #[allow(dead_code)]
+      1. src/lsp/lsp_impl.rs (lines 38-95):
+         - Remove InstallingLanguages struct marked #[allow(dead_code)] at line 38
+         - Remove impl block marked #[allow(dead_code)] at line 43
+         - Remove is_parser_failed() marked #[allow(dead_code)] at line 180
+         - Remove clear_failed_parser() marked #[allow(dead_code)] at line 187
          - These were for "later subtasks (ST-5)" that never materialized
 
-      2. src/language/injection.rs:252:
+      2. src/language/injection.rs:49-62:
          - Remove parse_offset_directive() marked #[deprecated]
-         - Note says "returns incorrect offsets" - kept for testing
-         - Update any tests that depend on it
+         - Note says "returns incorrect offsets" - kept for testing only
+         - Update test_parse_offset_directive_pattern_aware() to not use deprecated fn
 
-      3. src/language/predicate_accessor.rs:
-         - Remove or implement placeholder test: test_unified_predicate_operator()
+      3. src/language/predicate_accessor.rs:78-91:
+         - Remove or implement placeholder tests: test_predicate_accessor_basic()
+           and test_unified_predicate_operator()
          - Currently just assert!(true)
 
       Estimated time: 15-20 minutes total
 
   - id: PBI-030
-    status: draft
+    status: ready
     story:
       role: "developer maintaining treesitter-ls"
       capability: "use consistent lock handling patterns across the codebase"
@@ -177,33 +183,38 @@ product_backlog:
       - criterion: "All tests pass after refactoring"
         verification: |
           cargo test
+      - criterion: "Clippy passes with no warnings"
+        verification: |
+          cargo clippy -- -D warnings
     story_points: 1
     technical_notes: |
       Eliminate Lock Pattern Duplication (Tidy First)
 
-      Current state: 4+ instances of manual poison recovery in lsp_impl.rs:
-        match self.parser_pool.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => {
-                log::warn!(target: "...", "Recovered from poisoned lock");
-                poisoned.into_inner()
-            }
-        }
+      Current state: 8+ instances of manual poison recovery in lsp_impl.rs:
+        - Lines 53-62: InstallingLanguages::is_installing()
+        - Lines 68-77: InstallingLanguages::try_start_install()
+        - Lines 82-93: InstallingLanguages::finish_install()
+        - Lines 236-244: parse_document() parser_pool lock
+        - Lines 925-931: semantic tokens parser_pool lock
+        - Lines 1036-1042: code actions parser_pool lock
+        - Lines 1137-1143: selection range parser_pool lock
+        - Lines 1223-1229: goto definition parser_pool lock
 
       The LockResultExt trait in error.rs already provides:
-        - recover_poison() - silent recovery
-        - recover_poison_with_log(target, message) - logged recovery
+        - recover_poison() - silent recovery (returns Result)
+        - recover_poison_with_log(context) - logged recovery (returns Result)
 
-      Refactor to:
-        self.parser_pool.lock().recover_poison_with_log(
-            "treesitter_ls::lock_recovery",
-            "Recovered from poisoned parser_pool lock"
-        )
+      Note: Both methods return Result<T, LspError>, so callers need to handle
+      the Result (use .unwrap() or ? operator as appropriate).
 
-      Estimated time: 15 minutes
+      Refactor pattern:
+        let pool = self.parser_pool.lock()
+            .recover_poison_with_log("parse_document parser_pool")?;
+
+      Estimated time: 20-30 minutes
 
   - id: PBI-031
-    status: draft
+    status: ready
     story:
       role: "developer maintaining treesitter-ls"
       capability: "read dense functions with clear visual grouping"
@@ -220,17 +231,21 @@ product_backlog:
       - criterion: "All tests pass (no behavioral change)"
         verification: |
           cargo test
+      - criterion: "Code format check passes"
+        verification: |
+          cargo fmt --check
     story_points: 1
     technical_notes: |
       Chunk Statements in Dense Functions (Tidy First)
 
       Add blank lines to group related statements in:
 
-      1. src/lsp/lsp_impl.rs - parse_document():
-         - Chunk: Get document and language
-         - Chunk: Acquire parser from pool
-         - Chunk: Parse with tree-sitter
-         - Chunk: Update document store
+      1. src/lsp/lsp_impl.rs - parse_document() (lines 201-290):
+         - Chunk: Determine language from path or language_id
+         - Chunk: Check if parser previously crashed
+         - Chunk: Ensure language is loaded
+         - Chunk: Acquire parser from pool and parse
+         - Chunk: Store the parsed document
 
       2. src/analysis/semantic.rs - handle_semantic_tokens_full():
          - Chunk: Setup and early returns
@@ -242,7 +257,7 @@ product_backlog:
       Estimated time: 10 minutes per function
 
   - id: PBI-032
-    status: draft
+    status: ready
     story:
       role: "developer maintaining treesitter-ls"
       capability: "work with a smaller, more focused lsp_impl.rs"
@@ -260,6 +275,9 @@ product_backlog:
       - criterion: "All tests pass"
         verification: |
           cargo test
+      - criterion: "Clippy passes"
+        verification: |
+          cargo clippy -- -D warnings
     story_points: 3
     technical_notes: |
       Split God Object: lsp_impl.rs (Tidy Later - Substantial)
@@ -268,31 +286,31 @@ product_backlog:
 
       Extraction targets:
       1. Auto-install logic → src/lsp/auto_install.rs (~200 lines)
-         - ensure_language_installed()
-         - install_language_async()
-         - handle_missing_parser()
+         - maybe_auto_install_language() (lines 349-421)
+         - reload_language_after_install() (lines 423-477)
+         - check_injected_languages_auto_install() (lines 539-549+)
+         - get_injected_languages() (lines 493-527)
 
       2. Settings loading → src/lsp/settings.rs (expand existing)
-         - load_settings_from_init_options()
-         - merge_with_toml_config()
-         - validate_settings()
+         - apply_settings() currently at line 303-308
+         - Move settings-related helpers
 
       3. Document parsing → src/lsp/parsing.rs (~150 lines)
-         - parse_document()
-         - incremental_parse()
+         - parse_document() (lines 201-290)
+         - get_language_for_document() (lines 292-301)
 
       Keep in lsp_impl.rs:
-      - LSP trait implementations
+      - LSP trait implementations (LanguageServer)
       - Request/notification routing
-      - State coordination
+      - State coordination (TreeSitterLs struct)
 
       Estimated time: 2-3 hours
 
   - id: PBI-033
-    status: draft
+    status: ready
     story:
       role: "developer maintaining treesitter-ls"
-      capability: "understand code action APIs without navigating 5 function variants"
+      capability: "understand code action APIs without navigating multiple function variants"
       benefit: "I can extend code actions without confusion about which function to call"
     acceptance_criteria:
       - criterion: "Single entry point for code actions with options struct"
@@ -304,32 +322,45 @@ product_backlog:
       - criterion: "All tests pass"
         verification: |
           cargo test
+      - criterion: "Clippy passes"
+        verification: |
+          cargo clippy -- -D warnings
     story_points: 2
     technical_notes: |
       Consolidate Code Action Function Variants (Tidy Later)
 
-      Current state (5 variants):
-        pub fn handle_code_actions(...)
-        pub fn handle_code_actions_with_injection_query(...)
-        pub fn handle_code_actions_with_injection_and_coordinator(...)
-        fn handle_code_actions_with_context(...)
-        fn handle_nested_injection(...)
+      Current state (3 public + 2 private):
+        Public:
+        - handle_code_actions(...) at line 558
+        - handle_code_actions_with_injection_query(...) at line 578
+        - handle_code_actions_with_injection_and_coordinator(...) at line 602
 
-      Refactor to builder/options pattern:
+        Private:
+        - handle_code_actions_with_context(...) at line 627
+        - handle_nested_injection(...) at line 395
+
+      The CodeActionContext struct already exists internally (used by
+      handle_code_actions_with_context). Refactor to expose it:
+
         pub struct CodeActionOptions<'a> {
-            document: &'a Document,
-            range: Range,
+            uri: &'a Url,
+            text: &'a str,
+            tree: &'a Tree,
+            cursor: Range,
+            queries: Option<(&'a Query, Option<&'a Query>)>,
+            capture_context: Option<(&'a str, &'a CaptureMappings)>,
             injection_query: Option<&'a Query>,
             coordinator: Option<&'a LanguageCoordinator>,
+            parser_pool: Option<&'a mut DocumentParserPool>,
         }
 
         impl<'a> CodeActionOptions<'a> {
-            pub fn new(document: &'a Document, range: Range) -> Self { ... }
-            pub fn with_injection(self, query: &'a Query) -> Self { ... }
-            pub fn with_coordinator(self, coord: &'a LanguageCoordinator) -> Self { ... }
+            pub fn new(uri: &'a Url, text: &'a str, tree: &'a Tree, cursor: Range) -> Self
+            pub fn with_injection(self, query: &'a Query) -> Self
+            pub fn with_coordinator(self, coord: &'a LanguageCoordinator, pool: &'a mut DocumentParserPool) -> Self
         }
 
-        pub fn handle_code_actions(options: CodeActionOptions) -> Vec<CodeAction>
+        pub fn handle_code_actions(options: CodeActionOptions) -> Option<Vec<CodeActionOrCommand>>
 
       Estimated time: 30-45 minutes
 
@@ -337,7 +368,7 @@ product_backlog:
   # LOGGING PBIs (Observability Improvements)
   # ============================================================================
   - id: PBI-034
-    status: draft
+    status: ready
     story:
       role: "operator running treesitter-ls"
       capability: "see log messages via RUST_LOG environment variable"
@@ -349,30 +380,34 @@ product_backlog:
       - criterion: "env_logger::init() is called in run_lsp_server() before server starts"
         verification: |
           grep -q 'env_logger' src/bin/main.rs
-      - criterion: "Running RUST_LOG=treesitter_ls=warn treesitter-ls outputs log messages"
-        verification: |
-          RUST_LOG=treesitter_ls=warn cargo run 2>&1 | head -1  # Manual test
       - criterion: "Log output goes to stderr (not stdout, which is used for LSP JSON-RPC)"
         verification: |
           grep -q 'Target::Stderr' src/bin/main.rs
+      - criterion: "All tests pass"
+        verification: |
+          cargo test
     story_points: 2
     technical_notes: |
       Initialize Logging Backend (Foundation)
 
-      The log crate is used throughout but no backend is initialized - all logs are no-ops.
+      The log crate is used throughout (line 18 in Cargo.toml) but no backend
+      is initialized - all logs are no-ops.
 
-      Implementation:
-        use env_logger::Builder;
-        use std::io::Write;
+      Implementation steps:
+      1. Add to Cargo.toml dependencies:
+         env_logger = "0.11"
 
-        Builder::from_default_env()
-            .target(env_logger::Target::Stderr)  # CRITICAL: stdout is LSP JSON-RPC
-            .init();
+      2. In src/bin/main.rs run_lsp_server() (line 505-516), add before server starts:
+         use env_logger::Builder;
 
-      MUST use stderr because stdout is the LSP protocol channel.
+         Builder::from_default_env()
+             .target(env_logger::Target::Stderr)  # CRITICAL: stdout is LSP JSON-RPC
+             .init();
+
+      MUST use stderr because stdout is the LSP protocol channel (JSON-RPC).
 
   - id: PBI-035
-    status: draft
+    status: ready
     story:
       role: "operator filtering logs"
       capability: "filter warnings by category using RUST_LOG targets"
@@ -387,7 +422,12 @@ product_backlog:
       - criterion: "All log::warn! calls have explicit targets"
         verification: |
           ! grep -r 'log::warn!' src/ --include='*.rs' | grep -v 'target:'
+      - criterion: "All tests pass"
+        verification: |
+          cargo test
     story_points: 1
+    dependencies:
+      - "PBI-034 (logging backend must be initialized for targets to work)"
     technical_notes: |
       Standardize Log Targets
 
@@ -398,13 +438,20 @@ product_backlog:
 
       Files to update:
         - src/error.rs:61 → add target: "treesitter_ls::lock_recovery"
-        - src/language/injection.rs:88,138 → add target: "treesitter_ls::query"
+          Current: log::warn!("Recovered from poisoned lock");
+          Change:  log::warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock");
+
+        - src/language/injection.rs:88 → add target: "treesitter_ls::query"
+          (Malformed #offset! directive - wrong argument count)
+
+        - src/language/injection.rs:138 → add target: "treesitter_ls::query"
+          (Failed to parse #offset! directive - invalid values)
 
       The injection.rs warnings are about malformed #offset! directives - user config
       issues, not server health. Separating them lets query authors filter independently.
 
   - id: PBI-036
-    status: draft
+    status: ready
     story:
       role: "developer debugging lock issues"
       capability: "see which operation triggered lock poisoning recovery"
@@ -416,23 +463,34 @@ product_backlog:
       - criterion: "No context-less recover_poison variant exists"
         verification: |
           ! grep -A5 'fn recover_poison\b' src/error.rs | grep -q '"Recovered from poisoned lock"$'
+      - criterion: "All callers of recover_poison provide context"
+        verification: |
+          ! grep -r 'recover_poison()' src/ --include='*.rs'
+      - criterion: "All tests pass"
+        verification: |
+          cargo test
     story_points: 2
+    dependencies:
+      - "PBI-035 (targets should be standardized before consolidating)"
     technical_notes: |
       Add Context to Recover Poison Warning
 
       Current state in error.rs:
         - recover_poison() at line 57-64: no target, no context
+          log::warn!("Recovered from poisoned lock");
         - recover_poison_with_log() at line 67-79: has target and context
+          log::warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in {}", context);
 
-      Options:
-        1. Remove recover_poison(), keep only recover_poison_with_log()
-        2. Add context param to recover_poison()
-        3. Rename recover_poison_with_log() to recover_poison() after removing old one
+      Recommended approach (Option 3):
+        1. Remove recover_poison() (the context-less variant)
+        2. Rename recover_poison_with_log(context) to recover_poison(context)
+        3. Update all callers to use the new signature
 
-      Recommendation: Option 3 - consolidate to single function with context.
+      This ensures ALL lock recovery is logged with context for debugging.
+      After PBI-030, most callers will already use recover_poison_with_log().
 
   - id: PBI-037
-    status: draft
+    status: ready
     story:
       role: "operator monitoring logs"
       capability: "see crash detection events at error level instead of warn"
@@ -444,19 +502,37 @@ product_backlog:
       - criterion: "Target remains treesitter_ls::crash_recovery"
         verification: |
           grep 'crash_recovery' src/language/failed_parsers.rs
+      - criterion: "All tests pass"
+        verification: |
+          cargo test
     story_points: 1
+    dependencies:
+      - "PBI-034 (logging backend must be initialized)"
     technical_notes: |
       Use Error Level for Crash Detection
 
       Crash detection indicates a parser caused SIGABRT - genuinely an error condition.
       The warn level is for "recovered gracefully"; crash means "something bad happened".
 
-      Change in src/language/failed_parsers.rs:68:
-        - log::warn!(target: "treesitter_ls::crash_recovery", ...)
-        + log::error!(target: "treesitter_ls::crash_recovery", ...)
+      Change in src/language/failed_parsers.rs:68-72:
+        Current:
+          log::warn!(
+              target: "treesitter_ls::crash_recovery",
+              "Detected crash during parsing of '{}'. Marking as failed.",
+              language
+          );
+
+        Change to:
+          log::error!(
+              target: "treesitter_ls::crash_recovery",
+              "Detected crash during parsing of '{}'. Marking as failed.",
+              language
+          );
+
+      This is a one-line change (warn! -> error!) with clear semantic meaning.
 
   - id: PBI-038
-    status: draft
+    status: ready
     story:
       role: "operator configuring treesitter-ls"
       capability: "read documentation about available log targets"
@@ -475,28 +551,42 @@ product_backlog:
         verification: |
           grep -qi 'stderr' docs/README.md
     story_points: 2
+    dependencies:
+      - "PBI-034 (logging backend must exist to document)"
+      - "PBI-035 (log targets must be standardized to document)"
+      - "PBI-037 (crash_recovery level must be finalized)"
     technical_notes: |
       Document Logging Targets
 
-      Add to docs/README.md:
+      Add new section to docs/README.md (after Troubleshooting section):
 
       ## Logging
 
       treesitter-ls uses Rust's standard logging with env_logger.
-      Enable logging via RUST_LOG:
+      Enable logging via RUST_LOG environment variable.
+
+      ### Log Targets
 
       | Target | Level | Description |
       |--------|-------|-------------|
-      | treesitter_ls::lock_recovery | warn | Thread synchronization recovery |
-      | treesitter_ls::crash_recovery | error | Parser crash detection |
+      | treesitter_ls::lock_recovery | warn | Thread synchronization recovery events |
+      | treesitter_ls::crash_recovery | error | Parser crash detection and recovery |
       | treesitter_ls::query | warn | Query syntax/validation issues |
 
-      Examples:
-        RUST_LOG=treesitter_ls=debug treesitter-ls          # All logs
-        RUST_LOG=treesitter_ls::crash_recovery=error ...    # Crashes only
-        RUST_LOG=treesitter_ls::query=warn ...              # Query issues only
+      ### Examples
 
-      Note: Logs are written to stderr. Stdout is reserved for LSP JSON-RPC.
+      ```bash
+      # All logs at debug level
+      RUST_LOG=treesitter_ls=debug treesitter-ls
+
+      # Only crash events
+      RUST_LOG=treesitter_ls::crash_recovery=error treesitter-ls
+
+      # Query issues (helpful for query authors)
+      RUST_LOG=treesitter_ls::query=warn treesitter-ls
+      ```
+
+      **Note:** Logs are written to stderr. Stdout is reserved for LSP JSON-RPC protocol.
 
   # ============================================================================
   # COMPLETED PBIs (details in git history)
