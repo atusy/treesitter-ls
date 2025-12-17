@@ -64,26 +64,7 @@ impl std::fmt::Display for MetadataError {
 
 impl std::error::Error for MetadataError {}
 
-/// Fetch and parse parsers.lua to extract all parser information.
-///
-/// The main branch format is:
-/// ```lua
-/// return {
-///   lua = {
-///     install_info = {
-///       revision = 'abc123...',
-///       url = 'https://github.com/...',
-///       location = 'optional/subdir',  -- optional
-///     },
-///     ...
-///   },
-/// }
-/// ```
-fn fetch_parsers_lua() -> Result<HashMap<String, ParserMetadata>, MetadataError> {
-    fetch_parsers_lua_with_options(None)
-}
-
-/// Fetch parsers.lua with optional caching support.
+/// Fetch and parse parsers.lua with optional caching support.
 ///
 /// If `options` is provided and caching is enabled, the function will:
 /// 1. Check for a fresh cached copy
@@ -95,18 +76,17 @@ fn fetch_parsers_lua_with_options(
     // Try to get cache if options provided with caching enabled
     let cache = options.and_then(|opts| {
         if opts.use_cache {
-            opts.data_dir
-                .map(|dir| MetadataCache::with_default_ttl(dir))
+            opts.data_dir.map(MetadataCache::with_default_ttl)
         } else {
             None
         }
     });
 
     // Try cache first
-    if let Some(ref cache) = cache {
-        if let Some(cached_content) = cache.read() {
-            return parse_parsers_lua(&cached_content);
-        }
+    if let Some(ref cache) = cache
+        && let Some(cached_content) = cache.read()
+    {
+        return parse_parsers_lua(&cached_content);
     }
 
     // Cache miss or no cache - fetch from network
@@ -251,7 +231,18 @@ fn find_matching_brace(s: &str) -> Option<&str> {
 /// This fetches parsers.lua which contains url, revision, and location
 /// all in one place (main branch format).
 pub fn fetch_parser_metadata(language: &str) -> Result<ParserMetadata, MetadataError> {
-    let parsers = fetch_parsers_lua()?;
+    fetch_parser_metadata_with_options(language, None)
+}
+
+/// Fetch parser metadata with optional caching support.
+///
+/// If `options` is provided with caching enabled, the parsers.lua content
+/// will be cached to avoid repeated HTTP requests.
+pub fn fetch_parser_metadata_with_options(
+    language: &str,
+    options: Option<&FetchOptions>,
+) -> Result<ParserMetadata, MetadataError> {
+    let parsers = fetch_parsers_lua_with_options(options)?;
 
     parsers
         .get(language)
@@ -263,7 +254,14 @@ pub fn fetch_parser_metadata(language: &str) -> Result<ParserMetadata, MetadataE
 ///
 /// This returns all languages that nvim-treesitter supports (300+ languages).
 pub fn list_supported_languages() -> Result<Vec<String>, MetadataError> {
-    let parsers = fetch_parsers_lua()?;
+    list_supported_languages_with_options(None)
+}
+
+/// List all supported languages with optional caching support.
+pub fn list_supported_languages_with_options(
+    options: Option<&FetchOptions>,
+) -> Result<Vec<String>, MetadataError> {
+    let parsers = fetch_parsers_lua_with_options(options)?;
     let mut languages: Vec<String> = parsers.keys().cloned().collect();
     languages.sort();
     Ok(languages)
