@@ -230,15 +230,9 @@ fn find_matching_brace(s: &str) -> Option<&str> {
 ///
 /// This fetches parsers.lua which contains url, revision, and location
 /// all in one place (main branch format).
-pub fn fetch_parser_metadata(language: &str) -> Result<ParserMetadata, MetadataError> {
-    fetch_parser_metadata_with_options(language, None)
-}
-
-/// Fetch parser metadata with optional caching support.
 ///
-/// If `options` is provided with caching enabled, the parsers.lua content
-/// will be cached to avoid repeated HTTP requests.
-pub fn fetch_parser_metadata_with_options(
+/// Use `options` to enable caching and avoid repeated HTTP requests.
+pub fn fetch_parser_metadata(
     language: &str,
     options: Option<&FetchOptions>,
 ) -> Result<ParserMetadata, MetadataError> {
@@ -253,12 +247,9 @@ pub fn fetch_parser_metadata_with_options(
 /// List all supported languages by fetching from nvim-treesitter.
 ///
 /// This returns all languages that nvim-treesitter supports (300+ languages).
-pub fn list_supported_languages() -> Result<Vec<String>, MetadataError> {
-    list_supported_languages_with_options(None)
-}
-
-/// List all supported languages with optional caching support.
-pub fn list_supported_languages_with_options(
+///
+/// Use `options` to enable caching and avoid repeated HTTP requests.
+pub fn list_supported_languages(
     options: Option<&FetchOptions>,
 ) -> Result<Vec<String>, MetadataError> {
     let parsers = fetch_parsers_lua_with_options(options)?;
@@ -282,7 +273,7 @@ mod tests {
         };
 
         // Fetch metadata with caching enabled - this should write to cache
-        let result = fetch_parser_metadata_with_options("lua", Some(&options));
+        let result = fetch_parser_metadata("lua", Some(&options));
 
         // The function should either succeed (if network available)
         // or fail with HttpError (if offline), but not crash

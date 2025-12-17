@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::metadata::{FetchOptions, MetadataError, fetch_parser_metadata_with_options};
+use super::metadata::{FetchOptions, MetadataError, fetch_parser_metadata};
 
 /// Error types for parser installation.
 #[derive(Debug)]
@@ -148,7 +148,7 @@ pub fn install_parser(
         data_dir: Some(&options.data_dir),
         use_cache: !options.no_cache,
     };
-    let metadata = fetch_parser_metadata_with_options(language, Some(&fetch_options))?;
+    let metadata = fetch_parser_metadata(language, Some(&fetch_options))?;
 
     if options.verbose {
         eprintln!("Repository: {}", metadata.url);

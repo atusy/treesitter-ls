@@ -170,7 +170,7 @@ fn run_list_languages(no_cache: bool) {
         eprintln!("Fetching supported languages from nvim-treesitter...");
     }
 
-    match metadata::list_supported_languages_with_options(Some(&options)) {
+    match metadata::list_supported_languages(Some(&options)) {
         Ok(languages) => {
             eprintln!("Supported languages ({} total):", languages.len());
             for lang in languages {
