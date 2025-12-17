@@ -19,6 +19,11 @@ enum Commands {
         #[command(subcommand)]
         action: LanguageAction,
     },
+    /// Manage configuration files
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -52,6 +57,16 @@ enum LanguageAction {
     },
 }
 
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// Generate a default configuration file
+    Init {
+        /// Overwrite existing configuration file if it exists
+        #[arg(long)]
+        force: bool,
+    },
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -68,6 +83,11 @@ fn main() {
             }
             LanguageAction::List { no_cache } => {
                 run_list_languages(no_cache);
+            }
+        },
+        Some(Commands::Config { action }) => match action {
+            ConfigAction::Init { force } => {
+                run_config_init(force);
             }
         },
         None => {
@@ -101,6 +121,52 @@ fn run_list_languages(no_cache: bool) {
         }
         Err(e) => {
             eprintln!("Failed to fetch language list: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Default configuration template
+const CONFIG_TEMPLATE: &str = r#"# treesitter-ls configuration
+# Documentation: https://github.com/atusy/treesitter-ls/blob/main/docs/README.md
+
+# Auto-install missing parsers and queries (default: true)
+# autoInstall = true
+
+# Custom search paths for parsers and queries
+# Default: ~/.local/share/treesitter-ls (Linux), ~/Library/Application Support/treesitter-ls (macOS)
+# searchPaths = ["/custom/path"]
+
+# Language-specific configuration (usually not needed)
+# [languages.custom_lang]
+# filetypes = ["ext"]
+# library = "/path/to/parser.so"
+# highlight = [{ path = "./queries/highlights.scm" }]
+
+# Capture name remapping (Tree-sitter -> LSP semantic tokens)
+# [captureMappings._.highlights]
+# "variable.builtin" = "variable.defaultLibrary"
+"#;
+
+/// Run the config init command
+fn run_config_init(force: bool) {
+    let config_path = PathBuf::from("treesitter-ls.toml");
+
+    if config_path.exists() && !force {
+        eprintln!(
+            "Error: Configuration file '{}' already exists.",
+            config_path.display()
+        );
+        eprintln!("Use --force to overwrite.");
+        std::process::exit(1);
+    }
+
+    match std::fs::write(&config_path, CONFIG_TEMPLATE) {
+        Ok(()) => {
+            eprintln!("Created configuration file: {}", config_path.display());
+        }
+        Err(e) => {
+            eprintln!("Failed to write configuration file: {}", e);
             std::process::exit(1);
         }
     }

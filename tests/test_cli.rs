@@ -192,3 +192,147 @@ fn test_language_list_command() {
         combined
     );
 }
+
+/// Test that config --help shows available actions
+#[test]
+fn test_config_help_shows_actions() {
+    let output = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
+        .args(["config", "--help"])
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should exit successfully
+    assert!(
+        output.status.success(),
+        "Config help should exit with success"
+    );
+
+    // Should contain init action
+    assert!(
+        stdout.contains("init"),
+        "Config help should show init action. Got: {}",
+        stdout
+    );
+}
+
+/// Test that config init creates a configuration file
+#[test]
+fn test_config_init_creates_file() {
+    use std::fs;
+    use std::path::Path;
+
+    let test_dir = "/tmp/test-config-init";
+    let config_path = Path::new(test_dir).join("treesitter-ls.toml");
+
+    // Clean up before test
+    let _ = fs::remove_dir_all(test_dir);
+    fs::create_dir_all(test_dir).expect("Failed to create test directory");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
+        .args(["config", "init"])
+        .current_dir(test_dir)
+        .output()
+        .expect("Failed to execute command");
+
+    // Should exit successfully
+    assert!(
+        output.status.success(),
+        "Config init should exit with success. stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // File should exist
+    assert!(
+        config_path.exists(),
+        "Config file should be created at {}",
+        config_path.display()
+    );
+
+    // File should contain expected options
+    let content = fs::read_to_string(&config_path).expect("Failed to read config");
+    assert!(
+        content.contains("autoInstall") && content.contains("searchPaths"),
+        "Config should contain expected options. Got: {}",
+        content
+    );
+
+    // Clean up
+    let _ = fs::remove_dir_all(test_dir);
+}
+
+/// Test that config init does not overwrite existing file without --force
+#[test]
+fn test_config_init_no_overwrite_without_force() {
+    use std::fs;
+    use std::path::Path;
+
+    let test_dir = "/tmp/test-config-no-overwrite";
+    let config_path = Path::new(test_dir).join("treesitter-ls.toml");
+
+    // Clean up and setup
+    let _ = fs::remove_dir_all(test_dir);
+    fs::create_dir_all(test_dir).expect("Failed to create test directory");
+    fs::write(&config_path, "existing").expect("Failed to write existing config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
+        .args(["config", "init"])
+        .current_dir(test_dir)
+        .output()
+        .expect("Failed to execute command");
+
+    // Should exit with failure
+    assert!(
+        !output.status.success(),
+        "Config init should fail when file exists"
+    );
+
+    // Original content should be preserved
+    let content = fs::read_to_string(&config_path).expect("Failed to read config");
+    assert_eq!(content, "existing", "Original content should be preserved");
+
+    // Clean up
+    let _ = fs::remove_dir_all(test_dir);
+}
+
+/// Test that config init --force overwrites existing file
+#[test]
+fn test_config_init_force_overwrites() {
+    use std::fs;
+    use std::path::Path;
+
+    let test_dir = "/tmp/test-config-force";
+    let config_path = Path::new(test_dir).join("treesitter-ls.toml");
+
+    // Clean up and setup
+    let _ = fs::remove_dir_all(test_dir);
+    fs::create_dir_all(test_dir).expect("Failed to create test directory");
+    fs::write(&config_path, "existing").expect("Failed to write existing config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
+        .args(["config", "init", "--force"])
+        .current_dir(test_dir)
+        .output()
+        .expect("Failed to execute command");
+
+    // Should exit successfully
+    assert!(
+        output.status.success(),
+        "Config init --force should exit with success"
+    );
+
+    // Content should be replaced
+    let content = fs::read_to_string(&config_path).expect("Failed to read config");
+    assert!(
+        !content.contains("existing"),
+        "Content should be overwritten"
+    );
+    assert!(
+        content.contains("autoInstall"),
+        "New content should be present"
+    );
+
+    // Clean up
+    let _ = fs::remove_dir_all(test_dir);
+}

@@ -211,6 +211,16 @@ treesitter-ls language install ruby --no-cache
 treesitter-ls language list
 ```
 
+### Configuration Management
+
+```bash
+# Generate a default configuration file in current directory
+treesitter-ls config init
+
+# Overwrite existing configuration file
+treesitter-ls config init --force
+```
+
 ## Editor Integration
 
 ### Neovim
