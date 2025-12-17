@@ -407,7 +407,7 @@ product_backlog:
       MUST use stderr because stdout is the LSP protocol channel (JSON-RPC).
 
   - id: PBI-035
-    status: ready
+    status: done
     story:
       role: "operator filtering logs"
       capability: "filter warnings by category using RUST_LOG targets"

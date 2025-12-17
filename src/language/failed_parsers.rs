@@ -65,7 +65,7 @@ impl FailedParserRegistry {
             if let Ok(language) = fs::read_to_string(&parsing_state) {
                 let language = language.trim();
                 if !language.is_empty() {
-                    log::warn!(
+                    log::error!(
                         target: "treesitter_ls::crash_recovery",
                         "Detected crash during parsing of '{}'. Marking as failed.",
                         language
