@@ -35,11 +35,12 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint:
+  last_sprint:
     number: 10
     pbi: PBI-015
-    status: in_progress
-    goal: "Fix tag revision checkout bug"
+    status: done
+    outcome: "Fixed git checkout for tag revisions (FETCH_HEAD)"
+  next_ready_pbi: PBI-010
   impediments: 0
 
 ---
@@ -72,7 +73,7 @@ product_goal:
 product_backlog:
   # Priority 1: Bug fix for parser installation
   - id: PBI-015
-    status: ready
+    status: done
     story:
       role: "user of treesitter-ls"
       capability: "install parsers at specific git revisions (tags or commit hashes)"
@@ -194,10 +195,9 @@ definition_of_done:
 # ==============================================================================
 
 current_sprint:
-  number: 10
-  pbi: PBI-015
-  status: in_progress
-  goal: "Fix parser installation for tag revisions (git checkout FETCH_HEAD)"
+  status: none
+  note: "Sprint 10 (PBI-015) completed. Ready for Sprint 11 planning."
+  next_candidate: PBI-010
 
 ---
 # ==============================================================================
@@ -206,6 +206,9 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 10
+    pbi: PBI-015
+    outcome: "Fixed git checkout for tag revisions using FETCH_HEAD"
   - sprint: 9
     pbi: [PBI-017, PBI-018, PBI-019]
     outcome: "Zero-Config MVP complete - default searchPaths, autoInstall=true by default"
