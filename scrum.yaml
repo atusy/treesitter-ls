@@ -137,7 +137,51 @@ product_backlog:
       - CLI command: treesitter-ls crash-recovery {list,clear}
       - Failed parsers are skipped until user clears via CLI after reinstall
 
-  # Priority 4: UX improvement (draft)
+  # Priority 4: Query inheritance support (blocks TypeScript, JavaScript, etc.)
+  - id: PBI-020
+    status: draft
+    story:
+      role: "user of treesitter-ls"
+      capability: "get syntax highlighting for languages that use inherited queries (TypeScript, JavaScript, etc.)"
+      benefit: "I can use treesitter-ls with popular languages that rely on nvim-treesitter's query inheritance"
+    acceptance_criteria:
+      - criterion: "TypeScript files are highlighted correctly"
+        verification: |
+          # Open a .ts file in nvim with treesitter-ls
+          nvim --clean -u scripts/minimal_init.lua __ignored/example.ts
+          # Verify 'const' is highlighted as @keyword
+      - criterion: "JavaScript files are highlighted correctly"
+        verification: |
+          # Open a .js file and verify highlighting
+          nvim --clean -u scripts/minimal_init.lua test.js
+      - criterion: "Inherited queries (ecma, jsx) are automatically downloaded when needed"
+        verification: |
+          rm -rf /tmp/test-ts
+          ./target/release/treesitter-ls install typescript --data-dir /tmp/test-ts --verbose
+          test -d /tmp/test-ts/queries/ecma  # ecma queries should be downloaded
+      - criterion: "; inherits: directive is resolved and queries are concatenated"
+        verification: "Unit test verifies query resolution"
+    story_points: 5
+    technical_notes: |
+      Problem: nvim-treesitter queries use "; inherits: <lang>" directive to share common patterns.
+      Example: TypeScript's highlights.scm starts with "; inherits: ecma"
+
+      Solution options:
+      1. Pre-process at install time: Download inherited queries, concatenate into single file
+      2. Runtime resolution: Load and concatenate queries when compiling
+
+      Implementation:
+      - Parse "; inherits: lang1,lang2" directive from query files
+      - Recursively resolve inheritance chain (ecma -> jsx -> javascript -> typescript)
+      - Download missing base queries (ecma, jsx are not languages, just query sets)
+      - Concatenate in correct order (base first, derived last)
+      - Handle cycles (error) and missing dependencies (warning/fallback)
+
+      Special cases:
+      - "ecma" and "jsx" are query-only (no parser) - need special handling
+      - Some languages inherit from multiple parents (e.g., "; inherits: ecma,jsx")
+
+  # Priority 5: UX improvement (draft)
   - id: PBI-011
     status: draft
     story:
