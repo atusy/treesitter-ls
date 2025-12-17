@@ -35,12 +35,11 @@ rules:
 # ==============================================================================
 
 quick_status:
-  last_sprint:
-    number: 10
-    pbi: PBI-015
-    status: done
-    outcome: "Fixed git checkout for tag revisions (FETCH_HEAD)"
-  next_ready_pbi: PBI-010
+  current_sprint:
+    number: 11
+    pbi: PBI-010
+    status: in_progress
+    goal: "Cache parsers.lua locally"
   impediments: 0
 
 ---
@@ -195,9 +194,10 @@ definition_of_done:
 # ==============================================================================
 
 current_sprint:
-  status: none
-  note: "Sprint 10 (PBI-015) completed. Ready for Sprint 11 planning."
-  next_candidate: PBI-010
+  number: 11
+  pbi: PBI-010
+  status: in_progress
+  goal: "Cache parsers.lua locally with 1-hour TTL"
 
 ---
 # ==============================================================================
