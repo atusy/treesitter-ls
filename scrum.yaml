@@ -1,146 +1,158 @@
 # AI-Agentic Scrum Dashboard
-
-## Rules
-
-### General Principles
-
-1. **Single Source of Truth**: This dashboard is the only place for Scrum artifacts. All agents read from and write to this file.
-2. **Git as History**: Do not add timestamps. Git tracks when changes were made.
-3. **Order is Priority**: Items higher in lists have higher priority. No separate priority field needed.
-
-### Product Backlog Management
-
-1. **User Story Format**: Every PBI must have a `story` block with `role`, `capability`, and `benefit`.
-2. **Ordering**: Product Owner reorders by moving items up/down in the YAML array.
-3. **Refinement**: Change status from `draft` -> `refining` -> `ready` as stories mature.
-
-### Definition of Ready (AI-Agentic)
-
-**Ready = AI can complete it without asking humans.**
-
-| Status | Meaning |
-|--------|---------|
-| `draft` | Initial idea. Needs elaboration. |
-| `refining` | Being refined. AI may be able to make it `ready`. |
-| `ready` | All information available. AI can execute autonomously. |
-
-**Refinement process**:
-1. AI attempts to refine `draft`/`refining` items autonomously (explore codebase, propose acceptance criteria, identify dependencies)
-2. If AI can fill in all gaps -> change status to `ready`
-3. If story is too big or unclear -> try to split it
-4. If unsplittable item still needs human help -> keep as `refining` and document the question
-
-**Prioritization**: Prefer `ready` items. Work on refinement when no `ready` items exist or while waiting for human input.
-
-### Sprint Structure (AI-Agentic)
-
-**1 Sprint = 1 PBI**
-
-Unlike human Scrum where Sprints are time-boxed to amortize event overhead, AI agents have no such constraint. Scrum events are instant for AI, so we maximize iterations by:
-
-- Each Sprint delivers exactly one PBI
-- Sprint Planning = select top `ready` item from backlog
-- Sprint Review/Retro = run after every PBI completion
-- No fixed duration - Sprint ends when PBI is done
-
-**Benefits**: Faster feedback, simpler planning, cleaner increments, easier rollback.
-
-### Sprint Execution (TDD Workflow)
-
-1. **One PBI per Sprint**: Select the top `ready` item. That's the Sprint Backlog.
-2. **TDD Subtask Breakdown**: Break the PBI into subtasks. Each subtask produces commits through Red-Green-Refactor:
-   - `test`: What behavior to verify (becomes the Red phase test)
-   - `implementation`: What to build to make the test pass (Green phase)
-   - `type`: `behavioral` (new functionality) or `structural` (refactoring only)
-   - `status`: Current TDD phase (`pending` | `red` | `green` | `refactoring` | `completed`)
-   - `commits`: Array tracking each commit made for this subtask
-3. **TDD Cycle Per Subtask (Commit-Based)**:
-   - **Red**: Write a failing test, commit it (`phase: red`), status becomes `red`
-   - **Green**: Implement minimum code to pass, commit it (`phase: green`), status becomes `green`
-   - **Refactor**: Make structural improvements, commit each one separately (`phase: refactor`), status becomes `refactoring`
-   - **Complete**: All refactoring done, status becomes `completed`
-4. **Multiple Refactor Commits**: Following Tidy First, make small, frequent structural changes. Each refactor commit should be a single logical improvement (rename, extract method, etc.).
-5. **Commit Discipline**: Each commit represents one TDD phase step. Never mix behavioral and structural changes in the same commit.
-6. **Full Event Cycle**: After PBI completion, run Review -> Retro -> next Planning.
-
-### Impediment Handling
-
-1. **Log Immediately**: When blocked, add to `impediments.active` right away.
-2. **Escalation Path**: Developer -> Scrum Master -> Human.
-3. **Resolution**: Move resolved impediments to `impediments.resolved`.
-
-### Definition of Done
-
-1. **All Criteria Must Pass**: Every required DoD criterion must be verified.
-2. **Executable Verification**: Run the verification commands, don't just check boxes.
-3. **No Partial Done**: An item is either fully Done or still in_progress.
-
-### Status Transitions
-
-`````````
-PBI Status (in Product Backlog):
-  draft -> refining -> ready
-
-Sprint Status (1 PBI per Sprint):
-  in_progress -> done
-       |
-    blocked
-
-Subtask Status (TDD Cycle with Commits):
-  pending ─┬─> red ─────> green ─┬─> refactoring ─┬─> completed
-           │   (commit)  (commit) │    (commit)    │
-           │                      │       ↓        │
-           │                      │   (more refactor commits)
-           │                      │       ↓        │
-           │                      └───────┴────────┘
-           │
-           └─> (skip to completed if no test needed, e.g., pure structural)
-
-Each status transition produces a commit:
-  pending -> red:        commit(test: ...)
-  red -> green:          commit(feat: ... or fix: ...)
-  green -> refactoring:  commit(refactor: ...)
-  refactoring -> refactoring: commit(refactor: ...) [multiple allowed]
-  refactoring -> completed:   (no commit, just status update)
-  green -> completed:    (no commit, skip refactor if not needed)
-
-Sprint Cycle:
-  Planning -> Execution -> Review -> Retro -> (next Planning)
-`````````
-
-### Agent Responsibilities
-
-| Agent | Reads | Writes |
-|-------|-------|--------|
-| Product Owner | Full dashboard | Product Backlog, Product Goal, Sprint acceptance |
-| Scrum Master | Full dashboard | Sprint config, Impediments, Retrospective, Metrics |
-| Developer | Sprint Backlog, DoD | Subtask status, Progress, Notes, Impediments |
-| Event Agents | Relevant sections | Event-specific outputs |
+# Single source of truth for all Scrum artifacts
+# Git tracks when changes were made - no timestamps needed
+# Order is priority - higher items have higher priority
 
 ---
+# ==============================================================================
+# RULES AND GUIDELINES
+# ==============================================================================
 
-## Quick Status
+rules:
+  general_principles:
+    - name: "Single Source of Truth"
+      description: "This dashboard is the only place for Scrum artifacts. All agents read from and write to this file."
+    - name: "Git as History"
+      description: "Do not add timestamps. Git tracks when changes were made."
+    - name: "Order is Priority"
+      description: "Items higher in lists have higher priority. No separate priority field needed."
 
-`````````yaml
-sprint:
-  number: 9
-  pbi: PBI-014
-  status: done
-  subtasks_completed: 4
-  subtasks_total: 4
-  impediments: 0
-  sprint_goal: |
-    Enable immediate syntax highlighting for code blocks added during editing
-    by automatically installing missing parsers when new injection regions appear.
-`````````
+  product_backlog_management:
+    - name: "User Story Format"
+      description: "Every PBI must have a 'story' block with 'role', 'capability', and 'benefit'."
+    - name: "Ordering"
+      description: "Product Owner reorders by moving items up/down in the YAML array."
+    - name: "Refinement"
+      description: "Change status from 'draft' -> 'refining' -> 'ready' as stories mature."
+
+  definition_of_ready:
+    summary: "Ready = AI can complete it without asking humans."
+    statuses:
+      draft: "Initial idea. Needs elaboration."
+      refining: "Being refined. AI may be able to make it 'ready'."
+      ready: "All information available. AI can execute autonomously."
+    refinement_process:
+      - "AI attempts to refine draft/refining items autonomously (explore codebase, propose acceptance criteria, identify dependencies)"
+      - "If AI can fill in all gaps -> change status to 'ready'"
+      - "If story is too big or unclear -> try to split it"
+      - "If unsplittable item still needs human help -> keep as 'refining' and document the question"
+    prioritization: "Prefer 'ready' items. Work on refinement when no 'ready' items exist or while waiting for human input."
+
+  sprint_structure:
+    summary: "1 Sprint = 1 PBI"
+    rationale: |
+      Unlike human Scrum where Sprints are time-boxed to amortize event overhead, AI agents have no such constraint.
+      Scrum events are instant for AI, so we maximize iterations by:
+      - Each Sprint delivers exactly one PBI
+      - Sprint Planning = select top 'ready' item from backlog
+      - Sprint Review/Retro = run after every PBI completion
+      - No fixed duration - Sprint ends when PBI is done
+    benefits:
+      - "Faster feedback"
+      - "Simpler planning"
+      - "Cleaner increments"
+      - "Easier rollback"
+
+  sprint_execution:
+    workflow: "TDD Workflow"
+    steps:
+      - name: "One PBI per Sprint"
+        description: "Select the top 'ready' item. That's the Sprint Backlog."
+      - name: "TDD Subtask Breakdown"
+        description: |
+          Break the PBI into subtasks. Each subtask produces commits through Red-Green-Refactor:
+          - test: What behavior to verify (becomes the Red phase test)
+          - implementation: What to build to make the test pass (Green phase)
+          - type: 'behavioral' (new functionality) or 'structural' (refactoring only)
+          - status: Current TDD phase (pending | red | green | refactoring | completed)
+          - commits: Array tracking each commit made for this subtask
+      - name: "TDD Cycle Per Subtask (Commit-Based)"
+        description: |
+          - Red: Write a failing test, commit it (phase: red), status becomes 'red'
+          - Green: Implement minimum code to pass, commit it (phase: green), status becomes 'green'
+          - Refactor: Make structural improvements, commit each one separately (phase: refactor), status becomes 'refactoring'
+          - Complete: All refactoring done, status becomes 'completed'
+      - name: "Multiple Refactor Commits"
+        description: "Following Tidy First, make small, frequent structural changes. Each refactor commit should be a single logical improvement (rename, extract method, etc.)."
+      - name: "Commit Discipline"
+        description: "Each commit represents one TDD phase step. Never mix behavioral and structural changes in the same commit."
+      - name: "Full Event Cycle"
+        description: "After PBI completion, run Review -> Retro -> next Planning."
+
+  impediment_handling:
+    - name: "Log Immediately"
+      description: "When blocked, add to 'impediments.active' right away."
+    - name: "Escalation Path"
+      description: "Developer -> Scrum Master -> Human."
+    - name: "Resolution"
+      description: "Move resolved impediments to 'impediments.resolved'."
+
+  definition_of_done_rules:
+    - name: "All Criteria Must Pass"
+      description: "Every required DoD criterion must be verified."
+    - name: "Executable Verification"
+      description: "Run the verification commands, don't just check boxes."
+    - name: "No Partial Done"
+      description: "An item is either fully Done or still in_progress."
+
+  status_transitions:
+    pbi_status:
+      description: "PBI Status (in Product Backlog)"
+      flow: "draft -> refining -> ready"
+    sprint_status:
+      description: "Sprint Status (1 PBI per Sprint)"
+      flow: "in_progress -> done (with blocked branch)"
+    subtask_status:
+      description: "Subtask Status (TDD Cycle with Commits)"
+      flow: |
+        pending -> red (commit) -> green (commit) -> refactoring (commit) -> completed
+        - Multiple refactor commits allowed
+        - Can skip to completed if no test needed (e.g., pure structural)
+      commit_mapping:
+        pending_to_red: "commit(test: ...)"
+        red_to_green: "commit(feat: ... or fix: ...)"
+        green_to_refactoring: "commit(refactor: ...)"
+        refactoring_to_refactoring: "commit(refactor: ...) [multiple allowed]"
+        refactoring_to_completed: "(no commit, just status update)"
+        green_to_completed: "(no commit, skip refactor if not needed)"
+    sprint_cycle: "Planning -> Execution -> Review -> Retro -> (next Planning)"
+
+  agent_responsibilities:
+    product_owner:
+      reads: "Full dashboard"
+      writes: "Product Backlog, Product Goal, Sprint acceptance"
+    scrum_master:
+      reads: "Full dashboard"
+      writes: "Sprint config, Impediments, Retrospective, Metrics"
+    developer:
+      reads: "Sprint Backlog, DoD"
+      writes: "Subtask status, Progress, Notes, Impediments"
+    event_agents:
+      reads: "Relevant sections"
+      writes: "Event-specific outputs"
 
 ---
+# ==============================================================================
+# QUICK STATUS
+# ==============================================================================
 
-## 1. Product Backlog
+quick_status:
+  sprint:
+    number: 9
+    pbi: PBI-014
+    status: done
+    subtasks_completed: 4
+    subtasks_total: 4
+    impediments: 0
+    sprint_goal: |
+      Enable immediate syntax highlighting for code blocks added during editing
+      by automatically installing missing parsers when new injection regions appear.
 
-### Product Goal
+---
+# ==============================================================================
+# PRODUCT BACKLOG
+# ==============================================================================
 
-`````````yaml
 product_goal:
   statement: "Enable zero-configuration usage of treesitter-ls: users can start the LSP server and get syntax highlighting for any supported language without manual setup."
   success_metrics:
@@ -155,7 +167,6 @@ product_goal:
     - metric: "Code quality"
       target: "make check succeeds (cargo check, clippy, fmt)"
   owner: "@scrum-team-product-owner"
-
   mvp_definition: |
     Minimum Viable Zero-Config Experience:
     1. User starts treesitter-ls with no initialization options
@@ -172,33 +183,29 @@ product_goal:
     - Default searchPaths: [<default_data_dir>/parser, <default_data_dir>/queries]
     - Default autoInstall: true (was false)
     - Built-in filetype mappings for 300+ languages from nvim-treesitter
-`````````
 
-### Backlog Items
+# ==============================================================================
+# EPIC: Zero-Configuration Experience (MVP)
+# ==============================================================================
+# Goal: Users can use treesitter-ls without any configuration. The server
+#       automatically detects languages, installs missing parsers/queries,
+#       and provides syntax highlighting out of the box.
+#
+# Splitting Strategy: By capability layer (bottom-up)
+#   PBI-017: Default data directory in searchPaths (foundation)
+#   PBI-018: Built-in filetype mappings - DONE (LSP provides languageId)
+#   PBI-019: Enable autoInstall by default (activation)
+#   PBI-015: Fix parser installation for tag revisions (bug fix - existing)
+#
+# Dependencies:
+#   - PBI-008 (auto-install on file open) - COMPLETED
+#   - PBI-013/014 (auto-install for injections) - COMPLETED
+#   - PBI-018 (filetype detection) - DONE (no implementation needed, LSP provides)
+# ==============================================================================
 
-`````````yaml
 product_backlog:
   # PBI-002 completed in Sprint 2
   # PBI-003 resolved as part of Sprint 2 (PBI-002 fix included delta injection support)
-
-  # ============================================================================
-  # EPIC: Zero-Configuration Experience (MVP)
-  # ============================================================================
-  # Goal: Users can use treesitter-ls without any configuration. The server
-  #       automatically detects languages, installs missing parsers/queries,
-  #       and provides syntax highlighting out of the box.
-  #
-  # Splitting Strategy: By capability layer (bottom-up)
-  #   PBI-017: Default data directory in searchPaths (foundation)
-  #   PBI-018: Built-in filetype mappings - DONE (LSP provides languageId)
-  #   PBI-019: Enable autoInstall by default (activation)
-  #   PBI-015: Fix parser installation for tag revisions (bug fix - existing)
-  #
-  # Dependencies:
-  #   - PBI-008 (auto-install on file open) - COMPLETED
-  #   - PBI-013/014 (auto-install for injections) - COMPLETED
-  #   - PBI-018 (filetype detection) - DONE (no implementation needed, LSP provides)
-  # ============================================================================
 
   - id: PBI-017
     status: done
@@ -382,12 +389,12 @@ product_backlog:
       - Failed installs show clear error messages
       - Users can opt-out with autoInstall: false
 
-  # ============================================================================
+  # ==============================================================================
   # EPIC: Automatic Parser and Query Installation (Original)
-  # ============================================================================
+  # ==============================================================================
   # Note: PBI-004 through PBI-009 are COMPLETED (Sprints 3-6, 7-9)
   # The infrastructure is in place; the Zero-Config epic above builds on it.
-  # ============================================================================
+  # ==============================================================================
 
   - id: PBI-004
     status: ready
@@ -761,12 +768,12 @@ product_backlog:
       treesitter-ls install lua --force            # Overwrite existing
       ```
 
-  # ============================================================================
+  # ==============================================================================
   # PRIORITIZED BACKLOG (Post-Sprint 9 - Zero-Config MVP)
-  # ============================================================================
+  # ==============================================================================
   # Priority order (top to bottom):
-  #   1. PBI-017: Default searchPaths (foundation for zero-config) - ready
-  #   2. PBI-019: autoInstall default true (activation) - ready
+  #   1. PBI-017: Default searchPaths (foundation for zero-config) - done
+  #   2. PBI-019: autoInstall default true (activation) - done
   #   3. PBI-015: Fix parser installation for tag revisions (bug fix) - ready
   #   4. PBI-010: Cache parsers.lua (performance) - ready
   #   5. PBI-016: Parser crash isolation (robustness) - ready
@@ -778,7 +785,7 @@ product_backlog:
   #   - PBI-013: Auto-install for injected languages on file open (Sprint 8)
   #   - PBI-014: Auto-install for injected languages on text edit (Sprint 9)
   #   - PBI-018: Built-in filetypes - DONE (LSP provides languageId, no implementation needed)
-  # ============================================================================
+  # ==============================================================================
 
   - id: PBI-013
     status: ready
@@ -1390,11 +1397,12 @@ product_backlog:
       1. Unit test: Mock subprocess for parse success/failure/timeout
       2. Integration test: Actually crash a parser and verify server recovery
       3. E2E test: Open file with crash-inducing content, verify server survives
-`````````
 
-### Definition of Ready
+---
+# ==============================================================================
+# DEFINITION OF READY
+# ==============================================================================
 
-`````````yaml
 definition_of_ready:
   criteria:
     - criterion: "AI can complete this story without human input"
@@ -1406,14 +1414,13 @@ definition_of_ready:
       required: true
     - criterion: "Dependencies are resolved or not blocking"
       required: true
-`````````
 
 ---
+# ==============================================================================
+# CURRENT SPRINT
+# ==============================================================================
 
-## 2. Current Sprint
-
-`````````yaml
-sprint:
+current_sprint:
   number: 9
   pbi_id: PBI-014
   story:
@@ -1552,11 +1559,12 @@ sprint:
     - Rapid edits: InstallingLanguages prevents spam
     - Recursive injections: Only handle depth=1 (same as PBI-013)
     - Already loaded languages: ensure_language_loaded returns success, skipped
-`````````
 
-### Impediment Registry
+---
+# ==============================================================================
+# IMPEDIMENT REGISTRY
+# ==============================================================================
 
-`````````yaml
 impediments:
   active: []
   # Example impediment format:
@@ -1582,13 +1590,12 @@ impediments:
   #   impact: "Async tests could not run"
   #   severity: medium
   #   resolution: "Added pytest-asyncio to dev dependencies"
-`````````
 
 ---
+# ==============================================================================
+# DEFINITION OF DONE
+# ==============================================================================
 
-## 3. Definition of Done
-
-`````````yaml
 definition_of_done:
   # Run all verification commands from the PBI's acceptance_criteria
   # Plus these baseline checks:
@@ -1600,15 +1607,13 @@ definition_of_done:
     - name: "E2E tests pass"
       run: "make test_nvim"
       note: "Runs Neovim integration tests including tests/test_lsp_semantic.lua"
-`````````
 
 ---
+# ==============================================================================
+# COMPLETED SPRINTS
+# ==============================================================================
 
-## 4. Completed Sprints
-
-`````````yaml
-# Log of completed PBIs (one per sprint)
-completed:
+completed_sprints:
   - sprint: 9
     pbi: PBI-014
     story: "As a user of treesitter-ls, I want to have treesitter-ls automatically install missing parsers when I type a new injected code block, so that I get immediate syntax highlighting for code blocks I add while editing without needing to re-open the file"
@@ -1806,14 +1811,12 @@ completed:
     unit_tests: 138
     e2e_tests: 20
     impediments: 0
-`````````
 
 ---
+# ==============================================================================
+# RETROSPECTIVE LOG
+# ==============================================================================
 
-## 5. Retrospective Log
-
-`````````yaml
-# After each sprint, record what to improve
 retrospectives:
   - sprint: 9
     pbi: PBI-014
@@ -2290,21 +2293,20 @@ retrospectives:
       commits_expected: 8  # minimum: 1 per subtask
       commits_actual: 1    # actual commits for implementation
       commit_discipline_score: 0.125  # 1/8 = 12.5%
-`````````
 
 ---
+# ==============================================================================
+# AGENTS
+# ==============================================================================
 
-## 6. Agents
-
-`````````yaml
 agents:
-  product_owner: "@scrum-team-product-owner"
-  scrum_master: "@scrum-team-scrum-master"
-  developer: "@scrum-team-developer"
+  roles:
+    product_owner: "@scrum-team-product-owner"
+    scrum_master: "@scrum-team-scrum-master"
+    developer: "@scrum-team-developer"
 
-events:
-  planning: "@scrum-event-sprint-planning"
-  review: "@scrum-event-sprint-review"
-  retrospective: "@scrum-event-sprint-retrospective"
-  refinement: "@scrum-event-backlog-refinement"
-`````````
+  events:
+    planning: "@scrum-event-sprint-planning"
+    review: "@scrum-event-sprint-review"
+    retrospective: "@scrum-event-sprint-retrospective"
+    refinement: "@scrum-event-backlog-refinement"
