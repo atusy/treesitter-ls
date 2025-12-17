@@ -334,6 +334,171 @@ product_backlog:
       Estimated time: 30-45 minutes
 
   # ============================================================================
+  # LOGGING PBIs (Observability Improvements)
+  # ============================================================================
+  - id: PBI-034
+    status: draft
+    story:
+      role: "operator running treesitter-ls"
+      capability: "see log messages via RUST_LOG environment variable"
+      benefit: "I can diagnose issues when the LSP server misbehaves"
+    acceptance_criteria:
+      - criterion: "env_logger crate is added to Cargo.toml dependencies"
+        verification: |
+          grep -q 'env_logger' Cargo.toml
+      - criterion: "env_logger::init() is called in run_lsp_server() before server starts"
+        verification: |
+          grep -q 'env_logger' src/bin/main.rs
+      - criterion: "Running RUST_LOG=treesitter_ls=warn treesitter-ls outputs log messages"
+        verification: |
+          RUST_LOG=treesitter_ls=warn cargo run 2>&1 | head -1  # Manual test
+      - criterion: "Log output goes to stderr (not stdout, which is used for LSP JSON-RPC)"
+        verification: |
+          grep -q 'Target::Stderr' src/bin/main.rs
+    story_points: 2
+    technical_notes: |
+      Initialize Logging Backend (Foundation)
+
+      The log crate is used throughout but no backend is initialized - all logs are no-ops.
+
+      Implementation:
+        use env_logger::Builder;
+        use std::io::Write;
+
+        Builder::from_default_env()
+            .target(env_logger::Target::Stderr)  # CRITICAL: stdout is LSP JSON-RPC
+            .init();
+
+      MUST use stderr because stdout is the LSP protocol channel.
+
+  - id: PBI-035
+    status: draft
+    story:
+      role: "operator filtering logs"
+      capability: "filter warnings by category using RUST_LOG targets"
+      benefit: "I can see only relevant logs without noise from other categories"
+    acceptance_criteria:
+      - criterion: "src/error.rs:61 recover_poison() includes target: treesitter_ls::lock_recovery"
+        verification: |
+          grep -A5 'fn recover_poison\b' src/error.rs | grep 'target.*lock_recovery'
+      - criterion: "src/language/injection.rs warnings use target: treesitter_ls::query"
+        verification: |
+          grep 'log::warn!' src/language/injection.rs | grep -c 'target.*treesitter_ls::query' | grep -q '2'
+      - criterion: "All log::warn! calls have explicit targets"
+        verification: |
+          ! grep -r 'log::warn!' src/ --include='*.rs' | grep -v 'target:'
+    story_points: 1
+    technical_notes: |
+      Standardize Log Targets
+
+      Three log targets for different audiences:
+        - treesitter_ls::lock_recovery  → Server operators (thread safety)
+        - treesitter_ls::crash_recovery → Server operators (parser crashes)
+        - treesitter_ls::query          → Query authors (malformed queries)
+
+      Files to update:
+        - src/error.rs:61 → add target: "treesitter_ls::lock_recovery"
+        - src/language/injection.rs:88,138 → add target: "treesitter_ls::query"
+
+      The injection.rs warnings are about malformed #offset! directives - user config
+      issues, not server health. Separating them lets query authors filter independently.
+
+  - id: PBI-036
+    status: draft
+    story:
+      role: "developer debugging lock issues"
+      capability: "see which operation triggered lock poisoning recovery"
+      benefit: "I can identify which component experienced the lock poisoning"
+    acceptance_criteria:
+      - criterion: "recover_poison() function includes context in message"
+        verification: |
+          grep -A10 'fn recover_poison\b' src/error.rs | grep 'Recovered.*in'
+      - criterion: "No context-less recover_poison variant exists"
+        verification: |
+          ! grep -A5 'fn recover_poison\b' src/error.rs | grep -q '"Recovered from poisoned lock"$'
+    story_points: 2
+    technical_notes: |
+      Add Context to Recover Poison Warning
+
+      Current state in error.rs:
+        - recover_poison() at line 57-64: no target, no context
+        - recover_poison_with_log() at line 67-79: has target and context
+
+      Options:
+        1. Remove recover_poison(), keep only recover_poison_with_log()
+        2. Add context param to recover_poison()
+        3. Rename recover_poison_with_log() to recover_poison() after removing old one
+
+      Recommendation: Option 3 - consolidate to single function with context.
+
+  - id: PBI-037
+    status: draft
+    story:
+      role: "operator monitoring logs"
+      capability: "see crash detection events at error level instead of warn"
+      benefit: "I can configure alerts on the more severe error level for crashes"
+    acceptance_criteria:
+      - criterion: "src/language/failed_parsers.rs uses log::error! for crash detection"
+        verification: |
+          grep 'log::error!' src/language/failed_parsers.rs | grep 'crash_recovery'
+      - criterion: "Target remains treesitter_ls::crash_recovery"
+        verification: |
+          grep 'crash_recovery' src/language/failed_parsers.rs
+    story_points: 1
+    technical_notes: |
+      Use Error Level for Crash Detection
+
+      Crash detection indicates a parser caused SIGABRT - genuinely an error condition.
+      The warn level is for "recovered gracefully"; crash means "something bad happened".
+
+      Change in src/language/failed_parsers.rs:68:
+        - log::warn!(target: "treesitter_ls::crash_recovery", ...)
+        + log::error!(target: "treesitter_ls::crash_recovery", ...)
+
+  - id: PBI-038
+    status: draft
+    story:
+      role: "operator configuring treesitter-ls"
+      capability: "read documentation about available log targets"
+      benefit: "I can configure RUST_LOG effectively without reading source code"
+    acceptance_criteria:
+      - criterion: "docs/README.md includes Logging section"
+        verification: |
+          grep -q '## Logging' docs/README.md
+      - criterion: "Documents all three log targets with descriptions"
+        verification: |
+          grep -q 'lock_recovery' docs/README.md && grep -q 'crash_recovery' docs/README.md && grep -q 'treesitter_ls::query' docs/README.md
+      - criterion: "Includes example RUST_LOG configurations"
+        verification: |
+          grep -q 'RUST_LOG=' docs/README.md
+      - criterion: "Notes that logs go to stderr"
+        verification: |
+          grep -qi 'stderr' docs/README.md
+    story_points: 2
+    technical_notes: |
+      Document Logging Targets
+
+      Add to docs/README.md:
+
+      ## Logging
+
+      treesitter-ls uses Rust's standard logging with env_logger.
+      Enable logging via RUST_LOG:
+
+      | Target | Level | Description |
+      |--------|-------|-------------|
+      | treesitter_ls::lock_recovery | warn | Thread synchronization recovery |
+      | treesitter_ls::crash_recovery | error | Parser crash detection |
+      | treesitter_ls::query | warn | Query syntax/validation issues |
+
+      Examples:
+        RUST_LOG=treesitter_ls=debug treesitter-ls          # All logs
+        RUST_LOG=treesitter_ls::crash_recovery=error ...    # Crashes only
+        RUST_LOG=treesitter_ls::query=warn ...              # Query issues only
+
+      Note: Logs are written to stderr. Stdout is reserved for LSP JSON-RPC.
+
+  # ============================================================================
   # COMPLETED PBIs (details in git history)
   # ============================================================================
   - id: PBI-025
