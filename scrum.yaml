@@ -38,8 +38,8 @@ quick_status:
   current_sprint:
     number: 11
     pbi: PBI-010
-    status: in_progress
-    goal: "Cache parsers.lua locally"
+    status: done
+    goal: "Cache parsers.lua locally with --no-cache bypass"
   impediments: 0
 
 ---
@@ -66,7 +66,7 @@ product_goal:
 # ==============================================================================
 # PRODUCT BACKLOG (Active Items Only)
 # ==============================================================================
-# Completed PBIs: PBI-001 through PBI-009, PBI-013, PBI-014, PBI-017, PBI-018, PBI-019
+# Completed PBIs: PBI-001 through PBI-010, PBI-013 through PBI-015, PBI-017, PBI-018, PBI-019
 # For details: git log -- scrum.yaml
 
 product_backlog:
@@ -99,7 +99,7 @@ product_backlog:
 
   # Priority 2: Performance improvement
   - id: PBI-010
-    status: ready
+    status: done
     story:
       role: "user of treesitter-ls"
       capability: "have parsers.lua cached locally to avoid repeated HTTP requests"
@@ -196,8 +196,8 @@ definition_of_done:
 current_sprint:
   number: 11
   pbi: PBI-010
-  status: in_progress
-  goal: "Cache parsers.lua locally with 1-hour TTL"
+  status: done
+  goal: "Cache parsers.lua locally with --no-cache bypass"
 
 ---
 # ==============================================================================
@@ -206,6 +206,9 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 11
+    pbi: PBI-010
+    outcome: "Cache parsers.lua locally with 1-hour TTL and --no-cache flag"
   - sprint: 10
     pbi: PBI-015
     outcome: "Fixed git checkout for tag revisions using FETCH_HEAD"
