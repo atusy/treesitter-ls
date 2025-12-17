@@ -150,29 +150,28 @@ Project configuration is merged with LSP initialization options.
 
 ## CLI Commands
 
-### Install Languages
+The CLI uses a hierarchical subcommand structure: `treesitter-ls <resource> <action>`.
+
+### Language Management
 
 ```bash
 # Install a language (parser + queries)
-treesitter-ls install lua
+treesitter-ls language install lua
 
 # Install with verbose output
-treesitter-ls install rust --verbose
+treesitter-ls language install rust --verbose
 
 # Force reinstall
-treesitter-ls install python --force
+treesitter-ls language install python --force
 
 # Custom data directory
-treesitter-ls install go --data-dir /custom/path
+treesitter-ls language install go --data-dir /custom/path
 
 # Bypass metadata cache
-treesitter-ls install ruby --no-cache
-```
+treesitter-ls language install ruby --no-cache
 
-### List Supported Languages
-
-```bash
-treesitter-ls list-languages
+# List supported languages
+treesitter-ls language list
 ```
 
 ## Editor Integration
@@ -248,7 +247,7 @@ When you install a language with inheritance, the base queries are automatically
 ### Parser fails to load
 
 1. Check if the parser exists: `ls ~/.local/share/treesitter-ls/parser/`
-2. Reinstall: `treesitter-ls install <language> --force`
+2. Reinstall: `treesitter-ls language install <language> --force`
 3. Check for ABI compatibility with your Tree-sitter version
 
 ### No syntax highlighting
@@ -262,6 +261,6 @@ When you install a language with inheritance, the base queries are automatically
 These languages use query inheritance. Ensure base queries are installed:
 
 ```bash
-treesitter-ls install typescript --force
+treesitter-ls language install typescript --force
 # This automatically installs 'ecma' queries
 ```

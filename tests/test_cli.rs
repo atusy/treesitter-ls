@@ -30,19 +30,19 @@ fn test_help_flag_shows_help_message() {
         stdout
     );
 
-    // Should show install subcommand
+    // Should show language subcommand (hierarchical CLI)
     assert!(
-        stdout.contains("install"),
-        "Help should show install subcommand. Got: {}",
+        stdout.contains("language"),
+        "Help should show language subcommand. Got: {}",
         stdout
     );
 }
 
-/// Test that install --help shows usage with LANGUAGE argument
+/// Test that language install --help shows usage with LANGUAGE argument
 #[test]
 fn test_install_help_shows_language_argument() {
     let output = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
-        .args(["install", "--help"])
+        .args(["language", "install", "--help"])
         .output()
         .expect("Failed to execute command");
 
@@ -62,11 +62,12 @@ fn test_install_help_shows_language_argument() {
     );
 }
 
-/// Test that install command with unsupported language shows helpful error
+/// Test that language install command with unsupported language shows helpful error
 #[test]
 fn test_install_command_unsupported_language_shows_error() {
     let output = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
         .args([
+            "language",
             "install",
             "nonexistent_language_xyz",
             "--data-dir",
@@ -133,5 +134,61 @@ fn test_version_flag() {
         stdout.contains("treesitter-ls") || stdout.contains("0."),
         "Version should show program name or version. Got: {}",
         stdout
+    );
+}
+
+/// Test that language --help shows available actions
+#[test]
+fn test_language_help_shows_actions() {
+    let output = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
+        .args(["language", "--help"])
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should exit successfully
+    assert!(
+        output.status.success(),
+        "Language help should exit with success"
+    );
+
+    // Should contain install and list actions
+    assert!(
+        stdout.contains("install"),
+        "Language help should show install action. Got: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("list"),
+        "Language help should show list action. Got: {}",
+        stdout
+    );
+}
+
+/// Test that language list command works
+#[test]
+fn test_language_list_command() {
+    let output = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
+        .args(["language", "list"])
+        .output()
+        .expect("Failed to execute command");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should exit successfully
+    assert!(
+        output.status.success(),
+        "Language list should exit with success. stderr: {}",
+        stderr
+    );
+
+    // Should contain some common languages
+    let combined = format!("{}{}", stdout, stderr);
+    assert!(
+        combined.contains("lua") || combined.contains("rust") || combined.contains("python"),
+        "Language list should show some languages. Got: {}",
+        combined
     );
 }

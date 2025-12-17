@@ -14,6 +14,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Manage language parsers and queries
+    Language {
+        #[command(subcommand)]
+        action: LanguageAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum LanguageAction {
     /// Install a Tree-sitter parser and its queries for a language
     Install {
         /// The language to install (e.g., lua, rust, python)
@@ -36,7 +45,7 @@ enum Commands {
         no_cache: bool,
     },
     /// List supported languages for installation
-    ListLanguages {
+    List {
         /// Bypass the metadata cache and fetch fresh data from network
         #[arg(long)]
         no_cache: bool,
@@ -47,18 +56,20 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Install {
-            language,
-            data_dir,
-            force,
-            verbose,
-            no_cache,
-        }) => {
-            run_install(&language, data_dir, force, verbose, no_cache);
-        }
-        Some(Commands::ListLanguages { no_cache }) => {
-            run_list_languages(no_cache);
-        }
+        Some(Commands::Language { action }) => match action {
+            LanguageAction::Install {
+                language,
+                data_dir,
+                force,
+                verbose,
+                no_cache,
+            } => {
+                run_install(&language, data_dir, force, verbose, no_cache);
+            }
+            LanguageAction::List { no_cache } => {
+                run_list_languages(no_cache);
+            }
+        },
         None => {
             // Start LSP server (backward compatible default behavior)
             // Only create tokio runtime for LSP mode to avoid conflicts with reqwest::blocking
