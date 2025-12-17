@@ -38,7 +38,7 @@ quick_status:
   current_sprint:
     number: 13
     pbi: PBI-020
-    status: in_progress
+    status: done
     goal: "Query inheritance support for TypeScript, JavaScript, etc."
   impediments: 0
 
@@ -66,7 +66,7 @@ product_goal:
 # ==============================================================================
 # PRODUCT BACKLOG (Active Items Only)
 # ==============================================================================
-# Completed PBIs: PBI-001 through PBI-010, PBI-013 through PBI-016, PBI-017, PBI-018, PBI-019
+# Completed PBIs: PBI-001 through PBI-010, PBI-013 through PBI-016, PBI-017, PBI-018, PBI-019, PBI-020
 # For details: git log -- scrum.yaml
 
 product_backlog:
@@ -139,7 +139,7 @@ product_backlog:
 
   # Priority 4: Query inheritance support (blocks TypeScript, JavaScript, etc.)
   - id: PBI-020
-    status: ready
+    status: done
     story:
       role: "user of treesitter-ls"
       capability: "get syntax highlighting for languages that use inherited queries (TypeScript, JavaScript, etc.)"
@@ -270,7 +270,7 @@ definition_of_done:
 current_sprint:
   number: 13
   pbi: PBI-020
-  status: in_progress
+  status: done
   goal: "Query inheritance support for TypeScript, JavaScript, etc."
   subtasks:
     - id: S13.1
@@ -284,7 +284,7 @@ current_sprint:
       status: done
     - id: S13.4
       task: "Integration test with TypeScript"
-      status: in_progress
+      status: done
 
 ---
 # ==============================================================================
@@ -293,6 +293,9 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 13
+    pbi: PBI-020
+    outcome: "Query inheritance support via parse_inherits_directive() and resolve_query_with_inheritance()"
   - sprint: 12
     pbi: PBI-016
     outcome: "Parser crash resilience via state file detection and CLI recovery"
