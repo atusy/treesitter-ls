@@ -117,7 +117,51 @@ product_backlog:
         - `treesitter-ls config init`
       - Rationale: Scalable, discoverable, follows kubectl/docker patterns
 
-  # Priority 1: Documentation - Dependencies
+  # Priority 1: Migrate existing CLI to hierarchical structure (FOUNDATIONAL)
+  - id: PBI-026
+    status: ready
+    story:
+      role: "user of treesitter-ls"
+      capability: "use consistent hierarchical CLI commands"
+      benefit: "I have a predictable, discoverable CLI that follows industry patterns"
+    acceptance_criteria:
+      - criterion: "treesitter-ls language install <lang> works"
+        verification: |
+          ./target/release/treesitter-ls language install lua --data-dir /tmp/test-migrate --force
+          test -f /tmp/test-migrate/parser/lua.dylib || test -f /tmp/test-migrate/parser/lua.so
+      - criterion: "treesitter-ls language list shows supported languages"
+        verification: |
+          ./target/release/treesitter-ls language list | grep -E "lua|rust|python"
+      - criterion: "Old commands (install, list-languages) are removed"
+        verification: |
+          ! ./target/release/treesitter-ls install lua 2>&1 | grep -v "error"
+          ! ./target/release/treesitter-ls list-languages 2>&1 | grep -v "error"
+      - criterion: "Help text shows new hierarchical structure"
+        verification: |
+          ./target/release/treesitter-ls --help | grep "language"
+          ./target/release/treesitter-ls language --help | grep -E "install|list"
+    story_points: 3
+    technical_notes: |
+      CLI Migration:
+      Before:
+        treesitter-ls install <lang>
+        treesitter-ls list-languages
+
+      After:
+        treesitter-ls language install <lang>
+        treesitter-ls language list
+
+      Implementation:
+      1. Create Language subcommand enum with Install and List actions
+      2. Move existing install logic to language::install
+      3. Move existing list-languages logic to language::list
+      4. Remove old top-level Install and ListLanguages commands
+      5. Update docs/README.md with new CLI commands
+
+      Breaking change: Old CLI commands will stop working.
+      Note: Status and Uninstall will be added in PBI-023 and PBI-024.
+
+  # Priority 2: Documentation - Dependencies
   - id: PBI-021
     status: ready
     story:
@@ -134,7 +178,7 @@ product_backlog:
       - criterion: "Error messages for missing dependencies are clear"
         verification: |
           # Remove tree-sitter temporarily and check error message
-          ./target/release/treesitter-ls install lua 2>&1 | grep -i "install"
+          ./target/release/treesitter-ls language install lua 2>&1 | grep -i "install"
     story_points: 1
     technical_notes: |
       Required external dependencies:
@@ -150,7 +194,7 @@ product_backlog:
       Files to update:
       - docs/README.md: Add "Prerequisites" section before "Zero-Configuration Usage"
 
-  # Priority 2: Config generation CLI command
+  # Priority 3: Config generation CLI command
   - id: PBI-022
     status: ready
     story:
@@ -209,7 +253,7 @@ product_backlog:
       # "variable.builtin" = "variable.defaultLibrary"
       ```
 
-  # Priority 3: Status command for debugging
+  # Priority 4: Status command for debugging (depends on PBI-026)
   - id: PBI-023
     status: ready
     story:
@@ -247,7 +291,7 @@ product_backlog:
       3. For each parser, check if queries/{lang}/highlights.scm exists
       4. Display formatted output
 
-  # Priority 4: Uninstall command
+  # Priority 5: Uninstall command (depends on PBI-026)
   - id: PBI-024
     status: ready
     story:
@@ -278,54 +322,6 @@ product_backlog:
       3. Remove queries directory: queries/{lang}/
       4. Prompt for confirmation unless --force
       5. Handle --all flag to remove everything
-
-  # Priority 5: Migrate existing CLI to hierarchical structure
-  - id: PBI-026
-    status: ready
-    story:
-      role: "user of treesitter-ls"
-      capability: "use consistent hierarchical CLI commands"
-      benefit: "I have a predictable, discoverable CLI that follows industry patterns"
-    acceptance_criteria:
-      - criterion: "treesitter-ls language install <lang> works"
-        verification: |
-          ./target/release/treesitter-ls language install lua --data-dir /tmp/test-migrate --force
-          test -f /tmp/test-migrate/parser/lua.dylib || test -f /tmp/test-migrate/parser/lua.so
-      - criterion: "treesitter-ls language list shows supported languages"
-        verification: |
-          ./target/release/treesitter-ls language list | grep -E "lua|rust|python"
-      - criterion: "Old commands (install, list-languages) are removed"
-        verification: |
-          ! ./target/release/treesitter-ls install lua 2>&1 | grep -v "error"
-          ! ./target/release/treesitter-ls list-languages 2>&1 | grep -v "error"
-      - criterion: "Help text shows new hierarchical structure"
-        verification: |
-          ./target/release/treesitter-ls --help | grep "language"
-          ./target/release/treesitter-ls language --help | grep -E "install|list|status|uninstall"
-    story_points: 3
-    technical_notes: |
-      CLI Migration:
-      Before:
-        treesitter-ls install <lang>
-        treesitter-ls list-languages
-
-      After:
-        treesitter-ls language install <lang>
-        treesitter-ls language list
-        treesitter-ls language status
-        treesitter-ls language uninstall <lang>
-        treesitter-ls config init
-
-      Implementation:
-      1. Create Language subcommand enum with Install, List, Status, Uninstall actions
-      2. Create Config subcommand enum with Init action
-      3. Move existing install logic to language::install
-      4. Move existing list-languages logic to language::list
-      5. Remove old top-level Install and ListLanguages commands
-      6. Update docs/README.md with new CLI commands
-
-      Breaking change: Old CLI commands will stop working.
-      Consider: deprecation period with warnings? (probably not needed for early-stage project)
 
   # ============================================================================
   # COMPLETED PBIs (kept for reference)
