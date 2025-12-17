@@ -11,7 +11,7 @@ use crate::analysis::{
 };
 use crate::config::WorkspaceSettings;
 use crate::document::DocumentStore;
-use crate::language::{DocumentParserPool, LanguageCoordinator};
+use crate::language::{DocumentParserPool, FailedParserRegistry, LanguageCoordinator};
 use crate::language::{LanguageEvent, LanguageLogLevel};
 use crate::lsp::{SettingsEvent, SettingsEventKind, SettingsSource, load_settings};
 use crate::text::PositionMapper;
@@ -110,6 +110,8 @@ pub struct TreeSitterLs {
     settings: ArcSwap<WorkspaceSettings>,
     /// Tracks languages currently being installed
     installing_languages: InstallingLanguages,
+    /// Tracks parsers that have crashed
+    failed_parsers: FailedParserRegistry,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -122,6 +124,7 @@ impl std::fmt::Debug for TreeSitterLs {
             .field("root_path", &"ArcSwap<Option<PathBuf>>")
             .field("settings", &"ArcSwap<WorkspaceSettings>")
             .field("installing_languages", &"InstallingLanguages")
+            .field("failed_parsers", &"FailedParserRegistry")
             .finish_non_exhaustive()
     }
 }
@@ -130,6 +133,10 @@ impl TreeSitterLs {
     pub fn new(client: Client) -> Self {
         let language = LanguageCoordinator::new();
         let parser_pool = language.create_document_parser_pool();
+
+        // Initialize failed parser registry with crash detection
+        let failed_parsers = Self::init_failed_parser_registry();
+
         Self {
             client,
             language,
@@ -138,12 +145,59 @@ impl TreeSitterLs {
             root_path: ArcSwap::new(Arc::new(None)),
             settings: ArcSwap::new(Arc::new(WorkspaceSettings::default())),
             installing_languages: InstallingLanguages::new(),
+            failed_parsers,
         }
+    }
+
+    /// Initialize the failed parser registry with crash detection.
+    ///
+    /// Uses the default data directory for state storage.
+    /// If initialization fails, returns an empty registry.
+    fn init_failed_parser_registry() -> FailedParserRegistry {
+        let state_dir = crate::install::default_data_dir()
+            .unwrap_or_else(|| PathBuf::from("/tmp/treesitter-ls"));
+
+        let registry = FailedParserRegistry::new(&state_dir);
+
+        // Initialize and detect any previous crashes
+        if let Err(e) = registry.init() {
+            log::warn!(
+                target: "treesitter_ls::crash_recovery",
+                "Failed to initialize crash recovery state: {}",
+                e
+            );
+        }
+
+        registry
     }
 
     /// Check if auto-install is enabled.
     fn is_auto_install_enabled(&self) -> bool {
         self.settings.load().auto_install
+    }
+
+    /// Check if a parser has previously crashed.
+    #[allow(dead_code)]
+    fn is_parser_failed(&self, language: &str) -> bool {
+        self.failed_parsers.is_failed(language)
+    }
+
+    /// Clear the failed status for a parser (e.g., after reinstall).
+    /// Returns true if the parser was previously marked as failed.
+    #[allow(dead_code)]
+    fn clear_failed_parser(&self, language: &str) -> bool {
+        let was_failed = self.failed_parsers.is_failed(language);
+        if was_failed
+            && let Err(e) = self.failed_parsers.clear_failed(language)
+        {
+            log::warn!(
+                target: "treesitter_ls::crash_recovery",
+                "Failed to clear failed status for '{}': {}",
+                language,
+                e
+            );
+        }
+        was_failed
     }
 
     async fn parse_document(
@@ -162,11 +216,24 @@ impl TreeSitterLs {
             .or_else(|| language_id.map(|s| s.to_string()));
 
         if let Some(language_name) = language_name {
+            // Check if this parser has previously crashed
+            if self.failed_parsers.is_failed(&language_name) {
+                log::warn!(
+                    target: "treesitter_ls::crash_recovery",
+                    "Skipping parsing for '{}' - parser previously crashed",
+                    language_name
+                );
+                // Store document without parsing
+                self.documents.insert(uri, text, Some(language_name), None);
+                self.handle_language_events(&events).await;
+                return;
+            }
+
             // Ensure language is loaded
             let load_result = self.language.ensure_language_loaded(&language_name);
             events.extend(load_result.events.clone());
 
-            // Parse the document
+            // Parse the document with crash detection
             let parsed_tree = {
                 let mut pool = match self.parser_pool.lock() {
                     Ok(guard) => guard,
@@ -185,7 +252,14 @@ impl TreeSitterLs {
                         self.documents.get(&uri).and_then(|doc| doc.tree().cloned())
                     };
 
+                    // Record that we're about to parse (for crash detection)
+                    let _ = self.failed_parsers.begin_parsing(&language_name);
+
                     let result = parser.parse(&text, old_tree.as_ref());
+
+                    // Parsing succeeded without crash - clear the state
+                    let _ = self.failed_parsers.end_parsing();
+
                     pool.release(language_name.clone(), parser);
                     result
                 } else {
