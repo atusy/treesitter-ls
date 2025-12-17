@@ -456,6 +456,53 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_query_with_real_typescript() {
+        // Integration test with actual installed queries
+        let search_path = "/Users/atusy/Library/Application Support/treesitter-ls".to_string();
+
+        // Skip if queries aren't installed
+        let ts_path = std::path::Path::new(&search_path)
+            .join("queries")
+            .join("typescript")
+            .join("highlights.scm");
+        if !ts_path.exists() {
+            eprintln!("Skipping: TypeScript queries not installed");
+            return;
+        }
+
+        let result = QueryLoader::resolve_query_with_inheritance(
+            &[search_path],
+            "typescript",
+            "highlights.scm",
+        );
+
+        assert!(
+            result.is_ok(),
+            "Should resolve TypeScript query: {:?}",
+            result.err()
+        );
+        let content = result.unwrap();
+
+        // Should have ecma content (from inheritance)
+        assert!(
+            content.contains("(identifier) @variable"),
+            "Should contain ecma patterns"
+        );
+
+        // Should have typescript-specific content
+        assert!(
+            content.contains("@keyword.import"),
+            "Should contain typescript patterns"
+        );
+
+        // Should NOT have the inherits directive
+        assert!(
+            !content.contains("; inherits:"),
+            "Should strip inherits directive"
+        );
+    }
+
+    #[test]
     fn test_resolve_query_with_inheritance_circular_detection() {
         // a inherits b, b inherits a - should detect and error
         let dir = tempdir().unwrap();
