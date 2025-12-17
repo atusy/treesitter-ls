@@ -628,39 +628,10 @@ pub fn handle_code_actions(options: CodeActionOptions) -> Option<Vec<CodeActionO
     handle_code_actions_with_context(options)
 }
 
-/// Legacy function - use `handle_code_actions(CodeActionOptions::new(...))` instead.
-#[deprecated(
-    since = "0.2.0",
-    note = "Use handle_code_actions(CodeActionOptions::new(...)) instead"
-)]
-#[allow(deprecated)]
-pub fn handle_code_actions_legacy(
-    uri: &Url,
-    text: &str,
-    tree: &Tree,
-    cursor: Range,
-    queries: Option<(&Query, Option<&Query>)>,
-    capture_context: Option<(&str, &CaptureMappings)>,
-) -> Option<Vec<CodeActionOrCommand>> {
-    handle_code_actions_with_injection_query(
-        uri,
-        text,
-        tree,
-        cursor,
-        queries,
-        capture_context,
-        None,
-    )
-}
-
 /// Handle code actions with optional injection query for language hierarchy detection.
-///
-/// Deprecated: Use `handle_code_actions(CodeActionOptions::new(...).with_injection(...))` instead.
-#[deprecated(
-    since = "0.2.0",
-    note = "Use handle_code_actions(CodeActionOptions::new(...).with_injection(...)) instead"
-)]
-pub fn handle_code_actions_with_injection_query(
+/// Internal function kept for test compatibility.
+#[cfg(test)]
+fn handle_code_actions_with_injection_query(
     uri: &Url,
     text: &str,
     tree: &Tree,
@@ -684,14 +655,10 @@ pub fn handle_code_actions_with_injection_query(
 }
 
 /// Handle code actions with injection query and coordinator for full injection-aware processing.
-///
-/// Deprecated: Use `handle_code_actions(CodeActionOptions::new(...).with_coordinator(...))` instead.
-#[deprecated(
-    since = "0.2.0",
-    note = "Use handle_code_actions(CodeActionOptions::new(...).with_coordinator(...)) instead"
-)]
+/// Internal function kept for test compatibility.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
-pub fn handle_code_actions_with_injection_and_coordinator(
+fn handle_code_actions_with_injection_and_coordinator(
     uri: &Url,
     text: &str,
     tree: &Tree,
