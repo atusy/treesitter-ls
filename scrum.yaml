@@ -208,21 +208,6 @@ product_backlog:
       - Multiple inheritance: javascript inherits both ecma AND jsx
       - Transitive: tsx -> typescript -> ecma AND tsx -> jsx
 
-  # Priority 5: UX improvement (draft)
-  - id: PBI-011
-    status: draft
-    story:
-      role: "user of treesitter-ls"
-      capability: "install multiple languages with a single command"
-      benefit: "I can set up my development environment quickly without running separate commands"
-    acceptance_criteria:
-      - criterion: "treesitter-ls install lua rust python installs all three"
-      - criterion: "Progress shows which language is being installed (1/3, 2/3, 3/3)"
-      - criterion: "If one language fails, others are still attempted"
-      - criterion: "Summary shows success/failure count at the end"
-    story_points: 3
-    dependencies: [PBI-010]
-
   # Priority 5: Nice-to-have (draft)
   - id: PBI-012
     status: draft
