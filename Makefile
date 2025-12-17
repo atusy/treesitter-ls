@@ -16,6 +16,9 @@ all: build
 build:
 	$(CARGO) build --release
 
+build-debug:
+	$(CARGO) build
+
 # Build the project in debug mode
 .PHONY: debug
 debug:
@@ -54,11 +57,11 @@ install: build
 	$(CARGO) install --path .
 
 # Run all test files
-test_nvim: deps
+test_nvim: deps build-debug
 	nvim -es --headless --noplugin -u ./scripts/minimal_init.lua -c "lua MiniTest.run()"
 
 # Run test from file at `$FILE` environment variable
-test_nvim_file: deps
+test_nvim_file: deps build-debug
 	nvim --headless --noplugin -u ./scripts/minimal_init.lua -c "lua MiniTest.run_file('$(FILE)')"
 
 # Download 'mini.nvim' to use its 'mini.test' testing module
