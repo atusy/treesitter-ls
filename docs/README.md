@@ -218,6 +218,15 @@ treesitter-ls language status --verbose
 
 # Show status for custom data directory
 treesitter-ls language status --data-dir /custom/path
+
+# Uninstall a language (parser + queries)
+treesitter-ls language uninstall lua
+
+# Uninstall without confirmation prompt
+treesitter-ls language uninstall rust --force
+
+# Uninstall all installed languages
+treesitter-ls language uninstall --all --force
 ```
 
 ### Configuration Management

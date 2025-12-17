@@ -448,3 +448,202 @@ fn test_language_status_missing_queries() {
     // Clean up
     let _ = fs::remove_dir_all(test_dir);
 }
+
+/// Test that language uninstall --help shows expected options
+#[test]
+fn test_language_uninstall_help() {
+    let output = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
+        .args(["language", "uninstall", "--help"])
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should exit successfully
+    assert!(
+        output.status.success(),
+        "Language uninstall help should exit with success"
+    );
+
+    // Should contain --force and --all options
+    assert!(
+        stdout.contains("--force"),
+        "Uninstall help should show --force option. Got: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("--all"),
+        "Uninstall help should show --all option. Got: {}",
+        stdout
+    );
+}
+
+/// Test that language uninstall removes parser and queries
+#[test]
+fn test_language_uninstall_removes_files() {
+    use std::fs;
+
+    let test_dir = "/tmp/test-uninstall-files";
+
+    // Clean up and setup
+    let _ = fs::remove_dir_all(test_dir);
+    fs::create_dir_all(format!("{}/parser", test_dir)).expect("Failed to create parser dir");
+    fs::create_dir_all(format!("{}/queries/testlang", test_dir))
+        .expect("Failed to create queries dir");
+    fs::write(format!("{}/parser/testlang.dylib", test_dir), "fake")
+        .expect("Failed to write parser");
+    fs::write(
+        format!("{}/queries/testlang/highlights.scm", test_dir),
+        "(comment) @comment",
+    )
+    .expect("Failed to write query");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
+        .args([
+            "language",
+            "uninstall",
+            "testlang",
+            "--data-dir",
+            test_dir,
+            "--force",
+        ])
+        .output()
+        .expect("Failed to execute command");
+
+    // Should exit successfully
+    assert!(
+        output.status.success(),
+        "Uninstall should exit with success. stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Parser should be removed
+    assert!(
+        !std::path::Path::new(&format!("{}/parser/testlang.dylib", test_dir)).exists(),
+        "Parser should be removed"
+    );
+
+    // Queries should be removed
+    assert!(
+        !std::path::Path::new(&format!("{}/queries/testlang", test_dir)).exists(),
+        "Queries directory should be removed"
+    );
+
+    // Clean up
+    let _ = fs::remove_dir_all(test_dir);
+}
+
+/// Test that language uninstall --all removes all languages
+#[test]
+fn test_language_uninstall_all() {
+    use std::fs;
+
+    let test_dir = "/tmp/test-uninstall-all";
+
+    // Clean up and setup multiple languages
+    let _ = fs::remove_dir_all(test_dir);
+    fs::create_dir_all(format!("{}/parser", test_dir)).expect("Failed to create parser dir");
+    fs::create_dir_all(format!("{}/queries/lang1", test_dir))
+        .expect("Failed to create queries dir");
+    fs::create_dir_all(format!("{}/queries/lang2", test_dir))
+        .expect("Failed to create queries dir");
+    fs::write(format!("{}/parser/lang1.so", test_dir), "fake").expect("Failed to write parser");
+    fs::write(format!("{}/parser/lang2.dylib", test_dir), "fake").expect("Failed to write parser");
+    fs::write(
+        format!("{}/queries/lang1/highlights.scm", test_dir),
+        "(comment) @comment",
+    )
+    .expect("Failed to write query");
+    fs::write(
+        format!("{}/queries/lang2/highlights.scm", test_dir),
+        "(comment) @comment",
+    )
+    .expect("Failed to write query");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
+        .args([
+            "language",
+            "uninstall",
+            "--all",
+            "--data-dir",
+            test_dir,
+            "--force",
+        ])
+        .output()
+        .expect("Failed to execute command");
+
+    // Should exit successfully
+    assert!(
+        output.status.success(),
+        "Uninstall --all should exit with success. stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // All parsers should be removed
+    let parser_dir = format!("{}/parser", test_dir);
+    let parsers: Vec<_> = fs::read_dir(&parser_dir)
+        .map(|entries| entries.filter_map(|e| e.ok()).collect())
+        .unwrap_or_default();
+    assert!(parsers.is_empty(), "All parsers should be removed");
+
+    // All queries should be removed
+    let queries_dir = format!("{}/queries", test_dir);
+    let queries: Vec<_> = fs::read_dir(&queries_dir)
+        .map(|entries| entries.filter_map(|e| e.ok()).collect())
+        .unwrap_or_default();
+    assert!(queries.is_empty(), "All queries should be removed");
+
+    // Clean up
+    let _ = fs::remove_dir_all(test_dir);
+}
+
+/// Test that language uninstall cancels without --force when user enters 'n'
+#[test]
+fn test_language_uninstall_cancel() {
+    use std::fs;
+    use std::process::Stdio;
+
+    let test_dir = "/tmp/test-uninstall-cancel";
+
+    // Clean up and setup
+    let _ = fs::remove_dir_all(test_dir);
+    fs::create_dir_all(format!("{}/parser", test_dir)).expect("Failed to create parser dir");
+    fs::write(format!("{}/parser/testlang.dylib", test_dir), "fake")
+        .expect("Failed to write parser");
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
+        .args(["language", "uninstall", "testlang", "--data-dir", test_dir])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("Failed to spawn command");
+
+    // Write 'n' to stdin
+    use std::io::Write;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(b"n\n").expect("Failed to write to stdin");
+    }
+
+    let output = child
+        .wait_with_output()
+        .expect("Failed to wait for command");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should contain "Cancelled"
+    assert!(
+        stderr.to_lowercase().contains("cancel"),
+        "Should show cancelled message. Got: {}",
+        stderr
+    );
+
+    // Parser should still exist
+    assert!(
+        std::path::Path::new(&format!("{}/parser/testlang.dylib", test_dir)).exists(),
+        "Parser should still exist after cancellation"
+    );
+
+    // Clean up
+    let _ = fs::remove_dir_all(test_dir);
+}

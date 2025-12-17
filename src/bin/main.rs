@@ -65,6 +65,24 @@ enum LanguageAction {
         #[arg(long, short)]
         verbose: bool,
     },
+    /// Remove installed parser and queries for a language
+    Uninstall {
+        /// The language to uninstall (e.g., lua, rust, python)
+        #[arg(required_unless_present = "all")]
+        language: Option<String>,
+
+        /// Custom data directory (default: ~/.local/share/treesitter-ls on Linux)
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
+
+        /// Remove all installed languages
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -96,6 +114,14 @@ fn main() {
             }
             LanguageAction::Status { data_dir, verbose } => {
                 run_language_status(data_dir, verbose);
+            }
+            LanguageAction::Uninstall {
+                language,
+                data_dir,
+                force,
+                all,
+            } => {
+                run_language_uninstall(language, data_dir, force, all);
             }
         },
         Some(Commands::Config { action }) => match action {
@@ -239,6 +265,135 @@ fn run_language_status(data_dir: Option<PathBuf>, verbose: bool) {
                     queries_path.parent().unwrap().display()
                 );
             }
+        }
+    }
+}
+
+/// Run the language uninstall command
+fn run_language_uninstall(
+    language: Option<String>,
+    data_dir: Option<PathBuf>,
+    force: bool,
+    all: bool,
+) {
+    use std::collections::BTreeSet;
+    use std::fs;
+    use std::io::{self, Write};
+
+    let data_dir = data_dir.or_else(default_data_dir).unwrap_or_else(|| {
+        eprintln!("Error: Could not determine data directory. Please specify --data-dir.");
+        std::process::exit(1);
+    });
+
+    let parser_dir = data_dir.join("parser");
+    let queries_dir = data_dir.join("queries");
+
+    // Determine which languages to uninstall
+    let languages_to_uninstall: Vec<String> = if all {
+        // Collect all installed languages
+        let mut languages = BTreeSet::new();
+
+        if let Ok(entries) = fs::read_dir(&parser_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let is_parser = path
+                    .extension()
+                    .map(|ext| ext == "so" || ext == "dylib" || ext == "dll")
+                    .unwrap_or(false);
+                if is_parser && let Some(stem) = path.file_stem() {
+                    languages.insert(stem.to_string_lossy().to_string());
+                }
+            }
+        }
+
+        if let Ok(entries) = fs::read_dir(&queries_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir()
+                    && let Some(name) = path.file_name()
+                {
+                    languages.insert(name.to_string_lossy().to_string());
+                }
+            }
+        }
+
+        languages.into_iter().collect()
+    } else {
+        vec![language.expect("language required when --all not specified")]
+    };
+
+    if languages_to_uninstall.is_empty() {
+        eprintln!("No languages installed to uninstall.");
+        return;
+    }
+
+    // Confirmation prompt unless --force
+    if !force {
+        if all {
+            eprint!(
+                "Uninstall all {} languages? [y/N] ",
+                languages_to_uninstall.len()
+            );
+        } else {
+            eprint!("Uninstall '{}'? [y/N] ", languages_to_uninstall[0]);
+        }
+        io::stderr().flush().unwrap();
+
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() || !input.trim().eq_ignore_ascii_case("y") {
+            eprintln!("Cancelled.");
+            std::process::exit(0);
+        }
+    }
+
+    // Uninstall each language
+    let mut any_removed = false;
+    for lang in &languages_to_uninstall {
+        let mut removed_something = false;
+
+        // Remove parser file
+        if let Some(parser_path) = find_parser_file(&parser_dir, lang) {
+            match fs::remove_file(&parser_path) {
+                Ok(()) => {
+                    eprintln!("✓ Removed parser: {}", parser_path.display());
+                    removed_something = true;
+                }
+                Err(e) => {
+                    eprintln!("✗ Failed to remove parser {}: {}", parser_path.display(), e);
+                }
+            }
+        }
+
+        // Remove queries directory
+        let queries_path = queries_dir.join(lang);
+        if queries_path.exists() {
+            match fs::remove_dir_all(&queries_path) {
+                Ok(()) => {
+                    eprintln!("✓ Removed queries: {}", queries_path.display());
+                    removed_something = true;
+                }
+                Err(e) => {
+                    eprintln!(
+                        "✗ Failed to remove queries {}: {}",
+                        queries_path.display(),
+                        e
+                    );
+                }
+            }
+        }
+
+        if removed_something {
+            any_removed = true;
+        } else if !all {
+            eprintln!("Language '{}' is not installed.", lang);
+        }
+    }
+
+    if any_removed {
+        if all {
+            eprintln!("\nUninstalled all languages.");
+        } else {
+            eprintln!("\nUninstalled '{}'.", languages_to_uninstall[0]);
         }
     }
 }
