@@ -36,10 +36,10 @@ rules:
 
 quick_status:
   current_sprint:
-    number: 21
-    pbi: PBI-028
+    number: 25
+    pbi: PBI-034
     status: done
-    goal: "Fix default_search_paths() to return base directory"
+    goal: "Initialize logging backend with env_logger"
   impediments: 0
 
 ---
@@ -368,7 +368,7 @@ product_backlog:
   # LOGGING PBIs (Observability Improvements)
   # ============================================================================
   - id: PBI-034
-    status: ready
+    status: done
     story:
       role: "operator running treesitter-ls"
       capability: "see log messages via RUST_LOG environment variable"
@@ -646,19 +646,16 @@ definition_of_done:
 # ==============================================================================
 
 current_sprint:
-  number: 21
-  pbi: PBI-028
+  number: 25
+  pbi: PBI-034
   status: done
-  goal: "Fix default_search_paths() to return base directory"
+  goal: "Initialize logging backend with env_logger"
   subtasks:
-    - id: S21.1
-      task: "Write failing test for correct path format"
+    - id: S25.1
+      task: "Add env_logger crate to Cargo.toml"
       status: completed
-    - id: S21.2
-      task: "Fix default_search_paths() to return base directory only"
-      status: completed
-    - id: S21.3
-      task: "Update documentation to clarify searchPaths format"
+    - id: S25.2
+      task: "Initialize env_logger in run_lsp_server() with stderr target"
       status: completed
 
 ---
@@ -668,6 +665,18 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 25
+    pbi: PBI-034
+    outcome: "Initialized logging backend with env_logger, enabling RUST_LOG configuration"
+  - sprint: 24
+    pbi: PBI-031
+    outcome: "Added phase markers in handle_semantic_tokens_full for better readability"
+  - sprint: 23
+    pbi: PBI-030
+    outcome: "Standardized lock handling with LockResultExt trait, reduced duplication"
+  - sprint: 22
+    pbi: PBI-029
+    outcome: "Removed dead code: deprecated functions, placeholder tests, stale annotations"
   - sprint: 21
     pbi: PBI-028
     outcome: "Fixed default_search_paths() to return base directory, enabling zero-config mode"
