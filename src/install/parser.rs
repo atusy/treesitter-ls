@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::metadata::{MetadataError, fetch_parser_metadata};
+use super::metadata::{FetchOptions, MetadataError, fetch_parser_metadata_with_options};
 
 /// Error types for parser installation.
 #[derive(Debug)]
@@ -82,6 +82,8 @@ pub struct InstallOptions {
     pub force: bool,
     /// Whether to print verbose output.
     pub verbose: bool,
+    /// Whether to bypass the metadata cache.
+    pub no_cache: bool,
 }
 
 /// Find the tree-sitter CLI executable.
@@ -138,11 +140,15 @@ pub fn install_parser(
         eprintln!("Using tree-sitter at: {}", tree_sitter.display());
     }
 
-    // Fetch metadata
+    // Fetch metadata (with caching support)
     if options.verbose {
         eprintln!("Fetching metadata for '{}'...", language);
     }
-    let metadata = fetch_parser_metadata(language)?;
+    let fetch_options = FetchOptions {
+        data_dir: Some(&options.data_dir),
+        use_cache: !options.no_cache,
+    };
+    let metadata = fetch_parser_metadata_with_options(language, Some(&fetch_options))?;
 
     if options.verbose {
         eprintln!("Repository: {}", metadata.url);

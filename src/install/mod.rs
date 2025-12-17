@@ -75,10 +75,12 @@ pub async fn install_language_async(
         };
 
         // Install parser
+        // For async/auto-install, always use cache (background operation)
         let parser_options = parser::InstallOptions {
             data_dir: dir.clone(),
             force,
             verbose: false,
+            no_cache: false,
         };
 
         match parser::install_parser(&lang, &parser_options) {

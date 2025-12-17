@@ -38,9 +38,17 @@ enum Commands {
         /// Only install parser, skip query download
         #[arg(long)]
         parser_only: bool,
+
+        /// Bypass the metadata cache and fetch fresh data from network
+        #[arg(long)]
+        no_cache: bool,
     },
     /// List supported languages for installation
-    ListLanguages,
+    ListLanguages {
+        /// Bypass the metadata cache and fetch fresh data from network
+        #[arg(long)]
+        no_cache: bool,
+    },
 }
 
 fn main() {
@@ -54,6 +62,7 @@ fn main() {
             verbose,
             queries_only,
             parser_only,
+            no_cache,
         }) => {
             run_install(
                 &language,
@@ -62,27 +71,44 @@ fn main() {
                 verbose,
                 queries_only,
                 parser_only,
+                no_cache,
             );
         }
-        Some(Commands::ListLanguages) => {
-            eprintln!("Fetching supported languages from nvim-treesitter...");
-            match metadata::list_supported_languages() {
-                Ok(languages) => {
-                    eprintln!("Supported languages ({} total):", languages.len());
-                    for lang in languages {
-                        println!("  {}", lang);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Failed to fetch language list: {}", e);
-                    std::process::exit(1);
-                }
-            }
+        Some(Commands::ListLanguages { no_cache }) => {
+            run_list_languages(no_cache);
         }
         None => {
             // Start LSP server (backward compatible default behavior)
             // Only create tokio runtime for LSP mode to avoid conflicts with reqwest::blocking
             run_lsp_server();
+        }
+    }
+}
+
+/// Run the list-languages command
+fn run_list_languages(no_cache: bool) {
+    let data_dir = default_data_dir();
+    let options = metadata::FetchOptions {
+        data_dir: data_dir.as_deref(),
+        use_cache: !no_cache,
+    };
+
+    if no_cache {
+        eprintln!("Fetching supported languages from nvim-treesitter (cache bypassed)...");
+    } else {
+        eprintln!("Fetching supported languages from nvim-treesitter...");
+    }
+
+    match metadata::list_supported_languages_with_options(Some(&options)) {
+        Ok(languages) => {
+            eprintln!("Supported languages ({} total):", languages.len());
+            for lang in languages {
+                println!("  {}", lang);
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to fetch language list: {}", e);
+            std::process::exit(1);
         }
     }
 }
@@ -95,6 +121,7 @@ fn run_install(
     verbose: bool,
     queries_only: bool,
     parser_only: bool,
+    no_cache: bool,
 ) {
     let data_dir = data_dir.or_else(default_data_dir).unwrap_or_else(|| {
         eprintln!("Error: Could not determine data directory. Please specify --data-dir.");
@@ -113,6 +140,7 @@ fn run_install(
             data_dir: data_dir.clone(),
             force,
             verbose,
+            no_cache,
         };
 
         match parser::install_parser(language, &options) {
