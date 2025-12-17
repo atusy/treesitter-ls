@@ -373,6 +373,8 @@ pub fn handle_semantic_tokens_full(
         &mut all_tokens,
     );
 
+    // --- Post-processing phase ---
+
     // 3. Filter out zero-length tokens (they don't provide useful highlighting)
     // This also fixes issues where overlapping injections create duplicate tokens
     // at the same position (e.g., markdown_inline creates zero-length tokens that
@@ -388,6 +390,8 @@ pub fn handle_semantic_tokens_full(
     // This prevents issues with Neovim's semantic token highlighter which may
     // mishandle multiple tokens at the exact same position.
     all_tokens.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+
+    // --- Delta encoding phase ---
 
     // 6. Convert to delta encoding
     let mut last_line = 0;

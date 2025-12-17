@@ -167,7 +167,7 @@ product_backlog:
       Estimated time: 15-20 minutes total
 
   - id: PBI-030
-    status: ready
+    status: done
     story:
       role: "developer maintaining treesitter-ls"
       capability: "use consistent lock handling patterns across the codebase"
