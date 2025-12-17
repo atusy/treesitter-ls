@@ -67,6 +67,7 @@ product_goal:
 # PRODUCT BACKLOG (Active Items Only)
 # ==============================================================================
 # Completed PBIs: PBI-001 through PBI-010, PBI-013 through PBI-027
+# Tidying PBIs: PBI-029 through PBI-033 (technical debt reduction)
 # For details: git log -- scrum.yaml
 #
 product_backlog:
@@ -119,6 +120,218 @@ product_backlog:
       Documentation to update:
         - docs/README.md: Clarify searchPaths format (base directories, not subdirs)
         - scrum.yaml: Fix product_goal.mvp_definition line 60
+
+  # ============================================================================
+  # TIDYING PBIs (Technical Debt Reduction)
+  # ============================================================================
+  - id: PBI-029
+    status: draft
+    story:
+      role: "developer maintaining treesitter-ls"
+      capability: "work with a codebase free of dead and deprecated code"
+      benefit: "I can understand the codebase faster without being confused by unused code"
+    acceptance_criteria:
+      - criterion: "No #[allow(dead_code)] annotations in production code"
+        verification: |
+          ! grep -r "#\[allow(dead_code)\]" src/ --include="*.rs" | grep -v test
+      - criterion: "No #[deprecated] functions in the codebase"
+        verification: |
+          ! grep -r "#\[deprecated" src/ --include="*.rs"
+      - criterion: "No placeholder tests with assert!(true)"
+        verification: |
+          ! grep -r "assert!(true)" src/ --include="*.rs"
+    story_points: 1
+    technical_notes: |
+      Quick Wins - Dead Code Removal (Tidy First candidates)
+
+      1. src/language/failed_parsers.rs:
+         - Remove is_parser_failed() marked #[allow(dead_code)]
+         - Remove clear_failed_parser() marked #[allow(dead_code)]
+         - These were for "later subtasks (ST-5)" that never materialized
+
+      2. src/language/injection.rs:252:
+         - Remove parse_offset_directive() marked #[deprecated]
+         - Note says "returns incorrect offsets" - kept for testing
+         - Update any tests that depend on it
+
+      3. src/language/predicate_accessor.rs:
+         - Remove or implement placeholder test: test_unified_predicate_operator()
+         - Currently just assert!(true)
+
+      Estimated time: 15-20 minutes total
+
+  - id: PBI-030
+    status: draft
+    story:
+      role: "developer maintaining treesitter-ls"
+      capability: "use consistent lock handling patterns across the codebase"
+      benefit: "I can trust that all locks are handled safely and code is DRY"
+    acceptance_criteria:
+      - criterion: "All lock() calls use LockResultExt trait methods"
+        verification: |
+          # No manual match on lock() result - use recover_poison_with_log() instead
+          ! grep -A5 "\.lock()" src/lsp/lsp_impl.rs | grep "Err(poisoned)"
+      - criterion: "LockResultExt is imported where locks are used"
+        verification: |
+          grep "use crate::error::LockResultExt" src/lsp/lsp_impl.rs
+      - criterion: "All tests pass after refactoring"
+        verification: |
+          cargo test
+    story_points: 1
+    technical_notes: |
+      Eliminate Lock Pattern Duplication (Tidy First)
+
+      Current state: 4+ instances of manual poison recovery in lsp_impl.rs:
+        match self.parser_pool.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                log::warn!(target: "...", "Recovered from poisoned lock");
+                poisoned.into_inner()
+            }
+        }
+
+      The LockResultExt trait in error.rs already provides:
+        - recover_poison() - silent recovery
+        - recover_poison_with_log(target, message) - logged recovery
+
+      Refactor to:
+        self.parser_pool.lock().recover_poison_with_log(
+            "treesitter_ls::lock_recovery",
+            "Recovered from poisoned parser_pool lock"
+        )
+
+      Estimated time: 15 minutes
+
+  - id: PBI-031
+    status: draft
+    story:
+      role: "developer maintaining treesitter-ls"
+      capability: "read dense functions with clear visual grouping"
+      benefit: "I can quickly understand function flow by scanning logical chunks"
+    acceptance_criteria:
+      - criterion: "parse_document() has blank lines separating logical steps"
+        verification: |
+          # Manual review: lsp_impl.rs parse_document should have 4-5 logical chunks
+          grep -A100 "fn parse_document" src/lsp/lsp_impl.rs | head -120
+      - criterion: "handle_semantic_tokens_full() has blank lines separating phases"
+        verification: |
+          # Manual review: semantic.rs should chunk: setup, query, process, cache
+          grep -A120 "fn handle_semantic_tokens_full" src/analysis/semantic.rs | head -140
+      - criterion: "All tests pass (no behavioral change)"
+        verification: |
+          cargo test
+    story_points: 1
+    technical_notes: |
+      Chunk Statements in Dense Functions (Tidy First)
+
+      Add blank lines to group related statements in:
+
+      1. src/lsp/lsp_impl.rs - parse_document():
+         - Chunk: Get document and language
+         - Chunk: Acquire parser from pool
+         - Chunk: Parse with tree-sitter
+         - Chunk: Update document store
+
+      2. src/analysis/semantic.rs - handle_semantic_tokens_full():
+         - Chunk: Setup and early returns
+         - Chunk: Query execution
+         - Chunk: Token processing
+         - Chunk: Caching and return
+
+      Structural change only - no behavioral modifications.
+      Estimated time: 10 minutes per function
+
+  - id: PBI-032
+    status: draft
+    story:
+      role: "developer maintaining treesitter-ls"
+      capability: "work with a smaller, more focused lsp_impl.rs"
+      benefit: "I can navigate and modify LSP code without scrolling through 2400 lines"
+    acceptance_criteria:
+      - criterion: "lsp_impl.rs is under 1500 lines"
+        verification: |
+          [ $(wc -l < src/lsp/lsp_impl.rs) -lt 1500 ]
+      - criterion: "Auto-install logic extracted to separate module"
+        verification: |
+          test -f src/lsp/auto_install.rs
+      - criterion: "Settings loading extracted to settings module"
+        verification: |
+          grep -q "fn load_settings" src/lsp/settings.rs
+      - criterion: "All tests pass"
+        verification: |
+          cargo test
+    story_points: 3
+    technical_notes: |
+      Split God Object: lsp_impl.rs (Tidy Later - Substantial)
+
+      Current: 2391 lines handling multiple concerns
+
+      Extraction targets:
+      1. Auto-install logic → src/lsp/auto_install.rs (~200 lines)
+         - ensure_language_installed()
+         - install_language_async()
+         - handle_missing_parser()
+
+      2. Settings loading → src/lsp/settings.rs (expand existing)
+         - load_settings_from_init_options()
+         - merge_with_toml_config()
+         - validate_settings()
+
+      3. Document parsing → src/lsp/parsing.rs (~150 lines)
+         - parse_document()
+         - incremental_parse()
+
+      Keep in lsp_impl.rs:
+      - LSP trait implementations
+      - Request/notification routing
+      - State coordination
+
+      Estimated time: 2-3 hours
+
+  - id: PBI-033
+    status: draft
+    story:
+      role: "developer maintaining treesitter-ls"
+      capability: "understand code action APIs without navigating 5 function variants"
+      benefit: "I can extend code actions without confusion about which function to call"
+    acceptance_criteria:
+      - criterion: "Single entry point for code actions with options struct"
+        verification: |
+          grep -q "pub struct CodeActionOptions" src/analysis/refactor.rs
+      - criterion: "No more than 2 public handle_code_actions functions"
+        verification: |
+          [ $(grep -c "pub fn handle_code_actions" src/analysis/refactor.rs) -le 2 ]
+      - criterion: "All tests pass"
+        verification: |
+          cargo test
+    story_points: 2
+    technical_notes: |
+      Consolidate Code Action Function Variants (Tidy Later)
+
+      Current state (5 variants):
+        pub fn handle_code_actions(...)
+        pub fn handle_code_actions_with_injection_query(...)
+        pub fn handle_code_actions_with_injection_and_coordinator(...)
+        fn handle_code_actions_with_context(...)
+        fn handle_nested_injection(...)
+
+      Refactor to builder/options pattern:
+        pub struct CodeActionOptions<'a> {
+            document: &'a Document,
+            range: Range,
+            injection_query: Option<&'a Query>,
+            coordinator: Option<&'a LanguageCoordinator>,
+        }
+
+        impl<'a> CodeActionOptions<'a> {
+            pub fn new(document: &'a Document, range: Range) -> Self { ... }
+            pub fn with_injection(self, query: &'a Query) -> Self { ... }
+            pub fn with_coordinator(self, coord: &'a LanguageCoordinator) -> Self { ... }
+        }
+
+        pub fn handle_code_actions(options: CodeActionOptions) -> Vec<CodeAction>
+
+      Estimated time: 30-45 minutes
 
   # ============================================================================
   # COMPLETED PBIs (details in git history)
