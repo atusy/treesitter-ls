@@ -63,10 +63,13 @@ T["assets/example.md"] = create_file_test_set("tests/assets/example.md")
 T["assets/example.md"]["selectionRange"] = MiniTest.new_set({})
 
 -- Test selection no injection region (plain Markdown)
+-- Note: Line 26 (1-indexed) is "# section" which starts a markdown section node.
+-- In tree-sitter markdown, a section contains ALL content until the next section,
+-- so expanding to level 3 yields the entire section including the python code block.
 T["assets/example.md"]["selectionRange"]["no injection"] = MiniTest.new_set({
 	parametrize = {
-		{ 28, 1, 1, "paragraph" }, -- line 20 "paragraph"
-		{ 26, 1, 3, "# section\n\nparagraph" }, -- line 18 "# section"
+		{ 28, 1, 1, "paragraph" }, -- line 28 "paragraph"
+		{ 26, 1, 3, "# section\n\nparagraph\n\n```python\ndef f():\n    return 1\n```\n\n" }, -- line 26 "# section" -> full section
 	},
 })
 T["assets/example.md"]["selectionRange"]["no injection"]["works"] = function(line, col, direction, expected)
