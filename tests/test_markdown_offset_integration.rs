@@ -1,6 +1,4 @@
 use tree_sitter::Query;
-#[allow(deprecated)]
-use treesitter_ls::language::injection::parse_offset_directive;
 use treesitter_ls::language::injection::parse_offset_directive_for_pattern;
 
 /// This integration test verifies that the pattern-aware offset parsing
@@ -35,23 +33,7 @@ fn test_markdown_injection_offsets_real_world() {
     let query = Query::new(&language, markdown_injection_query)
         .expect("Failed to parse markdown injection query");
 
-    // The old broken function would return the first offset found (frontmatter offset)
-    // even when processing a fenced code block
-    #[allow(deprecated)]
-    let first_offset = parse_offset_directive(&query);
-    assert!(
-        first_offset.is_some(),
-        "Should find at least one offset in the query"
-    );
-
-    // The broken behavior: returns (1, 0, -1, 0) from frontmatter
-    let offset = first_offset.unwrap();
-    assert_eq!(
-        offset.start_row, 1,
-        "Old function returns frontmatter offset"
-    );
-
-    // Now test the pattern-aware function
+    // Test the pattern-aware function
     // We need to find which patterns correspond to which injection type
     let pattern_count = query.pattern_count();
 

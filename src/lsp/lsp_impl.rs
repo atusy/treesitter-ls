@@ -35,12 +35,10 @@ fn lsp_legend_modifiers() -> Vec<SemanticTokenModifier> {
 }
 
 /// Tracks languages currently being installed to prevent duplicate installs.
-#[allow(dead_code)] // Used in later subtasks (ST-5)
 pub struct InstallingLanguages {
     languages: Mutex<HashSet<String>>,
 }
 
-#[allow(dead_code)] // Methods used in later subtasks (ST-5)
 impl InstallingLanguages {
     pub fn new() -> Self {
         Self {
@@ -49,6 +47,7 @@ impl InstallingLanguages {
     }
 
     /// Check if a language is currently being installed.
+    #[cfg(test)] // Only used in tests for now
     pub fn is_installing(&self, language: &str) -> bool {
         match self.languages.lock() {
             Ok(guard) => guard.contains(language),
@@ -174,28 +173,6 @@ impl TreeSitterLs {
     /// Check if auto-install is enabled.
     fn is_auto_install_enabled(&self) -> bool {
         self.settings.load().auto_install
-    }
-
-    /// Check if a parser has previously crashed.
-    #[allow(dead_code)]
-    fn is_parser_failed(&self, language: &str) -> bool {
-        self.failed_parsers.is_failed(language)
-    }
-
-    /// Clear the failed status for a parser (e.g., after reinstall).
-    /// Returns true if the parser was previously marked as failed.
-    #[allow(dead_code)]
-    fn clear_failed_parser(&self, language: &str) -> bool {
-        let was_failed = self.failed_parsers.is_failed(language);
-        if was_failed && let Err(e) = self.failed_parsers.clear_failed(language) {
-            log::warn!(
-                target: "treesitter_ls::crash_recovery",
-                "Failed to clear failed status for '{}': {}",
-                language,
-                e
-            );
-        }
-        was_failed
     }
 
     async fn parse_document(

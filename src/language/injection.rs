@@ -30,39 +30,8 @@ pub const DEFAULT_OFFSET: InjectionOffset = InjectionOffset {
     end_column: 0,
 };
 
-/// Parses offset directive from query and returns the offset values if found
-/// Returns None if no #offset! directive exists for @injection.content
-///
-/// # Deprecated
-///
-/// This function is deprecated and should not be used in new code.
-/// It has a fundamental flaw: it searches ALL patterns and returns the FIRST offset found,
-/// regardless of which pattern actually matched during injection detection.
-///
-/// This causes incorrect offsets to be applied, such as markdown frontmatter offsets
-/// being applied to fenced code blocks.
-///
-/// Use [`parse_offset_directive_for_pattern`] instead, which correctly returns
-/// the offset for a specific pattern.
-///
-/// This function is kept only for testing purposes to document the old broken behavior.
-#[deprecated(
-    since = "0.1.0",
-    note = "This function returns incorrect offsets when queries have multiple patterns. \
-            Use parse_offset_directive_for_pattern instead."
-)]
-pub fn parse_offset_directive(query: &Query) -> Option<InjectionOffset> {
-    // Check all patterns in the query
-    for pattern_index in 0..query.pattern_count() {
-        if let Some(offset) = parse_offset_directive_for_pattern(query, pattern_index) {
-            return Some(offset);
-        }
-    }
-    None
-}
-
-/// Parses offset directive for a specific pattern in the query
-/// Returns None if the specified pattern has no #offset! directive for @injection.content
+/// Parses offset directive for a specific pattern in the query.
+/// Returns None if the specified pattern has no #offset! directive for @injection.content.
 pub fn parse_offset_directive_for_pattern(
     query: &Query,
     pattern_index: usize,
@@ -420,8 +389,8 @@ mod tests {
     use tree_sitter::Parser;
 
     #[test]
-    fn test_parse_offset_directive_pattern_aware() {
-        // Test that the new pattern-aware function correctly returns
+    fn test_parse_offset_directive_for_pattern() {
+        // Test that the pattern-aware function correctly returns
         // offsets only for the specific pattern
 
         // Create a query similar to markdown's injection.scm with multiple patterns
@@ -439,16 +408,6 @@ mod tests {
         let language = tree_sitter_rust::LANGUAGE.into();
         let query = Query::new(&language, query_str).expect("valid query");
 
-        // Test the old broken behavior (for documentation)
-        #[allow(deprecated)]
-        let offset = parse_offset_directive(&query);
-        assert_eq!(
-            offset,
-            Some(InjectionOffset::new(1, 0, -1, 0)),
-            "Old function returns first offset found"
-        );
-
-        // Test the new pattern-aware function
         // Pattern 0 (raw_string_literal) has NO offset
         let offset_pattern_0 = parse_offset_directive_for_pattern(&query, 0);
         assert_eq!(offset_pattern_0, None, "Pattern 0 should have no offset");

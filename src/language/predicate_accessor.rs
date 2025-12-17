@@ -72,20 +72,5 @@ impl<'a> Iterator for PredicateIterator<'a> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-
-    #[test]
-    fn test_predicate_accessor_basic() {
-        // This is a basic test structure - actual testing would require
-        // creating a Query with predicates, which requires a language
-        // Test would go here with actual query objects
-        assert!(true); // Placeholder
-    }
-
-    #[test]
-    fn test_unified_predicate_operator() {
-        // Would test with actual predicate objects
-        assert!(true); // Placeholder
-    }
-}
+// Note: This module is tested through integration tests in injection.rs
+// where actual Query objects with predicates are created.
