@@ -129,7 +129,9 @@ fn run_crash_recovery(action: CrashRecoveryAction) {
                     println!("  - {}", lang);
                 }
                 println!();
-                println!("Use 'treesitter-ls crash-recovery clear <language>' to retry after reinstall.");
+                println!(
+                    "Use 'treesitter-ls crash-recovery clear <language>' to retry after reinstall."
+                );
             }
         }
         CrashRecoveryAction::Clear { language } => {

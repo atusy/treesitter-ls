@@ -187,9 +187,7 @@ impl TreeSitterLs {
     #[allow(dead_code)]
     fn clear_failed_parser(&self, language: &str) -> bool {
         let was_failed = self.failed_parsers.is_failed(language);
-        if was_failed
-            && let Err(e) = self.failed_parsers.clear_failed(language)
-        {
+        if was_failed && let Err(e) = self.failed_parsers.clear_failed(language) {
             log::warn!(
                 target: "treesitter_ls::crash_recovery",
                 "Failed to clear failed status for '{}': {}",

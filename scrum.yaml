@@ -36,10 +36,10 @@ rules:
 
 quick_status:
   current_sprint:
-    number: 12
-    pbi: PBI-016
-    status: done
-    goal: "Parser crash resilience via state file detection"
+    number: 13
+    pbi: PBI-020
+    status: in_progress
+    goal: "Query inheritance support for TypeScript, JavaScript, etc."
   impediments: 0
 
 ---
@@ -268,10 +268,23 @@ definition_of_done:
 # ==============================================================================
 
 current_sprint:
-  number: 12
-  pbi: PBI-016
-  status: done
-  goal: "Parser crash resilience via state file detection"
+  number: 13
+  pbi: PBI-020
+  status: in_progress
+  goal: "Query inheritance support for TypeScript, JavaScript, etc."
+  subtasks:
+    - id: S13.1
+      task: "Implement parse_inherits_directive() with TDD"
+      status: in_progress
+    - id: S13.2
+      task: "Implement resolve_query_with_inheritance() with TDD"
+      status: pending
+    - id: S13.3
+      task: "Implement install_queries_with_dependencies() with TDD"
+      status: pending
+    - id: S13.4
+      task: "Integration test with TypeScript"
+      status: pending
 
 ---
 # ==============================================================================

@@ -9,6 +9,27 @@ use tree_sitter::{Language, Query};
 pub struct QueryLoader;
 
 impl QueryLoader {
+    /// Parse the `; inherits: lang1,lang2` directive from query content.
+    ///
+    /// nvim-treesitter queries can inherit from other queries using this directive
+    /// on the first line. This function extracts the list of parent languages.
+    ///
+    /// # Returns
+    /// A vector of parent language names (empty if no inheritance).
+    pub fn parse_inherits_directive(content: &str) -> Vec<String> {
+        let first_line = content.lines().next().unwrap_or("");
+
+        // Pattern: "; inherits: lang1,lang2,..."
+        if let Some(rest) = first_line.strip_prefix("; inherits:") {
+            rest.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
     /// Load query content from highlight items
     pub fn load_query_from_highlight(highlight_items: &[HighlightItem]) -> LspResult<String> {
         let mut combined_query = String::new();
