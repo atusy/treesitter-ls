@@ -36,10 +36,10 @@ rules:
 
 quick_status:
   current_sprint:
-    number: 29
-    pbi: PBI-038
+    number: 30
+    pbi: PBI-032
     status: done
-    goal: "Document logging targets in README"
+    goal: "Split lsp_impl.rs into smaller modules"
   impediments: 0
 
 ---
@@ -257,7 +257,7 @@ product_backlog:
       Estimated time: 10 minutes per function
 
   - id: PBI-032
-    status: ready
+    status: done
     story:
       role: "developer maintaining treesitter-ls"
       capability: "work with a smaller, more focused lsp_impl.rs"
@@ -646,19 +646,22 @@ definition_of_done:
 # ==============================================================================
 
 current_sprint:
-  number: 29
-  pbi: PBI-038
+  number: 30
+  pbi: PBI-032
   status: done
-  goal: "Document logging targets in README"
+  goal: "Split lsp_impl.rs into smaller modules"
   subtasks:
-    - id: S29.1
-      task: "Add Logging section to docs/README.md with targets table"
+    - id: S30.1
+      task: "Create auto_install.rs with InstallingLanguages struct"
       status: completed
-    - id: S29.2
-      task: "Add RUST_LOG examples"
+    - id: S30.2
+      task: "Extract get_injected_languages helper function"
       status: completed
-    - id: S29.3
-      task: "Note stderr requirement"
+    - id: S30.3
+      task: "Move integration tests to tests/test_auto_install_integration.rs"
+      status: completed
+    - id: S30.4
+      task: "Verify lsp_impl.rs under 1500 lines"
       status: completed
 
 ---
@@ -668,6 +671,9 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 30
+    pbi: PBI-032
+    outcome: "Split lsp_impl.rs from 2327 to 1299 lines by extracting auto_install module"
   - sprint: 29
     pbi: PBI-038
     outcome: "Documented logging targets (lock_recovery, crash_recovery, query) in README"
