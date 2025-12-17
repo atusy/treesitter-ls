@@ -8,17 +8,15 @@ use std::collections::HashMap;
 
 /// Returns the default search paths for parsers and queries.
 /// Uses the platform-specific data directory (via `dirs` crate):
-/// - Linux: ~/.local/share/treesitter-ls/{parser,queries}
-/// - macOS: ~/Library/Application Support/treesitter-ls/{parser,queries}
-/// - Windows: %APPDATA%/treesitter-ls/{parser,queries}
+/// - Linux: ~/.local/share/treesitter-ls
+/// - macOS: ~/Library/Application Support/treesitter-ls
+/// - Windows: %APPDATA%/treesitter-ls
+///
+/// Note: Returns the base directory only. The resolver functions append
+/// "parser/" or "queries/" subdirectories as needed.
 pub fn default_search_paths() -> Vec<String> {
     crate::install::default_data_dir()
-        .map(|d| {
-            vec![
-                d.join("parser").to_string_lossy().to_string(),
-                d.join("queries").to_string_lossy().to_string(),
-            ]
-        })
+        .map(|d| vec![d.to_string_lossy().to_string()])
         .unwrap_or_default()
 }
 
@@ -508,7 +506,7 @@ mod tests {
         let workspace: WorkspaceSettings = WorkspaceSettings::from(&settings);
 
         // Should use the combined paths
-        assert_eq!(workspace.search_paths.len(), 3); // 1 custom + 2 default
+        assert_eq!(workspace.search_paths.len(), 2); // 1 custom + 1 default (base dir only)
         assert_eq!(workspace.search_paths[0], "/custom/path");
         // Default paths follow
         for (i, default_path) in default_paths.iter().enumerate() {
