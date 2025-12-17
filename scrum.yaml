@@ -105,26 +105,136 @@ product_backlog:
 
   # Priority 2: Config generation CLI command
   - id: PBI-022
-    status: draft
+    status: ready
     story:
       role: "power user of treesitter-ls"
       capability: "generate a default configuration file"
       benefit: "I can customize settings without writing config from scratch"
     acceptance_criteria:
       - criterion: "treesitter-ls init creates treesitter-ls.toml in current directory"
+        verification: |
+          cd /tmp && rm -f treesitter-ls.toml
+          treesitter-ls init
+          test -f treesitter-ls.toml && echo "Config created"
       - criterion: "Generated config includes all available options with comments"
+        verification: |
+          grep -E "searchPaths|autoInstall|languages|captureMappings" /tmp/treesitter-ls.toml
       - criterion: "Existing config is not overwritten without --force"
+        verification: |
+          cd /tmp && echo "existing" > treesitter-ls.toml
+          treesitter-ls init 2>&1 | grep -i "exists"
+          cat treesitter-ls.toml | grep "existing"
+      - criterion: "--force overwrites existing config"
+        verification: |
+          cd /tmp && echo "existing" > treesitter-ls.toml
+          treesitter-ls init --force
+          ! grep "existing" treesitter-ls.toml
     story_points: 2
     technical_notes: |
       New CLI subcommand: treesitter-ls init [--force]
-      Output file: treesitter-ls.toml
+      Output file: treesitter-ls.toml in current directory
 
-      Content should include:
-      - searchPaths (commented out, shows default)
-      - autoInstall = true (default)
-      - Example language configuration (commented out)
-      - Example captureMappings (commented out)
+      Implementation:
+      1. Add Init subcommand to Commands enum in src/bin/main.rs
+      2. Create run_init() function that writes template TOML
+      3. Check if file exists, error unless --force
 
+      Template content (TOML with comments):
+      ```toml
+      # treesitter-ls configuration
+      # Documentation: https://github.com/atusy/treesitter-ls/blob/main/docs/README.md
+
+      # Auto-install missing parsers and queries (default: true)
+      # autoInstall = true
+
+      # Custom search paths for parsers and queries
+      # Default: ~/.local/share/treesitter-ls (Linux), ~/Library/Application Support/treesitter-ls (macOS)
+      # searchPaths = ["/custom/path"]
+
+      # Language-specific configuration (usually not needed)
+      # [languages.custom_lang]
+      # filetypes = ["ext"]
+      # library = "/path/to/parser.so"
+      # highlight = [{ path = "./queries/highlights.scm" }]
+
+      # Capture name remapping (Tree-sitter -> LSP semantic tokens)
+      # [captureMappings._.highlights]
+      # "variable.builtin" = "variable.defaultLibrary"
+      ```
+
+  # Priority 3: Status command for debugging
+  - id: PBI-023
+    status: ready
+    story:
+      role: "user troubleshooting treesitter-ls"
+      capability: "see which languages are installed and their status"
+      benefit: "I can diagnose issues without manually checking directories"
+    acceptance_criteria:
+      - criterion: "treesitter-ls status shows installed languages"
+        verification: |
+          ./target/release/treesitter-ls status | grep -E "lua|rust|python"
+      - criterion: "Status shows parser path and whether queries exist"
+        verification: |
+          ./target/release/treesitter-ls status --verbose | grep -E "parser|queries"
+      - criterion: "Status indicates languages with missing queries"
+        verification: |
+          # Create parser-only entry and verify status shows missing queries
+          mkdir -p /tmp/test-status/parser
+          touch /tmp/test-status/parser/test.dylib
+          ./target/release/treesitter-ls status --data-dir /tmp/test-status | grep -E "missing|incomplete"
+    story_points: 2
+    technical_notes: |
+      New CLI subcommand: treesitter-ls status [--verbose] [--data-dir PATH]
+
+      Output format:
+      ```
+      Installed languages (data dir: ~/.local/share/treesitter-ls):
+        lua       ✓ parser  ✓ queries
+        rust      ✓ parser  ✓ queries
+        markdown  ✓ parser  ✗ queries (missing)
+      ```
+
+      Implementation:
+      1. Add Status subcommand to Commands enum in src/bin/main.rs
+      2. Scan parser/ directory for .so/.dylib files
+      3. For each parser, check if queries/{lang}/highlights.scm exists
+      4. Display formatted output
+
+  # Priority 4: Uninstall command
+  - id: PBI-024
+    status: ready
+    story:
+      role: "user of treesitter-ls"
+      capability: "remove installed parsers and queries"
+      benefit: "I can clean up disk space or fix corrupted installations"
+    acceptance_criteria:
+      - criterion: "treesitter-ls uninstall <language> removes parser and queries"
+        verification: |
+          ./target/release/treesitter-ls install lua --data-dir /tmp/test-uninstall
+          ./target/release/treesitter-ls uninstall lua --data-dir /tmp/test-uninstall
+          ! test -f /tmp/test-uninstall/parser/lua.dylib
+          ! test -d /tmp/test-uninstall/queries/lua
+      - criterion: "Uninstall confirms before deletion (unless --force)"
+        verification: |
+          echo "n" | ./target/release/treesitter-ls uninstall lua 2>&1 | grep -i "cancel"
+      - criterion: "Uninstall --all removes all installed languages"
+        verification: |
+          ./target/release/treesitter-ls uninstall --all --data-dir /tmp/test-uninstall --force
+          test -z "$(ls /tmp/test-uninstall/parser/ 2>/dev/null)"
+    story_points: 2
+    technical_notes: |
+      New CLI subcommand: treesitter-ls uninstall <LANGUAGE|--all> [--force] [--data-dir PATH]
+
+      Implementation:
+      1. Add Uninstall subcommand to Commands enum
+      2. Find and remove parser file: parser/{lang}.{so,dylib,dll}
+      3. Remove queries directory: queries/{lang}/
+      4. Prompt for confirmation unless --force
+      5. Handle --all flag to remove everything
+
+  # ============================================================================
+  # COMPLETED PBIs (kept for reference)
+  # ============================================================================
 
   # Priority 1: Bug fix for parser installation
   - id: PBI-015
