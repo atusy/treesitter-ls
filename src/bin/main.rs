@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use treesitter_ls::install::{default_data_dir, metadata, parser, queries};
+use treesitter_ls::language::FailedParserRegistry;
 
 /// A Language Server Protocol (LSP) server using Tree-sitter for parsing
 #[derive(Parser)]
@@ -49,6 +50,22 @@ enum Commands {
         #[arg(long)]
         no_cache: bool,
     },
+    /// Manage parser crash recovery state
+    CrashRecovery {
+        #[command(subcommand)]
+        action: CrashRecoveryAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum CrashRecoveryAction {
+    /// List parsers that have crashed and are currently disabled
+    List,
+    /// Clear a crashed parser so it can be retried (e.g., after reinstall)
+    Clear {
+        /// The language to clear (use 'all' to clear all)
+        language: String,
+    },
 }
 
 fn main() {
@@ -77,10 +94,64 @@ fn main() {
         Some(Commands::ListLanguages { no_cache }) => {
             run_list_languages(no_cache);
         }
+        Some(Commands::CrashRecovery { action }) => {
+            run_crash_recovery(action);
+        }
         None => {
             // Start LSP server (backward compatible default behavior)
             // Only create tokio runtime for LSP mode to avoid conflicts with reqwest::blocking
             run_lsp_server();
+        }
+    }
+}
+
+/// Run crash recovery commands
+fn run_crash_recovery(action: CrashRecoveryAction) {
+    let state_dir = default_data_dir().unwrap_or_else(|| {
+        eprintln!("Error: Could not determine data directory.");
+        std::process::exit(1);
+    });
+
+    let registry = FailedParserRegistry::new(&state_dir);
+    if let Err(e) = registry.init() {
+        eprintln!("Error initializing crash recovery state: {}", e);
+        std::process::exit(1);
+    }
+
+    match action {
+        CrashRecoveryAction::List => {
+            let failed = registry.failed_parsers();
+            if failed.is_empty() {
+                println!("No crashed parsers found.");
+            } else {
+                println!("Crashed parsers ({}):", failed.len());
+                for lang in failed {
+                    println!("  - {}", lang);
+                }
+                println!();
+                println!("Use 'treesitter-ls crash-recovery clear <language>' to retry after reinstall.");
+            }
+        }
+        CrashRecoveryAction::Clear { language } => {
+            if language == "all" {
+                match registry.clear_all() {
+                    Ok(()) => println!("Cleared all crashed parser records."),
+                    Err(e) => {
+                        eprintln!("Error clearing crashed parsers: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            } else if registry.is_failed(&language) {
+                match registry.clear_failed(&language) {
+                    Ok(()) => println!("Cleared '{}' - it will be retried on next use.", language),
+                    Err(e) => {
+                        eprintln!("Error clearing '{}': {}", language, e);
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                println!("'{}' was not marked as crashed.", language);
+            }
         }
     }
 }
