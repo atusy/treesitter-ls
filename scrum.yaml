@@ -68,8 +68,64 @@ product_goal:
 # ==============================================================================
 # Completed PBIs: PBI-001 through PBI-010, PBI-013 through PBI-016, PBI-017, PBI-018, PBI-019, PBI-020
 # For details: git log -- scrum.yaml
-
+#
 product_backlog:
+  # Priority 1: Documentation - Dependencies
+  - id: PBI-021
+    status: ready
+    story:
+      role: "new user of treesitter-ls"
+      capability: "know what external tools I need to install before using treesitter-ls"
+      benefit: "I can set up my environment correctly and avoid cryptic error messages"
+    acceptance_criteria:
+      - criterion: "docs/README.md lists all required dependencies"
+        verification: |
+          grep -E "tree-sitter|git|C compiler" docs/README.md
+      - criterion: "Each dependency includes installation instructions for major platforms"
+        verification: |
+          grep -E "brew|apt|cargo install" docs/README.md
+      - criterion: "Error messages for missing dependencies are clear"
+        verification: |
+          # Remove tree-sitter temporarily and check error message
+          ./target/release/treesitter-ls install lua 2>&1 | grep -i "install"
+    story_points: 1
+    technical_notes: |
+      Required external dependencies:
+      1. tree-sitter CLI - for compiling parsers
+         - Install: cargo install tree-sitter-cli
+      2. Git - for cloning parser repositories
+         - Usually pre-installed on most systems
+      3. C compiler (cc/gcc/clang) - tree-sitter CLI needs this
+         - macOS: xcode-select --install
+         - Linux: apt install build-essential / dnf install gcc
+         - Windows: Visual Studio Build Tools
+
+      Files to update:
+      - docs/README.md: Add "Prerequisites" section before "Zero-Configuration Usage"
+
+  # Priority 2: Config generation CLI command
+  - id: PBI-022
+    status: draft
+    story:
+      role: "power user of treesitter-ls"
+      capability: "generate a default configuration file"
+      benefit: "I can customize settings without writing config from scratch"
+    acceptance_criteria:
+      - criterion: "treesitter-ls init creates treesitter-ls.toml in current directory"
+      - criterion: "Generated config includes all available options with comments"
+      - criterion: "Existing config is not overwritten without --force"
+    story_points: 2
+    technical_notes: |
+      New CLI subcommand: treesitter-ls init [--force]
+      Output file: treesitter-ls.toml
+
+      Content should include:
+      - searchPaths (commented out, shows default)
+      - autoInstall = true (default)
+      - Example language configuration (commented out)
+      - Example captureMappings (commented out)
+
+
   # Priority 1: Bug fix for parser installation
   - id: PBI-015
     status: done
