@@ -139,7 +139,7 @@ product_backlog:
 
   # Priority 4: Query inheritance support (blocks TypeScript, JavaScript, etc.)
   - id: PBI-020
-    status: draft
+    status: ready
     story:
       role: "user of treesitter-ls"
       capability: "get syntax highlighting for languages that use inherited queries (TypeScript, JavaScript, etc.)"
@@ -147,39 +147,66 @@ product_backlog:
     acceptance_criteria:
       - criterion: "TypeScript files are highlighted correctly"
         verification: |
-          # Open a .ts file in nvim with treesitter-ls
-          nvim --clean -u scripts/minimal_init.lua __ignored/example.ts
-          # Verify 'const' is highlighted as @keyword
+          nvim --clean -u scripts/minimal_init.lua -c 'e __ignored/example.ts' -c 'sleep 2' -c 'lua print(vim.inspect(vim.api.nvim_buf_get_extmarks(0, -1, 0, -1, {details=true})))' -c 'qa!'
+          # Should show semantic token highlights for 'const' and 'x'
       - criterion: "JavaScript files are highlighted correctly"
         verification: |
-          # Open a .js file and verify highlighting
-          nvim --clean -u scripts/minimal_init.lua test.js
-      - criterion: "Inherited queries (ecma, jsx) are automatically downloaded when needed"
+          echo 'const y = 2;' > /tmp/test.js
+          nvim --clean -u scripts/minimal_init.lua -c 'e /tmp/test.js' -c 'sleep 2' -c 'lua print(vim.inspect(vim.api.nvim_buf_get_extmarks(0, -1, 0, -1, {details=true})))' -c 'qa!'
+      - criterion: "Inherited queries (ecma, jsx) are automatically downloaded when installing typescript"
         verification: |
           rm -rf /tmp/test-ts
           ./target/release/treesitter-ls install typescript --data-dir /tmp/test-ts --verbose
-          test -d /tmp/test-ts/queries/ecma  # ecma queries should be downloaded
-      - criterion: "; inherits: directive is resolved and queries are concatenated"
-        verification: "Unit test verifies query resolution"
+          test -f /tmp/test-ts/queries/ecma/highlights.scm && echo "ecma downloaded"
+      - criterion: "; inherits: directive is resolved and queries are concatenated in correct order"
+        verification: |
+          cargo test test_resolve_query_inheritance
+      - criterion: "Circular inheritance is detected and reported as error"
+        verification: |
+          cargo test test_circular_inheritance_detection
     story_points: 5
     technical_notes: |
       Problem: nvim-treesitter queries use "; inherits: <lang>" directive to share common patterns.
       Example: TypeScript's highlights.scm starts with "; inherits: ecma"
 
-      Solution options:
-      1. Pre-process at install time: Download inherited queries, concatenate into single file
-      2. Runtime resolution: Load and concatenate queries when compiling
+      Chosen approach: Runtime resolution in QueryLoader
+      - Simpler than pre-processing at install time
+      - Works with existing installed queries
+      - Auto-installs inherited queries when needed
 
-      Implementation:
-      - Parse "; inherits: lang1,lang2" directive from query files
-      - Recursively resolve inheritance chain (ecma -> jsx -> javascript -> typescript)
-      - Download missing base queries (ecma, jsx are not languages, just query sets)
-      - Concatenate in correct order (base first, derived last)
-      - Handle cycles (error) and missing dependencies (warning/fallback)
+      Implementation files:
+      - src/language/query_loader.rs: Add resolve_inheritance() function
+      - src/install/queries.rs: Add install_with_dependencies() to download inherited queries
 
-      Special cases:
-      - "ecma" and "jsx" are query-only (no parser) - need special handling
-      - Some languages inherit from multiple parents (e.g., "; inherits: ecma,jsx")
+      Key functions to add:
+      1. parse_inherits_directive(content: &str) -> Vec<String>
+         - Parse "; inherits: lang1,lang2" from first line
+         - Return list of parent languages
+
+      2. resolve_query_with_inheritance(search_paths, lang, file) -> String
+         - Load query file
+         - Parse inherits directive
+         - Recursively resolve parents (depth-first, parents first)
+         - Track visited to detect cycles
+         - Concatenate: parent1 + parent2 + ... + child (remove inherits line)
+
+      3. install_queries_with_dependencies(lang, data_dir, force)
+         - Download query for lang
+         - Parse inherits directive
+         - Recursively install parent queries (ecma, jsx, etc.)
+         - Skip if already installed (unless force)
+
+      Inheritance examples from nvim-treesitter:
+      - typescript: inherits ecma
+      - javascript: inherits ecma,jsx
+      - tsx: inherits typescript,jsx
+      - ecma: no inheritance (base)
+      - jsx: no inheritance (base)
+
+      Edge cases:
+      - ecma/jsx are query-only (no parser) - must skip parser install
+      - Multiple inheritance: javascript inherits both ecma AND jsx
+      - Transitive: tsx -> typescript -> ecma AND tsx -> jsx
 
   # Priority 5: UX improvement (draft)
   - id: PBI-011
