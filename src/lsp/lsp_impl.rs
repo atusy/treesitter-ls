@@ -1099,30 +1099,24 @@ impl LanguageServer for TreeSitterLs {
                 .as_ref()
                 .map(|hq| (hq.as_ref(), locals_query.as_ref().map(|lq| lq.as_ref())));
 
-            // Use the injection-aware handler with coordinator
+            // Build code action options with injection support
+            let mut options =
+                crate::analysis::refactor::CodeActionOptions::new(&uri, text, tree, domain_range)
+                    .with_queries(queries)
+                    .with_capture_context(capture_context);
+
+            // Add injection query if available
+            if let Some(inj_q) = injection_query.as_ref() {
+                options = options.with_injection(inj_q.as_ref());
+            }
+
+            // Use coordinator if we can get parser pool lock
             if let Ok(mut pool) = self.parser_pool.lock() {
-                crate::analysis::refactor::handle_code_actions_with_injection_and_coordinator(
-                    &uri,
-                    text,
-                    tree,
-                    domain_range,
-                    queries,
-                    capture_context,
-                    injection_query.as_ref().map(|q| q.as_ref()),
-                    &self.language,
-                    &mut pool,
-                )
+                options = options.with_coordinator(&self.language, &mut pool);
+                handle_code_actions(options)
             } else {
-                // Fallback if we can't get parser pool lock
-                crate::analysis::refactor::handle_code_actions_with_injection_query(
-                    &uri,
-                    text,
-                    tree,
-                    domain_range,
-                    queries,
-                    capture_context,
-                    injection_query.as_ref().map(|q| q.as_ref()),
-                )
+                // Fallback without coordinator
+                handle_code_actions(options)
             }
         } else {
             handle_code_actions(

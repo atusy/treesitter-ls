@@ -633,6 +633,7 @@ pub fn handle_code_actions(options: CodeActionOptions) -> Option<Vec<CodeActionO
     since = "0.2.0",
     note = "Use handle_code_actions(CodeActionOptions::new(...)) instead"
 )]
+#[allow(deprecated)]
 pub fn handle_code_actions_legacy(
     uri: &Url,
     text: &str,
@@ -652,7 +653,13 @@ pub fn handle_code_actions_legacy(
     )
 }
 
-/// Handle code actions with optional injection query for language hierarchy detection
+/// Handle code actions with optional injection query for language hierarchy detection.
+///
+/// Deprecated: Use `handle_code_actions(CodeActionOptions::new(...).with_injection(...))` instead.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use handle_code_actions(CodeActionOptions::new(...).with_injection(...)) instead"
+)]
 pub fn handle_code_actions_with_injection_query(
     uri: &Url,
     text: &str,
@@ -676,6 +683,13 @@ pub fn handle_code_actions_with_injection_query(
     handle_code_actions_with_context(context)
 }
 
+/// Handle code actions with injection query and coordinator for full injection-aware processing.
+///
+/// Deprecated: Use `handle_code_actions(CodeActionOptions::new(...).with_coordinator(...))` instead.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use handle_code_actions(CodeActionOptions::new(...).with_coordinator(...)) instead"
+)]
 #[allow(clippy::too_many_arguments)]
 pub fn handle_code_actions_with_injection_and_coordinator(
     uri: &Url,
@@ -968,6 +982,7 @@ fn ordinal(n: usize) -> String {
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // Tests use deprecated functions to verify they still work
 mod tests {
     use super::*;
     use std::collections::HashMap;
