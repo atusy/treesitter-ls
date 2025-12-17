@@ -55,6 +55,16 @@ enum LanguageAction {
         #[arg(long)]
         no_cache: bool,
     },
+    /// Show installed languages and their status
+    Status {
+        /// Custom data directory (default: ~/.local/share/treesitter-ls on Linux)
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+
+        /// Print verbose output (show file paths)
+        #[arg(long, short)]
+        verbose: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -83,6 +93,9 @@ fn main() {
             }
             LanguageAction::List { no_cache } => {
                 run_list_languages(no_cache);
+            }
+            LanguageAction::Status { data_dir, verbose } => {
+                run_language_status(data_dir, verbose);
             }
         },
         Some(Commands::Config { action }) => match action {
@@ -147,6 +160,99 @@ const CONFIG_TEMPLATE: &str = r#"# treesitter-ls configuration
 # [captureMappings._.highlights]
 # "variable.builtin" = "variable.defaultLibrary"
 "#;
+
+/// Run the language status command
+fn run_language_status(data_dir: Option<PathBuf>, verbose: bool) {
+    use std::collections::BTreeSet;
+    use std::fs;
+
+    let data_dir = data_dir.or_else(default_data_dir).unwrap_or_else(|| {
+        eprintln!("Error: Could not determine data directory. Please specify --data-dir.");
+        std::process::exit(1);
+    });
+
+    let parser_dir = data_dir.join("parser");
+    let queries_dir = data_dir.join("queries");
+
+    // Collect all installed languages from both parser and queries directories
+    let mut languages = BTreeSet::new();
+
+    // Scan parser directory for .so, .dylib, .dll files
+    if let Ok(entries) = fs::read_dir(&parser_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_parser = path
+                .extension()
+                .map(|ext| ext == "so" || ext == "dylib" || ext == "dll")
+                .unwrap_or(false);
+            if is_parser && let Some(stem) = path.file_stem() {
+                languages.insert(stem.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    // Also check queries directory for languages that might only have queries
+    if let Ok(entries) = fs::read_dir(&queries_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir()
+                && let Some(name) = path.file_name()
+            {
+                languages.insert(name.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    if languages.is_empty() {
+        eprintln!("No languages installed in {}", data_dir.display());
+        eprintln!("Use 'treesitter-ls language install <language>' to install one.");
+        return;
+    }
+
+    eprintln!("Installed languages (data dir: {}):", data_dir.display());
+
+    for lang in &languages {
+        let parser_path = find_parser_file(&parser_dir, lang);
+        let queries_path = queries_dir.join(lang).join("highlights.scm");
+
+        let parser_status = if parser_path.is_some() {
+            "✓ parser"
+        } else {
+            "✗ parser"
+        };
+
+        let queries_status = if queries_path.exists() {
+            "✓ queries"
+        } else {
+            "✗ queries (missing)"
+        };
+
+        println!("  {:<12} {}  {}", lang, parser_status, queries_status);
+
+        if verbose {
+            if let Some(ref p) = parser_path {
+                println!("               parser: {}", p.display());
+            }
+            if queries_path.exists() {
+                println!(
+                    "               queries: {}",
+                    queries_path.parent().unwrap().display()
+                );
+            }
+        }
+    }
+}
+
+/// Find the parser file for a language (handles .so, .dylib, .dll extensions)
+fn find_parser_file(parser_dir: &std::path::Path, lang: &str) -> Option<PathBuf> {
+    for ext in &["dylib", "so", "dll"] {
+        let path = parser_dir.join(format!("{}.{}", lang, ext));
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    None
+}
 
 /// Run the config init command
 fn run_config_init(force: bool) {

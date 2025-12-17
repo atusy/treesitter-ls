@@ -336,3 +336,115 @@ fn test_config_init_force_overwrites() {
     // Clean up
     let _ = fs::remove_dir_all(test_dir);
 }
+
+/// Test that language status --help shows expected options
+#[test]
+fn test_language_status_help() {
+    let output = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
+        .args(["language", "status", "--help"])
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should exit successfully
+    assert!(
+        output.status.success(),
+        "Language status help should exit with success"
+    );
+
+    // Should contain --data-dir and --verbose options
+    assert!(
+        stdout.contains("--data-dir"),
+        "Status help should show --data-dir option. Got: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("--verbose") || stdout.contains("-v"),
+        "Status help should show --verbose option. Got: {}",
+        stdout
+    );
+}
+
+/// Test that language status shows installed languages
+#[test]
+fn test_language_status_shows_installed() {
+    use std::fs;
+
+    let test_dir = "/tmp/test-status-installed";
+
+    // Clean up and setup with a fake parser and queries
+    let _ = fs::remove_dir_all(test_dir);
+    fs::create_dir_all(format!("{}/parser", test_dir)).expect("Failed to create parser dir");
+    fs::create_dir_all(format!("{}/queries/testlang", test_dir))
+        .expect("Failed to create queries dir");
+    fs::write(format!("{}/parser/testlang.dylib", test_dir), "fake")
+        .expect("Failed to write parser");
+    fs::write(
+        format!("{}/queries/testlang/highlights.scm", test_dir),
+        "(comment) @comment",
+    )
+    .expect("Failed to write query");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
+        .args(["language", "status", "--data-dir", test_dir])
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{}{}", stdout, stderr);
+
+    // Should show testlang with parser and queries
+    assert!(
+        combined.contains("testlang"),
+        "Status should show testlang. Got: {}",
+        combined
+    );
+    assert!(
+        combined.contains("✓ parser") && combined.contains("✓ queries"),
+        "Status should show parser and queries as installed. Got: {}",
+        combined
+    );
+
+    // Clean up
+    let _ = fs::remove_dir_all(test_dir);
+}
+
+/// Test that language status shows missing queries
+#[test]
+fn test_language_status_missing_queries() {
+    use std::fs;
+
+    let test_dir = "/tmp/test-status-missing";
+
+    // Clean up and setup with parser only (no queries)
+    let _ = fs::remove_dir_all(test_dir);
+    fs::create_dir_all(format!("{}/parser", test_dir)).expect("Failed to create parser dir");
+    fs::write(format!("{}/parser/incomplete.so", test_dir), "fake")
+        .expect("Failed to write parser");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
+        .args(["language", "status", "--data-dir", test_dir])
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{}{}", stdout, stderr);
+
+    // Should show incomplete with missing queries
+    assert!(
+        combined.contains("incomplete"),
+        "Status should show incomplete. Got: {}",
+        combined
+    );
+    assert!(
+        combined.contains("missing"),
+        "Status should indicate missing queries. Got: {}",
+        combined
+    );
+
+    // Clean up
+    let _ = fs::remove_dir_all(test_dir);
+}

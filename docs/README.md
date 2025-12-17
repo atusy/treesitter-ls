@@ -209,6 +209,15 @@ treesitter-ls language install ruby --no-cache
 
 # List supported languages
 treesitter-ls language list
+
+# Show installed languages and their status
+treesitter-ls language status
+
+# Show status with file paths
+treesitter-ls language status --verbose
+
+# Show status for custom data directory
+treesitter-ls language status --data-dir /custom/path
 ```
 
 ### Configuration Management
