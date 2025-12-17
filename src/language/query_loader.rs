@@ -224,4 +224,40 @@ mod tests {
         assert!(result.is_some());
         assert!(result.unwrap().ends_with("parser/rust.so"));
     }
+
+    // ============================================================
+    // Tests for query inheritance (PBI-020)
+    // ============================================================
+
+    #[test]
+    fn test_parse_inherits_directive_single() {
+        // TypeScript inherits from ecma
+        let content = "; inherits: ecma\n\n\"require\" @keyword.import\n";
+        let result = QueryLoader::parse_inherits_directive(content);
+        assert_eq!(result, vec!["ecma"]);
+    }
+
+    #[test]
+    fn test_parse_inherits_directive_multiple() {
+        // JavaScript inherits from ecma and jsx
+        let content = "; inherits: ecma,jsx\n\n(identifier) @variable\n";
+        let result = QueryLoader::parse_inherits_directive(content);
+        assert_eq!(result, vec!["ecma", "jsx"]);
+    }
+
+    #[test]
+    fn test_parse_inherits_directive_none() {
+        // ecma has no inheritance
+        let content = "(identifier) @variable\n";
+        let result = QueryLoader::parse_inherits_directive(content);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_inherits_directive_with_spaces() {
+        // Handle spaces around language names
+        let content = "; inherits: ecma , jsx\n";
+        let result = QueryLoader::parse_inherits_directive(content);
+        assert_eq!(result, vec!["ecma", "jsx"]);
+    }
 }
