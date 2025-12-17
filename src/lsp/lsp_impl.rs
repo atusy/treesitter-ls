@@ -1125,7 +1125,9 @@ impl LanguageServer for TreeSitterLs {
                 )
             }
         } else {
-            handle_code_actions(&uri, text, tree, domain_range, None, None)
+            handle_code_actions(
+                crate::analysis::refactor::CodeActionOptions::new(&uri, text, tree, domain_range),
+            )
         };
 
         Ok(lsp_response)

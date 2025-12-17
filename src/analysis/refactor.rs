@@ -612,10 +612,28 @@ fn process_nested_injection(
     )
 }
 
-/// Produce code actions that reorder a parameter within a function parameter list.
-/// The implementation is language-agnostic for grammars that use a `parameters` node
-/// with direct child comma tokens and surrounding parentheses.
-pub fn handle_code_actions(
+/// Produce code actions for the given options.
+///
+/// This is the primary entry point for code actions. Use `CodeActionOptions::new()`
+/// to construct options with the builder pattern:
+///
+/// ```ignore
+/// let actions = handle_code_actions(
+///     CodeActionOptions::new(&uri, text, &tree, cursor)
+///         .with_queries(Some((highlights, locals)))
+///         .with_injection(&injection_query)
+/// );
+/// ```
+pub fn handle_code_actions(options: CodeActionOptions) -> Option<Vec<CodeActionOrCommand>> {
+    handle_code_actions_with_context(options)
+}
+
+/// Legacy function - use `handle_code_actions(CodeActionOptions::new(...))` instead.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use handle_code_actions(CodeActionOptions::new(...)) instead"
+)]
+pub fn handle_code_actions_legacy(
     uri: &Url,
     text: &str,
     tree: &Tree,
@@ -630,7 +648,7 @@ pub fn handle_code_actions(
         cursor,
         queries,
         capture_context,
-        None, // No injection query yet - will be loaded from language module later
+        None,
     )
 }
 
@@ -1052,14 +1070,11 @@ mod tests {
         // Create code action WITHOUT injection query
         let capture_mappings: CaptureMappings = HashMap::new();
         let cursor_range = Range::new(cursor_pos, cursor_pos);
+        let uri = Url::parse("file:///test.rs").unwrap();
 
         let actions = handle_code_actions(
-            &Url::parse("file:///test.rs").unwrap(),
-            text,
-            &tree,
-            cursor_range,
-            None,
-            Some(("rust", &capture_mappings)),
+            CodeActionOptions::new(&uri, text, &tree, cursor_range)
+                .with_capture_context(Some(("rust", &capture_mappings))),
         );
 
         assert!(actions.is_some(), "Should return code actions");
@@ -2044,6 +2059,40 @@ fn main() {
             .with_injection(&injection_query);
 
         assert!(options.injection_query.is_some());
+    }
+
+    #[test]
+    fn test_handle_code_actions_with_options() {
+        // RED: Test that handle_code_actions accepts CodeActionOptions
+        let mut parser = Parser::new();
+        let language = tree_sitter_rust::LANGUAGE.into();
+        parser.set_language(&language).expect("load rust grammar");
+
+        let text = "fn foo(a: i32, b: i32) {}";
+        let tree = parser.parse(text, None).expect("parse rust");
+        let uri = Url::parse("file:///test.rs").unwrap();
+
+        // Position inside parameter 'a'
+        let cursor = Range::new(Position::new(0, 8), Position::new(0, 8));
+
+        // Use the new unified API with options
+        let options = CodeActionOptions::new(&uri, text, &tree, cursor);
+        let actions = handle_code_actions(options);
+
+        // Should return at least the inspect token action
+        assert!(actions.is_some());
+        let actions = actions.unwrap();
+        assert!(!actions.is_empty());
+
+        // Find inspect token action
+        let has_inspect = actions.iter().any(|a| {
+            if let CodeActionOrCommand::CodeAction(action) = a {
+                action.title.starts_with("Inspect token")
+            } else {
+                false
+            }
+        });
+        assert!(has_inspect, "Should have inspect token action");
     }
 
     #[test]
