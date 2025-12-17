@@ -29,6 +29,43 @@ Expand/shrink selection based on AST structure. Select increasingly larger synta
 
 - **Swap Parameters**: Reorder function parameters
 
+## Prerequisites
+
+treesitter-ls automatically compiles Tree-sitter parsers from source, which requires these external tools:
+
+### Required Dependencies
+
+| Dependency | Purpose | Installation |
+|------------|---------|--------------|
+| **tree-sitter CLI** | Compiles parser grammars into shared libraries | `cargo install tree-sitter-cli` |
+| **Git** | Clones parser repositories during installation | Usually pre-installed |
+| **C Compiler** | Required by tree-sitter CLI for compilation | See platform-specific instructions |
+
+### C Compiler Installation
+
+| Platform | Command |
+|----------|---------|
+| **macOS** | `xcode-select --install` |
+| **Debian/Ubuntu** | `sudo apt install build-essential` |
+| **Fedora/RHEL** | `sudo dnf install gcc` |
+| **Arch Linux** | `sudo pacman -S base-devel` |
+| **Windows** | Install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) |
+
+### Verifying Installation
+
+```bash
+# Check tree-sitter CLI
+tree-sitter --version
+
+# Check C compiler
+cc --version  # or gcc --version / clang --version
+
+# Check git
+git --version
+```
+
+If any command fails, install the missing dependency before using treesitter-ls.
+
 ## Zero-Configuration Usage
 
 treesitter-ls works out of the box with no configuration required:
