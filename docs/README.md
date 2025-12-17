@@ -312,6 +312,36 @@ Some languages inherit queries from base languages:
 
 When you install a language with inheritance, the base queries are automatically downloaded.
 
+## Logging
+
+treesitter-ls uses Rust's standard logging with `env_logger`. Configure logging via the `RUST_LOG` environment variable.
+
+### Log Targets
+
+| Target | Level | Description |
+|--------|-------|-------------|
+| `treesitter_ls::lock_recovery` | warn | Thread synchronization recovery events |
+| `treesitter_ls::crash_recovery` | error | Parser crash detection and recovery |
+| `treesitter_ls::query` | warn | Query syntax/validation issues |
+
+### Examples
+
+```bash
+# Enable all treesitter-ls logs at debug level
+RUST_LOG=treesitter_ls=debug treesitter-ls
+
+# Only show crash events (most severe)
+RUST_LOG=treesitter_ls::crash_recovery=error treesitter-ls
+
+# Show query issues (helpful for query authors)
+RUST_LOG=treesitter_ls::query=warn treesitter-ls
+
+# Show lock recovery events (for debugging thread issues)
+RUST_LOG=treesitter_ls::lock_recovery=warn treesitter-ls
+```
+
+**Note:** Logs are written to stderr. Stdout is reserved for LSP JSON-RPC protocol messages.
+
 ## Troubleshooting
 
 ### Parser fails to load
