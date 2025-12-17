@@ -2,7 +2,7 @@ local cwd = vim.uv.cwd()
 vim.lsp.config.treesitter_ls = {
 	cmd = { cwd .. "/target/debug/treesitter-ls" },
 	init_options = {
-		searchPaths = { "/Users/atusy/Library/Application Support/treesitter-ls" },
+		-- searchPaths = { "/Users/atusy/Library/Application Support/treesitter-ls" },
 		autoInstall = true,
 	},
 }
