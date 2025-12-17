@@ -370,7 +370,6 @@ mod tests {
   - `test_lua_match.rs` - Tests for lua-match predicate functionality
   - `test_multiple_file_opening.rs` - Tests for handling multiple file operations
   - `test_file_reopen.rs` - File reopening scenarios
-  - `test_language_injection.rs` - Language injection support
   - `test_poison_recovery.rs` - Lock poison recovery tests
   - `test_runtime_coordinator_api.rs` - Runtime coordinator tests
 - **Neovim E2E tests**: In the `tests/` directory (Lua files):
