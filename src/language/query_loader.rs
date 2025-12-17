@@ -281,4 +281,126 @@ mod tests {
         let result = QueryLoader::parse_inherits_directive(content);
         assert_eq!(result, vec!["ecma", "jsx"]);
     }
+
+    #[test]
+    fn test_resolve_query_with_inheritance_no_inheritance() {
+        // ecma has no inheritance - should return content as-is
+        let dir = tempdir().unwrap();
+        let base_path = dir.path().to_str().unwrap().to_string();
+
+        // Create ecma query
+        let ecma_dir = dir.path().join("queries").join("ecma");
+        fs::create_dir_all(&ecma_dir).unwrap();
+        fs::write(
+            ecma_dir.join("highlights.scm"),
+            "(identifier) @variable\n",
+        )
+        .unwrap();
+
+        let result = QueryLoader::resolve_query_with_inheritance(
+            &[base_path],
+            "ecma",
+            "highlights.scm",
+        );
+        assert!(result.is_ok());
+        let content = result.unwrap();
+        assert!(content.contains("(identifier) @variable"));
+    }
+
+    #[test]
+    fn test_resolve_query_with_inheritance_single_parent() {
+        // typescript inherits from ecma
+        let dir = tempdir().unwrap();
+        let base_path = dir.path().to_str().unwrap().to_string();
+
+        // Create ecma query (base)
+        let ecma_dir = dir.path().join("queries").join("ecma");
+        fs::create_dir_all(&ecma_dir).unwrap();
+        fs::write(
+            ecma_dir.join("highlights.scm"),
+            "(identifier) @variable\n",
+        )
+        .unwrap();
+
+        // Create typescript query (inherits ecma)
+        let ts_dir = dir.path().join("queries").join("typescript");
+        fs::create_dir_all(&ts_dir).unwrap();
+        fs::write(
+            ts_dir.join("highlights.scm"),
+            "; inherits: ecma\n\n\"require\" @keyword.import\n",
+        )
+        .unwrap();
+
+        let result = QueryLoader::resolve_query_with_inheritance(
+            &[base_path],
+            "typescript",
+            "highlights.scm",
+        );
+        assert!(result.is_ok());
+        let content = result.unwrap();
+
+        // Should have ecma content first, then typescript
+        assert!(content.contains("(identifier) @variable"));
+        assert!(content.contains("\"require\" @keyword.import"));
+
+        // ecma content should come before typescript
+        let ecma_pos = content.find("(identifier)").unwrap();
+        let ts_pos = content.find("\"require\"").unwrap();
+        assert!(ecma_pos < ts_pos, "Parent query should come before child");
+    }
+
+    #[test]
+    fn test_resolve_query_with_inheritance_removes_directive() {
+        // The "; inherits:" line should be removed from output
+        let dir = tempdir().unwrap();
+        let base_path = dir.path().to_str().unwrap().to_string();
+
+        // Create ecma query
+        let ecma_dir = dir.path().join("queries").join("ecma");
+        fs::create_dir_all(&ecma_dir).unwrap();
+        fs::write(ecma_dir.join("highlights.scm"), "(identifier) @variable\n").unwrap();
+
+        // Create typescript query with inherits
+        let ts_dir = dir.path().join("queries").join("typescript");
+        fs::create_dir_all(&ts_dir).unwrap();
+        fs::write(
+            ts_dir.join("highlights.scm"),
+            "; inherits: ecma\n\"require\" @keyword\n",
+        )
+        .unwrap();
+
+        let result = QueryLoader::resolve_query_with_inheritance(
+            &[base_path],
+            "typescript",
+            "highlights.scm",
+        );
+        let content = result.unwrap();
+
+        // The inherits directive should not be in the output
+        assert!(!content.contains("; inherits:"));
+    }
+
+    #[test]
+    fn test_resolve_query_with_inheritance_circular_detection() {
+        // a inherits b, b inherits a - should detect and error
+        let dir = tempdir().unwrap();
+        let base_path = dir.path().to_str().unwrap().to_string();
+
+        let a_dir = dir.path().join("queries").join("lang_a");
+        fs::create_dir_all(&a_dir).unwrap();
+        fs::write(a_dir.join("highlights.scm"), "; inherits: lang_b\n(a) @a\n").unwrap();
+
+        let b_dir = dir.path().join("queries").join("lang_b");
+        fs::create_dir_all(&b_dir).unwrap();
+        fs::write(b_dir.join("highlights.scm"), "; inherits: lang_a\n(b) @b\n").unwrap();
+
+        let result = QueryLoader::resolve_query_with_inheritance(
+            &[base_path],
+            "lang_a",
+            "highlights.scm",
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("circular") || err.to_string().contains("Circular"));
+    }
 }
