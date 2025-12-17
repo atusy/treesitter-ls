@@ -36,10 +36,10 @@ rules:
 
 quick_status:
   current_sprint:
-    number: 25
-    pbi: PBI-034
+    number: 29
+    pbi: PBI-038
     status: done
-    goal: "Initialize logging backend with env_logger"
+    goal: "Document logging targets in README"
   impediments: 0
 
 ---
@@ -451,7 +451,7 @@ product_backlog:
       issues, not server health. Separating them lets query authors filter independently.
 
   - id: PBI-036
-    status: ready
+    status: done
     story:
       role: "developer debugging lock issues"
       capability: "see which operation triggered lock poisoning recovery"
@@ -532,7 +532,7 @@ product_backlog:
       This is a one-line change (warn! -> error!) with clear semantic meaning.
 
   - id: PBI-038
-    status: ready
+    status: done
     story:
       role: "operator configuring treesitter-ls"
       capability: "read documentation about available log targets"
@@ -646,16 +646,19 @@ definition_of_done:
 # ==============================================================================
 
 current_sprint:
-  number: 25
-  pbi: PBI-034
+  number: 29
+  pbi: PBI-038
   status: done
-  goal: "Initialize logging backend with env_logger"
+  goal: "Document logging targets in README"
   subtasks:
-    - id: S25.1
-      task: "Add env_logger crate to Cargo.toml"
+    - id: S29.1
+      task: "Add Logging section to docs/README.md with targets table"
       status: completed
-    - id: S25.2
-      task: "Initialize env_logger in run_lsp_server() with stderr target"
+    - id: S29.2
+      task: "Add RUST_LOG examples"
+      status: completed
+    - id: S29.3
+      task: "Note stderr requirement"
       status: completed
 
 ---
@@ -665,6 +668,18 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 29
+    pbi: PBI-038
+    outcome: "Documented logging targets (lock_recovery, crash_recovery, query) in README"
+  - sprint: 28
+    pbi: PBI-036
+    outcome: "Consolidated recover_poison() with context parameter, removed context-less variant"
+  - sprint: 27
+    pbi: PBI-037
+    outcome: "Changed crash detection logging from warn to error level"
+  - sprint: 26
+    pbi: PBI-035
+    outcome: "Standardized log targets across all log::warn! calls"
   - sprint: 25
     pbi: PBI-034
     outcome: "Initialized logging backend with env_logger, enabling RUST_LOG configuration"
