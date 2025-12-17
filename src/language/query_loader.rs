@@ -522,4 +522,61 @@ mod tests {
         let err = result.unwrap_err();
         assert!(err.to_string().contains("circular") || err.to_string().contains("Circular"));
     }
+
+    #[test]
+    fn test_resolve_query_with_real_javascript_multiple_inheritance() {
+        // Integration test: JavaScript inherits from BOTH ecma AND jsx
+        let search_path = "/Users/atusy/Library/Application Support/treesitter-ls".to_string();
+
+        // Skip if queries aren't installed
+        let js_path = std::path::Path::new(&search_path)
+            .join("queries")
+            .join("javascript")
+            .join("highlights.scm");
+        let jsx_path = std::path::Path::new(&search_path)
+            .join("queries")
+            .join("jsx")
+            .join("highlights.scm");
+        if !js_path.exists() || !jsx_path.exists() {
+            eprintln!("Skipping: JavaScript or JSX queries not installed");
+            return;
+        }
+
+        let result = QueryLoader::resolve_query_with_inheritance(
+            &[search_path],
+            "javascript",
+            "highlights.scm",
+        );
+
+        assert!(
+            result.is_ok(),
+            "Should resolve JavaScript query: {:?}",
+            result.err()
+        );
+        let content = result.unwrap();
+
+        // Should have ecma content (from inheritance)
+        assert!(
+            content.contains("(identifier) @variable"),
+            "Should contain ecma patterns"
+        );
+
+        // Should have jsx content (from inheritance)
+        assert!(
+            content.contains("jsx_element") || content.contains("jsx_opening_element"),
+            "Should contain jsx patterns"
+        );
+
+        // Should have javascript-specific content
+        assert!(
+            content.contains("@variable.parameter"),
+            "Should contain javascript patterns"
+        );
+
+        // Should NOT have the inherits directive
+        assert!(
+            !content.contains("; inherits:"),
+            "Should strip inherits directive"
+        );
+    }
 }
