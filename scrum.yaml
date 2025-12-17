@@ -275,10 +275,10 @@ current_sprint:
   subtasks:
     - id: S13.1
       task: "Implement parse_inherits_directive() with TDD"
-      status: in_progress
+      status: done
     - id: S13.2
       task: "Implement resolve_query_with_inheritance() with TDD"
-      status: pending
+      status: in_progress
     - id: S13.3
       task: "Implement install_queries_with_dependencies() with TDD"
       status: pending

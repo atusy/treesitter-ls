@@ -9,6 +9,78 @@ use tree_sitter::{Language, Query};
 pub struct QueryLoader;
 
 impl QueryLoader {
+    /// Resolve query inheritance and return the combined query content.
+    ///
+    /// Recursively resolves parent queries and concatenates them in the correct order
+    /// (parents first, then child). Removes the `; inherits:` directive from the output.
+    ///
+    /// # Arguments
+    /// * `runtime_bases` - Search paths for query files
+    /// * `lang_name` - The language to resolve
+    /// * `file_name` - The query file name (e.g., "highlights.scm")
+    ///
+    /// # Returns
+    /// Combined query content with all inherited queries.
+    pub fn resolve_query_with_inheritance(
+        runtime_bases: &[String],
+        lang_name: &str,
+        file_name: &str,
+    ) -> LspResult<String> {
+        let mut visited = std::collections::HashSet::new();
+        Self::resolve_query_recursive(runtime_bases, lang_name, file_name, &mut visited)
+    }
+
+    /// Internal recursive helper for query resolution.
+    fn resolve_query_recursive(
+        runtime_bases: &[String],
+        lang_name: &str,
+        file_name: &str,
+        visited: &mut std::collections::HashSet<String>,
+    ) -> LspResult<String> {
+        // Check for circular inheritance
+        if visited.contains(lang_name) {
+            return Err(LspError::query(format!(
+                "Circular inheritance detected for language '{}'",
+                lang_name
+            )));
+        }
+        visited.insert(lang_name.to_string());
+
+        // Load the query file
+        let content = Self::load_query_file(runtime_bases, lang_name, file_name)?;
+
+        // Parse inheritance directive
+        let parents = Self::parse_inherits_directive(&content);
+
+        // Build combined query: parents first, then child
+        let mut combined = String::new();
+
+        // Recursively resolve parent queries
+        for parent in &parents {
+            let parent_content =
+                Self::resolve_query_recursive(runtime_bases, parent, file_name, visited)?;
+            combined.push_str(&parent_content);
+            combined.push('\n');
+        }
+
+        // Add child content (without the inherits directive line)
+        let child_content = Self::strip_inherits_directive(&content);
+        combined.push_str(&child_content);
+
+        Ok(combined)
+    }
+
+    /// Remove the `; inherits:` line from query content.
+    fn strip_inherits_directive(content: &str) -> String {
+        let first_line = content.lines().next().unwrap_or("");
+        if first_line.starts_with("; inherits:") {
+            // Skip the first line
+            content.lines().skip(1).collect::<Vec<_>>().join("\n")
+        } else {
+            content.to_string()
+        }
+    }
+
     /// Parse the `; inherits: lang1,lang2` directive from query content.
     ///
     /// nvim-treesitter queries can inherit from other queries using this directive
@@ -291,17 +363,10 @@ mod tests {
         // Create ecma query
         let ecma_dir = dir.path().join("queries").join("ecma");
         fs::create_dir_all(&ecma_dir).unwrap();
-        fs::write(
-            ecma_dir.join("highlights.scm"),
-            "(identifier) @variable\n",
-        )
-        .unwrap();
+        fs::write(ecma_dir.join("highlights.scm"), "(identifier) @variable\n").unwrap();
 
-        let result = QueryLoader::resolve_query_with_inheritance(
-            &[base_path],
-            "ecma",
-            "highlights.scm",
-        );
+        let result =
+            QueryLoader::resolve_query_with_inheritance(&[base_path], "ecma", "highlights.scm");
         assert!(result.is_ok());
         let content = result.unwrap();
         assert!(content.contains("(identifier) @variable"));
@@ -316,11 +381,7 @@ mod tests {
         // Create ecma query (base)
         let ecma_dir = dir.path().join("queries").join("ecma");
         fs::create_dir_all(&ecma_dir).unwrap();
-        fs::write(
-            ecma_dir.join("highlights.scm"),
-            "(identifier) @variable\n",
-        )
-        .unwrap();
+        fs::write(ecma_dir.join("highlights.scm"), "(identifier) @variable\n").unwrap();
 
         // Create typescript query (inherits ecma)
         let ts_dir = dir.path().join("queries").join("typescript");
@@ -394,11 +455,8 @@ mod tests {
         fs::create_dir_all(&b_dir).unwrap();
         fs::write(b_dir.join("highlights.scm"), "; inherits: lang_a\n(b) @b\n").unwrap();
 
-        let result = QueryLoader::resolve_query_with_inheritance(
-            &[base_path],
-            "lang_a",
-            "highlights.scm",
-        );
+        let result =
+            QueryLoader::resolve_query_with_inheritance(&[base_path], "lang_a", "highlights.scm");
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("circular") || err.to_string().contains("Circular"));
