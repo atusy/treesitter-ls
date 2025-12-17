@@ -42,6 +42,38 @@ impl<'a> CodeActionOptions<'a> {
             parser_pool: None,
         }
     }
+
+    /// Set highlight and locals queries.
+    pub fn with_queries(mut self, queries: Option<(&'a Query, Option<&'a Query>)>) -> Self {
+        self.queries = queries;
+        self
+    }
+
+    /// Set capture context (filetype and mappings).
+    pub fn with_capture_context(
+        mut self,
+        capture_context: Option<(&'a str, &'a CaptureMappings)>,
+    ) -> Self {
+        self.capture_context = capture_context;
+        self
+    }
+
+    /// Set injection query for language hierarchy detection.
+    pub fn with_injection(mut self, injection_query: &'a Query) -> Self {
+        self.injection_query = Some(injection_query);
+        self
+    }
+
+    /// Set coordinator and parser pool for full injection-aware processing.
+    pub fn with_coordinator(
+        mut self,
+        coordinator: &'a crate::language::LanguageCoordinator,
+        parser_pool: &'a mut crate::language::DocumentParserPool,
+    ) -> Self {
+        self.coordinator = Some(coordinator);
+        self.parser_pool = Some(parser_pool);
+        self
+    }
 }
 
 // Type alias for backwards compatibility during migration
@@ -1965,6 +1997,53 @@ fn main() {
         assert!(options.injection_query.is_none());
         assert!(options.coordinator.is_none());
         assert!(options.parser_pool.is_none());
+    }
+
+    #[test]
+    fn test_code_action_options_builder_methods() {
+        // RED: Test that CodeActionOptions can be built with optional fields
+        let mut parser = Parser::new();
+        let language = tree_sitter_rust::LANGUAGE.into();
+        parser.set_language(&language).expect("load rust grammar");
+
+        let text = "fn main() {}";
+        let tree = parser.parse(text, None).expect("parse rust");
+        let uri = Url::parse("file:///test.rs").unwrap();
+        let cursor = Range::new(Position::new(0, 0), Position::new(0, 0));
+
+        // Create a simple highlights query for testing
+        let highlights_query = Query::new(&language, "(identifier) @variable").unwrap();
+        let capture_mappings: CaptureMappings = HashMap::new();
+
+        // Test builder pattern - should chain like InspectTokenParams
+        let options = CodeActionOptions::new(&uri, text, &tree, cursor)
+            .with_queries(Some((&highlights_query, None)))
+            .with_capture_context(Some(("rust", &capture_mappings)));
+
+        // Verify builder methods set the fields
+        assert!(options.queries.is_some());
+        assert!(options.capture_context.is_some());
+        assert_eq!(options.capture_context.unwrap().0, "rust");
+    }
+
+    #[test]
+    fn test_code_action_options_with_injection() {
+        // RED: Test injection query builder method
+        let mut parser = Parser::new();
+        let language = tree_sitter_rust::LANGUAGE.into();
+        parser.set_language(&language).expect("load rust grammar");
+
+        let text = "fn main() {}";
+        let tree = parser.parse(text, None).expect("parse rust");
+        let uri = Url::parse("file:///test.rs").unwrap();
+        let cursor = Range::new(Position::new(0, 0), Position::new(0, 0));
+
+        let injection_query = Query::new(&language, "(string_literal) @injection.content").unwrap();
+
+        let options = CodeActionOptions::new(&uri, text, &tree, cursor)
+            .with_injection(&injection_query);
+
+        assert!(options.injection_query.is_some());
     }
 
     #[test]
