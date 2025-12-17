@@ -6,8 +6,15 @@ use crate::language::injection;
 use crate::text::PositionMapper;
 use std::str::FromStr;
 
-/// Context for code action generation with injection support
-pub struct CodeActionContext<'a> {
+/// Options for code action generation with optional injection support.
+///
+/// Use the builder pattern to construct:
+/// ```ignore
+/// CodeActionOptions::new(&uri, text, &tree, cursor)
+///     .with_queries(Some((highlights, locals)))
+///     .with_injection(injection_query)
+/// ```
+pub struct CodeActionOptions<'a> {
     pub uri: &'a Url,
     pub text: &'a str,
     pub tree: &'a Tree,
@@ -18,6 +25,27 @@ pub struct CodeActionContext<'a> {
     pub coordinator: Option<&'a crate::language::LanguageCoordinator>,
     pub parser_pool: Option<&'a mut crate::language::DocumentParserPool>,
 }
+
+impl<'a> CodeActionOptions<'a> {
+    /// Create options with required fields only.
+    /// Optional fields (queries, injection_query, coordinator, parser_pool) default to None.
+    pub fn new(uri: &'a Url, text: &'a str, tree: &'a Tree, cursor: Range) -> Self {
+        Self {
+            uri,
+            text,
+            tree,
+            cursor,
+            queries: None,
+            capture_context: None,
+            injection_query: None,
+            coordinator: None,
+            parser_pool: None,
+        }
+    }
+}
+
+// Type alias for backwards compatibility during migration
+type CodeActionContext<'a> = CodeActionOptions<'a>;
 use tower_lsp::lsp_types::{
     CodeAction, CodeActionDisabled, CodeActionKind, CodeActionOrCommand, DocumentChanges, OneOf,
     OptionalVersionedTextDocumentIdentifier, Position, Range, TextDocumentEdit, TextEdit,
@@ -1908,6 +1936,35 @@ fn main() {
             "Should detect regex injection via query, but got: {}",
             reason
         );
+    }
+
+    #[test]
+    fn test_code_action_options_new_creates_minimal_options() {
+        // RED: Test that CodeActionOptions can be created with new() and minimal fields
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .expect("load rust grammar");
+
+        let text = "fn main() {}";
+        let tree = parser.parse(text, None).expect("parse rust");
+        let uri = Url::parse("file:///test.rs").unwrap();
+        let cursor = Range::new(Position::new(0, 0), Position::new(0, 0));
+
+        // This should compile - CodeActionOptions::new() with required fields only
+        let options = CodeActionOptions::new(&uri, text, &tree, cursor);
+
+        // Verify the required fields are set correctly
+        assert_eq!(options.uri.as_str(), "file:///test.rs");
+        assert_eq!(options.text, "fn main() {}");
+        assert_eq!(options.cursor.start.line, 0);
+
+        // Optional fields should be None
+        assert!(options.queries.is_none());
+        assert!(options.capture_context.is_none());
+        assert!(options.injection_query.is_none());
+        assert!(options.coordinator.is_none());
+        assert!(options.parser_pool.is_none());
     }
 
     #[test]
