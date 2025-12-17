@@ -38,8 +38,8 @@ quick_status:
   current_sprint:
     number: 12
     pbi: PBI-016
-    status: in_progress
-    goal: "Parser crash resilience via subprocess isolation"
+    status: done
+    goal: "Parser crash resilience via state file detection"
   impediments: 0
 
 ---
@@ -66,7 +66,7 @@ product_goal:
 # ==============================================================================
 # PRODUCT BACKLOG (Active Items Only)
 # ==============================================================================
-# Completed PBIs: PBI-001 through PBI-010, PBI-013 through PBI-015, PBI-017, PBI-018, PBI-019
+# Completed PBIs: PBI-001 through PBI-010, PBI-013 through PBI-016, PBI-017, PBI-018, PBI-019
 # For details: git log -- scrum.yaml
 
 product_backlog:
@@ -117,7 +117,7 @@ product_backlog:
 
   # Priority 3: Robustness improvement
   - id: PBI-016
-    status: ready
+    status: done
     story:
       role: "user of treesitter-ls"
       capability: "continue using the language server even when a parser crashes"
@@ -130,9 +130,12 @@ product_backlog:
       - criterion: "Crashed parser can be retried after reinstallation"
     story_points: 8
     technical_notes: |
-      Solution: Subprocess isolation for parsing operations
-      C assert() failures trigger SIGABRT which cannot be caught by Rust catch_unwind
-      Run parsing in subprocess: treesitter-ls parse --language <lang> --timeout 30
+      Solution: State file crash detection (simpler than subprocess isolation)
+      - Before parsing: write language to "parsing_in_progress" state file
+      - After success: remove state file
+      - On restart: if state file exists, mark that parser as crashed
+      - CLI command: treesitter-ls crash-recovery {list,clear}
+      - Failed parsers are skipped until user clears via CLI after reinstall
 
   # Priority 4: UX improvement (draft)
   - id: PBI-011
@@ -196,8 +199,8 @@ definition_of_done:
 current_sprint:
   number: 12
   pbi: PBI-016
-  status: in_progress
-  goal: "Parser crash resilience via subprocess isolation"
+  status: done
+  goal: "Parser crash resilience via state file detection"
 
 ---
 # ==============================================================================
@@ -206,6 +209,9 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 12
+    pbi: PBI-016
+    outcome: "Parser crash resilience via state file detection and CLI recovery"
   - sprint: 11
     pbi: PBI-010
     outcome: "Cache parsers.lua locally with 1-hour TTL and --no-cache flag"
