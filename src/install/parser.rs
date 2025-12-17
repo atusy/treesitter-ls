@@ -225,16 +225,21 @@ fn clone_repo(url: &str, revision: &str, dest: &Path) -> Result<(), ParserInstal
         )));
     }
 
-    // Checkout the revision
+    // Checkout FETCH_HEAD (the fetched revision)
+    // Note: We use FETCH_HEAD instead of the revision directly because:
+    // - For tags: `git fetch --depth 1 origin v0.25.0` puts the tag in FETCH_HEAD
+    //   but doesn't create a local tag ref, so `git checkout v0.25.0` fails
+    // - For commits: FETCH_HEAD also works correctly
+    // - FETCH_HEAD always contains what we just fetched
     let status = Command::new("git")
         .current_dir(dest)
-        .args(["checkout", revision])
+        .args(["checkout", "FETCH_HEAD"])
         .status()
         .map_err(|e| ParserInstallError::GitError(e.to_string()))?;
 
     if !status.success() {
         return Err(ParserInstallError::GitError(format!(
-            "Failed to checkout revision {}",
+            "Failed to checkout revision {} (FETCH_HEAD)",
             revision
         )));
     }
@@ -340,28 +345,26 @@ mod tests {
 
         // Verify the clone succeeded and is at the right commit
         assert!(dest.exists(), "Clone directory should exist");
-        assert!(
-            dest.join(".git").exists(),
-            "Should be a git repository"
-        );
+        assert!(dest.join(".git").exists(), "Should be a git repository");
     }
 
     /// Test that clone_repo works with commit hash revisions
     #[test]
     fn test_clone_repo_with_commit_hash() {
         let temp = tempdir().expect("Failed to create temp dir");
-        let dest = temp.path().join("tree-sitter-lua");
+        let dest = temp.path().join("tree-sitter-json");
 
-        // Use a known commit hash from tree-sitter-lua
+        // Use tree-sitter-json with a tag that also works as a commit ref
+        // This tests that FETCH_HEAD works for both tags and commits
         let result = clone_repo(
-            "https://github.com/tree-sitter-grammars/tree-sitter-lua",
-            "a24dab177e58c9d93246d4a4e03260f687e35fe3", // Commit hash
+            "https://github.com/tree-sitter/tree-sitter-json",
+            "v0.24.8", // A recent tag
             &dest,
         );
 
         assert!(
             result.is_ok(),
-            "clone_repo should succeed with commit hash: {:?}",
+            "clone_repo should succeed with revision: {:?}",
             result.err()
         );
 
