@@ -1,6 +1,7 @@
 pub mod config_store;
 pub mod coordinator;
 pub mod events;
+pub mod failed_parsers;
 pub mod filetypes;
 pub mod injection;
 pub mod loader;
@@ -14,6 +15,7 @@ pub mod registry;
 pub use config_store::ConfigStore;
 pub use coordinator::LanguageCoordinator;
 pub use events::{LanguageEvent, LanguageLoadResult, LanguageLoadSummary, LanguageLogLevel};
+pub use failed_parsers::FailedParserRegistry;
 pub use filetypes::FiletypeResolver;
 pub use loader::ParserLoader;
 pub use parser_pool::{DocumentParserPool, ParserFactory};

@@ -36,10 +36,10 @@ rules:
 
 quick_status:
   current_sprint:
-    number: 11
-    pbi: PBI-010
-    status: done
-    goal: "Cache parsers.lua locally with --no-cache bypass"
+    number: 12
+    pbi: PBI-016
+    status: in_progress
+    goal: "Parser crash resilience via subprocess isolation"
   impediments: 0
 
 ---
@@ -194,10 +194,10 @@ definition_of_done:
 # ==============================================================================
 
 current_sprint:
-  number: 11
-  pbi: PBI-010
-  status: done
-  goal: "Cache parsers.lua locally with --no-cache bypass"
+  number: 12
+  pbi: PBI-016
+  status: in_progress
+  goal: "Parser crash resilience via subprocess isolation"
 
 ---
 # ==============================================================================
