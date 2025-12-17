@@ -71,6 +71,56 @@ product_goal:
 #
 product_backlog:
   # ============================================================================
+  # ACTIVE PBIs
+  # ============================================================================
+  - id: PBI-028
+    status: ready
+    story:
+      role: "user of treesitter-ls"
+      capability: "get syntax highlighting without specifying searchPaths in config"
+      benefit: "I can use zero-config mode as intended without manually configuring paths"
+    acceptance_criteria:
+      - criterion: "default_search_paths() returns base directory, not subdirectories"
+        verification: |
+          # Default should be ["/Users/.../treesitter-ls"], not [".../parser", ".../queries"]
+          cargo test test_default_search_paths_format
+      - criterion: "Highlighting works when searchPaths is not specified in init_options"
+        verification: |
+          # With searchPaths commented out in minimal_init.lua, opening a file should highlight
+          nvim -es --headless -u scripts/minimal_init.lua -c "e tests/assets/example.lua" -c "sleep 2" -c "lua print(#vim.lsp.semantic_tokens.get(0, {}, {}) > 0 and 'OK' or 'FAIL')" -c "qa!"
+      - criterion: "Documentation updated to clarify searchPaths format"
+        verification: |
+          grep -E "searchPaths.*base directory|searchPaths.*not.*subdirectories" docs/README.md
+      - criterion: "Product goal MVP definition updated to reflect correct path format"
+        verification: |
+          grep -v "parser,queries" scrum.yaml | grep -E "default.*searchPaths"
+    story_points: 2
+    technical_notes: |
+      Bug: default_search_paths() returns wrong path format
+
+      Current behavior (BROKEN):
+        default_search_paths() returns:
+          [".../treesitter-ls/parser", ".../treesitter-ls/queries"]
+
+        But resolve_library_path() expects base directories and appends "parser/" itself:
+          PathBuf::from(path).join("parser").join(format!("{language}.so"))
+
+        Result: Looks for ".../treesitter-ls/parser/parser/lua.so" → NOT FOUND
+
+      Expected behavior:
+        default_search_paths() should return:
+          [".../treesitter-ls"]
+
+        Then resolve_library_path() correctly finds:
+          ".../treesitter-ls/parser/lua.so"
+
+      Fix location: src/config.rs, default_search_paths() function
+
+      Documentation to update:
+        - docs/README.md: Clarify searchPaths format (base directories, not subdirs)
+        - scrum.yaml: Fix product_goal.mvp_definition line 60
+
+  # ============================================================================
   # COMPLETED PBIs (details in git history)
   # ============================================================================
   - id: PBI-025
