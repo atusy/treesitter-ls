@@ -38,7 +38,7 @@ quick_status:
   current_sprint:
     number: 31
     pbi: PBI-033
-    status: in_progress
+    status: done
     goal: "Consolidate code action function variants to single entry point with builder"
   impediments: 0
 
@@ -307,7 +307,7 @@ product_backlog:
       Estimated time: 2-3 hours
 
   - id: PBI-033
-    status: ready
+    status: done
     story:
       role: "developer maintaining treesitter-ls"
       capability: "understand code action APIs without navigating multiple function variants"
@@ -648,73 +648,24 @@ definition_of_done:
 current_sprint:
   number: 31
   pbi: PBI-033
-  status: in_progress
+  status: done
   goal: "Consolidate code action function variants to single entry point with builder"
   subtasks:
-    # Phase 1: Create CodeActionOptions with builder pattern (RED-GREEN-REFACTOR)
     - id: S31.1
-      task: "RED: Write test for CodeActionOptions struct with required fields"
-      status: pending
-      tdd_phase: red
-      notes: |
-        Test that CodeActionOptions::new(uri, text, tree, cursor) creates valid options.
-        This verifies acceptance criterion 1: "pub struct CodeActionOptions".
+      task: "Create CodeActionOptions struct with new() and builder methods"
+      status: completed
     - id: S31.2
-      task: "GREEN: Implement CodeActionOptions struct with new() constructor"
-      status: pending
-      tdd_phase: green
-      notes: |
-        Rename CodeActionContext to CodeActionOptions (struct already exists at line 10).
-        Add new() constructor for required fields only.
+      task: "Create unified handle_code_actions(options) entry point"
+      status: completed
     - id: S31.3
-      task: "RED: Write test for CodeActionOptions builder methods"
-      status: pending
-      tdd_phase: red
-      notes: |
-        Test builder methods: with_queries(), with_capture_context(),
-        with_injection_query(), with_coordinator().
+      task: "Update lsp_impl.rs callers to use new builder API"
+      status: completed
     - id: S31.4
-      task: "GREEN: Implement builder methods on CodeActionOptions"
-      status: pending
-      tdd_phase: green
-      notes: |
-        Add builder pattern methods that return Self for chaining.
-        Similar to existing InspectTokenParams pattern (lines 40-83).
-
-    # Phase 2: Consolidate public functions (RED-GREEN-REFACTOR)
+      task: "Make deprecated functions test-only"
+      status: completed
     - id: S31.5
-      task: "RED: Write test calling new unified handle_code_actions(options)"
-      status: pending
-      tdd_phase: red
-      notes: |
-        Test the new single entry point API:
-          let options = CodeActionOptions::new(uri, text, tree, cursor);
-          handle_code_actions(options)
-    - id: S31.6
-      task: "GREEN: Create unified handle_code_actions(options) function"
-      status: pending
-      tdd_phase: green
-      notes: |
-        Rename handle_code_actions_with_context to handle_code_actions.
-        Keep old variants temporarily as deprecated wrappers.
-    - id: S31.7
-      task: "REFACTOR: Remove deprecated function variants"
-      status: pending
-      tdd_phase: refactor
-      notes: |
-        Remove handle_code_actions_with_injection_query and
-        handle_code_actions_with_injection_and_coordinator.
-        Update lsp_impl.rs callers to use new API.
-
-    # Phase 3: Verification
-    - id: S31.8
-      task: "Verify acceptance criteria and run full test suite"
-      status: pending
-      notes: |
-        1. grep -q "pub struct CodeActionOptions" src/analysis/refactor.rs
-        2. [ $(grep -c "pub fn handle_code_actions" src/analysis/refactor.rs) -le 2 ]
-        3. cargo test
-        4. cargo clippy -- -D warnings
+      task: "Verify all acceptance criteria"
+      status: completed
 
 ---
 # ==============================================================================
@@ -723,6 +674,9 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 31
+    pbi: PBI-033
+    outcome: "Consolidated code action functions to single entry point with CodeActionOptions builder pattern"
   - sprint: 30
     pbi: PBI-032
     outcome: "Split lsp_impl.rs from 2327 to 1299 lines by extracting auto_install module"
