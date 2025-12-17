@@ -36,10 +36,10 @@ rules:
 
 quick_status:
   current_sprint:
-    number: 20
-    pbi: PBI-027
+    number: 21
+    pbi: PBI-028
     status: done
-    goal: "Fix failing selection range test for markdown"
+    goal: "Fix default_search_paths() to return base directory"
   impediments: 0
 
 ---
@@ -57,7 +57,7 @@ product_goal:
     3. treesitter-ls automatically:
        a. Detects the language from file extension (via LSP languageId)
        b. Installs the parser and queries if missing (autoInstall: true by default)
-       c. Uses default searchPaths (~/.local/share/treesitter-ls/{parser,queries})
+       c. Uses default searchPaths (~/.local/share/treesitter-ls)
        d. Provides semantic highlighting
     4. Power users can still override with explicit configuration
   owner: "@scrum-team-product-owner"
@@ -75,7 +75,7 @@ product_backlog:
   # ACTIVE PBIs
   # ============================================================================
   - id: PBI-028
-    status: ready
+    status: done
     story:
       role: "user of treesitter-ls"
       capability: "get syntax highlighting without specifying searchPaths in config"
@@ -646,13 +646,19 @@ definition_of_done:
 # ==============================================================================
 
 current_sprint:
-  number: 20
-  pbi: PBI-027
+  number: 21
+  pbi: PBI-028
   status: done
-  goal: "Fix failing selection range test for markdown"
+  goal: "Fix default_search_paths() to return base directory"
   subtasks:
-    - id: S20.1
-      task: "Update test expectation to match actual markdown AST structure"
+    - id: S21.1
+      task: "Write failing test for correct path format"
+      status: completed
+    - id: S21.2
+      task: "Fix default_search_paths() to return base directory only"
+      status: completed
+    - id: S21.3
+      task: "Update documentation to clarify searchPaths format"
       status: completed
 
 ---
@@ -662,6 +668,9 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 21
+    pbi: PBI-028
+    outcome: "Fixed default_search_paths() to return base directory, enabling zero-config mode"
   - sprint: 20
     pbi: PBI-027
     outcome: "Fixed markdown selection range test expectation to match AST structure"

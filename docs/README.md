@@ -121,10 +121,15 @@ Configuration is provided via LSP `initializationOptions`. All options are optio
 
 #### `searchPaths`
 
-Array of directories to search for parsers and queries. If not specified, uses platform-specific defaults.
+Array of base directories to search for parsers and queries. If not specified, uses platform-specific defaults:
+- Linux: `~/.local/share/treesitter-ls`
+- macOS: `~/Library/Application Support/treesitter-ls`
+- Windows: `%APPDATA%/treesitter-ls`
 
-Parsers are searched as `{searchPath}/{language}.{so,dylib,dll}`.
-Queries are searched as `{searchPath}/{language}/{query_type}.scm`.
+**Important:** Specify base directories, not subdirectories. The resolver automatically appends `parser/` and `queries/` subdirectories.
+
+Parsers are searched as `{searchPath}/parser/{language}.{so,dylib,dll}`.
+Queries are searched as `{searchPath}/queries/{language}/{query_type}.scm`.
 
 #### `autoInstall`
 
