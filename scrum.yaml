@@ -36,10 +36,10 @@ rules:
 
 quick_status:
   current_sprint:
-    number: 17
-    pbi: PBI-022
+    number: 18
+    pbi: PBI-023
     status: in_progress
-    goal: "Add treesitter-ls config init command to generate default configuration"
+    goal: "Add treesitter-ls language status command"
   impediments: 0
 
 ---
@@ -196,7 +196,7 @@ product_backlog:
 
   # Priority 3: Config generation CLI command
   - id: PBI-022
-    status: ready
+    status: done
     story:
       role: "power user of treesitter-ls"
       capability: "generate a default configuration file"
@@ -497,19 +497,19 @@ definition_of_done:
 # ==============================================================================
 
 current_sprint:
-  number: 17
-  pbi: PBI-022
+  number: 18
+  pbi: PBI-023
   status: in_progress
-  goal: "Add treesitter-ls config init command to generate default configuration"
+  goal: "Add treesitter-ls language status command"
   subtasks:
-    - id: S17.1
-      task: "Add Config subcommand with Init action to CLI"
+    - id: S18.1
+      task: "Add Status action to LanguageAction enum"
       status: pending
-    - id: S17.2
-      task: "Implement run_config_init() function that writes template TOML"
+    - id: S18.2
+      task: "Implement run_language_status() to scan installed parsers/queries"
       status: pending
-    - id: S17.3
-      task: "Add --force flag to overwrite existing config"
+    - id: S18.3
+      task: "Add --verbose flag for detailed output"
       status: pending
 
 ---
@@ -519,6 +519,9 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 17
+    pbi: PBI-022
+    outcome: "Added config init command to generate treesitter-ls.toml template"
   - sprint: 16
     pbi: PBI-021
     outcome: "Added Prerequisites section to docs/README.md with dependency requirements"
