@@ -566,4 +566,42 @@ mod tests {
             "explicit autoInstall: false should be honored"
         );
     }
+
+    #[test]
+    fn test_default_search_paths_format() {
+        // PBI-028: default_search_paths() should return base directory only.
+        //
+        // resolve_library_path() appends "parser/" to each search path,
+        // so default_search_paths() should NOT include "parser" or "queries" subdirectories.
+        //
+        // WRONG: [".../treesitter-ls/parser", ".../treesitter-ls/queries"]
+        //   -> resolve_library_path looks for ".../treesitter-ls/parser/parser/lua.so" (FAILS)
+        //
+        // CORRECT: [".../treesitter-ls"]
+        //   -> resolve_library_path looks for ".../treesitter-ls/parser/lua.so" (WORKS)
+        let paths = default_search_paths();
+
+        // Should have exactly one path (the base directory)
+        assert_eq!(
+            paths.len(),
+            1,
+            "default_search_paths should return single base directory, got {:?}",
+            paths
+        );
+
+        // The path should NOT end with "/parser" or "/queries"
+        let path = &paths[0];
+        assert!(
+            !path.ends_with("/parser") && !path.ends_with("/queries"),
+            "Path should be base directory, not subdirectory: {}",
+            path
+        );
+
+        // The path should end with "treesitter-ls" (the base directory name)
+        assert!(
+            path.ends_with("treesitter-ls"),
+            "Path should end with 'treesitter-ls': {}",
+            path
+        );
+    }
 }
