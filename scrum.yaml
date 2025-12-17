@@ -208,19 +208,6 @@ product_backlog:
       - Multiple inheritance: javascript inherits both ecma AND jsx
       - Transitive: tsx -> typescript -> ecma AND tsx -> jsx
 
-  # Priority 5: Nice-to-have (draft)
-  - id: PBI-012
-    status: draft
-    story:
-      role: "user of treesitter-ls"
-      capability: "see progress indicators during parser compilation"
-      benefit: "I know the install is working and approximately how long it will take"
-    acceptance_criteria:
-      - criterion: "Parser compilation shows phases (cloning, building, installing)"
-      - criterion: "Long operations show spinner or elapsed time"
-      - criterion: "Quiet mode (--quiet) suppresses progress output"
-    story_points: 2
-
 ---
 # ==============================================================================
 # DEFINITION OF READY
