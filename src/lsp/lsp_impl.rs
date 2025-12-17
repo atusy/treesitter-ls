@@ -52,7 +52,7 @@ impl InstallingLanguages {
     pub fn is_installing(&self, language: &str) -> bool {
         self.languages
             .lock()
-            .recover_poison_with_log("InstallingLanguages::is_installing")
+            .recover_poison("InstallingLanguages::is_installing")
             .unwrap()
             .contains(language)
     }
@@ -62,7 +62,7 @@ impl InstallingLanguages {
     pub fn try_start_install(&self, language: &str) -> bool {
         self.languages
             .lock()
-            .recover_poison_with_log("InstallingLanguages::try_start_install")
+            .recover_poison("InstallingLanguages::try_start_install")
             .unwrap()
             .insert(language.to_string())
     }
@@ -71,7 +71,7 @@ impl InstallingLanguages {
     pub fn finish_install(&self, language: &str) {
         self.languages
             .lock()
-            .recover_poison_with_log("InstallingLanguages::finish_install")
+            .recover_poison("InstallingLanguages::finish_install")
             .unwrap()
             .remove(language);
     }
@@ -197,7 +197,7 @@ impl TreeSitterLs {
                 let mut pool = self
                     .parser_pool
                     .lock()
-                    .recover_poison_with_log("parse_document parser_pool")
+                    .recover_poison("parse_document parser_pool")
                     .unwrap();
                 if let Some(mut parser) = pool.acquire(&language_name) {
                     let old_tree = if !edits.is_empty() {
@@ -880,7 +880,7 @@ impl LanguageServer for TreeSitterLs {
             let mut pool = self
                 .parser_pool
                 .lock()
-                .recover_poison_with_log("semantic_tokens_full parser_pool")
+                .recover_poison("semantic_tokens_full parser_pool")
                 .unwrap();
             crate::analysis::handle_semantic_tokens_full(
                 text,
@@ -986,7 +986,7 @@ impl LanguageServer for TreeSitterLs {
             let mut pool = self
                 .parser_pool
                 .lock()
-                .recover_poison_with_log("semantic_tokens_full_delta parser_pool")
+                .recover_poison("semantic_tokens_full_delta parser_pool")
                 .unwrap();
 
             // Delegate to handler with injection support
@@ -1082,7 +1082,7 @@ impl LanguageServer for TreeSitterLs {
         let mut pool = self
             .parser_pool
             .lock()
-            .recover_poison_with_log("semantic_tokens_range parser_pool")
+            .recover_poison("semantic_tokens_range parser_pool")
             .unwrap();
         let result = crate::analysis::handle_semantic_tokens_range(
             text,
@@ -1163,7 +1163,7 @@ impl LanguageServer for TreeSitterLs {
         let mut pool = self
             .parser_pool
             .lock()
-            .recover_poison_with_log("selection_range parser_pool")
+            .recover_poison("selection_range parser_pool")
             .unwrap();
         let result = handle_selection_range(&doc, &positions, &self.language, &mut pool);
 

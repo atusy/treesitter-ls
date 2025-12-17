@@ -490,7 +490,7 @@ product_backlog:
       After PBI-030, most callers will already use recover_poison_with_log().
 
   - id: PBI-037
-    status: ready
+    status: done
     story:
       role: "operator monitoring logs"
       capability: "see crash detection events at error level instead of warn"
