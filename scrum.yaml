@@ -35,12 +35,11 @@ rules:
 # ==============================================================================
 
 quick_status:
-  last_sprint:
-    number: 9
-    pbi: PBI-019
-    status: done
-    outcome: "Zero-Config MVP complete"
-  next_ready_pbi: PBI-015
+  current_sprint:
+    number: 10
+    pbi: PBI-015
+    status: in_progress
+    goal: "Fix tag revision checkout bug"
   impediments: 0
 
 ---
@@ -195,9 +194,10 @@ definition_of_done:
 # ==============================================================================
 
 current_sprint:
-  status: none
-  note: "Sprint 9 (PBI-019) completed. Ready for Sprint 10 planning."
-  next_candidate: PBI-015
+  number: 10
+  pbi: PBI-015
+  status: in_progress
+  goal: "Fix parser installation for tag revisions (git checkout FETCH_HEAD)"
 
 ---
 # ==============================================================================

@@ -298,6 +298,7 @@ fn find_built_library(source_dir: &Path) -> Result<PathBuf, ParserInstallError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn test_shared_lib_extension() {
@@ -311,5 +312,59 @@ mod tests {
         // but that's okay - it's testing the search logic
         let _result = find_tree_sitter();
         // Just verify it doesn't panic
+    }
+
+    /// PBI-015: Test that clone_repo works with tag revisions (e.g., v0.25.0)
+    /// This is the bug fix test - tag revisions failed because:
+    /// - `git fetch --depth 1 origin v0.25.0` puts the tag in FETCH_HEAD
+    /// - `git checkout v0.25.0` fails because the tag isn't a local ref
+    /// - Fix: use `git checkout FETCH_HEAD` instead
+    #[test]
+    fn test_clone_repo_with_tag_revision() {
+        let temp = tempdir().expect("Failed to create temp dir");
+        let dest = temp.path().join("tree-sitter-python");
+
+        // Python parser uses tag revision (v0.23.5 is a known tag)
+        // Using a small/fast repo for testing
+        let result = clone_repo(
+            "https://github.com/tree-sitter/tree-sitter-python",
+            "v0.23.5", // Tag revision - this is what was failing
+            &dest,
+        );
+
+        assert!(
+            result.is_ok(),
+            "clone_repo should succeed with tag revision: {:?}",
+            result.err()
+        );
+
+        // Verify the clone succeeded and is at the right commit
+        assert!(dest.exists(), "Clone directory should exist");
+        assert!(
+            dest.join(".git").exists(),
+            "Should be a git repository"
+        );
+    }
+
+    /// Test that clone_repo works with commit hash revisions
+    #[test]
+    fn test_clone_repo_with_commit_hash() {
+        let temp = tempdir().expect("Failed to create temp dir");
+        let dest = temp.path().join("tree-sitter-lua");
+
+        // Use a known commit hash from tree-sitter-lua
+        let result = clone_repo(
+            "https://github.com/tree-sitter-grammars/tree-sitter-lua",
+            "a24dab177e58c9d93246d4a4e03260f687e35fe3", // Commit hash
+            &dest,
+        );
+
+        assert!(
+            result.is_ok(),
+            "clone_repo should succeed with commit hash: {:?}",
+            result.err()
+        );
+
+        assert!(dest.exists(), "Clone directory should exist");
     }
 }
