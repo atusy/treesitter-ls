@@ -188,7 +188,7 @@ impl QueryLoader {
         Self::parse_query(language, &query_str)
     }
 
-    /// Load and parse a query from search paths
+    /// Load and parse a query from search paths (without inheritance resolution).
     pub fn load_query_from_search_paths(
         language: &Language,
         runtime_bases: &[String],
@@ -196,6 +196,20 @@ impl QueryLoader {
         file_name: &str,
     ) -> LspResult<Query> {
         let query_str = Self::load_query_file(runtime_bases, lang_name, file_name)?;
+        Self::parse_query(language, &query_str)
+    }
+
+    /// Load and parse a query with inheritance resolution.
+    ///
+    /// This resolves `; inherits:` directives and concatenates parent queries.
+    /// Use this for languages that may inherit from base query sets (e.g., typescript -> ecma).
+    pub fn load_query_with_inheritance(
+        language: &Language,
+        runtime_bases: &[String],
+        lang_name: &str,
+        file_name: &str,
+    ) -> LspResult<Query> {
+        let query_str = Self::resolve_query_with_inheritance(runtime_bases, lang_name, file_name)?;
         Self::parse_query(language, &query_str)
     }
 

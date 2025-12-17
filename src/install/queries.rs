@@ -141,6 +141,143 @@ pub fn install_queries(
     })
 }
 
+/// Parse the `; inherits: lang1,lang2` directive from query content.
+/// Returns the list of parent languages.
+fn parse_inherits_directive(content: &str) -> Vec<String> {
+    let first_line = content.lines().next().unwrap_or("");
+    if let Some(rest) = first_line.strip_prefix("; inherits:") {
+        rest.split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    } else {
+        Vec::new()
+    }
+}
+
+/// Download and install query files for a language, including inherited dependencies.
+///
+/// This recursively downloads parent queries (e.g., ecma, jsx for TypeScript).
+pub fn install_queries_with_dependencies(
+    language: &str,
+    data_dir: &Path,
+    force: bool,
+) -> Result<QueryInstallResult, QueryInstallError> {
+    let mut installed = std::collections::HashSet::new();
+    install_queries_recursive(language, data_dir, force, &mut installed)
+}
+
+/// Internal recursive helper for installing queries with dependencies.
+fn install_queries_recursive(
+    language: &str,
+    data_dir: &Path,
+    force: bool,
+    installed: &mut std::collections::HashSet<String>,
+) -> Result<QueryInstallResult, QueryInstallError> {
+    // Skip if already installed in this session
+    if installed.contains(language) {
+        return Ok(QueryInstallResult {
+            language: language.to_string(),
+            install_path: data_dir.join("queries").join(language),
+            files_downloaded: vec![],
+        });
+    }
+
+    let queries_dir = data_dir.join("queries").join(language);
+
+    // Check if queries already exist
+    if queries_dir.exists() && !force {
+        // Even if skipping, we need to check for inherited dependencies
+        let highlights_path = queries_dir.join("highlights.scm");
+        if highlights_path.exists()
+            && let Ok(content) = std::fs::read_to_string(&highlights_path)
+        {
+            let parents = parse_inherits_directive(&content);
+            for parent in parents {
+                // Install parent dependencies (don't force, just ensure they exist)
+                let _ = install_queries_recursive(&parent, data_dir, false, installed);
+            }
+        }
+        installed.insert(language.to_string());
+        return Err(QueryInstallError::AlreadyExists(queries_dir));
+    }
+
+    // Create the queries directory
+    fs::create_dir_all(&queries_dir)?;
+
+    let mut files_downloaded = Vec::new();
+    let mut any_success = false;
+    let mut parents_to_install = Vec::new();
+
+    // Download each query file
+    for query_file in QUERY_FILES {
+        let url = format!(
+            "{}/{}/{}",
+            NVIM_TREESITTER_QUERIES_URL, language, query_file
+        );
+
+        match download_file(&url) {
+            Ok(content) => {
+                // Check for inherits directive in highlights.scm
+                if *query_file == "highlights.scm" {
+                    parents_to_install = parse_inherits_directive(&content);
+                }
+
+                let file_path = queries_dir.join(query_file);
+                let mut file = fs::File::create(&file_path)?;
+                file.write_all(content.as_bytes())?;
+                files_downloaded.push(query_file.to_string());
+                any_success = true;
+            }
+            Err(e) => {
+                // highlights.scm is required, others are optional
+                if *query_file == "highlights.scm" {
+                    // Clean up the directory we created
+                    let _ = fs::remove_dir_all(&queries_dir);
+                    return Err(QueryInstallError::LanguageNotSupported(
+                        language.to_string(),
+                    ));
+                }
+                // Log but continue for optional files
+                eprintln!(
+                    "Note: {} not available for {} ({})",
+                    query_file, language, e
+                );
+            }
+        }
+    }
+
+    if !any_success {
+        let _ = fs::remove_dir_all(&queries_dir);
+        return Err(QueryInstallError::LanguageNotSupported(
+            language.to_string(),
+        ));
+    }
+
+    installed.insert(language.to_string());
+
+    // Install parent dependencies
+    for parent in parents_to_install {
+        eprintln!("Installing inherited queries: {}", parent);
+        // Don't fail if parent already exists
+        match install_queries_recursive(&parent, data_dir, false, installed) {
+            Ok(_) | Err(QueryInstallError::AlreadyExists(_)) => {}
+            Err(e) => {
+                eprintln!(
+                    "Warning: Failed to install inherited queries '{}': {}",
+                    parent, e
+                );
+            }
+        }
+    }
+
+    Ok(QueryInstallResult {
+        language: language.to_string(),
+        install_path: queries_dir,
+        files_downloaded,
+    })
+}
+
 /// Download a file from a URL.
 fn download_file(url: &str) -> Result<String, QueryInstallError> {
     let response =

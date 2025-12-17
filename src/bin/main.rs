@@ -231,10 +231,11 @@ fn run_install(
     }
 
     // Install queries (unless --parser-only)
+    // Use install_queries_with_dependencies to also download inherited queries
     if !parser_only {
         eprintln!("Installing queries for '{}' to {:?}...", language, data_dir);
 
-        match queries::install_queries(language, &data_dir, force) {
+        match queries::install_queries_with_dependencies(language, &data_dir, force) {
             Ok(result) => {
                 eprintln!("✓ Queries installed: {}", result.install_path.display());
                 if verbose {

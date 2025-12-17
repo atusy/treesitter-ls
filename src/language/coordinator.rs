@@ -106,7 +106,10 @@ impl LanguageCoordinator {
             .register_unchecked(language_id.to_string(), language.clone());
 
         let mut events = Vec::new();
-        if let Ok(query) = QueryLoader::load_query_from_search_paths(
+
+        // Use inheritance-aware loading for all query types
+        // This handles languages like TypeScript that inherit from ecma
+        if let Ok(query) = QueryLoader::load_query_with_inheritance(
             &language,
             paths,
             language_id,
@@ -121,7 +124,7 @@ impl LanguageCoordinator {
         }
 
         if let Ok(query) =
-            QueryLoader::load_query_from_search_paths(&language, paths, language_id, "locals.scm")
+            QueryLoader::load_query_with_inheritance(&language, paths, language_id, "locals.scm")
         {
             self.query_store
                 .insert_locals_query(language_id.to_string(), Arc::new(query));
@@ -131,7 +134,7 @@ impl LanguageCoordinator {
             ));
         }
 
-        if let Ok(query) = QueryLoader::load_query_from_search_paths(
+        if let Ok(query) = QueryLoader::load_query_with_inheritance(
             &language,
             paths,
             language_id,
