@@ -36,10 +36,10 @@ rules:
 
 quick_status:
   current_sprint:
-    number: 13
-    pbi: PBI-020
+    number: 14
+    pbi: PBI-025
     status: done
-    goal: "Query inheritance support for TypeScript, JavaScript, etc."
+    goal: "Architecture Decision Records documentation"
   impediments: 0
 
 ---
@@ -72,7 +72,7 @@ product_goal:
 product_backlog:
   # Priority 0: Architecture Decision Records
   - id: PBI-025
-    status: ready
+    status: done
     story:
       role: "developer or contributor of treesitter-ls"
       capability: "understand past architectural decisions and their rationale"
@@ -501,22 +501,16 @@ definition_of_done:
 # ==============================================================================
 
 current_sprint:
-  number: 13
-  pbi: PBI-020
+  number: 14
+  pbi: PBI-025
   status: done
-  goal: "Query inheritance support for TypeScript, JavaScript, etc."
+  goal: "Architecture Decision Records documentation"
   subtasks:
-    - id: S13.1
-      task: "Implement parse_inherits_directive() with TDD"
+    - id: S14.1
+      task: "Create docs/adr/ directory with ADR template"
       status: done
-    - id: S13.2
-      task: "Implement resolve_query_with_inheritance() with TDD"
-      status: done
-    - id: S13.3
-      task: "Implement install_queries_with_dependencies() with TDD"
-      status: done
-    - id: S13.4
-      task: "Integration test with TypeScript"
+    - id: S14.2
+      task: "Create ADR-0001: Hierarchical CLI Subcommands"
       status: done
 
 ---
@@ -526,6 +520,9 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 14
+    pbi: PBI-025
+    outcome: "ADR documentation with template and ADR-0001 (hierarchical CLI subcommands)"
   - sprint: 13
     pbi: PBI-020
     outcome: "Query inheritance support via parse_inherits_directive() and resolve_query_with_inheritance()"
