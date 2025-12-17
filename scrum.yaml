@@ -125,7 +125,7 @@ product_backlog:
   # TIDYING PBIs (Technical Debt Reduction)
   # ============================================================================
   - id: PBI-029
-    status: ready
+    status: done
     story:
       role: "developer maintaining treesitter-ls"
       capability: "work with a codebase free of dead and deprecated code"

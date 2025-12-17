@@ -11,6 +11,7 @@ use crate::analysis::{
 };
 use crate::config::WorkspaceSettings;
 use crate::document::DocumentStore;
+use crate::error::LockResultExt;
 use crate::language::{DocumentParserPool, FailedParserRegistry, LanguageCoordinator};
 use crate::language::{LanguageEvent, LanguageLogLevel};
 use crate::lsp::{SettingsEvent, SettingsEventKind, SettingsSource, load_settings};
@@ -49,47 +50,30 @@ impl InstallingLanguages {
     /// Check if a language is currently being installed.
     #[cfg(test)] // Only used in tests for now
     pub fn is_installing(&self, language: &str) -> bool {
-        match self.languages.lock() {
-            Ok(guard) => guard.contains(language),
-            Err(poisoned) => {
-                log::warn!(
-                    target: "treesitter_ls::lock_recovery",
-                    "Recovered from poisoned lock in InstallingLanguages::is_installing"
-                );
-                poisoned.into_inner().contains(language)
-            }
-        }
+        self.languages
+            .lock()
+            .recover_poison_with_log("InstallingLanguages::is_installing")
+            .unwrap()
+            .contains(language)
     }
 
     /// Try to start installing a language. Returns true if this call started the install,
     /// false if it was already being installed.
     pub fn try_start_install(&self, language: &str) -> bool {
-        match self.languages.lock() {
-            Ok(mut guard) => guard.insert(language.to_string()),
-            Err(poisoned) => {
-                log::warn!(
-                    target: "treesitter_ls::lock_recovery",
-                    "Recovered from poisoned lock in InstallingLanguages::try_start_install"
-                );
-                poisoned.into_inner().insert(language.to_string())
-            }
-        }
+        self.languages
+            .lock()
+            .recover_poison_with_log("InstallingLanguages::try_start_install")
+            .unwrap()
+            .insert(language.to_string())
     }
 
     /// Mark a language installation as complete.
     pub fn finish_install(&self, language: &str) {
-        match self.languages.lock() {
-            Ok(mut guard) => {
-                guard.remove(language);
-            }
-            Err(poisoned) => {
-                log::warn!(
-                    target: "treesitter_ls::lock_recovery",
-                    "Recovered from poisoned lock in InstallingLanguages::finish_install"
-                );
-                poisoned.into_inner().remove(language);
-            }
-        }
+        self.languages
+            .lock()
+            .recover_poison_with_log("InstallingLanguages::finish_install")
+            .unwrap()
+            .remove(language);
     }
 }
 
@@ -210,16 +194,11 @@ impl TreeSitterLs {
 
             // Parse the document with crash detection
             let parsed_tree = {
-                let mut pool = match self.parser_pool.lock() {
-                    Ok(guard) => guard,
-                    Err(poisoned) => {
-                        log::warn!(
-                            target: "treesitter_ls::lock_recovery",
-                            "Recovered from poisoned parser pool lock in did_open"
-                        );
-                        poisoned.into_inner()
-                    }
-                };
+                let mut pool = self
+                    .parser_pool
+                    .lock()
+                    .recover_poison_with_log("parse_document parser_pool")
+                    .unwrap();
                 if let Some(mut parser) = pool.acquire(&language_name) {
                     let old_tree = if !edits.is_empty() {
                         self.documents.get_edited_tree(&uri, &edits)
@@ -898,16 +877,11 @@ impl LanguageServer for TreeSitterLs {
             let capture_mappings = self.language.get_capture_mappings();
 
             // Use injection-aware handler (works with or without injection support)
-            let mut pool = match self.parser_pool.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => {
-                    log::warn!(
-                        target: "treesitter_ls::lock_recovery",
-                        "Recovered from poisoned parser pool lock in semantic_tokens_full"
-                    );
-                    poisoned.into_inner()
-                }
-            };
+            let mut pool = self
+                .parser_pool
+                .lock()
+                .recover_poison_with_log("semantic_tokens_full parser_pool")
+                .unwrap();
             crate::analysis::handle_semantic_tokens_full(
                 text,
                 tree,
@@ -1009,16 +983,11 @@ impl LanguageServer for TreeSitterLs {
             let capture_mappings = self.language.get_capture_mappings();
 
             // Use injection-aware handler (works with or without injection support)
-            let mut pool = match self.parser_pool.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => {
-                    log::warn!(
-                        target: "treesitter_ls::lock_recovery",
-                        "Recovered from poisoned parser pool lock in semantic_tokens_full_delta"
-                    );
-                    poisoned.into_inner()
-                }
-            };
+            let mut pool = self
+                .parser_pool
+                .lock()
+                .recover_poison_with_log("semantic_tokens_full_delta parser_pool")
+                .unwrap();
 
             // Delegate to handler with injection support
             handle_semantic_tokens_full_delta(
@@ -1110,16 +1079,11 @@ impl LanguageServer for TreeSitterLs {
         let capture_mappings = self.language.get_capture_mappings();
 
         // Use injection-aware handler (works with or without injection support)
-        let mut pool = match self.parser_pool.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => {
-                log::warn!(
-                    target: "treesitter_ls::lock_recovery",
-                    "Recovered from poisoned parser pool lock in semantic_tokens_range"
-                );
-                poisoned.into_inner()
-            }
-        };
+        let mut pool = self
+            .parser_pool
+            .lock()
+            .recover_poison_with_log("semantic_tokens_range parser_pool")
+            .unwrap();
         let result = crate::analysis::handle_semantic_tokens_range(
             text,
             tree,
@@ -1196,16 +1160,11 @@ impl LanguageServer for TreeSitterLs {
         };
 
         // Use full injection parsing handler with coordinator and parser pool
-        let mut pool = match self.parser_pool.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => {
-                log::warn!(
-                    target: "treesitter_ls::lock_recovery",
-                    "Recovered from poisoned parser pool lock in selection_range"
-                );
-                poisoned.into_inner()
-            }
-        };
+        let mut pool = self
+            .parser_pool
+            .lock()
+            .recover_poison_with_log("selection_range parser_pool")
+            .unwrap();
         let result = handle_selection_range(&doc, &positions, &self.language, &mut pool);
 
         Ok(Some(result))
