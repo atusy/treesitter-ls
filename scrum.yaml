@@ -70,6 +70,53 @@ product_goal:
 # For details: git log -- scrum.yaml
 #
 product_backlog:
+  # Priority 0: Architecture Decision Records
+  - id: PBI-025
+    status: ready
+    story:
+      role: "developer or contributor of treesitter-ls"
+      capability: "understand past architectural decisions and their rationale"
+      benefit: "I can make informed decisions without repeating past mistakes or reversing good decisions"
+    acceptance_criteria:
+      - criterion: "docs/adr/ directory exists with ADR template"
+        verification: |
+          test -f docs/adr/0000-template.md
+      - criterion: "ADR-0001 documents hierarchical CLI subcommand decision"
+        verification: |
+          test -f docs/adr/0001-hierarchical-cli-subcommands.md
+          grep -E "treesitter-ls language install" docs/adr/0001-hierarchical-cli-subcommands.md
+      - criterion: "ADRs follow standard format (Title, Status, Context, Decision, Consequences)"
+        verification: |
+          grep -E "^## (Status|Context|Decision|Consequences)" docs/adr/0001-hierarchical-cli-subcommands.md
+    story_points: 1
+    technical_notes: |
+      ADR Format (based on Michael Nygard's template):
+      ```markdown
+      # ADR-NNNN: Title
+
+      ## Status
+      Accepted | Deprecated | Superseded by ADR-XXXX
+
+      ## Context
+      What is the issue that we're seeing that is motivating this decision?
+
+      ## Decision
+      What is the change that we're proposing and/or doing?
+
+      ## Consequences
+      What becomes easier or harder as a result of this change?
+      ```
+
+      First ADR: Hierarchical CLI Subcommands
+      - Decision: Use `treesitter-ls <resource> <action>` pattern
+      - Examples:
+        - `treesitter-ls language install lua`
+        - `treesitter-ls language uninstall lua`
+        - `treesitter-ls language list`
+        - `treesitter-ls language status`
+        - `treesitter-ls config init`
+      - Rationale: Scalable, discoverable, follows kubectl/docker patterns
+
   # Priority 1: Documentation - Dependencies
   - id: PBI-021
     status: ready
@@ -111,10 +158,10 @@ product_backlog:
       capability: "generate a default configuration file"
       benefit: "I can customize settings without writing config from scratch"
     acceptance_criteria:
-      - criterion: "treesitter-ls init creates treesitter-ls.toml in current directory"
+      - criterion: "treesitter-ls config init creates treesitter-ls.toml in current directory"
         verification: |
           cd /tmp && rm -f treesitter-ls.toml
-          treesitter-ls init
+          treesitter-ls config init
           test -f treesitter-ls.toml && echo "Config created"
       - criterion: "Generated config includes all available options with comments"
         verification: |
@@ -122,21 +169,21 @@ product_backlog:
       - criterion: "Existing config is not overwritten without --force"
         verification: |
           cd /tmp && echo "existing" > treesitter-ls.toml
-          treesitter-ls init 2>&1 | grep -i "exists"
+          treesitter-ls config init 2>&1 | grep -i "exists"
           cat treesitter-ls.toml | grep "existing"
       - criterion: "--force overwrites existing config"
         verification: |
           cd /tmp && echo "existing" > treesitter-ls.toml
-          treesitter-ls init --force
+          treesitter-ls config init --force
           ! grep "existing" treesitter-ls.toml
     story_points: 2
     technical_notes: |
-      New CLI subcommand: treesitter-ls init [--force]
+      CLI: treesitter-ls config init [--force]
       Output file: treesitter-ls.toml in current directory
 
       Implementation:
-      1. Add Init subcommand to Commands enum in src/bin/main.rs
-      2. Create run_init() function that writes template TOML
+      1. Add Config subcommand with Init action to Commands enum
+      2. Create run_config_init() function that writes template TOML
       3. Check if file exists, error unless --force
 
       Template content (TOML with comments):
@@ -170,21 +217,21 @@ product_backlog:
       capability: "see which languages are installed and their status"
       benefit: "I can diagnose issues without manually checking directories"
     acceptance_criteria:
-      - criterion: "treesitter-ls status shows installed languages"
+      - criterion: "treesitter-ls language status shows installed languages"
         verification: |
-          ./target/release/treesitter-ls status | grep -E "lua|rust|python"
+          ./target/release/treesitter-ls language status | grep -E "lua|rust|python"
       - criterion: "Status shows parser path and whether queries exist"
         verification: |
-          ./target/release/treesitter-ls status --verbose | grep -E "parser|queries"
+          ./target/release/treesitter-ls language status --verbose | grep -E "parser|queries"
       - criterion: "Status indicates languages with missing queries"
         verification: |
           # Create parser-only entry and verify status shows missing queries
           mkdir -p /tmp/test-status/parser
           touch /tmp/test-status/parser/test.dylib
-          ./target/release/treesitter-ls status --data-dir /tmp/test-status | grep -E "missing|incomplete"
+          ./target/release/treesitter-ls language status --data-dir /tmp/test-status | grep -E "missing|incomplete"
     story_points: 2
     technical_notes: |
-      New CLI subcommand: treesitter-ls status [--verbose] [--data-dir PATH]
+      CLI: treesitter-ls language status [--verbose] [--data-dir PATH]
 
       Output format:
       ```
@@ -195,7 +242,7 @@ product_backlog:
       ```
 
       Implementation:
-      1. Add Status subcommand to Commands enum in src/bin/main.rs
+      1. Add Language subcommand with Status action
       2. Scan parser/ directory for .so/.dylib files
       3. For each parser, check if queries/{lang}/highlights.scm exists
       4. Display formatted output
@@ -208,29 +255,77 @@ product_backlog:
       capability: "remove installed parsers and queries"
       benefit: "I can clean up disk space or fix corrupted installations"
     acceptance_criteria:
-      - criterion: "treesitter-ls uninstall <language> removes parser and queries"
+      - criterion: "treesitter-ls language uninstall <language> removes parser and queries"
         verification: |
-          ./target/release/treesitter-ls install lua --data-dir /tmp/test-uninstall
-          ./target/release/treesitter-ls uninstall lua --data-dir /tmp/test-uninstall
+          ./target/release/treesitter-ls language install lua --data-dir /tmp/test-uninstall
+          ./target/release/treesitter-ls language uninstall lua --data-dir /tmp/test-uninstall
           ! test -f /tmp/test-uninstall/parser/lua.dylib
           ! test -d /tmp/test-uninstall/queries/lua
       - criterion: "Uninstall confirms before deletion (unless --force)"
         verification: |
-          echo "n" | ./target/release/treesitter-ls uninstall lua 2>&1 | grep -i "cancel"
+          echo "n" | ./target/release/treesitter-ls language uninstall lua 2>&1 | grep -i "cancel"
       - criterion: "Uninstall --all removes all installed languages"
         verification: |
-          ./target/release/treesitter-ls uninstall --all --data-dir /tmp/test-uninstall --force
+          ./target/release/treesitter-ls language uninstall --all --data-dir /tmp/test-uninstall --force
           test -z "$(ls /tmp/test-uninstall/parser/ 2>/dev/null)"
     story_points: 2
     technical_notes: |
-      New CLI subcommand: treesitter-ls uninstall <LANGUAGE|--all> [--force] [--data-dir PATH]
+      CLI: treesitter-ls language uninstall <LANGUAGE|--all> [--force] [--data-dir PATH]
 
       Implementation:
-      1. Add Uninstall subcommand to Commands enum
+      1. Add Uninstall action to Language subcommand
       2. Find and remove parser file: parser/{lang}.{so,dylib,dll}
       3. Remove queries directory: queries/{lang}/
       4. Prompt for confirmation unless --force
       5. Handle --all flag to remove everything
+
+  # Priority 5: Migrate existing CLI to hierarchical structure
+  - id: PBI-026
+    status: ready
+    story:
+      role: "user of treesitter-ls"
+      capability: "use consistent hierarchical CLI commands"
+      benefit: "I have a predictable, discoverable CLI that follows industry patterns"
+    acceptance_criteria:
+      - criterion: "treesitter-ls language install <lang> works"
+        verification: |
+          ./target/release/treesitter-ls language install lua --data-dir /tmp/test-migrate --force
+          test -f /tmp/test-migrate/parser/lua.dylib || test -f /tmp/test-migrate/parser/lua.so
+      - criterion: "treesitter-ls language list shows supported languages"
+        verification: |
+          ./target/release/treesitter-ls language list | grep -E "lua|rust|python"
+      - criterion: "Old commands (install, list-languages) are removed"
+        verification: |
+          ! ./target/release/treesitter-ls install lua 2>&1 | grep -v "error"
+          ! ./target/release/treesitter-ls list-languages 2>&1 | grep -v "error"
+      - criterion: "Help text shows new hierarchical structure"
+        verification: |
+          ./target/release/treesitter-ls --help | grep "language"
+          ./target/release/treesitter-ls language --help | grep -E "install|list|status|uninstall"
+    story_points: 3
+    technical_notes: |
+      CLI Migration:
+      Before:
+        treesitter-ls install <lang>
+        treesitter-ls list-languages
+
+      After:
+        treesitter-ls language install <lang>
+        treesitter-ls language list
+        treesitter-ls language status
+        treesitter-ls language uninstall <lang>
+        treesitter-ls config init
+
+      Implementation:
+      1. Create Language subcommand enum with Install, List, Status, Uninstall actions
+      2. Create Config subcommand enum with Init action
+      3. Move existing install logic to language::install
+      4. Move existing list-languages logic to language::list
+      5. Remove old top-level Install and ListLanguages commands
+      6. Update docs/README.md with new CLI commands
+
+      Breaking change: Old CLI commands will stop working.
+      Consider: deprecation period with warnings? (probably not needed for early-stage project)
 
   # ============================================================================
   # COMPLETED PBIs (kept for reference)
