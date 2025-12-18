@@ -35,8 +35,8 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint: "Sprint 42 - COMPLETED - PBI-053 (1pt) - Consistent path resolution in query_loader.rs"
-  backlog: "2 PBIs ready (tidying)"
+  current_sprint: "Sprint 43 - COMPLETED - PBI-059 (1pt) - Consistent naming in injection.rs"
+  backlog: "1 PBI ready (tidying)"
   impediments: 0
 
 ---
@@ -306,7 +306,7 @@ product_backlog:
       role: "developer maintaining treesitter-ls"
       capability: "understand injection language extraction flow more easily"
       benefit: "improved clarity in injection.rs"
-    status: ready
+    status: done
     story_points: 1
     acceptance_criteria:
       - criterion: "AC1: Consistent function naming (extract_* for extraction, collect_* for collection)"
@@ -455,65 +455,46 @@ definition_of_done:
 # ==============================================================================
 
 current_sprint:
-  sprint: 42
-  pbi: PBI-053
-  goal: "Consolidate path resolution in query_loader.rs to use consistent PathBuf handling with PARSER_EXTENSIONS array"
+  sprint: 43
+  pbi: PBI-059
+  goal: "Apply consistent naming convention in injection.rs: extract_* for single item extraction, collect_* for multiple item collection"
   status: completed
 
   subtasks:
-    - id: ST-053-1
-      title: "Create PARSER_EXTENSIONS constant with all three extensions (so, dylib, dll)"
+    - id: ST-059-1
+      title: "Rename find_injection_content_and_language to extract_content_and_language"
       status: completed
-      commits: ["fec5c17"]
+      commits:
+        - "5489919 - refactor(injection): rename find_injection_content_and_language to extract_content_and_language"
 
-    - id: ST-053-2
-      title: "Refactor resolve_library_path to use loop over extensions"
+    - id: ST-059-2
+      title: "Verify naming convention is consistent (extract_* for extraction, collect_* for collection)"
       status: completed
-      commits: ["fec5c17"]
+      commits: []
 
-    - id: ST-053-3
-      title: "Ensure all paths use PathBuf with .clean()"
-      status: completed
-      commits: ["fec5c17"]
-
-    - id: ST-053-4
+    - id: ST-059-3
       title: "Verify all tests pass"
       status: completed
-      commits: ["fec5c17"]
+      commits: []
 
   notes: |
     ## Sprint Goal
-    Consolidate path resolution in query_loader.rs to eliminate inconsistent path handling.
-    The .dll path currently uses format!() without .clean() while .so/.dylib use PathBuf.clean().
+    Apply consistent naming convention in injection.rs to improve code clarity.
+    The find_injection_content_and_language function should be renamed to extract_content_and_language
+    to match the extract_* pattern used by other extraction functions.
 
-    ## Outcome
-    Successfully consolidated 3 separate if-blocks (22 lines) into a single loop (11 lines).
-    All extension checks now use consistent PathBuf with .clean() handling.
+    ## Naming Convention
+    - extract_* - Single item extraction from a match (returns Option<T>)
+    - collect_* - Multiple item collection with deduplication (returns Vec<T>)
+    - find_* pattern should be removed for consistency (only test helper retains find_*)
 
-    ## Implementation
-    Added PARSER_EXTENSIONS constant at line 9:
-    ```rust
-    const PARSER_EXTENSIONS: &[&str] = &["so", "dylib", "dll"];
-    ```
+    ## Files Affected
+    - src/language/injection.rs (internal rename only, all functions are private)
 
-    Refactored resolve_library_path to loop over extensions (lines 234-242):
-    ```rust
-    for ext in PARSER_EXTENSIONS {
-        let parser_path = PathBuf::from(path)
-            .join("parser")
-            .join(format!("{language}.{ext}"))
-            .clean();
-        if parser_path.exists() {
-            return Some(parser_path.to_string_lossy().into_owned());
-        }
-    }
-    ```
-
-    ## Acceptance Criteria Verification
-    - AC1: All extension checks use PathBuf with .clean() - VERIFIED
-    - AC2: Extension search consolidated to loop over PARSER_EXTENSIONS - VERIFIED
-    - AC3: resolve_library_path tests pass - VERIFIED (199 unit tests pass)
-    - AC4: All tests pass - VERIFIED (cargo test, clippy clean, fmt clean)
+    ## Final State
+    - extract_* functions: 5 (single item extraction)
+    - collect_* functions: 2 (multiple item collection)
+    - find_* in main code: 0 (only test helper find_node_at_byte remains)
 
 ---
 # ==============================================================================
@@ -522,6 +503,24 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 43
+    pbi: PBI-059
+    outcome: "Applied consistent naming convention in injection.rs: extract_* for extraction, collect_* for collection"
+    retrospective:
+      what_went_well:
+        - "Clean single-commit refactoring (5489919)"
+        - "All 199 unit tests pass, clippy clean, formatting clean"
+        - "Naming convention now consistent across all 7 functions"
+        - "Pure structural change with zero behavioral impact"
+      what_to_improve:
+        - "Consider documenting naming conventions in module-level docs"
+      insight: |
+        Naming consistency refactors are low-risk tidying activities that improve code
+        readability. The extract_*/collect_* naming convention clearly communicates
+        function behavior: extract returns Option<T> for single items, collect returns
+        Vec<T> for multiple items. Test helpers can retain different naming (find_*)
+        since they serve a different purpose and are not part of the module's API.
+
   - sprint: 42
     pbi: PBI-053
     outcome: "Consolidated path resolution in query_loader.rs with PARSER_EXTENSIONS array (22 lines to 11 lines)"
