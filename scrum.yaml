@@ -36,7 +36,7 @@ rules:
 
 quick_status:
   current_sprint: null
-  backlog: "2 PBIs (1 ready, 1 draft)"
+  backlog: "1 PBI (0 ready, 1 draft)"
   impediments: 0
 
 ---
@@ -96,55 +96,6 @@ product_backlog:
 
       Status: draft - needs investigation to confirm approach is sound
 
-  - id: PBI-044
-    title: "Generate config init output from typed defaults"
-    status: ready
-    story_points: 3
-    user_story: |
-      As a maintainer,
-      I want config init to generate output from typed Rust constants,
-      So that the template always stays in sync with real defaults and I get compile-time safety.
-    acceptance_criteria:
-      - criterion: "AC1: default_capture_mappings() function exists"
-        verification: "Function in src/config/defaults.rs returns CaptureMappings"
-      - criterion: "AC2: default_settings() function exists"
-        verification: "Function returns TreeSitterSettings with autoInstall=true and captureMappings"
-      - criterion: "AC3: config init serializes default_settings()"
-        verification: "run_config_init uses toml::to_string on default_settings()"
-      - criterion: "AC4: CONFIG_TEMPLATE removed"
-        verification: "grep -c 'CONFIG_TEMPLATE' src/bin/main.rs returns 0"
-      - criterion: "AC5: Output matches treesitter-ls.toml content"
-        verification: "treesitter-ls config init output equals treesitter-ls.toml (ignoring comments)"
-      - criterion: "AC6: Doc link comment at top"
-        verification: "Output starts with '# Documentation: https://...'"
-      - criterion: "AC7: All tests pass"
-        verification: "cargo test"
-    notes: |
-      PO Decision: Use type-safe Rust constants (Approach B)
-
-      Implementation plan:
-      1. Create src/config/defaults.rs
-         - default_capture_mappings() -> CaptureMappings
-         - default_settings() -> TreeSitterSettings
-         - DOC_LINK constant for the documentation URL
-
-      2. Define all ~90 capture mappings as typed constants
-         - Use phf or lazy_static for compile-time HashMap if needed
-         - Or build HashMap in function (simpler, acceptable perf)
-
-      3. Update src/bin/main.rs:
-         - Remove CONFIG_TEMPLATE const
-         - In run_config_init(), call default_settings()
-         - Serialize with toml::to_string_pretty()
-         - Prepend doc link comment
-
-      4. Ensure TOML key ordering:
-         - autoInstall first
-         - captureMappings second
-         - May need custom serialization or struct field ordering
-
-      Trade-off accepted: Code and treesitter-ls.toml may diverge.
-      Mitigation: Add test comparing config init output to treesitter-ls.toml
 
 ---
 # ==============================================================================
@@ -186,6 +137,9 @@ current_sprint: null
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 36
+    pbi: PBI-044
+    outcome: "Replaced hardcoded CONFIG_TEMPLATE with type-safe default_settings() serialization (90+ mappings)"
   - sprint: 35
     pbi: PBI-043
     outcome: "Changed config init to output to stdout by default, added --output flag for file creation"
