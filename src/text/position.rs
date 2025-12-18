@@ -2,23 +2,19 @@ use line_index::{LineIndex, WideEncoding, WideLineCol};
 use tower_lsp::lsp_types::{Position, Range};
 
 /// Position mapper for converting between LSP positions and byte offsets
-pub struct PositionMapper<'a> {
-    _text: &'a str,
+pub struct PositionMapper {
     line_index: LineIndex,
 }
 
-impl<'a> PositionMapper<'a> {
+impl PositionMapper {
     /// Create a new PositionMapper with pre-computed line starts
-    pub fn new(text: &'a str) -> Self {
+    pub fn new(text: &str) -> Self {
         let line_index = LineIndex::new(text);
-        Self {
-            _text: text,
-            line_index,
-        }
+        Self { line_index }
     }
 }
 
-impl<'a> PositionMapper<'a> {
+impl PositionMapper {
     /// Convert LSP Position to byte offset in the document
     pub fn position_to_byte(&self, position: Position) -> Option<usize> {
         // LSP positions are UTF-16 based
@@ -70,23 +66,6 @@ impl<'a> PositionMapper<'a> {
             line_col.col as usize,
         ))
     }
-}
-
-/// Compute line start offsets for efficient position mapping
-/// This function is kept for backwards compatibility
-pub fn compute_line_starts(text: &str) -> Vec<usize> {
-    let mut line_starts = vec![0];
-
-    // Iterate through each line and find its starting position
-    let mut current_pos = 0;
-    for ch in text.chars() {
-        current_pos += ch.len_utf8();
-        if ch == '\n' {
-            line_starts.push(current_pos);
-        }
-    }
-
-    line_starts
 }
 
 /// Convert UTF-16 position to byte position within a line

@@ -35,7 +35,7 @@ pub struct DocumentContext<'a> {
     /// The full host document text
     pub text: &'a str,
     /// Position mapper for byte-to-UTF16 conversion
-    pub mapper: &'a PositionMapper<'a>,
+    pub mapper: &'a PositionMapper,
     /// Root node of the host document's AST
     pub root: Node<'a>,
     /// Base language identifier of the host document
@@ -53,7 +53,7 @@ impl<'a> DocumentContext<'a> {
     /// * `base_language` - Language identifier (e.g., "rust", "markdown")
     pub fn new(
         text: &'a str,
-        mapper: &'a PositionMapper<'a>,
+        mapper: &'a PositionMapper,
         root: Node<'a>,
         base_language: &'a str,
     ) -> Self {

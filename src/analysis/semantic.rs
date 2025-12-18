@@ -6,16 +6,6 @@ use tower_lsp::lsp_types::{
 };
 use tree_sitter::{Query, QueryCursor, StreamingIterator, Tree};
 
-// Re-export semantic token types from lsp_types
-pub use tower_lsp::lsp_types::{
-    SemanticToken as DomainSemanticToken, SemanticTokens as DomainSemanticTokens,
-    SemanticTokensDelta as DomainSemanticTokensDelta,
-    SemanticTokensEdit as DomainSemanticTokensEdit,
-    SemanticTokensFullDeltaResult as DomainSemanticTokensFullDeltaResult,
-    SemanticTokensRangeResult as DomainSemanticTokensRangeResult,
-    SemanticTokensResult as DomainSemanticTokensResult,
-};
-
 pub const LEGEND_TYPES: &[SemanticTokenType] = &[
     SemanticTokenType::COMMENT,
     SemanticTokenType::KEYWORD,

@@ -75,7 +75,7 @@ impl Document {
     }
 
     /// Get a position mapper for this document
-    pub fn position_mapper(&self) -> crate::text::PositionMapper<'_> {
+    pub fn position_mapper(&self) -> crate::text::PositionMapper {
         crate::text::PositionMapper::new(self.text())
     }
 
