@@ -36,7 +36,7 @@ rules:
 
 quick_status:
   current_sprint: "Sprint 38 - COMPLETED - PBI-049 (3pts) - Fix auto-install when parser exists"
-  backlog: "1 PBI ready (PBI-050: 1pt)"
+  backlog: "2 PBIs ready (PBI-051: 1pt, PBI-050: 1pt)"
   impediments: 0
 
 ---
@@ -121,6 +121,39 @@ product_backlog:
       1. RED: Write test that triggers auto-install when parser exists
       2. GREEN: Implement fix (option C recommended)
       3. REFACTOR: Clean up any redundant checks
+
+  - id: PBI-051
+    story:
+      role: "user configuring treesitter-ls in Neovim"
+      capability: "omit init_options entirely from LSP config"
+      benefit: "simplest possible zero-config setup works out of the box"
+    status: ready
+    story_points: 1
+    acceptance_criteria:
+      - criterion: "AC1: E2E tests pass when init_options is completely omitted"
+        verification: |
+          # Ensure minimal_init.lua has NO init_options line
+          grep -v "init_options" scripts/minimal_init.lua | head -5
+          make test_nvim
+          # Expected: All tests pass
+      - criterion: "AC2: Existing tests continue to pass"
+        verification: "make test && make check"
+    notes: |
+      ## Root Cause Analysis
+      When init_options is omitted, Neovim sends initializationOptions = {} (empty dict).
+      The server parses this successfully, but search_paths is None/empty.
+
+      The bug is in reload_language_after_install() at lsp_impl.rs:360-370:
+      - It adds "data_dir/parsers" (plural) to search paths
+      - But parser files are installed at "data_dir/parser" (singular)
+      - So the language coordinator can't find the parser
+
+      ## Fix
+      Change lsp_impl.rs line 360: "parsers" -> "parser"
+      (queries at line 367 is already correct)
+
+      ## Files Affected
+      - src/lsp/lsp_impl.rs:360 - fix typo: parsers -> parser
 
   - id: PBI-050
     story:
