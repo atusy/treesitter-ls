@@ -1350,16 +1350,12 @@ fn main() {
         let mut parser_pool = coordinator.create_document_parser_pool();
 
         // Call with injection query containing offset directive
-        let actions = handle_code_actions_with_injection_and_coordinator(
-            &Url::parse("file:///test.rs").unwrap(),
-            text,
-            &tree,
-            cursor_range,
-            None,
-            Some(("rust", &capture_mappings)),
-            Some(&injection_query),
-            &coordinator,
-            &mut parser_pool,
+        let uri = Url::parse("file:///test.rs").unwrap();
+        let actions = handle_code_actions(
+            CodeActionOptions::new(&uri, text, &tree, cursor_range)
+                .with_capture_context(Some(("rust", &capture_mappings)))
+                .with_injection(&injection_query)
+                .with_coordinator(&coordinator, &mut parser_pool),
         );
 
         assert!(actions.is_some(), "Should return code actions");
@@ -1466,14 +1462,11 @@ fn main() {
         let capture_mappings: CaptureMappings = HashMap::new();
 
         // Call with injection query
-        let actions = handle_code_actions_with_injection_query(
-            &Url::parse("file:///test.rs").unwrap(),
-            text,
-            &tree,
-            cursor_range,
-            None,
-            Some(("rust", &capture_mappings)),
-            Some(&injection_query),
+        let uri = Url::parse("file:///test.rs").unwrap();
+        let actions = handle_code_actions(
+            CodeActionOptions::new(&uri, text, &tree, cursor_range)
+                .with_capture_context(Some(("rust", &capture_mappings)))
+                .with_injection(&injection_query),
         );
 
         assert!(actions.is_some(), "Should return code actions");
@@ -1549,16 +1542,12 @@ fn main() {
         let mut parser_pool = coordinator.create_document_parser_pool();
 
         // Call with injection query containing offset directive
-        let actions = handle_code_actions_with_injection_and_coordinator(
-            &Url::parse("file:///test.rs").unwrap(),
-            text,
-            &tree,
-            cursor_range,
-            None,
-            Some(("rust", &capture_mappings)),
-            Some(&injection_query),
-            &coordinator,
-            &mut parser_pool,
+        let uri = Url::parse("file:///test.rs").unwrap();
+        let actions = handle_code_actions(
+            CodeActionOptions::new(&uri, text, &tree, cursor_range)
+                .with_capture_context(Some(("rust", &capture_mappings)))
+                .with_injection(&injection_query)
+                .with_coordinator(&coordinator, &mut parser_pool),
         );
 
         assert!(actions.is_some(), "Should return code actions");
@@ -1636,18 +1625,14 @@ fn main() {
         let capture_mappings: CaptureMappings = HashMap::new();
         let coordinator = crate::language::LanguageCoordinator::new();
         let mut parser_pool = coordinator.create_document_parser_pool();
+        let uri = Url::parse("file:///test.rs").unwrap();
 
         // Get action at underscore position
-        let actions = handle_code_actions_with_injection_and_coordinator(
-            &Url::parse("file:///test.rs").unwrap(),
-            text,
-            &tree,
-            cursor_range,
-            None,
-            Some(("rust", &capture_mappings)),
-            Some(&injection_query),
-            &coordinator,
-            &mut parser_pool,
+        let actions = handle_code_actions(
+            CodeActionOptions::new(&uri, text, &tree, cursor_range)
+                .with_capture_context(Some(("rust", &capture_mappings)))
+                .with_injection(&injection_query)
+                .with_coordinator(&coordinator, &mut parser_pool),
         );
 
         let actions = actions.expect("Should return code actions");
@@ -1690,16 +1675,11 @@ fn main() {
         let caret_pos = Position::new(1, 33); // Points to ^ in r"_^\d+$"
         let cursor_range = Range::new(caret_pos, caret_pos);
 
-        let actions = handle_code_actions_with_injection_and_coordinator(
-            &Url::parse("file:///test.rs").unwrap(),
-            text,
-            &tree,
-            cursor_range,
-            None,
-            Some(("rust", &capture_mappings)),
-            Some(&injection_query),
-            &coordinator,
-            &mut parser_pool,
+        let actions = handle_code_actions(
+            CodeActionOptions::new(&uri, text, &tree, cursor_range)
+                .with_capture_context(Some(("rust", &capture_mappings)))
+                .with_injection(&injection_query)
+                .with_coordinator(&coordinator, &mut parser_pool),
         );
 
         let actions = actions.expect("Should return code actions");
@@ -1771,17 +1751,13 @@ fn main() {
         let capture_mappings: CaptureMappings = HashMap::new();
         let coordinator = crate::language::LanguageCoordinator::new();
         let mut parser_pool = coordinator.create_document_parser_pool();
+        let uri = Url::parse("file:///test.rs").unwrap();
 
-        let actions = handle_code_actions_with_injection_and_coordinator(
-            &Url::parse("file:///test.rs").unwrap(),
-            text_with_offset,
-            &tree_with_offset,
-            cursor_range,
-            None,
-            Some(("rust", &capture_mappings)),
-            Some(&query_with_offset),
-            &coordinator,
-            &mut parser_pool,
+        let actions = handle_code_actions(
+            CodeActionOptions::new(&uri, text_with_offset, &tree_with_offset, cursor_range)
+                .with_capture_context(Some(("rust", &capture_mappings)))
+                .with_injection(&query_with_offset)
+                .with_coordinator(&coordinator, &mut parser_pool),
         );
 
         let actions = actions.expect("Should return code actions");
@@ -1840,16 +1816,11 @@ fn main() {
         let regex_start_pos = Position::new(1, 31); // Points to ^ in r"^\d+$"
         let cursor_range = Range::new(regex_start_pos, regex_start_pos);
 
-        let actions = handle_code_actions_with_injection_and_coordinator(
-            &Url::parse("file:///test.rs").unwrap(),
-            text_no_offset,
-            &tree_no_offset,
-            cursor_range,
-            None,
-            Some(("rust", &capture_mappings)),
-            Some(&query_no_offset),
-            &coordinator,
-            &mut parser_pool,
+        let actions = handle_code_actions(
+            CodeActionOptions::new(&uri, text_no_offset, &tree_no_offset, cursor_range)
+                .with_capture_context(Some(("rust", &capture_mappings)))
+                .with_injection(&query_no_offset)
+                .with_coordinator(&coordinator, &mut parser_pool),
         );
 
         let actions = actions.expect("Should return code actions");
@@ -1918,14 +1889,11 @@ fn main() {
         let capture_mappings: CaptureMappings = HashMap::new();
 
         // Call with injection query
-        let actions = handle_code_actions_with_injection_query(
-            &Url::parse("file:///test.rs").unwrap(),
-            text,
-            &tree,
-            cursor_range,
-            None,
-            Some(("rust", &capture_mappings)),
-            Some(&injection_query),
+        let uri = Url::parse("file:///test.rs").unwrap();
+        let actions = handle_code_actions(
+            CodeActionOptions::new(&uri, text, &tree, cursor_range)
+                .with_capture_context(Some(("rust", &capture_mappings)))
+                .with_injection(&injection_query),
         );
 
         assert!(actions.is_some(), "Should return code actions");
