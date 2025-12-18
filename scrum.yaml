@@ -35,8 +35,8 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint: 37
-  backlog: "0 PBIs ready"
+  current_sprint: null
+  backlog: "2 PBIs ready (PBI-049: 3pts, PBI-050: 1pt)"
   impediments: 0
 
 ---
@@ -63,7 +63,7 @@ product_goal:
 # ==============================================================================
 # PRODUCT BACKLOG (Active Items Only)
 # ==============================================================================
-# Completed PBIs: PBI-001 through PBI-040
+# Completed PBIs: PBI-001 through PBI-041
 # For details: git log -- scrum.yaml
 
 product_backlog:
@@ -71,34 +71,97 @@ product_backlog:
   # Technical Debt / Maintenance (Highest Priority)
   # ============================================================================
 
-  - id: PBI-041
-    title: "Consolidate query resolution API in QueryLoader"
+  - id: PBI-049
+    story:
+      role: "user starting treesitter-ls with default settings"
+      capability: "get working syntax highlighting when parsers already exist"
+      benefit: "zero-config experience works reliably without explicit autoInstall=false"
     status: ready
-    user_story: |
-      As a maintainer,
-      I want to simplify the QueryLoader API,
-      so that there is a single clear entry point for query resolution.
+    story_points: 3
     acceptance_criteria:
-      - criterion: "AC1: Single resolve_query method exists"
-        verification: "grep -c 'pub fn resolve_query\\b' src/language/query_loader.rs returns 1"
-      - criterion: "AC2: resolve_query_with_inheritance removed or made private"
-        verification: "grep -c 'pub fn resolve_query_with_inheritance' src/language/query_loader.rs returns 0"
-      - criterion: "AC3: All tests pass"
-        verification: "cargo test --lib -- query_loader"
-      - criterion: "AC4: No REVIEW comments remain in file"
-        verification: "grep -c '// REVIEW:' src/language/query_loader.rs returns 0"
+      - criterion: "AC1: Auto-install treats AlreadyExists as success, not failure"
+        verification: |
+          # Unit test verifies AlreadyExists triggers reload:
+          cargo test test_already_exists_triggers_reload -- --nocapture
+          # Or verify via log output that reload is called when parser exists
+      - criterion: "AC2: E2E tests pass with default autoInstall (empty init_options)"
+        verification: |
+          # Ensure minimal_init.lua uses init_options = {} (no autoInstall setting)
+          # Then run E2E tests:
+          make test_nvim
+          # Expected: All tests pass when parser already exists
+      - criterion: "AC3: Existing tests continue to pass"
+        verification: "make test && make check"
     notes: |
-      Review finding: Consider making visited parameter optional in resolve_query_recursive
-      to unify resolve_query_with_inheritance and resolve_query_recursive.
+      ## Root Cause Analysis
+      When autoInstall is enabled (default) and parser already exists:
+      1. install_parser() returns Err(AlreadyExists)
+      2. InstallResult.is_success() returns false
+      3. reload_language_after_install() is NOT called
+      4. Parser never gets loaded into coordinator
 
-      Current state (line 12):
-      - resolve_query_with_inheritance - public entry point that creates HashSet
-      - resolve_query_recursive - private helper with visited parameter
+      With autoInstall=false, the auto-install path is skipped entirely,
+      so normal loading works correctly.
 
-      Potential approach: Make visited parameter optional (Option<&mut HashSet>),
-      allowing a single public method named simply "resolve_query".
+      ## Fix Options (in order of preference)
+      C) Skip install_parser if parser file exists (check before calling)
+         - Simplest: avoids calling install_parser entirely
+         - Check parser_file.exists() before install_language_async
+      B) Check for AlreadyExists error and still call reload_language_after_install
+         - Requires matching on error message string (fragile)
+      A) Treat AlreadyExists as partial success in InstallResult
+         - Changes InstallResult semantics (may have side effects)
 
-      Estimate: 2 story points
+      ## Files Affected
+      - src/lsp/lsp_impl.rs (maybe_auto_install_language function)
+      - src/install/mod.rs (InstallResult if option A chosen)
+      - src/install/parser.rs (AlreadyExists error definition)
+
+      ## TDD Approach
+      1. RED: Write test that triggers auto-install when parser exists
+      2. GREEN: Implement fix (option C recommended)
+      3. REFACTOR: Clean up any redundant checks
+
+  - id: PBI-050
+    story:
+      role: "user running treesitter-ls"
+      capability: "see query predicate issues at info level instead of warn"
+      benefit: "log output distinguishes between actionable warnings and informational messages"
+    status: ready
+    story_points: 1
+    acceptance_criteria:
+      - criterion: "AC1: All 5 query predicate log calls use info! instead of warn!"
+        verification: |
+          # query_predicates.rs: 3 info! calls, 0 warn! calls
+          [ $(grep -c "info!" src/language/query_predicates.rs) -eq 3 ]
+          [ $(grep -c "warn!" src/language/query_predicates.rs) -eq 0 ]
+          # injection.rs: 2 info! calls for query-related messages
+          grep -c "info!" src/language/injection.rs  # Expected: 2
+      - criterion: "AC2: Log target remains treesitter_ls::query for all calls"
+        verification: |
+          grep "treesitter_ls::query" src/language/query_predicates.rs
+          grep "treesitter_ls::query" src/language/injection.rs
+      - criterion: "AC3: Documentation updated in docs/README.md"
+        verification: |
+          # Log table should show info level for treesitter_ls::query
+          grep "treesitter_ls::query" docs/README.md | grep -q "info"
+      - criterion: "AC4: All tests pass"
+        verification: "make test && make check"
+    notes: |
+      ## Rationale (Dave Cheney's logging philosophy)
+      - warn implies user action is needed
+      - Most users cannot modify upstream nvim-treesitter queries
+      - These messages are informational for query authors, not actionable warnings
+      - info is appropriate for "interesting runtime events"
+
+      ## Files Affected (5 log calls + 1 doc)
+      - src/language/query_predicates.rs: 3 calls (lines 31, 39, 47)
+        - Change: use log::warn -> use log::info
+        - Change: warn! -> info! (3 occurrences)
+      - src/language/injection.rs: 2 calls (lines 57, 108)
+        - Change: log::warn! -> log::info! (2 occurrences)
+      - docs/README.md: Update logging table row for treesitter_ls::query
+        - Change: warn -> info in Level column
 
   # ============================================================================
   # ADR-0003: Parser Compilation Fallback Strategy - SUPERSEDED
@@ -138,46 +201,8 @@ definition_of_done:
 # CURRENT SPRINT
 # ==============================================================================
 
-current_sprint:
-  sprint: 37
-  pbi: PBI-041
-  goal: "Consolidate QueryLoader API to single resolve_query entry point"
-  status: in_progress
-  subtasks:
-    # Subtask 1: Rename resolve_query_with_inheritance to resolve_query (structural)
-    - id: S37-1
-      title: "Rename resolve_query_with_inheritance to resolve_query"
-      status: pending
-      type: refactor
-      notes: "Pure rename - no behavioral changes"
-
-    # Subtask 2: Update tests to use new method name
-    - id: S37-2
-      title: "Update test calls from resolve_query_with_inheritance to resolve_query"
-      status: pending
-      type: refactor
-      notes: "Update all test method calls to use the new name"
-
-    # Subtask 3: Update load_query_with_inheritance caller
-    - id: S37-3
-      title: "Update load_query_with_inheritance to call resolve_query"
-      status: pending
-      type: refactor
-      notes: "Update internal caller in load_query_with_inheritance"
-
-    # Subtask 4: Check for REVIEW comments
-    - id: S37-4
-      title: "Verify and remove any REVIEW comments"
-      status: pending
-      type: refactor
-      notes: "Ensure no REVIEW comments remain in query_loader.rs"
-
-    # Subtask 5: Verify all acceptance criteria
-    - id: S37-5
-      title: "Verify all acceptance criteria pass"
-      status: pending
-      type: verification
-      notes: "Run all AC verification commands"
+current_sprint: null
+  # No active sprint - Sprint 37 completed, awaiting Sprint Planning for next PBI
 
 ---
 # ==============================================================================
@@ -186,6 +211,20 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 37
+    pbi: PBI-041
+    outcome: "Consolidated QueryLoader API to single resolve_query entry point, renamed from resolve_query_with_inheritance"
+    retrospective:
+      what_went_well:
+        - "All acceptance criteria passed on first verification"
+        - "All Definition of Done checks passed"
+        - "Clean, focused single-commit refactoring (a9fb827)"
+      what_to_improve:
+        - "Start Sprint Planning earlier when work is identified"
+      insight: |
+        Consolidation-type PBIs (API simplification, cleanup) naturally complete in single
+        well-scoped refactoring commits. This is appropriate for pure structural changes
+        with no behavioral changes - not a TDD violation but recognition of a distinct pattern.
   - sprint: 36
     pbi: PBI-044
     outcome: "Replaced hardcoded CONFIG_TEMPLATE with type-safe default_settings() serialization (90+ mappings)"
