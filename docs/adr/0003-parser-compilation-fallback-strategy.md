@@ -44,19 +44,26 @@ Parser source directory
      yes /  \ no
         /    \
        ▼      ▼
-┌──────────┐  ┌────────────────────┐
-│ Compile  │  │ tree-sitter CLI    │
-│ directly │  │ available?         │
-│ with cc  │  └─────────┬──────────┘
-└──────────┘       yes /  \ no
-                      /    \
-                     ▼      ▼
-          ┌──────────────┐  ┌─────────────────┐
-          │ Run:         │  │ Error with      │
-          │ tree-sitter  │  │ helpful message │
-          │ generate     │  │ explaining      │
-          │ then compile │  │ options         │
-          └──────────────┘  └─────────────────┘
+┌──────────┐  ┌─────────────────────┐
+│ Compile  │  │ src/grammar.json    │
+│ directly │  │ exists?             │
+│ with cc  │  └──────────┬──────────┘
+└──────────┘        yes /  \ no
+                       /    \
+                      ▼      ▼
+       ┌────────────────┐   ┌─────────────────┐
+       │ tree-sitter    │   │ grammar.js      │
+       │ generate       │   │ exists?         │
+       │ src/grammar.json│  └────────┬────────┘
+       │ (no Node.js)   │       yes /  \ no
+       └────────────────┘          /    \
+                                  ▼      ▼
+                   ┌────────────────┐  ┌─────────────┐
+                   │ tree-sitter    │  │ Error with  │
+                   │ generate       │  │ helpful     │
+                   │ grammar.js     │  │ message     │
+                   │ (needs Node.js)│  └─────────────┘
+                   └────────────────┘
 ```
 
 ### Coverage by Approach
@@ -67,6 +74,8 @@ Parser source directory
 | `src/grammar.json` | CLI generate → compile | C compiler + tree-sitter-cli |
 | `grammar.js` only | CLI generate → compile | C compiler + tree-sitter-cli + Node.js |
 | Nothing | Error | N/A |
+
+**Note**: Most mature parsers ship both `src/parser.c` and `src/grammar.json`, so typically only a C compiler is needed. Node.js is only required for bleeding-edge parsers that haven't generated their JSON grammar yet.
 
 ### Consequences
 
