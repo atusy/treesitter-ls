@@ -35,7 +35,7 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint: 33
+  current_sprint: null
   backlog: "3 PBIs (2 ready, 1 draft)"
   impediments: 0
 
@@ -63,40 +63,10 @@ product_goal:
 # ==============================================================================
 # PRODUCT BACKLOG (Active Items Only)
 # ==============================================================================
-# Completed PBIs: PBI-001 through PBI-039
+# Completed PBIs: PBI-001 through PBI-040
 # For details: git log -- scrum.yaml
 
 product_backlog:
-  - id: PBI-040
-    title: "Remove test-only calculate_effective_range function"
-    status: in_progress
-    user_story: |
-      As a maintainer,
-      I want to remove the redundant calculate_effective_range function,
-      so that the codebase has a single clear API for effective range calculation.
-    acceptance_criteria:
-      - criterion: "AC1: calculate_effective_range function removed"
-        verification: "grep -c 'pub fn calculate_effective_range\\b' src/analysis/offset_calculator.rs returns 0"
-      - criterion: "AC2: calculate_effective_range_with_text renamed to calculate_effective_range"
-        verification: "grep -c 'pub fn calculate_effective_range' src/analysis/offset_calculator.rs returns 1"
-      - criterion: "AC3: All callers updated"
-        verification: "grep -r 'calculate_effective_range_with_text' src/ returns 0"
-      - criterion: "AC4: All tests pass"
-        verification: "cargo test --lib -- offset_calculator"
-      - criterion: "AC5: No REVIEW comments remain in file"
-        verification: "grep -c '// REVIEW:' src/analysis/offset_calculator.rs returns 0"
-    notes: |
-      Review finding: calculate_effective_range is only used in tests.
-
-      Current state:
-      - calculate_effective_range (line 33) - only applies column offsets, only used in tests
-      - calculate_effective_range_with_text (line 46) - full implementation with row+column offsets
-
-      Action:
-      1. Remove calculate_effective_range
-      2. Rename calculate_effective_range_with_text to calculate_effective_range
-      3. Update all callers (grep shows only refactor.rs uses it)
-
   - id: PBI-041
     title: "Consolidate query resolution API in QueryLoader"
     status: draft
@@ -219,36 +189,7 @@ definition_of_done:
 # CURRENT SPRINT
 # ==============================================================================
 
-current_sprint:
-  number: 33
-  pbi: PBI-040
-  goal: "Simplify the offset calculation API by consolidating to a single calculate_effective_range function"
-  subtasks:
-    - id: "33.1"
-      title: "Migrate tests to use calculate_effective_range_with_text"
-      status: pending
-      notes: |
-        Update 2 tests in offset_calculator.rs:
-        - test_calculate_effective_range_with_positive_offset
-        - test_calculate_effective_range_with_default_offset
-        These tests use the simple calculate_effective_range function.
-        Migrate them to use calculate_effective_range_with_text with text parameter.
-    - id: "33.2"
-      title: "Remove calculate_effective_range function"
-      status: pending
-      notes: |
-        Remove the now-unused calculate_effective_range function (lines 29-38).
-        This includes the docstring and the function body.
-    - id: "33.3"
-      title: "Rename calculate_effective_range_with_text to calculate_effective_range"
-      status: pending
-      notes: |
-        Rename the function and update all callers:
-        - src/analysis/offset_calculator.rs (definition + tests)
-        - src/analysis/refactor.rs (import + 2 call sites)
-        - src/analysis/selection/range_builder.rs (import + 3 call sites)
-        - src/analysis/selection/injection_aware.rs (import + 2 call sites)
-        - src/analysis/semantic.rs (import + 1 call site)
+current_sprint: null
 
 ---
 # ==============================================================================
@@ -257,6 +198,9 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 33
+    pbi: PBI-040
+    outcome: "Consolidated offset calculation API by removing redundant function and renaming to single calculate_effective_range"
   - sprint: 32
     pbi: PBI-039
     outcome: "Removed test-only wrapper functions, migrated 18 test call sites to CodeActionOptions builder"
