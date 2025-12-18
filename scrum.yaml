@@ -35,11 +35,8 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint:
-    number: null
-    pbi: null
-    status: idle
-    goal: "No active sprint - 5 PBIs in backlog (4 ready, 1 draft)"
+  current_sprint: null  # Idle - ready for Sprint 33
+  backlog: "4 PBIs (3 ready, 1 draft)"
   impediments: 0
 
 ---
@@ -66,40 +63,10 @@ product_goal:
 # ==============================================================================
 # PRODUCT BACKLOG (Active Items Only)
 # ==============================================================================
-# Completed PBIs: PBI-001 through PBI-038
+# Completed PBIs: PBI-001 through PBI-039
 # For details: git log -- scrum.yaml
 
 product_backlog:
-  - id: PBI-039
-    title: "Remove test-only wrapper functions from refactor.rs"
-    status: ready
-    user_story: |
-      As a maintainer,
-      I want to remove the deprecated test-only wrapper functions,
-      so that the codebase has a single clear API without legacy compatibility shims.
-    acceptance_criteria:
-      - criterion: "AC1: handle_code_actions_with_injection_query removed"
-        verification: "grep -c 'fn handle_code_actions_with_injection_query' src/analysis/refactor.rs returns 0"
-      - criterion: "AC2: handle_code_actions_with_injection_and_coordinator removed"
-        verification: "grep -c 'fn handle_code_actions_with_injection_and_coordinator' src/analysis/refactor.rs returns 0"
-      - criterion: "AC3: CodeActionContext type alias removed"
-        verification: "grep -c 'type CodeActionContext' src/analysis/refactor.rs returns 0"
-      - criterion: "AC4: Tests use CodeActionOptions::new() builder directly"
-        verification: "grep -c 'CodeActionOptions::new' src/analysis/refactor.rs >= 10"
-      - criterion: "AC5: All tests pass"
-        verification: "cargo test --lib -- refactor"
-      - criterion: "AC6: No REVIEW comments remain"
-        verification: "grep -c '// REVIEW:' src/analysis/refactor.rs returns 0"
-    notes: |
-      Review finding from PBI-033: Two test-only functions marked with
-      "// REVIEW: this is a meaninglessly thin wrapper" should be removed.
-      Tests should be migrated to use CodeActionOptions::new() builder pattern.
-
-      Functions to remove:
-      - handle_code_actions_with_injection_query (lines 631-656)
-      - handle_code_actions_with_injection_and_coordinator (lines 658-686)
-      - CodeActionContext type alias (line 80)
-
   - id: PBI-040
     title: "Remove test-only calculate_effective_range function"
     status: ready
@@ -261,6 +228,9 @@ current_sprint: null
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 32
+    pbi: PBI-039
+    outcome: "Removed test-only wrapper functions, migrated 18 test call sites to CodeActionOptions builder"
   - sprint: 31
     pbi: PBI-033
     outcome: "Consolidated code action functions to single entry point with CodeActionOptions builder pattern"
