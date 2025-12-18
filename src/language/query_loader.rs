@@ -5,6 +5,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tree_sitter::{Language, Query};
 
+/// Parser library file extensions for different platforms
+const PARSER_EXTENSIONS: &[&str] = &["so", "dylib", "dll"];
+
 /// Loads Tree-sitter queries from files and configuration
 pub struct QueryLoader;
 
@@ -228,28 +231,14 @@ impl QueryLoader {
         // Otherwise, search in searchPaths: <base>/parser/
         if let Some(paths) = search_paths {
             for path in paths {
-                // Try .so extension first (Linux)
-                let so_path = PathBuf::from(path)
-                    .join("parser")
-                    .join(format!("{language}.so"))
-                    .clean();
-                if so_path.exists() {
-                    return Some(so_path.to_string_lossy().into_owned());
-                }
-
-                // Try .dylib extension (macOS)
-                let dylib_path = PathBuf::from(path)
-                    .join("parser")
-                    .join(format!("{language}.dylib"))
-                    .clean();
-                if dylib_path.exists() {
-                    return Some(dylib_path.to_string_lossy().into_owned());
-                }
-
-                // Try .dll extension (Windows)
-                let dll_path = format!("{path}/parser/{language}.dll");
-                if Path::new(&dll_path).exists() {
-                    return Some(dll_path);
+                for ext in PARSER_EXTENSIONS {
+                    let parser_path = PathBuf::from(path)
+                        .join("parser")
+                        .join(format!("{language}.{ext}"))
+                        .clean();
+                    if parser_path.exists() {
+                        return Some(parser_path.to_string_lossy().into_owned());
+                    }
                 }
             }
         }
