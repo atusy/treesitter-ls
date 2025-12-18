@@ -334,7 +334,7 @@ fn collect_injection_regions<'a>(
 
     while let Some(match_) = matches.next() {
         if let Some((content_node, language, pattern_index)) =
-            find_injection_content_and_language(node, match_, query, text)
+            extract_content_and_language(node, match_, query, text)
         {
             let key = (content_node.start_byte(), content_node.end_byte());
 
@@ -356,9 +356,9 @@ fn collect_injection_regions<'a>(
     Some(injections)
 }
 
-/// Finds the injection content node and language if the given node is within it
+/// Extracts the injection content node and language if the given node is within it
 /// Also returns the pattern index for offset lookups
-fn find_injection_content_and_language<'a>(
+fn extract_content_and_language<'a>(
     node: &Node<'a>,
     match_: &QueryMatch<'_, 'a>,
     query: &Query,
