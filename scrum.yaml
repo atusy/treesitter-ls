@@ -35,8 +35,8 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint: "Sprint 43 - COMPLETED - PBI-059 (1pt) - Consistent naming in injection.rs"
-  backlog: "1 PBI ready (tidying)"
+  current_sprint: "No active sprint - Tidying initiative complete"
+  backlog: "0 PBIs ready - Backlog empty"
   impediments: 0
 
 ---
@@ -355,7 +355,7 @@ product_backlog:
       role: "developer maintaining treesitter-ls"
       capability: "see clearer test coverage for injection malformed directives"
       benefit: "improved test clarity and maintainability"
-    status: ready
+    status: done
     story_points: 1
     acceptance_criteria:
       - criterion: "AC1: test_malformed_offset_directives split into 5 focused tests"
@@ -455,46 +455,48 @@ definition_of_done:
 # ==============================================================================
 
 current_sprint:
-  sprint: 43
-  pbi: PBI-059
-  goal: "Apply consistent naming convention in injection.rs: extract_* for single item extraction, collect_* for multiple item collection"
+  sprint: 44
+  pbi: PBI-060
+  goal: "Split test_malformed_offset_directives into 5 focused tests with descriptive names for improved test clarity"
   status: completed
 
   subtasks:
-    - id: ST-059-1
-      title: "Rename find_injection_content_and_language to extract_content_and_language"
+    - id: ST-060-1
+      title: "Split test_malformed_offset_directives into 5 separate tests"
       status: completed
-      commits:
-        - "5489919 - refactor(injection): rename find_injection_content_and_language to extract_content_and_language"
+      commits: ["c2dca50"]
 
-    - id: ST-059-2
-      title: "Verify naming convention is consistent (extract_* for extraction, collect_* for collection)"
+    - id: ST-060-2
+      title: "Each test should have a descriptive name for the scenario"
       status: completed
-      commits: []
+      commits: ["c2dca50"]
 
-    - id: ST-059-3
+    - id: ST-060-3
       title: "Verify all tests pass"
       status: completed
-      commits: []
+      commits: ["c2dca50"]
 
   notes: |
     ## Sprint Goal
-    Apply consistent naming convention in injection.rs to improve code clarity.
-    The find_injection_content_and_language function should be renamed to extract_content_and_language
-    to match the extract_* pattern used by other extraction functions.
+    Split the monolithic test_malformed_offset_directives test (86 lines) into 5 focused tests
+    with descriptive names for improved test clarity and maintainability.
 
-    ## Naming Convention
-    - extract_* - Single item extraction from a match (returns Option<T>)
-    - collect_* - Multiple item collection with deduplication (returns Vec<T>)
-    - find_* pattern should be removed for consistency (only test helper retains find_*)
+    ## Completion Summary
+    All 3 subtasks completed in single cohesive refactoring commit (c2dca50).
+    - 5 focused tests created with descriptive names
+    - Original 86-line monolithic test removed
+    - All 203 unit tests pass (4 more tests now due to split)
+    - Clippy clean, formatting clean
+
+    ## Test Scenarios Extracted
+    1. test_offset_directive_with_non_numeric_values - Non-numeric offset values (foo bar baz qux)
+    2. test_offset_directive_with_missing_arguments - Missing offset arguments (only 2 instead of 4)
+    3. test_offset_directive_with_extra_arguments - Too many offset arguments (5 instead of 4)
+    4. test_offset_directive_with_mixed_valid_invalid - Mixed valid and invalid values
+    5. test_offset_directive_with_empty_args - Empty offset directive (no arguments after capture)
 
     ## Files Affected
-    - src/language/injection.rs (internal rename only, all functions are private)
-
-    ## Final State
-    - extract_* functions: 5 (single item extraction)
-    - collect_* functions: 2 (multiple item collection)
-    - find_* in main code: 0 (only test helper find_node_at_byte remains)
+    - src/language/injection.rs (test module only)
 
 ---
 # ==============================================================================
@@ -503,6 +505,32 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 44
+    pbi: PBI-060
+    outcome: "Split test_malformed_offset_directives into 5 focused tests with descriptive names for improved test clarity"
+    retrospective:
+      what_went_well:
+        - "Clean single-commit refactoring (c2dca50)"
+        - "All 203 unit tests pass (4 net new tests from the split)"
+        - "Each test now has descriptive name indicating the scenario"
+        - "Pure test refactoring with zero production code changes"
+      what_to_improve:
+        - "None - straightforward tidying task completed efficiently"
+      insight: |
+        Splitting monolithic tests into focused tests with descriptive names improves both
+        test clarity and failure diagnosis. When a test fails, the function name immediately
+        indicates which scenario failed. This is the LAST PBI in the tidying backlog,
+        completing the Kent Beck "Tidy First" initiative that ran from Sprint 22 through
+        Sprint 44 (23 sprints of systematic code quality improvements).
+
+        TIDYING INITIATIVE COMPLETE: The codebase is now in a clean, maintainable state with:
+        - Consistent naming conventions
+        - No dead code
+        - Proper logging levels
+        - Standardized lock handling
+        - Well-organized test suites
+        - Clean module structure
+
   - sprint: 43
     pbi: PBI-059
     outcome: "Applied consistent naming convention in injection.rs: extract_* for extraction, collect_* for collection"
