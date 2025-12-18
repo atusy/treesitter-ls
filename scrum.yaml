@@ -35,8 +35,8 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint: null
-  backlog: "2 PBIs ready (PBI-049: 3pts, PBI-050: 1pt)"
+  current_sprint: "Sprint 38 - COMPLETED - PBI-049 (3pts) - Fix auto-install when parser exists"
+  backlog: "1 PBI ready (PBI-050: 1pt)"
   impediments: 0
 
 ---
@@ -76,7 +76,7 @@ product_backlog:
       role: "user starting treesitter-ls with default settings"
       capability: "get working syntax highlighting when parsers already exist"
       benefit: "zero-config experience works reliably without explicit autoInstall=false"
-    status: ready
+    status: done
     story_points: 3
     acceptance_criteria:
       - criterion: "AC1: Auto-install treats AlreadyExists as success, not failure"
@@ -201,8 +201,40 @@ definition_of_done:
 # CURRENT SPRINT
 # ==============================================================================
 
-current_sprint: null
-  # No active sprint - Sprint 37 completed, awaiting Sprint Planning for next PBI
+current_sprint:
+  sprint: 38
+  pbi: PBI-049
+  goal: "Fix zero-config auto-install to work when parsers already exist"
+  status: completed
+
+  subtasks:
+    - id: ST-049-1
+      title: "Add parser_file_exists helper function"
+      status: completed
+      commits: ["4c31e45"]
+
+    - id: ST-049-2
+      title: "Modify maybe_auto_install_language to check parser existence"
+      status: completed
+      commits: ["4c31e45"]
+
+    - id: ST-049-3
+      title: "Fix E2E test config for empty init_options"
+      status: completed
+      commits: ["82dc620"]
+
+  notes: |
+    ## Implementation Summary
+    1. Added parser_file_exists() helper in src/install/parser.rs
+    2. Modified maybe_auto_install_language in src/lsp/lsp_impl.rs to:
+       - Check if parser file exists before attempting installation
+       - If exists: skip install, call reload_language_after_install directly
+       - If missing: proceed with normal installation flow
+    3. Fixed minimal_init.lua to use vim.empty_dict() for proper JSON serialization
+
+    ## Key Discovery
+    Lua empty table {} serializes as JSON array [], not object {}.
+    Using vim.empty_dict() ensures correct JSON object serialization.
 
 ---
 # ==============================================================================
@@ -211,6 +243,24 @@ current_sprint: null
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 38
+    pbi: PBI-049
+    outcome: "Fixed zero-config auto-install when parsers already exist by adding parser_file_exists check before installation"
+    retrospective:
+      what_went_well:
+        - "Root cause identified correctly - AlreadyExists error prevented reload"
+        - "Simple, targeted fix (Option C) avoided complex changes to InstallResult"
+        - "Discovered and fixed secondary bug with Lua empty table JSON serialization"
+        - "All Definition of Done checks passed"
+      what_to_improve:
+        - "Consider adding integration test for the specific scenario (parser exists + autoInstall enabled)"
+      insight: |
+        When fixing auto-install issues, check the full flow from installation attempt through
+        to language loading. The fix point was at the beginning (check before install) rather
+        than at the error handling (treating AlreadyExists as success), which was simpler and
+        less risky. Also discovered that vim.empty_dict() is needed for proper JSON object
+        serialization from Lua.
+
   - sprint: 37
     pbi: PBI-041
     outcome: "Consolidated QueryLoader API to single resolve_query entry point, renamed from resolve_query_with_inheritance"
