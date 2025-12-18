@@ -9,7 +9,7 @@ use crate::analysis::{
     handle_code_actions, handle_goto_definition, handle_selection_range,
     handle_semantic_tokens_full_delta,
 };
-use crate::config::WorkspaceSettings;
+use crate::config::{TreeSitterSettings, WorkspaceSettings};
 use crate::document::DocumentStore;
 use crate::error::LockResultExt;
 use crate::language::{DocumentParserPool, FailedParserRegistry, LanguageCoordinator};
@@ -357,7 +357,7 @@ impl TreeSitterLs {
         let mut new_search_paths = current_settings.search_paths.clone();
 
         // Add parser directory to search paths
-        let parser_dir = data_dir.join("parsers");
+        let parser_dir = data_dir.join("parser");
         let parser_dir_str = parser_dir.to_string_lossy().to_string();
         if !new_search_paths.contains(&parser_dir_str) {
             new_search_paths.push(parser_dir_str);
@@ -493,9 +493,12 @@ impl LanguageServer for TreeSitterLs {
         );
         self.report_settings_events(&settings_outcome.events).await;
 
-        if let Some(settings) = settings_outcome.settings {
-            self.apply_settings(settings).await;
-        }
+        // Always apply settings (use defaults if none were loaded)
+        // This ensures auto_install=true and other defaults are active for zero-config experience
+        let settings = settings_outcome
+            .settings
+            .unwrap_or_else(|| WorkspaceSettings::from(TreeSitterSettings::default()));
+        self.apply_settings(settings).await;
 
         self.client
             .log_message(MessageType::INFO, "server initialized!")

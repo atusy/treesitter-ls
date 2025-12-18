@@ -1,7 +1,6 @@
 local cwd = vim.uv.cwd()
 vim.lsp.config.treesitter_ls = {
 	cmd = { cwd .. "/target/debug/treesitter-ls" },
-	init_options = vim.empty_dict(),
 }
 vim.lsp.enable("treesitter_ls")
 vim.lsp.log.set_level(vim.lsp.log_levels.DEBUG)
