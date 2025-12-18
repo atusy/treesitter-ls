@@ -35,8 +35,8 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint: null
-  backlog: "1 PBI (0 ready, 1 draft)"
+  current_sprint: 37
+  backlog: "0 PBIs ready"
   impediments: 0
 
 ---
@@ -67,9 +67,13 @@ product_goal:
 # For details: git log -- scrum.yaml
 
 product_backlog:
+  # ============================================================================
+  # Technical Debt / Maintenance (Highest Priority)
+  # ============================================================================
+
   - id: PBI-041
     title: "Consolidate query resolution API in QueryLoader"
-    status: draft
+    status: ready
     user_story: |
       As a maintainer,
       I want to simplify the QueryLoader API,
@@ -94,8 +98,14 @@ product_backlog:
       Potential approach: Make visited parameter optional (Option<&mut HashSet>),
       allowing a single public method named simply "resolve_query".
 
-      Status: draft - needs investigation to confirm approach is sound
+      Estimate: 2 story points
 
+  # ============================================================================
+  # ADR-0003: Parser Compilation Fallback Strategy - SUPERSEDED
+  # Decision: Keep tree-sitter-cli as sole compilation dependency
+  # Rationale: Matches nvim-treesitter approach, avoids header management complexity
+  # PBI-045, PBI-046, PBI-047, PBI-048 removed from backlog
+  # ============================================================================
 
 ---
 # ==============================================================================
@@ -128,7 +138,46 @@ definition_of_done:
 # CURRENT SPRINT
 # ==============================================================================
 
-current_sprint: null
+current_sprint:
+  sprint: 37
+  pbi: PBI-041
+  goal: "Consolidate QueryLoader API to single resolve_query entry point"
+  status: in_progress
+  subtasks:
+    # Subtask 1: Rename resolve_query_with_inheritance to resolve_query (structural)
+    - id: S37-1
+      title: "Rename resolve_query_with_inheritance to resolve_query"
+      status: pending
+      type: refactor
+      notes: "Pure rename - no behavioral changes"
+
+    # Subtask 2: Update tests to use new method name
+    - id: S37-2
+      title: "Update test calls from resolve_query_with_inheritance to resolve_query"
+      status: pending
+      type: refactor
+      notes: "Update all test method calls to use the new name"
+
+    # Subtask 3: Update load_query_with_inheritance caller
+    - id: S37-3
+      title: "Update load_query_with_inheritance to call resolve_query"
+      status: pending
+      type: refactor
+      notes: "Update internal caller in load_query_with_inheritance"
+
+    # Subtask 4: Check for REVIEW comments
+    - id: S37-4
+      title: "Verify and remove any REVIEW comments"
+      status: pending
+      type: refactor
+      notes: "Ensure no REVIEW comments remain in query_loader.rs"
+
+    # Subtask 5: Verify all acceptance criteria
+    - id: S37-5
+      title: "Verify all acceptance criteria pass"
+      status: pending
+      type: verification
+      notes: "Run all AC verification commands"
 
 ---
 # ==============================================================================
