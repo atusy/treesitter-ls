@@ -35,8 +35,8 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint: "Sprint 40 - COMPLETED - PBI-050 (1pt) - Downgrade query log level to info"
-  backlog: "5 PBIs ready (tidying)"
+  current_sprint: "Sprint 41 - COMPLETED - PBI-052 (1pt) - Remove dead code from position.rs and semantic.rs"
+  backlog: "4 PBIs ready (tidying)"
   impediments: 0
 
 ---
@@ -205,7 +205,7 @@ product_backlog:
       role: "developer maintaining treesitter-ls"
       capability: "remove unused code from position.rs and semantic.rs modules"
       benefit: "reduced technical debt and clearer codebase"
-    status: ready
+    status: done
     story_points: 1
     acceptance_criteria:
       - criterion: "AC1: compute_line_starts() function removed from position.rs"
@@ -455,34 +455,46 @@ definition_of_done:
 # ==============================================================================
 
 current_sprint:
-  sprint: 40
-  pbi: PBI-050
-  goal: "Change query predicate log level from warn to info for better log hygiene"
+  sprint: 41
+  pbi: PBI-052
+  goal: "Remove dead code from position.rs and semantic.rs to reduce technical debt and improve code clarity"
   status: completed
 
   subtasks:
-    - id: ST-050-1
-      title: "Change log levels from warn/eprintln to info across query modules"
+    - id: ST-052-1
+      title: "Remove compute_line_starts() function from position.rs"
       status: completed
-      commits: ["b2814d1"]
+      commits: ["8931c30"]
+
+    - id: ST-052-2
+      title: "Remove _text field from PositionMapper struct"
+      status: completed
+      commits: ["8931c30"]
+
+    - id: ST-052-3
+      title: "Remove Domain* semantic token re-exports from semantic.rs"
+      status: completed
+      commits: ["8931c30"]
+
+    - id: ST-052-4
+      title: "Verify all tests pass"
+      status: completed
+      commits: ["8931c30"]
 
   notes: |
-    ## Implementation Summary
-    Changed 5 log calls from warn/eprintln to log::info! following Dave Cheney's
-    logging philosophy:
-    1. query_predicates.rs: Changed 3 eprintln! to log::info! with target treesitter_ls::query
-    2. injection.rs: Changed 2 log::warn! to log::info! (kept target treesitter_ls::query)
-    3. docs/README.md: Updated logging table and example from warn to info
+    ## Sprint Goal
+    Remove identified dead code to reduce technical debt and improve codebase clarity.
+    This is a pure tidying Sprint with no behavioral changes.
 
-    ## Rationale
-    Query predicate issues (invalid lua-patterns, malformed #offset! directives) were
-    logged as warnings, but they don't require user action. Most users cannot modify
-    upstream nvim-treesitter queries. Following Dave Cheney's principle:
-    - warn: user action needed
-    - info: interesting runtime events
+    ## Dead Code Removed
+    - compute_line_starts() in text/position.rs - exported but never used externally
+    - _text field in PositionMapper - stored but never accessed
+    - DomainSemantic* re-exports in analysis/semantic.rs - aliased but never used
 
-    These messages are informational for query authors, not actionable warnings for
-    end users. Users running with RUST_LOG=warn would see these unnecessarily.
+    ## Verification
+    - All 199 unit tests pass
+    - Clippy clean, formatting clean
+    - All acceptance criteria verified via grep
 
 ---
 # ==============================================================================
@@ -491,6 +503,23 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 41
+    pbi: PBI-052
+    outcome: "Removed dead code from position.rs and semantic.rs (compute_line_starts, _text field, DomainSemantic re-exports)"
+    retrospective:
+      what_went_well:
+        - "All 4 subtasks completed in single cohesive refactoring commit"
+        - "All acceptance criteria verified via grep commands"
+        - "All Definition of Done checks passed (199 unit tests)"
+        - "Pure structural change with zero behavioral impact"
+      what_to_improve:
+        - "Consider running dead code analysis periodically to catch unused code earlier"
+      insight: |
+        Dead code removal is a straightforward tidying activity that naturally completes
+        in a single commit. When code is demonstrably unused (no callers, no references),
+        removal is low-risk and improves codebase clarity. Verification via grep provides
+        high confidence that removed code was truly dead.
+
   - sprint: 40
     pbi: PBI-050
     outcome: "Changed query predicate log level from warn to info for better log hygiene and actionability"
