@@ -76,8 +76,6 @@ impl<'a> CodeActionOptions<'a> {
     }
 }
 
-// Type alias for backwards compatibility during migration
-type CodeActionContext<'a> = CodeActionOptions<'a>;
 use tower_lsp::lsp_types::{
     CodeAction, CodeActionDisabled, CodeActionKind, CodeActionOrCommand, DocumentChanges, OneOf,
     OptionalVersionedTextDocumentIdentifier, Position, Range, TextDocumentEdit, TextEdit,
@@ -628,65 +626,10 @@ pub fn handle_code_actions(options: CodeActionOptions) -> Option<Vec<CodeActionO
     handle_code_actions_with_context(options)
 }
 
-/// Handle code actions with optional injection query for language hierarchy detection.
-/// Internal function kept for test compatibility.
-#[cfg(test)]
-fn handle_code_actions_with_injection_query(
-    uri: &Url,
-    text: &str,
-    tree: &Tree,
-    cursor: Range,
-    queries: Option<(&Query, Option<&Query>)>,
-    capture_context: Option<(&str, &CaptureMappings)>,
-    injection_query: Option<&Query>,
-) -> Option<Vec<CodeActionOrCommand>> {
-    let context = CodeActionContext {
-        uri,
-        text,
-        tree,
-        cursor,
-        queries,
-        capture_context,
-        injection_query,
-        coordinator: None,
-        parser_pool: None,
-    };
-    handle_code_actions_with_context(context)
-}
-
-/// Handle code actions with injection query and coordinator for full injection-aware processing.
-/// Internal function kept for test compatibility.
-#[cfg(test)]
-#[allow(clippy::too_many_arguments)]
-fn handle_code_actions_with_injection_and_coordinator(
-    uri: &Url,
-    text: &str,
-    tree: &Tree,
-    cursor: Range,
-    queries: Option<(&Query, Option<&Query>)>,
-    capture_context: Option<(&str, &CaptureMappings)>,
-    injection_query: Option<&Query>,
-    coordinator: &crate::language::LanguageCoordinator,
-    parser_pool: &mut crate::language::DocumentParserPool,
-) -> Option<Vec<CodeActionOrCommand>> {
-    let context = CodeActionContext {
-        uri,
-        text,
-        tree,
-        cursor,
-        queries,
-        capture_context,
-        injection_query,
-        coordinator: Some(coordinator),
-        parser_pool: Some(parser_pool),
-    };
-    handle_code_actions_with_context(context)
-}
-
 fn handle_code_actions_with_context(
-    context: CodeActionContext,
+    context: CodeActionOptions,
 ) -> Option<Vec<CodeActionOrCommand>> {
-    let CodeActionContext {
+    let CodeActionOptions {
         uri,
         text,
         tree,
@@ -949,7 +892,6 @@ fn ordinal(n: usize) -> String {
 }
 
 #[cfg(test)]
-#[allow(deprecated)] // Tests use deprecated functions to verify they still work
 mod tests {
     use super::*;
     use std::collections::HashMap;
