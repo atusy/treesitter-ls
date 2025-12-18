@@ -172,11 +172,8 @@ fn run_list_languages(no_cache: bool) {
     }
 }
 
-/// Default configuration template
-const CONFIG_TEMPLATE: &str = r#"# Documentation: https://github.com/atusy/treesitter-ls/blob/main/docs/README.md
-
-autoInstall = true
-"#;
+/// Documentation link for configuration
+const DOC_LINK: &str = "# Documentation: https://github.com/atusy/treesitter-ls/blob/main/docs/README.md\n";
 
 /// Run the language status command
 fn run_language_status(data_dir: Option<PathBuf>, verbose: bool) {
@@ -402,18 +399,31 @@ fn find_parser_file(parser_dir: &std::path::Path, lang: &str) -> Option<PathBuf>
 
 /// Run the config init command
 fn run_config_init(output: Option<PathBuf>, force: bool) {
+    use treesitter_ls::config::defaults::default_settings;
+
     // Check for --force without --output (warn but continue)
     if force && output.is_none() {
         eprintln!("Warning: --force has no effect without --output");
     }
 
+    // Generate config from typed defaults
+    let settings = default_settings();
+    let config_toml = toml::to_string_pretty(&settings)
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to serialize configuration: {}", e);
+            std::process::exit(1);
+        });
+
+    // Prepend documentation link
+    let config_with_doc = format!("{}\n{}", DOC_LINK, config_toml);
+
     match output {
         // No output specified or explicit "-" means stdout
         None => {
-            print!("{}", CONFIG_TEMPLATE);
+            print!("{}", config_with_doc);
         }
         Some(path) if path.as_os_str() == "-" => {
-            print!("{}", CONFIG_TEMPLATE);
+            print!("{}", config_with_doc);
         }
         // Write to specified file
         Some(path) => {
@@ -425,7 +435,7 @@ fn run_config_init(output: Option<PathBuf>, force: bool) {
                 std::process::exit(1);
             }
 
-            match std::fs::write(&path, CONFIG_TEMPLATE) {
+            match std::fs::write(&path, &config_with_doc) {
                 Ok(()) => {
                     eprintln!("Created configuration file: {}", path.display());
                 }

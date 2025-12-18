@@ -241,6 +241,31 @@ fn test_config_init_outputs_to_stdout() {
     );
 }
 
+/// Test that config init includes captureMappings in output
+#[test]
+fn test_config_init_includes_capture_mappings() {
+    let output = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
+        .args(["config", "init"])
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should contain captureMappings section
+    assert!(
+        stdout.contains("[captureMappings._.highlights]"),
+        "Should contain captureMappings section. Got: {}",
+        stdout
+    );
+
+    // Should contain variable mapping
+    assert!(
+        stdout.contains("\"variable\""),
+        "Should contain variable mapping. Got: {}",
+        stdout
+    );
+}
+
 /// Test that config init --output creates a configuration file
 #[test]
 fn test_config_init_output_creates_file() {
