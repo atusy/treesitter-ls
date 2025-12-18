@@ -36,7 +36,7 @@ rules:
 
 quick_status:
   current_sprint: null
-  backlog: "3 PBIs (2 ready, 1 draft)"
+  backlog: "2 PBIs (1 ready, 1 draft)"
   impediments: 0
 
 ---
@@ -122,42 +122,6 @@ product_backlog:
         # Documentation: ...
         autoInstall = true
 
-  - id: PBI-043
-    title: "config init outputs to stdout by default"
-    status: ready
-    story_points: 3
-    depends_on: [PBI-042]
-    user_story: |
-      As a user scripting with treesitter-ls CLI,
-      I want `treesitter-ls config init` to emit to stdout when no output file is specified,
-      So that I can pipe to other tools, preview before saving, or redirect to custom location.
-    acceptance_criteria:
-      - criterion: "AC1: Default outputs to stdout"
-        verification: "treesitter-ls config init outputs to stdout; no file created"
-      - criterion: "AC2: --output flag writes to file"
-        verification: "treesitter-ls config init --output custom.toml creates custom.toml"
-      - criterion: "AC3: --output with --force overwrites"
-        verification: "treesitter-ls config init --output existing.toml --force overwrites"
-      - criterion: "AC4: --output refuses overwrite without --force"
-        verification: "treesitter-ls config init --output existing.toml fails with error"
-      - criterion: "AC5: --force without --output warns"
-        verification: "treesitter-ls config init --force warns to stderr, outputs to stdout"
-      - criterion: "AC6: --output - means stdout"
-        verification: "treesitter-ls config init --output - outputs to stdout"
-    notes: |
-      PO Decisions:
-      - Breaking change acceptable (unreleased)
-      - NO short flag (-o) - use --output only
-      - Support --output - for explicit stdout
-      - Warn when --force used without --output
-
-      Technical changes in src/bin/main.rs:
-      - ConfigAction::Init: add `output: Option<PathBuf>` (long flag only)
-      - run_config_init(output: Option<PathBuf>, force: bool)
-      - stdout when output is None or "-"
-      - Warn to stderr if --force without --output
-      - Update existing tests to use --output flag
-
 ---
 # ==============================================================================
 # DEFINITION OF READY
@@ -198,6 +162,12 @@ current_sprint: null
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 35
+    pbi: PBI-043
+    outcome: "Changed config init to output to stdout by default, added --output flag for file creation"
+  - sprint: 34
+    pbi: PBI-042
+    outcome: "Simplified CONFIG_TEMPLATE to minimal active TOML (doc link comment + active settings)"
   - sprint: 33
     pbi: PBI-040
     outcome: "Consolidated offset calculation API by removing redundant function and renaming to single calculate_effective_range"
