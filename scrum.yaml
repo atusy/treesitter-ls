@@ -35,8 +35,8 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint: "Sprint 38 - COMPLETED - PBI-049 (3pts) - Fix auto-install when parser exists"
-  backlog: "2 PBIs ready (PBI-051: 1pt, PBI-050: 1pt)"
+  current_sprint: "Sprint 39 - COMPLETED - PBI-051 (1pt) - Fix zero-config without init_options"
+  backlog: "1 PBI ready (PBI-050: 1pt)"
   impediments: 0
 
 ---
@@ -127,7 +127,7 @@ product_backlog:
       role: "user configuring treesitter-ls in Neovim"
       capability: "omit init_options entirely from LSP config"
       benefit: "simplest possible zero-config setup works out of the box"
-    status: ready
+    status: done
     story_points: 1
     acceptance_criteria:
       - criterion: "AC1: E2E tests pass when init_options is completely omitted"
@@ -235,39 +235,37 @@ definition_of_done:
 # ==============================================================================
 
 current_sprint:
-  sprint: 38
-  pbi: PBI-049
-  goal: "Fix zero-config auto-install to work when parsers already exist"
+  sprint: 39
+  pbi: PBI-051
+  goal: "Fix zero-config to work when init_options is completely omitted"
   status: completed
 
   subtasks:
-    - id: ST-049-1
-      title: "Add parser_file_exists helper function"
+    - id: ST-051-1
+      title: "Fix initialization to always apply settings with defaults"
       status: completed
-      commits: ["4c31e45"]
-
-    - id: ST-049-2
-      title: "Modify maybe_auto_install_language to check parser existence"
-      status: completed
-      commits: ["4c31e45"]
-
-    - id: ST-049-3
-      title: "Fix E2E test config for empty init_options"
-      status: completed
-      commits: ["82dc620"]
+      commits: ["63704f8"]
 
   notes: |
     ## Implementation Summary
-    1. Added parser_file_exists() helper in src/install/parser.rs
-    2. Modified maybe_auto_install_language in src/lsp/lsp_impl.rs to:
-       - Check if parser file exists before attempting installation
-       - If exists: skip install, call reload_language_after_install directly
-       - If missing: proceed with normal installation flow
-    3. Fixed minimal_init.lua to use vim.empty_dict() for proper JSON serialization
+    Fixed the root cause where omitting init_options entirely broke zero-config:
+    1. Added Default derive to TreeSitterSettings in src/config/settings.rs
+    2. Modified initialize() in src/lsp/lsp_impl.rs to always call apply_settings(),
+       using WorkspaceSettings::from(TreeSitterSettings::default()) when none loaded
+    3. Fixed "parsers" -> "parser" typo in reload_language_after_install()
+    4. Updated minimal_init.lua to remove init_options line for true zero-config test
 
-    ## Key Discovery
-    Lua empty table {} serializes as JSON array [], not object {}.
-    Using vim.empty_dict() ensures correct JSON object serialization.
+    ## Root Cause Analysis Refinement
+    The original PBI analysis identified a typo ("parsers" vs "parser"), but the deeper
+    issue was that when no settings were loaded (no init_options, no TOML), the if-let
+    pattern skipped apply_settings() entirely, leaving auto_install=false from the
+    derived Default instead of the business-required true.
+
+    ## Key Insight
+    Derived Default traits don't always match business requirements. The From<TreeSitterSettings>
+    trait ensures auto_install.unwrap_or(true), but this is only applied when settings
+    conversion happens. The fix ensures settings are always applied, even when starting
+    from defaults.
 
 ---
 # ==============================================================================
@@ -276,6 +274,25 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 39
+    pbi: PBI-051
+    outcome: "Fixed zero-config to work when init_options is completely omitted from Neovim LSP config"
+    retrospective:
+      what_went_well:
+        - "Identified the deeper issue beyond the initial typo analysis"
+        - "Single cohesive commit fixed all related issues (typo + initialization)"
+        - "All Definition of Done checks passed (199 unit tests + 20 E2E tests)"
+        - "Root cause analysis refined during implementation"
+      what_to_improve:
+        - "Initial PBI analysis was surface-level (typo) rather than systemic (initialization flow)"
+      insight: |
+        Bug analysis should examine the full execution flow, not just the immediate error location.
+        The PBI identified a typo ("parsers" vs "parser"), but testing revealed the deeper issue:
+        when no settings are loaded, apply_settings() was never called, leaving auto_install=false.
+        Derived Default traits don't always match business requirements - zero-config requires
+        auto_install=true, but bool's Default is false. The fix ensures settings are always
+        applied with proper business defaults via the From<TreeSitterSettings> conversion.
+
   - sprint: 38
     pbi: PBI-049
     outcome: "Fixed zero-config auto-install when parsers already exist by adding parser_file_exists check before installation"
