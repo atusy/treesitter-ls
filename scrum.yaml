@@ -35,8 +35,8 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint: "Sprint 39 - COMPLETED - PBI-051 (1pt) - Fix zero-config without init_options"
-  backlog: "1 PBI ready (PBI-050: 1pt)"
+  current_sprint: "Sprint 40 - COMPLETED - PBI-050 (1pt) - Downgrade query log level to info"
+  backlog: "0 PBIs ready"
   impediments: 0
 
 ---
@@ -160,7 +160,7 @@ product_backlog:
       role: "user running treesitter-ls"
       capability: "see query predicate issues at info level instead of warn"
       benefit: "log output distinguishes between actionable warnings and informational messages"
-    status: ready
+    status: done
     story_points: 1
     acceptance_criteria:
       - criterion: "AC1: All 5 query predicate log calls use info! instead of warn!"
@@ -235,37 +235,34 @@ definition_of_done:
 # ==============================================================================
 
 current_sprint:
-  sprint: 39
-  pbi: PBI-051
-  goal: "Fix zero-config to work when init_options is completely omitted"
+  sprint: 40
+  pbi: PBI-050
+  goal: "Change query predicate log level from warn to info for better log hygiene"
   status: completed
 
   subtasks:
-    - id: ST-051-1
-      title: "Fix initialization to always apply settings with defaults"
+    - id: ST-050-1
+      title: "Change log levels from warn/eprintln to info across query modules"
       status: completed
-      commits: ["63704f8"]
+      commits: ["b2814d1"]
 
   notes: |
     ## Implementation Summary
-    Fixed the root cause where omitting init_options entirely broke zero-config:
-    1. Added Default derive to TreeSitterSettings in src/config/settings.rs
-    2. Modified initialize() in src/lsp/lsp_impl.rs to always call apply_settings(),
-       using WorkspaceSettings::from(TreeSitterSettings::default()) when none loaded
-    3. Fixed "parsers" -> "parser" typo in reload_language_after_install()
-    4. Updated minimal_init.lua to remove init_options line for true zero-config test
+    Changed 5 log calls from warn/eprintln to log::info! following Dave Cheney's
+    logging philosophy:
+    1. query_predicates.rs: Changed 3 eprintln! to log::info! with target treesitter_ls::query
+    2. injection.rs: Changed 2 log::warn! to log::info! (kept target treesitter_ls::query)
+    3. docs/README.md: Updated logging table and example from warn to info
 
-    ## Root Cause Analysis Refinement
-    The original PBI analysis identified a typo ("parsers" vs "parser"), but the deeper
-    issue was that when no settings were loaded (no init_options, no TOML), the if-let
-    pattern skipped apply_settings() entirely, leaving auto_install=false from the
-    derived Default instead of the business-required true.
+    ## Rationale
+    Query predicate issues (invalid lua-patterns, malformed #offset! directives) were
+    logged as warnings, but they don't require user action. Most users cannot modify
+    upstream nvim-treesitter queries. Following Dave Cheney's principle:
+    - warn: user action needed
+    - info: interesting runtime events
 
-    ## Key Insight
-    Derived Default traits don't always match business requirements. The From<TreeSitterSettings>
-    trait ensures auto_install.unwrap_or(true), but this is only applied when settings
-    conversion happens. The fix ensures settings are always applied, even when starting
-    from defaults.
+    These messages are informational for query authors, not actionable warnings for
+    end users. Users running with RUST_LOG=warn would see these unnecessarily.
 
 ---
 # ==============================================================================
@@ -274,6 +271,24 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 40
+    pbi: PBI-050
+    outcome: "Changed query predicate log level from warn to info for better log hygiene and actionability"
+    retrospective:
+      what_went_well:
+        - "Clear rationale based on Dave Cheney's logging philosophy"
+        - "Simple, focused refactoring with single cohesive commit"
+        - "All Definition of Done checks passed (199 unit tests + 20 E2E tests)"
+        - "Documentation updated alongside code changes"
+      what_to_improve:
+        - "Initial PBI notes incorrectly stated warn! macros existed when actual code used eprintln!"
+      insight: |
+        Log level decisions should be based on actionability, not severity. Warnings imply
+        user action is needed, while info is for interesting but non-actionable events.
+        Query predicate issues are informational for query authors (who use nvim-treesitter),
+        not actionable for end users of treesitter-ls. This distinction keeps RUST_LOG=warn
+        output focused on truly actionable issues.
+
   - sprint: 39
     pbi: PBI-051
     outcome: "Fixed zero-config to work when init_options is completely omitted from Neovim LSP config"
