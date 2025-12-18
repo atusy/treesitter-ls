@@ -261,13 +261,6 @@ impl TreeSitterLs {
             return;
         }
 
-        self.client
-            .log_message(
-                MessageType::INFO,
-                format!("Auto-installing language '{}' in background...", language),
-            )
-            .await;
-
         // Get data directory
         let data_dir = match crate::install::default_data_dir() {
             Some(dir) => dir,
@@ -282,6 +275,31 @@ impl TreeSitterLs {
                 return;
             }
         };
+
+        // Check if parser already exists - skip installation and just reload
+        if crate::install::parser_file_exists(language, &data_dir).is_some() {
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    format!(
+                        "Parser for '{}' already exists. Loading without reinstall...",
+                        language
+                    ),
+                )
+                .await;
+
+            self.installing_languages.finish_install(language);
+            self.reload_language_after_install(language, &data_dir, uri, text)
+                .await;
+            return;
+        }
+
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!("Auto-installing language '{}' in background...", language),
+            )
+            .await;
 
         let lang = language.to_string();
         let result =

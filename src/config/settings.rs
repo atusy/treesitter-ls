@@ -242,6 +242,18 @@ mod tests {
     }
 
     #[test]
+    fn should_handle_completely_empty_json_object() {
+        // This is crucial for zero-config: init_options = {} should work
+        let completely_empty = r#"{}"#;
+
+        let settings: TreeSitterSettings = serde_json::from_str(completely_empty).unwrap();
+        assert!(settings.languages.is_empty());
+        assert!(settings.search_paths.is_none());
+        assert!(settings.auto_install.is_none());
+        assert!(settings.capture_mappings.is_empty());
+    }
+
+    #[test]
     fn should_handle_missing_languages_field() {
         let json_without_languages = r#"{
             "searchPaths": ["/some/path"],
