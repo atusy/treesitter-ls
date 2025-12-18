@@ -273,11 +273,9 @@ fn collect_injection_tokens_recursive(
         // Calculate effective content range with offset (relative to current text)
         let content_node = injection.content_node;
         let (inj_start_byte, inj_end_byte) = if let Some(off) = offset {
-            use crate::analysis::offset_calculator::{
-                ByteRange, calculate_effective_range_with_text,
-            };
+            use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range};
             let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
-            let effective = calculate_effective_range_with_text(text, byte_range, off);
+            let effective = calculate_effective_range(text, byte_range, off);
             (effective.start, effective.end)
         } else {
             (content_node.start_byte(), content_node.end_byte())

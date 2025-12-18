@@ -9,7 +9,7 @@ use tower_lsp::lsp_types::{Position, Range, SelectionRange};
 use tree_sitter::Node;
 
 use super::range_builder::node_to_range;
-use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range_with_text};
+use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range};
 use crate::language::injection::InjectionOffset;
 use crate::text::position::PositionMapper;
 
@@ -70,7 +70,7 @@ pub fn calculate_effective_lsp_range(
     offset: InjectionOffset,
 ) -> Range {
     let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
-    let effective = calculate_effective_range_with_text(text, byte_range, offset);
+    let effective = calculate_effective_range(text, byte_range, offset);
 
     // Convert byte positions to LSP positions (reusing cached mapper - Sprint 7 perf fix)
     let start_pos = mapper
@@ -110,7 +110,7 @@ pub fn is_cursor_within_effective_range(
     offset: InjectionOffset,
 ) -> bool {
     let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
-    let effective_range = calculate_effective_range_with_text(text, byte_range, offset);
+    let effective_range = calculate_effective_range(text, byte_range, offset);
     cursor_byte >= effective_range.start && cursor_byte < effective_range.end
 }
 

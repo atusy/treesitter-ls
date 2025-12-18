@@ -1,5 +1,5 @@
 use crate::analysis::offset_calculator::{
-    ByteRange, calculate_effective_range_with_text, format_offset, get_offset_label,
+    ByteRange, calculate_effective_range, format_offset, get_offset_label,
 };
 use crate::config::CaptureMappings;
 use crate::language::injection;
@@ -165,7 +165,7 @@ pub fn create_inspect_token_action(params: InspectTokenParams) -> CodeActionOrCo
 
         // Calculate and display effective range when offset is present
         let byte_range = ByteRange::new(params.node.start_byte(), params.node.end_byte());
-        let effective_range = calculate_effective_range_with_text(params.text, byte_range, offset);
+        let effective_range = calculate_effective_range(params.text, byte_range, offset);
         info.push_str(&format!(
             "* Effective Range: [{}, {}]\n",
             effective_range.start, effective_range.end
@@ -309,7 +309,7 @@ fn is_within_effective_range(
     offset: crate::language::injection::InjectionOffset,
 ) -> bool {
     let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
-    let effective_range = calculate_effective_range_with_text(text, byte_range, offset);
+    let effective_range = calculate_effective_range(text, byte_range, offset);
     position >= effective_range.start && position < effective_range.end
 }
 

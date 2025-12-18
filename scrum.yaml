@@ -35,8 +35,8 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint: null  # Idle - ready for Sprint 33
-  backlog: "4 PBIs (3 ready, 1 draft)"
+  current_sprint: 33
+  backlog: "3 PBIs (2 ready, 1 draft)"
   impediments: 0
 
 ---
@@ -69,7 +69,7 @@ product_goal:
 product_backlog:
   - id: PBI-040
     title: "Remove test-only calculate_effective_range function"
-    status: ready
+    status: in_progress
     user_story: |
       As a maintainer,
       I want to remove the redundant calculate_effective_range function,
@@ -219,7 +219,36 @@ definition_of_done:
 # CURRENT SPRINT
 # ==============================================================================
 
-current_sprint: null
+current_sprint:
+  number: 33
+  pbi: PBI-040
+  goal: "Simplify the offset calculation API by consolidating to a single calculate_effective_range function"
+  subtasks:
+    - id: "33.1"
+      title: "Migrate tests to use calculate_effective_range_with_text"
+      status: pending
+      notes: |
+        Update 2 tests in offset_calculator.rs:
+        - test_calculate_effective_range_with_positive_offset
+        - test_calculate_effective_range_with_default_offset
+        These tests use the simple calculate_effective_range function.
+        Migrate them to use calculate_effective_range_with_text with text parameter.
+    - id: "33.2"
+      title: "Remove calculate_effective_range function"
+      status: pending
+      notes: |
+        Remove the now-unused calculate_effective_range function (lines 29-38).
+        This includes the docstring and the function body.
+    - id: "33.3"
+      title: "Rename calculate_effective_range_with_text to calculate_effective_range"
+      status: pending
+      notes: |
+        Rename the function and update all callers:
+        - src/analysis/offset_calculator.rs (definition + tests)
+        - src/analysis/refactor.rs (import + 2 call sites)
+        - src/analysis/selection/range_builder.rs (import + 3 call sites)
+        - src/analysis/selection/injection_aware.rs (import + 2 call sites)
+        - src/analysis/semantic.rs (import + 1 call site)
 
 ---
 # ==============================================================================

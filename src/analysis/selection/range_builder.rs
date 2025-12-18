@@ -29,7 +29,7 @@ use super::injection_aware::{
     adjust_range_to_host, calculate_effective_lsp_range, is_cursor_within_effective_range,
     is_node_in_selection_chain,
 };
-use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range_with_text};
+use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range};
 use crate::language::injection::{self, parse_offset_directive_for_pattern};
 use crate::text::PositionMapper;
 
@@ -203,7 +203,7 @@ pub fn build(
 
     let (content_text, effective_start_byte) = if let Some(offset) = offset_from_query {
         let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
-        let effective = calculate_effective_range_with_text(doc_ctx.text, byte_range, offset);
+        let effective = calculate_effective_range(doc_ctx.text, byte_range, offset);
         (
             &doc_ctx.text[effective.start..effective.end],
             effective.start,
@@ -328,7 +328,7 @@ fn build_nested_injection(
     let offset = parse_offset_directive_for_pattern(injection_query, pattern_index);
     let (nested_text, nested_effective_start_byte) = if let Some(off) = offset {
         let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
-        let effective = calculate_effective_range_with_text(text, byte_range, off);
+        let effective = calculate_effective_range(text, byte_range, off);
         (
             &text[effective.start..effective.end],
             parent_start_byte + effective.start,
@@ -350,7 +350,7 @@ fn build_nested_injection(
 
     let nested_relative_byte = if let Some(off) = offset {
         let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
-        let effective = calculate_effective_range_with_text(text, byte_range, off);
+        let effective = calculate_effective_range(text, byte_range, off);
         cursor_byte.saturating_sub(effective.start)
     } else {
         cursor_byte.saturating_sub(content_node.start_byte())
