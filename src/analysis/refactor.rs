@@ -2037,8 +2037,8 @@ fn main() {
 
         let injection_query = Query::new(&language, "(string_literal) @injection.content").unwrap();
 
-        let options = CodeActionOptions::new(&uri, text, &tree, cursor)
-            .with_injection(&injection_query);
+        let options =
+            CodeActionOptions::new(&uri, text, &tree, cursor).with_injection(&injection_query);
 
         assert!(options.injection_query.is_some());
     }

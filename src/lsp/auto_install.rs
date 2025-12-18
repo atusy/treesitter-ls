@@ -5,8 +5,8 @@
 
 use crate::document::DocumentStore;
 use crate::error::LockResultExt;
-use crate::language::injection::collect_all_injections;
 use crate::language::LanguageCoordinator;
+use crate::language::injection::collect_all_injections;
 use std::collections::HashSet;
 use std::sync::Mutex;
 use tower_lsp::lsp_types::Url;
@@ -213,8 +213,10 @@ mod tests {
             collect_all_injections(&root_multi, rust_code_multi, Some(&multi_query))
                 .unwrap_or_default();
 
-        let unique_multi: HashSet<String> =
-            injections_multi.iter().map(|i| i.language.clone()).collect();
+        let unique_multi: HashSet<String> = injections_multi
+            .iter()
+            .map(|i| i.language.clone())
+            .collect();
 
         // Should have both "text" and "regex"
         assert!(unique_multi.contains("text") || unique_multi.contains("regex"));

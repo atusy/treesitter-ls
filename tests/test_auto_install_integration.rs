@@ -7,8 +7,8 @@ use std::collections::HashSet;
 use tower_lsp::lsp_types::Url;
 use tree_sitter::{Parser, Query};
 use treesitter_ls::document::DocumentStore;
-use treesitter_ls::language::injection::collect_all_injections;
 use treesitter_ls::language::LanguageCoordinator;
+use treesitter_ls::language::injection::collect_all_injections;
 use treesitter_ls::lsp::auto_install::InstallingLanguages;
 
 #[test]

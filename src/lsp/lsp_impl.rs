@@ -378,7 +378,6 @@ impl TreeSitterLs {
         }
     }
 
-
     /// Check injected languages and trigger auto-install for missing parsers.
     ///
     /// This function:
@@ -1119,9 +1118,12 @@ impl LanguageServer for TreeSitterLs {
                 handle_code_actions(options)
             }
         } else {
-            handle_code_actions(
-                crate::analysis::refactor::CodeActionOptions::new(&uri, text, tree, domain_range),
-            )
+            handle_code_actions(crate::analysis::refactor::CodeActionOptions::new(
+                &uri,
+                text,
+                tree,
+                domain_range,
+            ))
         };
 
         Ok(lsp_response)
