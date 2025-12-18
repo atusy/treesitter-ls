@@ -36,7 +36,7 @@ rules:
 
 quick_status:
   current_sprint: "Sprint 40 - COMPLETED - PBI-050 (1pt) - Downgrade query log level to info"
-  backlog: "0 PBIs ready"
+  backlog: "9 PBIs ready (tidying)"
   impediments: 0
 
 ---
@@ -195,6 +195,508 @@ product_backlog:
         - Change: log::warn! -> log::info! (2 occurrences)
       - docs/README.md: Update logging table row for treesitter_ls::query
         - Change: warn -> info in Level column
+
+  # ============================================================================
+  # Tidying / Code Quality (Kent Beck's Tidy First)
+  # ============================================================================
+
+  - id: PBI-052
+    story:
+      role: "developer maintaining treesitter-ls"
+      capability: "remove unused code from position.rs and semantic.rs modules"
+      benefit: "reduced technical debt and clearer codebase"
+    status: ready
+    story_points: 1
+    acceptance_criteria:
+      - criterion: "AC1: compute_line_starts() function removed from position.rs"
+        verification: |
+          # Function should not exist in position.rs
+          ! grep -q "pub fn compute_line_starts" src/text/position.rs
+          # No other files should reference it
+          ! grep -r "compute_line_starts" src/ --include="*.rs" | grep -v "^Binary"
+      - criterion: "AC2: _text field removed from PositionMapper struct"
+        verification: |
+          # Field should not exist (check for _text in struct definition)
+          ! grep -q "_text:" src/text/position.rs
+          # PositionMapper::new should not store text
+          grep -A5 "pub fn new" src/text/position.rs | grep -q "line_index"
+      - criterion: "AC3: Domain* semantic token re-exports removed from semantic.rs"
+        verification: |
+          # Re-exports should not exist (lines 10-17)
+          ! grep -q "DomainSemantic" src/analysis/semantic.rs
+          # No other files should reference them
+          ! grep -r "DomainSemantic" src/ --include="*.rs"
+      - criterion: "AC4: All tests pass"
+        verification: "make test && make check"
+    notes: |
+      ## Dead Code Identified
+      - compute_line_starts() in text/position.rs:77-90 - exported but never used externally
+      - _text field in PositionMapper - stored but never accessed (line_index is used instead)
+      - DomainSemantic* re-exports in analysis/semantic.rs:10-17 - aliased but never used
+
+      ## Risk: Very Low
+      - Pure removal of unused code
+      - No behavioral changes
+      - Straightforward verification via grep
+
+  - id: PBI-053
+    story:
+      role: "developer maintaining treesitter-ls"
+      capability: "use consistent path resolution in query_loader.rs"
+      benefit: "avoid subtle bugs from inconsistent path handling"
+    status: ready
+    story_points: 1
+    acceptance_criteria:
+      - criterion: "AC1: All extension checks use PathBuf with .clean()"
+        verification: |
+          # Check that .dll path uses PathBuf.clean() like .so and .dylib
+          grep -A3 "dll" src/language/query_loader.rs | grep -q "PathBuf"
+          grep -A3 "dll" src/language/query_loader.rs | grep -q ".clean()"
+      - criterion: "AC2: Extension search consolidated to loop over PARSER_EXTENSIONS array"
+        verification: |
+          # Check for PARSER_EXTENSIONS constant definition
+          grep -q "PARSER_EXTENSIONS" src/language/query_loader.rs
+          # Check that it contains all three extensions
+          grep "PARSER_EXTENSIONS" src/language/query_loader.rs | grep -q "so.*dylib.*dll\|dylib.*so.*dll"
+      - criterion: "AC3: resolve_library_path test passes with Windows paths"
+        verification: |
+          # Existing test should still pass
+          cargo test test_resolve_library_path -- --nocapture
+      - criterion: "AC4: All tests pass"
+        verification: "make test && make check"
+    notes: |
+      ## Issue
+      query_loader.rs:250-252 uses format!() without .clean() while other extensions use PathBuf:
+      ```rust
+      // .so uses: PathBuf::from(path).join("parser").join(format!("{language}.so")).clean();
+      // .dylib uses: PathBuf::from(path).join("parser").join(format!("{language}.dylib")).clean();
+      // .dll uses: format!("{path}/parser/{language}.dll") -- INCONSISTENT
+      ```
+
+      ## Fix
+      Consolidate to:
+      ```rust
+      const PARSER_EXTENSIONS: &[&str] = &["so", "dylib", "dll"];
+      for ext in PARSER_EXTENSIONS {
+          let path = PathBuf::from(base).join("parser").join(format!("{language}.{ext}")).clean();
+          if path.exists() { return Some(path.to_string_lossy().into_owned()); }
+      }
+      ```
+
+      ## Risk: Very Low
+      - Simple refactor for consistency
+      - Existing behavior preserved
+
+  - id: PBI-054
+    story:
+      role: "developer maintaining treesitter-ls"
+      capability: "use a single lock recovery helper instead of repeated match blocks"
+      benefit: "reduced code duplication (~80 LOC) and consistent error handling"
+    status: ready
+    story_points: 2
+    acceptance_criteria:
+      - criterion: "AC1: Generic with_read_lock/with_write_lock helpers created"
+        verification: |
+          # Helpers should exist in query_store.rs or a shared module
+          grep -q "fn with_read_lock" src/language/query_store.rs || grep -rq "fn with_read_lock" src/
+          grep -q "fn with_write_lock" src/language/query_store.rs || grep -rq "fn with_write_lock" src/
+      - criterion: "AC2: QueryStore methods refactored to use helpers"
+        verification: |
+          # Match blocks reduced - count should be less than 12
+          [ $(grep -c "match self.*lock()" src/language/query_store.rs) -lt 12 ]
+          # Helper calls should appear
+          grep -q "with_read_lock\|with_write_lock" src/language/query_store.rs
+      - criterion: "AC3: Code reduced by at least 60 lines"
+        verification: |
+          # Current file is ~270 lines, should be under 210 after refactor
+          [ $(wc -l < src/language/query_store.rs) -lt 210 ]
+      - criterion: "AC4: All tests pass including poison recovery tests"
+        verification: |
+          cargo test query_store -- --nocapture
+          cargo test poison -- --nocapture
+          make test && make check
+    notes: |
+      ## Issue
+      query_store.rs has 12 nearly identical lock recovery match blocks:
+      ```rust
+      match self.highlight_queries.write() {
+          Ok(mut queries) => { queries.insert(lang_name, query); }
+          Err(poisoned) => {
+              warn!(target: "treesitter_ls::lock_recovery", "Recovered...");
+              poisoned.into_inner().insert(lang_name, query);
+          }
+      }
+      ```
+
+      ## Solution
+      Create generic helpers in the same module or a shared lock_helpers module:
+      ```rust
+      fn with_read_lock<T, R, F>(lock: &RwLock<T>, context: &str, op: F) -> R
+      where F: FnOnce(&T) -> R
+
+      fn with_write_lock<T, R, F>(lock: &RwLock<T>, context: &str, op: F) -> R
+      where F: FnOnce(&mut T) -> R
+      ```
+
+      ## Risk: Low
+      - Pure refactoring, no behavioral changes
+      - Existing tests validate behavior
+
+      ## Files Affected
+      - src/language/query_store.rs (primary)
+
+  - id: PBI-055
+    story:
+      role: "developer maintaining treesitter-ls"
+      capability: "use consistent lock recovery pattern in coordinator.rs"
+      benefit: "improved reliability and consistency with error handling patterns"
+    status: ready
+    story_points: 1
+    dependencies:
+      - PBI-054  # Uses shared helpers from PBI-054
+    acceptance_criteria:
+      - criterion: "AC1: .unwrap() calls on lock operations replaced with recovery pattern"
+        verification: |
+          # No .unwrap() on parser_loader lock operations
+          ! grep -n "parser_loader.*unwrap()" src/language/coordinator.rs
+          # Verify the specific lines 91-92 and 236-237 use recovery pattern
+          grep -A2 "parser_loader" src/language/coordinator.rs | grep -q "recover_poison\|with_write_lock"
+      - criterion: "AC2: Uses same pattern as query_store.rs (or shared helper from PBI-054)"
+        verification: |
+          # Should use either recover_poison (from LockResultExt) or with_write_lock helper
+          grep -q "recover_poison\|with_write_lock" src/language/coordinator.rs
+      - criterion: "AC3: Log target matches established pattern"
+        verification: |
+          # If using warn!, should use treesitter_ls::lock_recovery target
+          grep "lock_recovery" src/language/coordinator.rs || echo "Using trait-based recovery"
+      - criterion: "AC4: All tests pass"
+        verification: "make test && make check"
+    notes: |
+      ## Issue
+      coordinator.rs:91-92 and 236-237 use .unwrap() on lock operations:
+      ```rust
+      self.parser_loader.write().unwrap().load_language(&lib_path, language_id);
+      ```
+      This is inconsistent with the poison recovery pattern established in query_store.rs.
+
+      ## Dependency
+      Should be done after PBI-054 to use shared helpers or LockResultExt trait.
+
+      ## Solution Options
+      A) Use shared helpers from PBI-054 (if extracted to common module)
+      B) Use existing LockResultExt::recover_poison() trait method
+      C) Add inline match block with warn! logging
+
+      ## Risk: Low
+      - Only 2 locations to change
+      - Pattern already established in query_store.rs
+      - Existing tests cover coordinator functionality
+
+      ## Files Affected
+      - src/language/coordinator.rs (lines 91-92, 236-237)
+
+  - id: PBI-056
+    story:
+      role: "developer maintaining treesitter-ls"
+      capability: "use a shared helper for line-finding in offset_calculator.rs"
+      benefit: "reduced duplication and clearer code"
+    status: ready
+    story_points: 2
+    acceptance_criteria:
+      - criterion: "AC1: find_line_start_byte() helper function extracted"
+        verification: |
+          # Helper function should exist
+          grep -q "fn find_line_start_byte" src/analysis/offset_calculator.rs
+          # Function should take text and target_line as parameters
+          grep "fn find_line_start_byte" src/analysis/offset_calculator.rs | grep -q "text.*target_line"
+      - criterion: "AC2: Forward and backward scanning consolidated into single function"
+        verification: |
+          # apply_offset_to_position should call the helper
+          grep -A20 "fn apply_offset_to_position" src/analysis/offset_calculator.rs | grep -q "find_line_start_byte"
+          # No duplicate line-scanning loops in apply_offset_to_position
+          [ $(grep -c "for.*char_indices" src/analysis/offset_calculator.rs) -le 2 ]
+      - criterion: "AC3: All offset calculation tests pass"
+        verification: |
+          cargo test offset_calculator -- --nocapture
+          cargo test calculate_effective_range -- --nocapture
+          cargo test markdown_frontmatter -- --nocapture
+      - criterion: "AC4: All tests pass"
+        verification: "make test && make check"
+    notes: |
+      ## Issue
+      offset_calculator.rs:104-138 has nearly identical forward/backward line scanning logic:
+      ```rust
+      // Forward scan (lines 104-117):
+      for (i, ch) in text[line_start_byte..].char_indices() {
+          if lines_seen == target_line { break; }
+          if ch == '\n' { lines_seen += 1; target_line_start = ...; }
+      }
+
+      // Backward scan (lines 122-134):
+      for (i, ch) in text.char_indices() {
+          if lines_seen == target_line { target_line_start = i; break; }
+          if ch == '\n' { lines_seen += 1; }
+      }
+      ```
+
+      ## Solution
+      Extract to unified helper:
+      ```rust
+      fn find_line_start_byte(text: &str, target_line: usize) -> usize {
+          let mut line = 0;
+          for (i, ch) in text.char_indices() {
+              if line == target_line { return i; }
+              if ch == '\n' { line += 1; }
+          }
+          text.len()
+      }
+      ```
+
+      ## Risk: Low
+      - Pure refactoring with behavioral equivalence
+      - Comprehensive test coverage exists
+
+      ## Files Affected
+      - src/analysis/offset_calculator.rs
+
+  - id: PBI-057
+    story:
+      role: "developer maintaining treesitter-ls"
+      capability: "use a shared injection query runner helper"
+      benefit: "reduced duplication (~50 LOC) in injection.rs"
+    status: ready
+    story_points: 2
+    acceptance_criteria:
+      - criterion: "AC1: run_injection_query() helper created"
+        verification: |
+          # Helper function should exist
+          grep -q "fn run_injection_query\|fn execute_injection_query" src/language/injection.rs
+      - criterion: "AC2: collect_all_injections uses shared helper"
+        verification: |
+          # Function should call the helper
+          grep -A30 "pub fn collect_all_injections" src/language/injection.rs | grep -q "run_injection_query\|execute_injection_query"
+      - criterion: "AC3: collect_injection_regions uses shared helper"
+        verification: |
+          # Function should call the helper
+          grep -A30 "fn collect_injection_regions" src/language/injection.rs | grep -q "run_injection_query\|execute_injection_query"
+      - criterion: "AC4: All injection tests pass"
+        verification: |
+          cargo test injection -- --nocapture
+          cargo test nested_injection -- --nocapture
+          make test && make check
+    notes: |
+      ## Issue
+      injection.rs has two functions with nearly identical QueryCursor + HashMap deduplication:
+      ```rust
+      // collect_all_injections (lines 244-277):
+      let mut cursor = QueryCursor::new();
+      let mut matches = cursor.matches(query, *root, text.as_bytes());
+      let mut injections_map = HashMap::new();
+      while let Some(match_) = matches.next() {
+          // Process @injection.content captures
+          // Deduplicate by (start_byte, end_byte)
+      }
+
+      // collect_injection_regions (lines 319-357):
+      let mut cursor = QueryCursor::new();
+      let mut matches = cursor.matches(query, *root, text.as_bytes());
+      let mut injections_map = HashMap::new();
+      while let Some(match_) = matches.next() {
+          // Similar processing with deduplication
+      }
+      ```
+
+      ## Solution
+      Extract shared iteration logic:
+      ```rust
+      fn for_each_injection_match<'a, F>(
+          query: &Query,
+          root: &Node<'a>,
+          text: &str,
+          mut on_match: F,
+      ) where F: FnMut(&QueryMatch, &Node<'a>, &str, usize)
+      ```
+
+      ## Risk: Low
+      - Pure refactoring
+      - Comprehensive injection tests exist
+
+      ## Files Affected
+      - src/language/injection.rs
+
+  - id: PBI-058
+    story:
+      role: "developer maintaining treesitter-ls"
+      capability: "navigate lsp_impl.rs more easily via submodule organization"
+      benefit: "improved maintainability of the largest file (1153 lines)"
+    status: ready
+    story_points: 5
+    acceptance_criteria:
+      - criterion: "AC1: LSP handlers extracted to separate module"
+        verification: |
+          # handlers.rs should exist with LSP trait implementations
+          [ -f src/lsp/handlers.rs ]
+          grep -q "impl LanguageServer" src/lsp/handlers.rs
+      - criterion: "AC2: Main lsp_impl.rs under 600 lines after extraction"
+        verification: |
+          # lsp_impl.rs should be significantly reduced
+          [ $(wc -l < src/lsp/lsp_impl.rs) -lt 600 ]
+      - criterion: "AC3: All LSP functionality preserved"
+        verification: |
+          # Run all E2E tests to verify functionality
+          make test_nvim
+          # Run specific handler tests
+          cargo test semantic_tokens -- --nocapture
+          cargo test code_action -- --nocapture
+      - criterion: "AC4: All tests pass"
+        verification: "make test && make check"
+    notes: |
+      ## Issue
+      lsp_impl.rs is 1153 lines mixing:
+      - TreeSitterLs struct definition and creation
+      - Internal helper methods (parse_document, apply_settings, etc.)
+      - LanguageServer trait implementation (initialize, did_open, semantic_tokens, etc.)
+      - Test code
+
+      ## Proposed Structure
+      ```
+      src/lsp/
+      ├── mod.rs (re-exports: TreeSitterLs)
+      ├── server.rs (TreeSitterLs struct, new(), internal helpers)
+      ├── handlers.rs (impl LanguageServer for TreeSitterLs)
+      └── auto_install.rs (existing - unchanged)
+      ```
+
+      ## Extraction Plan
+      1. Create handlers.rs with LanguageServer trait implementation (~600 lines)
+      2. Keep TreeSitterLs struct and helpers in lsp_impl.rs (~500 lines)
+      3. Update mod.rs to re-export from new structure
+      4. Move tests to appropriate modules
+
+      ## Risk: Medium
+      - Large structural change
+      - Many code paths affected
+      - Must preserve all LSP functionality
+
+      ## Files Affected
+      - src/lsp/mod.rs (update re-exports)
+      - src/lsp/lsp_impl.rs (reduce to ~500 lines)
+      - src/lsp/handlers.rs (new file, ~600 lines)
+
+  - id: PBI-059
+    story:
+      role: "developer maintaining treesitter-ls"
+      capability: "understand injection language extraction flow more easily"
+      benefit: "improved clarity in injection.rs"
+    status: ready
+    story_points: 1
+    acceptance_criteria:
+      - criterion: "AC1: Consistent function naming (extract_* for extraction, collect_* for collection)"
+        verification: |
+          # Check naming convention:
+          # - extract_* functions should extract single items from matches
+          # - collect_* functions should gather multiple items
+          grep -E "^(pub )?fn (extract_|collect_|find_)" src/language/injection.rs
+          # No mixed naming like find_injection_content_and_language
+          ! grep -q "fn find_injection_content_and_language" src/language/injection.rs
+      - criterion: "AC2: Function names clearly indicate their return type"
+        verification: |
+          # Functions returning Option<String> should be named extract_*
+          # Functions returning Vec<...> should be named collect_*
+          grep "fn extract_" src/language/injection.rs | head -3
+          grep "fn collect_" src/language/injection.rs | head -3
+      - criterion: "AC3: All injection tests pass"
+        verification: |
+          cargo test injection -- --nocapture
+          make test && make check
+    notes: |
+      ## Issue
+      injection.rs has inconsistent naming patterns:
+      - extract_injection_language() - extracts language string
+      - collect_all_injections() - collects multiple regions
+      - find_injection_content_and_language() - extracts tuple (mixed naming)
+
+      ## Proposed Naming Convention
+      - `extract_*` - Single item extraction from a match
+      - `collect_*` - Multiple item collection with deduplication
+      - Remove `find_*` pattern for consistency
+
+      ## Rename Plan
+      - find_injection_content_and_language -> extract_content_and_language
+
+      ## Risk: Very Low
+      - Pure naming refactor
+      - All functions are private (internal to injection.rs)
+      - No API changes
+
+      ## Files Affected
+      - src/language/injection.rs
+
+  - id: PBI-060
+    story:
+      role: "developer maintaining treesitter-ls"
+      capability: "see clearer test coverage for injection malformed directives"
+      benefit: "improved test clarity and maintainability"
+    status: ready
+    story_points: 1
+    acceptance_criteria:
+      - criterion: "AC1: test_malformed_offset_directives split into 5 focused tests"
+        verification: |
+          # Original monolithic test should not exist
+          ! grep -q "fn test_malformed_offset_directives" src/language/injection.rs
+          # Should have 5 separate tests for malformed scenarios
+          [ $(grep -c "fn test_offset.*\|fn test_malformed" src/language/injection.rs) -ge 5 ]
+      - criterion: "AC2: Each test has descriptive name for the scenario"
+        verification: |
+          # Test names should describe the scenario being tested
+          grep "fn test_" src/language/injection.rs | grep -E "non_numeric|missing_args|too_many|mixed_valid|empty_directive"
+      - criterion: "AC3: All 5 malformed directive scenarios covered"
+        verification: |
+          # Run the new tests
+          cargo test test_offset -- --nocapture
+          cargo test test_malformed -- --nocapture
+          # All tests should pass
+          make test && make check
+    notes: |
+      ## Issue
+      injection.rs:650-736 test_malformed_offset_directives() is 86 lines testing 5 scenarios:
+      1. Non-numeric offset values (foo bar baz qux)
+      2. Missing offset arguments (only 2 instead of 4)
+      3. Too many offset arguments (5 instead of 4)
+      4. Mixed valid and invalid values
+      5. Empty offset directive (no arguments after capture)
+
+      ## Solution
+      Split into 5 separate tests with descriptive names:
+      ```rust
+      #[test]
+      fn test_offset_directive_with_non_numeric_values() { ... }
+
+      #[test]
+      fn test_offset_directive_with_missing_arguments() { ... }
+
+      #[test]
+      fn test_offset_directive_with_extra_arguments() { ... }
+
+      #[test]
+      fn test_offset_directive_with_mixed_valid_invalid() { ... }
+
+      #[test]
+      fn test_offset_directive_with_empty_args() { ... }
+      ```
+
+      ## Benefits
+      - Each test failure clearly indicates which scenario failed
+      - Easier to add new test cases
+      - Better test documentation through function names
+
+      ## Risk: Very Low
+      - Pure test refactoring
+      - No production code changes
+      - Same coverage, better organization
+
+      ## Files Affected
+      - src/language/injection.rs (test module only)
 
   # ============================================================================
   # ADR-0003: Parser Compilation Fallback Strategy - SUPERSEDED
