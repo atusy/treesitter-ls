@@ -648,35 +648,36 @@ mod tests {
     }
 
     #[test]
-    fn test_malformed_offset_directives() {
-        // Test various malformed offset directives to ensure proper handling
+    fn test_offset_directive_with_non_numeric_values() {
+        // Non-numeric values (foo bar baz qux) should return DEFAULT_OFFSET
         let language = tree_sitter_rust::LANGUAGE.into();
-
-        // Test 1: Non-numeric offset values
-        let query_non_numeric = r#"
+        let query_str = r#"
             ((line_comment) @injection.content
               (#set! injection.language "test")
               (#offset! @injection.content foo bar baz qux))
         "#;
 
-        let query = Query::new(&language, query_non_numeric).expect("valid query");
+        let query = Query::new(&language, query_str).expect("valid query");
         let offset = parse_offset_directive_for_pattern(&query, 0);
 
-        // Currently returns DEFAULT_OFFSET (0,0,0,0) on parse failure
         assert_eq!(
             offset,
             Some(super::DEFAULT_OFFSET),
             "Non-numeric values should return DEFAULT_OFFSET"
         );
+    }
 
-        // Test 2: Missing offset arguments (only 2 instead of 4)
-        let query_missing_args = r#"
+    #[test]
+    fn test_offset_directive_with_missing_arguments() {
+        // Missing arguments (only 2 instead of 4) should return DEFAULT_OFFSET
+        let language = tree_sitter_rust::LANGUAGE.into();
+        let query_str = r#"
             ((line_comment) @injection.content
               (#set! injection.language "test")
               (#offset! @injection.content 1 0))
         "#;
 
-        let query = Query::new(&language, query_missing_args).expect("valid query");
+        let query = Query::new(&language, query_str).expect("valid query");
         let offset = parse_offset_directive_for_pattern(&query, 0);
 
         assert_eq!(
@@ -684,32 +685,39 @@ mod tests {
             Some(super::DEFAULT_OFFSET),
             "Missing arguments should return DEFAULT_OFFSET"
         );
+    }
 
-        // Test 3: Too many offset arguments (5 instead of 4)
-        let query_too_many = r#"
+    #[test]
+    fn test_offset_directive_with_extra_arguments() {
+        // Too many arguments (5 instead of 4) should parse first 4, ignore extra
+        let language = tree_sitter_rust::LANGUAGE.into();
+        let query_str = r#"
             ((line_comment) @injection.content
               (#set! injection.language "test")
               (#offset! @injection.content 1 0 -1 0 5))
         "#;
 
-        let query = Query::new(&language, query_too_many).expect("valid query");
+        let query = Query::new(&language, query_str).expect("valid query");
         let offset = parse_offset_directive_for_pattern(&query, 0);
 
-        // Should still parse the first 4 arguments
         assert_eq!(
             offset,
             Some(InjectionOffset::new(1, 0, -1, 0)),
             "Extra arguments should be ignored, first 4 should be parsed"
         );
+    }
 
-        // Test 4: Mixed valid and invalid values
-        let query_mixed = r#"
+    #[test]
+    fn test_offset_directive_with_mixed_valid_invalid() {
+        // Mixed valid/invalid values (1 invalid -1 0) should return DEFAULT_OFFSET
+        let language = tree_sitter_rust::LANGUAGE.into();
+        let query_str = r#"
             ((line_comment) @injection.content
               (#set! injection.language "test")
               (#offset! @injection.content 1 invalid -1 0))
         "#;
 
-        let query = Query::new(&language, query_mixed).expect("valid query");
+        let query = Query::new(&language, query_str).expect("valid query");
         let offset = parse_offset_directive_for_pattern(&query, 0);
 
         assert_eq!(
@@ -717,15 +725,19 @@ mod tests {
             Some(super::DEFAULT_OFFSET),
             "Mixed valid/invalid values should return DEFAULT_OFFSET"
         );
+    }
 
-        // Test 5: Empty offset directive (no arguments after capture)
-        let query_empty = r#"
+    #[test]
+    fn test_offset_directive_with_empty_args() {
+        // Empty offset directive (no arguments after capture) should return DEFAULT_OFFSET
+        let language = tree_sitter_rust::LANGUAGE.into();
+        let query_str = r#"
             ((line_comment) @injection.content
               (#set! injection.language "test")
               (#offset! @injection.content))
         "#;
 
-        let query = Query::new(&language, query_empty).expect("valid query");
+        let query = Query::new(&language, query_str).expect("valid query");
         let offset = parse_offset_directive_for_pattern(&query, 0);
 
         assert_eq!(
