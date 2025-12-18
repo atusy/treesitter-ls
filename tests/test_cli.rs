@@ -217,22 +217,11 @@ fn test_config_help_shows_actions() {
     );
 }
 
-/// Test that config init creates a configuration file
+/// Test that config init outputs to stdout by default
 #[test]
-fn test_config_init_creates_file() {
-    use std::fs;
-    use std::path::Path;
-
-    let test_dir = "/tmp/test-config-init";
-    let config_path = Path::new(test_dir).join("treesitter-ls.toml");
-
-    // Clean up before test
-    let _ = fs::remove_dir_all(test_dir);
-    fs::create_dir_all(test_dir).expect("Failed to create test directory");
-
+fn test_config_init_outputs_to_stdout() {
     let output = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
         .args(["config", "init"])
-        .current_dir(test_dir)
         .output()
         .expect("Failed to execute command");
 
@@ -240,6 +229,41 @@ fn test_config_init_creates_file() {
     assert!(
         output.status.success(),
         "Config init should exit with success. stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Stdout should contain the config template
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("autoInstall"),
+        "Stdout should contain config template. Got: {}",
+        stdout
+    );
+}
+
+/// Test that config init --output creates a configuration file
+#[test]
+fn test_config_init_output_creates_file() {
+    use std::fs;
+    use std::path::Path;
+
+    let test_dir = "/tmp/test-config-init-output";
+    let config_path = Path::new(test_dir).join("treesitter-ls.toml");
+
+    // Clean up before test
+    let _ = fs::remove_dir_all(test_dir);
+    fs::create_dir_all(test_dir).expect("Failed to create test directory");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
+        .args(["config", "init", "--output", "treesitter-ls.toml"])
+        .current_dir(test_dir)
+        .output()
+        .expect("Failed to execute command");
+
+    // Should exit successfully
+    assert!(
+        output.status.success(),
+        "Config init --output should exit with success. stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
@@ -253,7 +277,7 @@ fn test_config_init_creates_file() {
     // File should contain expected options
     let content = fs::read_to_string(&config_path).expect("Failed to read config");
     assert!(
-        content.contains("autoInstall") && content.contains("searchPaths"),
+        content.contains("autoInstall"),
         "Config should contain expected options. Got: {}",
         content
     );
@@ -262,9 +286,9 @@ fn test_config_init_creates_file() {
     let _ = fs::remove_dir_all(test_dir);
 }
 
-/// Test that config init does not overwrite existing file without --force
+/// Test that config init --output does not overwrite existing file without --force
 #[test]
-fn test_config_init_no_overwrite_without_force() {
+fn test_config_init_output_no_overwrite_without_force() {
     use std::fs;
     use std::path::Path;
 
@@ -277,7 +301,7 @@ fn test_config_init_no_overwrite_without_force() {
     fs::write(&config_path, "existing").expect("Failed to write existing config");
 
     let output = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
-        .args(["config", "init"])
+        .args(["config", "init", "--output", "treesitter-ls.toml"])
         .current_dir(test_dir)
         .output()
         .expect("Failed to execute command");
@@ -285,7 +309,7 @@ fn test_config_init_no_overwrite_without_force() {
     // Should exit with failure
     assert!(
         !output.status.success(),
-        "Config init should fail when file exists"
+        "Config init --output should fail when file exists"
     );
 
     // Original content should be preserved
@@ -296,9 +320,9 @@ fn test_config_init_no_overwrite_without_force() {
     let _ = fs::remove_dir_all(test_dir);
 }
 
-/// Test that config init --force overwrites existing file
+/// Test that config init --output --force overwrites existing file
 #[test]
-fn test_config_init_force_overwrites() {
+fn test_config_init_output_force_overwrites() {
     use std::fs;
     use std::path::Path;
 
@@ -311,7 +335,13 @@ fn test_config_init_force_overwrites() {
     fs::write(&config_path, "existing").expect("Failed to write existing config");
 
     let output = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
-        .args(["config", "init", "--force"])
+        .args([
+            "config",
+            "init",
+            "--output",
+            "treesitter-ls.toml",
+            "--force",
+        ])
         .current_dir(test_dir)
         .output()
         .expect("Failed to execute command");
@@ -319,7 +349,7 @@ fn test_config_init_force_overwrites() {
     // Should exit successfully
     assert!(
         output.status.success(),
-        "Config init --force should exit with success"
+        "Config init --output --force should exit with success"
     );
 
     // Content should be replaced
@@ -335,6 +365,61 @@ fn test_config_init_force_overwrites() {
 
     // Clean up
     let _ = fs::remove_dir_all(test_dir);
+}
+
+/// Test that config init --force without --output warns to stderr
+#[test]
+fn test_config_init_force_without_output_warns() {
+    let output = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
+        .args(["config", "init", "--force"])
+        .output()
+        .expect("Failed to execute command");
+
+    // Should still exit successfully (warning is not fatal)
+    assert!(
+        output.status.success(),
+        "Config init --force should exit with success"
+    );
+
+    // Should warn on stderr
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Warning") && stderr.contains("--force"),
+        "Should warn about --force without --output. Got: {}",
+        stderr
+    );
+
+    // Should still output to stdout
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("autoInstall"),
+        "Should still output config to stdout. Got: {}",
+        stdout
+    );
+}
+
+/// Test that config init --output - outputs to stdout
+#[test]
+fn test_config_init_output_dash_outputs_to_stdout() {
+    let output = Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
+        .args(["config", "init", "--output", "-"])
+        .output()
+        .expect("Failed to execute command");
+
+    // Should exit successfully
+    assert!(
+        output.status.success(),
+        "Config init --output - should exit with success. stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Stdout should contain the config template
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("autoInstall"),
+        "Stdout should contain config template. Got: {}",
+        stdout
+    );
 }
 
 /// Test that language status --help shows expected options

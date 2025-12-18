@@ -87,9 +87,16 @@ enum LanguageAction {
 
 #[derive(Subcommand)]
 enum ConfigAction {
-    /// Generate a default configuration file
+    /// Generate a default configuration template
+    ///
+    /// By default, outputs to stdout for piping or redirection.
+    /// Use --output to write directly to a file.
     Init {
-        /// Overwrite existing configuration file if it exists
+        /// Write to specified file instead of stdout. Use "-" for explicit stdout.
+        #[arg(long)]
+        output: Option<PathBuf>,
+
+        /// Overwrite existing file (only applies with --output)
         #[arg(long)]
         force: bool,
     },
@@ -125,8 +132,8 @@ fn main() {
             }
         },
         Some(Commands::Config { action }) => match action {
-            ConfigAction::Init { force } => {
-                run_config_init(force);
+            ConfigAction::Init { output, force } => {
+                run_config_init(output, force);
             }
         },
         None => {
@@ -394,25 +401,39 @@ fn find_parser_file(parser_dir: &std::path::Path, lang: &str) -> Option<PathBuf>
 }
 
 /// Run the config init command
-fn run_config_init(force: bool) {
-    let config_path = PathBuf::from("treesitter-ls.toml");
-
-    if config_path.exists() && !force {
-        eprintln!(
-            "Error: Configuration file '{}' already exists.",
-            config_path.display()
-        );
-        eprintln!("Use --force to overwrite.");
-        std::process::exit(1);
+fn run_config_init(output: Option<PathBuf>, force: bool) {
+    // Check for --force without --output (warn but continue)
+    if force && output.is_none() {
+        eprintln!("Warning: --force has no effect without --output");
     }
 
-    match std::fs::write(&config_path, CONFIG_TEMPLATE) {
-        Ok(()) => {
-            eprintln!("Created configuration file: {}", config_path.display());
+    match output {
+        // No output specified or explicit "-" means stdout
+        None => {
+            print!("{}", CONFIG_TEMPLATE);
         }
-        Err(e) => {
-            eprintln!("Failed to write configuration file: {}", e);
-            std::process::exit(1);
+        Some(path) if path.as_os_str() == "-" => {
+            print!("{}", CONFIG_TEMPLATE);
+        }
+        // Write to specified file
+        Some(path) => {
+            if path.exists() && !force {
+                eprintln!(
+                    "Error: File '{}' already exists. Use --force to overwrite.",
+                    path.display()
+                );
+                std::process::exit(1);
+            }
+
+            match std::fs::write(&path, CONFIG_TEMPLATE) {
+                Ok(()) => {
+                    eprintln!("Created configuration file: {}", path.display());
+                }
+                Err(e) => {
+                    eprintln!("Failed to write configuration file: {}", e);
+                    std::process::exit(1);
+                }
+            }
         }
     }
 }
