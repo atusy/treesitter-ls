@@ -166,25 +166,9 @@ fn run_list_languages(no_cache: bool) {
 }
 
 /// Default configuration template
-const CONFIG_TEMPLATE: &str = r#"# treesitter-ls configuration
-# Documentation: https://github.com/atusy/treesitter-ls/blob/main/docs/README.md
+const CONFIG_TEMPLATE: &str = r#"# Documentation: https://github.com/atusy/treesitter-ls/blob/main/docs/README.md
 
-# Auto-install missing parsers and queries (default: true)
-# autoInstall = true
-
-# Custom search paths for parsers and queries
-# Default: ~/.local/share/treesitter-ls (Linux), ~/Library/Application Support/treesitter-ls (macOS)
-# searchPaths = ["/custom/path"]
-
-# Language-specific configuration (usually not needed)
-# [languages.custom_lang]
-# filetypes = ["ext"]
-# library = "/path/to/parser.so"
-# highlight = [{ path = "./queries/highlights.scm" }]
-
-# Capture name remapping (Tree-sitter -> LSP semantic tokens)
-# [captureMappings._.highlights]
-# "variable.builtin" = "variable.defaultLibrary"
+autoInstall = true
 "#;
 
 /// Run the language status command
