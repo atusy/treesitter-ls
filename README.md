@@ -7,12 +7,13 @@ A fast and flexible Language Server Protocol (LSP) server that leverages Tree-si
 ## Features
 
 ### Core Capabilities
-- **🚀 Dynamic Parser Loading** - Load Tree-sitter parsers at runtime from shared libraries
+- **🚀 Zero Configuration** - Works out of the box with automatic parser/query installation
 - **🎨 Semantic Highlighting** - Full, range, and delta semantic tokens with customizable mappings
 - **🌐 Language Injection** - Syntax highlighting for embedded languages (e.g., Lua in Markdown code blocks)
 - **🔍 Go to Definition** - Language-agnostic navigation using Tree-sitter locals queries
 - **📝 Smart Selection** - Expand selection based on AST structure with injection awareness
 - **🔧 Code Actions** - Refactoring support (e.g., parameter reordering)
+- **📦 Dynamic Parser Loading** - Load Tree-sitter parsers at runtime from shared libraries
 
 ## Installation
 
@@ -38,208 +39,154 @@ cargo build --release
 
 ## Quick Start
 
-### 1. Obtain Parser Libraries
+### Zero-Configuration Mode (Recommended)
 
-You need Tree-sitter parser shared libraries for the languages you want to support:
+treesitter-ls works out of the box with no configuration:
 
-- **Linux**: `<language>.so`
-- **macOS**: `<language>.dylib`
-- **Windows**: `<language>.dll` *(experimental)*
+1. Start your editor with treesitter-ls configured as the LSP server
+2. Open any file with a supported language
+3. The parser and queries are automatically downloaded and installed
 
-Example: Building the Rust parser
-```bash
-git clone https://github.com/tree-sitter/tree-sitter-rust.git
-cd tree-sitter-rust
-npm install
-npm run build
-# Creates rust.so (Linux) or rust.dylib (macOS)
-```
+That's it! Syntax highlighting and other features work immediately.
 
-### 2. Configure Your Editor
+### Example: Neovim Setup
 
-#### Neovim (Native LSP)
+Using Neovim's built-in LSP client (0.11+):
 
 ```lua
 -- ~/.config/nvim/init.lua
+vim.lsp.config.treesitter_ls = {
+  cmd = { "treesitter-ls" },
+}
+vim.lsp.enable("treesitter_ls")
+
+-- Disable built-in treesitter highlighting to avoid conflicts
 vim.api.nvim_create_autocmd("FileType", {
-  pattern = { "rust", "lua", "markdown" },
   callback = function()
-    vim.lsp.start({
-      name = "treesitter-ls",
-      cmd = { "/path/to/treesitter-ls" },
-      root_dir = vim.fs.dirname(vim.fs.find({ ".git" }, { upward = true })[1]),
-      init_options = {
-        searchPaths = { "/path/to/parsers" },
-        languages = {
-          rust = { filetypes = { "rs" } },
-          lua = { filetypes = { "lua" } },
-          markdown = { filetypes = { "md", "markdown" } },
-        }
-      }
-    })
-  end
+    vim.treesitter.stop()
+  end,
 })
 ```
 
-#### VS Code
-*Extension coming soon*
+Or with nvim-lspconfig:
 
-#### Other Editors
-Any editor with LSP support can use treesitter-ls. See [Editor Setup](docs/editors.md) for more examples.
+```lua
+require("lspconfig").treesitter_ls.setup({})
+```
+
+## CLI Commands
+
+treesitter-ls provides a command-line interface for managing languages:
+
+```bash
+# Install a language (parser + queries)
+treesitter-ls language install lua
+
+# List all supported languages
+treesitter-ls language list
+
+# Show installed languages and their status
+treesitter-ls language status
+
+# Uninstall a language
+treesitter-ls language uninstall lua
+
+# Generate a default configuration file
+treesitter-ls config init
+```
+
+See `treesitter-ls --help` for all options.
 
 ## Configuration
 
-The server is configured via LSP initialization options:
+Configuration is optional. When provided via LSP `initializationOptions`, you can customize behavior:
 
 ```jsonc
 {
-  "searchPaths": [
-    "/path/to/parsers",      // Directory containing parser/<lang>.so files
-    "/path/to/queries"       // Directory containing queries/<lang>/*.scm files
-  ],
+  "autoInstall": true,              // Auto-install missing parsers (default: true)
+  "searchPaths": ["/custom/path"],  // Custom paths for parsers/queries
   "languages": {
     "rust": {
-      "library": "/explicit/path/to/rust.so",  // Optional: override searchPaths
-      "filetypes": ["rs"],                     // Required: file extensions
-      "highlight": [                           // Optional: custom highlighting queries
-        { "path": "/path/to/highlights.scm" },
-        { "query": "(identifier) @variable" }
-      ],
-      "locals": [                              // Optional: for go-to-definition
-        { "path": "/path/to/locals.scm" }
-      ]
-    },
-    "markdown": {
-      "filetypes": ["md", "markdown"],
-      "injections": [                          // Optional: for embedded language support
-        { "path": "/path/to/injections.scm" }
-      ]
+      "filetypes": ["rs"],          // File extensions
+      "library": "/path/to/rust.so" // Explicit parser path
     }
   },
-  "captureMappings": {                         // Optional: customize token types
-    "_": {                                     // "_" applies to all languages
-      "constant": "variable.readonly",
-      "keyword.return": "keyword"
-    },
-    "rust": {                                  // Language-specific mappings
-      "lifetime": "label"
+  "captureMappings": {              // Customize token types
+    "_": {
+      "highlights": {
+        "variable.builtin": "variable.defaultLibrary"
+      }
     }
   }
 }
 ```
 
-### Configuration Options
+### Default Data Directories
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `searchPaths` | Directories to search for parsers and queries | `[]` |
-| `languages.<lang>.library` | Explicit parser library path | Auto-detect from searchPaths |
-| `languages.<lang>.filetypes` | File extensions to associate | Required |
-| `languages.<lang>.highlight` | Highlighting query sources | Auto-detect from searchPaths |
-| `languages.<lang>.locals` | Locals query sources for navigation | Auto-detect from searchPaths |
-| `languages.<lang>.injections` | Injection query sources for embedded languages | Auto-detect from searchPaths |
-| `captureMappings` | Map Tree-sitter captures to LSP token types | Built-in mappings |
+| Platform | Path |
+|----------|------|
+| Linux | `~/.local/share/treesitter-ls/` |
+| macOS | `~/Library/Application Support/treesitter-ls/` |
+| Windows | `%APPDATA%/treesitter-ls/` |
 
-## Query Files
+See [docs/README.md](docs/README.md) for complete configuration reference.
 
-Tree-sitter queries power the language features:
+## Prerequisites (for Auto-Install)
 
-### Highlights Query (`highlights.scm`)
-Defines syntax highlighting:
-```scheme
-(function_item name: (identifier) @function)
-(string_literal) @string
-```
+Auto-install compiles parsers from source, requiring:
 
-### Locals Query (`locals.scm`)
-Enables go-to-definition:
-```scheme
-(function_item name: (identifier) @local.definition.function)
-(call_expression function: (identifier) @local.reference.function)
-```
+| Dependency | Purpose | Installation |
+|------------|---------|--------------|
+| **tree-sitter CLI** | Compiles parser grammars | `cargo install tree-sitter-cli` |
+| **Git** | Clones parser repositories | Usually pre-installed |
+| **C Compiler** | Required for compilation | Platform-specific (see below) |
 
-### Injections Query (`injections.scm`)
-Defines embedded language regions for syntax highlighting:
-```scheme
-; Markdown fenced code blocks with language identifier
-(fenced_code_block
-  (info_string (language) @injection.language)
-  (code_fence_content) @injection.content)
+### C Compiler Installation
 
-; HTML script tags
-(script_element
-  (raw_text) @injection.content
-  (#set! injection.language "javascript"))
-```
+| Platform | Command |
+|----------|---------|
+| **macOS** | `xcode-select --install` |
+| **Debian/Ubuntu** | `sudo apt install build-essential` |
+| **Fedora/RHEL** | `sudo dnf install gcc` |
+| **Windows** | Install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) |
 
-When an injection query matches, treesitter-ls will:
-1. Parse the injected content with the appropriate language parser
-2. Generate semantic tokens for the embedded code
-3. Merge tokens with the host document (with proper position adjustment)
+## Supported Languages
 
-This enables syntax highlighting for code blocks in Markdown, embedded SQL in strings, and similar scenarios.
+treesitter-ls supports any language with a Tree-sitter grammar available in nvim-treesitter:
 
-### Query Locations
-Queries are searched in this order:
-1. Explicit paths in configuration
-2. `<searchPath>/queries/<language>/highlights.scm`
-3. `<searchPath>/queries/<language>/locals.scm`
-4. `<searchPath>/queries/<language>/injections.scm`
+- Lua, Python, Rust, Go, C, C++
+- JavaScript, TypeScript, TSX, JSX
+- HTML, CSS, JSON, YAML, TOML
+- Markdown, LaTeX
+- Bash, Fish, Zsh
+- SQL, GraphQL
+- And many more...
 
-Example directory structure:
-```
-/path/to/resources/
-├── parser/
-│   ├── rust.so
-│   ├── lua.so
-│   └── markdown.so
-└── queries/
-    ├── rust/
-    │   ├── highlights.scm
-    │   └── locals.scm
-    ├── lua/
-    │   ├── highlights.scm
-    │   └── locals.scm
-    └── markdown/
-        ├── highlights.scm
-        └── injections.scm    # Enables Lua/Python/etc. highlighting in code blocks
-```
-
-## Supported LSP Features
-
-### Text Synchronization
-- `textDocument/didOpen`
-- `textDocument/didChange` (full sync)
-- `textDocument/didClose`
-
-### Language Features
-- `textDocument/semanticTokens/full` - Full document highlighting
-- `textDocument/semanticTokens/range` - Partial highlighting
-- `textDocument/semanticTokens/full/delta` - Incremental updates
-- `textDocument/definition` - Go to definition
-- `textDocument/selectionRange` - Expand/shrink selection
-
-### Code Actions
-- `textDocument/codeAction` - Parameter reordering (for supported grammars)
+Run `treesitter-ls language list` for the complete list.
 
 ## Troubleshooting
 
-### Parser Not Found
+### Parser Not Loading
+```bash
+# Check if parser exists
+treesitter-ls language status
+
+# Reinstall the language
+treesitter-ls language install <language> --force
 ```
-Error: Could not load parser for language 'rust'
-```
-**Solution**: Ensure the parser library exists in one of the `searchPaths` directories or specify an explicit `library` path.
 
 ### No Syntax Highlighting
-**Check**:
-1. Parser loaded successfully (check server logs)
-2. `highlights.scm` query file exists and is valid
-3. File extension matches configured `filetypes`
+1. Verify queries exist: `treesitter-ls language status --verbose`
+2. Check LSP logs for errors
+3. Ensure your editor has semantic tokens enabled
 
-### Go to Definition Not Working
-**Requirements**:
-- `locals.scm` query file with `local.definition.*` and `local.reference.*` captures
-- Properly structured Tree-sitter grammar with scope information
+### Missing Prerequisites
+```bash
+# Verify dependencies
+tree-sitter --version
+git --version
+cc --version  # or gcc --version
+```
 
 ## Contributing
 
@@ -257,6 +204,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - [Tree-sitter](https://tree-sitter.github.io/) - The incremental parsing library
 - [tower-lsp](https://github.com/ebkalderon/tower-lsp) - Async LSP framework for Rust
+- [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) - Query files and parser metadata
 - The Tree-sitter grammar authors for their excellent work
 
 ## Related Projects
