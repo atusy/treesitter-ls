@@ -2,11 +2,14 @@
 
 | | |
 |---|---|
-| **Status** | accepted |
+| **Status** | superseded |
 | **Date** | 2025-12-18 |
 | **Decision-makers** | atusy |
 | **Consulted** | Claude Code |
 | **Informed** | treesitter-ls users |
+| **Superseded by** | [ADR-0004](0004-keep-tree-sitter-cli-dependency.md) |
+
+> **⚠️ SUPERSEDED**: This ADR has been superseded by [ADR-0004](0004-keep-tree-sitter-cli-dependency.md). See that document for the rationale.
 
 ## Context and Problem Statement
 
