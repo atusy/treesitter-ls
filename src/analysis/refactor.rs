@@ -1124,20 +1124,14 @@ fn main() {
         let coordinator = crate::language::LanguageCoordinator::new();
         let mut parser_pool = coordinator.create_document_parser_pool();
 
-        // Create context
-        let context = CodeActionContext {
-            uri: &Url::parse("file:///test.rs").unwrap(),
-            text: code,
-            tree: &tree,
-            cursor: cursor_range,
-            queries: None,
-            capture_context: Some(("rust", &capture_mappings)),
-            injection_query: Some(&injection_query),
-            coordinator: Some(&coordinator),
-            parser_pool: Some(&mut parser_pool),
-        };
+        // Create options using the builder pattern
+        let uri = Url::parse("file:///test.rs").unwrap();
+        let options = CodeActionOptions::new(&uri, code, &tree, cursor_range)
+            .with_capture_context(Some(("rust", &capture_mappings)))
+            .with_injection(&injection_query)
+            .with_coordinator(&coordinator, &mut parser_pool);
 
-        let actions = handle_code_actions_with_context(context);
+        let actions = handle_code_actions(options);
         assert!(actions.is_some());
 
         let actions = actions.unwrap();
