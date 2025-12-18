@@ -199,4 +199,34 @@ mod tests {
             "capture_mappings should contain wildcard '_' key"
         );
     }
+
+    #[test]
+    fn default_settings_serializes_to_valid_toml() {
+        let settings = default_settings();
+
+        // Should serialize to valid TOML
+        let toml_string = toml::to_string_pretty(&settings)
+            .expect("should serialize to TOML without error");
+
+        // Should contain autoInstall setting
+        assert!(
+            toml_string.contains("autoInstall = true"),
+            "TOML should contain 'autoInstall = true'. Got:\n{}",
+            toml_string
+        );
+
+        // Should contain captureMappings section
+        assert!(
+            toml_string.contains("[captureMappings._.highlights]"),
+            "TOML should contain captureMappings section. Got:\n{}",
+            toml_string
+        );
+
+        // Should contain at least one mapping (variable)
+        assert!(
+            toml_string.contains("\"variable\""),
+            "TOML should contain variable mapping. Got:\n{}",
+            toml_string
+        );
+    }
 }
