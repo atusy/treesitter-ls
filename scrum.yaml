@@ -36,7 +36,7 @@ rules:
 
 quick_status:
   current_sprint: "Sprint 40 - COMPLETED - PBI-050 (1pt) - Downgrade query log level to info"
-  backlog: "9 PBIs ready (tidying)"
+  backlog: "8 PBIs ready (tidying)"
   impediments: 0
 
 ---
@@ -524,64 +524,7 @@ product_backlog:
       ## Files Affected
       - src/language/injection.rs
 
-  - id: PBI-058
-    story:
-      role: "developer maintaining treesitter-ls"
-      capability: "navigate lsp_impl.rs more easily via submodule organization"
-      benefit: "improved maintainability of the largest file (1153 lines)"
-    status: ready
-    story_points: 5
-    acceptance_criteria:
-      - criterion: "AC1: LSP handlers extracted to separate module"
-        verification: |
-          # handlers.rs should exist with LSP trait implementations
-          [ -f src/lsp/handlers.rs ]
-          grep -q "impl LanguageServer" src/lsp/handlers.rs
-      - criterion: "AC2: Main lsp_impl.rs under 600 lines after extraction"
-        verification: |
-          # lsp_impl.rs should be significantly reduced
-          [ $(wc -l < src/lsp/lsp_impl.rs) -lt 600 ]
-      - criterion: "AC3: All LSP functionality preserved"
-        verification: |
-          # Run all E2E tests to verify functionality
-          make test_nvim
-          # Run specific handler tests
-          cargo test semantic_tokens -- --nocapture
-          cargo test code_action -- --nocapture
-      - criterion: "AC4: All tests pass"
-        verification: "make test && make check"
-    notes: |
-      ## Issue
-      lsp_impl.rs is 1153 lines mixing:
-      - TreeSitterLs struct definition and creation
-      - Internal helper methods (parse_document, apply_settings, etc.)
-      - LanguageServer trait implementation (initialize, did_open, semantic_tokens, etc.)
-      - Test code
-
-      ## Proposed Structure
-      ```
-      src/lsp/
-      ├── mod.rs (re-exports: TreeSitterLs)
-      ├── server.rs (TreeSitterLs struct, new(), internal helpers)
-      ├── handlers.rs (impl LanguageServer for TreeSitterLs)
-      └── auto_install.rs (existing - unchanged)
-      ```
-
-      ## Extraction Plan
-      1. Create handlers.rs with LanguageServer trait implementation (~600 lines)
-      2. Keep TreeSitterLs struct and helpers in lsp_impl.rs (~500 lines)
-      3. Update mod.rs to re-export from new structure
-      4. Move tests to appropriate modules
-
-      ## Risk: Medium
-      - Large structural change
-      - Many code paths affected
-      - Must preserve all LSP functionality
-
-      ## Files Affected
-      - src/lsp/mod.rs (update re-exports)
-      - src/lsp/lsp_impl.rs (reduce to ~500 lines)
-      - src/lsp/handlers.rs (new file, ~600 lines)
+  # PBI-058 (split lsp_impl.rs into submodules) removed - too complex, revisit later
 
   - id: PBI-059
     story:
