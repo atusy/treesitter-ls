@@ -21,7 +21,7 @@ impl QueryLoader {
     ///
     /// # Returns
     /// Combined query content with all inherited queries.
-    pub fn resolve_query_with_inheritance(
+    pub fn resolve_query(
         runtime_bases: &[String],
         lang_name: &str,
         file_name: &str,
@@ -209,7 +209,7 @@ impl QueryLoader {
         lang_name: &str,
         file_name: &str,
     ) -> LspResult<Query> {
-        let query_str = Self::resolve_query_with_inheritance(runtime_bases, lang_name, file_name)?;
+        let query_str = Self::resolve_query(runtime_bases, lang_name, file_name)?;
         Self::parse_query(language, &query_str)
     }
 
@@ -369,7 +369,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_query_with_inheritance_no_inheritance() {
+    fn test_resolve_query_no_inheritance() {
         // ecma has no inheritance - should return content as-is
         let dir = tempdir().unwrap();
         let base_path = dir.path().to_str().unwrap().to_string();
@@ -379,15 +379,14 @@ mod tests {
         fs::create_dir_all(&ecma_dir).unwrap();
         fs::write(ecma_dir.join("highlights.scm"), "(identifier) @variable\n").unwrap();
 
-        let result =
-            QueryLoader::resolve_query_with_inheritance(&[base_path], "ecma", "highlights.scm");
+        let result = QueryLoader::resolve_query(&[base_path], "ecma", "highlights.scm");
         assert!(result.is_ok());
         let content = result.unwrap();
         assert!(content.contains("(identifier) @variable"));
     }
 
     #[test]
-    fn test_resolve_query_with_inheritance_single_parent() {
+    fn test_resolve_query_single_parent() {
         // typescript inherits from ecma
         let dir = tempdir().unwrap();
         let base_path = dir.path().to_str().unwrap().to_string();
@@ -406,11 +405,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = QueryLoader::resolve_query_with_inheritance(
-            &[base_path],
-            "typescript",
-            "highlights.scm",
-        );
+        let result = QueryLoader::resolve_query(&[base_path], "typescript", "highlights.scm");
         assert!(result.is_ok());
         let content = result.unwrap();
 
@@ -425,7 +420,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_query_with_inheritance_removes_directive() {
+    fn test_resolve_query_removes_directive() {
         // The "; inherits:" line should be removed from output
         let dir = tempdir().unwrap();
         let base_path = dir.path().to_str().unwrap().to_string();
@@ -444,11 +439,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = QueryLoader::resolve_query_with_inheritance(
-            &[base_path],
-            "typescript",
-            "highlights.scm",
-        );
+        let result = QueryLoader::resolve_query(&[base_path], "typescript", "highlights.scm");
         let content = result.unwrap();
 
         // The inherits directive should not be in the output
@@ -470,11 +461,7 @@ mod tests {
             return;
         }
 
-        let result = QueryLoader::resolve_query_with_inheritance(
-            &[search_path],
-            "typescript",
-            "highlights.scm",
-        );
+        let result = QueryLoader::resolve_query(&[search_path], "typescript", "highlights.scm");
 
         assert!(
             result.is_ok(),
@@ -503,7 +490,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_query_with_inheritance_circular_detection() {
+    fn test_resolve_query_circular_detection() {
         // a inherits b, b inherits a - should detect and error
         let dir = tempdir().unwrap();
         let base_path = dir.path().to_str().unwrap().to_string();
@@ -516,8 +503,7 @@ mod tests {
         fs::create_dir_all(&b_dir).unwrap();
         fs::write(b_dir.join("highlights.scm"), "; inherits: lang_a\n(b) @b\n").unwrap();
 
-        let result =
-            QueryLoader::resolve_query_with_inheritance(&[base_path], "lang_a", "highlights.scm");
+        let result = QueryLoader::resolve_query(&[base_path], "lang_a", "highlights.scm");
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("circular") || err.to_string().contains("Circular"));
@@ -542,11 +528,7 @@ mod tests {
             return;
         }
 
-        let result = QueryLoader::resolve_query_with_inheritance(
-            &[search_path],
-            "javascript",
-            "highlights.scm",
-        );
+        let result = QueryLoader::resolve_query(&[search_path], "javascript", "highlights.scm");
 
         assert!(
             result.is_ok(),
