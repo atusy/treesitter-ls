@@ -35,8 +35,8 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint: "Sprint 41 - COMPLETED - PBI-052 (1pt) - Remove dead code from position.rs and semantic.rs"
-  backlog: "4 PBIs ready (tidying)"
+  current_sprint: "Sprint 42 - COMPLETED - PBI-053 (1pt) - Consistent path resolution in query_loader.rs"
+  backlog: "2 PBIs ready (tidying)"
   impediments: 0
 
 ---
@@ -244,7 +244,7 @@ product_backlog:
       role: "developer maintaining treesitter-ls"
       capability: "use consistent path resolution in query_loader.rs"
       benefit: "avoid subtle bugs from inconsistent path handling"
-    status: ready
+    status: done
     story_points: 1
     acceptance_criteria:
       - criterion: "AC1: All extension checks use PathBuf with .clean()"
@@ -455,46 +455,65 @@ definition_of_done:
 # ==============================================================================
 
 current_sprint:
-  sprint: 41
-  pbi: PBI-052
-  goal: "Remove dead code from position.rs and semantic.rs to reduce technical debt and improve code clarity"
+  sprint: 42
+  pbi: PBI-053
+  goal: "Consolidate path resolution in query_loader.rs to use consistent PathBuf handling with PARSER_EXTENSIONS array"
   status: completed
 
   subtasks:
-    - id: ST-052-1
-      title: "Remove compute_line_starts() function from position.rs"
+    - id: ST-053-1
+      title: "Create PARSER_EXTENSIONS constant with all three extensions (so, dylib, dll)"
       status: completed
-      commits: ["8931c30"]
+      commits: ["fec5c17"]
 
-    - id: ST-052-2
-      title: "Remove _text field from PositionMapper struct"
+    - id: ST-053-2
+      title: "Refactor resolve_library_path to use loop over extensions"
       status: completed
-      commits: ["8931c30"]
+      commits: ["fec5c17"]
 
-    - id: ST-052-3
-      title: "Remove Domain* semantic token re-exports from semantic.rs"
+    - id: ST-053-3
+      title: "Ensure all paths use PathBuf with .clean()"
       status: completed
-      commits: ["8931c30"]
+      commits: ["fec5c17"]
 
-    - id: ST-052-4
+    - id: ST-053-4
       title: "Verify all tests pass"
       status: completed
-      commits: ["8931c30"]
+      commits: ["fec5c17"]
 
   notes: |
     ## Sprint Goal
-    Remove identified dead code to reduce technical debt and improve codebase clarity.
-    This is a pure tidying Sprint with no behavioral changes.
+    Consolidate path resolution in query_loader.rs to eliminate inconsistent path handling.
+    The .dll path currently uses format!() without .clean() while .so/.dylib use PathBuf.clean().
 
-    ## Dead Code Removed
-    - compute_line_starts() in text/position.rs - exported but never used externally
-    - _text field in PositionMapper - stored but never accessed
-    - DomainSemantic* re-exports in analysis/semantic.rs - aliased but never used
+    ## Outcome
+    Successfully consolidated 3 separate if-blocks (22 lines) into a single loop (11 lines).
+    All extension checks now use consistent PathBuf with .clean() handling.
 
-    ## Verification
-    - All 199 unit tests pass
-    - Clippy clean, formatting clean
-    - All acceptance criteria verified via grep
+    ## Implementation
+    Added PARSER_EXTENSIONS constant at line 9:
+    ```rust
+    const PARSER_EXTENSIONS: &[&str] = &["so", "dylib", "dll"];
+    ```
+
+    Refactored resolve_library_path to loop over extensions (lines 234-242):
+    ```rust
+    for ext in PARSER_EXTENSIONS {
+        let parser_path = PathBuf::from(path)
+            .join("parser")
+            .join(format!("{language}.{ext}"))
+            .clean();
+        if parser_path.exists() {
+            return Some(parser_path.to_string_lossy().into_owned());
+        }
+    }
+    ```
+
+    ## Acceptance Criteria Verification
+    - AC1: All extension checks use PathBuf with .clean() - VERIFIED
+    - AC2: Extension search consolidated to loop over PARSER_EXTENSIONS - VERIFIED
+    - AC3: resolve_library_path tests pass - VERIFIED (199 unit tests pass)
+    - AC4: All tests pass - VERIFIED (cargo test, clippy clean, fmt clean)
 
 ---
 # ==============================================================================
@@ -503,6 +522,23 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 42
+    pbi: PBI-053
+    outcome: "Consolidated path resolution in query_loader.rs with PARSER_EXTENSIONS array (22 lines to 11 lines)"
+    retrospective:
+      what_went_well:
+        - "All 4 subtasks completed in single cohesive refactoring commit"
+        - "Code reduction from 3 separate if-blocks (22 lines) to single loop (11 lines)"
+        - "All Definition of Done checks passed (199 unit tests)"
+        - "Consistent PathBuf with .clean() handling across all platforms"
+      what_to_improve:
+        - "Consider adding more platform-specific tests for Windows path handling"
+      insight: |
+        Loop-based consolidation is a classic DRY refactoring pattern. When multiple
+        code blocks differ only by a constant value (extension string), extracting
+        those values into an array and iterating is both safer and more maintainable.
+        The PARSER_EXTENSIONS constant also serves as documentation of supported platforms.
+
   - sprint: 41
     pbi: PBI-052
     outcome: "Removed dead code from position.rs and semantic.rs (compute_line_starts, _text field, DomainSemantic re-exports)"
