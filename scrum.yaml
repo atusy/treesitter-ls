@@ -39,7 +39,7 @@ quick_status:
     number: null
     pbi: null
     status: idle
-    goal: "No active sprint - backlog empty"
+    goal: "No active sprint - 5 PBIs in backlog (4 ready, 1 draft)"
   impediments: 0
 
 ---
@@ -66,11 +66,160 @@ product_goal:
 # ==============================================================================
 # PRODUCT BACKLOG (Active Items Only)
 # ==============================================================================
-# All PBIs completed. Backlog is empty.
 # Completed PBIs: PBI-001 through PBI-038
 # For details: git log -- scrum.yaml
-#
-product_backlog: []
+
+product_backlog:
+  - id: PBI-039
+    title: "Remove test-only wrapper functions from refactor.rs"
+    status: ready
+    user_story: |
+      As a maintainer,
+      I want to remove the deprecated test-only wrapper functions,
+      so that the codebase has a single clear API without legacy compatibility shims.
+    acceptance_criteria:
+      - criterion: "AC1: handle_code_actions_with_injection_query removed"
+        verification: "grep -c 'fn handle_code_actions_with_injection_query' src/analysis/refactor.rs returns 0"
+      - criterion: "AC2: handle_code_actions_with_injection_and_coordinator removed"
+        verification: "grep -c 'fn handle_code_actions_with_injection_and_coordinator' src/analysis/refactor.rs returns 0"
+      - criterion: "AC3: CodeActionContext type alias removed"
+        verification: "grep -c 'type CodeActionContext' src/analysis/refactor.rs returns 0"
+      - criterion: "AC4: Tests use CodeActionOptions::new() builder directly"
+        verification: "grep -c 'CodeActionOptions::new' src/analysis/refactor.rs >= 10"
+      - criterion: "AC5: All tests pass"
+        verification: "cargo test --lib -- refactor"
+      - criterion: "AC6: No REVIEW comments remain"
+        verification: "grep -c '// REVIEW:' src/analysis/refactor.rs returns 0"
+    notes: |
+      Review finding from PBI-033: Two test-only functions marked with
+      "// REVIEW: this is a meaninglessly thin wrapper" should be removed.
+      Tests should be migrated to use CodeActionOptions::new() builder pattern.
+
+      Functions to remove:
+      - handle_code_actions_with_injection_query (lines 631-656)
+      - handle_code_actions_with_injection_and_coordinator (lines 658-686)
+      - CodeActionContext type alias (line 80)
+
+  - id: PBI-040
+    title: "Remove test-only calculate_effective_range function"
+    status: ready
+    user_story: |
+      As a maintainer,
+      I want to remove the redundant calculate_effective_range function,
+      so that the codebase has a single clear API for effective range calculation.
+    acceptance_criteria:
+      - criterion: "AC1: calculate_effective_range function removed"
+        verification: "grep -c 'pub fn calculate_effective_range\\b' src/analysis/offset_calculator.rs returns 0"
+      - criterion: "AC2: calculate_effective_range_with_text renamed to calculate_effective_range"
+        verification: "grep -c 'pub fn calculate_effective_range' src/analysis/offset_calculator.rs returns 1"
+      - criterion: "AC3: All callers updated"
+        verification: "grep -r 'calculate_effective_range_with_text' src/ returns 0"
+      - criterion: "AC4: All tests pass"
+        verification: "cargo test --lib -- offset_calculator"
+      - criterion: "AC5: No REVIEW comments remain in file"
+        verification: "grep -c '// REVIEW:' src/analysis/offset_calculator.rs returns 0"
+    notes: |
+      Review finding: calculate_effective_range is only used in tests.
+
+      Current state:
+      - calculate_effective_range (line 33) - only applies column offsets, only used in tests
+      - calculate_effective_range_with_text (line 46) - full implementation with row+column offsets
+
+      Action:
+      1. Remove calculate_effective_range
+      2. Rename calculate_effective_range_with_text to calculate_effective_range
+      3. Update all callers (grep shows only refactor.rs uses it)
+
+  - id: PBI-041
+    title: "Consolidate query resolution API in QueryLoader"
+    status: draft
+    user_story: |
+      As a maintainer,
+      I want to simplify the QueryLoader API,
+      so that there is a single clear entry point for query resolution.
+    acceptance_criteria:
+      - criterion: "AC1: Single resolve_query method exists"
+        verification: "grep -c 'pub fn resolve_query\\b' src/language/query_loader.rs returns 1"
+      - criterion: "AC2: resolve_query_with_inheritance removed or made private"
+        verification: "grep -c 'pub fn resolve_query_with_inheritance' src/language/query_loader.rs returns 0"
+      - criterion: "AC3: All tests pass"
+        verification: "cargo test --lib -- query_loader"
+      - criterion: "AC4: No REVIEW comments remain in file"
+        verification: "grep -c '// REVIEW:' src/language/query_loader.rs returns 0"
+    notes: |
+      Review finding: Consider making visited parameter optional in resolve_query_recursive
+      to unify resolve_query_with_inheritance and resolve_query_recursive.
+
+      Current state (line 12):
+      - resolve_query_with_inheritance - public entry point that creates HashSet
+      - resolve_query_recursive - private helper with visited parameter
+
+      Potential approach: Make visited parameter optional (Option<&mut HashSet>),
+      allowing a single public method named simply "resolve_query".
+
+      Status: draft - needs investigation to confirm approach is sound
+
+  - id: PBI-042
+    title: "Simplify CONFIG_TEMPLATE to minimal active TOML"
+    status: ready
+    story_points: 1
+    user_story: |
+      As a user,
+      I want the generated config to contain only a doc link and active settings,
+      So that I can use it immediately without uncommenting or editing.
+    acceptance_criteria:
+      - criterion: "AC1: Only doc link comment at top"
+        verification: "grep -c '^#' on CONFIG_TEMPLATE returns 1 (only doc link)"
+      - criterion: "AC2: Settings are active (not commented)"
+        verification: "CONFIG_TEMPLATE contains 'autoInstall = true' (not '# autoInstall')"
+      - criterion: "AC3: Valid TOML"
+        verification: "toml parse succeeds on CONFIG_TEMPLATE"
+    notes: |
+      Simplify CONFIG_TEMPLATE in src/bin/main.rs:
+      Current:
+        # treesitter-ls configuration
+        # Documentation: ...
+        # Auto-install missing parsers... (explanation)
+        # autoInstall = true              (commented out)
+      New:
+        # Documentation: ...
+        autoInstall = true
+
+  - id: PBI-043
+    title: "config init outputs to stdout by default"
+    status: ready
+    story_points: 3
+    depends_on: [PBI-042]
+    user_story: |
+      As a user scripting with treesitter-ls CLI,
+      I want `treesitter-ls config init` to emit to stdout when no output file is specified,
+      So that I can pipe to other tools, preview before saving, or redirect to custom location.
+    acceptance_criteria:
+      - criterion: "AC1: Default outputs to stdout"
+        verification: "treesitter-ls config init outputs to stdout; no file created"
+      - criterion: "AC2: --output flag writes to file"
+        verification: "treesitter-ls config init --output custom.toml creates custom.toml"
+      - criterion: "AC3: --output with --force overwrites"
+        verification: "treesitter-ls config init --output existing.toml --force overwrites"
+      - criterion: "AC4: --output refuses overwrite without --force"
+        verification: "treesitter-ls config init --output existing.toml fails with error"
+      - criterion: "AC5: --force without --output warns"
+        verification: "treesitter-ls config init --force warns to stderr, outputs to stdout"
+      - criterion: "AC6: --output - means stdout"
+        verification: "treesitter-ls config init --output - outputs to stdout"
+    notes: |
+      PO Decisions:
+      - Breaking change acceptable (unreleased)
+      - NO short flag (-o) - use --output only
+      - Support --output - for explicit stdout
+      - Warn when --force used without --output
+
+      Technical changes in src/bin/main.rs:
+      - ConfigAction::Init: add `output: Option<PathBuf>` (long flag only)
+      - run_config_init(output: Option<PathBuf>, force: bool)
+      - stdout when output is None or "-"
+      - Warn to stderr if --force without --output
+      - Update existing tests to use --output flag
 
 ---
 # ==============================================================================
