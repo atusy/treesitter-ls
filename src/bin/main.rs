@@ -173,7 +173,8 @@ fn run_list_languages(no_cache: bool) {
 }
 
 /// Documentation link for configuration
-const DOC_LINK: &str = "# Documentation: https://github.com/atusy/treesitter-ls/blob/main/docs/README.md\n";
+const DOC_LINK: &str =
+    "# Documentation: https://github.com/atusy/treesitter-ls/blob/main/docs/README.md\n";
 
 /// Run the language status command
 fn run_language_status(data_dir: Option<PathBuf>, verbose: bool) {
@@ -408,11 +409,10 @@ fn run_config_init(output: Option<PathBuf>, force: bool) {
 
     // Generate config from typed defaults
     let settings = default_settings();
-    let config_toml = toml::to_string_pretty(&settings)
-        .unwrap_or_else(|e| {
-            eprintln!("Failed to serialize configuration: {}", e);
-            std::process::exit(1);
-        });
+    let config_toml = toml::to_string_pretty(&settings).unwrap_or_else(|e| {
+        eprintln!("Failed to serialize configuration: {}", e);
+        std::process::exit(1);
+    });
 
     // Prepend documentation link
     let config_with_doc = format!("{}\n{}", DOC_LINK, config_toml);

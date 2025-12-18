@@ -205,8 +205,8 @@ mod tests {
         let settings = default_settings();
 
         // Should serialize to valid TOML
-        let toml_string = toml::to_string_pretty(&settings)
-            .expect("should serialize to TOML without error");
+        let toml_string =
+            toml::to_string_pretty(&settings).expect("should serialize to TOML without error");
 
         // Should contain autoInstall setting
         assert!(
