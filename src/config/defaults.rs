@@ -1,0 +1,160 @@
+//! Default configuration values for treesitter-ls.
+//!
+//! This module provides type-safe default values that are used by `config init`
+//! to generate configuration templates.
+
+use super::settings::{CaptureMapping, CaptureMappings, QueryTypeMappings};
+
+/// Returns the default capture mappings for semantic token translation.
+///
+/// These mappings translate Tree-sitter capture names (e.g., "variable.builtin")
+/// to LSP semantic token types (e.g., "variable.defaultLibrary").
+pub fn default_capture_mappings() -> CaptureMappings {
+    let mut mappings = CaptureMappings::new();
+
+    let highlights = default_highlight_mappings();
+    let wildcard = QueryTypeMappings {
+        highlights,
+        locals: CaptureMapping::new(),
+        folds: CaptureMapping::new(),
+    };
+
+    mappings.insert("_".to_string(), wildcard);
+    mappings
+}
+
+/// Returns the default highlight capture mappings.
+fn default_highlight_mappings() -> CaptureMapping {
+    let pairs = [
+        // Variables
+        ("variable", "variable"),
+        ("variable.builtin", "variable.defaultLibrary"),
+        ("variable.parameter", "parameter"),
+        ("variable.parameter.builtin", "parameter.defaultLibrary"),
+        ("variable.member", "property"),
+        // Constants
+        ("constant", "variable.readonly"),
+        ("constant.builtin", "variable.readonly.defaultLibrary"),
+        ("constant.macro", "macro"),
+        // Modules
+        ("module", "namespace"),
+        ("module.builtin", "namespace.defaultLibrary"),
+        ("label", "variable"),
+        // Strings
+        ("string", "string"),
+        ("string.documentation", "string.documentation"),
+        ("string.regexp", "regexp"),
+        ("string.escape", "string"),
+        ("string.special", "string"),
+        ("string.special.symbol", "string"),
+        ("string.special.path", "string"),
+        ("string.special.url", "string"),
+        ("character", "string"),
+        ("character.special", "string"),
+        // Literals
+        ("boolean", "keyword"),
+        ("number", "number"),
+        ("number.float", "number"),
+        // Types
+        ("type", "type"),
+        ("type.builtin", "type.defaultLibrary"),
+        ("type.definition", "type.definition"),
+        // Attributes
+        ("attribute", "decorator"),
+        ("attribute.builtin", "decorator.defaultLibrary"),
+        ("property", "property"),
+        // Functions
+        ("function", "function"),
+        ("function.builtin", "function.defaultLibrary"),
+        ("function.call", "function"),
+        ("function.macro", "macro"),
+        ("function.method", "method"),
+        ("function.method.call", "method"),
+        ("constructor", "function"),
+        // Operators
+        ("operator", "operator"),
+        // Keywords
+        ("keyword", "keyword"),
+        ("keyword.coroutine", "keyword.async"),
+        ("keyword.function", "keyword"),
+        ("keyword.operator", "operator"),
+        ("keyword.import", "keyword"),
+        ("keyword.type", "keyword"),
+        ("keyword.modifier", "modifier"),
+        ("keyword.repeat", "keyword"),
+        ("keyword.return", "keyword"),
+        ("keyword.debug", "keyword"),
+        ("keyword.exception", "keyword"),
+        ("keyword.conditional", "keyword"),
+        ("keyword.conditional.ternary", "operator"),
+        ("keyword.directive", "macro"),
+        ("keyword.directive.define", "macro"),
+        // Punctuation (map to empty string to suppress)
+        ("punctuation.delimiter", ""),
+        ("punctuation.bracket", ""),
+        ("punctuation.special", ""),
+        // Comments
+        ("comment", "comment"),
+        ("comment.documentation", "comment.documentation"),
+        ("comment.error", "comment"),
+        ("comment.warning", "comment"),
+        ("comment.todo", "comment"),
+        ("comment.note", "comment"),
+        // Markup (most map to empty to suppress)
+        ("markup.strong", ""),
+        ("markup.italic", ""),
+        ("markup.strikethrough", ""),
+        ("markup.underline", ""),
+        ("markup.heading", ""),
+        ("markup.heading.1", ""),
+        ("markup.heading.2", ""),
+        ("markup.heading.3", ""),
+        ("markup.heading.4", ""),
+        ("markup.heading.5", ""),
+        ("markup.heading.6", ""),
+        ("markup.quote", ""),
+        ("markup.math", ""),
+        ("markup.link", ""),
+        ("markup.link.label", ""),
+        ("markup.link.url", ""),
+        ("markup.raw", "string"),
+        ("markup.raw.block", "string"),
+        ("markup.list", ""),
+        ("markup.list.checked", ""),
+        ("markup.list.unchecked", ""),
+        // Diff
+        ("diff.plus", ""),
+        ("diff.minus", ""),
+        ("diff.delta", ""),
+        // Tags (XML/HTML)
+        ("tag", "class"),
+        ("tag.builtin", "class.defaultLibrary"),
+        ("tag.attribute", "property"),
+        ("tag.delimiter", ""),
+    ];
+
+    pairs
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_capture_mappings_contains_variable_mapping() {
+        let mappings = default_capture_mappings();
+
+        // The wildcard "_" key should exist with highlights mappings
+        let wildcard = mappings.get("_").expect("should have wildcard '_' key");
+
+        // "variable" should map to "variable" (identity mapping)
+        assert_eq!(
+            wildcard.highlights.get("variable"),
+            Some(&"variable".to_string()),
+            "should map 'variable' capture to 'variable' token type"
+        );
+    }
+}
