@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | proposed |
+| **Status** | accepted |
 | **Date** | 2025-12-18 |
 | **Decision-makers** | atusy |
 | **Consulted** | Claude Code |
