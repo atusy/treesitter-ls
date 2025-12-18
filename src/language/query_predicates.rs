@@ -27,21 +27,27 @@ fn check_predicate(query: &Query, match_: &QueryMatch, capture: &QueryCapture, t
                                         }
                                     }
                                     Err(err) => {
-                                        eprintln!(
+                                        log::info!(
+                                            target: "treesitter_ls::query",
                                             "Failed to compile regex from lua-pattern: {} ({err})",
                                             regex_str
                                         );
                                     }
                                 },
                                 Err(err) => {
-                                    eprintln!(
+                                    log::info!(
+                                        target: "treesitter_ls::query",
                                         "Failed to convert lua-pattern to regex: {} ({err:?})",
                                         pattern_str
                                     );
                                 }
                             }
                         } else {
-                            eprintln!("Invalid lua-pattern: {}", pattern_str);
+                            log::info!(
+                                target: "treesitter_ls::query",
+                                "Invalid lua-pattern: {}",
+                                pattern_str
+                            );
                         }
                     }
                 }

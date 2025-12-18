@@ -322,7 +322,7 @@ treesitter-ls uses Rust's standard logging with `env_logger`. Configure logging 
 |--------|-------|-------------|
 | `treesitter_ls::lock_recovery` | warn | Thread synchronization recovery events |
 | `treesitter_ls::crash_recovery` | error | Parser crash detection and recovery |
-| `treesitter_ls::query` | warn | Query syntax/validation issues |
+| `treesitter_ls::query` | info | Query syntax/validation issues |
 
 ### Examples
 
@@ -334,7 +334,7 @@ RUST_LOG=treesitter_ls=debug treesitter-ls
 RUST_LOG=treesitter_ls::crash_recovery=error treesitter-ls
 
 # Show query issues (helpful for query authors)
-RUST_LOG=treesitter_ls::query=warn treesitter-ls
+RUST_LOG=treesitter_ls::query=info treesitter-ls
 
 # Show lock recovery events (for debugging thread issues)
 RUST_LOG=treesitter_ls::lock_recovery=warn treesitter-ls
