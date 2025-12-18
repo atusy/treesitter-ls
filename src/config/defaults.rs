@@ -3,7 +3,20 @@
 //! This module provides type-safe default values that are used by `config init`
 //! to generate configuration templates.
 
-use super::settings::{CaptureMapping, CaptureMappings, QueryTypeMappings};
+use super::settings::{CaptureMapping, CaptureMappings, QueryTypeMappings, TreeSitterSettings};
+use std::collections::HashMap;
+
+/// Returns the default TreeSitterSettings for configuration generation.
+///
+/// This is used by `config init` to generate type-safe default configurations.
+pub fn default_settings() -> TreeSitterSettings {
+    TreeSitterSettings {
+        search_paths: None,
+        languages: HashMap::new(),
+        capture_mappings: default_capture_mappings(),
+        auto_install: Some(true),
+    }
+}
 
 /// Returns the default capture mappings for semantic token translation.
 ///
@@ -155,6 +168,35 @@ mod tests {
             wildcard.highlights.get("variable"),
             Some(&"variable".to_string()),
             "should map 'variable' capture to 'variable' token type"
+        );
+    }
+
+    #[test]
+    fn default_settings_has_auto_install_true() {
+        let settings = default_settings();
+
+        // autoInstall should default to true for zero-config experience
+        assert_eq!(
+            settings.auto_install,
+            Some(true),
+            "autoInstall should be Some(true) by default"
+        );
+    }
+
+    #[test]
+    fn default_settings_has_capture_mappings() {
+        let settings = default_settings();
+
+        // Should have capture mappings populated
+        assert!(
+            !settings.capture_mappings.is_empty(),
+            "capture_mappings should not be empty"
+        );
+
+        // Should contain the wildcard "_" key
+        assert!(
+            settings.capture_mappings.contains_key("_"),
+            "capture_mappings should contain wildcard '_' key"
         );
     }
 }
