@@ -8,6 +8,8 @@ pub mod metadata;
 pub mod parser;
 pub mod queries;
 
+pub use parser::parser_file_exists;
+
 use std::path::PathBuf;
 
 /// Get the default data directory for treesitter-ls.

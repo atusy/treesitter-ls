@@ -120,6 +120,21 @@ fn shared_lib_extension() -> &'static str {
     }
 }
 
+/// Check if a parser file exists for the given language.
+///
+/// Returns the path to the parser file if it exists, None otherwise.
+pub fn parser_file_exists(language: &str, data_dir: &Path) -> Option<PathBuf> {
+    let parser_file =
+        data_dir
+            .join("parser")
+            .join(format!("{}.{}", language, shared_lib_extension()));
+    if parser_file.exists() {
+        Some(parser_file)
+    } else {
+        None
+    }
+}
+
 /// Install a Tree-sitter parser for a language.
 pub fn install_parser(
     language: &str,
@@ -323,6 +338,29 @@ mod tests {
         // but that's okay - it's testing the search logic
         let _result = find_tree_sitter();
         // Just verify it doesn't panic
+    }
+
+    #[test]
+    fn test_parser_file_exists_returns_none_when_missing() {
+        let temp = tempdir().expect("Failed to create temp dir");
+        let result = parser_file_exists("nonexistent", temp.path());
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parser_file_exists_returns_some_when_present() {
+        let temp = tempdir().expect("Failed to create temp dir");
+        let parser_dir = temp.path().join("parser");
+        fs::create_dir_all(&parser_dir).expect("create parser dir");
+
+        // Create a fake parser file
+        let ext = shared_lib_extension();
+        let parser_file = parser_dir.join(format!("lua.{}", ext));
+        fs::write(&parser_file, b"fake parser").expect("write fake parser");
+
+        let result = parser_file_exists("lua", temp.path());
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), parser_file);
     }
 
     /// PBI-015: Test that clone_repo works with tag revisions (e.g., v0.25.0)
