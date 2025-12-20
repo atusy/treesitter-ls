@@ -39,25 +39,7 @@ pub struct TreeSitterSettings {
     pub auto_install: Option<bool>,
 }
 
-// Domain types that were previously in domain::settings
-// These are internal representations used throughout the application
-
-/// Query source definitions used across the domain.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum QuerySource {
-    Path(String),
-    Inline(String),
-}
-
-impl QuerySource {
-    pub fn path<P: Into<String>>(path: P) -> Self {
-        Self::Path(path.into())
-    }
-
-    pub fn inline<Q: Into<String>>(query: Q) -> Self {
-        Self::Inline(query.into())
-    }
-}
+// Domain types - internal representations used throughout the application
 
 /// Per-language Tree-sitter language configuration surfaced to the domain.
 #[derive(Clone, Debug, PartialEq, Eq)]
