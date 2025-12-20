@@ -16,24 +16,11 @@ pub struct QueryTypeMappings {
 pub type CaptureMappings = HashMap<String, QueryTypeMappings>;
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
-pub struct HighlightItem {
-    #[serde(flatten)]
-    pub source: HighlightSource,
-}
-
-#[derive(Debug, Clone, Deserialize, serde::Serialize)]
-#[serde(untagged)]
-pub enum HighlightSource {
-    Path { path: String },
-    Query { query: String },
-}
-
-#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct LanguageConfig {
     pub library: Option<String>,
     #[serde(default)]
     pub filetypes: Vec<String>,
-    /// Query file paths for syntax highlighting (simplified from HighlightItem)
+    /// Query file paths for syntax highlighting
     pub highlights: Option<Vec<String>>,
     /// Query file paths for locals/definitions
     pub locals: Option<Vec<String>>,

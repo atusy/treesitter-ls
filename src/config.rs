@@ -2,8 +2,8 @@ pub mod defaults;
 pub mod settings;
 
 pub use settings::{
-    CaptureMapping, CaptureMappings, HighlightItem, HighlightSource, LanguageConfig,
-    LanguageSettings, QuerySource, QueryTypeMappings, TreeSitterSettings, WorkspaceSettings,
+    CaptureMapping, CaptureMappings, LanguageConfig, LanguageSettings, QuerySource,
+    QueryTypeMappings, TreeSitterSettings, WorkspaceSettings,
 };
 use std::collections::HashMap;
 
@@ -48,24 +48,6 @@ pub fn merge_settings(
                 auto_install: primary.auto_install.or(fallback.auto_install),
             };
             Some(merged)
-        }
-    }
-}
-
-impl From<&HighlightSource> for QuerySource {
-    fn from(source: &HighlightSource) -> Self {
-        match source {
-            HighlightSource::Path { path } => QuerySource::Path(path.clone()),
-            HighlightSource::Query { query } => QuerySource::Inline(query.clone()),
-        }
-    }
-}
-
-impl From<QuerySource> for HighlightSource {
-    fn from(source: QuerySource) -> Self {
-        match source {
-            QuerySource::Path(path) => HighlightSource::Path { path },
-            QuerySource::Inline(query) => HighlightSource::Query { query },
         }
     }
 }
