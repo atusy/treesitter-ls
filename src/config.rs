@@ -72,22 +72,16 @@ impl From<QuerySource> for HighlightSource {
 
 impl From<&LanguageConfig> for LanguageSettings {
     fn from(config: &LanguageConfig) -> Self {
-        let highlight = config
-            .highlight
-            .iter()
-            .map(|item| QuerySource::from(&item.source))
-            .collect();
-        let locals = config.locals.as_ref().map(|items| {
-            items
-                .iter()
-                .map(|item| QuerySource::from(&item.source))
-                .collect()
-        });
+        let highlights = config
+            .highlights
+            .clone()
+            .unwrap_or_default();
+        let locals = config.locals.clone();
 
         LanguageSettings::new(
             config.library.clone(),
             config.filetypes.clone(),
-            highlight,
+            highlights,
             locals,
         )
     }
@@ -95,28 +89,17 @@ impl From<&LanguageConfig> for LanguageSettings {
 
 impl From<&LanguageSettings> for LanguageConfig {
     fn from(settings: &LanguageSettings) -> Self {
-        let highlight = settings
-            .highlight
-            .iter()
-            .cloned()
-            .map(|source| HighlightItem {
-                source: HighlightSource::from(source),
-            })
-            .collect();
-        let locals = settings.locals.as_ref().map(|items| {
-            items
-                .iter()
-                .cloned()
-                .map(|source| HighlightItem {
-                    source: HighlightSource::from(source),
-                })
-                .collect()
-        });
+        let highlights = if settings.highlights.is_empty() {
+            None
+        } else {
+            Some(settings.highlights.clone())
+        };
+        let locals = settings.locals.clone();
 
         LanguageConfig {
             library: settings.library.clone(),
             filetypes: settings.filetypes.clone(),
-            highlight,
+            highlights,
             locals,
         }
     }
@@ -293,7 +276,7 @@ mod tests {
             LanguageConfig {
                 library: Some("/fallback/rust.so".to_string()),
                 filetypes: vec!["rs".to_string()],
-                highlight: vec![],
+                highlights: None,
                 locals: None,
             },
         );
@@ -311,7 +294,7 @@ mod tests {
             LanguageConfig {
                 library: Some("/primary/rust.so".to_string()),
                 filetypes: vec!["rs".to_string(), "rust".to_string()],
-                highlight: vec![],
+                highlights: None,
                 locals: None,
             },
         );

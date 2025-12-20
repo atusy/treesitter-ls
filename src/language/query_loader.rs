@@ -1,4 +1,3 @@
-use crate::config::{HighlightItem, HighlightSource};
 use crate::error::{LspError, LspResult};
 use path_clean::PathClean;
 use std::fs;
@@ -105,30 +104,22 @@ impl QueryLoader {
         }
     }
 
-    /// Load query content from highlight items
-    pub fn load_query_from_highlight(highlight_items: &[HighlightItem]) -> LspResult<String> {
+    /// Load query content from path strings
+    pub fn load_query_from_paths(paths: &[String]) -> LspResult<String> {
         let mut combined_query = String::new();
 
-        for item in highlight_items {
-            match &item.source {
-                HighlightSource::Path { path } => {
-                    let normalized_path = PathBuf::from(path).clean();
-                    match fs::read_to_string(&normalized_path) {
-                        Ok(content) => {
-                            combined_query.push_str(&content);
-                            combined_query.push('\n');
-                        }
-                        Err(e) => {
-                            return Err(LspError::query(format!(
-                                "Failed to read query file {}: {e}",
-                                normalized_path.display()
-                            )));
-                        }
-                    }
-                }
-                HighlightSource::Query { query } => {
-                    combined_query.push_str(query);
+        for path in paths {
+            let normalized_path = PathBuf::from(path).clean();
+            match fs::read_to_string(&normalized_path) {
+                Ok(content) => {
+                    combined_query.push_str(&content);
                     combined_query.push('\n');
+                }
+                Err(e) => {
+                    return Err(LspError::query(format!(
+                        "Failed to read query file {}: {e}",
+                        normalized_path.display()
+                    )));
                 }
             }
         }
@@ -182,12 +173,9 @@ impl QueryLoader {
             .map_err(|e| LspError::query(format!("Failed to parse query: {e}")))
     }
 
-    /// Load and parse a highlight query
-    pub fn load_highlight_query(
-        language: &Language,
-        highlight_items: &[HighlightItem],
-    ) -> LspResult<Query> {
-        let query_str = Self::load_query_from_highlight(highlight_items)?;
+    /// Load and parse a highlight query from path strings
+    pub fn load_highlight_query(language: &Language, paths: &[String]) -> LspResult<Query> {
+        let query_str = Self::load_query_from_paths(paths)?;
         Self::parse_query(language, &query_str)
     }
 
@@ -254,21 +242,20 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn test_load_query_from_highlight() {
-        let items = vec![
-            HighlightItem {
-                source: HighlightSource::Query {
-                    query: "(identifier) @variable".to_string(),
-                },
-            },
-            HighlightItem {
-                source: HighlightSource::Query {
-                    query: "(string) @string".to_string(),
-                },
-            },
+    fn test_load_query_from_paths() {
+        // Create temp files with query content
+        let dir = tempdir().unwrap();
+        let file1 = dir.path().join("query1.scm");
+        let file2 = dir.path().join("query2.scm");
+        fs::write(&file1, "(identifier) @variable").unwrap();
+        fs::write(&file2, "(string) @string").unwrap();
+
+        let paths = vec![
+            file1.to_string_lossy().to_string(),
+            file2.to_string_lossy().to_string(),
         ];
 
-        let result = QueryLoader::load_query_from_highlight(&items).unwrap();
+        let result = QueryLoader::load_query_from_paths(&paths).unwrap();
         assert!(result.contains("(identifier) @variable"));
         assert!(result.contains("(string) @string"));
     }

@@ -144,7 +144,6 @@ impl Default for ConfigStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{HighlightItem, HighlightSource};
 
     #[test]
     fn test_config_store_language_configs() {
@@ -156,11 +155,7 @@ mod tests {
             LanguageConfig {
                 library: Some("/path/to/rust.so".to_string()),
                 filetypes: vec!["rs".to_string()],
-                highlight: vec![HighlightItem {
-                    source: HighlightSource::Query {
-                        query: "(identifier) @variable".to_string(),
-                    },
-                }],
+                highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
                 locals: None,
             },
         );
@@ -213,7 +208,7 @@ mod tests {
                     LanguageConfig {
                         library: None,
                         filetypes: vec!["py".to_string()],
-                        highlight: vec![],
+                        highlights: None,
                         locals: None,
                     },
                 );
@@ -243,7 +238,7 @@ mod tests {
             LanguageConfig {
                 library: None,
                 filetypes: vec!["go".to_string()],
-                highlight: vec![],
+                highlights: None,
                 locals: None,
             },
         );

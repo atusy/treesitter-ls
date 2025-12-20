@@ -216,7 +216,7 @@ mod tests {
                     LanguageConfig {
                         library: None,
                         filetypes: vec!["rs".to_string(), "rust".to_string()],
-                        highlight: vec![],
+                        highlights: None,
                         locals: None,
                     },
                 );
@@ -225,7 +225,7 @@ mod tests {
                     LanguageConfig {
                         library: None,
                         filetypes: vec!["py".to_string(), "pyi".to_string()],
-                        highlight: vec![],
+                        highlights: None,
                         locals: None,
                     },
                 );

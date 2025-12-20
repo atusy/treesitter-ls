@@ -267,21 +267,23 @@ impl LanguageCoordinator {
     ) -> Vec<LanguageEvent> {
         let mut events = Vec::new();
 
-        if !config.highlight.is_empty() {
-            match QueryLoader::load_highlight_query(language, &config.highlight) {
-                Ok(query) => {
-                    self.query_store
-                        .insert_highlight_query(lang_name.to_string(), Arc::new(query));
-                    events.push(LanguageEvent::log(
-                        LanguageLogLevel::Info,
-                        format!("Highlight query loaded for {lang_name}"),
-                    ));
-                }
-                Err(err) => {
-                    events.push(LanguageEvent::log(
-                        LanguageLogLevel::Error,
-                        format!("Failed to load highlight query for {lang_name}: {err}"),
-                    ));
+        if let Some(highlights) = &config.highlights {
+            if !highlights.is_empty() {
+                match QueryLoader::load_highlight_query(language, highlights) {
+                    Ok(query) => {
+                        self.query_store
+                            .insert_highlight_query(lang_name.to_string(), Arc::new(query));
+                        events.push(LanguageEvent::log(
+                            LanguageLogLevel::Info,
+                            format!("Highlight query loaded for {lang_name}"),
+                        ));
+                    }
+                    Err(err) => {
+                        events.push(LanguageEvent::log(
+                            LanguageLogLevel::Error,
+                            format!("Failed to load highlight query for {lang_name}: {err}"),
+                        ));
+                    }
                 }
             }
         } else if let Some(paths) = search_paths
@@ -300,21 +302,23 @@ impl LanguageCoordinator {
             ));
         }
 
-        if let Some(locals_items) = &config.locals {
-            match QueryLoader::load_highlight_query(language, locals_items) {
-                Ok(query) => {
-                    self.query_store
-                        .insert_locals_query(lang_name.to_string(), Arc::new(query));
-                    events.push(LanguageEvent::log(
-                        LanguageLogLevel::Info,
-                        format!("Locals query loaded for {lang_name}"),
-                    ));
-                }
-                Err(err) => {
-                    events.push(LanguageEvent::log(
-                        LanguageLogLevel::Error,
-                        format!("Failed to load locals query for {lang_name}: {err}"),
-                    ));
+        if let Some(locals_paths) = &config.locals {
+            if !locals_paths.is_empty() {
+                match QueryLoader::load_highlight_query(language, locals_paths) {
+                    Ok(query) => {
+                        self.query_store
+                            .insert_locals_query(lang_name.to_string(), Arc::new(query));
+                        events.push(LanguageEvent::log(
+                            LanguageLogLevel::Info,
+                            format!("Locals query loaded for {lang_name}"),
+                        ));
+                    }
+                    Err(err) => {
+                        events.push(LanguageEvent::log(
+                            LanguageLogLevel::Error,
+                            format!("Failed to load locals query for {lang_name}: {err}"),
+                        ));
+                    }
                 }
             }
         } else if let Some(paths) = search_paths

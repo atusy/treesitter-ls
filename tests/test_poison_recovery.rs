@@ -119,7 +119,7 @@ fn test_config_store_recovers_from_poisoned_lock() {
         LanguageConfig {
             library: Some("/path/to/rust.so".to_string()),
             filetypes: vec!["rs".to_string()],
-            highlight: vec![],
+            highlights: None,
             locals: None,
         },
     );

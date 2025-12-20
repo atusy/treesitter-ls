@@ -31,10 +31,12 @@ pub enum HighlightSource {
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct LanguageConfig {
     pub library: Option<String>,
-    pub filetypes: Vec<String>,
     #[serde(default)]
-    pub highlight: Vec<HighlightItem>,
-    pub locals: Option<Vec<HighlightItem>>,
+    pub filetypes: Vec<String>,
+    /// Query file paths for syntax highlighting (simplified from HighlightItem)
+    pub highlights: Option<Vec<String>>,
+    /// Query file paths for locals/definitions
+    pub locals: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, serde::Serialize)]
@@ -75,21 +77,21 @@ impl QuerySource {
 pub struct LanguageSettings {
     pub library: Option<String>,
     pub filetypes: Vec<String>,
-    pub highlight: Vec<QuerySource>,
-    pub locals: Option<Vec<QuerySource>>,
+    pub highlights: Vec<String>,
+    pub locals: Option<Vec<String>>,
 }
 
 impl LanguageSettings {
     pub fn new(
         library: Option<String>,
         filetypes: Vec<String>,
-        highlight: Vec<QuerySource>,
-        locals: Option<Vec<QuerySource>>,
+        highlights: Vec<String>,
+        locals: Option<Vec<String>>,
     ) -> Self {
         Self {
             library,
             filetypes,
-            highlight,
+            highlights,
             locals,
         }
     }
@@ -139,14 +141,15 @@ mod tests {
 
     #[test]
     fn should_parse_valid_configuration() {
+        // NEW FORMAT: highlights is a simple array of path strings
         let config_json = r#"{
             "languages": {
                 "rust": {
                     "library": "/path/to/rust.so",
                     "filetypes": ["rs"],
-                    "highlight": [
-                        {"path": "/path/to/highlights.scm"},
-                        {"query": "(identifier) @variable"}
+                    "highlights": [
+                        "/path/to/highlights.scm",
+                        "/path/to/custom.scm"
                     ]
                 }
             }
@@ -161,35 +164,22 @@ mod tests {
             Some("/path/to/rust.so".to_string())
         );
         assert_eq!(settings.languages["rust"].filetypes, vec!["rs"]);
-        assert_eq!(settings.languages["rust"].highlight.len(), 2);
 
-        match &settings.languages["rust"].highlight[0].source {
-            HighlightSource::Path { path } => {
-                assert_eq!(path, "/path/to/highlights.scm");
-            }
-            _ => unreachable!("Expected Path variant in test"),
-        }
-
-        match &settings.languages["rust"].highlight[1].source {
-            HighlightSource::Query { query } => {
-                assert_eq!(query, "(identifier) @variable");
-            }
-            _ => unreachable!("Expected Query variant in test"),
-        }
+        let highlights = settings.languages["rust"].highlights.as_ref().unwrap();
+        assert_eq!(highlights.len(), 2);
+        assert_eq!(highlights[0], "/path/to/highlights.scm");
+        assert_eq!(highlights[1], "/path/to/custom.scm");
     }
 
     #[test]
     fn should_parse_configuration_with_locals() {
+        // NEW FORMAT: both highlights and locals are simple path arrays
         let config_json = r#"{
             "languages": {
                 "rust": {
                     "filetypes": ["rs"],
-                    "highlight": [
-                        {"path": "/path/to/highlights.scm"}
-                    ],
-                    "locals": [
-                        {"path": "/path/to/locals.scm"}
-                    ]
+                    "highlights": ["/path/to/highlights.scm"],
+                    "locals": ["/path/to/locals.scm"]
                 }
             }
         }"#;
@@ -206,13 +196,7 @@ mod tests {
         );
         let locals = rust_config.locals.as_ref().unwrap();
         assert_eq!(locals.len(), 1, "Should have one locals item");
-
-        match &locals[0].source {
-            HighlightSource::Path { path } => {
-                assert_eq!(path, "/path/to/locals.scm");
-            }
-            _ => unreachable!("Expected Path variant for locals in test"),
-        }
+        assert_eq!(locals[0], "/path/to/locals.scm");
     }
 
     #[test]
@@ -289,9 +273,7 @@ mod tests {
             "languages": {
                 "rust": {
                     "filetypes": ["rs"],
-                    "highlight": [
-                        {"path": "/path/to/highlights.scm"}
-                    ]
+                    "highlights": ["/path/to/highlights.scm"]
                 }
             }
         }"#;
@@ -316,15 +298,11 @@ mod tests {
                 "rust": {
                     "library": "/custom/path/rust.so",
                     "filetypes": ["rs"],
-                    "highlight": [
-                        {"path": "/path/to/highlights.scm"}
-                    ]
+                    "highlights": ["/path/to/highlights.scm"]
                 },
                 "python": {
                     "filetypes": ["py"],
-                    "highlight": [
-                        {"path": "/path/to/python.scm"}
-                    ]
+                    "highlights": ["/path/to/python.scm"]
                 }
             }
         }"#;
@@ -357,9 +335,7 @@ mod tests {
             "languages": {
                 "lua": {
                     "filetypes": ["lua"],
-                    "highlight": [
-                        {"query": "(identifier) @variable"}
-                    ]
+                    "highlights": ["/path/to/highlights.scm"]
                 }
             }
         }"#;
@@ -374,50 +350,10 @@ mod tests {
     }
 
     #[test]
-    fn should_deserialize_path_based_highlight() {
-        let path_json = r#"{"path": "/test/highlights.scm"}"#;
-        let path_item: HighlightItem = serde_json::from_str(path_json).unwrap();
-
-        match path_item.source {
-            HighlightSource::Path { path } => {
-                assert_eq!(path, "/test/highlights.scm");
-            }
-            _ => unreachable!("Expected Path variant in test"),
-        }
-    }
-
-    #[test]
-    fn should_deserialize_query_based_highlight() {
-        let query_json = r#"{"query": "(function_item) @function"}"#;
-        let query_item: HighlightItem = serde_json::from_str(query_json).unwrap();
-
-        match query_item.source {
-            HighlightSource::Query { query } => {
-                assert_eq!(query, "(function_item) @function");
-            }
-            _ => unreachable!("Expected Query variant in test"),
-        }
-    }
-
-    #[test]
-    fn should_reject_invalid_highlight_source() {
-        let invalid_json = r#"{"invalid_field": "value"}"#;
-        let result = serde_json::from_str::<HighlightItem>(invalid_json);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn should_reject_empty_highlight_source() {
-        let empty_json = r#"{}"#;
-        let result = serde_json::from_str::<HighlightItem>(empty_json);
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn should_handle_malformed_json_gracefully() {
         let malformed_configs = vec![
             r#"{"languages": {"rust": {"library": "/path"}"#, // Missing closing braces
-            r#"{"languages": {"rust": {"library": "/path", "highlight": [}}"#, // Invalid array
+            r#"{"languages": {"rust": {"library": "/path", "highlights": [}}"#, // Invalid array
         ];
 
         for config in malformed_configs {
@@ -432,9 +368,7 @@ mod tests {
             "languages": {
                 "rust": {
                     "filetypes": ["rs"],
-                    "highlight": [
-                        {"path": "/path/to/highlights.scm"}
-                    ]
+                    "highlights": ["/path/to/highlights.scm"]
                 }
             },
             "captureMappings": {
@@ -482,6 +416,35 @@ mod tests {
             rust_locals.get("definition.var"),
             Some(&"definition.variable".to_string())
         );
+    }
+
+    #[test]
+    fn should_parse_highlights_as_vec_string() {
+        // NEW FORMAT: highlights is a simple array of path strings
+        let config_json = r#"{
+            "languages": {
+                "lua": {
+                    "library": "/path/to/lua.so",
+                    "highlights": [
+                        "/path/to/highlights.scm",
+                        "/path/to/custom.scm"
+                    ]
+                }
+            }
+        }"#;
+
+        let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
+
+        assert!(settings.languages.contains_key("lua"));
+        let lua_config = &settings.languages["lua"];
+        assert_eq!(lua_config.library, Some("/path/to/lua.so".to_string()));
+
+        // NEW: highlights should be Vec<String>
+        assert!(lua_config.highlights.is_some());
+        let highlights = lua_config.highlights.as_ref().unwrap();
+        assert_eq!(highlights.len(), 2);
+        assert_eq!(highlights[0], "/path/to/highlights.scm");
+        assert_eq!(highlights[1], "/path/to/custom.scm");
     }
 
     #[test]
@@ -535,18 +498,9 @@ mod tests {
                         "go" => vec!["go".to_string()],
                         _ => vec![],
                     },
-                    highlight: vec![
-                        HighlightItem {
-                            source: HighlightSource::Path {
-                                path: format!("/etc/treesitter/{}/highlights.scm", lang),
-                            },
-                        },
-                        HighlightItem {
-                            source: HighlightSource::Query {
-                                query: format!("(function_definition) @function.{}", lang),
-                            },
-                        },
-                    ],
+                    highlights: Some(vec![
+                        format!("/etc/treesitter/{}/highlights.scm", lang),
+                    ]),
                     locals: None,
                 },
             );
