@@ -35,10 +35,10 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint: "No active sprint"
-  backlog: "4 PBIs ready (PBI-061 to PBI-064) - Configuration API improvements"
+  current_sprint: "Sprint 45 COMPLETE - PBI-062 + PBI-063 (Configuration API simplification)"
+  backlog: "2 PBIs ready (PBI-061, PBI-064) - Configuration API improvements"
   impediments: 0
-  recommended_order: "PBI-062 -> PBI-063 -> PBI-064 -> PBI-061 (PBI-061 is independent)"
+  next_recommended: "PBI-064 (injections field) -> PBI-061 (remove filetypes)"
 
 ---
 # ==============================================================================
@@ -487,7 +487,7 @@ product_backlog:
       role: "developer configuring treesitter-ls"
       capability: "specify query files using simple path strings"
       benefit: "simpler configuration without inline query complexity"
-    status: ready
+    status: done  # Sprint 45 (combined with PBI-063)
     story_points: 5
     dependencies: []
     acceptance_criteria:
@@ -560,10 +560,10 @@ product_backlog:
       role: "developer configuring treesitter-ls"
       capability: "use plural field names for query arrays"
       benefit: "consistent naming convention (highlights, locals, injections)"
-    status: ready
+    status: done  # Sprint 45 (combined with PBI-062)
     story_points: 2
     dependencies:
-      - PBI-062  # Do together or after - simplifies the rename
+      - PBI-062  # Done together in Sprint 45
     acceptance_criteria:
       - criterion: "AC1: LanguageConfig field renamed from highlight to highlights"
         verification: |
@@ -719,48 +719,101 @@ definition_of_done:
 # ==============================================================================
 
 current_sprint:
-  sprint: 44
-  pbi: PBI-060
-  goal: "Split test_malformed_offset_directives into 5 focused tests with descriptive names for improved test clarity"
+  sprint: 45
+  pbi: [PBI-062, PBI-063]
+  story_points: 7
+  goal: "Simplify query configuration API from HighlightItem/HighlightSource to Vec<String> paths, and rename 'highlight' to 'highlights' for consistency"
   status: completed
 
   subtasks:
-    - id: ST-060-1
-      title: "Split test_malformed_offset_directives into 5 separate tests"
+    # Phase 1: Remove inline query support (PBI-062 core)
+    - id: ST-062-1
+      title: "RED: Write test for Vec<String> highlights parsing in LanguageConfig"
       status: completed
-      commits: ["c2dca50"]
+      notes: "Test should_parse_highlights_as_vec_string added"
 
-    - id: ST-060-2
-      title: "Each test should have a descriptive name for the scenario"
+    - id: ST-062-2
+      title: "GREEN: Change LanguageConfig.highlight to highlights: Option<Vec<String>>"
       status: completed
-      commits: ["c2dca50"]
+      notes: "Consolidated with ST-062-1 due to coupled API - commit 7ad8b85"
 
-    - id: ST-060-3
-      title: "Verify all tests pass"
+    - id: ST-062-3
+      title: "RED: Write test for Vec<String> locals parsing in LanguageConfig"
       status: completed
-      commits: ["c2dca50"]
+      notes: "Test should_parse_configuration_with_locals already existed"
+
+    - id: ST-062-4
+      title: "GREEN: Change LanguageConfig.locals to Option<Vec<String>>"
+      status: completed
+      notes: "Completed as part of 7ad8b85"
+
+    # Phase 2: Update internal types (LanguageSettings)
+    - id: ST-062-5
+      title: "RED: Write test for LanguageSettings with Vec<String> highlight"
+      status: completed
+      notes: "Covered by existing tests"
+
+    - id: ST-062-6
+      title: "GREEN: Change LanguageSettings.highlight to highlights: Vec<String>"
+      status: completed
+      notes: "Completed as part of 7ad8b85"
+
+    - id: ST-062-7
+      title: "GREEN: Change LanguageSettings.locals to Option<Vec<String>>"
+      status: completed
+      notes: "Completed as part of 7ad8b85"
+
+    # Phase 3: Update QueryLoader
+    - id: ST-062-8
+      title: "RED: Write test for load_query_from_paths(&[String])"
+      status: completed
+      notes: "Existing tests cover path loading"
+
+    - id: ST-062-9
+      title: "GREEN: Replace load_query_from_highlight with load_query_from_paths"
+      status: completed
+      notes: "Function renamed as part of 7ad8b85"
+
+    # Phase 4: Update conversions and callers
+    - id: ST-062-10
+      title: "REFACTOR: Remove HighlightItem, HighlightSource, QuerySource::Inline"
+      status: completed
+      notes: "Removed in commits aa8e689 and 8eee65f"
+
+    - id: ST-062-11
+      title: "REFACTOR: Update From implementations in config.rs"
+      status: completed
+      notes: "Simplified as part of type removal"
+
+    # Phase 5: Documentation
+    - id: ST-062-12
+      title: "Update docs/README.md with simplified configuration format"
+      status: completed
+      notes: "Commit c7d4fea"
+
+    # Phase 6: Final verification
+    - id: ST-062-13
+      title: "Verify all acceptance criteria for PBI-062 and PBI-063"
+      status: completed
+      notes: "All 200 tests pass, clippy clean"
 
   notes: |
-    ## Sprint Goal
-    Split the monolithic test_malformed_offset_directives test (86 lines) into 5 focused tests
-    with descriptive names for improved test clarity and maintainability.
+    ## Sprint Completed
+    Simplified the query configuration API by:
+    1. Replacing complex HighlightItem/HighlightSource with simple Vec<String> paths
+    2. Renaming 'highlight' to 'highlights' for consistency with array type
+    3. Removing inline query support (users must save queries to files)
 
-    ## Completion Summary
-    All 3 subtasks completed in single cohesive refactoring commit (c2dca50).
-    - 5 focused tests created with descriptive names
-    - Original 86-line monolithic test removed
-    - All 203 unit tests pass (4 more tests now due to split)
-    - Clippy clean, formatting clean
+    ## Commits
+    - 7ad8b85 feat(config): simplify query config to path-only Vec<String>
+    - aa8e689 refactor(config): remove dead HighlightItem and HighlightSource types
+    - 8eee65f refactor(config): remove dead QuerySource enum
+    - c7d4fea docs(readme): update config examples to new highlights format
 
-    ## Test Scenarios Extracted
-    1. test_offset_directive_with_non_numeric_values - Non-numeric offset values (foo bar baz qux)
-    2. test_offset_directive_with_missing_arguments - Missing offset arguments (only 2 instead of 4)
-    3. test_offset_directive_with_extra_arguments - Too many offset arguments (5 instead of 4)
-    4. test_offset_directive_with_mixed_valid_invalid - Mixed valid and invalid values
-    5. test_offset_directive_with_empty_args - Empty offset directive (no arguments after capture)
-
-    ## Files Affected
-    - src/language/injection.rs (test module only)
+    ## TDD Notes
+    The original subtask breakdown was too granular - changing one field cascaded to many
+    files due to API coupling. Consolidated multiple subtasks into single GREEN phase
+    to maintain working code state. REFACTOR phase properly separated dead code removal.
 
 ---
 # ==============================================================================
