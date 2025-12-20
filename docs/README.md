@@ -97,12 +97,12 @@ Configuration is provided via LSP `initializationOptions`. All options are optio
   "languages": {
     "lua": {
       "library": "/path/to/lua.so",
-      "highlight": [
-        {"path": "/path/to/highlights.scm"},
-        {"query": "(identifier) @variable"}
+      "highlights": [
+        "/path/to/highlights.scm",
+        "/path/to/custom.scm"
       ],
       "locals": [
-        {"path": "/path/to/locals.scm"}
+        "/path/to/locals.scm"
       ]
     }
   },
@@ -142,13 +142,8 @@ Per-language configuration. Usually not needed as treesitter-ls auto-detects lan
 | Field | Description |
 |-------|-------------|
 | `library` | Explicit path to the parser library (`.so`, `.dylib`, `.dll`) |
-| `filetypes` | File extensions that map to this language |
-| `highlight` | Array of highlight query sources |
-| `locals` | Array of locals query sources (for go-to-definition) |
-
-Query sources can be:
-- `{"path": "/path/to/file.scm"}` - Load from file
-- `{"query": "(node) @capture"}` - Inline query
+| `highlights` | Array of paths to highlight query files (`.scm`) |
+| `locals` | Array of paths to locals query files (for go-to-definition) |
 
 #### `captureMappings`
 
@@ -181,10 +176,8 @@ You can also use a `treesitter-ls.toml` file in your project root:
 "variable.builtin" = "variable.defaultLibrary"
 
 [languages.custom_lang]
-filetypes = ["ext"]
-highlight = [
-  { path = "./queries/highlights.scm" }
-]
+highlights = ["./queries/highlights.scm"]
+locals = ["./queries/locals.scm"]
 ```
 
 Project configuration is merged with LSP initialization options.
