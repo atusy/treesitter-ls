@@ -35,9 +35,10 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint: "No active sprint - Tidying initiative complete"
-  backlog: "0 PBIs ready - Backlog empty"
+  current_sprint: "No active sprint"
+  backlog: "4 PBIs ready (PBI-061 to PBI-064) - Configuration API improvements"
   impediments: 0
+  recommended_order: "PBI-062 -> PBI-063 -> PBI-064 -> PBI-061 (PBI-061 is independent)"
 
 ---
 # ==============================================================================
@@ -415,6 +416,269 @@ product_backlog:
 
       ## Files Affected
       - src/language/injection.rs (test module only)
+
+  # ============================================================================
+  # Configuration API Improvements (Breaking Changes - Pre-release)
+  # ============================================================================
+
+  - id: PBI-061
+    story:
+      role: "developer configuring treesitter-ls"
+      capability: "rely on languageId from DidOpen for language detection"
+      benefit: "simpler configuration without potential filetype conflicts"
+    status: ready
+    story_points: 3
+    dependencies: []
+    acceptance_criteria:
+      - criterion: "AC1: filetypes field removed from LanguageConfig struct"
+        verification: |
+          # Verify filetypes is not in LanguageConfig struct
+          cargo build 2>&1 | grep -v "filetypes" || true
+          grep -c "filetypes" src/config/settings.rs | grep -q "^0$" || \
+            (grep "filetypes" src/config/settings.rs | grep -qE "test|//" && echo "OK: only in tests/comments")
+      - criterion: "AC2: filetypes field removed from LanguageSettings internal type"
+        verification: |
+          # LanguageSettings should not have filetypes field
+          ! grep -A10 "pub struct LanguageSettings" src/config/settings.rs | grep "filetypes"
+      - criterion: "AC3: FiletypeResolver no longer builds from config filetypes"
+        verification: |
+          # build_from_settings and build_from_configs should be removed or updated
+          ! grep -q "build_from_settings\|build_from_configs" src/language/filetypes.rs || \
+            grep -A5 "build_from" src/language/filetypes.rs | grep -q "// deprecated"
+      - criterion: "AC4: Language detection still works via languageId from DidOpen"
+        verification: |
+          # lsp_impl.rs should use language_id from params
+          grep -q "language_id" src/lsp/lsp_impl.rs
+          grep -q "params.text_document.language_id" src/lsp/lsp_impl.rs
+      - criterion: "AC5: Documentation updated to remove filetypes field"
+        verification: |
+          ! grep -q '"filetypes"' docs/README.md
+      - criterion: "AC6: All tests pass with no warnings"
+        verification: "cargo test && cargo clippy -- -D warnings"
+    notes: |
+      ## Breaking Change (Pre-release)
+      Product is not yet released, breaking changes are acceptable.
+
+      ## Current Behavior (to preserve)
+      Language detection already works via this fallback chain in lsp_impl.rs:
+      1. File extension via FiletypeResolver.get_language_for_path()
+      2. DidOpen languageId (fallback when extension not in map)
+
+      The filetypes field in config was used to populate the FiletypeResolver map,
+      but this is redundant since:
+      - Most users rely on auto-install (no config at all)
+      - languageId from DidOpen already provides language info
+
+      ## Implementation Steps
+      1. Remove `filetypes: Vec<String>` from LanguageConfig struct
+      2. Remove `filetypes: Vec<String>` from LanguageSettings struct
+      3. Remove/update FiletypeResolver methods that read from config
+      4. Update any tests that use filetypes in config
+      5. Update docs/README.md to remove filetypes from examples
+
+      ## Files Affected
+      - src/config/settings.rs (remove filetypes from both structs)
+      - src/language/filetypes.rs (remove build_from_settings/configs or update)
+      - docs/README.md (update configuration examples)
+      - Tests in settings.rs and filetypes.rs
+
+  - id: PBI-062
+    story:
+      role: "developer configuring treesitter-ls"
+      capability: "specify query files using simple path strings"
+      benefit: "simpler configuration without inline query complexity"
+    status: ready
+    story_points: 5
+    dependencies: []
+    acceptance_criteria:
+      - criterion: "AC1: LanguageConfig uses Vec<String> for highlight/highlights field"
+        verification: |
+          # Check LanguageConfig struct definition
+          grep -A15 "pub struct LanguageConfig" src/config/settings.rs | grep -E "highlight.*Option<Vec<String>>|highlight.*Vec<String>"
+      - criterion: "AC2: LanguageConfig uses Option<Vec<String>> for locals field"
+        verification: |
+          grep -A15 "pub struct LanguageConfig" src/config/settings.rs | grep -E "locals.*Option<Vec<String>>"
+      - criterion: "AC3: HighlightItem struct removed"
+        verification: |
+          ! grep -q "pub struct HighlightItem" src/config/settings.rs
+      - criterion: "AC4: HighlightSource enum removed (path-only)"
+        verification: |
+          ! grep -q "pub enum HighlightSource" src/config/settings.rs
+      - criterion: "AC5: Internal QuerySource enum simplified to Path-only"
+        verification: |
+          # QuerySource::Inline should be removed
+          ! grep -q "QuerySource::Inline" src/config/settings.rs
+          ! grep -q "Inline(String)" src/config/settings.rs
+      - criterion: "AC6: QueryLoader updated to load paths directly"
+        verification: |
+          # load_query_from_highlight should accept &[String] instead of &[HighlightItem]
+          grep -q "fn load_query_from_paths" src/language/query_loader.rs || \
+            grep -A3 "load_query" src/language/query_loader.rs | grep -q "&\[String\]"
+      - criterion: "AC7: Documentation updated with simplified format"
+        verification: |
+          # Check docs show simple string arrays
+          grep -A5 '"highlights"' docs/README.md | grep -qE '^\s*"/|^\s*\["/'
+      - criterion: "AC8: All tests pass with no warnings"
+        verification: "cargo test && cargo clippy -- -D warnings"
+    notes: |
+      ## Breaking Change (Pre-release)
+      Simplify query source specification from:
+      ```json
+      "highlight": [{"path": "/path.scm"}, {"query": "..."}]
+      ```
+      To:
+      ```json
+      "highlights": ["/path/to/highlights.scm"]
+      ```
+
+      ## Removed Features
+      1. `HighlightItem` struct - no longer needed
+      2. `HighlightSource` enum - no longer needed
+      3. `QuerySource::Inline` variant - inline queries not supported
+      4. `{"query": "..."}` syntax - users must save queries to files
+
+      ## Implementation Steps
+      1. Change `highlight: Vec<HighlightItem>` to `highlights: Vec<String>` in LanguageConfig
+      2. Change `locals: Option<Vec<HighlightItem>>` to `locals: Option<Vec<String>>`
+      3. Remove `HighlightItem` struct
+      4. Remove `HighlightSource` enum
+      5. Remove `QuerySource::Inline` variant (keep `QuerySource::Path` or simplify to String)
+      6. Update QueryLoader.load_query_from_highlight to work with &[String]
+      7. Update all callers of these types
+      8. Update tests in settings.rs
+      9. Update docs/README.md examples
+
+      ## Files Affected
+      - src/config/settings.rs (major changes to types)
+      - src/language/query_loader.rs (update loading logic)
+      - src/language/coordinator.rs (if it uses these types)
+      - docs/README.md (update examples)
+      - Tests in settings.rs and query_loader.rs
+
+  - id: PBI-063
+    story:
+      role: "developer configuring treesitter-ls"
+      capability: "use plural field names for query arrays"
+      benefit: "consistent naming convention (highlights, locals, injections)"
+    status: ready
+    story_points: 2
+    dependencies:
+      - PBI-062  # Do together or after - simplifies the rename
+    acceptance_criteria:
+      - criterion: "AC1: LanguageConfig field renamed from highlight to highlights"
+        verification: |
+          # Check field name is highlights (plural)
+          grep -A15 "pub struct LanguageConfig" src/config/settings.rs | grep -q "highlights:"
+          # Ensure no singular 'highlight:' field exists (excluding comments)
+          ! grep -A15 "pub struct LanguageConfig" src/config/settings.rs | grep -E "^\s+highlight:" | grep -v "//"
+      - criterion: "AC2: LanguageSettings field renamed to highlights"
+        verification: |
+          grep -A15 "pub struct LanguageSettings" src/config/settings.rs | grep -q "highlights:"
+      - criterion: "AC3: Serde annotation preserves JSON field name 'highlights'"
+        verification: |
+          # Either no serde rename (field name = json name) or explicit rename to highlights
+          grep -B2 "highlights:" src/config/settings.rs | grep -qE 'serde.*rename.*highlights|^[^#]*highlights:' || \
+            ! grep -B2 "highlights:" src/config/settings.rs | grep -q 'serde.*rename'
+      - criterion: "AC4: Documentation uses plural naming"
+        verification: |
+          grep -q '"highlights"' docs/README.md
+          # Ensure singular 'highlight' is not used (except as part of other words)
+          ! grep -E '"highlight"[^s]' docs/README.md
+      - criterion: "AC5: All tests pass with no warnings"
+        verification: "cargo test && cargo clippy -- -D warnings"
+    notes: |
+      ## Breaking Change (Pre-release)
+      Rename for consistency with array type:
+      - highlight -> highlights (plural, matches Vec type)
+      - locals stays as-is (already correct)
+
+      ## Dependency on PBI-062
+      Best done together with or after PBI-062 because:
+      - Both touch the same struct fields
+      - Doing them together avoids double migration
+      - PBI-062 already updates docs, can rename at same time
+
+      ## Merge Recommendation
+      Consider merging this into PBI-062 to reduce churn. The rename is trivial
+      once PBI-062's type changes are done.
+
+      ## Implementation Steps
+      1. Rename `highlight` to `highlights` in LanguageConfig
+      2. Rename `highlight` to `highlights` in LanguageSettings
+      3. Update all references throughout codebase
+      4. Update tests
+      5. Update docs/README.md
+
+      ## Files Affected
+      - src/config/settings.rs (rename field in both structs)
+      - src/language/query_loader.rs (if it references the field)
+      - src/language/coordinator.rs (if it references the field)
+      - docs/README.md (update examples)
+      - Tests in settings.rs
+
+  - id: PBI-064
+    story:
+      role: "developer configuring treesitter-ls"
+      capability: "specify custom injection query files"
+      benefit: "full control over language injection behavior"
+    status: ready
+    story_points: 2
+    dependencies:
+      - PBI-062  # Use same Vec<String> format
+    acceptance_criteria:
+      - criterion: "AC1: injections field added to LanguageConfig"
+        verification: |
+          grep -A15 "pub struct LanguageConfig" src/config/settings.rs | grep -q "injections:"
+      - criterion: "AC2: injections field added to LanguageSettings (internal type)"
+        verification: |
+          grep -A15 "pub struct LanguageSettings" src/config/settings.rs | grep -q "injections:"
+      - criterion: "AC3: injections field type matches highlights/locals (Option<Vec<String>>)"
+        verification: |
+          # All three fields should have same type pattern
+          grep -A15 "pub struct LanguageConfig" src/config/settings.rs | grep -E "injections.*Option<Vec<String>>"
+      - criterion: "AC4: Coordinator loads custom injection queries from config"
+        verification: |
+          # Check coordinator or query_loader handles injections config
+          grep -rn "injections" src/language/coordinator.rs src/language/query_loader.rs | grep -v "test\|//" | head -5
+      - criterion: "AC5: Custom injection query loading has test coverage"
+        verification: |
+          # Test exists for custom injection loading
+          grep -rn "test.*injection" src/language/query_loader.rs src/language/coordinator.rs | grep "fn test"
+      - criterion: "AC6: Documentation includes injections field example"
+        verification: |
+          grep -q '"injections"' docs/README.md
+          grep -A3 '"injections"' docs/README.md | grep -qE '/.*\.scm'
+      - criterion: "AC7: All tests pass with no warnings"
+        verification: "cargo test && cargo clippy -- -D warnings"
+    notes: |
+      ## New Feature
+      Add injections field for alignment with highlights and locals.
+      Currently, injection queries are auto-discovered from injections.scm files.
+      This allows users to specify custom injection query files.
+
+      ## Dependency on PBI-062
+      Must be done after PBI-062 to use the same simplified Vec<String> format.
+      Doing it before would require the old HighlightItem format.
+
+      ## Current Injection Behavior (to preserve)
+      - QueryStore already has insert_injection_query/get_injection_query
+      - Injections are auto-discovered from {searchPath}/queries/{lang}/injections.scm
+      - This PBI adds OPTIONAL user-specified injection paths that override auto-discovery
+
+      ## Implementation Steps
+      1. Add `injections: Option<Vec<String>>` to LanguageConfig
+      2. Add `injections: Option<Vec<String>>` to LanguageSettings
+      3. Update LanguageSettings::new() to accept injections parameter
+      4. Update coordinator to load custom injection queries when specified
+      5. Add test for custom injection query loading
+      6. Update docs/README.md with injections example
+
+      ## Files Affected
+      - src/config/settings.rs (add injections field to both structs)
+      - src/language/coordinator.rs (load custom injections)
+      - src/language/query_loader.rs (may need helper for injection loading)
+      - docs/README.md (document new field with example)
+      - Tests for injection loading
 
   # ============================================================================
   # ADR-0003: Parser Compilation Fallback Strategy - SUPERSEDED

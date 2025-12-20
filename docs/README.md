@@ -97,7 +97,6 @@ Configuration is provided via LSP `initializationOptions`. All options are optio
   "languages": {
     "lua": {
       "library": "/path/to/lua.so",
-      "filetypes": ["lua"],
       "highlight": [
         {"path": "/path/to/highlights.scm"},
         {"query": "(identifier) @variable"}
