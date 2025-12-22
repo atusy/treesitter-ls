@@ -35,10 +35,10 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint: "Sprint 46 - PBI-065 (Dependency Updates) - 3 SP"
+  current_sprint: "Sprint 46 COMPLETE - PBI-065 (Dependency Updates) - 3 SP"
   backlog: "2 PBIs ready (PBI-061, PBI-064) - Configuration API improvements"
   impediments: 0
-  next_recommended: "After Sprint 46: PBI-064 (injections field) -> PBI-061 (remove filetypes)"
+  next_recommended: "PBI-064 (injections field) -> PBI-061 (remove filetypes)"
 
 ---
 # ==============================================================================
@@ -895,10 +895,11 @@ current_sprint:
       description: "Final verification and documentation"
       implementation: "Run full test suite (unit + E2E), clippy, fmt, document notable changes"
       type: structural
-      status: in_progress
-      commits: []
+      status: completed
+      commits: ["d7893e0"]
       notes: ["All 257 tests pass, clippy clean, fmt clean"]
   started_at: "2025-12-23"
+  status: completed
 
 ---
 # ==============================================================================
