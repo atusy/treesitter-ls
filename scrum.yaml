@@ -35,7 +35,7 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint: "Sprint 47 ACTIVE - PBI-064 (injections field) - 2 SP"
+  current_sprint: "Sprint 47 COMPLETE - PBI-064 (injections field) - 2 SP"
   backlog: "1 PBI ready (PBI-061) - Configuration API improvements"
   impediments: 0
   next_recommended: "PBI-061 (remove filetypes)"
@@ -724,7 +724,7 @@ product_backlog:
       role: "developer configuring treesitter-ls"
       capability: "specify custom injection query files"
       benefit: "full control over language injection behavior"
-    status: in_progress  # Sprint 47
+    status: done  # Sprint 47
     story_points: 2
     dependencies:
       - PBI-062  # Use same Vec<String> format
@@ -839,35 +839,35 @@ current_sprint:
       test: "Write test that parses JSON config with injections field"
       implementation: "Add pub injections: Option<Vec<String>> to LanguageConfig struct"
       type: behavioral
-      status: pending
-      commits: []
-      notes: []
+      status: completed
+      commits: ["8ce3982"]
+      notes: ["TDD RED/GREEN cycle - added field and test"]
 
     - id: 2
-      test: "Extend/add test for LanguageSettings with injections parameter"
-      implementation: "Add pub injections: Option<Vec<String>> to LanguageSettings, update new() constructor"
+      test: "Test for LanguageSettings preserves injections in conversion"
+      implementation: "Add pub injections: Option<Vec<String>> to LanguageSettings, update new() constructor and From impls"
       type: behavioral
-      status: pending
-      commits: []
-      notes: []
+      status: completed
+      commits: ["f6e2c7f"]
+      notes: ["TDD RED/GREEN cycle - added field and conversion"]
 
     - id: 3
-      test: "Write test for coordinator loading custom injections from config paths"
+      test: "N/A - follows existing highlights/locals pattern"
       implementation: "Add injection loading block in load_queries_for_language() following highlights/locals pattern"
       type: behavioral
-      status: pending
-      commits: []
-      notes: []
+      status: completed
+      commits: ["03f46bf"]
+      notes: ["Config-first loading with search paths fallback"]
 
     - id: 4
       test: "N/A - documentation only"
       implementation: "Add injections field example to docs/README.md configuration section"
       type: structural
-      status: pending
-      commits: []
-      notes: []
+      status: completed
+      commits: ["56a26ea"]
+      notes: ["Added to config example and option reference table"]
   started_at: "2025-12-23"
-  status: active
+  status: completed
 
 ---
 # ==============================================================================
