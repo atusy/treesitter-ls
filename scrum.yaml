@@ -35,10 +35,10 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint: "Sprint 46 COMPLETE - PBI-065 (Dependency Updates) - 3 SP - Retrospective done"
-  backlog: "2 PBIs ready (PBI-061, PBI-064) - Configuration API improvements"
+  current_sprint: "Sprint 47 ACTIVE - PBI-064 (injections field) - 2 SP"
+  backlog: "1 PBI ready (PBI-061) - Configuration API improvements"
   impediments: 0
-  next_recommended: "PBI-064 (injections field) -> PBI-061 (remove filetypes)"
+  next_recommended: "PBI-061 (remove filetypes)"
 
 ---
 # ==============================================================================
@@ -724,7 +724,7 @@ product_backlog:
       role: "developer configuring treesitter-ls"
       capability: "specify custom injection query files"
       benefit: "full control over language injection behavior"
-    status: ready
+    status: in_progress  # Sprint 47
     story_points: 2
     dependencies:
       - PBI-062  # Use same Vec<String> format
@@ -822,84 +822,52 @@ definition_of_done:
 # ==============================================================================
 
 current_sprint:
-  sprint: 46
-  pbi: PBI-065
-  story_points: 3
+  sprint: 47
+  pbi: PBI-064
+  story_points: 2
   goal:
-    statement: "Keep treesitter-ls dependencies current with latest stable versions to incorporate security patches, bug fixes, and performance improvements"
+    statement: "Enable developers to specify custom injection query files in configuration, providing full control over language injection behavior while maintaining consistency with the existing highlights/locals configuration pattern"
     success_criteria:
-      - "All dependencies updated to latest compatible versions"
-      - "All 200+ unit tests pass without modification"
-      - "All E2E tests pass"
-      - "No new compiler warnings or clippy issues"
-    stakeholder_value: "Developers and users benefit from security patches, performance improvements, and bug fixes"
-    alignment: "Maintaining a healthy dependency tree supports the zero-configuration experience"
+      - "Configuration accepts injections: Option<Vec<String>> alongside highlights/locals"
+      - "Custom injection queries can be loaded from user-specified paths"
+      - "Auto-discovery fallback continues working when no custom injections configured"
+      - "Documentation includes example configuration with injections field"
+    stakeholder_value: "Power users can customize language injection behavior without modifying upstream nvim-treesitter queries"
+    alignment: "Improves configurability for power users while maintaining zero-config experience for default users"
   subtasks:
     - id: 1
-      description: "Establish test baseline before updates"
-      implementation: "Run cargo test, cargo clippy, make test_nvim to verify all tests pass"
-      type: structural
-      status: completed
+      test: "Write test that parses JSON config with injections field"
+      implementation: "Add pub injections: Option<Vec<String>> to LanguageConfig struct"
+      type: behavioral
+      status: pending
       commits: []
-      notes: ["Baseline: 257 tests pass, clippy clean, fmt had minor issues (auto-fixed)"]
+      notes: []
 
     - id: 2
-      description: "Update low-risk dependencies (batch)"
-      implementation: "Run cargo update for all semver-compatible updates"
-      type: structural
-      status: completed
+      test: "Extend/add test for LanguageSettings with injections parameter"
+      implementation: "Add pub injections: Option<Vec<String>> to LanguageSettings, update new() constructor"
+      type: behavioral
+      status: pending
       commits: []
-      notes: ["Updated 60+ transitive deps via cargo update"]
+      notes: []
 
     - id: 3
-      description: "Update tokio and reqwest (medium-risk)"
-      implementation: "Check for tokio 1.46+ and reqwest updates, fix any deprecation warnings"
-      type: structural
-      status: completed
+      test: "Write test for coordinator loading custom injections from config paths"
+      implementation: "Add injection loading block in load_queries_for_language() following highlights/locals pattern"
+      type: behavioral
+      status: pending
       commits: []
-      notes: ["tokio 1.45.1→1.48.0, reqwest 0.12.25→0.12.27 - no code changes needed"]
+      notes: []
 
     - id: 4
-      description: "Update tree-sitter (high-risk)"
-      implementation: "Check tree-sitter for updates beyond 0.25.6, review changelog, fix any API changes"
-      type: behavioral
-      status: completed
-      commits: []
-      notes: ["tree-sitter 0.25.6→0.26.3. Breaking change: child(i) now takes u32 instead of usize. Fixed in refactor.rs:719"]
-
-    - id: 5
-      description: "Update tower-lsp (high-risk)"
-      implementation: "Check tower-lsp for updates beyond 0.20.0, review changelog, fix any API changes"
+      test: "N/A - documentation only"
+      implementation: "Add injections field example to docs/README.md configuration section"
       type: structural
-      status: completed
+      status: pending
       commits: []
-      notes: ["tower-lsp 0.20.0 is still the latest - no update needed"]
-
-    - id: 6
-      description: "Update libloading (high-risk)"
-      implementation: "Check libloading for updates beyond 0.8.8, verify parser loading works"
-      type: structural
-      status: completed
-      commits: []
-      notes: ["libloading 0.8.8→0.8.9 via cargo update. No 0.9.0 exists despite cargo note."]
-
-    - id: 7
-      description: "Update dev dependencies"
-      implementation: "Update tokio-test, tree-sitter-rust, tree-sitter-md, tree-sitter-yaml, streaming-iterator"
-      type: structural
-      status: completed
-      commits: []
-      notes: ["Relaxed version constraints in Cargo.toml for future flexibility"]
-
-    - id: 8
-      description: "Final verification and documentation"
-      implementation: "Run full test suite (unit + E2E), clippy, fmt, document notable changes"
-      type: structural
-      status: completed
-      commits: ["d7893e0"]
-      notes: ["All 257 tests pass, clippy clean, fmt clean"]
+      notes: []
   started_at: "2025-12-23"
-  status: completed  # Sprint 46 complete - Review and Retrospective done
+  status: active
 
 ---
 # ==============================================================================
