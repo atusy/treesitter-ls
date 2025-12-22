@@ -35,7 +35,7 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint: "Sprint 46 COMPLETE - PBI-065 (Dependency Updates) - 3 SP"
+  current_sprint: "Sprint 46 COMPLETE - PBI-065 (Dependency Updates) - 3 SP - Retrospective done"
   backlog: "2 PBIs ready (PBI-061, PBI-064) - Configuration API improvements"
   impediments: 0
   next_recommended: "PBI-064 (injections field) -> PBI-061 (remove filetypes)"
@@ -426,7 +426,7 @@ product_backlog:
       role: "developer maintaining treesitter-ls"
       capability: "keep dependencies up to date with latest stable versions"
       benefit: "security patches, bug fixes, and performance improvements are applied"
-    status: in_progress  # Sprint 46
+    status: done
     story_points: 3
     dependencies: []
     acceptance_criteria:
@@ -899,7 +899,7 @@ current_sprint:
       commits: ["d7893e0"]
       notes: ["All 257 tests pass, clippy clean, fmt clean"]
   started_at: "2025-12-23"
-  status: completed
+  status: completed  # Sprint 46 complete - Review and Retrospective done
 
 ---
 # ==============================================================================
@@ -908,6 +908,43 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 46
+    pbi: PBI-065
+    story_points: 3
+    outcome: "Updated dependencies including tree-sitter 0.25.6->0.26.3, tokio 1.45.1->1.48.0, 60+ transitive deps; fixed breaking API change (Node::child takes u32)"
+    retrospective:
+      what_went_well:
+        - "Risk-based batching strategy effective: low-risk batch update via cargo update, then evaluate high-risk individually"
+        - "Clean single-commit update with minimal code changes required (d7893e0)"
+        - "All 257 tests pass, clippy clean, no new warnings"
+        - "Breaking change in tree-sitter 0.26 handled with simple cast (i as u32) - easy fix"
+        - "Relaxed version constraints in Cargo.toml will make future updates easier"
+        - "Verified tower-lsp 0.20 is still the latest - no update needed"
+      what_to_improve:
+        - "Cargo output can be misleading - reported 'available: v0.9.0' for libloading but v0.9.0 does not exist"
+        - "Consider running cargo update more frequently (monthly) to reduce batch size and catch breaking changes earlier"
+      insight: |
+        Dependency updates are lower risk when done incrementally with risk-based batching.
+        The strategy of batch-updating low-risk deps first (cargo update), then evaluating
+        high-risk deps individually (tree-sitter, tower-lsp, libloading) proved effective.
+
+        The tree-sitter 0.26 breaking change (Node::child() takes u32 instead of usize)
+        was the only code change required, fixed with a simple cast. tower-lsp 0.20 is
+        still current, and the libloading "0.9.0 available" note from cargo was misleading
+        - that version does not exist.
+
+        Relaxing version constraints (e.g., "1.45" -> "1") reduces future Cargo.toml
+        maintenance while Cargo.lock still pins exact versions for reproducible builds.
+        This makes future cargo update runs more effective.
+
+        Key lesson: cargo's "available" output should be verified before updating version
+        constraints in Cargo.toml - not all reported versions actually exist.
+      improvements:
+        - action: "Document risk-based batching strategy for dependency updates"
+          timing: immediate
+          status: completed
+          outcome: "Captured in retrospective insight for future Sprint Planning reference"
+
   - sprint: 45
     pbi: [PBI-062, PBI-063]
     story_points: 7
