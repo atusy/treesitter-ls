@@ -56,12 +56,14 @@ impl From<&LanguageConfig> for LanguageSettings {
     fn from(config: &LanguageConfig) -> Self {
         let highlights = config.highlights.clone().unwrap_or_default();
         let locals = config.locals.clone();
+        let injections = config.injections.clone();
 
         LanguageSettings::new(
             config.library.clone(),
             config.filetypes.clone(),
             highlights,
             locals,
+            injections,
         )
     }
 }
@@ -74,13 +76,14 @@ impl From<&LanguageSettings> for LanguageConfig {
             Some(settings.highlights.clone())
         };
         let locals = settings.locals.clone();
+        let injections = settings.injections.clone();
 
         LanguageConfig {
             library: settings.library.clone(),
             filetypes: settings.filetypes.clone(),
             highlights,
             locals,
-            injections: None,
+            injections,
         }
     }
 }
@@ -567,5 +570,27 @@ mod tests {
             "Path should end with 'treesitter-ls': {}",
             path
         );
+    }
+
+    #[test]
+    fn test_language_settings_from_config_preserves_injections() {
+        let config = LanguageConfig {
+            library: Some("/path/to/parser.so".to_string()),
+            filetypes: vec!["md".to_string()],
+            highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
+            locals: None,
+            injections: Some(vec!["/path/to/injections.scm".to_string()]),
+        };
+
+        let settings: LanguageSettings = LanguageSettings::from(&config);
+
+        // Verify injections is preserved in conversion
+        assert!(
+            settings.injections.is_some(),
+            "Injections should be preserved in conversion"
+        );
+        let injections = settings.injections.as_ref().unwrap();
+        assert_eq!(injections.len(), 1);
+        assert_eq!(injections[0], "/path/to/injections.scm");
     }
 }

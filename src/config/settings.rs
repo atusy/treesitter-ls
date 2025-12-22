@@ -50,6 +50,7 @@ pub struct LanguageSettings {
     pub filetypes: Vec<String>,
     pub highlights: Vec<String>,
     pub locals: Option<Vec<String>>,
+    pub injections: Option<Vec<String>>,
 }
 
 impl LanguageSettings {
@@ -58,12 +59,14 @@ impl LanguageSettings {
         filetypes: Vec<String>,
         highlights: Vec<String>,
         locals: Option<Vec<String>>,
+        injections: Option<Vec<String>>,
     ) -> Self {
         Self {
             library,
             filetypes,
             highlights,
             locals,
+            injections,
         }
     }
 }
