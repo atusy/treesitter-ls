@@ -35,10 +35,10 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint: "Sprint 45 COMPLETE - PBI-062 + PBI-063 (Configuration API simplification)"
+  current_sprint: "Sprint 46 - PBI-065 (Dependency Updates) - 3 SP"
   backlog: "2 PBIs ready (PBI-061, PBI-064) - Configuration API improvements"
   impediments: 0
-  next_recommended: "PBI-064 (injections field) -> PBI-061 (remove filetypes)"
+  next_recommended: "After Sprint 46: PBI-064 (injections field) -> PBI-061 (remove filetypes)"
 
 ---
 # ==============================================================================
@@ -418,6 +418,109 @@ product_backlog:
       - src/language/injection.rs (test module only)
 
   # ============================================================================
+  # Technical Debt / Maintenance
+  # ============================================================================
+
+  - id: PBI-065
+    story:
+      role: "developer maintaining treesitter-ls"
+      capability: "keep dependencies up to date with latest stable versions"
+      benefit: "security patches, bug fixes, and performance improvements are applied"
+    status: in_progress  # Sprint 46
+    story_points: 3
+    dependencies: []
+    acceptance_criteria:
+      - criterion: "AC1: All dependencies updated to latest compatible versions"
+        verification: |
+          # Run cargo update and check for outdated packages
+          cargo update --dry-run
+          # Verify no outdated dependencies remain (cargo-outdated if available)
+          # cargo outdated --root-deps-only || echo "Install with: cargo install cargo-outdated"
+      - criterion: "AC2: All unit tests pass after dependency update"
+        verification: |
+          cargo test
+          # Expected: All tests pass (currently 200+ tests)
+      - criterion: "AC3: Code quality checks pass (clippy, fmt)"
+        verification: |
+          cargo clippy -- -D warnings
+          cargo fmt --check
+      - criterion: "AC4: E2E tests pass after dependency update"
+        verification: |
+          make test_nvim
+          # Expected: All Neovim E2E tests pass
+      - criterion: "AC5: No breaking API changes introduced (or documented if unavoidable)"
+        verification: |
+          # Review CHANGELOG of updated crates for breaking changes
+          # Key dependencies to check:
+          # - tower-lsp (LSP protocol)
+          # - tree-sitter (parsing)
+          # - tokio (async runtime)
+          cargo build --release 2>&1 | head -20
+    notes: |
+      ## Purpose
+      Regular dependency updates reduce security vulnerabilities, incorporate bug fixes,
+      and maintain compatibility with the broader Rust ecosystem.
+
+      ## Current Dependencies Analysis (as of 2025-12-23)
+
+      ### Runtime Dependencies to Update
+      | Crate | Current | Notes |
+      |-------|---------|-------|
+      | arc-swap | 1.7 | Check for 1.8+ |
+      | clap | 4.5 | Check for 4.6+ |
+      | dashmap | 6.1.0 | Check for 6.2+ |
+      | dirs | 6.0 | Check for updates |
+      | env_logger | 0.11 | Check for updates |
+      | libloading | 0.8.8 | Check for 0.9+ |
+      | line-index | 0.1 | Check for updates |
+      | log | 0.4 | Stable, likely no major updates |
+      | lua-pattern | 0.1.3 | Check for updates |
+      | path-clean | 1.0 | Check for updates |
+      | regex | 1.10 | Check for 1.11+ |
+      | reqwest | 0.12 | Check for updates |
+      | serde | 1.0.219 | Check for latest 1.0.x |
+      | serde_json | 1.0.140 | Check for latest 1.0.x |
+      | tempfile | 3.0 | Check for 3.x updates |
+      | thiserror | 2.0 | Check for 2.x updates |
+      | tokio | 1.45.1 | Check for 1.46+ |
+      | toml | 0.8 | Check for updates |
+      | tower-lsp | 0.20.0 | CRITICAL: Check for 0.21+ (may have breaking changes) |
+      | tree-sitter | 0.25.6 | CRITICAL: Check for 0.26+ (may have breaking changes) |
+      | url | 2.5 | Check for updates |
+
+      ### Dev Dependencies to Update
+      | Crate | Current | Notes |
+      |-------|---------|-------|
+      | tokio-test | 0.4 | Check for updates |
+      | tree-sitter-rust | 0.23 | Check for updates |
+      | tree-sitter-md | 0.3 | Check for updates |
+      | tree-sitter-yaml | 0.7 | Check for updates |
+      | streaming-iterator | 0.1 | Check for updates |
+
+      ## Update Strategy
+      1. Run `cargo update` to get latest compatible versions within constraints
+      2. Review changelogs for critical dependencies (tower-lsp, tree-sitter, tokio)
+      3. Update version constraints in Cargo.toml for any major version bumps
+      4. Run full test suite after each significant update
+      5. Document any breaking changes or migration steps required
+
+      ## Risk Assessment
+      - **Low risk**: Most serde, log, regex updates are backward compatible
+      - **Medium risk**: tokio, tower-lsp updates may require API adjustments
+      - **High risk**: tree-sitter major version updates may change parser loading
+
+      ## TDD Approach
+      1. Run existing tests to establish baseline
+      2. Update dependencies incrementally (start with low-risk)
+      3. Fix any compilation errors or deprecation warnings
+      4. Verify all tests pass after each batch of updates
+
+      ## Files Affected
+      - Cargo.toml (dependency version updates)
+      - Cargo.lock (automatically updated by cargo)
+      - Potentially affected source files if APIs change
+
+  # ============================================================================
   # Configuration API Improvements (Breaking Changes - Pre-release)
   # ============================================================================
 
@@ -719,101 +822,83 @@ definition_of_done:
 # ==============================================================================
 
 current_sprint:
-  sprint: 45
-  pbi: [PBI-062, PBI-063]
-  story_points: 7
-  goal: "Simplify query configuration API from HighlightItem/HighlightSource to Vec<String> paths, and rename 'highlight' to 'highlights' for consistency"
-  status: completed
-
+  sprint: 46
+  pbi: PBI-065
+  story_points: 3
+  goal:
+    statement: "Keep treesitter-ls dependencies current with latest stable versions to incorporate security patches, bug fixes, and performance improvements"
+    success_criteria:
+      - "All dependencies updated to latest compatible versions"
+      - "All 200+ unit tests pass without modification"
+      - "All E2E tests pass"
+      - "No new compiler warnings or clippy issues"
+    stakeholder_value: "Developers and users benefit from security patches, performance improvements, and bug fixes"
+    alignment: "Maintaining a healthy dependency tree supports the zero-configuration experience"
   subtasks:
-    # Phase 1: Remove inline query support (PBI-062 core)
-    - id: ST-062-1
-      title: "RED: Write test for Vec<String> highlights parsing in LanguageConfig"
+    - id: 1
+      description: "Establish test baseline before updates"
+      implementation: "Run cargo test, cargo clippy, make test_nvim to verify all tests pass"
+      type: structural
       status: completed
-      notes: "Test should_parse_highlights_as_vec_string added"
+      commits: []
+      notes: ["Baseline: 257 tests pass, clippy clean, fmt had minor issues (auto-fixed)"]
 
-    - id: ST-062-2
-      title: "GREEN: Change LanguageConfig.highlight to highlights: Option<Vec<String>>"
+    - id: 2
+      description: "Update low-risk dependencies (batch)"
+      implementation: "Run cargo update for all semver-compatible updates"
+      type: structural
       status: completed
-      notes: "Consolidated with ST-062-1 due to coupled API - commit 7ad8b85"
+      commits: []
+      notes: ["Updated 60+ transitive deps via cargo update"]
 
-    - id: ST-062-3
-      title: "RED: Write test for Vec<String> locals parsing in LanguageConfig"
+    - id: 3
+      description: "Update tokio and reqwest (medium-risk)"
+      implementation: "Check for tokio 1.46+ and reqwest updates, fix any deprecation warnings"
+      type: structural
       status: completed
-      notes: "Test should_parse_configuration_with_locals already existed"
+      commits: []
+      notes: ["tokio 1.45.1→1.48.0, reqwest 0.12.25→0.12.27 - no code changes needed"]
 
-    - id: ST-062-4
-      title: "GREEN: Change LanguageConfig.locals to Option<Vec<String>>"
+    - id: 4
+      description: "Update tree-sitter (high-risk)"
+      implementation: "Check tree-sitter for updates beyond 0.25.6, review changelog, fix any API changes"
+      type: behavioral
       status: completed
-      notes: "Completed as part of 7ad8b85"
+      commits: []
+      notes: ["tree-sitter 0.25.6→0.26.3. Breaking change: child(i) now takes u32 instead of usize. Fixed in refactor.rs:719"]
 
-    # Phase 2: Update internal types (LanguageSettings)
-    - id: ST-062-5
-      title: "RED: Write test for LanguageSettings with Vec<String> highlight"
+    - id: 5
+      description: "Update tower-lsp (high-risk)"
+      implementation: "Check tower-lsp for updates beyond 0.20.0, review changelog, fix any API changes"
+      type: structural
       status: completed
-      notes: "Covered by existing tests"
+      commits: []
+      notes: ["tower-lsp 0.20.0 is still the latest - no update needed"]
 
-    - id: ST-062-6
-      title: "GREEN: Change LanguageSettings.highlight to highlights: Vec<String>"
+    - id: 6
+      description: "Update libloading (high-risk)"
+      implementation: "Check libloading for updates beyond 0.8.8, verify parser loading works"
+      type: structural
       status: completed
-      notes: "Completed as part of 7ad8b85"
+      commits: []
+      notes: ["libloading 0.8.8→0.8.9 via cargo update. No 0.9.0 exists despite cargo note."]
 
-    - id: ST-062-7
-      title: "GREEN: Change LanguageSettings.locals to Option<Vec<String>>"
+    - id: 7
+      description: "Update dev dependencies"
+      implementation: "Update tokio-test, tree-sitter-rust, tree-sitter-md, tree-sitter-yaml, streaming-iterator"
+      type: structural
       status: completed
-      notes: "Completed as part of 7ad8b85"
+      commits: []
+      notes: ["Relaxed version constraints in Cargo.toml for future flexibility"]
 
-    # Phase 3: Update QueryLoader
-    - id: ST-062-8
-      title: "RED: Write test for load_query_from_paths(&[String])"
-      status: completed
-      notes: "Existing tests cover path loading"
-
-    - id: ST-062-9
-      title: "GREEN: Replace load_query_from_highlight with load_query_from_paths"
-      status: completed
-      notes: "Function renamed as part of 7ad8b85"
-
-    # Phase 4: Update conversions and callers
-    - id: ST-062-10
-      title: "REFACTOR: Remove HighlightItem, HighlightSource, QuerySource::Inline"
-      status: completed
-      notes: "Removed in commits aa8e689 and 8eee65f"
-
-    - id: ST-062-11
-      title: "REFACTOR: Update From implementations in config.rs"
-      status: completed
-      notes: "Simplified as part of type removal"
-
-    # Phase 5: Documentation
-    - id: ST-062-12
-      title: "Update docs/README.md with simplified configuration format"
-      status: completed
-      notes: "Commit c7d4fea"
-
-    # Phase 6: Final verification
-    - id: ST-062-13
-      title: "Verify all acceptance criteria for PBI-062 and PBI-063"
-      status: completed
-      notes: "All 200 tests pass, clippy clean"
-
-  notes: |
-    ## Sprint Completed
-    Simplified the query configuration API by:
-    1. Replacing complex HighlightItem/HighlightSource with simple Vec<String> paths
-    2. Renaming 'highlight' to 'highlights' for consistency with array type
-    3. Removing inline query support (users must save queries to files)
-
-    ## Commits
-    - 7ad8b85 feat(config): simplify query config to path-only Vec<String>
-    - aa8e689 refactor(config): remove dead HighlightItem and HighlightSource types
-    - 8eee65f refactor(config): remove dead QuerySource enum
-    - c7d4fea docs(readme): update config examples to new highlights format
-
-    ## TDD Notes
-    The original subtask breakdown was too granular - changing one field cascaded to many
-    files due to API coupling. Consolidated multiple subtasks into single GREEN phase
-    to maintain working code state. REFACTOR phase properly separated dead code removal.
+    - id: 8
+      description: "Final verification and documentation"
+      implementation: "Run full test suite (unit + E2E), clippy, fmt, document notable changes"
+      type: structural
+      status: in_progress
+      commits: []
+      notes: ["All 257 tests pass, clippy clean, fmt clean"]
+  started_at: "2025-12-23"
 
 ---
 # ==============================================================================
@@ -822,6 +907,41 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 45
+    pbi: [PBI-062, PBI-063]
+    story_points: 7
+    outcome: "Simplified query configuration API from HighlightItem/HighlightSource to Vec<String> paths, renamed 'highlight' to 'highlights'"
+    retrospective:
+      what_went_well:
+        - "Clean 4-commit implementation (feat, 2x refactor, docs)"
+        - "All 200 unit tests pass, clippy clean, E2E tests pass"
+        - "Removed ~100 lines of complex type definitions (HighlightItem, HighlightSource, QuerySource)"
+        - "Breaking change executed safely pre-release"
+        - "Combined PBI-062 and PBI-063 efficiently (single Sprint for related changes)"
+        - "REFACTOR phase properly separated dead code removal into 2 distinct commits"
+      what_to_improve:
+        - "Initial subtask breakdown was too granular for coupled API changes"
+        - "Consider 'coupling boundary analysis' when breaking down config-related PBIs"
+      insight: |
+        TDD Granularity Lesson: When changing coupled APIs (configuration structs used
+        throughout codebase), the "unit of work" for TDD must match the coupling boundary,
+        not the conceptual change boundary. Micro-commits per field change would leave
+        the codebase in broken states between commits.
+
+        The practical adaptation: consolidate multiple subtasks into a single GREEN phase
+        when API coupling requires atomic changes. The REFACTOR phase correctly separated
+        dead code removal (HighlightItem, HighlightSource, QuerySource) into distinct
+        commits since those were independent structural changes.
+
+        Combining related PBIs (062 + 063) into a single Sprint was efficient - both
+        touched the same struct fields and avoided double migration churn. Pre-release
+        is the ideal time for breaking changes.
+      improvements:
+        - action: "Add coupling boundary consideration to PBI breakdown process"
+          timing: immediate
+          status: completed
+          outcome: "Documented in retrospective insight for future Sprint Planning reference"
+
   - sprint: 44
     pbi: PBI-060
     outcome: "Split test_malformed_offset_directives into 5 focused tests with descriptive names for improved test clarity"
