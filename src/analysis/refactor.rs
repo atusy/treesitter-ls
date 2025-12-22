@@ -716,7 +716,7 @@ fn handle_code_actions_with_context(
 
     let child_count = params_node.child_count();
     for i in 0..child_count {
-        if let Some(ch) = params_node.child(i) {
+        if let Some(ch) = params_node.child(i as u32) {
             match ch.kind() {
                 "(" => {
                     lparen_end = Some(ch.end_byte());

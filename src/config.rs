@@ -54,10 +54,7 @@ pub fn merge_settings(
 
 impl From<&LanguageConfig> for LanguageSettings {
     fn from(config: &LanguageConfig) -> Self {
-        let highlights = config
-            .highlights
-            .clone()
-            .unwrap_or_default();
+        let highlights = config.highlights.clone().unwrap_or_default();
         let locals = config.locals.clone();
 
         LanguageSettings::new(

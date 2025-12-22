@@ -467,9 +467,7 @@ mod tests {
                         "go" => vec!["go".to_string()],
                         _ => vec![],
                     },
-                    highlights: Some(vec![
-                        format!("/etc/treesitter/{}/highlights.scm", lang),
-                    ]),
+                    highlights: Some(vec![format!("/etc/treesitter/{}/highlights.scm", lang)]),
                     locals: None,
                 },
             );
