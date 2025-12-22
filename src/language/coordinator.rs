@@ -333,8 +333,27 @@ impl LanguageCoordinator {
             ));
         }
 
-        // Load injection queries from search paths if available
-        if let Some(paths) = search_paths
+        // Load injection queries from config paths or search paths
+        if let Some(injection_paths) = &config.injections {
+            if !injection_paths.is_empty() {
+                match QueryLoader::load_highlight_query(language, injection_paths) {
+                    Ok(query) => {
+                        self.query_store
+                            .insert_injection_query(lang_name.to_string(), Arc::new(query));
+                        events.push(LanguageEvent::log(
+                            LanguageLogLevel::Info,
+                            format!("Injection query loaded for {lang_name}"),
+                        ));
+                    }
+                    Err(err) => {
+                        events.push(LanguageEvent::log(
+                            LanguageLogLevel::Error,
+                            format!("Failed to load injection query for {lang_name}: {err}"),
+                        ));
+                    }
+                }
+            }
+        } else if let Some(paths) = search_paths
             && let Ok(query) = QueryLoader::load_query_from_search_paths(
                 language,
                 paths,
