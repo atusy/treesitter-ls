@@ -218,6 +218,7 @@ mod tests {
                         filetypes: vec!["rs".to_string(), "rust".to_string()],
                         highlights: None,
                         locals: None,
+                        injections: None,
                     },
                 );
                 langs.insert(
@@ -227,6 +228,7 @@ mod tests {
                         filetypes: vec!["py".to_string(), "pyi".to_string()],
                         highlights: None,
                         locals: None,
+                        injections: None,
                     },
                 );
                 langs

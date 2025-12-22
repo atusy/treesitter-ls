@@ -80,6 +80,7 @@ impl From<&LanguageSettings> for LanguageConfig {
             filetypes: settings.filetypes.clone(),
             highlights,
             locals,
+            injections: None,
         }
     }
 }
@@ -257,6 +258,7 @@ mod tests {
                 filetypes: vec!["rs".to_string()],
                 highlights: None,
                 locals: None,
+                injections: None,
             },
         );
 
@@ -275,6 +277,7 @@ mod tests {
                 filetypes: vec!["rs".to_string(), "rust".to_string()],
                 highlights: None,
                 locals: None,
+                injections: None,
             },
         );
 

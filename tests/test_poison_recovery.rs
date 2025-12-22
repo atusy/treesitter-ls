@@ -121,6 +121,7 @@ fn test_config_store_recovers_from_poisoned_lock() {
             filetypes: vec!["rs".to_string()],
             highlights: None,
             locals: None,
+            injections: None,
         },
     );
 

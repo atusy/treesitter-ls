@@ -157,6 +157,7 @@ mod tests {
                 filetypes: vec!["rs".to_string()],
                 highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
                 locals: None,
+                injections: None,
             },
         );
 
@@ -210,6 +211,7 @@ mod tests {
                         filetypes: vec!["py".to_string()],
                         highlights: None,
                         locals: None,
+                        injections: None,
                     },
                 );
                 langs
@@ -240,6 +242,7 @@ mod tests {
                 filetypes: vec!["go".to_string()],
                 highlights: None,
                 locals: None,
+                injections: None,
             },
         );
         store.set_language_configs(configs);

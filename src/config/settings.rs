@@ -24,6 +24,8 @@ pub struct LanguageConfig {
     pub highlights: Option<Vec<String>>,
     /// Query file paths for locals/definitions
     pub locals: Option<Vec<String>>,
+    /// Query file paths for language injections
+    pub injections: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, serde::Serialize)]
@@ -469,6 +471,7 @@ mod tests {
                     },
                     highlights: Some(vec![format!("/etc/treesitter/{}/highlights.scm", lang)]),
                     locals: None,
+                    injections: None,
                 },
             );
         }
@@ -479,5 +482,33 @@ mod tests {
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: TreeSitterSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.languages.len(), config.languages.len());
+    }
+
+    #[test]
+    fn should_parse_configuration_with_injections() {
+        // Test that injections field can be parsed alongside highlights and locals
+        let config_json = r#"{
+            "languages": {
+                "markdown": {
+                    "filetypes": ["md"],
+                    "highlights": ["/path/to/highlights.scm"],
+                    "injections": ["/path/to/injections.scm"]
+                }
+            }
+        }"#;
+
+        let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
+
+        assert!(settings.languages.contains_key("markdown"));
+        let md_config = &settings.languages["markdown"];
+
+        // Verify injections configuration is parsed
+        assert!(
+            md_config.injections.is_some(),
+            "Injections configuration should be present"
+        );
+        let injections = md_config.injections.as_ref().unwrap();
+        assert_eq!(injections.len(), 1, "Should have one injections item");
+        assert_eq!(injections[0], "/path/to/injections.scm");
     }
 }
