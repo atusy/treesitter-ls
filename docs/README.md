@@ -103,6 +103,9 @@ Configuration is provided via LSP `initializationOptions`. All options are optio
       ],
       "locals": [
         "/path/to/locals.scm"
+      ],
+      "injections": [
+        "/path/to/injections.scm"
       ]
     }
   },
@@ -144,6 +147,7 @@ Per-language configuration. Usually not needed as treesitter-ls auto-detects lan
 | `library` | Explicit path to the parser library (`.so`, `.dylib`, `.dll`) |
 | `highlights` | Array of paths to highlight query files (`.scm`) |
 | `locals` | Array of paths to locals query files (for go-to-definition) |
+| `injections` | Array of paths to injection query files (for embedded languages) |
 
 #### `captureMappings`
 
