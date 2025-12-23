@@ -52,4 +52,30 @@ impl LanguageRegistry {
             .map(|entry| entry.key().clone())
             .collect()
     }
+
+    /// Check if a parser is available for a given language name.
+    /// Used by the detection fallback chain to determine whether to accept
+    /// a detection result or continue to the next method.
+    pub fn has_parser_available(&self, language_name: &str) -> bool {
+        self.contains(language_name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Helper to create a dummy language for testing
+    fn dummy_language() -> Language {
+        // Use tree-sitter-rust as a test language since it's commonly available
+        tree_sitter_rust::LANGUAGE.into()
+    }
+
+    #[test]
+    fn test_has_parser_available_when_loaded() {
+        let registry = LanguageRegistry::new();
+        registry.register_unchecked("rust".to_string(), dummy_language());
+
+        assert!(registry.has_parser_available("rust"));
+    }
 }
