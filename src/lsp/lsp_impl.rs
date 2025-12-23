@@ -403,6 +403,24 @@ impl TreeSitterLs {
         // Apply the updated settings
         self.apply_settings(updated_settings).await;
 
+        // Explicitly load the newly installed language
+        // This is necessary because detect_language checks has_parser_available
+        let load_result = self.language.ensure_language_loaded(language);
+        self.handle_language_events(&load_result.events).await;
+
+        if !load_result.success {
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    format!(
+                        "Parser for '{}' installed but failed to load: check search paths",
+                        language
+                    ),
+                )
+                .await;
+            return;
+        }
+
         // Re-parse the document that triggered the install
         self.parse_document(uri.clone(), text, Some(language), vec![])
             .await;
