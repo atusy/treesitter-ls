@@ -27,9 +27,7 @@ local injection = true
 
 paragraph
 
-```python
+```py
 def f():
     return 1
 ```
-
-
