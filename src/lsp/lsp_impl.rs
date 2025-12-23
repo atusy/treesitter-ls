@@ -449,11 +449,21 @@ impl TreeSitterLs {
 
         // Check each injected language and trigger auto-install if not loaded
         for lang in languages {
-            let load_result = self.language.ensure_language_loaded(&lang);
+            // ADR-0005: Try direct identifier first, then normalize alias
+            // This ensures "py" -> "python" before auto-install
+            let resolved_lang = if self.language.has_parser_available(&lang) {
+                lang.clone()
+            } else if let Some(normalized) = crate::language::alias::normalize_alias(&lang) {
+                normalized
+            } else {
+                lang.clone()
+            };
+
+            let load_result = self.language.ensure_language_loaded(&resolved_lang);
             if !load_result.success {
-                // Language not loaded - trigger auto-install
+                // Language not loaded - trigger auto-install with resolved name
                 // maybe_auto_install_language uses InstallingLanguages to prevent duplicates
-                self.maybe_auto_install_language(&lang, uri.clone(), text.clone())
+                self.maybe_auto_install_language(&resolved_lang, uri.clone(), text.clone())
                     .await;
             }
         }
