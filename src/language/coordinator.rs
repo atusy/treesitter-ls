@@ -531,4 +531,30 @@ mod tests {
             "Direct identifier should be preferred over alias"
         );
     }
+
+    #[test]
+    fn test_load_settings_does_not_make_parser_available() {
+        // Documents that load_settings alone does NOT make parsers available.
+        // ensure_language_loaded must be called to actually load the parser.
+        // This is important for reload_language_after_install to work correctly.
+        use crate::config::WorkspaceSettings;
+
+        let coordinator = LanguageCoordinator::new();
+
+        // Initially, parser is not available
+        assert!(
+            !coordinator.has_parser_available("rust"),
+            "Parser should not be available before load_settings"
+        );
+
+        // Load settings (simulating apply_settings behavior)
+        let settings = WorkspaceSettings::default();
+        let _summary = coordinator.load_settings(settings);
+
+        // After load_settings, parser is STILL not available
+        assert!(
+            !coordinator.has_parser_available("rust"),
+            "Parser should not be available after load_settings alone - ensure_language_loaded must be called"
+        );
+    }
 }
