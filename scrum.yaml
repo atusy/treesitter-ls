@@ -35,7 +35,7 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint: "Sprint 47 COMPLETE - PBI-064 (injections field) - 2 SP"
+  current_sprint: "None - Ready for Sprint Planning"
   backlog: "1 PBI ready (PBI-061) - Configuration API improvements"
   impediments: 0
   next_recommended: "PBI-061 (remove filetypes)"
@@ -64,462 +64,10 @@ product_goal:
 # ==============================================================================
 # PRODUCT BACKLOG (Active Items Only)
 # ==============================================================================
-# Completed PBIs: PBI-001 through PBI-041
+# Completed PBIs: PBI-001 through PBI-065
 # For details: git log -- scrum.yaml
 
 product_backlog:
-  # ============================================================================
-  # Technical Debt / Maintenance (Highest Priority)
-  # ============================================================================
-
-  - id: PBI-049
-    story:
-      role: "user starting treesitter-ls with default settings"
-      capability: "get working syntax highlighting when parsers already exist"
-      benefit: "zero-config experience works reliably without explicit autoInstall=false"
-    status: done
-    story_points: 3
-    acceptance_criteria:
-      - criterion: "AC1: Auto-install treats AlreadyExists as success, not failure"
-        verification: |
-          # Unit test verifies AlreadyExists triggers reload:
-          cargo test test_already_exists_triggers_reload -- --nocapture
-          # Or verify via log output that reload is called when parser exists
-      - criterion: "AC2: E2E tests pass with default autoInstall (empty init_options)"
-        verification: |
-          # Ensure minimal_init.lua uses init_options = {} (no autoInstall setting)
-          # Then run E2E tests:
-          make test_nvim
-          # Expected: All tests pass when parser already exists
-      - criterion: "AC3: Existing tests continue to pass"
-        verification: "make test && make check"
-    notes: |
-      ## Root Cause Analysis
-      When autoInstall is enabled (default) and parser already exists:
-      1. install_parser() returns Err(AlreadyExists)
-      2. InstallResult.is_success() returns false
-      3. reload_language_after_install() is NOT called
-      4. Parser never gets loaded into coordinator
-
-      With autoInstall=false, the auto-install path is skipped entirely,
-      so normal loading works correctly.
-
-      ## Fix Options (in order of preference)
-      C) Skip install_parser if parser file exists (check before calling)
-         - Simplest: avoids calling install_parser entirely
-         - Check parser_file.exists() before install_language_async
-      B) Check for AlreadyExists error and still call reload_language_after_install
-         - Requires matching on error message string (fragile)
-      A) Treat AlreadyExists as partial success in InstallResult
-         - Changes InstallResult semantics (may have side effects)
-
-      ## Files Affected
-      - src/lsp/lsp_impl.rs (maybe_auto_install_language function)
-      - src/install/mod.rs (InstallResult if option A chosen)
-      - src/install/parser.rs (AlreadyExists error definition)
-
-      ## TDD Approach
-      1. RED: Write test that triggers auto-install when parser exists
-      2. GREEN: Implement fix (option C recommended)
-      3. REFACTOR: Clean up any redundant checks
-
-  - id: PBI-051
-    story:
-      role: "user configuring treesitter-ls in Neovim"
-      capability: "omit init_options entirely from LSP config"
-      benefit: "simplest possible zero-config setup works out of the box"
-    status: done
-    story_points: 1
-    acceptance_criteria:
-      - criterion: "AC1: E2E tests pass when init_options is completely omitted"
-        verification: |
-          # Ensure minimal_init.lua has NO init_options line
-          grep -v "init_options" scripts/minimal_init.lua | head -5
-          make test_nvim
-          # Expected: All tests pass
-      - criterion: "AC2: Existing tests continue to pass"
-        verification: "make test && make check"
-    notes: |
-      ## Root Cause Analysis
-      When init_options is omitted, Neovim sends initializationOptions = {} (empty dict).
-      The server parses this successfully, but search_paths is None/empty.
-
-      The bug is in reload_language_after_install() at lsp_impl.rs:360-370:
-      - It adds "data_dir/parsers" (plural) to search paths
-      - But parser files are installed at "data_dir/parser" (singular)
-      - So the language coordinator can't find the parser
-
-      ## Fix
-      Change lsp_impl.rs line 360: "parsers" -> "parser"
-      (queries at line 367 is already correct)
-
-      ## Files Affected
-      - src/lsp/lsp_impl.rs:360 - fix typo: parsers -> parser
-
-  - id: PBI-050
-    story:
-      role: "user running treesitter-ls"
-      capability: "see query predicate issues at info level instead of warn"
-      benefit: "log output distinguishes between actionable warnings and informational messages"
-    status: done
-    story_points: 1
-    acceptance_criteria:
-      - criterion: "AC1: All 5 query predicate log calls use info! instead of warn!"
-        verification: |
-          # query_predicates.rs: 3 info! calls, 0 warn! calls
-          [ $(grep -c "info!" src/language/query_predicates.rs) -eq 3 ]
-          [ $(grep -c "warn!" src/language/query_predicates.rs) -eq 0 ]
-          # injection.rs: 2 info! calls for query-related messages
-          grep -c "info!" src/language/injection.rs  # Expected: 2
-      - criterion: "AC2: Log target remains treesitter_ls::query for all calls"
-        verification: |
-          grep "treesitter_ls::query" src/language/query_predicates.rs
-          grep "treesitter_ls::query" src/language/injection.rs
-      - criterion: "AC3: Documentation updated in docs/README.md"
-        verification: |
-          # Log table should show info level for treesitter_ls::query
-          grep "treesitter_ls::query" docs/README.md | grep -q "info"
-      - criterion: "AC4: All tests pass"
-        verification: "make test && make check"
-    notes: |
-      ## Rationale (Dave Cheney's logging philosophy)
-      - warn implies user action is needed
-      - Most users cannot modify upstream nvim-treesitter queries
-      - These messages are informational for query authors, not actionable warnings
-      - info is appropriate for "interesting runtime events"
-
-      ## Files Affected (5 log calls + 1 doc)
-      - src/language/query_predicates.rs: 3 calls (lines 31, 39, 47)
-        - Change: use log::warn -> use log::info
-        - Change: warn! -> info! (3 occurrences)
-      - src/language/injection.rs: 2 calls (lines 57, 108)
-        - Change: log::warn! -> log::info! (2 occurrences)
-      - docs/README.md: Update logging table row for treesitter_ls::query
-        - Change: warn -> info in Level column
-
-  # ============================================================================
-  # Tidying / Code Quality (Kent Beck's Tidy First)
-  # ============================================================================
-
-  - id: PBI-052
-    story:
-      role: "developer maintaining treesitter-ls"
-      capability: "remove unused code from position.rs and semantic.rs modules"
-      benefit: "reduced technical debt and clearer codebase"
-    status: done
-    story_points: 1
-    acceptance_criteria:
-      - criterion: "AC1: compute_line_starts() function removed from position.rs"
-        verification: |
-          # Function should not exist in position.rs
-          ! grep -q "pub fn compute_line_starts" src/text/position.rs
-          # No other files should reference it
-          ! grep -r "compute_line_starts" src/ --include="*.rs" | grep -v "^Binary"
-      - criterion: "AC2: _text field removed from PositionMapper struct"
-        verification: |
-          # Field should not exist (check for _text in struct definition)
-          ! grep -q "_text:" src/text/position.rs
-          # PositionMapper::new should not store text
-          grep -A5 "pub fn new" src/text/position.rs | grep -q "line_index"
-      - criterion: "AC3: Domain* semantic token re-exports removed from semantic.rs"
-        verification: |
-          # Re-exports should not exist (lines 10-17)
-          ! grep -q "DomainSemantic" src/analysis/semantic.rs
-          # No other files should reference them
-          ! grep -r "DomainSemantic" src/ --include="*.rs"
-      - criterion: "AC4: All tests pass"
-        verification: "make test && make check"
-    notes: |
-      ## Dead Code Identified
-      - compute_line_starts() in text/position.rs:77-90 - exported but never used externally
-      - _text field in PositionMapper - stored but never accessed (line_index is used instead)
-      - DomainSemantic* re-exports in analysis/semantic.rs:10-17 - aliased but never used
-
-      ## Risk: Very Low
-      - Pure removal of unused code
-      - No behavioral changes
-      - Straightforward verification via grep
-
-  - id: PBI-053
-    story:
-      role: "developer maintaining treesitter-ls"
-      capability: "use consistent path resolution in query_loader.rs"
-      benefit: "avoid subtle bugs from inconsistent path handling"
-    status: done
-    story_points: 1
-    acceptance_criteria:
-      - criterion: "AC1: All extension checks use PathBuf with .clean()"
-        verification: |
-          # Check that .dll path uses PathBuf.clean() like .so and .dylib
-          grep -A3 "dll" src/language/query_loader.rs | grep -q "PathBuf"
-          grep -A3 "dll" src/language/query_loader.rs | grep -q ".clean()"
-      - criterion: "AC2: Extension search consolidated to loop over PARSER_EXTENSIONS array"
-        verification: |
-          # Check for PARSER_EXTENSIONS constant definition
-          grep -q "PARSER_EXTENSIONS" src/language/query_loader.rs
-          # Check that it contains all three extensions
-          grep "PARSER_EXTENSIONS" src/language/query_loader.rs | grep -q "so.*dylib.*dll\|dylib.*so.*dll"
-      - criterion: "AC3: resolve_library_path test passes with Windows paths"
-        verification: |
-          # Existing test should still pass
-          cargo test test_resolve_library_path -- --nocapture
-      - criterion: "AC4: All tests pass"
-        verification: "make test && make check"
-    notes: |
-      ## Issue
-      query_loader.rs:250-252 uses format!() without .clean() while other extensions use PathBuf:
-      ```rust
-      // .so uses: PathBuf::from(path).join("parser").join(format!("{language}.so")).clean();
-      // .dylib uses: PathBuf::from(path).join("parser").join(format!("{language}.dylib")).clean();
-      // .dll uses: format!("{path}/parser/{language}.dll") -- INCONSISTENT
-      ```
-
-      ## Fix
-      Consolidate to:
-      ```rust
-      const PARSER_EXTENSIONS: &[&str] = &["so", "dylib", "dll"];
-      for ext in PARSER_EXTENSIONS {
-          let path = PathBuf::from(base).join("parser").join(format!("{language}.{ext}")).clean();
-          if path.exists() { return Some(path.to_string_lossy().into_owned()); }
-      }
-      ```
-
-      ## Risk: Very Low
-      - Simple refactor for consistency
-      - Existing behavior preserved
-
-  # ============================================================================
-  # Removed DRY PBIs after review - premature abstraction risk
-  # ============================================================================
-  # PBI-054 (lock recovery helper): Duplication is intentional - each log message
-  #   has unique context for debugging. Generic helper would obscure failures.
-  # PBI-055 (coordinator lock fix): Depended on PBI-054. The 2 .unwrap() calls
-  #   are acceptable - coordinator failures are unrecoverable anyway.
-  # PBI-056 (line-finding helper): Only 2 instances with different semantics
-  #   (forward vs backward scan). Not true duplication.
-  # PBI-057 (injection query helper): Different extraction logic, filter criteria,
-  #   and return types. Looks similar but fundamentally different purposes.
-  # PBI-058 (split lsp_impl.rs): Too complex, revisit later.
-  # ============================================================================
-
-  - id: PBI-059
-    story:
-      role: "developer maintaining treesitter-ls"
-      capability: "understand injection language extraction flow more easily"
-      benefit: "improved clarity in injection.rs"
-    status: done
-    story_points: 1
-    acceptance_criteria:
-      - criterion: "AC1: Consistent function naming (extract_* for extraction, collect_* for collection)"
-        verification: |
-          # Check naming convention:
-          # - extract_* functions should extract single items from matches
-          # - collect_* functions should gather multiple items
-          grep -E "^(pub )?fn (extract_|collect_|find_)" src/language/injection.rs
-          # No mixed naming like find_injection_content_and_language
-          ! grep -q "fn find_injection_content_and_language" src/language/injection.rs
-      - criterion: "AC2: Function names clearly indicate their return type"
-        verification: |
-          # Functions returning Option<String> should be named extract_*
-          # Functions returning Vec<...> should be named collect_*
-          grep "fn extract_" src/language/injection.rs | head -3
-          grep "fn collect_" src/language/injection.rs | head -3
-      - criterion: "AC3: All injection tests pass"
-        verification: |
-          cargo test injection -- --nocapture
-          make test && make check
-    notes: |
-      ## Issue
-      injection.rs has inconsistent naming patterns:
-      - extract_injection_language() - extracts language string
-      - collect_all_injections() - collects multiple regions
-      - find_injection_content_and_language() - extracts tuple (mixed naming)
-
-      ## Proposed Naming Convention
-      - `extract_*` - Single item extraction from a match
-      - `collect_*` - Multiple item collection with deduplication
-      - Remove `find_*` pattern for consistency
-
-      ## Rename Plan
-      - find_injection_content_and_language -> extract_content_and_language
-
-      ## Risk: Very Low
-      - Pure naming refactor
-      - All functions are private (internal to injection.rs)
-      - No API changes
-
-      ## Files Affected
-      - src/language/injection.rs
-
-  - id: PBI-060
-    story:
-      role: "developer maintaining treesitter-ls"
-      capability: "see clearer test coverage for injection malformed directives"
-      benefit: "improved test clarity and maintainability"
-    status: done
-    story_points: 1
-    acceptance_criteria:
-      - criterion: "AC1: test_malformed_offset_directives split into 5 focused tests"
-        verification: |
-          # Original monolithic test should not exist
-          ! grep -q "fn test_malformed_offset_directives" src/language/injection.rs
-          # Should have 5 separate tests for malformed scenarios
-          [ $(grep -c "fn test_offset.*\|fn test_malformed" src/language/injection.rs) -ge 5 ]
-      - criterion: "AC2: Each test has descriptive name for the scenario"
-        verification: |
-          # Test names should describe the scenario being tested
-          grep "fn test_" src/language/injection.rs | grep -E "non_numeric|missing_args|too_many|mixed_valid|empty_directive"
-      - criterion: "AC3: All 5 malformed directive scenarios covered"
-        verification: |
-          # Run the new tests
-          cargo test test_offset -- --nocapture
-          cargo test test_malformed -- --nocapture
-          # All tests should pass
-          make test && make check
-    notes: |
-      ## Issue
-      injection.rs:650-736 test_malformed_offset_directives() is 86 lines testing 5 scenarios:
-      1. Non-numeric offset values (foo bar baz qux)
-      2. Missing offset arguments (only 2 instead of 4)
-      3. Too many offset arguments (5 instead of 4)
-      4. Mixed valid and invalid values
-      5. Empty offset directive (no arguments after capture)
-
-      ## Solution
-      Split into 5 separate tests with descriptive names:
-      ```rust
-      #[test]
-      fn test_offset_directive_with_non_numeric_values() { ... }
-
-      #[test]
-      fn test_offset_directive_with_missing_arguments() { ... }
-
-      #[test]
-      fn test_offset_directive_with_extra_arguments() { ... }
-
-      #[test]
-      fn test_offset_directive_with_mixed_valid_invalid() { ... }
-
-      #[test]
-      fn test_offset_directive_with_empty_args() { ... }
-      ```
-
-      ## Benefits
-      - Each test failure clearly indicates which scenario failed
-      - Easier to add new test cases
-      - Better test documentation through function names
-
-      ## Risk: Very Low
-      - Pure test refactoring
-      - No production code changes
-      - Same coverage, better organization
-
-      ## Files Affected
-      - src/language/injection.rs (test module only)
-
-  # ============================================================================
-  # Technical Debt / Maintenance
-  # ============================================================================
-
-  - id: PBI-065
-    story:
-      role: "developer maintaining treesitter-ls"
-      capability: "keep dependencies up to date with latest stable versions"
-      benefit: "security patches, bug fixes, and performance improvements are applied"
-    status: done
-    story_points: 3
-    dependencies: []
-    acceptance_criteria:
-      - criterion: "AC1: All dependencies updated to latest compatible versions"
-        verification: |
-          # Run cargo update and check for outdated packages
-          cargo update --dry-run
-          # Verify no outdated dependencies remain (cargo-outdated if available)
-          # cargo outdated --root-deps-only || echo "Install with: cargo install cargo-outdated"
-      - criterion: "AC2: All unit tests pass after dependency update"
-        verification: |
-          cargo test
-          # Expected: All tests pass (currently 200+ tests)
-      - criterion: "AC3: Code quality checks pass (clippy, fmt)"
-        verification: |
-          cargo clippy -- -D warnings
-          cargo fmt --check
-      - criterion: "AC4: E2E tests pass after dependency update"
-        verification: |
-          make test_nvim
-          # Expected: All Neovim E2E tests pass
-      - criterion: "AC5: No breaking API changes introduced (or documented if unavoidable)"
-        verification: |
-          # Review CHANGELOG of updated crates for breaking changes
-          # Key dependencies to check:
-          # - tower-lsp (LSP protocol)
-          # - tree-sitter (parsing)
-          # - tokio (async runtime)
-          cargo build --release 2>&1 | head -20
-    notes: |
-      ## Purpose
-      Regular dependency updates reduce security vulnerabilities, incorporate bug fixes,
-      and maintain compatibility with the broader Rust ecosystem.
-
-      ## Current Dependencies Analysis (as of 2025-12-23)
-
-      ### Runtime Dependencies to Update
-      | Crate | Current | Notes |
-      |-------|---------|-------|
-      | arc-swap | 1.7 | Check for 1.8+ |
-      | clap | 4.5 | Check for 4.6+ |
-      | dashmap | 6.1.0 | Check for 6.2+ |
-      | dirs | 6.0 | Check for updates |
-      | env_logger | 0.11 | Check for updates |
-      | libloading | 0.8.8 | Check for 0.9+ |
-      | line-index | 0.1 | Check for updates |
-      | log | 0.4 | Stable, likely no major updates |
-      | lua-pattern | 0.1.3 | Check for updates |
-      | path-clean | 1.0 | Check for updates |
-      | regex | 1.10 | Check for 1.11+ |
-      | reqwest | 0.12 | Check for updates |
-      | serde | 1.0.219 | Check for latest 1.0.x |
-      | serde_json | 1.0.140 | Check for latest 1.0.x |
-      | tempfile | 3.0 | Check for 3.x updates |
-      | thiserror | 2.0 | Check for 2.x updates |
-      | tokio | 1.45.1 | Check for 1.46+ |
-      | toml | 0.8 | Check for updates |
-      | tower-lsp | 0.20.0 | CRITICAL: Check for 0.21+ (may have breaking changes) |
-      | tree-sitter | 0.25.6 | CRITICAL: Check for 0.26+ (may have breaking changes) |
-      | url | 2.5 | Check for updates |
-
-      ### Dev Dependencies to Update
-      | Crate | Current | Notes |
-      |-------|---------|-------|
-      | tokio-test | 0.4 | Check for updates |
-      | tree-sitter-rust | 0.23 | Check for updates |
-      | tree-sitter-md | 0.3 | Check for updates |
-      | tree-sitter-yaml | 0.7 | Check for updates |
-      | streaming-iterator | 0.1 | Check for updates |
-
-      ## Update Strategy
-      1. Run `cargo update` to get latest compatible versions within constraints
-      2. Review changelogs for critical dependencies (tower-lsp, tree-sitter, tokio)
-      3. Update version constraints in Cargo.toml for any major version bumps
-      4. Run full test suite after each significant update
-      5. Document any breaking changes or migration steps required
-
-      ## Risk Assessment
-      - **Low risk**: Most serde, log, regex updates are backward compatible
-      - **Medium risk**: tokio, tower-lsp updates may require API adjustments
-      - **High risk**: tree-sitter major version updates may change parser loading
-
-      ## TDD Approach
-      1. Run existing tests to establish baseline
-      2. Update dependencies incrementally (start with low-risk)
-      3. Fix any compilation errors or deprecation warnings
-      4. Verify all tests pass after each batch of updates
-
-      ## Files Affected
-      - Cargo.toml (dependency version updates)
-      - Cargo.lock (automatically updated by cargo)
-      - Potentially affected source files if APIs change
-
   # ============================================================================
   # Configuration API Improvements (Breaking Changes - Pre-release)
   # ============================================================================
@@ -585,204 +133,6 @@ product_backlog:
       - docs/README.md (update configuration examples)
       - Tests in settings.rs and filetypes.rs
 
-  - id: PBI-062
-    story:
-      role: "developer configuring treesitter-ls"
-      capability: "specify query files using simple path strings"
-      benefit: "simpler configuration without inline query complexity"
-    status: done  # Sprint 45 (combined with PBI-063)
-    story_points: 5
-    dependencies: []
-    acceptance_criteria:
-      - criterion: "AC1: LanguageConfig uses Vec<String> for highlight/highlights field"
-        verification: |
-          # Check LanguageConfig struct definition
-          grep -A15 "pub struct LanguageConfig" src/config/settings.rs | grep -E "highlight.*Option<Vec<String>>|highlight.*Vec<String>"
-      - criterion: "AC2: LanguageConfig uses Option<Vec<String>> for locals field"
-        verification: |
-          grep -A15 "pub struct LanguageConfig" src/config/settings.rs | grep -E "locals.*Option<Vec<String>>"
-      - criterion: "AC3: HighlightItem struct removed"
-        verification: |
-          ! grep -q "pub struct HighlightItem" src/config/settings.rs
-      - criterion: "AC4: HighlightSource enum removed (path-only)"
-        verification: |
-          ! grep -q "pub enum HighlightSource" src/config/settings.rs
-      - criterion: "AC5: Internal QuerySource enum simplified to Path-only"
-        verification: |
-          # QuerySource::Inline should be removed
-          ! grep -q "QuerySource::Inline" src/config/settings.rs
-          ! grep -q "Inline(String)" src/config/settings.rs
-      - criterion: "AC6: QueryLoader updated to load paths directly"
-        verification: |
-          # load_query_from_highlight should accept &[String] instead of &[HighlightItem]
-          grep -q "fn load_query_from_paths" src/language/query_loader.rs || \
-            grep -A3 "load_query" src/language/query_loader.rs | grep -q "&\[String\]"
-      - criterion: "AC7: Documentation updated with simplified format"
-        verification: |
-          # Check docs show simple string arrays
-          grep -A5 '"highlights"' docs/README.md | grep -qE '^\s*"/|^\s*\["/'
-      - criterion: "AC8: All tests pass with no warnings"
-        verification: "cargo test && cargo clippy -- -D warnings"
-    notes: |
-      ## Breaking Change (Pre-release)
-      Simplify query source specification from:
-      ```json
-      "highlight": [{"path": "/path.scm"}, {"query": "..."}]
-      ```
-      To:
-      ```json
-      "highlights": ["/path/to/highlights.scm"]
-      ```
-
-      ## Removed Features
-      1. `HighlightItem` struct - no longer needed
-      2. `HighlightSource` enum - no longer needed
-      3. `QuerySource::Inline` variant - inline queries not supported
-      4. `{"query": "..."}` syntax - users must save queries to files
-
-      ## Implementation Steps
-      1. Change `highlight: Vec<HighlightItem>` to `highlights: Vec<String>` in LanguageConfig
-      2. Change `locals: Option<Vec<HighlightItem>>` to `locals: Option<Vec<String>>`
-      3. Remove `HighlightItem` struct
-      4. Remove `HighlightSource` enum
-      5. Remove `QuerySource::Inline` variant (keep `QuerySource::Path` or simplify to String)
-      6. Update QueryLoader.load_query_from_highlight to work with &[String]
-      7. Update all callers of these types
-      8. Update tests in settings.rs
-      9. Update docs/README.md examples
-
-      ## Files Affected
-      - src/config/settings.rs (major changes to types)
-      - src/language/query_loader.rs (update loading logic)
-      - src/language/coordinator.rs (if it uses these types)
-      - docs/README.md (update examples)
-      - Tests in settings.rs and query_loader.rs
-
-  - id: PBI-063
-    story:
-      role: "developer configuring treesitter-ls"
-      capability: "use plural field names for query arrays"
-      benefit: "consistent naming convention (highlights, locals, injections)"
-    status: done  # Sprint 45 (combined with PBI-062)
-    story_points: 2
-    dependencies:
-      - PBI-062  # Done together in Sprint 45
-    acceptance_criteria:
-      - criterion: "AC1: LanguageConfig field renamed from highlight to highlights"
-        verification: |
-          # Check field name is highlights (plural)
-          grep -A15 "pub struct LanguageConfig" src/config/settings.rs | grep -q "highlights:"
-          # Ensure no singular 'highlight:' field exists (excluding comments)
-          ! grep -A15 "pub struct LanguageConfig" src/config/settings.rs | grep -E "^\s+highlight:" | grep -v "//"
-      - criterion: "AC2: LanguageSettings field renamed to highlights"
-        verification: |
-          grep -A15 "pub struct LanguageSettings" src/config/settings.rs | grep -q "highlights:"
-      - criterion: "AC3: Serde annotation preserves JSON field name 'highlights'"
-        verification: |
-          # Either no serde rename (field name = json name) or explicit rename to highlights
-          grep -B2 "highlights:" src/config/settings.rs | grep -qE 'serde.*rename.*highlights|^[^#]*highlights:' || \
-            ! grep -B2 "highlights:" src/config/settings.rs | grep -q 'serde.*rename'
-      - criterion: "AC4: Documentation uses plural naming"
-        verification: |
-          grep -q '"highlights"' docs/README.md
-          # Ensure singular 'highlight' is not used (except as part of other words)
-          ! grep -E '"highlight"[^s]' docs/README.md
-      - criterion: "AC5: All tests pass with no warnings"
-        verification: "cargo test && cargo clippy -- -D warnings"
-    notes: |
-      ## Breaking Change (Pre-release)
-      Rename for consistency with array type:
-      - highlight -> highlights (plural, matches Vec type)
-      - locals stays as-is (already correct)
-
-      ## Dependency on PBI-062
-      Best done together with or after PBI-062 because:
-      - Both touch the same struct fields
-      - Doing them together avoids double migration
-      - PBI-062 already updates docs, can rename at same time
-
-      ## Merge Recommendation
-      Consider merging this into PBI-062 to reduce churn. The rename is trivial
-      once PBI-062's type changes are done.
-
-      ## Implementation Steps
-      1. Rename `highlight` to `highlights` in LanguageConfig
-      2. Rename `highlight` to `highlights` in LanguageSettings
-      3. Update all references throughout codebase
-      4. Update tests
-      5. Update docs/README.md
-
-      ## Files Affected
-      - src/config/settings.rs (rename field in both structs)
-      - src/language/query_loader.rs (if it references the field)
-      - src/language/coordinator.rs (if it references the field)
-      - docs/README.md (update examples)
-      - Tests in settings.rs
-
-  - id: PBI-064
-    story:
-      role: "developer configuring treesitter-ls"
-      capability: "specify custom injection query files"
-      benefit: "full control over language injection behavior"
-    status: done  # Sprint 47
-    story_points: 2
-    dependencies:
-      - PBI-062  # Use same Vec<String> format
-    acceptance_criteria:
-      - criterion: "AC1: injections field added to LanguageConfig"
-        verification: |
-          grep -A15 "pub struct LanguageConfig" src/config/settings.rs | grep -q "injections:"
-      - criterion: "AC2: injections field added to LanguageSettings (internal type)"
-        verification: |
-          grep -A15 "pub struct LanguageSettings" src/config/settings.rs | grep -q "injections:"
-      - criterion: "AC3: injections field type matches highlights/locals (Option<Vec<String>>)"
-        verification: |
-          # All three fields should have same type pattern
-          grep -A15 "pub struct LanguageConfig" src/config/settings.rs | grep -E "injections.*Option<Vec<String>>"
-      - criterion: "AC4: Coordinator loads custom injection queries from config"
-        verification: |
-          # Check coordinator or query_loader handles injections config
-          grep -rn "injections" src/language/coordinator.rs src/language/query_loader.rs | grep -v "test\|//" | head -5
-      - criterion: "AC5: Custom injection query loading has test coverage"
-        verification: |
-          # Test exists for custom injection loading
-          grep -rn "test.*injection" src/language/query_loader.rs src/language/coordinator.rs | grep "fn test"
-      - criterion: "AC6: Documentation includes injections field example"
-        verification: |
-          grep -q '"injections"' docs/README.md
-          grep -A3 '"injections"' docs/README.md | grep -qE '/.*\.scm'
-      - criterion: "AC7: All tests pass with no warnings"
-        verification: "cargo test && cargo clippy -- -D warnings"
-    notes: |
-      ## New Feature
-      Add injections field for alignment with highlights and locals.
-      Currently, injection queries are auto-discovered from injections.scm files.
-      This allows users to specify custom injection query files.
-
-      ## Dependency on PBI-062
-      Must be done after PBI-062 to use the same simplified Vec<String> format.
-      Doing it before would require the old HighlightItem format.
-
-      ## Current Injection Behavior (to preserve)
-      - QueryStore already has insert_injection_query/get_injection_query
-      - Injections are auto-discovered from {searchPath}/queries/{lang}/injections.scm
-      - This PBI adds OPTIONAL user-specified injection paths that override auto-discovery
-
-      ## Implementation Steps
-      1. Add `injections: Option<Vec<String>>` to LanguageConfig
-      2. Add `injections: Option<Vec<String>>` to LanguageSettings
-      3. Update LanguageSettings::new() to accept injections parameter
-      4. Update coordinator to load custom injection queries when specified
-      5. Add test for custom injection query loading
-      6. Update docs/README.md with injections example
-
-      ## Files Affected
-      - src/config/settings.rs (add injections field to both structs)
-      - src/language/coordinator.rs (load custom injections)
-      - src/language/query_loader.rs (may need helper for injection loading)
-      - docs/README.md (document new field with example)
-      - Tests for injection loading
-
   # ============================================================================
   # ADR-0003: Parser Compilation Fallback Strategy - SUPERSEDED
   # Decision: Keep tree-sitter-cli as sole compilation dependency
@@ -821,53 +171,7 @@ definition_of_done:
 # CURRENT SPRINT
 # ==============================================================================
 
-current_sprint:
-  sprint: 47
-  pbi: PBI-064
-  story_points: 2
-  goal:
-    statement: "Enable developers to specify custom injection query files in configuration, providing full control over language injection behavior while maintaining consistency with the existing highlights/locals configuration pattern"
-    success_criteria:
-      - "Configuration accepts injections: Option<Vec<String>> alongside highlights/locals"
-      - "Custom injection queries can be loaded from user-specified paths"
-      - "Auto-discovery fallback continues working when no custom injections configured"
-      - "Documentation includes example configuration with injections field"
-    stakeholder_value: "Power users can customize language injection behavior without modifying upstream nvim-treesitter queries"
-    alignment: "Improves configurability for power users while maintaining zero-config experience for default users"
-  subtasks:
-    - id: 1
-      test: "Write test that parses JSON config with injections field"
-      implementation: "Add pub injections: Option<Vec<String>> to LanguageConfig struct"
-      type: behavioral
-      status: completed
-      commits: ["8ce3982"]
-      notes: ["TDD RED/GREEN cycle - added field and test"]
-
-    - id: 2
-      test: "Test for LanguageSettings preserves injections in conversion"
-      implementation: "Add pub injections: Option<Vec<String>> to LanguageSettings, update new() constructor and From impls"
-      type: behavioral
-      status: completed
-      commits: ["f6e2c7f"]
-      notes: ["TDD RED/GREEN cycle - added field and conversion"]
-
-    - id: 3
-      test: "N/A - follows existing highlights/locals pattern"
-      implementation: "Add injection loading block in load_queries_for_language() following highlights/locals pattern"
-      type: behavioral
-      status: completed
-      commits: ["03f46bf"]
-      notes: ["Config-first loading with search paths fallback"]
-
-    - id: 4
-      test: "N/A - documentation only"
-      implementation: "Add injections field example to docs/README.md configuration section"
-      type: structural
-      status: completed
-      commits: ["56a26ea"]
-      notes: ["Added to config example and option reference table"]
-  started_at: "2025-12-23"
-  status: completed
+current_sprint: null  # Ready for Sprint Planning
 
 ---
 # ==============================================================================
@@ -876,330 +180,199 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 47
+    pbi: PBI-064
+    story_points: 2
+    outcome: "Added injections field to LanguageConfig/LanguageSettings for custom injection query paths"
+    commits: ["8ce3982", "f6e2c7f", "03f46bf", "56a26ea"]
+    insight: "Config API additions that follow existing patterns (highlights/locals) are straightforward when done consistently"
+
   - sprint: 46
     pbi: PBI-065
     story_points: 3
-    outcome: "Updated dependencies including tree-sitter 0.25.6->0.26.3, tokio 1.45.1->1.48.0, 60+ transitive deps; fixed breaking API change (Node::child takes u32)"
-    retrospective:
-      what_went_well:
-        - "Risk-based batching strategy effective: low-risk batch update via cargo update, then evaluate high-risk individually"
-        - "Clean single-commit update with minimal code changes required (d7893e0)"
-        - "All 257 tests pass, clippy clean, no new warnings"
-        - "Breaking change in tree-sitter 0.26 handled with simple cast (i as u32) - easy fix"
-        - "Relaxed version constraints in Cargo.toml will make future updates easier"
-        - "Verified tower-lsp 0.20 is still the latest - no update needed"
-      what_to_improve:
-        - "Cargo output can be misleading - reported 'available: v0.9.0' for libloading but v0.9.0 does not exist"
-        - "Consider running cargo update more frequently (monthly) to reduce batch size and catch breaking changes earlier"
-      insight: |
-        Dependency updates are lower risk when done incrementally with risk-based batching.
-        The strategy of batch-updating low-risk deps first (cargo update), then evaluating
-        high-risk deps individually (tree-sitter, tower-lsp, libloading) proved effective.
-
-        The tree-sitter 0.26 breaking change (Node::child() takes u32 instead of usize)
-        was the only code change required, fixed with a simple cast. tower-lsp 0.20 is
-        still current, and the libloading "0.9.0 available" note from cargo was misleading
-        - that version does not exist.
-
-        Relaxing version constraints (e.g., "1.45" -> "1") reduces future Cargo.toml
-        maintenance while Cargo.lock still pins exact versions for reproducible builds.
-        This makes future cargo update runs more effective.
-
-        Key lesson: cargo's "available" output should be verified before updating version
-        constraints in Cargo.toml - not all reported versions actually exist.
-      improvements:
-        - action: "Document risk-based batching strategy for dependency updates"
-          timing: immediate
-          status: completed
-          outcome: "Captured in retrospective insight for future Sprint Planning reference"
+    outcome: "Updated dependencies including tree-sitter 0.25.6->0.26.3, tokio 1.45.1->1.48.0, 60+ transitive deps"
+    commits: ["d7893e0"]
+    insight: "Risk-based batching for dependency updates: batch low-risk via cargo update, evaluate high-risk individually"
 
   - sprint: 45
     pbi: [PBI-062, PBI-063]
     story_points: 7
-    outcome: "Simplified query configuration API from HighlightItem/HighlightSource to Vec<String> paths, renamed 'highlight' to 'highlights'"
-    retrospective:
-      what_went_well:
-        - "Clean 4-commit implementation (feat, 2x refactor, docs)"
-        - "All 200 unit tests pass, clippy clean, E2E tests pass"
-        - "Removed ~100 lines of complex type definitions (HighlightItem, HighlightSource, QuerySource)"
-        - "Breaking change executed safely pre-release"
-        - "Combined PBI-062 and PBI-063 efficiently (single Sprint for related changes)"
-        - "REFACTOR phase properly separated dead code removal into 2 distinct commits"
-      what_to_improve:
-        - "Initial subtask breakdown was too granular for coupled API changes"
-        - "Consider 'coupling boundary analysis' when breaking down config-related PBIs"
-      insight: |
-        TDD Granularity Lesson: When changing coupled APIs (configuration structs used
-        throughout codebase), the "unit of work" for TDD must match the coupling boundary,
-        not the conceptual change boundary. Micro-commits per field change would leave
-        the codebase in broken states between commits.
-
-        The practical adaptation: consolidate multiple subtasks into a single GREEN phase
-        when API coupling requires atomic changes. The REFACTOR phase correctly separated
-        dead code removal (HighlightItem, HighlightSource, QuerySource) into distinct
-        commits since those were independent structural changes.
-
-        Combining related PBIs (062 + 063) into a single Sprint was efficient - both
-        touched the same struct fields and avoided double migration churn. Pre-release
-        is the ideal time for breaking changes.
-      improvements:
-        - action: "Add coupling boundary consideration to PBI breakdown process"
-          timing: immediate
-          status: completed
-          outcome: "Documented in retrospective insight for future Sprint Planning reference"
+    outcome: "Simplified query configuration API from HighlightItem/HighlightSource to Vec<String> paths, renamed highlight to highlights"
+    insight: "When changing coupled APIs, the TDD unit of work must match the coupling boundary, not the conceptual change boundary"
 
   - sprint: 44
     pbi: PBI-060
-    outcome: "Split test_malformed_offset_directives into 5 focused tests with descriptive names for improved test clarity"
-    retrospective:
-      what_went_well:
-        - "Clean single-commit refactoring (c2dca50)"
-        - "All 203 unit tests pass (4 net new tests from the split)"
-        - "Each test now has descriptive name indicating the scenario"
-        - "Pure test refactoring with zero production code changes"
-      what_to_improve:
-        - "None - straightforward tidying task completed efficiently"
-      insight: |
-        Splitting monolithic tests into focused tests with descriptive names improves both
-        test clarity and failure diagnosis. When a test fails, the function name immediately
-        indicates which scenario failed. This is the LAST PBI in the tidying backlog,
-        completing the Kent Beck "Tidy First" initiative that ran from Sprint 22 through
-        Sprint 44 (23 sprints of systematic code quality improvements).
-
-        TIDYING INITIATIVE COMPLETE: The codebase is now in a clean, maintainable state with:
-        - Consistent naming conventions
-        - No dead code
-        - Proper logging levels
-        - Standardized lock handling
-        - Well-organized test suites
-        - Clean module structure
+    outcome: "Split test_malformed_offset_directives into 5 focused tests with descriptive names"
+    insight: "TIDYING INITIATIVE COMPLETE (Sprint 22-44): Codebase now clean with consistent naming, no dead code, proper logging"
 
   - sprint: 43
     pbi: PBI-059
     outcome: "Applied consistent naming convention in injection.rs: extract_* for extraction, collect_* for collection"
-    retrospective:
-      what_went_well:
-        - "Clean single-commit refactoring (5489919)"
-        - "All 199 unit tests pass, clippy clean, formatting clean"
-        - "Naming convention now consistent across all 7 functions"
-        - "Pure structural change with zero behavioral impact"
-      what_to_improve:
-        - "Consider documenting naming conventions in module-level docs"
-      insight: |
-        Naming consistency refactors are low-risk tidying activities that improve code
-        readability. The extract_*/collect_* naming convention clearly communicates
-        function behavior: extract returns Option<T> for single items, collect returns
-        Vec<T> for multiple items. Test helpers can retain different naming (find_*)
-        since they serve a different purpose and are not part of the module's API.
 
   - sprint: 42
     pbi: PBI-053
-    outcome: "Consolidated path resolution in query_loader.rs with PARSER_EXTENSIONS array (22 lines to 11 lines)"
-    retrospective:
-      what_went_well:
-        - "All 4 subtasks completed in single cohesive refactoring commit"
-        - "Code reduction from 3 separate if-blocks (22 lines) to single loop (11 lines)"
-        - "All Definition of Done checks passed (199 unit tests)"
-        - "Consistent PathBuf with .clean() handling across all platforms"
-      what_to_improve:
-        - "Consider adding more platform-specific tests for Windows path handling"
-      insight: |
-        Loop-based consolidation is a classic DRY refactoring pattern. When multiple
-        code blocks differ only by a constant value (extension string), extracting
-        those values into an array and iterating is both safer and more maintainable.
-        The PARSER_EXTENSIONS constant also serves as documentation of supported platforms.
+    outcome: "Consolidated path resolution in query_loader.rs with PARSER_EXTENSIONS array"
 
   - sprint: 41
     pbi: PBI-052
-    outcome: "Removed dead code from position.rs and semantic.rs (compute_line_starts, _text field, DomainSemantic re-exports)"
-    retrospective:
-      what_went_well:
-        - "All 4 subtasks completed in single cohesive refactoring commit"
-        - "All acceptance criteria verified via grep commands"
-        - "All Definition of Done checks passed (199 unit tests)"
-        - "Pure structural change with zero behavioral impact"
-      what_to_improve:
-        - "Consider running dead code analysis periodically to catch unused code earlier"
-      insight: |
-        Dead code removal is a straightforward tidying activity that naturally completes
-        in a single commit. When code is demonstrably unused (no callers, no references),
-        removal is low-risk and improves codebase clarity. Verification via grep provides
-        high confidence that removed code was truly dead.
+    outcome: "Removed dead code from position.rs and semantic.rs"
 
   - sprint: 40
     pbi: PBI-050
-    outcome: "Changed query predicate log level from warn to info for better log hygiene and actionability"
-    retrospective:
-      what_went_well:
-        - "Clear rationale based on Dave Cheney's logging philosophy"
-        - "Simple, focused refactoring with single cohesive commit"
-        - "All Definition of Done checks passed (199 unit tests + 20 E2E tests)"
-        - "Documentation updated alongside code changes"
-      what_to_improve:
-        - "Initial PBI notes incorrectly stated warn! macros existed when actual code used eprintln!"
-      insight: |
-        Log level decisions should be based on actionability, not severity. Warnings imply
-        user action is needed, while info is for interesting but non-actionable events.
-        Query predicate issues are informational for query authors (who use nvim-treesitter),
-        not actionable for end users of treesitter-ls. This distinction keeps RUST_LOG=warn
-        output focused on truly actionable issues.
+    outcome: "Changed query predicate log level from warn to info"
 
   - sprint: 39
     pbi: PBI-051
-    outcome: "Fixed zero-config to work when init_options is completely omitted from Neovim LSP config"
-    retrospective:
-      what_went_well:
-        - "Identified the deeper issue beyond the initial typo analysis"
-        - "Single cohesive commit fixed all related issues (typo + initialization)"
-        - "All Definition of Done checks passed (199 unit tests + 20 E2E tests)"
-        - "Root cause analysis refined during implementation"
-      what_to_improve:
-        - "Initial PBI analysis was surface-level (typo) rather than systemic (initialization flow)"
-      insight: |
-        Bug analysis should examine the full execution flow, not just the immediate error location.
-        The PBI identified a typo ("parsers" vs "parser"), but testing revealed the deeper issue:
-        when no settings are loaded, apply_settings() was never called, leaving auto_install=false.
-        Derived Default traits don't always match business requirements - zero-config requires
-        auto_install=true, but bool's Default is false. The fix ensures settings are always
-        applied with proper business defaults via the From<TreeSitterSettings> conversion.
+    outcome: "Fixed zero-config when init_options is completely omitted"
 
   - sprint: 38
     pbi: PBI-049
-    outcome: "Fixed zero-config auto-install when parsers already exist by adding parser_file_exists check before installation"
-    retrospective:
-      what_went_well:
-        - "Root cause identified correctly - AlreadyExists error prevented reload"
-        - "Simple, targeted fix (Option C) avoided complex changes to InstallResult"
-        - "Discovered and fixed secondary bug with Lua empty table JSON serialization"
-        - "All Definition of Done checks passed"
-      what_to_improve:
-        - "Consider adding integration test for the specific scenario (parser exists + autoInstall enabled)"
-      insight: |
-        When fixing auto-install issues, check the full flow from installation attempt through
-        to language loading. The fix point was at the beginning (check before install) rather
-        than at the error handling (treating AlreadyExists as success), which was simpler and
-        less risky. Also discovered that vim.empty_dict() is needed for proper JSON object
-        serialization from Lua.
+    outcome: "Fixed zero-config auto-install when parsers already exist"
 
   - sprint: 37
     pbi: PBI-041
-    outcome: "Consolidated QueryLoader API to single resolve_query entry point, renamed from resolve_query_with_inheritance"
-    retrospective:
-      what_went_well:
-        - "All acceptance criteria passed on first verification"
-        - "All Definition of Done checks passed"
-        - "Clean, focused single-commit refactoring (a9fb827)"
-      what_to_improve:
-        - "Start Sprint Planning earlier when work is identified"
-      insight: |
-        Consolidation-type PBIs (API simplification, cleanup) naturally complete in single
-        well-scoped refactoring commits. This is appropriate for pure structural changes
-        with no behavioral changes - not a TDD violation but recognition of a distinct pattern.
+    outcome: "Consolidated QueryLoader API to single resolve_query entry point"
+
   - sprint: 36
     pbi: PBI-044
-    outcome: "Replaced hardcoded CONFIG_TEMPLATE with type-safe default_settings() serialization (90+ mappings)"
+    outcome: "Replaced hardcoded CONFIG_TEMPLATE with type-safe default_settings() serialization"
+
   - sprint: 35
     pbi: PBI-043
-    outcome: "Changed config init to output to stdout by default, added --output flag for file creation"
+    outcome: "Changed config init to output to stdout by default"
+
   - sprint: 34
     pbi: PBI-042
-    outcome: "Simplified CONFIG_TEMPLATE to minimal active TOML (doc link comment + active settings)"
+    outcome: "Simplified CONFIG_TEMPLATE to minimal active TOML"
+
   - sprint: 33
     pbi: PBI-040
-    outcome: "Consolidated offset calculation API by removing redundant function and renaming to single calculate_effective_range"
+    outcome: "Consolidated offset calculation API"
+
   - sprint: 32
     pbi: PBI-039
-    outcome: "Removed test-only wrapper functions, migrated 18 test call sites to CodeActionOptions builder"
+    outcome: "Removed test-only wrapper functions"
+
   - sprint: 31
     pbi: PBI-033
-    outcome: "Consolidated code action functions to single entry point with CodeActionOptions builder pattern"
+    outcome: "Consolidated code action functions with CodeActionOptions builder"
+
   - sprint: 30
     pbi: PBI-032
-    outcome: "Split lsp_impl.rs from 2327 to 1299 lines by extracting auto_install module"
+    outcome: "Split lsp_impl.rs by extracting auto_install module"
+
   - sprint: 29
     pbi: PBI-038
-    outcome: "Documented logging targets (lock_recovery, crash_recovery, query) in README"
+    outcome: "Documented logging targets in README"
+
   - sprint: 28
     pbi: PBI-036
-    outcome: "Consolidated recover_poison() with context parameter, removed context-less variant"
+    outcome: "Consolidated recover_poison() with context parameter"
+
   - sprint: 27
     pbi: PBI-037
-    outcome: "Changed crash detection logging from warn to error level"
+    outcome: "Changed crash detection logging to error level"
+
   - sprint: 26
     pbi: PBI-035
     outcome: "Standardized log targets across all log::warn! calls"
+
   - sprint: 25
     pbi: PBI-034
-    outcome: "Initialized logging backend with env_logger, enabling RUST_LOG configuration"
+    outcome: "Initialized logging backend with env_logger"
+
   - sprint: 24
     pbi: PBI-031
-    outcome: "Added phase markers in handle_semantic_tokens_full for better readability"
+    outcome: "Added phase markers in handle_semantic_tokens_full"
+
   - sprint: 23
     pbi: PBI-030
-    outcome: "Standardized lock handling with LockResultExt trait, reduced duplication"
+    outcome: "Standardized lock handling with LockResultExt trait"
+
   - sprint: 22
     pbi: PBI-029
-    outcome: "Removed dead code: deprecated functions, placeholder tests, stale annotations"
+    outcome: "Removed dead code: deprecated functions, placeholder tests"
+
   - sprint: 21
     pbi: PBI-028
-    outcome: "Fixed default_search_paths() to return base directory, enabling zero-config mode"
+    outcome: "Fixed default_search_paths() to return base directory"
+
   - sprint: 20
     pbi: PBI-027
-    outcome: "Fixed markdown selection range test expectation to match AST structure"
+    outcome: "Fixed markdown selection range test expectation"
+
   - sprint: 19
     pbi: PBI-024
-    outcome: "Added language uninstall command with confirmation prompt and --all flag"
+    outcome: "Added language uninstall command"
+
   - sprint: 18
     pbi: PBI-023
-    outcome: "Added language status command to show installed languages and missing components"
+    outcome: "Added language status command"
+
   - sprint: 17
     pbi: PBI-022
-    outcome: "Added config init command to generate treesitter-ls.toml template"
+    outcome: "Added config init command"
+
   - sprint: 16
     pbi: PBI-021
-    outcome: "Added Prerequisites section to docs/README.md with dependency requirements"
+    outcome: "Added Prerequisites section to docs/README.md"
+
   - sprint: 15
     pbi: PBI-026
-    outcome: "CLI migrated to hierarchical structure: treesitter-ls language {install,list}"
+    outcome: "CLI migrated to hierarchical structure"
+
   - sprint: 14
     pbi: PBI-025
-    outcome: "ADR documentation with template and ADR-0001 (hierarchical CLI subcommands)"
+    outcome: "ADR documentation with template"
+
   - sprint: 13
     pbi: PBI-020
-    outcome: "Query inheritance support via parse_inherits_directive() and resolve_query_with_inheritance()"
+    outcome: "Query inheritance support"
+
   - sprint: 12
     pbi: PBI-016
-    outcome: "Parser crash resilience via state file detection and CLI recovery"
+    outcome: "Parser crash resilience"
+
   - sprint: 11
     pbi: PBI-010
-    outcome: "Cache parsers.lua locally with 1-hour TTL and --no-cache flag"
+    outcome: "Cache parsers.lua locally with TTL"
+
   - sprint: 10
     pbi: PBI-015
-    outcome: "Fixed git checkout for tag revisions using FETCH_HEAD"
+    outcome: "Fixed git checkout for tag revisions"
+
   - sprint: 9
     pbi: [PBI-017, PBI-018, PBI-019]
-    outcome: "Zero-Config MVP complete - default searchPaths, autoInstall=true by default"
+    outcome: "Zero-Config MVP complete"
+
   - sprint: 8
     pbi: PBI-013
-    outcome: "Auto-install for injected languages on file open"
+    outcome: "Auto-install for injected languages"
+
   - sprint: 7
     pbi: PBI-008
-    outcome: "Auto-install infrastructure (silent background install)"
+    outcome: "Auto-install infrastructure"
+
   - sprint: 6
     pbi: PBI-009
-    outcome: "Combined install command (parser + queries)"
+    outcome: "Combined install command"
+
   - sprint: 5
     pbi: PBI-006
     outcome: "Parser compilation via tree-sitter CLI"
+
   - sprint: 4
     pbi: PBI-005
     outcome: "Query downloading from nvim-treesitter"
+
   - sprint: 3
     pbi: PBI-004
     outcome: "CLI infrastructure with clap"
+
   - sprint: 2
     pbi: PBI-002
-    outcome: "Unified semantic token handlers; fixed PBI-003"
+    outcome: "Unified semantic token handlers"
+
   - sprint: 1
     pbi: PBI-001
     outcome: "Semantic tokens for injected languages"
