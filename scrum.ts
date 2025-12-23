@@ -263,7 +263,7 @@ const scrum: ScrumDashboard = {
             "cargo test test_detection_chain_returns_none_when_all_fail",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-070",
@@ -334,6 +334,13 @@ const scrum: ScrumDashboard = {
   // Sprint 1-45 details: git log -- scrum.yaml
   completed: [
     {
+      number: 51,
+      pbi_id: "PBI-068",
+      goal: "Extension-based fallback detection in chain",
+      status: "done",
+      subtasks: [],
+    },
+    {
       number: 50,
       pbi_id: "PBI-067",
       goal: "Shebang detection + fallback chain integration",
@@ -344,13 +351,6 @@ const scrum: ScrumDashboard = {
       number: 49,
       pbi_id: "PBI-066",
       goal: "Enable parser availability checks for fallback chain",
-      status: "done",
-      subtasks: [],
-    },
-    {
-      number: 48,
-      pbi_id: "PBI-061",
-      goal: "Remove filetypes field - language detection via languageId",
       status: "done",
       subtasks: [],
     },
