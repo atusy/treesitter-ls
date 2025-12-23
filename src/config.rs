@@ -60,7 +60,6 @@ impl From<&LanguageConfig> for LanguageSettings {
 
         LanguageSettings::new(
             config.library.clone(),
-            vec![], // filetypes removed from LanguageConfig (PBI-061)
             highlights,
             locals,
             injections,

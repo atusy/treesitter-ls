@@ -45,7 +45,6 @@ pub struct TreeSitterSettings {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LanguageSettings {
     pub library: Option<String>,
-    pub filetypes: Vec<String>,
     pub highlights: Vec<String>,
     pub locals: Option<Vec<String>>,
     pub injections: Option<Vec<String>>,
@@ -54,14 +53,12 @@ pub struct LanguageSettings {
 impl LanguageSettings {
     pub fn new(
         library: Option<String>,
-        filetypes: Vec<String>,
         highlights: Vec<String>,
         locals: Option<Vec<String>>,
         injections: Option<Vec<String>>,
     ) -> Self {
         Self {
             library,
-            filetypes,
             highlights,
             locals,
             injections,
@@ -495,6 +492,22 @@ mod tests {
             "LanguageConfig should not have filetypes field, but found in JSON: {}",
             json
         );
+    }
+
+    #[test]
+    fn should_not_have_filetypes_field_in_language_settings() {
+        // PBI-061 S48.3: filetypes field should be removed from LanguageSettings
+        // Language detection relies on languageId from DidOpen, not config filetypes
+        let settings = LanguageSettings::new(
+            Some("/path/to/parser.so".to_string()),
+            // No filetypes parameter - constructor should only take 4 args
+            vec!["/path/to/highlights.scm".to_string()],
+            None,
+            None,
+        );
+
+        assert_eq!(settings.library, Some("/path/to/parser.so".to_string()));
+        assert_eq!(settings.highlights, vec!["/path/to/highlights.scm"]);
     }
 
     #[test]
