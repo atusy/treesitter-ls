@@ -51,6 +51,7 @@ impl LanguageCoordinator {
         self.load_settings_from_config(&config_settings)
     }
 
+    #[allow(deprecated)] // PBI-061: build_from_settings will be removed in a future subtask
     fn load_settings_from_config(&self, settings: &TreeSitterSettings) -> LanguageLoadSummary {
         self.config_store.update_from_settings(settings);
         self.filetype_resolver.build_from_settings(settings);

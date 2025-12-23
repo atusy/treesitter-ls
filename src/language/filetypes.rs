@@ -16,37 +16,19 @@ impl FiletypeResolver {
     }
 
     /// Build filetype map from TreeSitter settings
-    pub fn build_from_settings(&self, settings: &TreeSitterSettings) {
-        let mut map = HashMap::new();
-        for (language, config) in &settings.languages {
-            for ext in &config.filetypes {
-                map.insert(ext.clone(), language.clone());
-            }
-        }
-        match self.filetype_map.write() {
-            Ok(mut guard) => *guard = map,
-            Err(poisoned) => {
-                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::build_from_settings");
-                *poisoned.into_inner() = map;
-            }
-        }
+    /// DEPRECATED (PBI-061): LanguageConfig no longer has filetypes field.
+    /// This method is now a no-op and will be removed.
+    #[deprecated(note = "filetypes removed from config in PBI-061")]
+    pub fn build_from_settings(&self, _settings: &TreeSitterSettings) {
+        // No-op: filetypes field removed from LanguageConfig
     }
 
     /// Build filetype map from language configurations
-    pub fn build_from_configs(&self, configs: &HashMap<String, LanguageConfig>) {
-        let mut map = HashMap::new();
-        for (language, config) in configs {
-            for ext in &config.filetypes {
-                map.insert(ext.clone(), language.clone());
-            }
-        }
-        match self.filetype_map.write() {
-            Ok(mut guard) => *guard = map,
-            Err(poisoned) => {
-                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::build_from_configs");
-                *poisoned.into_inner() = map;
-            }
-        }
+    /// DEPRECATED (PBI-061): LanguageConfig no longer has filetypes field.
+    /// This method is now a no-op and will be removed.
+    #[deprecated(note = "filetypes removed from config in PBI-061")]
+    pub fn build_from_configs(&self, _configs: &HashMap<String, LanguageConfig>) {
+        // No-op: filetypes field removed from LanguageConfig
     }
 
     /// Set the filetype map directly
@@ -205,7 +187,9 @@ mod tests {
     }
 
     #[test]
-    fn test_filetype_resolver_from_settings() {
+    #[allow(deprecated)]
+    fn test_filetype_resolver_from_settings_is_noop() {
+        // PBI-061: build_from_settings is now a no-op since filetypes removed from config
         let resolver = FiletypeResolver::new();
 
         let settings = TreeSitterSettings {
@@ -215,17 +199,6 @@ mod tests {
                     "rust".to_string(),
                     LanguageConfig {
                         library: None,
-                        filetypes: vec!["rs".to_string(), "rust".to_string()],
-                        highlights: None,
-                        locals: None,
-                        injections: None,
-                    },
-                );
-                langs.insert(
-                    "python".to_string(),
-                    LanguageConfig {
-                        library: None,
-                        filetypes: vec!["py".to_string(), "pyi".to_string()],
                         highlights: None,
                         locals: None,
                         injections: None,
@@ -240,22 +213,8 @@ mod tests {
 
         resolver.build_from_settings(&settings);
 
-        assert_eq!(
-            resolver.get_language_for_extension("rs"),
-            Some("rust".to_string())
-        );
-        assert_eq!(
-            resolver.get_language_for_extension("rust"),
-            Some("rust".to_string())
-        );
-        assert_eq!(
-            resolver.get_language_for_extension("py"),
-            Some("python".to_string())
-        );
-        assert_eq!(
-            resolver.get_language_for_extension("pyi"),
-            Some("python".to_string())
-        );
+        // Method is now a no-op, so no mappings are added
+        assert_eq!(resolver.get_language_for_extension("rs"), None);
     }
 
     #[test]

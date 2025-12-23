@@ -18,8 +18,6 @@ pub type CaptureMappings = HashMap<String, QueryTypeMappings>;
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct LanguageConfig {
     pub library: Option<String>,
-    #[serde(default)]
-    pub filetypes: Vec<String>,
     /// Query file paths for syntax highlighting
     pub highlights: Option<Vec<String>>,
     /// Query file paths for locals/definitions
@@ -137,7 +135,7 @@ mod tests {
             settings.languages["rust"].library,
             Some("/path/to/rust.so".to_string())
         );
-        assert_eq!(settings.languages["rust"].filetypes, vec!["rs"]);
+        // filetypes field removed in PBI-061
 
         let highlights = settings.languages["rust"].highlights.as_ref().unwrap();
         assert_eq!(highlights.len(), 2);
@@ -261,7 +259,7 @@ mod tests {
         );
         assert!(settings.languages.contains_key("rust"));
         assert_eq!(settings.languages["rust"].library, None);
-        assert_eq!(settings.languages["rust"].filetypes, vec!["rs"]);
+        // filetypes field removed in PBI-061
     }
 
     #[test]
@@ -464,14 +462,6 @@ mod tests {
                 lang.to_string(),
                 LanguageConfig {
                     library: Some(format!("/usr/lib/libtree-sitter-{}.so", lang)),
-                    filetypes: match lang {
-                        "rust" => vec!["rs".to_string()],
-                        "python" => vec!["py".to_string(), "pyi".to_string()],
-                        "javascript" => vec!["js".to_string(), "jsx".to_string()],
-                        "typescript" => vec!["ts".to_string(), "tsx".to_string()],
-                        "go" => vec!["go".to_string()],
-                        _ => vec![],
-                    },
                     highlights: Some(vec![format!("/etc/treesitter/{}/highlights.scm", lang)]),
                     locals: None,
                     injections: None,
@@ -485,6 +475,26 @@ mod tests {
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: TreeSitterSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.languages.len(), config.languages.len());
+    }
+
+    #[test]
+    fn should_not_have_filetypes_field_in_language_config() {
+        // PBI-061: filetypes field should be removed from LanguageConfig
+        // Language detection now relies entirely on languageId from DidOpen
+        let config = LanguageConfig {
+            library: Some("/path/to/parser.so".to_string()),
+            highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
+            locals: None,
+            injections: None,
+        };
+
+        // Serialize and verify no filetypes in output
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(
+            !json.contains("filetypes"),
+            "LanguageConfig should not have filetypes field, but found in JSON: {}",
+            json
+        );
     }
 
     #[test]

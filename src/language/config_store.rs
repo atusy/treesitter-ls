@@ -154,7 +154,6 @@ mod tests {
             "rust".to_string(),
             LanguageConfig {
                 library: Some("/path/to/rust.so".to_string()),
-                filetypes: vec!["rs".to_string()],
                 highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
                 locals: None,
                 injections: None,
@@ -208,7 +207,6 @@ mod tests {
                     "python".to_string(),
                     LanguageConfig {
                         library: None,
-                        filetypes: vec!["py".to_string()],
                         highlights: None,
                         locals: None,
                         injections: None,
@@ -239,7 +237,6 @@ mod tests {
             "go".to_string(),
             LanguageConfig {
                 library: None,
-                filetypes: vec!["go".to_string()],
                 highlights: None,
                 locals: None,
                 injections: None,

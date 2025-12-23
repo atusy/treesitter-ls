@@ -118,7 +118,6 @@ fn test_config_store_recovers_from_poisoned_lock() {
         "rust".to_string(),
         LanguageConfig {
             library: Some("/path/to/rust.so".to_string()),
-            filetypes: vec!["rs".to_string()],
             highlights: None,
             locals: None,
             injections: None,
