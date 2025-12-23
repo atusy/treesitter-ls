@@ -320,7 +320,70 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 52,
+    pbi_id: "PBI-070",
+    goal: "Alias normalization for injected language regions",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "test_normalize_alias_py",
+        implementation: "normalize_alias function maps py -> python",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "test_normalize_alias_js",
+        implementation: "normalize_alias function maps js -> javascript",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "test_normalize_alias_sh",
+        implementation: "normalize_alias function maps sh -> bash",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "test_normalize_alias_passthrough",
+        implementation: "Non-alias identifiers pass through unchanged",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "test_injection_direct_identifier_first",
+        implementation: "Injection tries direct identifier before alias normalization",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "test_injection_uses_alias_normalization",
+        implementation: "Injection uses alias normalization when direct lookup fails",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "test_injection_unknown_alias_returns_none",
+        implementation: "Unknown aliases with no parser return None gracefully",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
