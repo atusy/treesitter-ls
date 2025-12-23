@@ -360,58 +360,11 @@ const scrum: ScrumDashboard = {
             "cargo test --test test_auto_install_integration test_progress_end_sent",
         },
       ],
-      status: "ready",
+      status: "done",
     },
   ],
 
-  sprint: {
-    number: 53,
-    pbi_id: "PBI-071",
-    goal: "Enable users to see real-time progress when parsers are auto-installed",
-    status: "in_progress",
-    subtasks: [
-      {
-        test: "test_progress_token_format",
-        implementation: "Create progress_token(language) -> NumberOrString helper",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-      {
-        test: "test_create_progress_begin",
-        implementation: "Create create_progress_begin(language) -> ProgressParams helper",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-      {
-        test: "test_create_progress_end",
-        implementation: "Create create_progress_end(language, success, message) -> ProgressParams helper",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-      {
-        test: "test_progress_begin_sent",
-        implementation: "Send Begin notification in maybe_auto_install_language after try_start_install",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-      {
-        test: "test_progress_end_sent",
-        implementation: "Send End notification in maybe_auto_install_language before finish_install",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -425,6 +378,13 @@ const scrum: ScrumDashboard = {
   // Sprint 1-45 details: git log -- scrum.yaml
   completed: [
     {
+      number: 53,
+      pbi_id: "PBI-071",
+      goal: "Enable users to see real-time progress when parsers are auto-installed",
+      status: "done",
+      subtasks: [],
+    },
+    {
       number: 52,
       pbi_id: "PBI-070",
       goal: "Alias normalization for injected language regions",
@@ -435,13 +395,6 @@ const scrum: ScrumDashboard = {
       number: 51,
       pbi_id: "PBI-068",
       goal: "Extension-based fallback detection in chain",
-      status: "done",
-      subtasks: [],
-    },
-    {
-      number: 50,
-      pbi_id: "PBI-067",
-      goal: "Shebang detection + fallback chain integration",
       status: "done",
       subtasks: [],
     },
