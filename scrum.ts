@@ -216,7 +216,7 @@ const scrum: ScrumDashboard = {
           verification: "make test_nvim FILE=tests/test_lsp_shebang.lua",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-068",
@@ -320,67 +320,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 50,
-    pbi_id: "PBI-067",
-    goal: "Enable shebang-based language detection for extensionless scripts",
-    status: "in_progress",
-    subtasks: [
-      // Detection logic subtasks (unit tests in src/language/shebang.rs)
-      {
-        test: "detect_from_shebang returns 'python' for '#!/usr/bin/env python'",
-        implementation: "Create shebang module with detect_from_shebang function",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["First subtask - creates the shebang.rs module"],
-      },
-      {
-        test: "detect_from_shebang returns 'bash' for '#!/bin/bash'",
-        implementation: "Handle direct interpreter paths in shebang detection",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Tests direct path form without /usr/bin/env"],
-      },
-      {
-        test: "detect_from_shebang returns 'javascript' for '#!/usr/bin/env node'",
-        implementation: "Add interpreter-to-language mapping (node -> javascript)",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Some interpreters need mapping to parser names"],
-      },
-      {
-        test: "detect_from_shebang returns None for files without shebang",
-        implementation: "Handle edge cases: empty file, no shebang prefix",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Verify graceful degradation"],
-      },
-      // Integration subtasks (tests in lsp_impl.rs or integration tests)
-      {
-        test: "Shebang detection runs when languageId is 'plaintext' and has no parser",
-        implementation: "Integrate detect_from_shebang into parse_document flow",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: [
-          "Modify parse_document to use fallback chain",
-          "Use has_parser_available from PBI-066",
-        ],
-      },
-      {
-        test: "Shebang detection is skipped when languageId parser is available",
-        implementation: "Check parser availability before attempting shebang detection",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Lazy I/O: don't read file content if parser already available"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -394,6 +334,13 @@ const scrum: ScrumDashboard = {
   // Sprint 1-45 details: git log -- scrum.yaml
   completed: [
     {
+      number: 50,
+      pbi_id: "PBI-067",
+      goal: "Shebang detection + fallback chain integration",
+      status: "done",
+      subtasks: [],
+    },
+    {
       number: 49,
       pbi_id: "PBI-066",
       goal: "Enable parser availability checks for fallback chain",
@@ -404,13 +351,6 @@ const scrum: ScrumDashboard = {
       number: 48,
       pbi_id: "PBI-061",
       goal: "Remove filetypes field - language detection via languageId",
-      status: "done",
-      subtasks: [],
-    },
-    {
-      number: 47,
-      pbi_id: "PBI-064",
-      goal: "Add injections field for custom injection query paths",
       status: "done",
       subtasks: [],
     },
