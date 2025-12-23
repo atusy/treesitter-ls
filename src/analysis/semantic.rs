@@ -246,14 +246,15 @@ fn collect_injection_tokens_recursive(
     };
 
     for injection in injections {
-        // Ensure the injected language is loaded
-        let load_result = coordinator.ensure_language_loaded(&injection.language);
-        if !load_result.success {
+        // ADR-0005: Resolve injection language with alias fallback
+        // Try direct identifier first, then normalize (py -> python, etc.)
+        let Some((resolved_lang, _)) = coordinator.resolve_injection_language(&injection.language)
+        else {
             continue;
-        }
+        };
 
-        // Get highlight query for injected language
-        let Some(inj_highlight_query) = coordinator.get_highlight_query(&injection.language) else {
+        // Get highlight query for resolved language
+        let Some(inj_highlight_query) = coordinator.get_highlight_query(&resolved_lang) else {
             continue;
         };
 
@@ -277,12 +278,12 @@ fn collect_injection_tokens_recursive(
         }
         let inj_content_text = &text[inj_start_byte..inj_end_byte];
 
-        // Parse the injected content
-        let Some(mut parser) = parser_pool.acquire(&injection.language) else {
+        // Parse the injected content using resolved language name
+        let Some(mut parser) = parser_pool.acquire(&resolved_lang) else {
             continue;
         };
         let Some(injected_tree) = parser.parse(inj_content_text, None) else {
-            parser_pool.release(injection.language.clone(), parser);
+            parser_pool.release(resolved_lang.clone(), parser);
             continue;
         };
 
@@ -295,7 +296,7 @@ fn collect_injection_tokens_recursive(
             inj_content_text,
             &injected_tree,
             &inj_highlight_query,
-            Some(&injection.language),
+            Some(&resolved_lang),
             capture_mappings,
             Some(coordinator),
             Some(parser_pool),
@@ -306,7 +307,7 @@ fn collect_injection_tokens_recursive(
             all_tokens,
         );
 
-        parser_pool.release(injection.language.clone(), parser);
+        parser_pool.release(resolved_lang.clone(), parser);
     }
 }
 

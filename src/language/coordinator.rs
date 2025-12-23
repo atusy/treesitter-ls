@@ -226,6 +226,35 @@ impl LanguageCoordinator {
         None
     }
 
+    /// ADR-0005: Resolve injection language with alias fallback
+    ///
+    /// For injection regions, try direct identifier first, then normalize.
+    /// Returns the resolved language name and load result.
+    ///
+    /// Priority order:
+    /// 1. Direct identifier (try to load as-is)
+    /// 2. Normalized alias (py -> python, js -> javascript, sh -> bash)
+    pub fn resolve_injection_language(
+        &self,
+        identifier: &str,
+    ) -> Option<(String, LanguageLoadResult)> {
+        // 1. Try direct identifier first
+        let direct_result = self.ensure_language_loaded(identifier);
+        if direct_result.success {
+            return Some((identifier.to_string(), direct_result));
+        }
+
+        // 2. Try normalized alias
+        if let Some(normalized) = super::alias::normalize_alias(identifier) {
+            let alias_result = self.ensure_language_loaded(&normalized);
+            if alias_result.success {
+                return Some((normalized, alias_result));
+            }
+        }
+
+        None
+    }
+
     /// Create a document parser pool
     pub fn create_document_parser_pool(&self) -> DocumentParserPool {
         let parser_factory = ParserFactory::new(self.language_registry.clone());
@@ -437,5 +466,69 @@ impl LanguageCoordinator {
     pub fn register_injection_query_for_test(&self, language_id: &str, query: tree_sitter::Query) {
         self.query_store
             .insert_injection_query(language_id.to_string(), Arc::new(query));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_injection_direct_identifier_first() {
+        let coordinator = LanguageCoordinator::new();
+        // Register "python" parser
+        coordinator.register_language_for_test("python", tree_sitter_rust::LANGUAGE.into());
+
+        // Direct identifier "python" should work
+        let result = coordinator.resolve_injection_language("python");
+        assert!(result.is_some());
+        let (resolved, load_result) = result.unwrap();
+        assert_eq!(resolved, "python");
+        assert!(load_result.success);
+    }
+
+    #[test]
+    fn test_injection_uses_alias_normalization() {
+        let coordinator = LanguageCoordinator::new();
+        // Register "python" parser (not "py")
+        coordinator.register_language_for_test("python", tree_sitter_rust::LANGUAGE.into());
+
+        // Alias "py" should resolve to "python"
+        let result = coordinator.resolve_injection_language("py");
+        assert!(result.is_some());
+        let (resolved, load_result) = result.unwrap();
+        assert_eq!(resolved, "python");
+        assert!(load_result.success);
+    }
+
+    #[test]
+    fn test_injection_unknown_alias_returns_none() {
+        let coordinator = LanguageCoordinator::new();
+        // No parsers registered
+
+        // Unknown alias with no parser should return None
+        let result = coordinator.resolve_injection_language("unknown_lang");
+        assert!(result.is_none());
+
+        // Known alias but no parser should also return None
+        let result = coordinator.resolve_injection_language("py");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_injection_prefers_direct_over_alias() {
+        let coordinator = LanguageCoordinator::new();
+        // Register both "js" and "javascript" as separate parsers
+        coordinator.register_language_for_test("js", tree_sitter_rust::LANGUAGE.into());
+        coordinator.register_language_for_test("javascript", tree_sitter_rust::LANGUAGE.into());
+
+        // "js" should resolve to "js" (direct), not "javascript" (alias)
+        let result = coordinator.resolve_injection_language("js");
+        assert!(result.is_some());
+        let (resolved, _) = result.unwrap();
+        assert_eq!(
+            resolved, "js",
+            "Direct identifier should be preferred over alias"
+        );
     }
 }
