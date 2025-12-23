@@ -35,10 +35,10 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint: "Sprint 48 ACCEPTED - PBI-061 (remove filetypes field)"
+  current_sprint: null
   backlog: "0 PBI ready - Backlog refinement needed"
   impediments: 0
-  next_recommended: null
+  next_recommended: "Backlog refinement session required"
 
 ---
 # ==============================================================================
@@ -67,77 +67,15 @@ product_goal:
 # Completed PBIs: PBI-001 through PBI-065
 # For details: git log -- scrum.yaml
 
-product_backlog:
+product_backlog: []
   # ============================================================================
-  # Configuration API Improvements (Breaking Changes - Pre-release)
+  # Backlog Empty - Refinement Session Required
   # ============================================================================
-
-  - id: PBI-061
-    story:
-      role: "developer configuring treesitter-ls"
-      capability: "rely on languageId from DidOpen for language detection"
-      benefit: "simpler configuration without potential filetype conflicts"
-    status: done
-    story_points: 3
-    dependencies: []
-    acceptance_criteria:
-      - criterion: "AC1: filetypes field removed from LanguageConfig struct"
-        verification: |
-          # Verify filetypes is not in LanguageConfig struct
-          cargo build 2>&1 | grep -v "filetypes" || true
-          grep -c "filetypes" src/config/settings.rs | grep -q "^0$" || \
-            (grep "filetypes" src/config/settings.rs | grep -qE "test|//" && echo "OK: only in tests/comments")
-      - criterion: "AC2: filetypes field removed from LanguageSettings internal type"
-        verification: |
-          # LanguageSettings should not have filetypes field
-          ! grep -A10 "pub struct LanguageSettings" src/config/settings.rs | grep "filetypes"
-      - criterion: "AC3: FiletypeResolver no longer builds from config filetypes"
-        verification: |
-          # build_from_settings and build_from_configs should be removed or updated
-          ! grep -q "build_from_settings\|build_from_configs" src/language/filetypes.rs || \
-            grep -A5 "build_from" src/language/filetypes.rs | grep -q "// deprecated"
-      - criterion: "AC4: Language detection still works via languageId from DidOpen"
-        verification: |
-          # lsp_impl.rs should use language_id from params
-          grep -q "language_id" src/lsp/lsp_impl.rs
-          grep -q "params.text_document.language_id" src/lsp/lsp_impl.rs
-      - criterion: "AC5: Documentation updated to remove filetypes field"
-        verification: |
-          ! grep -q '"filetypes"' docs/README.md
-      - criterion: "AC6: All tests pass with no warnings"
-        verification: "cargo test && cargo clippy -- -D warnings"
-    notes: |
-      ## Breaking Change (Pre-release)
-      Product is not yet released, breaking changes are acceptable.
-
-      ## Current Behavior (to preserve)
-      Language detection already works via this fallback chain in lsp_impl.rs:
-      1. File extension via FiletypeResolver.get_language_for_path()
-      2. DidOpen languageId (fallback when extension not in map)
-
-      The filetypes field in config was used to populate the FiletypeResolver map,
-      but this is redundant since:
-      - Most users rely on auto-install (no config at all)
-      - languageId from DidOpen already provides language info
-
-      ## Implementation Steps
-      1. Remove `filetypes: Vec<String>` from LanguageConfig struct
-      2. Remove `filetypes: Vec<String>` from LanguageSettings struct
-      3. Remove/update FiletypeResolver methods that read from config
-      4. Update any tests that use filetypes in config
-      5. Update docs/README.md to remove filetypes from examples
-
-      ## Files Affected
-      - src/config/settings.rs (remove filetypes from both structs)
-      - src/language/filetypes.rs (remove build_from_settings/configs or update)
-      - docs/README.md (update configuration examples)
-      - Tests in settings.rs and filetypes.rs
-
-  # ============================================================================
+  # Last completed: PBI-061 (remove filetypes field) - Sprint 48
+  # For historical PBI details: git log -- scrum.yaml
+  #
   # ADR-0003: Parser Compilation Fallback Strategy - SUPERSEDED
   # Decision: Keep tree-sitter-cli as sole compilation dependency
-  # Rationale: Matches nvim-treesitter approach, avoids header management complexity
-  # PBI-045, PBI-046, PBI-047, PBI-048 removed from backlog
   # ============================================================================
 
 ---
@@ -180,221 +118,30 @@ current_sprint: null
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  # Recent sprints with insights (keep latest 3 for learning)
   - sprint: 48
     pbi: PBI-061
-    story_points: 3
-    outcome: "Removed filetypes field from LanguageConfig/LanguageSettings, language detection now uses languageId from DidOpen"
-    commits: ["37042b4", "e129522", "d40065b", "2e09a5b", "6075bec"]
-    insight: "Removal with serde(default) is simpler than addition - serde ignores unknown fields, so only code using the field needs updating"
-    retrospective:
-      what_went_well:
-        - "Subtask merging followed coupling boundaries naturally (S48.1+S48.2, S48.4+S48.5)"
-        - "Deprecation-as-documentation pattern made removal cleaner"
-        - "API layer separation revealed different impact radii (LanguageConfig: 10+ sites, LanguageSettings: 1 site)"
-      what_to_improve:
-        - "Upfront coupling boundary analysis during refinement would predict natural subtask merges"
-      pattern_captured: |
-        Removal vs Addition Complexity Heuristic:
-        - Addition: Cascades to ALL constructor sites (high coupling radius)
-        - Removal with serde(default): Only affects code that USES the field (lower radius)
-        - Removal without serde(default): Requires config migration (higher complexity)
+    outcome: "Removed filetypes field - language detection via languageId"
+    insight: "Removal with serde(default) simpler than addition - only affects code using the field"
 
   - sprint: 47
     pbi: PBI-064
-    story_points: 2
-    outcome: "Added injections field to LanguageConfig/LanguageSettings for custom injection query paths"
-    commits: ["8ce3982", "f6e2c7f", "03f46bf", "56a26ea"]
-    insight: "Config API additions that follow existing patterns (highlights/locals) are straightforward when done consistently"
+    outcome: "Added injections field for custom injection query paths"
+    insight: "Config API additions following existing patterns are straightforward"
 
   - sprint: 46
     pbi: PBI-065
-    story_points: 3
-    outcome: "Updated dependencies including tree-sitter 0.25.6->0.26.3, tokio 1.45.1->1.48.0, 60+ transitive deps"
-    commits: ["d7893e0"]
-    insight: "Risk-based batching for dependency updates: batch low-risk via cargo update, evaluate high-risk individually"
+    outcome: "Updated dependencies: tree-sitter 0.26.3, tokio 1.48.0"
+    insight: "Risk-based batching: batch low-risk, evaluate high-risk individually"
 
-  - sprint: 45
-    pbi: [PBI-062, PBI-063]
-    story_points: 7
-    outcome: "Simplified query configuration API from HighlightItem/HighlightSource to Vec<String> paths, renamed highlight to highlights"
-    insight: "When changing coupled APIs, the TDD unit of work must match the coupling boundary, not the conceptual change boundary"
-
-  - sprint: 44
-    pbi: PBI-060
-    outcome: "Split test_malformed_offset_directives into 5 focused tests with descriptive names"
-    insight: "TIDYING INITIATIVE COMPLETE (Sprint 22-44): Codebase now clean with consistent naming, no dead code, proper logging"
-
-  - sprint: 43
-    pbi: PBI-059
-    outcome: "Applied consistent naming convention in injection.rs: extract_* for extraction, collect_* for collection"
-
-  - sprint: 42
-    pbi: PBI-053
-    outcome: "Consolidated path resolution in query_loader.rs with PARSER_EXTENSIONS array"
-
-  - sprint: 41
-    pbi: PBI-052
-    outcome: "Removed dead code from position.rs and semantic.rs"
-
-  - sprint: 40
-    pbi: PBI-050
-    outcome: "Changed query predicate log level from warn to info"
-
-  - sprint: 39
-    pbi: PBI-051
-    outcome: "Fixed zero-config when init_options is completely omitted"
-
-  - sprint: 38
-    pbi: PBI-049
-    outcome: "Fixed zero-config auto-install when parsers already exist"
-
-  - sprint: 37
-    pbi: PBI-041
-    outcome: "Consolidated QueryLoader API to single resolve_query entry point"
-
-  - sprint: 36
-    pbi: PBI-044
-    outcome: "Replaced hardcoded CONFIG_TEMPLATE with type-safe default_settings() serialization"
-
-  - sprint: 35
-    pbi: PBI-043
-    outcome: "Changed config init to output to stdout by default"
-
-  - sprint: 34
-    pbi: PBI-042
-    outcome: "Simplified CONFIG_TEMPLATE to minimal active TOML"
-
-  - sprint: 33
-    pbi: PBI-040
-    outcome: "Consolidated offset calculation API"
-
-  - sprint: 32
-    pbi: PBI-039
-    outcome: "Removed test-only wrapper functions"
-
-  - sprint: 31
-    pbi: PBI-033
-    outcome: "Consolidated code action functions with CodeActionOptions builder"
-
-  - sprint: 30
-    pbi: PBI-032
-    outcome: "Split lsp_impl.rs by extracting auto_install module"
-
-  - sprint: 29
-    pbi: PBI-038
-    outcome: "Documented logging targets in README"
-
-  - sprint: 28
-    pbi: PBI-036
-    outcome: "Consolidated recover_poison() with context parameter"
-
-  - sprint: 27
-    pbi: PBI-037
-    outcome: "Changed crash detection logging to error level"
-
-  - sprint: 26
-    pbi: PBI-035
-    outcome: "Standardized log targets across all log::warn! calls"
-
-  - sprint: 25
-    pbi: PBI-034
-    outcome: "Initialized logging backend with env_logger"
-
-  - sprint: 24
-    pbi: PBI-031
-    outcome: "Added phase markers in handle_semantic_tokens_full"
-
-  - sprint: 23
-    pbi: PBI-030
-    outcome: "Standardized lock handling with LockResultExt trait"
-
-  - sprint: 22
-    pbi: PBI-029
-    outcome: "Removed dead code: deprecated functions, placeholder tests"
-
-  - sprint: 21
-    pbi: PBI-028
-    outcome: "Fixed default_search_paths() to return base directory"
-
-  - sprint: 20
-    pbi: PBI-027
-    outcome: "Fixed markdown selection range test expectation"
-
-  - sprint: 19
-    pbi: PBI-024
-    outcome: "Added language uninstall command"
-
-  - sprint: 18
-    pbi: PBI-023
-    outcome: "Added language status command"
-
-  - sprint: 17
-    pbi: PBI-022
-    outcome: "Added config init command"
-
-  - sprint: 16
-    pbi: PBI-021
-    outcome: "Added Prerequisites section to docs/README.md"
-
-  - sprint: 15
-    pbi: PBI-026
-    outcome: "CLI migrated to hierarchical structure"
-
-  - sprint: 14
-    pbi: PBI-025
-    outcome: "ADR documentation with template"
-
-  - sprint: 13
-    pbi: PBI-020
-    outcome: "Query inheritance support"
-
-  - sprint: 12
-    pbi: PBI-016
-    outcome: "Parser crash resilience"
-
-  - sprint: 11
-    pbi: PBI-010
-    outcome: "Cache parsers.lua locally with TTL"
-
-  - sprint: 10
-    pbi: PBI-015
-    outcome: "Fixed git checkout for tag revisions"
-
-  - sprint: 9
-    pbi: [PBI-017, PBI-018, PBI-019]
-    outcome: "Zero-Config MVP complete"
-
-  - sprint: 8
-    pbi: PBI-013
-    outcome: "Auto-install for injected languages"
-
-  - sprint: 7
-    pbi: PBI-008
-    outcome: "Auto-install infrastructure"
-
-  - sprint: 6
-    pbi: PBI-009
-    outcome: "Combined install command"
-
-  - sprint: 5
-    pbi: PBI-006
-    outcome: "Parser compilation via tree-sitter CLI"
-
-  - sprint: 4
-    pbi: PBI-005
-    outcome: "Query downloading from nvim-treesitter"
-
-  - sprint: 3
-    pbi: PBI-004
-    outcome: "CLI infrastructure with clap"
-
-  - sprint: 2
-    pbi: PBI-002
-    outcome: "Unified semantic token handlers"
-
-  - sprint: 1
-    pbi: PBI-001
-    outcome: "Semantic tokens for injected languages"
+  # Historical summary (Sprints 1-45)
+  # For detailed history: git log -- scrum.yaml
+  #
+  # Key milestones:
+  # - Sprint 44: TIDYING INITIATIVE COMPLETE (Sprint 22-44)
+  # - Sprint 45: Simplified query config API (highlights/locals)
+  # - Sprint 9: Zero-Config MVP complete
+  # - Sprint 1: Semantic tokens for injected languages
 
 ---
 # ==============================================================================
