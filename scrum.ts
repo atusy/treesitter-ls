@@ -318,9 +318,100 @@ const scrum: ScrumDashboard = {
       ],
       status: "done",
     },
+    {
+      id: "PBI-071",
+      story: {
+        role: "treesitter-ls user",
+        capability:
+          "see progress feedback in my editor when parsers are being auto-installed",
+        benefit:
+          "I know the server is actively working and not stuck when opening files that require parser installation",
+      },
+      // Implementation: Use lsp_types::notification::Progress with WorkDoneProgressBegin/End
+      // Insert in maybe_auto_install_language after try_start_install and before finish_install
+      acceptance_criteria: [
+        // Progress notification helper (unit testable)
+        {
+          criterion:
+            "create_progress_begin returns ProgressParams with Begin variant and language in title",
+          verification: "cargo test test_create_progress_begin",
+        },
+        {
+          criterion:
+            "create_progress_end returns ProgressParams with End variant and success/failure message",
+          verification: "cargo test test_create_progress_end",
+        },
+        {
+          criterion:
+            "Progress token is unique per language (format: treesitter-ls/install/{language})",
+          verification: "cargo test test_progress_token_format",
+        },
+        // Integration into auto-install flow
+        {
+          criterion:
+            "maybe_auto_install_language sends Begin notification after starting install",
+          verification:
+            "cargo test --test test_auto_install_integration test_progress_begin_sent",
+        },
+        {
+          criterion:
+            "maybe_auto_install_language sends End notification with result status",
+          verification:
+            "cargo test --test test_auto_install_integration test_progress_end_sent",
+        },
+      ],
+      status: "ready",
+    },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 53,
+    pbi_id: "PBI-071",
+    goal: "Enable users to see real-time progress when parsers are auto-installed",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "test_progress_token_format",
+        implementation: "Create progress_token(language) -> NumberOrString helper",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "test_create_progress_begin",
+        implementation: "Create create_progress_begin(language) -> ProgressParams helper",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "test_create_progress_end",
+        implementation: "Create create_progress_end(language, success, message) -> ProgressParams helper",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "test_progress_begin_sent",
+        implementation: "Send Begin notification in maybe_auto_install_language after try_start_install",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "test_progress_end_sent",
+        implementation: "Send End notification in maybe_auto_install_language before finish_install",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
