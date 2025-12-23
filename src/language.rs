@@ -1,3 +1,4 @@
+pub mod alias;
 pub mod config_store;
 pub mod coordinator;
 pub mod events;
