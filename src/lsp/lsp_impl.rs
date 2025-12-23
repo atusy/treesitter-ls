@@ -322,6 +322,9 @@ impl TreeSitterLs {
         // Mark installation as complete
         self.installing_languages.finish_install(&lang);
 
+        // Check if parser file exists after install attempt (even if queries failed)
+        let parser_exists = crate::install::parser_file_exists(&lang, &data_dir).is_some();
+
         if result.is_success() {
             // Send progress End notification (success)
             self.client
@@ -335,6 +338,31 @@ impl TreeSitterLs {
                 .await;
 
             // Add the installed paths to search paths and reload
+            self.reload_language_after_install(&lang, &data_dir, uri, text)
+                .await;
+        } else if parser_exists {
+            // Parser compiled successfully but queries failed (e.g., already exist)
+            // Still try to reload since the parser is available
+            self.client
+                .send_notification::<Progress>(create_progress_end(&lang, true))
+                .await;
+
+            let mut warnings = Vec::new();
+            if let Some(e) = &result.queries_error {
+                warnings.push(format!("queries: {}", e));
+            }
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    format!(
+                        "Language '{}' parser installed but with warnings: {}. Reloading...",
+                        lang,
+                        warnings.join("; ")
+                    ),
+                )
+                .await;
+
+            // Still reload - parser is usable even without fresh queries
             self.reload_language_after_install(&lang, &data_dir, uri, text)
                 .await;
         } else {
@@ -403,7 +431,7 @@ impl TreeSitterLs {
         // Apply the updated settings
         self.apply_settings(updated_settings).await;
 
-        // BUG FIX: Ensure the language is loaded BEFORE parsing
+        // Ensure the language is loaded BEFORE parsing
         // apply_settings only stores configuration but doesn't load the parser.
         // parse_document uses detect_language which checks has_parser_available.
         // Without ensure_language_loaded, has_parser_available returns false and
