@@ -188,6 +188,38 @@ impl LanguageCoordinator {
         self.language_registry.has_parser_available(language_name)
     }
 
+    /// ADR-0005: Detection fallback chain
+    /// Returns the first language for which a parser is available.
+    ///
+    /// Priority order:
+    /// 1. languageId (if parser available and not "plaintext")
+    /// 2. Shebang detection from content
+    /// 3. Extension-based detection from path
+    pub fn detect_language(
+        &self,
+        path: &str,
+        language_id: Option<&str>,
+        content: &str,
+    ) -> Option<String> {
+        // 1. Try languageId if parser is available (and not "plaintext")
+        if let Some(lang_id) = language_id
+            && lang_id != "plaintext"
+            && self.has_parser_available(lang_id)
+        {
+            return Some(lang_id.to_string());
+        }
+
+        // 2. Try shebang detection (lazy I/O: only runs if step 1 failed)
+        if let Some(shebang_lang) = super::shebang::detect_from_shebang(content)
+            && self.has_parser_available(&shebang_lang)
+        {
+            return Some(shebang_lang);
+        }
+
+        // 3. Fall back to extension-based detection
+        self.get_language_for_path(path)
+    }
+
     /// Create a document parser pool
     pub fn create_document_parser_pool(&self) -> DocumentParserPool {
         let parser_factory = ParserFactory::new(self.language_registry.clone());

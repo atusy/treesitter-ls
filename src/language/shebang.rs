@@ -17,9 +17,7 @@ pub fn detect_from_shebang(content: &str) -> Option<String> {
     // Extract the interpreter from shebang
     // Handles both "/usr/bin/env python" and "/bin/bash" styles
     let shebang = first_line.trim_start_matches("#!");
-    let interpreter = shebang
-        .split_whitespace()
-        .last()?; // Get the last part (actual interpreter)
+    let interpreter = shebang.split_whitespace().last()?; // Get the last part (actual interpreter)
 
     // Map interpreter to language name
     interpreter_to_language(interpreter)

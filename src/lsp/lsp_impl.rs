@@ -121,11 +121,10 @@ impl TreeSitterLs {
     ) {
         let mut events = Vec::new();
 
-        // Determine language from path or explicit language_id
+        // ADR-0005: Detection fallback chain via LanguageCoordinator
         let language_name = self
             .language
-            .get_language_for_path(uri.path())
-            .or_else(|| language_id.map(|s| s.to_string()));
+            .detect_language(uri.path(), language_id, &text);
 
         if let Some(language_name) = language_name {
             // Check if this parser has previously crashed

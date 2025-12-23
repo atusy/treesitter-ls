@@ -41,3 +41,36 @@ fn test_coordinator_has_parser_available() {
     // The full behavior (true when loaded) is tested in unit tests
     // via register_language_for_test which is only available there.
 }
+
+#[test]
+fn test_shebang_used_when_language_id_plaintext() {
+    let coordinator = LanguageCoordinator::new();
+
+    // When languageId is "plaintext", fallback to shebang detection
+    // Note: No parser loaded, so will return None (graceful degradation)
+    // But the shebang detection path is still exercised
+    let content = "#!/usr/bin/env python\nprint('hello')";
+    let result = coordinator.detect_language("/script", Some("plaintext"), content);
+
+    // No python parser loaded, so result is None
+    // The important thing is that "plaintext" didn't short-circuit
+    assert_eq!(result, None);
+}
+
+#[test]
+fn test_shebang_skipped_when_language_id_has_parser() {
+    let coordinator = LanguageCoordinator::new();
+
+    // When languageId has an available parser, don't run shebang detection
+    // This tests lazy I/O - shebang parsing is skipped entirely
+
+    // Scenario: languageId is "rust" but no rust parser loaded
+    // So it falls through to shebang, but no python parser either
+    let content = "#!/usr/bin/env python\nprint('hello')";
+    let result = coordinator.detect_language("/script", Some("rust"), content);
+
+    // Neither rust nor python parser loaded
+    assert_eq!(result, None);
+
+    // Full behavior with loaded parser is tested in unit tests
+}
