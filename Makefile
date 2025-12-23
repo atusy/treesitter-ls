@@ -67,7 +67,7 @@ test_nvim_file: deps build-debug
 # Download 'mini.nvim' to use its 'mini.test' testing module
 deps: deps/nvim deps/treesitter
 
-deps/nvim: deps/nvim/mini.nvim deps/nvim/nvim-treesitter deps/nvim/catppuccin
+deps/nvim: build-debug deps/nvim/mini.nvim deps/nvim/nvim-treesitter deps/nvim/catppuccin
 
 deps/nvim/mini.nvim:
 	git clone --filter=blob:none https://github.com/nvim-mini/mini.nvim $@
@@ -82,6 +82,10 @@ deps/treesitter: deps/nvim/nvim-treesitter
 	@mkdir -p $@
 	nvim -n --clean --headless --cmd "lua (function() vim.opt.rtp:append(vim.uv.cwd() .. '/deps/nvim/nvim-treesitter'); require('nvim-treesitter').setup({ install_dir = vim.uv.cwd() .. '/deps/treesitter' }); require('nvim-treesitter').install({ 'lua', 'luadoc', 'rust', 'markdown', 'markdown_inline', 'yaml', 'r' }):wait(300000); vim.cmd.q() end)()"
 
+deps/vim/prabirshrestha/vim-lsp:
+	git clone --filter=blob:none https://github.com/prabirshrestha/vim-lsp $@
+
+deps/vim: build-debug deps/vim/prabirshrestha/vim-lsp
 
 # Show help
 .PHONY: help
