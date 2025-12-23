@@ -46,11 +46,12 @@ This applies to both document-level language detection and injected language res
    - Magic comments: `# -*- mode: ruby -*-` → ruby
    - File patterns: `Makefile` → make, `Dockerfile` → dockerfile
    - Useful when client sends generic languageId (e.g., "plaintext")
+   - Candidate implementation: syntect's `find_syntax_for_file` (reads first line for shebang/magic)
 
 3. **File extension (lowest priority)**
-   - Simple `.rs` → rust, `.py` → python mapping
+   - Strips the dot: `.rs` → `rs`, `.py` → `py`
+   - No mapping — uses extension directly as parser name candidate
    - Fallback when above methods fail or return unavailable parsers
-   - Uses well-known extension conventions
 
 ### Availability Check
 
@@ -89,6 +90,7 @@ For example, a Markdown code fence with ` ```py ` provides the identifier `"py"`
 
 1. **Try the identifier directly**: Check if a parser named `"py"` is available
 2. **Normalize and retry**: If not, map aliases (`py` → `python`, `js` → `javascript`, `sh` → `bash`) and check again
+   - Candidate implementation: syntect's `find_syntax_by_extension` provides alias mappings
 3. **Skip if unavailable**: If no parser matches, the region is skipped
 
 This means:
