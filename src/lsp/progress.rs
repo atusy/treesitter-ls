@@ -5,6 +5,7 @@
 
 use tower_lsp::lsp_types::{
     NumberOrString, ProgressParams, ProgressParamsValue, WorkDoneProgress, WorkDoneProgressBegin,
+    WorkDoneProgressEnd,
 };
 
 /// Creates a progress token for a language installation.
@@ -26,6 +27,24 @@ pub fn create_progress_begin(language: &str) -> ProgressParams {
             cancellable: Some(false),
             message: None,
             percentage: None,
+        })),
+    }
+}
+
+/// Creates a ProgressParams for the End phase of parser installation.
+///
+/// The message will indicate success or failure.
+pub fn create_progress_end(language: &str, success: bool) -> ProgressParams {
+    let message = if success {
+        format!("{} parser installed successfully", language)
+    } else {
+        format!("Failed to install {} parser", language)
+    };
+
+    ProgressParams {
+        token: progress_token(language),
+        value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(WorkDoneProgressEnd {
+            message: Some(message),
         })),
     }
 }
@@ -70,6 +89,56 @@ mod tests {
                 assert_eq!(begin.cancellable, Some(false));
             }
             _ => panic!("Expected WorkDoneProgress::Begin"),
+        }
+    }
+
+    #[test]
+    fn test_create_progress_end() {
+        // Test success case
+        let params_success = create_progress_end("python", true);
+
+        match &params_success.token {
+            NumberOrString::String(s) => {
+                assert_eq!(s, "treesitter-ls/install/python");
+            }
+            NumberOrString::Number(_) => panic!("Expected String token"),
+        }
+
+        match params_success.value {
+            ProgressParamsValue::WorkDone(WorkDoneProgress::End(end)) => {
+                assert!(end.message.as_ref().unwrap().contains("python"));
+                assert!(
+                    end.message
+                        .as_ref()
+                        .unwrap()
+                        .to_lowercase()
+                        .contains("success")
+                        || end
+                            .message
+                            .as_ref()
+                            .unwrap()
+                            .to_lowercase()
+                            .contains("installed")
+                );
+            }
+            _ => panic!("Expected WorkDoneProgress::End"),
+        }
+
+        // Test failure case
+        let params_fail = create_progress_end("lua", false);
+
+        match params_fail.value {
+            ProgressParamsValue::WorkDone(WorkDoneProgress::End(end)) => {
+                assert!(end.message.as_ref().unwrap().contains("lua"));
+                assert!(
+                    end.message
+                        .as_ref()
+                        .unwrap()
+                        .to_lowercase()
+                        .contains("fail")
+                );
+            }
+            _ => panic!("Expected WorkDoneProgress::End"),
         }
     }
 }
