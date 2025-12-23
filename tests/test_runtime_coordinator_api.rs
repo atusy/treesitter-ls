@@ -29,3 +29,15 @@ fn coordinator_should_provide_capture_mappings() {
     let coordinator = LanguageCoordinator::new();
     let _mappings = coordinator.get_capture_mappings();
 }
+
+#[test]
+fn test_coordinator_has_parser_available() {
+    let coordinator = LanguageCoordinator::new();
+
+    // No languages loaded initially - should return false
+    assert!(!coordinator.has_parser_available("rust"));
+
+    // This test verifies the API is exposed on LanguageCoordinator.
+    // The full behavior (true when loaded) is tested in unit tests
+    // via register_language_for_test which is only available there.
+}

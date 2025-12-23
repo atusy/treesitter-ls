@@ -181,6 +181,13 @@ impl LanguageCoordinator {
         self.language_registry.contains(language_id)
     }
 
+    /// Check if a parser is available for a given language name.
+    /// Used by the detection fallback chain (ADR-0005) to determine whether
+    /// to accept a detection result or continue to the next method.
+    pub fn has_parser_available(&self, language_name: &str) -> bool {
+        self.language_registry.has_parser_available(language_name)
+    }
+
     /// Create a document parser pool
     pub fn create_document_parser_pool(&self) -> DocumentParserPool {
         let parser_factory = ParserFactory::new(self.language_registry.clone());
