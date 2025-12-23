@@ -185,7 +185,19 @@ completed_sprints:
     story_points: 3
     outcome: "Removed filetypes field from LanguageConfig/LanguageSettings, language detection now uses languageId from DidOpen"
     commits: ["37042b4", "e129522", "d40065b", "2e09a5b", "6075bec"]
-    insight: "Removing fields is simpler than adding - fewer integration points to update, serde ignores unknown fields"
+    insight: "Removal with serde(default) is simpler than addition - serde ignores unknown fields, so only code using the field needs updating"
+    retrospective:
+      what_went_well:
+        - "Subtask merging followed coupling boundaries naturally (S48.1+S48.2, S48.4+S48.5)"
+        - "Deprecation-as-documentation pattern made removal cleaner"
+        - "API layer separation revealed different impact radii (LanguageConfig: 10+ sites, LanguageSettings: 1 site)"
+      what_to_improve:
+        - "Upfront coupling boundary analysis during refinement would predict natural subtask merges"
+      pattern_captured: |
+        Removal vs Addition Complexity Heuristic:
+        - Addition: Cascades to ALL constructor sites (high coupling radius)
+        - Removal with serde(default): Only affects code that USES the field (lower radius)
+        - Removal without serde(default): Requires config migration (higher complexity)
 
   - sprint: 47
     pbi: PBI-064
