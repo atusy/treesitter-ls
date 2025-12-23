@@ -71,6 +71,26 @@ This means:
 - If client sends `languageId: "typescript"` but only JavaScript parser is loaded, fall through to check if extension `.ts` maps to an available parser
 - If shebang says `python3` but Python parser isn't installed, continue to extension check
 
+### Language Injection
+
+The fallback chain also applies to **injected languages** (e.g., code blocks in Markdown, JavaScript inside HTML). Injection queries extract a language identifier, but this identifier needs resolution:
+
+```
+Document (markdown) ──parse──▶ AST ──injection query──▶ "py" ──detect──▶ python
+                                                      ▶ "sh" ──detect──▶ bash
+```
+
+For example, a Markdown code fence with ` ```py ` provides the identifier `"py"`, which must be resolved to an available parser. This resolution follows a fallback pattern:
+
+1. **Try the identifier directly**: Check if a parser named `"py"` is available
+2. **Normalize and retry**: If not, map aliases (`py` → `python`, `js` → `javascript`, `sh` → `bash`) and check again
+3. **Skip if unavailable**: If no parser matches, the region is skipped
+
+This means:
+- Injected languages benefit from the same graceful degradation
+- A Markdown file can have some code blocks with semantic tokens and others without, depending on installed parsers
+- Alias normalization is needed for both document-level `languageId` and injection identifiers
+
 ## Consequences
 
 ### Positive
