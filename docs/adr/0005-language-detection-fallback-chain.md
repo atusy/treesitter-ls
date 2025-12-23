@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (Will supersede [ADR-0002](0002-filetype-detection-via-extension-mapping.md) when implemented)
+Accepted (Supersedes [ADR-0002](0002-filetype-detection-via-extension-mapping.md))
 
 ## Context
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (See [ADR-0005](0005-language-detection-fallback-chain.md) for proposed replacement)
+Superseded by [ADR-0005](0005-language-detection-fallback-chain.md)
 
 ## Context
 
