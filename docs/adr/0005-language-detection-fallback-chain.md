@@ -6,7 +6,7 @@ Proposed (Will supersede [ADR-0002](0002-filetype-detection-via-extension-mappin
 
 ## Context
 
-ADR-0002 established extension-based detection as the primary method with LSP languageId as fallback. However, this approach has limitations:
+ADR-0002 established extension-based document-level language detection as the primary method with LSP languageId as fallback. However, this approach has limitations:
 
 1. **LSP clients are authoritative**: Modern LSP clients (VS Code, Neovim, etc.) already perform sophisticated language detection and send accurate `languageId` values
 2. **Extension mapping is redundant**: Duplicating what clients already do creates maintenance burden and potential conflicts
