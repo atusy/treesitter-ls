@@ -35,7 +35,7 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint: "Sprint 48 COMPLETE - PBI-061 (remove filetypes field)"
+  current_sprint: "Sprint 48 ACCEPTED - PBI-061 (remove filetypes field)"
   backlog: "0 PBI ready - Backlog refinement needed"
   impediments: 0
   next_recommended: null
@@ -171,86 +171,7 @@ definition_of_done:
 # CURRENT SPRINT
 # ==============================================================================
 
-current_sprint:
-  sprint: 48
-  pbi: PBI-061
-  story_points: 3
-  goal:
-    statement: "Simplify configuration by removing redundant filetypes field"
-    success_criteria:
-      - "filetypes removed from LanguageConfig and LanguageSettings structs"
-      - "FiletypeResolver no longer depends on config-based filetypes"
-      - "Language detection continues working via languageId from DidOpen"
-      - "All tests pass with no warnings"
-    stakeholder_value: "Cleaner, simpler configuration API without confusing redundant options"
-    alignment: "Advances zero-config goal by removing unnecessary configuration complexity"
-
-  subtasks:
-    # Subtask 1: Remove filetypes from LanguageConfig (API struct)
-    - id: S48.1
-      test: "Verify LanguageConfig deserializes without filetypes field"
-      implementation: "Remove filetypes field from LanguageConfig struct"
-      type: behavioral
-      status: pending
-      commits: []
-      notes:
-        - "LanguageConfig is the external API (serde deserialization)"
-        - "Tests in settings.rs use filetypes - will need updates"
-
-    # Subtask 2: Update tests that use filetypes in LanguageConfig
-    - id: S48.2
-      test: "All existing tests pass after filetypes removal from LanguageConfig"
-      implementation: "Update test fixtures to remove filetypes from LanguageConfig usage"
-      type: structural
-      status: pending
-      commits: []
-      notes:
-        - "Tests: should_parse_valid_configuration, should_parse_searchpaths_configuration_basic, etc."
-        - "These tests assert on filetypes - need to remove those assertions"
-
-    # Subtask 3: Remove filetypes from LanguageSettings (domain struct)
-    - id: S48.3
-      test: "Verify LanguageSettings works without filetypes field"
-      implementation: "Remove filetypes field from LanguageSettings struct and new() constructor"
-      type: behavioral
-      status: pending
-      commits: []
-      notes:
-        - "LanguageSettings is the internal domain type"
-        - "Constructor signature changes: remove filetypes parameter"
-
-    # Subtask 4: Remove build_from_settings and build_from_configs from FiletypeResolver
-    - id: S48.4
-      test: "Verify FiletypeResolver still works without config-based build methods"
-      implementation: "Remove build_from_settings() and build_from_configs() methods"
-      type: behavioral
-      status: pending
-      commits: []
-      notes:
-        - "These methods read filetypes from config - no longer needed"
-        - "Need to verify no callers exist in lsp_impl.rs or elsewhere"
-
-    # Subtask 5: Update FiletypeResolver tests
-    - id: S48.5
-      test: "FiletypeResolver tests pass after removing config-based methods"
-      implementation: "Remove or update test_filetype_resolver_from_settings test"
-      type: structural
-      status: pending
-      commits: []
-      notes:
-        - "test_filetype_resolver_from_settings tests the removed method"
-        - "May need to remove this test entirely"
-
-    # Subtask 6: Final verification and cleanup
-    - id: S48.6
-      test: "All tests pass, clippy clean, no warnings"
-      implementation: "Run full test suite and clippy, fix any remaining issues"
-      type: structural
-      status: pending
-      commits: []
-      notes:
-        - "cargo test && cargo clippy -- -D warnings"
-        - "Verify AC6: All tests pass with no warnings"
+current_sprint: null
 
 ---
 # ==============================================================================
@@ -259,6 +180,13 @@ current_sprint:
 # For detailed subtasks and commits: git log -- scrum.yaml
 
 completed_sprints:
+  - sprint: 48
+    pbi: PBI-061
+    story_points: 3
+    outcome: "Removed filetypes field from LanguageConfig/LanguageSettings, language detection now uses languageId from DidOpen"
+    commits: ["37042b4", "e129522", "d40065b", "2e09a5b", "6075bec"]
+    insight: "Removing fields is simpler than adding - fewer integration points to update, serde ignores unknown fields"
+
   - sprint: 47
     pbi: PBI-064
     story_points: 2
