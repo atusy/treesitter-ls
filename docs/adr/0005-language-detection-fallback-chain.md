@@ -86,12 +86,14 @@ This means:
 - **Heuristic overhead**: Reading file content for shebang detection adds I/O
 - **Non-deterministic**: Same file might use different parsers on different systems (based on available parsers)
 - **Heuristic maintenance**: Shebang patterns need ongoing updates
+- **languageId naming variance**: Clients may send languageIds that differ from parser names (e.g., `shellscript` vs `bash`); normalization may be needed later
 
 ### Neutral
 
 - **Extension mapping still exists**: But as last resort, not primary method
 - **Parser availability matters**: Detection result depends on what's installed
-- **Auto-install interaction**: If autoInstall is enabled, missing parsers trigger installation, then retry detection
+- **Auto-install interaction**: Detection completes first (returning None if no parser found); auto-install runs asynchronously afterward, making the parser available for subsequent requests
+- **Caching**: Detection result is stored per-document; cache invalidates on content change or `languageId` change from client
 
 ## Migration from ADR-0002
 
