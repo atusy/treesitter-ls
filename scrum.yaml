@@ -35,7 +35,7 @@ rules:
 # ==============================================================================
 
 quick_status:
-  current_sprint: "Sprint 48 - PBI-061 (remove filetypes field)"
+  current_sprint: "Sprint 48 COMPLETE - PBI-061 (remove filetypes field)"
   backlog: "0 PBI ready - Backlog refinement needed"
   impediments: 0
   next_recommended: null
@@ -77,7 +77,7 @@ product_backlog:
       role: "developer configuring treesitter-ls"
       capability: "rely on languageId from DidOpen for language detection"
       benefit: "simpler configuration without potential filetype conflicts"
-    status: in_progress
+    status: done
     story_points: 3
     dependencies: []
     acceptance_criteria:
