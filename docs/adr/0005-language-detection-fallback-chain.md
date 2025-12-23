@@ -16,9 +16,14 @@ Additionally, PBI-061 removed the `filetypes` configuration field entirely, elim
 
 The key insight is: **detection should find an *available* Tree-sitter parser, not just identify a language name**. If the detected language has no parser loaded, detection should continue to the next method.
 
+This applies to both document-level language detection and injected language resolution (e.g., code blocks in Markdown).
+
 ## Decision
 
-**Implement a fallback chain that continues until an available Tree-sitter parser is found:**
+**Implement a fallback chain that continues until an available Tree-sitter parser is found.** This applies at two levels:
+
+1. **Document-level**: Detecting the primary language when a file is opened
+2. **Injection-level**: Resolving embedded languages within a parsed document
 
 ```
 1. LSP languageId  →  Check if parser available  →  If yes: use it
