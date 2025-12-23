@@ -36,10 +36,9 @@ rules:
 
 quick_status:
   current_sprint: "None - Ready for Sprint Planning"
-  backlog: "1 PBI ready (PBI-061), 1 PBI draft (PBI-066) - Configuration API improvements"
+  backlog: "1 PBI ready (PBI-061) - Configuration API improvements"
   impediments: 0
   next_recommended: "PBI-061 (remove filetypes)"
-  last_refinement: "PBI-061 retained; PBI-066 draft created for future consideration"
 
 ---
 # ==============================================================================
@@ -133,63 +132,6 @@ product_backlog:
       - src/language/filetypes.rs (remove build_from_settings/configs or update)
       - docs/README.md (update configuration examples)
       - Tests in settings.rs and filetypes.rs
-
-  # ============================================================================
-  # Draft PBIs (Require Product Owner Decision)
-  # ============================================================================
-
-  - id: PBI-066
-    story:
-      role: "developer configuring treesitter-ls"
-      capability: "use only searchPaths for all parser/query discovery"
-      benefit: "dramatically simpler configuration API with fewer concepts to learn"
-    status: draft
-    story_points: null  # Requires refinement
-    dependencies: [PBI-061]
-    refinement_notes: |
-      ## Product Owner Decision Required
-
-      This PBI proposes removing the `languages` field entirely from configuration,
-      relying solely on `searchPaths` for parser and query discovery.
-
-      ## Refinement Analysis (conducted by @scrum-event-backlog-refinement)
-
-      ### Current `languages` Field Provides:
-      1. `library` - explicit path to parser library
-      2. `highlights` - array of paths to highlight query files
-      3. `locals` - array of paths to locals query files
-      4. `injections` - array of paths to injection query files
-      5. `filetypes` - ALREADY PLANNED FOR REMOVAL in PBI-061
-
-      ### Use Cases That Would Break:
-      1. **Custom query file locations**: Users specifying `./queries/custom.scm`
-      2. **Multiple query files**: Combining `["/base.scm", "/custom.scm"]`
-      3. **Non-standard library paths**: Explicit parser paths outside searchPaths
-
-      ### Recommendation: DO NOT SUPERSEDE PBI-061
-
-      The `languages` field provides legitimate value for power users:
-      - Development/testing with custom parser paths
-      - Layered highlighting with multiple query files
-      - Project-specific query customizations
-
-      Zero-config users already don't need `languages` - it's purely opt-in.
-      Removing it would break power-user workflows without meaningful benefit.
-
-      ### Alternative Approaches (if PO wants to pursue):
-      A. Deprecate with warning, keep for backward compatibility
-      B. Document as "advanced/optional" feature in README
-      C. Keep as-is (current recommendation)
-
-      ### INVEST Analysis:
-      - Independent: NO - depends on PBI-061 completion first
-      - Negotiable: YES - scope is flexible
-      - Valuable: QUESTIONABLE - may harm power users more than help
-      - Estimable: NO - needs more investigation if pursued
-      - Small: NO - would be 8+ story points
-      - Testable: YES - can verify searchPaths-only workflow
-
-      ### Decision: Await PO input before moving to `refining` status
 
   # ============================================================================
   # ADR-0003: Parser Compilation Fallback Strategy - SUPERSEDED
