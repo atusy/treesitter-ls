@@ -58,12 +58,7 @@ impl From<&LanguageConfig> for LanguageSettings {
         let locals = config.locals.clone();
         let injections = config.injections.clone();
 
-        LanguageSettings::new(
-            config.library.clone(),
-            highlights,
-            locals,
-            injections,
-        )
+        LanguageSettings::new(config.library.clone(), highlights, locals, injections)
     }
 }
 
