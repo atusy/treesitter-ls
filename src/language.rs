@@ -1,6 +1,7 @@
 pub mod config_store;
 pub mod coordinator;
 pub mod events;
+pub mod extension;
 pub mod failed_parsers;
 pub mod filetypes;
 pub mod injection;
@@ -28,5 +29,6 @@ pub use registry::LanguageRegistry;
 // Re-export injection types for semantic tokens
 pub use injection::{InjectionRegionInfo, collect_all_injections};
 
-// Re-export shebang detection
+// Re-export detection functions
+pub use extension::detect_from_extension;
 pub use shebang::detect_from_shebang;

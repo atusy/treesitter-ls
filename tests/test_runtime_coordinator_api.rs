@@ -74,3 +74,42 @@ fn test_shebang_skipped_when_language_id_has_parser() {
 
     // Full behavior with loaded parser is tested in unit tests
 }
+
+#[test]
+fn test_extension_fallback_after_shebang() {
+    let coordinator = LanguageCoordinator::new();
+
+    // When shebang detection fails (no parser), extension fallback runs
+    // File has .rs extension but content has python shebang
+    let content = "#!/usr/bin/env python\nprint('hello')";
+    let result = coordinator.detect_language("/path/to/file.rs", None, content);
+
+    // No parsers loaded, so result is None
+    // But the chain tried: languageId (None) -> shebang (python, no parser) -> extension (rs, no parser)
+    assert_eq!(result, None);
+}
+
+#[test]
+fn test_full_detection_chain() {
+    let coordinator = LanguageCoordinator::new();
+
+    // Full chain test: languageId -> shebang -> extension
+    // All methods tried, none have parsers available
+
+    // languageId = "plaintext" (skipped), shebang = python (no parser), extension = rs (no parser)
+    let content = "#!/usr/bin/env python\nprint('hello')";
+    let result = coordinator.detect_language("/path/to/file.rs", Some("plaintext"), content);
+
+    assert_eq!(result, None);
+}
+
+#[test]
+fn test_detection_chain_returns_none_when_all_fail() {
+    let coordinator = LanguageCoordinator::new();
+
+    // No languageId, no shebang, no extension -> None
+    let result =
+        coordinator.detect_language("/Makefile", None, "all: build\n\nbuild:\n\techo hello");
+
+    assert_eq!(result, None);
+}

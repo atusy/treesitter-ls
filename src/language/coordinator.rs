@@ -216,8 +216,14 @@ impl LanguageCoordinator {
             return Some(shebang_lang);
         }
 
-        // 3. Fall back to extension-based detection
-        self.get_language_for_path(path)
+        // 3. Fall back to extension-based detection (ADR-0005: strip dot, use as parser name)
+        if let Some(ext_lang) = super::extension::detect_from_extension(path)
+            && self.has_parser_available(&ext_lang)
+        {
+            return Some(ext_lang);
+        }
+
+        None
     }
 
     /// Create a document parser pool
