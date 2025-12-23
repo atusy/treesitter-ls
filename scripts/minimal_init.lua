@@ -23,6 +23,20 @@ vim.api.nvim_create_autocmd("FileType", {
 	end,
 })
 
+local progress_messages = {}
+
+vim.api.nvim_create_autocmd("LspProgress", {
+	callback = function(ev)
+		local msg = ev.data.params.value.kind .. ": " .. ev.data.params.value.title
+		table.insert(progress_messages, msg)
+		vim.notify(msg)
+	end,
+})
+
+vim.api.nvim_create_user_command("LspProgress", function()
+	vim.print(progress_messages)
+end, {})
+
 _G.helper = {}
 
 ---@return boolean true if callback returns true before timeout, false otherwise
