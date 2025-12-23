@@ -1,4 +1,5 @@
 use tower_lsp::jsonrpc::Result;
+use tower_lsp::lsp_types::notification::Progress;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 use tree_sitter::InputEdit;
@@ -21,6 +22,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use super::auto_install::{InstallingLanguages, get_injected_languages};
+use super::progress::{create_progress_begin, create_progress_end};
 
 fn lsp_legend_types() -> Vec<SemanticTokenType> {
     LEGEND_TYPES
@@ -260,6 +262,11 @@ impl TreeSitterLs {
             return;
         }
 
+        // Send progress Begin notification
+        self.client
+            .send_notification::<Progress>(create_progress_begin(language))
+            .await;
+
         // Get data directory
         let data_dir = match crate::install::default_data_dir() {
             Some(dir) => dir,
@@ -269,6 +276,10 @@ impl TreeSitterLs {
                         MessageType::ERROR,
                         "Could not determine data directory for auto-install",
                     )
+                    .await;
+                // Send progress End notification (failure)
+                self.client
+                    .send_notification::<Progress>(create_progress_end(language, false))
                     .await;
                 self.installing_languages.finish_install(language);
                 return;
@@ -287,6 +298,10 @@ impl TreeSitterLs {
                 )
                 .await;
 
+            // Send progress End notification (success - already installed)
+            self.client
+                .send_notification::<Progress>(create_progress_end(language, true))
+                .await;
             self.installing_languages.finish_install(language);
             self.reload_language_after_install(language, &data_dir, uri, text)
                 .await;
@@ -308,6 +323,10 @@ impl TreeSitterLs {
         self.installing_languages.finish_install(&lang);
 
         if result.is_success() {
+            // Send progress End notification (success)
+            self.client
+                .send_notification::<Progress>(create_progress_end(&lang, true))
+                .await;
             self.client
                 .log_message(
                     MessageType::INFO,
@@ -319,6 +338,10 @@ impl TreeSitterLs {
             self.reload_language_after_install(&lang, &data_dir, uri, text)
                 .await;
         } else {
+            // Send progress End notification (failure)
+            self.client
+                .send_notification::<Progress>(create_progress_end(&lang, false))
+                .await;
             let mut errors = Vec::new();
             if let Some(e) = result.parser_error {
                 errors.push(format!("parser: {}", e));
