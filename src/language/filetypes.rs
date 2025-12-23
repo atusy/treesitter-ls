@@ -1,4 +1,3 @@
-use crate::config::{LanguageConfig, TreeSitterSettings};
 use log::warn;
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -15,21 +14,8 @@ impl FiletypeResolver {
         }
     }
 
-    /// Build filetype map from TreeSitter settings
-    /// DEPRECATED (PBI-061): LanguageConfig no longer has filetypes field.
-    /// This method is now a no-op and will be removed.
-    #[deprecated(note = "filetypes removed from config in PBI-061")]
-    pub fn build_from_settings(&self, _settings: &TreeSitterSettings) {
-        // No-op: filetypes field removed from LanguageConfig
-    }
-
-    /// Build filetype map from language configurations
-    /// DEPRECATED (PBI-061): LanguageConfig no longer has filetypes field.
-    /// This method is now a no-op and will be removed.
-    #[deprecated(note = "filetypes removed from config in PBI-061")]
-    pub fn build_from_configs(&self, _configs: &HashMap<String, LanguageConfig>) {
-        // No-op: filetypes field removed from LanguageConfig
-    }
+    // build_from_settings and build_from_configs removed in PBI-061
+    // Language detection now relies on languageId from DidOpen, not config filetypes
 
     /// Set the filetype map directly
     pub fn set_filetype_map(&self, map: HashMap<String, String>) {
@@ -186,36 +172,8 @@ mod tests {
         assert_eq!(resolver.get_language_for_extension("txt"), None);
     }
 
-    #[test]
-    #[allow(deprecated)]
-    fn test_filetype_resolver_from_settings_is_noop() {
-        // PBI-061: build_from_settings is now a no-op since filetypes removed from config
-        let resolver = FiletypeResolver::new();
-
-        let settings = TreeSitterSettings {
-            languages: {
-                let mut langs = HashMap::new();
-                langs.insert(
-                    "rust".to_string(),
-                    LanguageConfig {
-                        library: None,
-                        highlights: None,
-                        locals: None,
-                        injections: None,
-                    },
-                );
-                langs
-            },
-            search_paths: None,
-            capture_mappings: Default::default(),
-            auto_install: None,
-        };
-
-        resolver.build_from_settings(&settings);
-
-        // Method is now a no-op, so no mappings are added
-        assert_eq!(resolver.get_language_for_extension("rs"), None);
-    }
+    // test_filetype_resolver_from_settings removed in PBI-061 S48.4
+    // Method build_from_settings no longer exists
 
     #[test]
     fn test_filetype_resolver_document_path() {
