@@ -78,4 +78,12 @@ mod tests {
 
         assert!(registry.has_parser_available("rust"));
     }
+
+    #[test]
+    fn test_has_parser_available_when_not_loaded() {
+        let registry = LanguageRegistry::new();
+        // Don't register anything
+
+        assert!(!registry.has_parser_available("nonexistent"));
+    }
 }
