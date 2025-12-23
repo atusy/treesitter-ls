@@ -1,0 +1,104 @@
+# ADR-0005: Language Detection Fallback Chain
+
+## Status
+
+Proposed (Will supersede [ADR-0002](0002-filetype-detection-via-extension-mapping.md) when implemented)
+
+## Context
+
+ADR-0002 established extension-based detection as the primary method with LSP languageId as fallback. However, this approach has limitations:
+
+1. **LSP clients are authoritative**: Modern LSP clients (VS Code, Neovim, etc.) already perform sophisticated language detection and send accurate `languageId` values
+2. **Extension mapping is redundant**: Duplicating what clients already do creates maintenance burden and potential conflicts
+3. **Missing heuristic layer**: Files without extensions (e.g., `Dockerfile`, scripts with shebangs) aren't handled well
+
+Additionally, PBI-061 removed the `filetypes` configuration field entirely, eliminating the ability to configure extension mappings in the server. This forces a rethinking of the detection strategy.
+
+The key insight is: **detection should find an *available* Tree-sitter parser, not just identify a language name**. If the detected language has no parser loaded, detection should continue to the next method.
+
+## Decision
+
+**Implement a fallback chain that continues until an available Tree-sitter parser is found:**
+
+```
+1. LSP languageId  →  Check if parser available  →  If yes: use it
+                                                 →  If no: continue
+2. Heuristic       →  Check if parser available  →  If yes: use it
+                                                 →  If no: continue
+3. File extension  →  Check if parser available  →  If yes: use it
+                                                 →  If no: return None
+```
+
+### Priority Order Rationale
+
+1. **LSP languageId (highest priority)**
+   - Client has full context: file path, content, user preferences, workspace settings
+   - Already handles complex cases: `.tsx` vs `.ts`, polyglot files, user overrides
+   - Trust the client—it knows best
+
+2. **Heuristic analysis (middle priority)**
+   - Shebang detection: `#!/usr/bin/env python` → python
+   - Magic comments: `# -*- mode: ruby -*-` → ruby
+   - File patterns: `Makefile` → make, `Dockerfile` → dockerfile
+   - Useful when client sends generic languageId (e.g., "plaintext")
+
+3. **File extension (lowest priority)**
+   - Simple `.rs` → rust, `.py` → python mapping
+   - Fallback when above methods fail or return unavailable parsers
+   - Uses well-known extension conventions
+
+### Availability Check
+
+Each detection method returns a candidate language. Before accepting it:
+
+```rust
+fn try_detect_language(&self, uri: &Url, language_id: Option<&str>) -> Option<String> {
+    // Try each method in order
+    for candidate in [
+        language_id.map(String::from),
+        self.detect_from_heuristics(uri),
+        self.detect_from_extension(uri),
+    ].into_iter().flatten() {
+        if self.has_parser_available(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+```
+
+This means:
+- If client sends `languageId: "typescript"` but only JavaScript parser is loaded, fall through to check if extension `.ts` maps to an available parser
+- If shebang says `python3` but Python parser isn't installed, continue to extension check
+
+## Consequences
+
+### Positive
+
+- **Respects client authority**: LSP clients invest heavily in language detection
+- **No configuration needed**: Works out of the box without `filetypes` mapping
+- **Graceful degradation**: Missing parsers don't block detection entirely
+- **Handles edge cases**: Shebangs, magic comments, extensionless files
+- **Simpler configuration**: Removed redundant `filetypes` field (PBI-061)
+
+### Negative
+
+- **Heuristic overhead**: Reading file content for shebang detection adds I/O
+- **Non-deterministic**: Same file might use different parsers on different systems (based on available parsers)
+- **Heuristic maintenance**: Shebang patterns need ongoing updates
+
+### Neutral
+
+- **Extension mapping still exists**: But as last resort, not primary method
+- **Parser availability matters**: Detection result depends on what's installed
+- **Auto-install interaction**: If autoInstall is enabled, missing parsers trigger installation, then retry detection
+
+## Migration from ADR-0002
+
+The `filetypes` configuration field has been removed (PBI-061). Users who relied on custom extension mappings should:
+
+1. Configure their LSP client to send the correct `languageId`
+2. Use file associations in their editor (e.g., VS Code's `files.associations`)
+3. Add shebangs or magic comments to extensionless files
+
+This aligns with the principle: **configure at the source (client), not the sink (server)**.
