@@ -403,6 +403,13 @@ impl TreeSitterLs {
         // Apply the updated settings
         self.apply_settings(updated_settings).await;
 
+        // BUG FIX: Ensure the language is loaded BEFORE parsing
+        // apply_settings only stores configuration but doesn't load the parser.
+        // parse_document uses detect_language which checks has_parser_available.
+        // Without ensure_language_loaded, has_parser_available returns false and
+        // the document won't be parsed, resulting in no syntax highlighting.
+        let _load_result = self.language.ensure_language_loaded(language);
+
         // Re-parse the document that triggered the install
         self.parse_document(uri.clone(), text, Some(language), vec![])
             .await;
