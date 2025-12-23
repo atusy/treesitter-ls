@@ -320,7 +320,38 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 49,
+    pbi_id: "PBI-066",
+    goal: "Enable parser availability checks so the fallback chain can determine when to continue to the next detection method",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "has_parser_available returns true when parser is registered in LanguageRegistry",
+        implementation: "Add has_parser_available method to LanguageRegistry that delegates to contains()",
+        type: "behavioral",
+        status: "green",
+        commits: [],
+        notes: ["Foundation for AC-1: registry-level check"],
+      },
+      {
+        test: "has_parser_available returns false when parser is not registered",
+        implementation: "Verify false case - no new code needed, just test coverage",
+        type: "behavioral",
+        status: "green",
+        commits: [],
+        notes: ["Covers AC-2: negative case verification"],
+      },
+      {
+        test: "LanguageCoordinator.has_parser_available delegates to registry method",
+        implementation: "Add has_parser_available method to LanguageCoordinator that delegates to language_registry",
+        type: "behavioral",
+        status: "green",
+        commits: [],
+        notes: ["Covers AC-3: coordinator exposes the API for detection logic"],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
