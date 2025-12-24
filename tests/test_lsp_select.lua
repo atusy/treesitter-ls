@@ -69,7 +69,7 @@ T["assets/example.md"]["selectionRange"] = MiniTest.new_set({})
 T["assets/example.md"]["selectionRange"]["no injection"] = MiniTest.new_set({
 	parametrize = {
 		{ 28, 1, 1, "paragraph" }, -- line 28 "paragraph"
-		{ 26, 1, 3, "# section\n\nparagraph\n\n```python\ndef f():\n    return 1\n```\n\n" }, -- line 26 "# section" -> full section
+		{ 26, 1, 3, "# section\n\nparagraph\n\n```py\ndef f():\n    return 1\n```" }, -- line 26 "# section" -> full section
 	},
 })
 T["assets/example.md"]["selectionRange"]["no injection"]["works"] = function(line, col, direction, expected)
