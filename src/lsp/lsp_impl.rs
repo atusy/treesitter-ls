@@ -19,6 +19,7 @@ use crate::lsp::{SettingsEvent, SettingsEventKind, SettingsSource, load_settings
 use crate::text::PositionMapper;
 use arc_swap::ArcSwap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::auto_install::{InstallingLanguages, get_injected_languages};
@@ -50,6 +51,8 @@ pub struct TreeSitterLs {
     installing_languages: InstallingLanguages,
     /// Tracks parsers that have crashed
     failed_parsers: FailedParserRegistry,
+    /// Monotonically increasing counter for generating unique semantic token result IDs
+    semantic_token_version: AtomicU64,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -63,6 +66,7 @@ impl std::fmt::Debug for TreeSitterLs {
             .field("settings", &"ArcSwap<WorkspaceSettings>")
             .field("installing_languages", &"InstallingLanguages")
             .field("failed_parsers", &"FailedParserRegistry")
+            .field("semantic_token_version", &"AtomicU64")
             .finish_non_exhaustive()
     }
 }
@@ -84,6 +88,7 @@ impl TreeSitterLs {
             settings: ArcSwap::new(Arc::new(WorkspaceSettings::default())),
             installing_languages: InstallingLanguages::new(),
             failed_parsers,
+            semantic_token_version: AtomicU64::new(0),
         }
     }
 
@@ -112,6 +117,15 @@ impl TreeSitterLs {
     /// Check if auto-install is enabled.
     fn is_auto_install_enabled(&self) -> bool {
         self.settings.load().auto_install
+    }
+
+    /// Generate a unique result ID for semantic tokens.
+    ///
+    /// Uses a monotonically increasing counter to ensure each response has a unique ID.
+    /// This is critical for LSP clients like vim-lsp that use result_id to detect changes.
+    fn next_semantic_token_id(&self) -> String {
+        let version = self.semantic_token_version.fetch_add(1, Ordering::SeqCst);
+        format!("v{}", version)
     }
 
     async fn parse_document(
@@ -893,21 +907,8 @@ impl LanguageServer for TreeSitterLs {
                 }
             }
         };
-        // Simple ID based on token count and first/last token info
-        let id = if tokens_with_id.data.is_empty() {
-            "empty".to_string()
-        } else {
-            format!(
-                "v{}_{}",
-                tokens_with_id.data.len(),
-                tokens_with_id
-                    .data
-                    .first()
-                    .map(|t| t.delta_line)
-                    .unwrap_or(0)
-            )
-        };
-        tokens_with_id.result_id = Some(id);
+        // Use monotonically increasing ID to ensure uniqueness across all token responses
+        tokens_with_id.result_id = Some(self.next_semantic_token_id());
         let stored_tokens = tokens_with_id.clone();
         let lsp_tokens = tokens_with_id;
         self.documents.update_semantic_tokens(&uri, stored_tokens);
@@ -940,7 +941,7 @@ impl LanguageServer for TreeSitterLs {
         };
 
         // Get document data and compute delta, then drop the reference
-        let result = {
+        let delta_with_current = {
             let Some(doc) = self.documents.get(&uri) else {
                 return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
                     SemanticTokens {
@@ -987,38 +988,40 @@ impl LanguageServer for TreeSitterLs {
             )
         }; // doc reference is dropped here
 
-        let domain_result = result.unwrap_or_else(|| {
-            tower_lsp::lsp_types::SemanticTokensFullDeltaResult::Tokens(
-                tower_lsp::lsp_types::SemanticTokens {
+        let Some(delta_with_current) = delta_with_current else {
+            return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
+                SemanticTokens {
                     result_id: None,
-                    data: Vec::new(),
+                    data: vec![],
                 },
-            )
-        });
+            )));
+        };
 
-        match domain_result {
-            tower_lsp::lsp_types::SemanticTokensFullDeltaResult::Tokens(tokens) => {
-                let mut tokens_with_id = tokens;
-                let id = if tokens_with_id.data.is_empty() {
-                    "empty".to_string()
-                } else {
-                    format!(
-                        "v{}_{}",
-                        tokens_with_id.data.len(),
-                        tokens_with_id
-                            .data
-                            .first()
-                            .map(|t| t.delta_line)
-                            .unwrap_or(0)
-                    )
-                };
-                tokens_with_id.result_id = Some(id);
-                let stored_tokens = tokens_with_id.clone();
-                let lsp_tokens = tokens_with_id;
-                self.documents.update_semantic_tokens(&uri, stored_tokens);
-                Ok(Some(SemanticTokensFullDeltaResult::Tokens(lsp_tokens)))
+        // Generate a new unique result ID for this response
+        let new_result_id = self.next_semantic_token_id();
+
+        // Store the current tokens with the new result_id for future delta calculations
+        // This is critical: both delta and full token responses need to update the stored state
+        let mut stored_tokens = delta_with_current.current_tokens;
+        stored_tokens.result_id = Some(new_result_id.clone());
+        self.documents.update_semantic_tokens(&uri, stored_tokens);
+
+        // Return the result with the new result_id
+        match delta_with_current.result {
+            SemanticTokensFullDeltaResult::Tokens(mut tokens) => {
+                tokens.result_id = Some(new_result_id);
+                Ok(Some(SemanticTokensFullDeltaResult::Tokens(tokens)))
             }
-            other => Ok(Some(other)),
+            SemanticTokensFullDeltaResult::TokensDelta(mut delta) => {
+                delta.result_id = Some(new_result_id);
+                Ok(Some(SemanticTokensFullDeltaResult::TokensDelta(delta)))
+            }
+            SemanticTokensFullDeltaResult::PartialTokensDelta { edits } => {
+                // Partial deltas don't have a result_id field, pass through as-is
+                Ok(Some(SemanticTokensFullDeltaResult::PartialTokensDelta {
+                    edits,
+                }))
+            }
         }
     }
 

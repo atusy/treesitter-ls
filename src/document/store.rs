@@ -57,31 +57,38 @@ impl DocumentStore {
     }
 
     pub fn update_document(&self, uri: Url, text: String, new_tree: Option<Tree>) {
-        // Preserve language_id from existing document if available
-        let language_id = self
+        // Preserve language_id and semantic tokens from existing document if available
+        let (language_id, existing_tokens) = self
             .documents
             .get(&uri)
-            .and_then(|doc| doc.language_id().map(String::from));
+            .map(|doc| {
+                (
+                    doc.language_id().map(String::from),
+                    doc.last_semantic_tokens().cloned(),
+                )
+            })
+            .unwrap_or((None, None));
 
-        match (language_id, new_tree) {
-            (Some(lang), Some(tree)) => {
-                self.documents
-                    .insert(uri, Document::with_tree(text, lang, tree));
-            }
+        let mut new_doc = match (language_id, new_tree) {
+            (Some(lang), Some(tree)) => Document::with_tree(text, lang, tree),
             (Some(lang), None) => {
                 // Preserve existing tree if no new tree provided
                 let existing_tree = self.documents.get(&uri).and_then(|doc| doc.tree().cloned());
                 if let Some(tree) = existing_tree {
-                    self.documents
-                        .insert(uri, Document::with_tree(text, lang, tree));
+                    Document::with_tree(text, lang, tree)
                 } else {
-                    self.documents.insert(uri, Document::new(text));
+                    Document::new(text)
                 }
             }
-            _ => {
-                self.documents.insert(uri, Document::new(text));
-            }
+            _ => Document::new(text),
+        };
+
+        // Preserve semantic tokens for delta calculation
+        if existing_tokens.is_some() {
+            new_doc.set_last_semantic_tokens(existing_tokens);
         }
+
+        self.documents.insert(uri, new_doc);
     }
 
     /// Get the existing tree and apply edits for incremental parsing
@@ -181,5 +188,61 @@ mod tests {
         let doc = store.get(&uri).unwrap();
         assert_eq!(doc.text(), new_text);
         assert!(doc.tree().is_some());
+    }
+
+    #[test]
+    fn test_update_document_preserves_semantic_tokens() {
+        let store = DocumentStore::new();
+        let uri = Url::parse("file:///test.rs").unwrap();
+        let text = "let x = 1;".to_string();
+
+        // Create document with tree
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(&text, None).unwrap();
+
+        store.insert(
+            uri.clone(),
+            text.clone(),
+            Some("rust".to_string()),
+            Some(tree.clone()),
+        );
+
+        // Set semantic tokens
+        let tokens = SemanticTokens {
+            result_id: Some("v0".to_string()),
+            data: vec![],
+        };
+        store.update_semantic_tokens(&uri, tokens.clone());
+
+        // Verify tokens are stored
+        let doc = store.get(&uri).unwrap();
+        assert!(doc.last_semantic_tokens().is_some());
+        assert_eq!(
+            doc.last_semantic_tokens().unwrap().result_id,
+            Some("v0".to_string())
+        );
+        drop(doc);
+
+        // Update document with new text and tree
+        let new_text = "let x = 2;".to_string();
+        let new_tree = parser.parse(&new_text, Some(&tree)).unwrap();
+        store.update_document(uri.clone(), new_text.clone(), Some(new_tree));
+
+        // Semantic tokens should be preserved after document update
+        let doc = store.get(&uri).unwrap();
+        assert_eq!(doc.text(), new_text);
+        assert!(doc.tree().is_some());
+        assert!(
+            doc.last_semantic_tokens().is_some(),
+            "Semantic tokens should be preserved after document update"
+        );
+        assert_eq!(
+            doc.last_semantic_tokens().unwrap().result_id,
+            Some("v0".to_string()),
+            "Semantic tokens result_id should be preserved"
+        );
     }
 }

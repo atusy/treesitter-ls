@@ -540,6 +540,14 @@ pub fn handle_semantic_tokens_range(
     }))
 }
 
+/// Result of semantic tokens delta calculation, including the current tokens for storage
+pub struct SemanticTokensDeltaWithCurrent {
+    /// The result to send to the client (either delta or full tokens)
+    pub result: SemanticTokensFullDeltaResult,
+    /// The current tokens that should be stored for future delta calculations
+    pub current_tokens: SemanticTokens,
+}
+
 /// Handle semantic tokens full delta request
 ///
 /// Analyzes the document and returns either a delta from the previous version
@@ -560,7 +568,7 @@ pub fn handle_semantic_tokens_range(
 /// * `parser_pool` - Parser pool for efficient parser reuse (None = no injection)
 ///
 /// # Returns
-/// Either a delta or full semantic tokens for the document
+/// Either a delta or full semantic tokens for the document, along with current tokens for storage
 #[allow(clippy::too_many_arguments)]
 pub fn handle_semantic_tokens_full_delta(
     text: &str,
@@ -572,7 +580,7 @@ pub fn handle_semantic_tokens_full_delta(
     capture_mappings: Option<&CaptureMappings>,
     coordinator: Option<&crate::language::LanguageCoordinator>,
     parser_pool: Option<&mut crate::language::DocumentParserPool>,
-) -> Option<SemanticTokensFullDeltaResult> {
+) -> Option<SemanticTokensDeltaWithCurrent> {
     // Get current tokens with injection support
     let current_result = handle_semantic_tokens_full(
         text,
@@ -593,11 +601,17 @@ pub fn handle_semantic_tokens_full_delta(
         && prev.result_id.as_deref() == Some(previous_result_id)
         && let Some(delta) = calculate_semantic_tokens_delta(prev, &current_tokens)
     {
-        return Some(SemanticTokensFullDeltaResult::TokensDelta(delta));
+        return Some(SemanticTokensDeltaWithCurrent {
+            result: SemanticTokensFullDeltaResult::TokensDelta(delta),
+            current_tokens,
+        });
     }
 
     // Fall back to full tokens
-    Some(SemanticTokensFullDeltaResult::Tokens(current_tokens))
+    Some(SemanticTokensDeltaWithCurrent {
+        result: SemanticTokensFullDeltaResult::Tokens(current_tokens.clone()),
+        current_tokens,
+    })
 }
 
 /// Calculate delta between two sets of semantic tokens
@@ -1380,7 +1394,7 @@ let z = 42"#;
 
         // Call delta handler with coordinator and parser_pool
         // Use empty previous tokens to get full result back
-        let result = handle_semantic_tokens_full_delta(
+        let delta_with_current = handle_semantic_tokens_full_delta(
             text,
             &tree,
             &md_highlight_query,
@@ -1393,8 +1407,8 @@ let z = 42"#;
         );
 
         // Should return full tokens result
-        let result = result.expect("Should return tokens");
-        let SemanticTokensFullDeltaResult::Tokens(tokens) = result else {
+        let delta_with_current = delta_with_current.expect("Should return tokens");
+        let SemanticTokensFullDeltaResult::Tokens(tokens) = delta_with_current.result else {
             panic!("Expected full tokens result when no previous tokens match");
         };
 
@@ -1421,6 +1435,86 @@ let z = 42"#;
         assert!(
             found_local_keyword,
             "Delta handler should return `local` keyword token at line 6, col 0 from injected Lua code"
+        );
+    }
+
+    #[test]
+    fn test_semantic_tokens_delta_returns_delta_when_previous_id_matches() {
+        // Test that handle_semantic_tokens_full_delta returns a delta (not full tokens)
+        // when the previous result ID matches what we stored.
+        //
+        // This is the core delta flow that was broken: the server was always returning
+        // full tokens even when delta calculation should have worked.
+        use tree_sitter::{Parser, Query};
+
+        let text = r#"let x = 1;
+let y = 2;"#;
+
+        let language = tree_sitter_rust::LANGUAGE.into();
+        let mut parser = Parser::new();
+        parser.set_language(&language).unwrap();
+
+        let tree = parser.parse(text, None).unwrap();
+
+        let query_text = r#"
+            "let" @keyword
+            (identifier) @variable
+            (integer_literal) @number
+        "#;
+
+        let query = Query::new(&language, query_text).unwrap();
+
+        // Step 1: Get initial tokens
+        let initial_result =
+            handle_semantic_tokens_full(text, &tree, &query, Some("rust"), None, None, None);
+        let initial_tokens = match initial_result.unwrap() {
+            SemanticTokensResult::Tokens(tokens) => tokens,
+            _ => panic!("Expected full tokens"),
+        };
+
+        // Step 2: Create "previous" tokens with a known result_id
+        let previous_tokens = SemanticTokens {
+            result_id: Some("v0".to_string()),
+            data: initial_tokens.data.clone(),
+        };
+
+        // Step 3: Request delta with the same text (no changes)
+        // This should return an empty delta, not full tokens
+        let delta_result = handle_semantic_tokens_full_delta(
+            text,
+            &tree,
+            &query,
+            "v0", // Same result_id as previous
+            Some(&previous_tokens),
+            Some("rust"),
+            None,
+            None,
+            None,
+        );
+
+        let delta_with_current = delta_result.expect("Should return result");
+
+        // The result should be a TokensDelta with empty edits (since text didn't change)
+        match delta_with_current.result {
+            SemanticTokensFullDeltaResult::TokensDelta(delta) => {
+                assert!(
+                    delta.edits.is_empty(),
+                    "Delta should have no edits when text didn't change, got {} edits",
+                    delta.edits.len()
+                );
+            }
+            SemanticTokensFullDeltaResult::Tokens(_) => {
+                panic!("Expected TokensDelta, got full Tokens. Delta calculation is not working!");
+            }
+            SemanticTokensFullDeltaResult::PartialTokensDelta { .. } => {
+                panic!("Unexpected PartialTokensDelta");
+            }
+        }
+
+        // Verify that current_tokens are also returned for storage
+        assert!(
+            !delta_with_current.current_tokens.data.is_empty(),
+            "current_tokens should contain the computed tokens for storage"
         );
     }
 }

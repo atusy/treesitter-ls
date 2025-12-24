@@ -69,7 +69,8 @@ fn test_document_store_reopen_resets_semantic_tokens() {
 
 #[test]
 fn test_document_store_update_preserves_semantic_tokens() {
-    // This test shows that update_document preserves language but NOT semantic tokens
+    // This test verifies that update_document preserves BOTH language AND semantic tokens.
+    // Semantic tokens must be preserved so that delta requests can compute proper diffs.
     let store = DocumentStore::new();
     let uri = Url::parse("file:///test.rs").unwrap();
 
@@ -107,16 +108,21 @@ fn test_document_store_update_preserves_semantic_tokens() {
         assert!(doc.last_semantic_tokens().is_some());
     }
 
-    // Update document (this also resets semantic tokens)
+    // Update document - semantic tokens should be preserved for delta calculation
     let text2 = "fn main() { println!(\"hello\"); }";
     store.update_document(uri.clone(), text2.to_string(), None);
 
-    // Check that semantic tokens were reset
+    // Check that semantic tokens are preserved
     {
         let doc = store.get(&uri).unwrap();
         assert!(
-            doc.last_semantic_tokens().is_none(),
-            "Semantic tokens are reset on update_document"
+            doc.last_semantic_tokens().is_some(),
+            "Semantic tokens should be preserved on update_document for delta calculation"
+        );
+        assert_eq!(
+            doc.last_semantic_tokens().unwrap().result_id.as_deref(),
+            Some("v1"),
+            "Semantic tokens result_id should be preserved"
         );
         assert_eq!(
             doc.language_id(),
