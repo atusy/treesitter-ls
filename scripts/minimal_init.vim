@@ -1,12 +1,11 @@
 set nocompatible
-let s:cwd = getcwd()
-set rtp+=deps/vim/vim-lsp
-
-" Enable filetype detection
 filetype plugin indent on
 syntax off
 
-" Register treesitter-ls server
+
+" Setup treesitter-ls
+let s:cwd = getcwd()
+set rtp+=deps/vim/vim-lsp
 augroup lsp_setup
   autocmd!
   autocmd User lsp_setup call lsp#register_server({
@@ -16,7 +15,7 @@ augroup lsp_setup
         \ })
 augroup END
 
-" Semantic highlight
+" Enable semantic highlight
 let g:lsp_semantic_enabled = 1
 let g:lsp_semantic_delay = 100
 highlight LspSemanticComment guifg=#6a737d ctermfg=245
