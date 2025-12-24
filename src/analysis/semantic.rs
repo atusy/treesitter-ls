@@ -630,7 +630,7 @@ fn calculate_semantic_tokens_delta(
     previous: &SemanticTokens,
     current: &SemanticTokens,
 ) -> Option<SemanticTokensDelta> {
-    // Find the common prefix length
+    // Find the common prefix length (number of tokens that match from the start)
     let common_prefix_len = previous
         .data
         .iter()
@@ -644,8 +644,30 @@ fn calculate_semantic_tokens_delta(
         })
         .count();
 
+    // Get remaining tokens after prefix
+    let prev_remaining = &previous.data[common_prefix_len..];
+    let curr_remaining = &current.data[common_prefix_len..];
+
+    // Find the common suffix length (number of tokens that match from the end)
+    let common_suffix_len = prev_remaining
+        .iter()
+        .rev()
+        .zip(curr_remaining.iter().rev())
+        .take_while(|(a, b)| {
+            a.delta_line == b.delta_line
+                && a.delta_start == b.delta_start
+                && a.length == b.length
+                && a.token_type == b.token_type
+                && a.token_modifiers_bitset == b.token_modifiers_bitset
+        })
+        .count();
+
+    // Calculate the differing middle section
+    let prev_middle = &prev_remaining[..prev_remaining.len() - common_suffix_len];
+    let curr_middle = &curr_remaining[..curr_remaining.len() - common_suffix_len];
+
     // If all tokens are the same, no edits needed
-    if common_prefix_len == previous.data.len() && common_prefix_len == current.data.len() {
+    if prev_middle.is_empty() && curr_middle.is_empty() {
         return Some(SemanticTokensDelta {
             result_id: current.result_id.clone(),
             edits: vec![],
@@ -653,9 +675,11 @@ fn calculate_semantic_tokens_delta(
     }
 
     // Calculate the edit
-    let start = common_prefix_len;
-    let delete_count = previous.data.len() - start;
-    let data = current.data[start..].to_vec();
+    // IMPORTANT: LSP spec says start and delete_count are indices into the flattened
+    // integer array, where each token is 5 integers. So we multiply by 5.
+    let start = 5 * common_prefix_len;
+    let delete_count = 5 * prev_middle.len();
+    let data = curr_middle.to_vec();
 
     Some(SemanticTokensDelta {
         result_id: current.result_id.clone(),
@@ -765,13 +789,19 @@ mod tests {
         let delta = delta.unwrap();
         assert_eq!(delta.result_id, Some("v2".to_string()));
         assert_eq!(delta.edits.len(), 1);
+        // LSP spec: start and delete_count are indices into the flattened integer array
+        // Each token is 5 integers.
+        // - Common prefix: 0 tokens (first token differs in length)
+        // - Common suffix: 2 tokens (tokens 2 and 3 are identical)
+        // - Middle section: 1 token in both (the first token with changed length)
+        // So: start=0, delete_count=5 (1 token * 5 integers)
         assert_eq!(delta.edits[0].start, 0);
-        assert_eq!(delta.edits[0].delete_count, 3);
+        assert_eq!(delta.edits[0].delete_count, 5); // 1 token * 5 integers per token
         let edits_data = delta.edits[0]
             .data
             .as_ref()
             .expect("delta edits should include replacement data");
-        assert_eq!(edits_data.len(), 3);
+        assert_eq!(edits_data.len(), 1); // Only 1 SemanticToken (the first one with changed length)
     }
 
     #[test]
@@ -853,6 +883,157 @@ mod tests {
 
         let delta = delta.unwrap();
         assert_eq!(delta.edits.len(), 0);
+    }
+
+    /// Helper to create a SemanticToken from tuple for testing
+    fn from_tuple(t: (u32, u32, u32, u32, u32)) -> SemanticToken {
+        SemanticToken {
+            delta_line: t.0,
+            delta_start: t.1,
+            length: t.2,
+            token_type: t.3,
+            token_modifiers_bitset: t.4,
+        }
+    }
+
+    #[test]
+    fn test_delta_insert_at_end() {
+        let before = SemanticTokens {
+            result_id: Some("v1".to_string()),
+            data: vec![from_tuple((1, 2, 3, 4, 5)), from_tuple((6, 7, 8, 9, 10))],
+        };
+        let after = SemanticTokens {
+            result_id: Some("v2".to_string()),
+            data: vec![
+                from_tuple((1, 2, 3, 4, 5)),
+                from_tuple((6, 7, 8, 9, 10)),
+                from_tuple((11, 12, 13, 14, 15)),
+            ],
+        };
+
+        let delta = calculate_semantic_tokens_delta(&before, &after).unwrap();
+        assert_eq!(delta.edits.len(), 1);
+        // Insert at position 2 (after 2 tokens), so start = 2 * 5 = 10
+        assert_eq!(delta.edits[0].start, 10);
+        assert_eq!(delta.edits[0].delete_count, 0);
+        assert_eq!(delta.edits[0].data.as_ref().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_delta_insert_at_beginning() {
+        let before = SemanticTokens {
+            result_id: Some("v1".to_string()),
+            data: vec![from_tuple((1, 2, 3, 4, 5)), from_tuple((6, 7, 8, 9, 10))],
+        };
+        let after = SemanticTokens {
+            result_id: Some("v2".to_string()),
+            data: vec![
+                from_tuple((11, 12, 13, 14, 15)),
+                from_tuple((1, 2, 3, 4, 5)),
+                from_tuple((6, 7, 8, 9, 10)),
+            ],
+        };
+
+        let delta = calculate_semantic_tokens_delta(&before, &after).unwrap();
+        assert_eq!(delta.edits.len(), 1);
+        // Insert at position 0
+        assert_eq!(delta.edits[0].start, 0);
+        assert_eq!(delta.edits[0].delete_count, 0);
+        assert_eq!(delta.edits[0].data.as_ref().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_delta_insert_in_middle() {
+        let before = SemanticTokens {
+            result_id: Some("v1".to_string()),
+            data: vec![from_tuple((1, 2, 3, 4, 5)), from_tuple((6, 7, 8, 9, 10))],
+        };
+        let after = SemanticTokens {
+            result_id: Some("v2".to_string()),
+            data: vec![
+                from_tuple((1, 2, 3, 4, 5)),
+                from_tuple((10, 20, 30, 40, 50)),
+                from_tuple((60, 70, 80, 90, 100)),
+                from_tuple((6, 7, 8, 9, 10)),
+            ],
+        };
+
+        let delta = calculate_semantic_tokens_delta(&before, &after).unwrap();
+        assert_eq!(delta.edits.len(), 1);
+        // Insert after first token, so start = 1 * 5 = 5
+        assert_eq!(delta.edits[0].start, 5);
+        assert_eq!(delta.edits[0].delete_count, 0);
+        assert_eq!(delta.edits[0].data.as_ref().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_delta_remove_from_end() {
+        let before = SemanticTokens {
+            result_id: Some("v1".to_string()),
+            data: vec![
+                from_tuple((1, 2, 3, 4, 5)),
+                from_tuple((6, 7, 8, 9, 10)),
+                from_tuple((11, 12, 13, 14, 15)),
+            ],
+        };
+        let after = SemanticTokens {
+            result_id: Some("v2".to_string()),
+            data: vec![from_tuple((1, 2, 3, 4, 5)), from_tuple((6, 7, 8, 9, 10))],
+        };
+
+        let delta = calculate_semantic_tokens_delta(&before, &after).unwrap();
+        assert_eq!(delta.edits.len(), 1);
+        // Remove at position 2, so start = 2 * 5 = 10
+        assert_eq!(delta.edits[0].start, 10);
+        assert_eq!(delta.edits[0].delete_count, 5); // 1 token = 5 integers
+        assert!(delta.edits[0].data.as_ref().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_delta_remove_from_beginning() {
+        let before = SemanticTokens {
+            result_id: Some("v1".to_string()),
+            data: vec![
+                from_tuple((11, 12, 13, 14, 15)),
+                from_tuple((1, 2, 3, 4, 5)),
+                from_tuple((6, 7, 8, 9, 10)),
+            ],
+        };
+        let after = SemanticTokens {
+            result_id: Some("v2".to_string()),
+            data: vec![from_tuple((1, 2, 3, 4, 5)), from_tuple((6, 7, 8, 9, 10))],
+        };
+
+        let delta = calculate_semantic_tokens_delta(&before, &after).unwrap();
+        assert_eq!(delta.edits.len(), 1);
+        // Remove at position 0
+        assert_eq!(delta.edits[0].start, 0);
+        assert_eq!(delta.edits[0].delete_count, 5); // 1 token = 5 integers
+        assert!(delta.edits[0].data.as_ref().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_delta_remove_from_middle() {
+        let before = SemanticTokens {
+            result_id: Some("v1".to_string()),
+            data: vec![
+                from_tuple((1, 2, 3, 4, 5)),
+                from_tuple((10, 20, 30, 40, 50)),
+                from_tuple((60, 70, 80, 90, 100)),
+                from_tuple((6, 7, 8, 9, 10)),
+            ],
+        };
+        let after = SemanticTokens {
+            result_id: Some("v2".to_string()),
+            data: vec![from_tuple((1, 2, 3, 4, 5)), from_tuple((6, 7, 8, 9, 10))],
+        };
+
+        let delta = calculate_semantic_tokens_delta(&before, &after).unwrap();
+        assert_eq!(delta.edits.len(), 1);
+        // Remove 2 tokens starting at position 1, so start = 1 * 5 = 5
+        assert_eq!(delta.edits[0].start, 5);
+        assert_eq!(delta.edits[0].delete_count, 10); // 2 tokens = 10 integers
+        assert!(delta.edits[0].data.as_ref().unwrap().is_empty());
     }
 
     #[test]
