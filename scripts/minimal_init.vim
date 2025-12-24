@@ -15,6 +15,10 @@ augroup lsp_setup
         \ })
 augroup END
 
+" Enable logging
+" let g:lsp_log_verbose = 1
+" let g:lsp_log_file = expand('__ignored/vimlsp.log')
+
 " Enable semantic highlight
 let g:lsp_semantic_enabled = 1
 let g:lsp_semantic_delay = 100
