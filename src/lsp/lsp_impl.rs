@@ -964,6 +964,16 @@ impl LanguageServer for TreeSitterLs {
             // Get previous tokens from document
             let previous_tokens = doc.last_semantic_tokens().cloned();
 
+            // Debug: log the result_id comparison
+            let stored_result_id = previous_tokens.as_ref().and_then(|t| t.result_id.clone());
+            log::debug!(
+                target: "treesitter_ls::semantic_delta",
+                "Delta request: previous_result_id={:?}, stored_result_id={:?}, match={}",
+                previous_result_id,
+                stored_result_id,
+                stored_result_id.as_deref() == Some(&previous_result_id)
+            );
+
             // Get capture mappings
             let capture_mappings = self.language.get_capture_mappings();
 
@@ -997,23 +1007,48 @@ impl LanguageServer for TreeSitterLs {
             )));
         };
 
-        // Generate a new unique result ID for this response
-        let new_result_id = self.next_semantic_token_id();
-
-        // Store the current tokens with the new result_id for future delta calculations
-        // This is critical: both delta and full token responses need to update the stored state
-        let mut stored_tokens = delta_with_current.current_tokens;
-        stored_tokens.result_id = Some(new_result_id.clone());
-        self.documents.update_semantic_tokens(&uri, stored_tokens);
-
-        // Return the result with the new result_id
+        // Return the result with the appropriate result_id
+        //
+        // IMPORTANT: We only update stored tokens when returning FULL tokens, not deltas.
+        // This prevents a race condition where:
+        // 1. Server processes a request and stores new result_id "v3"
+        // 2. Response gets cancelled/discarded by client
+        // 3. Client still has "v2", sends next request with previousResultId="v2"
+        // 4. Server has "v3" stored, so result_id doesn't match
+        // 5. This cascades, and client never gets valid highlighting
+        //
+        // By only updating stored tokens for full responses (not deltas), we ensure:
+        // - Delta responses use the SAME result_id as stored (what client has)
+        // - If delta response is cancelled, next request still matches
+        // - Full token responses update the stored state (these are less frequent)
         match delta_with_current.result {
             SemanticTokensFullDeltaResult::Tokens(mut tokens) => {
+                // Full tokens response - generate new result_id and update stored state
+                let new_result_id = self.next_semantic_token_id();
+                log::debug!(
+                    target: "treesitter_ls::semantic_delta",
+                    "Returning FULL tokens with new_result_id={:?} (fallback because previous_result_id didn't match)",
+                    new_result_id
+                );
+
+                // Store the current tokens for future delta calculations
+                let mut stored_tokens = delta_with_current.current_tokens;
+                stored_tokens.result_id = Some(new_result_id.clone());
+                self.documents.update_semantic_tokens(&uri, stored_tokens);
+
                 tokens.result_id = Some(new_result_id);
                 Ok(Some(SemanticTokensFullDeltaResult::Tokens(tokens)))
             }
             SemanticTokensFullDeltaResult::TokensDelta(mut delta) => {
-                delta.result_id = Some(new_result_id);
+                // Delta response - use the SAME result_id that the client sent
+                // This way, if this response is cancelled, the next request will still match
+                log::debug!(
+                    target: "treesitter_ls::semantic_delta",
+                    "Returning DELTA with result_id={:?} (keeping client's previousResultId), edits count={}",
+                    previous_result_id,
+                    delta.edits.len()
+                );
+                delta.result_id = Some(previous_result_id.clone());
                 Ok(Some(SemanticTokensFullDeltaResult::TokensDelta(delta)))
             }
             SemanticTokensFullDeltaResult::PartialTokensDelta { edits } => {

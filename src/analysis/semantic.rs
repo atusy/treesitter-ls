@@ -1056,12 +1056,12 @@ mod tests {
             result_id: Some("v1".to_string()),
             data: vec![
                 // Line 0: pub mod definition;
-                from_tuple((0, 0, 3, 1, 0)), // pub
-                from_tuple((0, 4, 3, 1, 0)), // mod
+                from_tuple((0, 0, 3, 1, 0)),  // pub
+                from_tuple((0, 4, 3, 1, 0)),  // mod
                 from_tuple((0, 4, 10, 7, 0)), // definition
                 // Line 1: pub mod offset_calc;
-                from_tuple((1, 0, 3, 1, 0)), // pub
-                from_tuple((0, 4, 3, 1, 0)), // mod
+                from_tuple((1, 0, 3, 1, 0)),  // pub
+                from_tuple((0, 4, 3, 1, 0)),  // mod
                 from_tuple((0, 4, 11, 7, 0)), // offset_calc
                 // Line 2: pub mod refactor;
                 from_tuple((1, 0, 3, 1, 0)), // pub
@@ -1074,15 +1074,15 @@ mod tests {
             result_id: Some("v2".to_string()),
             data: vec![
                 // Line 0: pub mod definition;
-                from_tuple((0, 0, 3, 1, 0)), // pub
-                from_tuple((0, 4, 3, 1, 0)), // mod
+                from_tuple((0, 0, 3, 1, 0)),  // pub
+                from_tuple((0, 4, 3, 1, 0)),  // mod
                 from_tuple((0, 4, 10, 7, 0)), // definition
                 // Line 1: pub mod (INSERTED, incomplete)
                 from_tuple((1, 0, 3, 1, 0)), // pub
                 from_tuple((0, 4, 3, 1, 0)), // mod
                 // Line 2: pub mod offset_calc; (was line 1)
-                from_tuple((1, 0, 3, 1, 0)), // pub
-                from_tuple((0, 4, 3, 1, 0)), // mod
+                from_tuple((1, 0, 3, 1, 0)),  // pub
+                from_tuple((0, 4, 3, 1, 0)),  // mod
                 from_tuple((0, 4, 11, 7, 0)), // offset_calc
                 // Line 3: pub mod refactor; (was line 2)
                 from_tuple((1, 0, 3, 1, 0)), // pub
