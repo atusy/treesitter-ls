@@ -1037,6 +1037,182 @@ mod tests {
     }
 
     #[test]
+    fn test_delta_insert_line_in_middle() {
+        // Simulates inserting a new line in the middle of a file
+        // This is the scenario from the second bug report
+        //
+        // OLD file:
+        //   Line 0: pub mod definition;   → [pub, mod, definition]
+        //   Line 1: pub mod offset_calc;  → [pub, mod, offset_calc]
+        //   Line 2: pub mod refactor;     → [pub, mod, refactor]
+        //
+        // NEW file (after inserting `pub mod` on line 1):
+        //   Line 0: pub mod definition;   → [pub, mod, definition]
+        //   Line 1: pub mod              → [pub, mod]  <- INSERTED
+        //   Line 2: pub mod offset_calc;  → [pub, mod, offset_calc]
+        //   Line 3: pub mod refactor;     → [pub, mod, refactor]
+
+        let before = SemanticTokens {
+            result_id: Some("v1".to_string()),
+            data: vec![
+                // Line 0: pub mod definition;
+                from_tuple((0, 0, 3, 1, 0)), // pub
+                from_tuple((0, 4, 3, 1, 0)), // mod
+                from_tuple((0, 4, 10, 7, 0)), // definition
+                // Line 1: pub mod offset_calc;
+                from_tuple((1, 0, 3, 1, 0)), // pub
+                from_tuple((0, 4, 3, 1, 0)), // mod
+                from_tuple((0, 4, 11, 7, 0)), // offset_calc
+                // Line 2: pub mod refactor;
+                from_tuple((1, 0, 3, 1, 0)), // pub
+                from_tuple((0, 4, 3, 1, 0)), // mod
+                from_tuple((0, 4, 8, 7, 0)), // refactor
+            ],
+        };
+
+        let after = SemanticTokens {
+            result_id: Some("v2".to_string()),
+            data: vec![
+                // Line 0: pub mod definition;
+                from_tuple((0, 0, 3, 1, 0)), // pub
+                from_tuple((0, 4, 3, 1, 0)), // mod
+                from_tuple((0, 4, 10, 7, 0)), // definition
+                // Line 1: pub mod (INSERTED, incomplete)
+                from_tuple((1, 0, 3, 1, 0)), // pub
+                from_tuple((0, 4, 3, 1, 0)), // mod
+                // Line 2: pub mod offset_calc; (was line 1)
+                from_tuple((1, 0, 3, 1, 0)), // pub
+                from_tuple((0, 4, 3, 1, 0)), // mod
+                from_tuple((0, 4, 11, 7, 0)), // offset_calc
+                // Line 3: pub mod refactor; (was line 2)
+                from_tuple((1, 0, 3, 1, 0)), // pub
+                from_tuple((0, 4, 3, 1, 0)), // mod
+                from_tuple((0, 4, 8, 7, 0)), // refactor
+            ],
+        };
+
+        let delta = calculate_semantic_tokens_delta(&before, &after).unwrap();
+
+        println!("=== Insert Line in Middle ===");
+        println!("Before tokens: {:?}", before.data.len());
+        println!("After tokens: {:?}", after.data.len());
+        println!("Delta edits: {:?}", delta.edits);
+
+        // Let's trace what SHOULD happen:
+        // Common prefix: first 5 tokens match (pub, mod, definition, pub, mod on lines 0-1)
+        // Wait, OLD[3]=pub(1,0) and NEW[3]=pub(1,0) - MATCH
+        // OLD[4]=mod(0,4) and NEW[4]=mod(0,4) - MATCH
+        // OLD[5]=offset_calc(0,4) vs NEW[5]=pub(1,0) - NO MATCH
+        //
+        // So common prefix = 5
+
+        // Common suffix from remaining:
+        // OLD remaining: [offset_calc(0,4), pub(1,0), mod(0,4), refactor(0,4)]
+        // NEW remaining: [pub(1,0), mod(0,4), offset_calc(0,4), pub(1,0), mod(0,4), refactor(0,4)]
+        //
+        // Comparing from end:
+        // refactor(0,4) == refactor(0,4) ✓
+        // mod(0,4) == mod(0,4) ✓
+        // pub(1,0) == pub(1,0) ✓
+        // offset_calc(0,4) == offset_calc(0,4) ✓
+        // OLD exhausted!
+        //
+        // Common suffix = 4 (all of OLD remaining)
+        //
+        // Middle:
+        // OLD middle: [] (empty!)
+        // NEW middle: [pub(1,0), mod(0,4)]
+        //
+        // Edit: start=25 (5*5), delete=0, insert=[pub, mod]
+
+        assert_eq!(delta.edits.len(), 1);
+        // After 5 prefix tokens = 25 integers
+        assert_eq!(delta.edits[0].start, 25);
+        assert_eq!(delta.edits[0].delete_count, 0);
+        assert_eq!(delta.edits[0].data.as_ref().unwrap().len(), 2);
+
+        // Verify the inserted tokens
+        let inserted = delta.edits[0].data.as_ref().unwrap();
+        assert_eq!(inserted[0].delta_line, 1);
+        assert_eq!(inserted[0].delta_start, 0);
+        assert_eq!(inserted[1].delta_line, 0);
+        assert_eq!(inserted[1].delta_start, 4);
+    }
+
+    #[test]
+    fn test_delta_prepend_new_line() {
+        // Simulates prepending a comment line to a file
+        // This is the exact scenario from the bug report
+        //
+        // OLD file:
+        //   Line 0: pub mod foo;   → [pub(dl=0,ds=0), mod(dl=0,ds=4), foo(dl=0,ds=4)]
+        //   Line 1: pub mod bar;   → [pub(dl=1,ds=0), mod(dl=0,ds=4), bar(dl=0,ds=4)]
+        //
+        // NEW file (after prepending comment):
+        //   Line 0: // comment     → [comment(dl=0,ds=0)]
+        //   Line 1: pub mod foo;   → [pub(dl=1,ds=0), mod(dl=0,ds=4), foo(dl=0,ds=4)]
+        //   Line 2: pub mod bar;   → [pub(dl=1,ds=0), mod(dl=0,ds=4), bar(dl=0,ds=4)]
+
+        let before = SemanticTokens {
+            result_id: Some("v1".to_string()),
+            data: vec![
+                // Line 0: pub mod foo;
+                from_tuple((0, 0, 3, 1, 0)), // pub (keyword)
+                from_tuple((0, 4, 3, 1, 0)), // mod (keyword)
+                from_tuple((0, 4, 3, 7, 0)), // foo (namespace)
+                // Line 1: pub mod bar;
+                from_tuple((1, 0, 3, 1, 0)), // pub (keyword)
+                from_tuple((0, 4, 3, 1, 0)), // mod (keyword)
+                from_tuple((0, 4, 3, 7, 0)), // bar (namespace)
+            ],
+        };
+
+        let after = SemanticTokens {
+            result_id: Some("v2".to_string()),
+            data: vec![
+                // Line 0: // comment
+                from_tuple((0, 0, 10, 0, 0)), // comment
+                // Line 1: pub mod foo; (was line 0, now line 1)
+                from_tuple((1, 0, 3, 1, 0)), // pub (keyword) - delta_line is now 1!
+                from_tuple((0, 4, 3, 1, 0)), // mod (keyword)
+                from_tuple((0, 4, 3, 7, 0)), // foo (namespace)
+                // Line 2: pub mod bar; (was line 1, now line 2)
+                from_tuple((1, 0, 3, 1, 0)), // pub (keyword)
+                from_tuple((0, 4, 3, 1, 0)), // mod (keyword)
+                from_tuple((0, 4, 3, 7, 0)), // bar (namespace)
+            ],
+        };
+
+        let delta = calculate_semantic_tokens_delta(&before, &after).unwrap();
+
+        // Debug: print what we got
+        println!("Delta edits: {:?}", delta.edits);
+        println!("Before token count: {}", before.data.len());
+        println!("After token count: {}", after.data.len());
+
+        assert_eq!(delta.edits.len(), 1, "Should produce exactly one edit");
+
+        // The common prefix is 0 (first tokens differ: pub(0,0) vs comment(0,0))
+        // The common suffix should be 5 tokens:
+        //   - bar(dl=0,ds=4) matches bar(dl=0,ds=4)
+        //   - mod(dl=0,ds=4) matches mod(dl=0,ds=4)
+        //   - pub(dl=1,ds=0) matches pub(dl=1,ds=0)
+        //   - foo(dl=0,ds=4) matches foo(dl=0,ds=4)
+        //   - mod(dl=0,ds=4) matches mod(dl=0,ds=4)
+        // The first pub(dl=0,ds=0) in OLD does NOT match pub(dl=1,ds=0) in NEW
+        //
+        // So the middle section is:
+        //   OLD: [pub(0,0)]           → 1 token
+        //   NEW: [comment(0,0), pub(1,0)] → 2 tokens
+        //
+        // Edit: start=0, delete_count=5, data=[comment, pub]
+
+        assert_eq!(delta.edits[0].start, 0);
+        assert_eq!(delta.edits[0].delete_count, 5); // Delete 1 token (5 integers)
+        assert_eq!(delta.edits[0].data.as_ref().unwrap().len(), 2); // Insert 2 tokens
+    }
+
+    #[test]
     fn test_byte_to_utf16_col() {
         // ASCII text
         let line = "hello world";
@@ -1697,5 +1873,76 @@ let y = 2;"#;
             !delta_with_current.current_tokens.data.is_empty(),
             "current_tokens should contain the computed tokens for storage"
         );
+    }
+
+    #[test]
+    fn test_delta_serialization_format() {
+        // Verify that SemanticTokensEdit.data is serialized correctly as a flat array
+        let edit = SemanticTokensEdit {
+            start: 0,
+            delete_count: 5,
+            data: Some(vec![SemanticToken {
+                delta_line: 1,
+                delta_start: 2,
+                length: 3,
+                token_type: 4,
+                token_modifiers_bitset: 5,
+            }]),
+        };
+
+        let json = serde_json::to_string(&edit).unwrap();
+        println!("Serialized edit: {}", json);
+
+        // The LSP spec says data should be a flat array of integers [1,2,3,4,5]
+        // NOT an array of objects like [{"delta_line":1,"delta_start":2,...}]
+        assert!(
+            json.contains("\"data\":[1,2,3,4,5]"),
+            "data should be flattened to integers, got: {}",
+            json
+        );
+    }
+
+    #[test]
+    fn test_full_delta_response_serialization() {
+        // Test the complete delta response structure that gets sent to clients
+        let delta = SemanticTokensDelta {
+            result_id: Some("v2".to_string()),
+            edits: vec![SemanticTokensEdit {
+                start: 25,
+                delete_count: 0,
+                data: Some(vec![
+                    SemanticToken {
+                        delta_line: 1,
+                        delta_start: 0,
+                        length: 3,
+                        token_type: 1,
+                        token_modifiers_bitset: 0,
+                    },
+                    SemanticToken {
+                        delta_line: 0,
+                        delta_start: 4,
+                        length: 3,
+                        token_type: 1,
+                        token_modifiers_bitset: 0,
+                    },
+                ]),
+            }],
+        };
+
+        let result = SemanticTokensFullDeltaResult::TokensDelta(delta);
+        let json = serde_json::to_string_pretty(&result).unwrap();
+        println!("Full delta response:\n{}", json);
+
+        // Verify the structure matches what vim-lsp/clients expect
+        assert!(json.contains("\"resultId\": \"v2\""));
+        assert!(json.contains("\"edits\""));
+        assert!(json.contains("\"start\": 25"));
+        assert!(json.contains("\"deleteCount\": 0"));
+        // Data should be flattened (pretty-printed has newlines between elements)
+        assert!(json.contains("\"data\""));
+        // The data values are there (pretty-printed)
+        assert!(json.contains("1,"));
+        assert!(json.contains("0,"));
+        assert!(json.contains("3,"));
     }
 }
