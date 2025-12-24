@@ -46,19 +46,9 @@ Prepare the following, and treesitter-ls will auto-install parsers/queries as ne
 
 See docs/README.md for detailed setup instructions for various editors.
 
-### on Neovim
+A quick start with Neovim:
 
-```lua
--- ~/.config/nvim/init.lua
-vim.lsp.config.treesitter_ls = {
-  cmd = { "treesitter-ls" },
-}
-vim.lsp.enable("treesitter_ls")
-
--- Disable built-in treesitter highlighting to avoid conflicts
-vim.api.nvim_create_autocmd("FileType", {
-  callback = function()
-    vim.treesitter.stop()
-  end,
-})
+```bash
+make deps/nvim
+nvim -u scripts/minimal_init.lua
 ```
