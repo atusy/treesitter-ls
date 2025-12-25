@@ -44,6 +44,11 @@ impl SemanticTokenCache {
             }
         })
     }
+
+    /// Remove cached tokens for a document (e.g., on document close).
+    pub fn remove(&self, uri: &Url) {
+        self.cache.remove(uri);
+    }
 }
 
 impl Default for SemanticTokenCache {
@@ -133,5 +138,33 @@ mod tests {
             cache.get_if_valid(&other_uri, "42").is_none(),
             "Non-existent URI should return None"
         );
+    }
+
+    #[test]
+    fn test_semantic_cache_remove_on_close() {
+        let cache = SemanticTokenCache::new();
+        let uri = Url::parse("file:///test.rs").unwrap();
+        let tokens = SemanticTokens {
+            result_id: Some("1".to_string()),
+            data: vec![SemanticToken {
+                delta_line: 0,
+                delta_start: 0,
+                length: 5,
+                token_type: 0,
+                token_modifiers_bitset: 0,
+            }],
+        };
+
+        // Store tokens
+        cache.store(uri.clone(), tokens);
+        assert!(cache.get(&uri).is_some(), "Should have cached tokens");
+
+        // Remove on close
+        cache.remove(&uri);
+        assert!(cache.get(&uri).is_none(), "Should return None after remove");
+
+        // Removing non-existent URI is safe
+        let other_uri = Url::parse("file:///other.rs").unwrap();
+        cache.remove(&other_uri); // Should not panic
     }
 }
