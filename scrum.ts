@@ -140,6 +140,37 @@ const scrum: ScrumDashboard = {
   // Design reference: __ignored/semantic-token-performance.md
   product_backlog: [
     {
+      id: "PBI-080",
+      story: {
+        role: "developer editing a large file",
+        capability:
+          "have the incremental tokenization path enabled using merge_tokens() for localized edits",
+        benefit:
+          "experience measurably faster highlighting updates (<20ms) for single-line edits in 1000+ line files",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "semantic_tokens_full_delta uses merge_tokens() when previous_tree exists and is_large_structural_change() returns false",
+          verification:
+            "Integration test: verify incremental path is taken for small edits via log or metrics",
+        },
+        {
+          criterion:
+            "Benchmark confirms <20ms token update for single-line edit in 1000-line file",
+          verification:
+            "Benchmark test comparing incremental vs full tokenization timing",
+        },
+        {
+          criterion:
+            "Highlighting remains correct after incremental tokenization",
+          verification:
+            "E2E test: edit file, verify semantic tokens match full recomputation",
+        },
+      ],
+      status: "ready",
+    },
+    {
       id: "PBI-079",
       story: {
         role: "developer editing a document with embedded languages (e.g., Markdown with code blocks)",
