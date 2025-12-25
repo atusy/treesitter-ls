@@ -233,24 +233,68 @@ const scrum: ScrumDashboard = {
       acceptance_criteria: [
         {
           criterion:
-            "semantic_tokens_full stores result in SemanticTokenCache",
-          verification: "cargo test test_full_handler_stores_in_cache",
+            "TreeSitterLs has semantic_cache field of type SemanticTokenCache",
+          verification: "code review: field exists in struct",
         },
         {
           criterion:
-            "semantic_tokens_full_delta retrieves previous from cache",
-          verification: "cargo test test_delta_handler_retrieves_from_cache",
+            "semantic_tokens_full stores result in SemanticTokenCache",
+          verification: "code review: store called after computing tokens",
+        },
+        {
+          criterion:
+            "semantic_tokens_full_delta uses get_if_valid for previous tokens",
+          verification: "code review: get_if_valid called with result_id",
         },
         {
           criterion: "did_close removes entry from SemanticTokenCache",
-          verification: "cargo test test_close_removes_from_cache",
+          verification: "code review: remove called in did_close",
         },
       ],
-      status: "draft",
+      status: "ready",
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 57,
+    pbi_id: "PBI-075",
+    goal: "Integrate SemanticTokenCache into LSP handlers",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "Add semantic_cache field to TreeSitterLs struct",
+        implementation: "Add SemanticTokenCache field and initialize in new()",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Use cache in semantic_tokens_full",
+        implementation: "Call semantic_cache.store() after computing tokens",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Use cache in semantic_tokens_full_delta",
+        implementation: "Call semantic_cache.get_if_valid() for previous tokens",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Clean up cache in did_close",
+        implementation: "Call semantic_cache.remove() in did_close handler",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
