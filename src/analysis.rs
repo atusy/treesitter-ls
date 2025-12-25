@@ -1,4 +1,5 @@
 pub mod definition;
+pub mod incremental_tokens;
 pub mod offset_calculator;
 pub mod refactor;
 pub mod result_id;
