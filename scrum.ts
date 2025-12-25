@@ -198,7 +198,7 @@ const scrum: ScrumDashboard = {
       //   (the behavior is already covered by SemanticTokenCache tests)
       // - src/document/model.rs also has unit tests for last_semantic_tokens
       //   that should be deleted along with the field
-      status: "ready",
+      status: "done",
     },
     // Critical Bug Fix
     {
@@ -347,58 +347,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 59,
-    pbi_id: "PBI-077",
-    goal: "Remove redundant Document.last_semantic_tokens storage - Tidy First structural cleanup",
-    status: "in_progress",
-    subtasks: [
-      {
-        test: "Verify tests/test_file_reopen.rs exists and is redundant",
-        implementation: "Delete tests/test_file_reopen.rs",
-        type: "structural",
-        status: "pending",
-        commits: [],
-        notes: [
-          "These tests are now covered by SemanticTokenCache tests",
-          "test_semantic_cache_remove_on_close covers did_close behavior",
-        ],
-      },
-      {
-        test: "Verify last_semantic_tokens field exists in Document",
-        implementation:
-          "Remove last_semantic_tokens field, getter, setter, and unit tests from model.rs",
-        type: "structural",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-      {
-        test: "Verify update_semantic_tokens exists in DocumentStore",
-        implementation: "Remove update_semantic_tokens method from store.rs",
-        type: "structural",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-      {
-        test: "Verify lsp_impl.rs calls update_semantic_tokens",
-        implementation: "Remove calls to update_semantic_tokens in lsp_impl.rs",
-        type: "structural",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-      {
-        test: "Run DoD checks",
-        implementation: "Verify make test, make check, make test_nvim all pass",
-        type: "structural",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -409,8 +358,15 @@ const scrum: ScrumDashboard = {
   },
 
   // Historical sprints (keep recent 3 for learning)
-  // Sprint 1-55 details: git log -- scrum.yaml, scrum.ts
+  // Sprint 1-56 details: git log -- scrum.yaml, scrum.ts
   completed: [
+    {
+      number: 59,
+      pbi_id: "PBI-077",
+      goal: "Remove redundant Document.last_semantic_tokens storage - Tidy First structural cleanup",
+      status: "done",
+      subtasks: [],
+    },
     {
       number: 58,
       pbi_id: "PBI-076",
@@ -422,13 +378,6 @@ const scrum: ScrumDashboard = {
       number: 57,
       pbi_id: "PBI-075",
       goal: "Integrate SemanticTokenCache into LSP handlers",
-      status: "done",
-      subtasks: [],
-    },
-    {
-      number: 56,
-      pbi_id: "PBI-074",
-      goal: "Implement dedicated SemanticTokenCache with result_id validation",
       status: "done",
       subtasks: [],
     },
