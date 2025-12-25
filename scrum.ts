@@ -138,7 +138,82 @@ const scrum: ScrumDashboard = {
   // Completed PBIs: PBI-001 through PBI-077
   // For historical details: git log -- scrum.yaml, scrum.ts
   // Design reference: __ignored/semantic-token-performance.md
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "PBI-078",
+      story: {
+        role: "developer editing a large file",
+        capability:
+          "have semantic tokens re-computed only for changed regions using Tree-sitter's changed_ranges() API",
+        benefit:
+          "experience faster highlighting updates for localized edits without full document re-tokenization",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "Tree-sitter changed_ranges() API is called after incremental parsing to identify modified regions",
+          verification:
+            "Unit test verifies changed_ranges is queried when old and new trees are available",
+        },
+        {
+          criterion:
+            "Tokens outside changed regions are preserved from the previous result",
+          verification:
+            "Integration test shows tokens for unmodified code sections remain unchanged",
+        },
+        {
+          criterion:
+            "Heuristic determines when incremental tokenization is beneficial vs full re-tokenization",
+          verification:
+            "Unit test for heuristic: >10 changed ranges or >30% document change triggers full recompute",
+        },
+        {
+          criterion:
+            "Performance improvement measured for localized edits in large documents",
+          verification:
+            "Benchmark shows <20ms response for single-line edits in 1000+ line files",
+        },
+      ],
+      status: "draft",
+    },
+    {
+      id: "PBI-079",
+      story: {
+        role: "developer editing a document with embedded languages (e.g., Markdown with code blocks)",
+        capability:
+          "have only affected injection regions re-tokenized when editing",
+        benefit:
+          "experience faster highlighting in multi-language documents where most injections remain unchanged",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "Injection regions are tracked with their byte/line ranges and cached tokens",
+          verification:
+            "Unit test verifies InjectionMap correctly tracks injection regions from parse tree",
+        },
+        {
+          criterion:
+            "Only injections overlapping with changed ranges are re-tokenized",
+          verification:
+            "Integration test: edit in host document outside code blocks skips injection re-parse",
+        },
+        {
+          criterion:
+            "Injection structure changes (add/remove code block) invalidate relevant caches",
+          verification:
+            "Test verifies adding new code block triggers fresh tokenization for that block",
+        },
+        {
+          criterion:
+            "Performance improvement for documents with many unchanged injections",
+          verification:
+            "Benchmark shows reduced latency when editing outside injection regions",
+        },
+      ],
+      status: "draft",
+    },
+  ],
 
   sprint: null,
 
