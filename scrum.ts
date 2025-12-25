@@ -193,7 +193,7 @@ const scrum: ScrumDashboard = {
           verification: "cargo test test_diff_tokens_no_change",
         },
       ],
-      status: "draft",
+      status: "ready",
     },
     // Phase 2: Caching
     {
@@ -227,7 +227,46 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 55,
+    pbi_id: "PBI-073",
+    goal: "Implement prefix-suffix matching for semantic token deltas",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "test_diff_tokens_no_change - verify empty delta when tokens unchanged",
+        implementation: "Ensure calculate_semantic_tokens_delta returns empty edits for identical tokens",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "test_diff_tokens_suffix_matching - verify suffix is found after prefix",
+        implementation: "Add suffix matching logic after prefix matching in calculate_semantic_tokens_delta",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "test_diff_tokens_line_insertion_no_suffix - verify line changes disable suffix optimization",
+        implementation: "Check if total line delta differs; if so, skip suffix matching",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "test_diff_tokens_same_line_edit_suffix - verify same-line edits preserve suffix",
+        implementation: "Verify suffix optimization works when total line count unchanged",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
