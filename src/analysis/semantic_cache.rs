@@ -29,6 +29,21 @@ impl SemanticTokenCache {
     pub fn get(&self, uri: &Url) -> Option<SemanticTokens> {
         self.cache.get(uri).map(|entry| entry.clone())
     }
+
+    /// Get cached tokens if the result_id matches.
+    ///
+    /// Returns None if:
+    /// - No tokens are cached for this URI
+    /// - The cached result_id doesn't match the expected one
+    pub fn get_if_valid(&self, uri: &Url, expected_result_id: &str) -> Option<SemanticTokens> {
+        self.cache.get(uri).and_then(|entry| {
+            if entry.result_id.as_deref() == Some(expected_result_id) {
+                Some(entry.clone())
+            } else {
+                None
+            }
+        })
+    }
 }
 
 impl Default for SemanticTokenCache {
@@ -76,6 +91,46 @@ mod tests {
         let other_uri = Url::parse("file:///other.rs").unwrap();
         assert!(
             cache.get(&other_uri).is_none(),
+            "Non-existent URI should return None"
+        );
+    }
+
+    #[test]
+    fn test_semantic_cache_invalid_result_id() {
+        let cache = SemanticTokenCache::new();
+        let uri = Url::parse("file:///test.rs").unwrap();
+        let tokens = SemanticTokens {
+            result_id: Some("42".to_string()),
+            data: vec![SemanticToken {
+                delta_line: 0,
+                delta_start: 0,
+                length: 10,
+                token_type: 1,
+                token_modifiers_bitset: 0,
+            }],
+        };
+
+        cache.store(uri.clone(), tokens);
+
+        // Matching result_id returns tokens
+        let valid = cache.get_if_valid(&uri, "42");
+        assert!(
+            valid.is_some(),
+            "Should return tokens when result_id matches"
+        );
+        assert_eq!(valid.unwrap().data[0].length, 10);
+
+        // Mismatched result_id returns None
+        let invalid = cache.get_if_valid(&uri, "99");
+        assert!(
+            invalid.is_none(),
+            "Should return None when result_id doesn't match"
+        );
+
+        // Non-existent URI returns None
+        let other_uri = Url::parse("file:///other.rs").unwrap();
+        assert!(
+            cache.get_if_valid(&other_uri, "42").is_none(),
             "Non-existent URI should return None"
         );
     }
