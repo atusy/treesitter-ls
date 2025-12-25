@@ -703,6 +703,9 @@ impl LanguageServer for TreeSitterLs {
         // This ensures that reopening the file will properly reinitialize everything
         self.documents.remove(&uri);
 
+        // Clean up semantic token cache for this document
+        self.semantic_cache.remove(&uri);
+
         self.client
             .log_message(MessageType::INFO, "file closed!")
             .await;
