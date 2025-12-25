@@ -1,6 +1,7 @@
 pub mod definition;
 pub mod offset_calculator;
 pub mod refactor;
+pub mod result_id;
 pub mod selection;
 pub mod semantic;
 
