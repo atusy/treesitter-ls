@@ -151,30 +151,36 @@ const scrum: ScrumDashboard = {
       acceptance_criteria: [
         {
           criterion:
-            "Tree-sitter changed_ranges() API is called after incremental parsing to identify modified regions",
+            "parse_document() preserves old tree (edited) alongside new tree after incremental parsing",
           verification:
-            "Unit test verifies changed_ranges is queried when old and new trees are available",
+            "Unit test: after did_change, both old_tree (with edits applied) and new_tree are accessible for comparison",
         },
         {
           criterion:
-            "Tokens outside changed regions are preserved from the previous result",
+            "old_tree.changed_ranges(&new_tree) is called to identify byte ranges that differ between parses",
           verification:
-            "Integration test shows tokens for unmodified code sections remain unchanged",
+            "Unit test: changed_ranges returns non-empty iterator when document content changes; empty when unchanged",
         },
         {
           criterion:
-            "Heuristic determines when incremental tokenization is beneficial vs full re-tokenization",
+            "compute_incremental_tokens() uses changed_ranges to selectively re-tokenize only affected lines",
           verification:
-            "Unit test for heuristic: >10 changed ranges or >30% document change triggers full recompute",
+            "Unit test: tokens outside changed line ranges are copied from cache; only changed regions are re-queried",
         },
         {
           criterion:
-            "Performance improvement measured for localized edits in large documents",
+            "Heuristic: >10 changed ranges OR >30% document bytes changed triggers full re-tokenization fallback",
           verification:
-            "Benchmark shows <20ms response for single-line edits in 1000+ line files",
+            "Unit test: is_large_structural_change() returns true for scattered changes; false for localized edits",
+        },
+        {
+          criterion:
+            "Performance improvement for localized edits in documents with 1000+ tokens",
+          verification:
+            "Benchmark: single-line edit in 1000-line file achieves <20ms token update vs baseline",
         },
       ],
-      status: "draft",
+      status: "ready",
     },
     {
       id: "PBI-079",
