@@ -2,6 +2,17 @@
 
 use tree_sitter::{Range as TsRange, Tree};
 
+/// Determine if the changes are too large for incremental tokenization.
+/// Returns true if full re-tokenization is more efficient.
+///
+/// Heuristics:
+/// - More than 10 changed ranges = likely a large structural change
+/// - Changed bytes exceed 30% of document = significant rewrite
+pub fn is_large_structural_change(_ranges: &[TsRange], _document_len: usize) -> bool {
+    // TODO: implement
+    false
+}
+
 /// Get the byte ranges that changed between two trees.
 /// Returns a vector of ranges that differ between the old and new trees.
 ///
@@ -15,6 +26,36 @@ pub fn get_changed_ranges(old_tree: &Tree, new_tree: &Tree) -> Vec<TsRange> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tree_sitter::Point;
+
+    // Helper to create a range for testing
+    fn make_range(start_byte: usize, end_byte: usize) -> TsRange {
+        TsRange {
+            start_byte,
+            end_byte,
+            start_point: Point { row: 0, column: 0 },
+            end_point: Point { row: 0, column: 0 },
+        }
+    }
+
+    #[test]
+    fn test_heuristic_large_change_triggers_full_recompute() {
+        // Test 1: Few small changes - should NOT be large
+        let small_changes = vec![make_range(0, 10), make_range(50, 60)];
+        assert!(!is_large_structural_change(&small_changes, 1000));
+
+        // Test 2: More than 10 ranges - should be large
+        let many_ranges: Vec<_> = (0..15).map(|i| make_range(i * 10, i * 10 + 5)).collect();
+        assert!(is_large_structural_change(&many_ranges, 1000));
+
+        // Test 3: >30% of document changed - should be large
+        let large_change = vec![make_range(0, 400)]; // 400 bytes out of 1000 = 40%
+        assert!(is_large_structural_change(&large_change, 1000));
+
+        // Test 4: Exactly 30% - should NOT be large (boundary)
+        let boundary_change = vec![make_range(0, 300)]; // 300 bytes out of 1000 = 30%
+        assert!(!is_large_structural_change(&boundary_change, 1000));
+    }
 
     #[test]
     fn test_changed_ranges_returns_affected_regions() {
