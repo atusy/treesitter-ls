@@ -8,9 +8,8 @@ use tree_sitter::{Range as TsRange, Tree};
 /// Note: For best results, the old tree should have been edited via `tree.edit()`
 /// before the new tree was parsed. Without proper edit information, Tree-sitter
 /// may return larger ranges than strictly necessary.
-pub fn get_changed_ranges(_old_tree: &Tree, _new_tree: &Tree) -> Vec<TsRange> {
-    // TODO: Implement
-    unimplemented!()
+pub fn get_changed_ranges(old_tree: &Tree, new_tree: &Tree) -> Vec<TsRange> {
+    old_tree.changed_ranges(new_tree).collect()
 }
 
 #[cfg(test)]
