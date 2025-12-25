@@ -733,4 +733,72 @@ mod tests {
         // Line delta should be +1 (one line added)
         assert_eq!(result.line_delta, 1, "Should detect line insertion");
     }
+
+    #[test]
+    fn test_incremental_tokenization_performance() {
+        use std::time::Instant;
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
+
+        // Generate a ~1000 line Rust file
+        let mut code_lines: Vec<String> = vec!["fn main() {".to_string()];
+        for i in 0..998 {
+            code_lines.push(format!("    let x{} = {};", i, i));
+        }
+        code_lines.push("}".to_string());
+        let old_code = code_lines.join("\n");
+
+        // Parse original
+        let old_tree = parser.parse(&old_code, None).unwrap();
+
+        // Simulate old tokens (just a few for the test)
+        let old_tokens: Vec<AbsoluteToken> = (0..1000).map(|i| make_token(i, 4, 3, 1)).collect();
+
+        // Make a small edit on line 500
+        code_lines[500] = "    let modified = 999;".to_string();
+        let new_code = code_lines.join("\n");
+
+        // Parse new version
+        let new_tree = parser.parse(&new_code, None).unwrap();
+
+        // Simulate new tokens
+        let new_tokens: Vec<AbsoluteToken> = (0..1000)
+            .map(|i| {
+                if i == 500 {
+                    make_token(i, 4, 8, 1) // "modified" has different length
+                } else {
+                    make_token(i, 4, 3, 1)
+                }
+            })
+            .collect();
+
+        // Benchmark incremental tokenization
+        let start = Instant::now();
+        let _result = compute_incremental_tokens(
+            &old_tokens,
+            &old_tree,
+            &new_tree,
+            &old_code,
+            &new_code,
+            &new_tokens,
+        );
+        let duration = start.elapsed();
+
+        // Assert that incremental tokenization is fast (< 20ms target)
+        // Note: This test verifies the merge logic is fast; full integration
+        // with actual token computation will have different characteristics
+        assert!(
+            duration.as_millis() < 20,
+            "Incremental tokenization should complete in <20ms, took {}ms",
+            duration.as_millis()
+        );
+
+        println!(
+            "Incremental tokenization for 1000-line file completed in {:?}",
+            duration
+        );
+    }
 }
