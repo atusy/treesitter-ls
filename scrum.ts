@@ -251,50 +251,11 @@ const scrum: ScrumDashboard = {
           verification: "code review: remove called in did_close",
         },
       ],
-      status: "ready",
+      status: "done",
     },
   ],
 
-  sprint: {
-    number: 57,
-    pbi_id: "PBI-075",
-    goal: "Integrate SemanticTokenCache into LSP handlers",
-    status: "in_progress",
-    subtasks: [
-      {
-        test: "Add semantic_cache field to TreeSitterLs struct",
-        implementation: "Add SemanticTokenCache field and initialize in new()",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-      {
-        test: "Use cache in semantic_tokens_full",
-        implementation: "Call semantic_cache.store() after computing tokens",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-      {
-        test: "Use cache in semantic_tokens_full_delta",
-        implementation: "Call semantic_cache.get_if_valid() for previous tokens",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-      {
-        test: "Clean up cache in did_close",
-        implementation: "Call semantic_cache.remove() in did_close handler",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -305,8 +266,15 @@ const scrum: ScrumDashboard = {
   },
 
   // Historical sprints (keep recent 3 for learning)
-  // Sprint 1-53 details: git log -- scrum.yaml, scrum.ts
+  // Sprint 1-54 details: git log -- scrum.yaml, scrum.ts
   completed: [
+    {
+      number: 57,
+      pbi_id: "PBI-075",
+      goal: "Integrate SemanticTokenCache into LSP handlers",
+      status: "done",
+      subtasks: [],
+    },
     {
       number: 56,
       pbi_id: "PBI-074",
@@ -318,13 +286,6 @@ const scrum: ScrumDashboard = {
       number: 55,
       pbi_id: "PBI-073",
       goal: "Implement prefix-suffix matching for semantic token deltas",
-      status: "done",
-      subtasks: [],
-    },
-    {
-      number: 54,
-      pbi_id: "PBI-072",
-      goal: "Implement atomic sequential result_id generation for semantic tokens",
       status: "done",
       subtasks: [],
     },
