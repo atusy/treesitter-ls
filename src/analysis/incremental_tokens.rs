@@ -8,8 +8,29 @@ use tree_sitter::{Range as TsRange, Tree};
 /// Heuristics:
 /// - More than 10 changed ranges = likely a large structural change
 /// - Changed bytes exceed 30% of document = significant rewrite
-pub fn is_large_structural_change(_ranges: &[TsRange], _document_len: usize) -> bool {
-    // TODO: implement
+pub fn is_large_structural_change(ranges: &[TsRange], document_len: usize) -> bool {
+    const MAX_RANGES: usize = 10;
+    const MAX_CHANGE_RATIO: f64 = 0.30;
+
+    // Too many changed ranges
+    if ranges.len() > MAX_RANGES {
+        return true;
+    }
+
+    // Calculate total changed bytes
+    let total_changed: usize = ranges
+        .iter()
+        .map(|r| r.end_byte.saturating_sub(r.start_byte))
+        .sum();
+
+    // More than 30% of document changed
+    if document_len > 0 {
+        let ratio = total_changed as f64 / document_len as f64;
+        if ratio > MAX_CHANGE_RATIO {
+            return true;
+        }
+    }
+
     false
 }
 
