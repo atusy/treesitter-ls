@@ -139,6 +139,37 @@ const scrum: ScrumDashboard = {
   // For historical details: git log -- scrum.yaml, scrum.ts
   // Design reference: __ignored/semantic-token-performance.md
   product_backlog: [
+    // Critical Bug Fix
+    {
+      id: "PBI-076",
+      story: {
+        role: "developer editing code",
+        capability:
+          "have semantic token cache invalidated when document is edited",
+        benefit:
+          "syntax highlighting updates correctly after edits instead of showing stale tokens",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "SemanticTokenCache entry is removed in did_change handler after document update",
+          verification:
+            "code review: self.semantic_cache.remove(&uri) called in did_change after parse_document",
+        },
+        {
+          criterion:
+            "Delta request after edit computes fresh tokens (not stale cached tokens)",
+          verification:
+            "cargo test test_delta_after_edit_uses_fresh_tokens",
+        },
+        {
+          criterion:
+            "Syntax highlighting visually updates correctly after editing document",
+          verification: "make test_nvim (E2E semantic token tests)",
+        },
+      ],
+      status: "ready",
+    },
     // Phase 1: Foundation (from design doc)
     {
       id: "PBI-072",
@@ -255,7 +286,43 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 58,
+    pbi_id: "PBI-076",
+    goal: "Fix semantic token cache invalidation on document edit",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "test_delta_after_edit_uses_fresh_tokens: delta request after edit computes fresh tokens",
+        implementation:
+          "Write integration test that opens doc, gets tokens, edits doc, gets delta, verifies fresh tokens not stale cache",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "(existing tests must pass)",
+        implementation:
+          "Add self.semantic_cache.remove(&uri) in did_change handler after document update",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Root cause: did_change handler does not invalidate SemanticTokenCache",
+          "Fix location: src/lsp/lsp_impl.rs in did_change method",
+        ],
+      },
+      {
+        test: "E2E semantic token tests verify visual highlighting",
+        implementation: "Run make test_nvim to verify syntax highlighting updates correctly",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Verification step: no code changes expected"],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
