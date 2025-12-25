@@ -221,6 +221,33 @@ const scrum: ScrumDashboard = {
       ],
       status: "done",
     },
+    {
+      id: "PBI-075",
+      story: {
+        role: "treesitter-ls server",
+        capability:
+          "integrate SemanticTokenCache into LSP handlers for delta requests",
+        benefit:
+          "delta requests use cached previous tokens for efficient comparison",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "semantic_tokens_full stores result in SemanticTokenCache",
+          verification: "cargo test test_full_handler_stores_in_cache",
+        },
+        {
+          criterion:
+            "semantic_tokens_full_delta retrieves previous from cache",
+          verification: "cargo test test_delta_handler_retrieves_from_cache",
+        },
+        {
+          criterion: "did_close removes entry from SemanticTokenCache",
+          verification: "cargo test test_close_removes_from_cache",
+        },
+      ],
+      status: "draft",
+    },
   ],
 
   sprint: null,
