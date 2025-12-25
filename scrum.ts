@@ -164,7 +164,7 @@ const scrum: ScrumDashboard = {
           verification: "cargo test test_semantic_tokens_full_uses_atomic_id",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-073",
@@ -227,46 +227,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 54,
-    pbi_id: "PBI-072",
-    goal: "Implement atomic sequential result_id generation for semantic tokens",
-    status: "in_progress",
-    subtasks: [
-      {
-        test: "test_next_result_id_returns_string - verify next_result_id() returns a String type",
-        implementation: "Create ResultIdGenerator struct with next_result_id() method returning String",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "a9c4810", message: "feat(analysis): add atomic result_id generation", phase: "green" }],
-        notes: ["Used AtomicU64 with SeqCst ordering for thread safety"],
-      },
-      {
-        test: "test_next_result_id_monotonic - verify sequential calls return increasing IDs",
-        implementation: "Use AtomicU64 counter, format as string with fetch_add(1, Ordering::SeqCst)",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "3142cfd", message: "test(result_id): add monotonicity verification", phase: "green" }],
-        notes: ["Test passed immediately - impl from subtask 1 covers this"],
-      },
-      {
-        test: "test_next_result_id_concurrent - verify thread safety with no duplicate IDs",
-        implementation: "AtomicU64 guarantees uniqueness across threads, test with multiple threads",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "c55fae9", message: "test(result_id): add concurrent uniqueness verification", phase: "green" }],
-        notes: ["10 threads x 100 calls = 1000 unique IDs verified"],
-      },
-      {
-        test: "test_semantic_tokens_full_uses_atomic_id - verify semantic_tokens_full returns result_id from generator",
-        implementation: "Integrate ResultIdGenerator into LspImpl, use in semantic_tokens_full handler",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -280,6 +241,13 @@ const scrum: ScrumDashboard = {
   // Sprint 1-45 details: git log -- scrum.yaml
   completed: [
     {
+      number: 54,
+      pbi_id: "PBI-072",
+      goal: "Implement atomic sequential result_id generation for semantic tokens",
+      status: "done",
+      subtasks: [],
+    },
+    {
       number: 53,
       pbi_id: "PBI-071",
       goal: "Enable users to see real-time progress when parsers are auto-installed",
@@ -290,13 +258,6 @@ const scrum: ScrumDashboard = {
       number: 52,
       pbi_id: "PBI-070",
       goal: "Alias normalization for injected language regions",
-      status: "done",
-      subtasks: [],
-    },
-    {
-      number: 51,
-      pbi_id: "PBI-068",
-      goal: "Extension-based fallback detection in chain",
       status: "done",
       subtasks: [],
     },
