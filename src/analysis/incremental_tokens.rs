@@ -2,6 +2,42 @@
 
 use tree_sitter::{Range as TsRange, Tree};
 
+/// Decision for which tokenization strategy to use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IncrementalDecision {
+    /// Use incremental tokenization - only re-tokenize changed regions
+    UseIncremental,
+    /// Use full tokenization - re-tokenize the entire document
+    UseFull,
+}
+
+/// Decide whether to use incremental or full tokenization.
+///
+/// Returns `UseIncremental` when:
+/// - previous_tree is available (Some)
+/// - changed ranges indicate a localized edit (not a large structural change)
+///
+/// Returns `UseFull` when:
+/// - No previous tree available
+/// - Changes are too large/scattered for incremental to be beneficial
+pub fn decide_tokenization_strategy(
+    previous_tree: Option<&Tree>,
+    current_tree: &Tree,
+    document_len: usize,
+) -> IncrementalDecision {
+    let Some(prev_tree) = previous_tree else {
+        return IncrementalDecision::UseFull;
+    };
+
+    let changed_ranges = get_changed_ranges(prev_tree, current_tree);
+
+    if is_large_structural_change(&changed_ranges, document_len) {
+        IncrementalDecision::UseFull
+    } else {
+        IncrementalDecision::UseIncremental
+    }
+}
+
 /// Determine if the changes are too large for incremental tokenization.
 /// Returns true if full re-tokenization is more efficient.
 ///
@@ -472,5 +508,61 @@ mod tests {
                 i
             );
         }
+    }
+
+    #[test]
+    fn test_incremental_path_chosen_when_small_change() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
+
+        // Parse original code - a small function
+        let old_code = "fn main() {\n    let x = 1;\n}\n";
+        let old_tree = parser.parse(old_code, None).unwrap();
+
+        // Parse with a small edit (change x to y)
+        let new_code = "fn main() {\n    let y = 1;\n}\n";
+        let new_tree = parser.parse(new_code, None).unwrap();
+
+        // With previous tree and small change, should choose incremental
+        let decision = decide_tokenization_strategy(Some(&old_tree), &new_tree, new_code.len());
+        assert_eq!(
+            decision,
+            IncrementalDecision::UseIncremental,
+            "Small change with previous_tree should use incremental"
+        );
+
+        // Without previous tree, should choose full
+        let decision = decide_tokenization_strategy(None, &new_tree, new_code.len());
+        assert_eq!(
+            decision,
+            IncrementalDecision::UseFull,
+            "No previous_tree should use full tokenization"
+        );
+    }
+
+    #[test]
+    fn test_full_path_chosen_when_large_change() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
+
+        // Parse original code
+        let old_code = "fn main() {}";
+        let old_tree = parser.parse(old_code, None).unwrap();
+
+        // Parse with a large change (completely different code)
+        let new_code = "struct Foo { a: i32, b: i32, c: i32, d: i32 }\nimpl Foo { fn new() -> Self { Foo { a: 0, b: 0, c: 0, d: 0 } } }";
+        let new_tree = parser.parse(new_code, None).unwrap();
+
+        // Large change should choose full even with previous tree
+        let decision = decide_tokenization_strategy(Some(&old_tree), &new_tree, new_code.len());
+        assert_eq!(
+            decision,
+            IncrementalDecision::UseFull,
+            "Large structural change should use full tokenization"
+        );
     }
 }
