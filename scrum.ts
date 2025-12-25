@@ -135,41 +135,10 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-078
+  // Completed PBIs: PBI-001 through PBI-080
   // For historical details: git log -- scrum.yaml, scrum.ts
   // Design reference: __ignored/semantic-token-performance.md
   product_backlog: [
-    {
-      id: "PBI-080",
-      story: {
-        role: "developer editing a large file",
-        capability:
-          "have the incremental tokenization path enabled using merge_tokens() for localized edits",
-        benefit:
-          "experience measurably faster highlighting updates (<20ms) for single-line edits in 1000+ line files",
-      },
-      acceptance_criteria: [
-        {
-          criterion:
-            "semantic_tokens_full_delta uses merge_tokens() when previous_tree exists and is_large_structural_change() returns false",
-          verification:
-            "Integration test: verify incremental path is taken for small edits via log or metrics",
-        },
-        {
-          criterion:
-            "Benchmark confirms <20ms token update for single-line edit in 1000-line file",
-          verification:
-            "Benchmark test comparing incremental vs full tokenization timing",
-        },
-        {
-          criterion:
-            "Highlighting remains correct after incremental tokenization",
-          verification:
-            "E2E test: edit file, verify semantic tokens match full recomputation",
-        },
-      ],
-      status: "done",
-    },
     {
       id: "PBI-079",
       story: {
@@ -209,68 +178,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 61,
-    pbi_id: "PBI-080",
-    goal: "Enable incremental tokenization path using merge_tokens() so that localized edits achieve <20ms highlighting updates in large files",
-    status: "review",
-    subtasks: [
-      // Subtask 1: Unit test for incremental path decision logic
-      {
-        test: "Write unit test: incremental_path_chosen_when_small_change() - verify that when previous_tree exists and is_large_structural_change() returns false, the incremental path is selected",
-        implementation: "Add decision logic function that returns IncrementalDecision enum (UseIncremental/UseFull) based on previous_tree presence and is_large_structural_change result",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Test location: src/analysis/incremental_tokens.rs", "This is a pure function test, no LSP integration yet"],
-      },
-      // Subtask 2: Unit test for merge_tokens integration with changed_ranges
-      {
-        test: "Write unit test: merge_tokens_uses_changed_ranges() - verify merge_tokens correctly integrates with get_changed_ranges() and changed_ranges_to_lines() to identify affected regions",
-        implementation: "Create helper function compute_incremental_tokens() that orchestrates get_changed_ranges, changed_ranges_to_lines, and merge_tokens",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Test with actual tree-sitter parse trees", "Verify tokens outside changed region are preserved"],
-      },
-      // Subtask 3: Integration test for handle_semantic_tokens_full_delta with incremental path
-      {
-        test: "Write integration test: handle_semantic_tokens_full_delta_uses_incremental_path() - verify that handle_semantic_tokens_full_delta uses incremental tokenization when conditions are met",
-        implementation: "Modify handle_semantic_tokens_full_delta signature to accept previous_tree and integrate incremental tokenization logic",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Requires signature change to accept previous_tree", "Fall back to full tokenization when incremental not possible"],
-      },
-      // Subtask 4: Integration test for lsp_impl incremental path
-      {
-        test: "Write integration test: lsp_impl_invokes_incremental_tokenization() - verify semantic_tokens_full_delta in lsp_impl passes previous_tree to handler and uses incremental path for small edits",
-        implementation: "Wire up lsp_impl.rs to pass doc.previous_tree() to handle_semantic_tokens_full_delta and invoke incremental path",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Integration point: src/lsp/lsp_impl.rs lines 964-983", "Replace logging-only code with actual incremental call"],
-      },
-      // Subtask 5: Correctness test - highlighting matches full recomputation
-      {
-        test: "Write E2E test: incremental_tokens_match_full_recomputation() - edit a file, verify incremental semantic tokens match what full recomputation would produce",
-        implementation: "No new implementation needed - this validates correctness of the integrated system",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["AC: Highlighting remains correct after incremental tokenization", "Compare incremental result with full tokenization result"],
-      },
-      // Subtask 6: Benchmark test for performance requirement
-      {
-        test: "Write benchmark test: incremental_tokenization_under_20ms() - measure token update latency for single-line edit in 1000-line file, assert <20ms",
-        implementation: "Create benchmark infrastructure if needed, run incremental vs full comparison",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["AC: Benchmark confirms <20ms token update for single-line edit in 1000-line file", "Use criterion or simple timing with assertions"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -281,8 +189,15 @@ const scrum: ScrumDashboard = {
   },
 
   // Historical sprints (keep recent 3 for learning)
-  // Sprint 1-56 details: git log -- scrum.yaml, scrum.ts
+  // Sprint 1-57 details: git log -- scrum.yaml, scrum.ts
   completed: [
+    {
+      number: 61,
+      pbi_id: "PBI-080",
+      goal: "Enable incremental tokenization path using merge_tokens() for <20ms highlighting updates",
+      status: "done",
+      subtasks: [],
+    },
     {
       number: 60,
       pbi_id: "PBI-078",
@@ -294,13 +209,6 @@ const scrum: ScrumDashboard = {
       number: 59,
       pbi_id: "PBI-077",
       goal: "Remove redundant Document.last_semantic_tokens storage - Tidy First structural cleanup",
-      status: "done",
-      subtasks: [],
-    },
-    {
-      number: 58,
-      pbi_id: "PBI-076",
-      goal: "Fix semantic token cache invalidation on document edit",
       status: "done",
       subtasks: [],
     },
