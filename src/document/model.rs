@@ -1,4 +1,3 @@
-use tower_lsp::lsp_types::SemanticTokens;
 use tree_sitter::Tree;
 
 /// Unified document structure combining text, parsing, and LSP state
@@ -7,7 +6,6 @@ pub struct Document {
     version: Option<i32>,
     language_id: Option<String>,
     tree: Option<Tree>,
-    last_semantic_tokens: Option<SemanticTokens>,
 }
 
 impl Document {
@@ -18,7 +16,6 @@ impl Document {
             version: None,
             language_id: None,
             tree: None,
-            last_semantic_tokens: None,
         }
     }
 
@@ -29,7 +26,6 @@ impl Document {
             version: Some(version),
             language_id: None,
             tree: None,
-            last_semantic_tokens: None,
         }
     }
 
@@ -40,7 +36,6 @@ impl Document {
             version: None,
             language_id: Some(language_id),
             tree: Some(tree),
-            last_semantic_tokens: None,
         }
     }
 
@@ -96,22 +91,11 @@ impl Document {
         self.tree = None;
     }
 
-    /// Get the last semantic tokens
-    pub fn last_semantic_tokens(&self) -> Option<&SemanticTokens> {
-        self.last_semantic_tokens.as_ref()
-    }
-
-    /// Set the last semantic tokens
-    pub fn set_last_semantic_tokens(&mut self, tokens: Option<SemanticTokens>) {
-        self.last_semantic_tokens = tokens;
-    }
-
     /// Update text and clear layers/state
     pub fn update_text(&mut self, text: String) {
         self.text = text;
         // Note: Tree needs to be rebuilt after text change
         self.tree = None;
-        self.last_semantic_tokens = None;
     }
 
     /// Get the length in bytes
@@ -136,7 +120,6 @@ mod tests {
         assert_eq!(doc.version(), None);
         assert_eq!(doc.len(), 11);
         assert!(!doc.is_empty());
-        assert!(doc.last_semantic_tokens().is_none());
     }
 
     #[test]
@@ -162,28 +145,10 @@ mod tests {
     }
 
     #[test]
-    fn test_semantic_tokens_management() {
-        let mut doc = Document::new("test".to_string());
-        assert!(doc.last_semantic_tokens().is_none());
-
-        let tokens = SemanticTokens {
-            result_id: Some("test".to_string()),
-            data: vec![],
-        };
-        doc.set_last_semantic_tokens(Some(tokens.clone()));
-        assert!(doc.last_semantic_tokens().is_some());
-        assert_eq!(doc.last_semantic_tokens().unwrap(), &tokens);
-
-        doc.set_last_semantic_tokens(None);
-        assert!(doc.last_semantic_tokens().is_none());
-    }
-
-    #[test]
     fn test_update_text() {
         let mut doc = Document::new("initial".to_string());
         doc.update_text("updated".to_string());
         assert_eq!(doc.text(), "updated");
         assert!(doc.tree().is_none());
-        assert!(doc.last_semantic_tokens().is_none());
     }
 }

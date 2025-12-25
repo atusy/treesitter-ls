@@ -2,7 +2,6 @@ use crate::document::Document;
 use dashmap::DashMap;
 use dashmap::mapref::one::Ref;
 use std::ops::Deref;
-use tower_lsp::lsp_types::SemanticTokens;
 use tree_sitter::{InputEdit, Tree};
 use url::Url;
 
@@ -96,12 +95,6 @@ impl DocumentStore {
                 tree
             })
         })
-    }
-
-    pub fn update_semantic_tokens(&self, uri: &Url, tokens: SemanticTokens) {
-        if let Some(mut doc) = self.documents.get_mut(uri) {
-            doc.set_last_semantic_tokens(Some(tokens));
-        }
     }
 
     pub fn get_document_text(&self, uri: &Url) -> Option<String> {
