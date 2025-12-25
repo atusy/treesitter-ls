@@ -216,6 +216,39 @@ const scrum: ScrumDashboard = {
 
   retrospectives: [
     {
+      sprint: 62,
+      improvements: [
+        {
+          action:
+            "Tidy First applied well - previous_text structural change separated from behavioral wiring",
+          timing: "immediate",
+          status: "completed",
+          outcome: "Clean separation made review easier and reduced risk",
+        },
+        {
+          action:
+            "Document the UseIncremental -> compute_incremental_tokens() wiring in code comments for maintainability",
+          timing: "sprint",
+          status: "active",
+          outcome: null,
+        },
+        {
+          action:
+            "Evaluate memory optimization: previous_text storage vs on-demand diff computation",
+          timing: "product",
+          status: "active",
+          outcome: null,
+        },
+        {
+          action:
+            "Performance exceeded target by 4x (4.6ms vs 20ms target) - consider updating product goal metrics to reflect actual capability",
+          timing: "product",
+          status: "active",
+          outcome: null,
+        },
+      ],
+    },
+    {
       sprint: 61,
       improvements: [
         {
@@ -236,8 +269,8 @@ const scrum: ScrumDashboard = {
           action:
             "Performance exceeded target by 4x (4.6ms vs 20ms target) - consider updating product goal metrics to reflect actual capability",
           timing: "product",
-          status: "active",
-          outcome: null,
+          status: "completed",
+          outcome: "Carried forward to Sprint 62 retrospective for tracking",
         },
       ],
     },
