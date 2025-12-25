@@ -219,42 +219,11 @@ const scrum: ScrumDashboard = {
           verification: "cargo test test_semantic_cache_remove_on_close",
         },
       ],
-      status: "ready",
+      status: "done",
     },
   ],
 
-  sprint: {
-    number: 56,
-    pbi_id: "PBI-074",
-    goal: "Implement dedicated SemanticTokenCache with result_id validation",
-    status: "in_progress",
-    subtasks: [
-      {
-        test: "test_semantic_cache_store_retrieve - verify tokens stored and retrieved by URL",
-        implementation: "Create SemanticTokenCache struct with DashMap<Url, SemanticTokens>",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-      {
-        test: "test_semantic_cache_invalid_result_id - verify get_if_valid returns None on mismatch",
-        implementation: "Add get_if_valid method that checks result_id matches",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-      {
-        test: "test_semantic_cache_remove_on_close - verify cache cleanup on document close",
-        implementation: "Add remove method and integrate with document close handler",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -265,8 +234,15 @@ const scrum: ScrumDashboard = {
   },
 
   // Historical sprints (keep recent 3 for learning)
-  // Sprint 1-51 details: git log -- scrum.yaml, scrum.ts
+  // Sprint 1-53 details: git log -- scrum.yaml, scrum.ts
   completed: [
+    {
+      number: 56,
+      pbi_id: "PBI-074",
+      goal: "Implement dedicated SemanticTokenCache with result_id validation",
+      status: "done",
+      subtasks: [],
+    },
     {
       number: 55,
       pbi_id: "PBI-073",
@@ -278,13 +254,6 @@ const scrum: ScrumDashboard = {
       number: 54,
       pbi_id: "PBI-072",
       goal: "Implement atomic sequential result_id generation for semantic tokens",
-      status: "done",
-      subtasks: [],
-    },
-    {
-      number: 53,
-      pbi_id: "PBI-071",
-      goal: "Enable users to see real-time progress when parsers are auto-installed",
       status: "done",
       subtasks: [],
     },
