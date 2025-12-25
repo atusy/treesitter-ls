@@ -796,6 +796,9 @@ impl LanguageServer for TreeSitterLs {
         self.parse_document(uri.clone(), text, language_id.as_deref(), edits)
             .await;
 
+        // Invalidate semantic token cache to ensure fresh tokens for delta calculations
+        self.semantic_cache.remove(&uri);
+
         // Check for injected languages and trigger auto-install for missing parsers
         // This must be called AFTER parse_document so we have access to the updated AST
         self.check_injected_languages_auto_install(&uri).await;
