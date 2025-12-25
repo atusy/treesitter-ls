@@ -17,3 +17,7 @@ pub use semantic::{
     handle_semantic_tokens_range,
 };
 pub use semantic_cache::SemanticTokenCache;
+pub use incremental_tokens::{
+    AbsoluteToken, changed_ranges_to_lines, get_changed_ranges, is_large_structural_change,
+    merge_tokens,
+};
