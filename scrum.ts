@@ -176,12 +176,29 @@ const scrum: ScrumDashboard = {
         },
         {
           criterion:
+            "tests/test_file_reopen.rs tests migrated or deleted",
+          verification:
+            "code review: tests no longer reference Document.last_semantic_tokens",
+        },
+        {
+          criterion:
             "All existing tests pass after removal",
           verification:
             "make test && make test_nvim",
         },
       ],
-      status: "draft",
+      // Investigation notes (2025-01-25):
+      // - tests/test_file_reopen.rs has 3 tests using last_semantic_tokens()
+      // - These tests verify document lifecycle (reopen, update, remove)
+      // - The tests are NOW REDUNDANT because:
+      //   1. SemanticTokenCache already has test_semantic_cache_remove_on_close
+      //   2. The LSP did_close already calls semantic_cache.remove()
+      //   3. The LSP did_change already calls semantic_cache.remove()
+      // - Recommendation: DELETE tests/test_file_reopen.rs entirely
+      //   (the behavior is already covered by SemanticTokenCache tests)
+      // - src/document/model.rs also has unit tests for last_semantic_tokens
+      //   that should be deleted along with the field
+      status: "ready",
     },
     // Critical Bug Fix
     {
