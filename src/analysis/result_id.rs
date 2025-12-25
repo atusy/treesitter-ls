@@ -84,4 +84,32 @@ mod tests {
             all_ids.len() - unique_ids.len()
         );
     }
+
+    /// Verifies that the result_id format is suitable for LSP semantic tokens.
+    /// The ID should be a numeric string that can be compared for equality.
+    #[test]
+    fn test_semantic_tokens_full_uses_atomic_id() {
+        // Verify the format matches what LSP expects: a simple string
+        let id1 = next_result_id();
+        let id2 = next_result_id();
+
+        // IDs should be parseable as numbers
+        assert!(
+            id1.parse::<u64>().is_ok(),
+            "result_id should be numeric: {}",
+            id1
+        );
+        assert!(
+            id2.parse::<u64>().is_ok(),
+            "result_id should be numeric: {}",
+            id2
+        );
+
+        // IDs should be different
+        assert_ne!(id1, id2, "Sequential IDs should be different");
+
+        // IDs should not contain the old format patterns
+        assert!(!id1.starts_with("v"), "Should not use old format: {}", id1);
+        assert!(!id1.contains("_"), "Should not use old format: {}", id1);
+    }
 }

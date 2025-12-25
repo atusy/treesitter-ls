@@ -8,7 +8,7 @@ use tree_sitter::InputEdit;
 use crate::analysis::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
 use crate::analysis::{
     handle_code_actions, handle_goto_definition, handle_selection_range,
-    handle_semantic_tokens_full_delta,
+    handle_semantic_tokens_full_delta, next_result_id,
 };
 use crate::config::{TreeSitterSettings, WorkspaceSettings};
 use crate::document::DocumentStore;
@@ -893,21 +893,8 @@ impl LanguageServer for TreeSitterLs {
                 }
             }
         };
-        // Simple ID based on token count and first/last token info
-        let id = if tokens_with_id.data.is_empty() {
-            "empty".to_string()
-        } else {
-            format!(
-                "v{}_{}",
-                tokens_with_id.data.len(),
-                tokens_with_id
-                    .data
-                    .first()
-                    .map(|t| t.delta_line)
-                    .unwrap_or(0)
-            )
-        };
-        tokens_with_id.result_id = Some(id);
+        // Use atomic sequential ID for efficient cache validation
+        tokens_with_id.result_id = Some(next_result_id());
         let stored_tokens = tokens_with_id.clone();
         let lsp_tokens = tokens_with_id;
         self.documents.update_semantic_tokens(&uri, stored_tokens);
@@ -999,20 +986,8 @@ impl LanguageServer for TreeSitterLs {
         match domain_result {
             tower_lsp::lsp_types::SemanticTokensFullDeltaResult::Tokens(tokens) => {
                 let mut tokens_with_id = tokens;
-                let id = if tokens_with_id.data.is_empty() {
-                    "empty".to_string()
-                } else {
-                    format!(
-                        "v{}_{}",
-                        tokens_with_id.data.len(),
-                        tokens_with_id
-                            .data
-                            .first()
-                            .map(|t| t.delta_line)
-                            .unwrap_or(0)
-                    )
-                };
-                tokens_with_id.result_id = Some(id);
+                // Use atomic sequential ID for efficient cache validation
+                tokens_with_id.result_id = Some(next_result_id());
                 let stored_tokens = tokens_with_id.clone();
                 let lsp_tokens = tokens_with_id;
                 self.documents.update_semantic_tokens(&uri, stored_tokens);
