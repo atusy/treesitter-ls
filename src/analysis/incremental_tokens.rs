@@ -84,6 +84,65 @@ pub struct AbsoluteToken {
     pub token_modifiers_bitset: u32,
 }
 
+/// Convert LSP SemanticTokens (delta-encoded) to AbsoluteTokens.
+/// This allows us to work with cached tokens for incremental computation.
+pub fn decode_semantic_tokens(tokens: &tower_lsp::lsp_types::SemanticTokens) -> Vec<AbsoluteToken> {
+    let mut result = Vec::with_capacity(tokens.data.len());
+    let mut current_line = 0u32;
+    let mut current_col = 0u32;
+
+    for token in &tokens.data {
+        current_line += token.delta_line;
+        if token.delta_line > 0 {
+            current_col = token.delta_start;
+        } else {
+            current_col += token.delta_start;
+        }
+
+        result.push(AbsoluteToken {
+            line: current_line,
+            start: current_col,
+            length: token.length,
+            token_type: token.token_type,
+            token_modifiers_bitset: token.token_modifiers_bitset,
+        });
+    }
+
+    result
+}
+
+/// Convert AbsoluteTokens back to delta-encoded SemanticTokens.
+pub fn encode_semantic_tokens(
+    tokens: &[AbsoluteToken],
+    result_id: Option<String>,
+) -> tower_lsp::lsp_types::SemanticTokens {
+    let mut data = Vec::with_capacity(tokens.len());
+    let mut last_line = 0u32;
+    let mut last_col = 0u32;
+
+    for token in tokens {
+        let delta_line = token.line - last_line;
+        let delta_start = if delta_line > 0 {
+            token.start
+        } else {
+            token.start - last_col
+        };
+
+        data.push(tower_lsp::lsp_types::SemanticToken {
+            delta_line,
+            delta_start,
+            length: token.length,
+            token_type: token.token_type,
+            token_modifiers_bitset: token.token_modifiers_bitset,
+        });
+
+        last_line = token.line;
+        last_col = token.start;
+    }
+
+    tower_lsp::lsp_types::SemanticTokens { result_id, data }
+}
+
 /// Merge old tokens with newly computed tokens for changed regions.
 ///
 /// This function:
@@ -330,5 +389,88 @@ mod tests {
         // Old line 3 shifted to line 4
         assert_eq!(result[4].line, 4);
         assert_eq!(result[4].token_type, 4, "Token type preserved");
+    }
+
+    #[test]
+    fn test_encode_decode_roundtrip() {
+        use tower_lsp::lsp_types::{SemanticToken, SemanticTokens};
+
+        // Create some delta-encoded tokens
+        let original = SemanticTokens {
+            result_id: Some("test".to_string()),
+            data: vec![
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 0,
+                    length: 5,
+                    token_type: 1,
+                    token_modifiers_bitset: 0,
+                },
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 6,
+                    length: 4,
+                    token_type: 2,
+                    token_modifiers_bitset: 1,
+                },
+                SemanticToken {
+                    delta_line: 1,
+                    delta_start: 4,
+                    length: 3,
+                    token_type: 3,
+                    token_modifiers_bitset: 0,
+                },
+                SemanticToken {
+                    delta_line: 2,
+                    delta_start: 0,
+                    length: 1,
+                    token_type: 4,
+                    token_modifiers_bitset: 2,
+                },
+            ],
+        };
+
+        // Decode to absolute
+        let decoded = decode_semantic_tokens(&original);
+        assert_eq!(decoded.len(), 4);
+
+        // Check absolute positions
+        assert_eq!(decoded[0].line, 0);
+        assert_eq!(decoded[0].start, 0);
+        assert_eq!(decoded[1].line, 0);
+        assert_eq!(decoded[1].start, 6);
+        assert_eq!(decoded[2].line, 1);
+        assert_eq!(decoded[2].start, 4);
+        assert_eq!(decoded[3].line, 3); // 0 + 1 + 2 = 3
+        assert_eq!(decoded[3].start, 0);
+
+        // Encode back
+        let encoded = encode_semantic_tokens(&decoded, Some("roundtrip".to_string()));
+
+        // Data should match original
+        assert_eq!(encoded.data.len(), original.data.len());
+        for (i, (enc, orig)) in encoded.data.iter().zip(original.data.iter()).enumerate() {
+            assert_eq!(
+                enc.delta_line, orig.delta_line,
+                "delta_line mismatch at {}",
+                i
+            );
+            assert_eq!(
+                enc.delta_start, orig.delta_start,
+                "delta_start mismatch at {}",
+                i
+            );
+            assert_eq!(enc.length, orig.length, "length mismatch at {}", i);
+            assert_eq!(
+                enc.token_type, orig.token_type,
+                "token_type mismatch at {}",
+                i
+            );
+            assert_eq!(
+                enc.token_modifiers_bitset, orig.token_modifiers_bitset,
+                "modifiers mismatch at {}",
+                i
+            );
+        }
     }
 }

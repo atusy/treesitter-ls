@@ -9,6 +9,10 @@ pub mod semantic_cache;
 
 // Re-export main types and functions
 pub use definition::{DefinitionResolver, handle_goto_definition};
+pub use incremental_tokens::{
+    AbsoluteToken, changed_ranges_to_lines, decode_semantic_tokens, encode_semantic_tokens,
+    get_changed_ranges, is_large_structural_change, merge_tokens,
+};
 pub use refactor::handle_code_actions;
 pub use result_id::next_result_id;
 pub use selection::handle_selection_range;
@@ -17,7 +21,3 @@ pub use semantic::{
     handle_semantic_tokens_range,
 };
 pub use semantic_cache::SemanticTokenCache;
-pub use incremental_tokens::{
-    AbsoluteToken, changed_ranges_to_lines, get_changed_ranges, is_large_structural_change,
-    merge_tokens,
-};
