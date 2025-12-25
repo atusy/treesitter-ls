@@ -7,8 +7,8 @@ use tree_sitter::InputEdit;
 // Note: position_to_point from selection.rs is deprecated - use PositionMapper.position_to_point() instead
 use crate::analysis::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES, SemanticTokenCache};
 use crate::analysis::{
-    get_changed_ranges, handle_code_actions, handle_goto_definition, handle_selection_range,
-    handle_semantic_tokens_full_delta, is_large_structural_change, next_result_id,
+    IncrementalDecision, decide_tokenization_strategy, handle_code_actions, handle_goto_definition,
+    handle_selection_range, handle_semantic_tokens_full_delta, next_result_id,
 };
 use crate::config::{TreeSitterSettings, WorkspaceSettings};
 use crate::document::DocumentStore;
@@ -961,23 +961,19 @@ impl LanguageServer for TreeSitterLs {
             // Get previous tokens from cache with result_id validation
             let previous_tokens = self.semantic_cache.get_if_valid(&uri, &previous_result_id);
 
-            // Check if incremental tokenization is beneficial
-            // This logs when incremental mode could be used (infrastructure for PBI-078)
-            if let Some(prev_tree) = doc.previous_tree() {
-                let changed_ranges = get_changed_ranges(prev_tree, tree);
-                let doc_len = text.len();
-
-                if !is_large_structural_change(&changed_ranges, doc_len) {
+            // Decide tokenization strategy based on change size
+            let strategy = decide_tokenization_strategy(doc.previous_tree(), tree, text.len());
+            match strategy {
+                IncrementalDecision::UseIncremental => {
                     log::debug!(
                         target: "treesitter_ls::semantic",
-                        "Incremental mode possible: {} changed ranges, {} bytes",
-                        changed_ranges.len(),
-                        changed_ranges.iter().map(|r| r.end_byte.saturating_sub(r.start_byte)).sum::<usize>()
+                        "Using incremental tokenization strategy"
                     );
-                } else {
+                }
+                IncrementalDecision::UseFull => {
                     log::debug!(
                         target: "treesitter_ls::semantic",
-                        "Large structural change detected, using full tokenization"
+                        "Using full tokenization strategy"
                     );
                 }
             }
