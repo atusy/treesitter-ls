@@ -193,7 +193,7 @@ const scrum: ScrumDashboard = {
           verification: "cargo test test_diff_tokens_no_change",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     // Phase 2: Caching
     {
@@ -227,46 +227,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 55,
-    pbi_id: "PBI-073",
-    goal: "Implement prefix-suffix matching for semantic token deltas",
-    status: "in_progress",
-    subtasks: [
-      {
-        test: "test_diff_tokens_no_change - verify empty delta when tokens unchanged",
-        implementation: "Ensure calculate_semantic_tokens_delta returns empty edits for identical tokens",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-      {
-        test: "test_diff_tokens_suffix_matching - verify suffix is found after prefix",
-        implementation: "Add suffix matching logic after prefix matching in calculate_semantic_tokens_delta",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-      {
-        test: "test_diff_tokens_line_insertion_no_suffix - verify line changes disable suffix optimization",
-        implementation: "Check if total line delta differs; if so, skip suffix matching",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-      {
-        test: "test_diff_tokens_same_line_edit_suffix - verify same-line edits preserve suffix",
-        implementation: "Verify suffix optimization works when total line count unchanged",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -277,8 +238,15 @@ const scrum: ScrumDashboard = {
   },
 
   // Historical sprints (keep recent 3 for learning)
-  // Sprint 1-45 details: git log -- scrum.yaml
+  // Sprint 1-51 details: git log -- scrum.yaml, scrum.ts
   completed: [
+    {
+      number: 55,
+      pbi_id: "PBI-073",
+      goal: "Implement prefix-suffix matching for semantic token deltas",
+      status: "done",
+      subtasks: [],
+    },
     {
       number: 54,
       pbi_id: "PBI-072",
@@ -290,13 +258,6 @@ const scrum: ScrumDashboard = {
       number: 53,
       pbi_id: "PBI-071",
       goal: "Enable users to see real-time progress when parsers are auto-installed",
-      status: "done",
-      subtasks: [],
-    },
-    {
-      number: 52,
-      pbi_id: "PBI-070",
-      goal: "Alias normalization for injected language regions",
       status: "done",
       subtasks: [],
     },
