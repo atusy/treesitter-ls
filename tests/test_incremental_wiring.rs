@@ -171,6 +171,72 @@ fn test_incremental_path_produces_equivalent_results() {
     // not from new computation - this is what makes the incremental path valuable
 }
 
+/// Test that UseFull strategy is selected when no previous tree exists.
+/// This is a regression test to ensure first request uses full path.
+#[test]
+fn test_full_path_without_previous_tree() {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_rust::LANGUAGE.into())
+        .unwrap();
+
+    let code = "fn main() {\n    let x = 1;\n}\n";
+    let tree = parser.parse(code, None).unwrap();
+
+    // Without previous tree, should always use full
+    let strategy = decide_tokenization_strategy(None, &tree, code.len());
+    assert_eq!(
+        strategy,
+        IncrementalDecision::UseFull,
+        "No previous tree should trigger UseFull strategy"
+    );
+}
+
+/// Test that UseFull strategy is selected for large changes.
+/// This is a regression test to ensure large structural changes bypass incremental path.
+#[test]
+fn test_full_path_for_large_changes() {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_rust::LANGUAGE.into())
+        .unwrap();
+
+    // Small original code
+    let old_code = "fn main() {}";
+    let old_tree = parser.parse(old_code, None).unwrap();
+
+    // Large new code - completely different structure
+    let new_code = r#"struct Foo {
+    a: i32,
+    b: String,
+    c: Vec<u8>,
+}
+
+impl Foo {
+    fn new() -> Self {
+        Foo {
+            a: 0,
+            b: String::new(),
+            c: Vec::new(),
+        }
+    }
+
+    fn process(&self) -> Result<(), Error> {
+        todo!()
+    }
+}
+"#;
+    let new_tree = parser.parse(new_code, None).unwrap();
+
+    // Large structural change should trigger UseFull
+    let strategy = decide_tokenization_strategy(Some(&old_tree), &new_tree, new_code.len());
+    assert_eq!(
+        strategy,
+        IncrementalDecision::UseFull,
+        "Large structural change should trigger UseFull strategy"
+    );
+}
+
 /// Test that encode/decode round-trip works correctly.
 /// This is essential for the incremental path to work - cached tokens
 /// must be decodable back to AbsoluteToken format.
