@@ -108,6 +108,7 @@ impl Document {
     pub fn clear_tree(&mut self) {
         self.language_id = None;
         self.tree = None;
+        self.previous_tree = None;
     }
 
     /// Update text and clear layers/state
@@ -115,6 +116,7 @@ impl Document {
         self.text = text;
         // Note: Tree needs to be rebuilt after text change
         self.tree = None;
+        self.previous_tree = None;
     }
 
     /// Get the length in bytes
