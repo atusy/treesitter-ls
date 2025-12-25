@@ -135,53 +135,10 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-077
+  // Completed PBIs: PBI-001 through PBI-078
   // For historical details: git log -- scrum.yaml, scrum.ts
   // Design reference: __ignored/semantic-token-performance.md
   product_backlog: [
-    {
-      id: "PBI-078",
-      story: {
-        role: "developer editing a large file",
-        capability:
-          "have semantic tokens re-computed only for changed regions using Tree-sitter's changed_ranges() API",
-        benefit:
-          "experience faster highlighting updates for localized edits without full document re-tokenization",
-      },
-      acceptance_criteria: [
-        {
-          criterion:
-            "parse_document() preserves old tree (edited) alongside new tree after incremental parsing",
-          verification:
-            "Unit test: after did_change, both old_tree (with edits applied) and new_tree are accessible for comparison",
-        },
-        {
-          criterion:
-            "old_tree.changed_ranges(&new_tree) is called to identify byte ranges that differ between parses",
-          verification:
-            "Unit test: changed_ranges returns non-empty iterator when document content changes; empty when unchanged",
-        },
-        {
-          criterion:
-            "compute_incremental_tokens() uses changed_ranges to selectively re-tokenize only affected lines",
-          verification:
-            "Unit test: tokens outside changed line ranges are copied from cache; only changed regions are re-queried",
-        },
-        {
-          criterion:
-            "Heuristic: >10 changed ranges OR >30% document bytes changed triggers full re-tokenization fallback",
-          verification:
-            "Unit test: is_large_structural_change() returns true for scattered changes; false for localized edits",
-        },
-        {
-          criterion:
-            "Performance improvement for localized edits in documents with 1000+ tokens",
-          verification:
-            "Benchmark: single-line edit in 1000-line file achieves <20ms token update vs baseline",
-        },
-      ],
-      status: "ready",
-    },
     {
       id: "PBI-079",
       story: {
@@ -221,75 +178,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 60,
-    pbi_id: "PBI-078",
-    goal: "Implement incremental tokenization using Tree-sitter changed_ranges() API",
-    status: "in_progress",
-    subtasks: [
-      {
-        test: "test_document_preserves_previous_tree: after parse_document, previous_tree field contains the old tree",
-        implementation:
-          "Add previous_tree: Option<Tree> field to Document; update parse_document to store old tree before replacing",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [
-          "Tree-sitter trees are not Clone, need to handle ownership carefully",
-          "previous_tree is the edited version of old tree (after edit() calls)",
-        ],
-      },
-      {
-        test: "test_changed_ranges_returns_affected_regions: old_tree.changed_ranges(&new_tree) returns byte ranges",
-        implementation:
-          "Create get_changed_ranges(old_tree, new_tree) helper; return Option<Vec<Range>> (None = full recompute)",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [
-          "Handle None old_tree case gracefully",
-          "Tree-sitter Range uses byte offsets, need to convert to lines for tokenization",
-        ],
-      },
-      {
-        test: "test_heuristic_large_change_triggers_full_recompute: >10 ranges OR >30% bytes = true",
-        implementation:
-          "Implement is_large_structural_change(ranges, doc_len) returning bool for fallback decision",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [
-          "Thresholds: >10 changed ranges OR >30% of document bytes",
-          "This determines when incremental is worth the overhead",
-        ],
-      },
-      {
-        test: "test_incremental_tokens_preserves_unchanged: tokens outside changed ranges are copied from cache",
-        implementation:
-          "Implement compute_incremental_tokens(old_tokens, changed_ranges, doc, tree, queries) merging strategy",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [
-          "Convert byte ranges to line ranges for token filtering",
-          "Merge: unchanged_before + recomputed_changed + unchanged_after",
-          "Handle line offset adjustments when lines are inserted/deleted",
-        ],
-      },
-      {
-        test: "test_semantic_tokens_uses_incremental_when_beneficial: integration with full_delta handler",
-        implementation:
-          "Integrate incremental tokenization into semantic_tokens_full_delta; add fallback path",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [
-          "Use incremental when: has previous_tree AND not large_structural_change",
-          "Run DoD checks after integration",
-        ],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -303,6 +192,13 @@ const scrum: ScrumDashboard = {
   // Sprint 1-56 details: git log -- scrum.yaml, scrum.ts
   completed: [
     {
+      number: 60,
+      pbi_id: "PBI-078",
+      goal: "Implement incremental tokenization infrastructure using Tree-sitter changed_ranges() API",
+      status: "done",
+      subtasks: [],
+    },
+    {
       number: 59,
       pbi_id: "PBI-077",
       goal: "Remove redundant Document.last_semantic_tokens storage - Tidy First structural cleanup",
@@ -313,13 +209,6 @@ const scrum: ScrumDashboard = {
       number: 58,
       pbi_id: "PBI-076",
       goal: "Fix semantic token cache invalidation on document edit",
-      status: "done",
-      subtasks: [],
-    },
-    {
-      number: 57,
-      pbi_id: "PBI-075",
-      goal: "Integrate SemanticTokenCache into LSP handlers",
       status: "done",
       subtasks: [],
     },
