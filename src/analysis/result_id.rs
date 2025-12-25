@@ -24,4 +24,24 @@ mod tests {
         let id: String = next_result_id();
         assert!(!id.is_empty(), "result_id should not be empty");
     }
+
+    #[test]
+    fn test_next_result_id_monotonic() {
+        let id1: u64 = next_result_id().parse().expect("should be numeric");
+        let id2: u64 = next_result_id().parse().expect("should be numeric");
+        let id3: u64 = next_result_id().parse().expect("should be numeric");
+
+        assert!(
+            id2 > id1,
+            "id2 ({}) should be greater than id1 ({})",
+            id2,
+            id1
+        );
+        assert!(
+            id3 > id2,
+            "id3 ({}) should be greater than id2 ({})",
+            id3,
+            id2
+        );
+    }
 }
