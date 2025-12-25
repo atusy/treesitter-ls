@@ -901,6 +901,9 @@ impl LanguageServer for TreeSitterLs {
         tokens_with_id.result_id = Some(next_result_id());
         let stored_tokens = tokens_with_id.clone();
         let lsp_tokens = tokens_with_id;
+        // Store in dedicated cache for delta requests with result_id validation
+        self.semantic_cache
+            .store(uri.clone(), stored_tokens.clone());
         self.documents.update_semantic_tokens(&uri, stored_tokens);
         Ok(Some(SemanticTokensResult::Tokens(lsp_tokens)))
     }
