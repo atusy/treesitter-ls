@@ -168,7 +168,7 @@ const scrum: ScrumDashboard = {
           verification: "make test_nvim (E2E semantic token tests)",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     // Phase 1: Foundation (from design doc)
     {
@@ -286,43 +286,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 58,
-    pbi_id: "PBI-076",
-    goal: "Fix semantic token cache invalidation on document edit",
-    status: "in_progress",
-    subtasks: [
-      {
-        test: "test_delta_after_edit_uses_fresh_tokens: delta request after edit computes fresh tokens",
-        implementation:
-          "Write integration test that opens doc, gets tokens, edits doc, gets delta, verifies fresh tokens not stale cache",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-      {
-        test: "(existing tests must pass)",
-        implementation:
-          "Add self.semantic_cache.remove(&uri) in did_change handler after document update",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [
-          "Root cause: did_change handler does not invalidate SemanticTokenCache",
-          "Fix location: src/lsp/lsp_impl.rs in did_change method",
-        ],
-      },
-      {
-        test: "E2E semantic token tests verify visual highlighting",
-        implementation: "Run make test_nvim to verify syntax highlighting updates correctly",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: ["Verification step: no code changes expected"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -333,8 +297,15 @@ const scrum: ScrumDashboard = {
   },
 
   // Historical sprints (keep recent 3 for learning)
-  // Sprint 1-54 details: git log -- scrum.yaml, scrum.ts
+  // Sprint 1-55 details: git log -- scrum.yaml, scrum.ts
   completed: [
+    {
+      number: 58,
+      pbi_id: "PBI-076",
+      goal: "Fix semantic token cache invalidation on document edit",
+      status: "done",
+      subtasks: [],
+    },
     {
       number: 57,
       pbi_id: "PBI-075",
@@ -346,13 +317,6 @@ const scrum: ScrumDashboard = {
       number: 56,
       pbi_id: "PBI-074",
       goal: "Implement dedicated SemanticTokenCache with result_id validation",
-      status: "done",
-      subtasks: [],
-    },
-    {
-      number: 55,
-      pbi_id: "PBI-073",
-      goal: "Implement prefix-suffix matching for semantic token deltas",
       status: "done",
       subtasks: [],
     },
