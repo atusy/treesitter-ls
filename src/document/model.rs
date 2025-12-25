@@ -6,6 +6,8 @@ pub struct Document {
     version: Option<i32>,
     language_id: Option<String>,
     tree: Option<Tree>,
+    /// Previous tree for changed_ranges comparison during incremental parsing
+    previous_tree: Option<Tree>,
 }
 
 impl Document {
@@ -16,6 +18,7 @@ impl Document {
             version: None,
             language_id: None,
             tree: None,
+            previous_tree: None,
         }
     }
 
@@ -26,6 +29,7 @@ impl Document {
             version: Some(version),
             language_id: None,
             tree: None,
+            previous_tree: None,
         }
     }
 
@@ -36,6 +40,7 @@ impl Document {
             version: None,
             language_id: Some(language_id),
             tree: Some(tree),
+            previous_tree: None,
         }
     }
 
@@ -77,6 +82,20 @@ impl Document {
     /// Get mutable tree
     pub fn tree_mut(&mut self) -> Option<&mut Tree> {
         self.tree.as_mut()
+    }
+
+    /// Get the previous tree (used for changed_ranges comparison)
+    pub fn previous_tree(&self) -> Option<&Tree> {
+        self.previous_tree.as_ref()
+    }
+
+    /// Update tree, moving current tree to previous_tree
+    ///
+    /// This preserves the previous tree for changed_ranges comparison
+    /// during incremental parsing optimization.
+    pub fn update_tree(&mut self, new_tree: Tree) {
+        self.previous_tree = self.tree.take();
+        self.tree = Some(new_tree);
     }
 
     /// Set the tree and language
