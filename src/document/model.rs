@@ -8,6 +8,8 @@ pub struct Document {
     tree: Option<Tree>,
     /// Previous tree for changed_ranges comparison during incremental parsing
     previous_tree: Option<Tree>,
+    /// Previous text for line delta calculation during incremental tokenization
+    previous_text: Option<String>,
 }
 
 impl Document {
@@ -19,6 +21,7 @@ impl Document {
             language_id: None,
             tree: None,
             previous_tree: None,
+            previous_text: None,
         }
     }
 
@@ -30,6 +33,7 @@ impl Document {
             language_id: None,
             tree: None,
             previous_tree: None,
+            previous_text: None,
         }
     }
 
@@ -41,6 +45,7 @@ impl Document {
             language_id: Some(language_id),
             tree: Some(tree),
             previous_tree: None,
+            previous_text: None,
         }
     }
 
@@ -89,12 +94,28 @@ impl Document {
         self.previous_tree.as_ref()
     }
 
+    /// Get the previous text for line delta calculation
+    pub fn previous_text(&self) -> Option<&str> {
+        self.previous_text.as_deref()
+    }
+
     /// Update tree, moving current tree to previous_tree
     ///
     /// This preserves the previous tree for changed_ranges comparison
     /// during incremental parsing optimization.
     pub fn update_tree(&mut self, new_tree: Tree) {
         self.previous_tree = self.tree.take();
+        self.tree = Some(new_tree);
+    }
+
+    /// Update tree and text together for incremental tokenization support
+    ///
+    /// This preserves both previous tree and previous text for:
+    /// - changed_ranges comparison (tree)
+    /// - line delta calculation (text)
+    pub fn update_tree_and_text(&mut self, new_tree: Tree, new_text: String) {
+        self.previous_tree = self.tree.take();
+        self.previous_text = Some(std::mem::replace(&mut self.text, new_text));
         self.tree = Some(new_tree);
     }
 
@@ -109,6 +130,7 @@ impl Document {
         self.language_id = None;
         self.tree = None;
         self.previous_tree = None;
+        self.previous_text = None;
     }
 
     /// Update text and clear layers/state
@@ -117,6 +139,7 @@ impl Document {
         // Note: Tree needs to be rebuilt after text change
         self.tree = None;
         self.previous_tree = None;
+        self.previous_text = None;
     }
 
     /// Get the length in bytes
@@ -195,5 +218,33 @@ mod tests {
         assert!(doc.previous_tree().is_some());
         // Current tree should be the new one
         assert!(doc.tree().is_some());
+    }
+
+    #[test]
+    fn test_document_preserves_previous_text() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
+
+        let old_text = "fn main() {}".to_string();
+        let new_text = "fn main() { let x = 1; }".to_string();
+
+        let tree1 = parser.parse(&old_text, None).unwrap();
+        let mut doc = Document::with_tree(old_text.clone(), "rust".to_string(), tree1);
+
+        // Initially no previous text
+        assert!(doc.previous_text().is_none());
+
+        // Update tree and text together
+        let tree2 = parser.parse(&new_text, None).unwrap();
+        doc.update_tree_and_text(tree2, new_text.clone());
+
+        // Now previous text should exist and match old text
+        assert_eq!(doc.previous_text(), Some("fn main() {}"));
+        // Current text should be new text
+        assert_eq!(doc.text(), "fn main() { let x = 1; }");
+        // Previous tree should also exist
+        assert!(doc.previous_tree().is_some());
     }
 }
