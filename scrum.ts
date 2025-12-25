@@ -218,16 +218,43 @@ const scrum: ScrumDashboard = {
           criterion: "Cache entries removed on document close",
           verification: "cargo test test_semantic_cache_remove_on_close",
         },
-        {
-          criterion: "Delta handler uses cache for previous tokens lookup",
-          verification: "cargo test test_delta_handler_uses_cache",
-        },
       ],
-      status: "draft",
+      status: "ready",
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 56,
+    pbi_id: "PBI-074",
+    goal: "Implement dedicated SemanticTokenCache with result_id validation",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "test_semantic_cache_store_retrieve - verify tokens stored and retrieved by URL",
+        implementation: "Create SemanticTokenCache struct with DashMap<Url, SemanticTokens>",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "test_semantic_cache_invalid_result_id - verify get_if_valid returns None on mismatch",
+        implementation: "Add get_if_valid method that checks result_id matches",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "test_semantic_cache_remove_on_close - verify cache cleanup on document close",
+        implementation: "Add remove method and integrate with document close handler",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
