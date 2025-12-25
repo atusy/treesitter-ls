@@ -151,4 +151,28 @@ mod tests {
         assert_eq!(doc.text(), "updated");
         assert!(doc.tree().is_none());
     }
+
+    #[test]
+    fn test_document_preserves_previous_tree() {
+        // Create document with initial tree
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
+        let tree1 = parser.parse("fn main() {}", None).unwrap();
+
+        let mut doc = Document::with_tree("fn main() {}".to_string(), "rust".to_string(), tree1);
+
+        // Initially no previous tree
+        assert!(doc.previous_tree().is_none());
+
+        // Update tree - old should become previous
+        let tree2 = parser.parse("fn main() { let x = 1; }", None).unwrap();
+        doc.update_tree(tree2);
+
+        // Now previous tree should exist
+        assert!(doc.previous_tree().is_some());
+        // Current tree should be the new one
+        assert!(doc.tree().is_some());
+    }
 }
