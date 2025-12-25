@@ -166,7 +166,7 @@ const scrum: ScrumDashboard = {
             "Both 'sprint' timing improvements marked as completed with outcomes documented",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-079",
@@ -211,60 +211,48 @@ const scrum: ScrumDashboard = {
     number: 62,
     pbi_id: "PBI-081",
     goal: "Wire incremental tokenization path: use compute_incremental_tokens() when UseIncremental strategy selected",
-    status: "in_progress",
+    status: "review",
     subtasks: [
-      // Sprint 61 Retrospective Improvements (sprint timing)
+      // All subtasks completed
       {
         test: "Verify wire_incremental_path test exists and fails showing compute_incremental_tokens is not called",
         implementation: "Add test in lsp_impl.rs or integration test that verifies incremental path is invoked",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
-        notes: [
-          "Sprint 61 retro: 'Verify incremental path fully wired'",
-          "Test should detect that UseIncremental strategy does not trigger compute_incremental_tokens()",
-        ],
+        notes: ["Sprint 61 retro: 'Verify incremental path fully wired'"],
       },
       {
         test: "Test passes after wiring compute_incremental_tokens() into semantic_tokens_full_delta",
         implementation: "When UseIncremental: decode cached tokens, call compute_incremental_tokens(), encode result",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
-        notes: [
-          "Need to store previous_text in Document or pass line count for merge_tokens",
-          "Use decode_semantic_tokens() on cached tokens, encode_semantic_tokens() on result",
-        ],
+        notes: ["Use decode_semantic_tokens() on cached tokens, encode_semantic_tokens() on result"],
       },
       {
         test: "Integration test: edit on line N preserves tokens from lines outside changed range",
         implementation: "Test that modifying line 5 of 10 preserves cached tokens from lines 0-4 and 6-9",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
-        notes: [
-          "Sprint 61 retro: 'Add integration test verifying incremental path reduces token computation work'",
-          "Verify unchanged regions use cached tokens, not recomputed",
-        ],
+        notes: ["Sprint 61 retro: 'Add integration test verifying incremental path reduces work'"],
       },
       {
         test: "Document stores previous_text for line delta calculation",
-        implementation: "Add previous_text field to Document, update in update_tree()",
+        implementation: "Add previous_text field to Document, update in update_tree_and_text()",
         type: "structural",
-        status: "pending",
+        status: "completed",
         commits: [],
-        notes: [
-          "compute_incremental_tokens() needs old_text and new_text to calculate line_delta",
-          "Alternative: calculate line_delta from tree positions if possible",
-        ],
+        notes: ["Added update_tree_and_text() for atomic update preserving previous state"],
       },
       {
         test: "Verify UseFull strategy still uses full tokenization path",
         implementation: "Ensure large changes (>30% or >10 ranges) bypass incremental path",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
-        notes: ["Regression test: full path still works for large structural changes"],
+        notes: ["Regression tests added for no previous_tree and large structural changes"],
       },
     ],
   },
@@ -311,15 +299,15 @@ const scrum: ScrumDashboard = {
           action:
             "Verify incremental path fully wired - ensure compute_incremental_tokens() is used when UseIncremental strategy selected",
           timing: "sprint",
-          status: "active",
-          outcome: null,
+          status: "completed",
+          outcome: "Wired in Sprint 62 - compute_incremental_tokens() now invoked when UseIncremental selected",
         },
         {
           action:
             "Add integration test verifying incremental path reduces token computation work (not just merge logic)",
           timing: "sprint",
-          status: "active",
-          outcome: null,
+          status: "completed",
+          outcome: "Added test_incremental_wiring.rs with 4 tests verifying preservation of cached tokens",
         },
         {
           action:
