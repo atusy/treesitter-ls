@@ -56,18 +56,29 @@ impl DocumentStore {
     }
 
     pub fn update_document(&self, uri: Url, text: String, new_tree: Option<Tree>) {
-        // Preserve language_id from existing document if available
+        // Try to update in place to preserve previous_tree and previous_text
+        if let Some(tree) = new_tree {
+            // Check if document exists - update in place to preserve previous state
+            if let Some(mut doc) = self.documents.get_mut(&uri) {
+                doc.update_tree_and_text(tree, text);
+                return;
+            }
+
+            // Document doesn't exist - create new one with language_id if available
+            // (This is a race condition edge case - document may have been removed)
+            self.documents
+                .insert(uri, Document::with_tree(text, "unknown".to_string(), tree));
+            return;
+        }
+
+        // No new tree provided - use fallback logic
         let language_id = self
             .documents
             .get(&uri)
             .and_then(|doc| doc.language_id().map(String::from));
 
-        match (language_id, new_tree) {
-            (Some(lang), Some(tree)) => {
-                self.documents
-                    .insert(uri, Document::with_tree(text, lang, tree));
-            }
-            (Some(lang), None) => {
+        match language_id {
+            Some(lang) => {
                 // Preserve existing tree if no new tree provided
                 let existing_tree = self.documents.get(&uri).and_then(|doc| doc.tree().cloned());
                 if let Some(tree) = existing_tree {
@@ -77,7 +88,7 @@ impl DocumentStore {
                     self.documents.insert(uri, Document::new(text));
                 }
             }
-            _ => {
+            None => {
                 self.documents.insert(uri, Document::new(text));
             }
         }

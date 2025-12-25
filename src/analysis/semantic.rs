@@ -600,6 +600,23 @@ pub fn handle_semantic_tokens_full_delta(
     Some(SemanticTokensFullDeltaResult::Tokens(current_tokens))
 }
 
+/// Calculate delta or return full tokens.
+///
+/// This is a public helper for the incremental tokenization path.
+/// It calculates a delta if possible, otherwise returns the current tokens.
+pub fn calculate_delta_or_full(
+    previous: &SemanticTokens,
+    current: &SemanticTokens,
+    expected_result_id: &str,
+) -> SemanticTokensFullDeltaResult {
+    if previous.result_id.as_deref() == Some(expected_result_id)
+        && let Some(delta) = calculate_semantic_tokens_delta(previous, current)
+    {
+        return SemanticTokensFullDeltaResult::TokensDelta(delta);
+    }
+    SemanticTokensFullDeltaResult::Tokens(current.clone())
+}
+
 /// Check if two semantic tokens are equal
 #[inline]
 fn tokens_equal(a: &SemanticToken, b: &SemanticToken) -> bool {

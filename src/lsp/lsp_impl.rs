@@ -7,7 +7,8 @@ use tree_sitter::InputEdit;
 // Note: position_to_point from selection.rs is deprecated - use PositionMapper.position_to_point() instead
 use crate::analysis::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES, SemanticTokenCache};
 use crate::analysis::{
-    IncrementalDecision, decide_tokenization_strategy, handle_code_actions, handle_goto_definition,
+    IncrementalDecision, compute_incremental_tokens, decide_tokenization_strategy,
+    decode_semantic_tokens, encode_semantic_tokens, handle_code_actions, handle_goto_definition,
     handle_selection_range, handle_semantic_tokens_full_delta, next_result_id,
 };
 use crate::config::{TreeSitterSettings, WorkspaceSettings};
@@ -961,22 +962,11 @@ impl LanguageServer for TreeSitterLs {
             // Get previous tokens from cache with result_id validation
             let previous_tokens = self.semantic_cache.get_if_valid(&uri, &previous_result_id);
 
+            // Get previous text for incremental tokenization
+            let previous_text = doc.previous_text().map(|s| s.to_string());
+
             // Decide tokenization strategy based on change size
             let strategy = decide_tokenization_strategy(doc.previous_tree(), tree, text.len());
-            match strategy {
-                IncrementalDecision::UseIncremental => {
-                    log::debug!(
-                        target: "treesitter_ls::semantic",
-                        "Using incremental tokenization strategy"
-                    );
-                }
-                IncrementalDecision::UseFull => {
-                    log::debug!(
-                        target: "treesitter_ls::semantic",
-                        "Using full tokenization strategy"
-                    );
-                }
-            }
 
             // Get capture mappings
             let capture_mappings = self.language.get_capture_mappings();
@@ -988,18 +978,113 @@ impl LanguageServer for TreeSitterLs {
                 .recover_poison("semantic_tokens_full_delta parser_pool")
                 .unwrap();
 
-            // Delegate to handler with injection support
-            handle_semantic_tokens_full_delta(
-                text,
-                tree,
-                &query,
-                &previous_result_id,
-                previous_tokens.as_ref(),
-                Some(&language_name),
-                Some(&capture_mappings),
-                Some(&self.language),
-                Some(&mut pool),
-            )
+            // Check if we can use the incremental path
+            let use_incremental = matches!(strategy, IncrementalDecision::UseIncremental)
+                && previous_tokens.is_some()
+                && doc.previous_tree().is_some()
+                && previous_text.is_some();
+
+            if use_incremental {
+                log::debug!(
+                    target: "treesitter_ls::semantic",
+                    "Using incremental tokenization path"
+                );
+
+                // Safe to unwrap because we checked above
+                let prev_tokens = previous_tokens.as_ref().unwrap();
+                let prev_tree = doc.previous_tree().unwrap();
+                let prev_text = previous_text.as_ref().unwrap();
+
+                // Decode previous tokens to AbsoluteToken format
+                let old_absolute = decode_semantic_tokens(prev_tokens);
+
+                // Get new tokens via full computation (still needed for changed region)
+                let new_tokens_result = handle_semantic_tokens_full_delta(
+                    text,
+                    tree,
+                    &query,
+                    &previous_result_id,
+                    None, // Don't pass previous - we'll merge ourselves
+                    Some(&language_name),
+                    Some(&capture_mappings),
+                    Some(&self.language),
+                    Some(&mut pool),
+                );
+
+                // Extract current tokens from the result
+                if let Some(result) = new_tokens_result {
+                    let current_tokens = match &result {
+                        SemanticTokensFullDeltaResult::Tokens(tokens) => tokens.clone(),
+                        SemanticTokensFullDeltaResult::TokensDelta(_)
+                        | SemanticTokensFullDeltaResult::PartialTokensDelta { .. } => {
+                            // If we got a delta, we need the full tokens
+                            // This shouldn't happen since we passed None for previous
+                            log::warn!(
+                                target: "treesitter_ls::semantic",
+                                "Unexpected delta result when computing full tokens"
+                            );
+                            return Ok(Some(result));
+                        }
+                    };
+
+                    // Decode new tokens to AbsoluteToken format
+                    let new_absolute = decode_semantic_tokens(&current_tokens);
+
+                    // Use incremental merge
+                    let merge_result = compute_incremental_tokens(
+                        &old_absolute,
+                        prev_tree,
+                        tree,
+                        prev_text,
+                        text,
+                        &new_absolute,
+                    );
+
+                    log::debug!(
+                        target: "treesitter_ls::semantic",
+                        "Incremental merge: {} changed lines, line_delta={}",
+                        merge_result.changed_lines.len(),
+                        merge_result.line_delta
+                    );
+
+                    // Encode merged tokens back to SemanticTokens
+                    let merged_tokens = encode_semantic_tokens(
+                        &merge_result.tokens,
+                        current_tokens.result_id.clone(),
+                    );
+
+                    // Calculate delta against original previous tokens
+                    Some(crate::analysis::semantic::calculate_delta_or_full(
+                        prev_tokens,
+                        &merged_tokens,
+                        &previous_result_id,
+                    ))
+                } else {
+                    None
+                }
+            } else {
+                log::debug!(
+                    target: "treesitter_ls::semantic",
+                    "Using full tokenization path (strategy={:?}, has_prev_tokens={}, has_prev_tree={}, has_prev_text={})",
+                    strategy,
+                    previous_tokens.is_some(),
+                    doc.previous_tree().is_some(),
+                    previous_text.is_some()
+                );
+
+                // Delegate to handler with injection support
+                handle_semantic_tokens_full_delta(
+                    text,
+                    tree,
+                    &query,
+                    &previous_result_id,
+                    previous_tokens.as_ref(),
+                    Some(&language_name),
+                    Some(&capture_mappings),
+                    Some(&self.language),
+                    Some(&mut pool),
+                )
+            }
         }; // doc reference is dropped here
 
         let domain_result = result.unwrap_or_else(|| {
