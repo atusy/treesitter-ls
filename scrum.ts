@@ -135,39 +135,10 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-080
+  // Completed PBIs: PBI-001 through PBI-081
   // For historical details: git log -- scrum.yaml, scrum.ts
   // Design reference: __ignored/semantic-token-performance.md
   product_backlog: [
-    {
-      id: "PBI-081",
-      story: {
-        role: "developer editing a document",
-        capability:
-          "have the incremental tokenization strategy decision actually used",
-        benefit:
-          "only changed regions are re-tokenized, reducing latency for small edits",
-      },
-      acceptance_criteria: [
-        {
-          criterion:
-            "UseIncremental strategy triggers compute_incremental_tokens()",
-          verification:
-            "Unit test verifies incremental path is invoked when strategy is UseIncremental",
-        },
-        {
-          criterion: "Unchanged regions preserve cached tokens",
-          verification:
-            "Integration test: edit on line N preserves tokens from lines outside changed range",
-        },
-        {
-          criterion: "Sprint 61 retrospective improvements completed",
-          verification:
-            "Both 'sprint' timing improvements marked as completed with outcomes documented",
-        },
-      ],
-      status: "done",
-    },
     {
       id: "PBI-079",
       story: {
@@ -207,55 +178,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 62,
-    pbi_id: "PBI-081",
-    goal: "Wire incremental tokenization path: use compute_incremental_tokens() when UseIncremental strategy selected",
-    status: "review",
-    subtasks: [
-      // All subtasks completed
-      {
-        test: "Verify wire_incremental_path test exists and fails showing compute_incremental_tokens is not called",
-        implementation: "Add test in lsp_impl.rs or integration test that verifies incremental path is invoked",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Sprint 61 retro: 'Verify incremental path fully wired'"],
-      },
-      {
-        test: "Test passes after wiring compute_incremental_tokens() into semantic_tokens_full_delta",
-        implementation: "When UseIncremental: decode cached tokens, call compute_incremental_tokens(), encode result",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Use decode_semantic_tokens() on cached tokens, encode_semantic_tokens() on result"],
-      },
-      {
-        test: "Integration test: edit on line N preserves tokens from lines outside changed range",
-        implementation: "Test that modifying line 5 of 10 preserves cached tokens from lines 0-4 and 6-9",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Sprint 61 retro: 'Add integration test verifying incremental path reduces work'"],
-      },
-      {
-        test: "Document stores previous_text for line delta calculation",
-        implementation: "Add previous_text field to Document, update in update_tree_and_text()",
-        type: "structural",
-        status: "completed",
-        commits: [],
-        notes: ["Added update_tree_and_text() for atomic update preserving previous state"],
-      },
-      {
-        test: "Verify UseFull strategy still uses full tokenization path",
-        implementation: "Ensure large changes (>30% or >10 ranges) bypass incremental path",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Regression tests added for no previous_tree and large structural changes"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -266,8 +189,15 @@ const scrum: ScrumDashboard = {
   },
 
   // Historical sprints (keep recent 3 for learning)
-  // Sprint 1-57 details: git log -- scrum.yaml, scrum.ts
+  // Sprint 1-58 details: git log -- scrum.yaml, scrum.ts
   completed: [
+    {
+      number: 62,
+      pbi_id: "PBI-081",
+      goal: "Wire incremental tokenization path: use compute_incremental_tokens() when UseIncremental selected",
+      status: "done",
+      subtasks: [],
+    },
     {
       number: 61,
       pbi_id: "PBI-080",
@@ -279,13 +209,6 @@ const scrum: ScrumDashboard = {
       number: 60,
       pbi_id: "PBI-078",
       goal: "Implement incremental tokenization infrastructure using Tree-sitter changed_ranges() API",
-      status: "done",
-      subtasks: [],
-    },
-    {
-      number: 59,
-      pbi_id: "PBI-077",
-      goal: "Remove redundant Document.last_semantic_tokens storage - Tidy First structural cleanup",
       status: "done",
       subtasks: [],
     },
