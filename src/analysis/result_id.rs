@@ -44,4 +44,44 @@ mod tests {
             id2
         );
     }
+
+    #[test]
+    fn test_next_result_id_concurrent() {
+        use std::collections::HashSet;
+        use std::sync::Arc;
+        use std::thread;
+
+        const NUM_THREADS: usize = 10;
+        const IDS_PER_THREAD: usize = 100;
+
+        let results: Arc<std::sync::Mutex<Vec<String>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let handles: Vec<_> = (0..NUM_THREADS)
+            .map(|_| {
+                let results = Arc::clone(&results);
+                thread::spawn(move || {
+                    for _ in 0..IDS_PER_THREAD {
+                        let id = next_result_id();
+                        results.lock().unwrap().push(id);
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().expect("thread should not panic");
+        }
+
+        let all_ids = results.lock().unwrap();
+        let unique_ids: HashSet<_> = all_ids.iter().collect();
+
+        assert_eq!(
+            all_ids.len(),
+            unique_ids.len(),
+            "All {} IDs should be unique, but found {} duplicates",
+            all_ids.len(),
+            all_ids.len() - unique_ids.len()
+        );
+    }
 }
