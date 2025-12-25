@@ -26,9 +26,7 @@ pub fn is_large_structural_change(ranges: &[TsRange], document_len: usize) -> bo
     // More than 30% of document changed
     if document_len > 0 {
         let ratio = total_changed as f64 / document_len as f64;
-        if ratio > MAX_CHANGE_RATIO {
-            return true;
-        }
+        return ratio > MAX_CHANGE_RATIO;
     }
 
     false
