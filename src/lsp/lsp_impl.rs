@@ -954,8 +954,8 @@ impl LanguageServer for TreeSitterLs {
                 )));
             };
 
-            // Get previous tokens from document
-            let previous_tokens = doc.last_semantic_tokens().cloned();
+            // Get previous tokens from cache with result_id validation
+            let previous_tokens = self.semantic_cache.get_if_valid(&uri, &previous_result_id);
 
             // Get capture mappings
             let capture_mappings = self.language.get_capture_mappings();
@@ -997,6 +997,9 @@ impl LanguageServer for TreeSitterLs {
                 tokens_with_id.result_id = Some(next_result_id());
                 let stored_tokens = tokens_with_id.clone();
                 let lsp_tokens = tokens_with_id;
+                // Store in dedicated cache for next delta request
+                self.semantic_cache
+                    .store(uri.clone(), stored_tokens.clone());
                 self.documents.update_semantic_tokens(&uri, stored_tokens);
                 Ok(Some(SemanticTokensFullDeltaResult::Tokens(lsp_tokens)))
             }
