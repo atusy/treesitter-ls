@@ -139,6 +139,50 @@ const scrum: ScrumDashboard = {
   // For historical details: git log -- scrum.yaml, scrum.ts
   // Design reference: __ignored/semantic-token-performance.md
   product_backlog: [
+    // Structural Cleanup (Tidy First - after PBI-074/075)
+    {
+      id: "PBI-077",
+      story: {
+        role: "treesitter-ls maintainer",
+        capability:
+          "have a single source of truth for cached semantic tokens",
+        benefit:
+          "codebase is simpler with no redundant storage, reducing confusion and maintenance burden",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "Document struct no longer has last_semantic_tokens field",
+          verification:
+            "code review: field removed from src/document/model.rs",
+        },
+        {
+          criterion:
+            "DocumentStore no longer has update_semantic_tokens method",
+          verification:
+            "code review: method removed from src/document/store.rs",
+        },
+        {
+          criterion:
+            "lsp_impl.rs no longer calls update_semantic_tokens",
+          verification:
+            "grep: no occurrences in src/lsp/lsp_impl.rs",
+        },
+        {
+          criterion:
+            "All semantic token caching uses SemanticTokenCache exclusively",
+          verification:
+            "code review: semantic_cache is the only cache mechanism",
+        },
+        {
+          criterion:
+            "All existing tests pass after removal",
+          verification:
+            "make test && make test_nvim",
+        },
+      ],
+      status: "draft",
+    },
     // Critical Bug Fix
     {
       id: "PBI-076",
