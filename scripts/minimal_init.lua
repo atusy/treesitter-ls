@@ -1,6 +1,10 @@
 local cwd = vim.uv.cwd()
 vim.lsp.config.treesitter_ls = {
 	cmd = { cwd .. "/target/debug/treesitter-ls" },
+	on_init = function(client)
+		-- to use semanticTokens/full/delta
+		client.server_capabilities.semanticTokensProvider.range = false
+	end,
 }
 vim.lsp.enable("treesitter_ls")
 vim.lsp.log.set_level(vim.lsp.log_levels.DEBUG)
