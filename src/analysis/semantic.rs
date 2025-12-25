@@ -600,11 +600,25 @@ pub fn handle_semantic_tokens_full_delta(
     Some(SemanticTokensFullDeltaResult::Tokens(current_tokens))
 }
 
-/// Calculate delta between two sets of semantic tokens
+/// Check if two semantic tokens are equal
+#[inline]
+fn tokens_equal(a: &SemanticToken, b: &SemanticToken) -> bool {
+    a.delta_line == b.delta_line
+        && a.delta_start == b.delta_start
+        && a.length == b.length
+        && a.token_type == b.token_type
+        && a.token_modifiers_bitset == b.token_modifiers_bitset
+}
+
+/// Calculate delta between two sets of semantic tokens using prefix-suffix matching.
 ///
-/// Compares previous and current semantic tokens and returns the differences
-/// as a set of edits that can be applied to transform the previous tokens
-/// into the current tokens.
+/// This algorithm:
+/// 1. Finds the longest common prefix
+/// 2. Finds the longest common suffix (from what remains), with safety check for line changes
+/// 3. Returns a single edit replacing the middle section
+///
+/// The suffix matching is disabled when total line deltas differ, as tokens with
+/// identical delta encoding would be at different absolute positions (PBI-077 safety).
 ///
 /// # Arguments
 /// * `previous` - The previous semantic tokens
@@ -616,18 +630,12 @@ fn calculate_semantic_tokens_delta(
     previous: &SemanticTokens,
     current: &SemanticTokens,
 ) -> Option<SemanticTokensDelta> {
-    // Find the common prefix length
+    // --- Step 1: Find common prefix ---
     let common_prefix_len = previous
         .data
         .iter()
         .zip(current.data.iter())
-        .take_while(|(a, b)| {
-            a.delta_line == b.delta_line
-                && a.delta_start == b.delta_start
-                && a.length == b.length
-                && a.token_type == b.token_type
-                && a.token_modifiers_bitset == b.token_modifiers_bitset
-        })
+        .take_while(|(a, b)| tokens_equal(a, b))
         .count();
 
     // If all tokens are the same, no edits needed
@@ -638,10 +646,34 @@ fn calculate_semantic_tokens_delta(
         });
     }
 
-    // Calculate the edit
+    // --- Step 2: Find common suffix (with line change safety) ---
+    let prev_suffix = &previous.data[common_prefix_len..];
+    let curr_suffix = &current.data[common_prefix_len..];
+
+    // PBI-077 Safety: Check if total line count changed
+    // When lines are inserted/deleted, tokens with identical delta encoding
+    // are at different absolute positions - suffix matching would be incorrect
+    let prev_total_lines: u32 = previous.data.iter().map(|t| t.delta_line).sum();
+    let curr_total_lines: u32 = current.data.iter().map(|t| t.delta_line).sum();
+
+    let common_suffix_len = if prev_total_lines != curr_total_lines {
+        // Line count changed - disable suffix optimization
+        0
+    } else {
+        // Safe to find matching suffix
+        prev_suffix
+            .iter()
+            .rev()
+            .zip(curr_suffix.iter().rev())
+            .take_while(|(a, b)| tokens_equal(a, b))
+            .count()
+    };
+
+    // --- Step 3: Calculate the edit ---
     let start = common_prefix_len;
-    let delete_count = previous.data.len() - start;
-    let data = current.data[start..].to_vec();
+    let delete_count = prev_suffix.len() - common_suffix_len;
+    let insert_count = curr_suffix.len() - common_suffix_len;
+    let data = current.data[start..start + insert_count].to_vec();
 
     Some(SemanticTokensDelta {
         result_id: current.result_id.clone(),
@@ -752,12 +784,14 @@ mod tests {
         assert_eq!(delta.result_id, Some("v2".to_string()));
         assert_eq!(delta.edits.len(), 1);
         assert_eq!(delta.edits[0].start, 0);
-        assert_eq!(delta.edits[0].delete_count, 3);
+        // With suffix matching: only the first token (comment) changed
+        // The last two tokens (keyword, variable) are suffix matched
+        assert_eq!(delta.edits[0].delete_count, 1);
         let edits_data = delta.edits[0]
             .data
             .as_ref()
             .expect("delta edits should include replacement data");
-        assert_eq!(edits_data.len(), 3);
+        assert_eq!(edits_data.len(), 1);
     }
 
     #[test]
@@ -839,6 +873,324 @@ mod tests {
 
         let delta = delta.unwrap();
         assert_eq!(delta.edits.len(), 0);
+    }
+
+    /// Alias for acceptance criteria naming
+    #[test]
+    fn test_diff_tokens_no_change() {
+        // Same as test_semantic_tokens_delta_no_changes
+        let tokens = SemanticTokens {
+            result_id: Some("v1".to_string()),
+            data: vec![SemanticToken {
+                delta_line: 0,
+                delta_start: 0,
+                length: 10,
+                token_type: 0,
+                token_modifiers_bitset: 0,
+            }],
+        };
+
+        let delta = calculate_semantic_tokens_delta(&tokens, &tokens);
+        assert!(delta.is_some());
+        assert_eq!(delta.unwrap().edits.len(), 0);
+    }
+
+    /// Test that suffix matching reduces delta size when change is in the middle.
+    ///
+    /// Scenario: 5 tokens, only the 3rd token changes length
+    /// Expected: Only 1 token in the edit (the changed one), not 3 tokens
+    #[test]
+    fn test_diff_tokens_suffix_matching() {
+        // 5 tokens on the same line (delta_line=0 for all after first)
+        let previous = SemanticTokens {
+            result_id: Some("v1".to_string()),
+            data: vec![
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 0,
+                    length: 5,
+                    token_type: 0,
+                    token_modifiers_bitset: 0,
+                },
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 6,
+                    length: 5,
+                    token_type: 1,
+                    token_modifiers_bitset: 0,
+                },
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 6,
+                    length: 5,
+                    token_type: 2,
+                    token_modifiers_bitset: 0,
+                }, // This one changes
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 6,
+                    length: 5,
+                    token_type: 3,
+                    token_modifiers_bitset: 0,
+                },
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 6,
+                    length: 5,
+                    token_type: 4,
+                    token_modifiers_bitset: 0,
+                },
+            ],
+        };
+
+        let current = SemanticTokens {
+            result_id: Some("v2".to_string()),
+            data: vec![
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 0,
+                    length: 5,
+                    token_type: 0,
+                    token_modifiers_bitset: 0,
+                },
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 6,
+                    length: 5,
+                    token_type: 1,
+                    token_modifiers_bitset: 0,
+                },
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 6,
+                    length: 10,
+                    token_type: 2,
+                    token_modifiers_bitset: 0,
+                }, // Changed length
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 6,
+                    length: 5,
+                    token_type: 3,
+                    token_modifiers_bitset: 0,
+                },
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 6,
+                    length: 5,
+                    token_type: 4,
+                    token_modifiers_bitset: 0,
+                },
+            ],
+        };
+
+        let delta = calculate_semantic_tokens_delta(&previous, &current);
+        assert!(delta.is_some());
+
+        let delta = delta.unwrap();
+        assert_eq!(delta.edits.len(), 1);
+
+        // With suffix matching: start=2 (skip 2 prefix tokens), delete_count=1, data=1 token
+        // Without suffix matching: start=2, delete_count=3, data=3 tokens
+        let edit = &delta.edits[0];
+        assert_eq!(edit.start, 2, "Should skip 2 prefix tokens");
+        assert_eq!(
+            edit.delete_count, 1,
+            "Should only delete 1 token (with suffix matching)"
+        );
+        assert_eq!(
+            edit.data.as_ref().unwrap().len(),
+            1,
+            "Should only include 1 changed token"
+        );
+    }
+
+    /// Test that line insertion disables suffix optimization (PBI-077 safety).
+    ///
+    /// When lines are inserted, tokens at the end have the same delta encoding
+    /// but are at different absolute positions. We must NOT match them as suffix.
+    #[test]
+    fn test_diff_tokens_line_insertion_no_suffix() {
+        // Before: 3 tokens on lines 0, 1, 2
+        let previous = SemanticTokens {
+            result_id: Some("v1".to_string()),
+            data: vec![
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 0,
+                    length: 5,
+                    token_type: 0,
+                    token_modifiers_bitset: 0,
+                }, // line 0
+                SemanticToken {
+                    delta_line: 1,
+                    delta_start: 0,
+                    length: 5,
+                    token_type: 1,
+                    token_modifiers_bitset: 0,
+                }, // line 1
+                SemanticToken {
+                    delta_line: 1,
+                    delta_start: 0,
+                    length: 5,
+                    token_type: 2,
+                    token_modifiers_bitset: 0,
+                }, // line 2
+            ],
+        };
+
+        // After: 4 tokens on lines 0, 1, 2, 3 (line inserted at position 1)
+        let current = SemanticTokens {
+            result_id: Some("v2".to_string()),
+            data: vec![
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 0,
+                    length: 5,
+                    token_type: 0,
+                    token_modifiers_bitset: 0,
+                }, // line 0 (same)
+                SemanticToken {
+                    delta_line: 1,
+                    delta_start: 0,
+                    length: 5,
+                    token_type: 5,
+                    token_modifiers_bitset: 0,
+                }, // line 1 (NEW)
+                SemanticToken {
+                    delta_line: 1,
+                    delta_start: 0,
+                    length: 5,
+                    token_type: 1,
+                    token_modifiers_bitset: 0,
+                }, // line 2 (was line 1)
+                SemanticToken {
+                    delta_line: 1,
+                    delta_start: 0,
+                    length: 5,
+                    token_type: 2,
+                    token_modifiers_bitset: 0,
+                }, // line 3 (was line 2)
+            ],
+        };
+
+        let delta = calculate_semantic_tokens_delta(&previous, &current);
+        assert!(delta.is_some());
+
+        let delta = delta.unwrap();
+        assert_eq!(delta.edits.len(), 1);
+
+        // The last two tokens in current have SAME delta encoding as last two in previous,
+        // but they're at DIFFERENT absolute positions (line 2,3 vs line 1,2).
+        // Suffix optimization MUST be disabled.
+        let edit = &delta.edits[0];
+        assert_eq!(edit.start, 1, "Should skip 1 prefix token (line 0)");
+        // Without suffix: delete_count=2 (tokens at line 1,2), data=3 tokens
+        // With incorrect suffix: would wrongly match last token
+        assert_eq!(
+            edit.delete_count, 2,
+            "Should delete 2 original tokens after prefix"
+        );
+        assert_eq!(
+            edit.data.as_ref().unwrap().len(),
+            3,
+            "Should include 3 new tokens"
+        );
+    }
+
+    /// Test that same-line edits preserve suffix optimization.
+    ///
+    /// When editing within a line (no line count change), suffix matching is safe.
+    #[test]
+    fn test_diff_tokens_same_line_edit_suffix() {
+        // 4 tokens all on line 0
+        let previous = SemanticTokens {
+            result_id: Some("v1".to_string()),
+            data: vec![
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 0,
+                    length: 3,
+                    token_type: 0,
+                    token_modifiers_bitset: 0,
+                },
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 4,
+                    length: 5,
+                    token_type: 1,
+                    token_modifiers_bitset: 0,
+                }, // This changes
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 6,
+                    length: 3,
+                    token_type: 2,
+                    token_modifiers_bitset: 0,
+                },
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 4,
+                    length: 4,
+                    token_type: 3,
+                    token_modifiers_bitset: 0,
+                },
+            ],
+        };
+
+        // Second token changes length
+        let current = SemanticTokens {
+            result_id: Some("v2".to_string()),
+            data: vec![
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 0,
+                    length: 3,
+                    token_type: 0,
+                    token_modifiers_bitset: 0,
+                },
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 4,
+                    length: 8,
+                    token_type: 1,
+                    token_modifiers_bitset: 0,
+                }, // Changed
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 6,
+                    length: 3,
+                    token_type: 2,
+                    token_modifiers_bitset: 0,
+                },
+                SemanticToken {
+                    delta_line: 0,
+                    delta_start: 4,
+                    length: 4,
+                    token_type: 3,
+                    token_modifiers_bitset: 0,
+                },
+            ],
+        };
+
+        let delta = calculate_semantic_tokens_delta(&previous, &current);
+        assert!(delta.is_some());
+
+        let delta = delta.unwrap();
+        assert_eq!(delta.edits.len(), 1);
+
+        // Same line count, so suffix matching should work
+        let edit = &delta.edits[0];
+        assert_eq!(edit.start, 1, "Should skip 1 prefix token");
+        assert_eq!(
+            edit.delete_count, 1,
+            "Should only delete 1 token (suffix matched 2)"
+        );
+        assert_eq!(
+            edit.data.as_ref().unwrap().len(),
+            1,
+            "Should only include 1 changed token"
+        );
     }
 
     #[test]
