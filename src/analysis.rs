@@ -4,6 +4,7 @@ pub mod refactor;
 pub mod result_id;
 pub mod selection;
 pub mod semantic;
+pub mod semantic_cache;
 
 // Re-export main types and functions
 pub use definition::{DefinitionResolver, handle_goto_definition};
@@ -14,3 +15,4 @@ pub use semantic::{
     LEGEND_MODIFIERS, LEGEND_TYPES, handle_semantic_tokens_full, handle_semantic_tokens_full_delta,
     handle_semantic_tokens_range,
 };
+pub use semantic_cache::SemanticTokenCache;
