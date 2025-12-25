@@ -243,6 +243,63 @@ pub fn merge_tokens(
     result
 }
 
+/// Result of incremental tokenization computation.
+pub struct IncrementalTokensResult {
+    /// The merged tokens (unchanged regions preserved, changed regions updated)
+    pub tokens: Vec<AbsoluteToken>,
+    /// The line ranges that were changed
+    pub changed_lines: std::collections::HashSet<usize>,
+    /// The line count delta (positive = lines added, negative = removed)
+    pub line_delta: i32,
+}
+
+/// Compute incremental tokens by merging cached tokens with newly computed ones.
+///
+/// This function orchestrates the incremental tokenization process:
+/// 1. Get changed byte ranges using Tree-sitter's changed_ranges API
+/// 2. Convert byte ranges to affected line numbers
+/// 3. Merge old tokens with new tokens for changed regions only
+///
+/// # Arguments
+/// * `old_tokens` - Previously cached tokens in absolute position format
+/// * `previous_tree` - The previous Tree-sitter parse tree
+/// * `current_tree` - The current Tree-sitter parse tree
+/// * `old_text` - The previous document text (for line counting)
+/// * `new_text` - The current document text
+/// * `new_tokens` - Newly computed tokens for the entire document
+///
+/// # Returns
+/// The merged tokens where unchanged regions are preserved from old_tokens
+/// and changed regions use new_tokens
+pub fn compute_incremental_tokens(
+    old_tokens: &[AbsoluteToken],
+    previous_tree: &Tree,
+    current_tree: &Tree,
+    old_text: &str,
+    new_text: &str,
+    new_tokens: &[AbsoluteToken],
+) -> IncrementalTokensResult {
+    // Get changed byte ranges from Tree-sitter
+    let changed_ranges = get_changed_ranges(previous_tree, current_tree);
+
+    // Convert byte ranges to affected line numbers (using new text)
+    let changed_lines = changed_ranges_to_lines(new_text, &changed_ranges);
+
+    // Calculate line count delta
+    let old_line_count = old_text.lines().count() as i32;
+    let new_line_count = new_text.lines().count() as i32;
+    let line_delta = new_line_count - old_line_count;
+
+    // Merge tokens
+    let tokens = merge_tokens(old_tokens, new_tokens, &changed_lines, line_delta);
+
+    IncrementalTokensResult {
+        tokens,
+        changed_lines,
+        line_delta,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -564,5 +621,116 @@ mod tests {
             IncrementalDecision::UseFull,
             "Large structural change should use full tokenization"
         );
+    }
+
+    #[test]
+    fn test_compute_incremental_tokens_preserves_unchanged_regions() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
+
+        // Original code with tokens on lines 0, 1, 2
+        let old_code = "fn main() {\n    let x = 1;\n}\n";
+        let old_tree = parser.parse(old_code, None).unwrap();
+
+        // Modified code: change 'x' to 'y' on line 1
+        let new_code = "fn main() {\n    let y = 1;\n}\n";
+        let new_tree = parser.parse(new_code, None).unwrap();
+
+        // Simulate old tokens
+        let old_tokens = vec![
+            make_token(0, 0, 2, 1), // "fn" on line 0
+            make_token(0, 3, 4, 2), // "main" on line 0
+            make_token(1, 4, 3, 3), // "let" on line 1
+            make_token(1, 8, 1, 4), // "x" on line 1
+            make_token(2, 0, 1, 5), // "}" on line 2
+        ];
+
+        // Simulate new tokens (same structure, just 'y' instead of 'x')
+        let new_tokens = vec![
+            make_token(0, 0, 2, 1), // "fn" on line 0
+            make_token(0, 3, 4, 2), // "main" on line 0
+            make_token(1, 4, 3, 3), // "let" on line 1
+            make_token(1, 8, 1, 4), // "y" on line 1 (different char, same position)
+            make_token(2, 0, 1, 5), // "}" on line 2
+        ];
+
+        let result = compute_incremental_tokens(
+            &old_tokens,
+            &old_tree,
+            &new_tree,
+            old_code,
+            new_code,
+            &new_tokens,
+        );
+
+        // Should have same number of tokens
+        assert_eq!(result.tokens.len(), 5, "Should have 5 tokens");
+
+        // Line 0 tokens should be preserved from old (unchanged region)
+        assert_eq!(result.tokens[0], old_tokens[0], "Line 0 token 0 preserved");
+        assert_eq!(result.tokens[1], old_tokens[1], "Line 0 token 1 preserved");
+
+        // Line 2 token should be preserved from old (unchanged region)
+        assert_eq!(result.tokens[4], old_tokens[4], "Line 2 token preserved");
+
+        // Line delta should be 0 (same number of lines)
+        assert_eq!(result.line_delta, 0, "No line delta for in-place edit");
+    }
+
+    #[test]
+    fn test_compute_incremental_tokens_handles_line_insertion() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
+
+        // Original code: 2 lines
+        let old_code = "fn main() {\n}\n";
+        let old_tree = parser.parse(old_code, None).unwrap();
+
+        // Modified code: insert a line in the middle
+        let new_code = "fn main() {\n    let x = 1;\n}\n";
+        let new_tree = parser.parse(new_code, None).unwrap();
+
+        // Simulate old tokens
+        let old_tokens = vec![
+            make_token(0, 0, 2, 1), // "fn" on line 0
+            make_token(0, 3, 4, 2), // "main" on line 0
+            make_token(1, 0, 1, 5), // "}" on line 1
+        ];
+
+        // Simulate new tokens with inserted line
+        let new_tokens = vec![
+            make_token(0, 0, 2, 1), // "fn" on line 0
+            make_token(0, 3, 4, 2), // "main" on line 0
+            make_token(1, 4, 3, 3), // "let" on line 1 (new!)
+            make_token(1, 8, 1, 4), // "x" on line 1 (new!)
+            make_token(2, 0, 1, 5), // "}" on line 2 (was line 1)
+        ];
+
+        let result = compute_incremental_tokens(
+            &old_tokens,
+            &old_tree,
+            &new_tree,
+            old_code,
+            new_code,
+            &new_tokens,
+        );
+
+        // Should have 5 tokens now
+        assert_eq!(
+            result.tokens.len(),
+            5,
+            "Should have 5 tokens after insertion"
+        );
+
+        // Line 0 tokens should be preserved
+        assert_eq!(result.tokens[0].line, 0);
+        assert_eq!(result.tokens[1].line, 0);
+
+        // Line delta should be +1 (one line added)
+        assert_eq!(result.line_delta, 1, "Should detect line insertion");
     }
 }

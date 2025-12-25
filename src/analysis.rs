@@ -10,9 +10,9 @@ pub mod semantic_cache;
 // Re-export main types and functions
 pub use definition::{DefinitionResolver, handle_goto_definition};
 pub use incremental_tokens::{
-    AbsoluteToken, IncrementalDecision, changed_ranges_to_lines, decide_tokenization_strategy,
-    decode_semantic_tokens, encode_semantic_tokens, get_changed_ranges, is_large_structural_change,
-    merge_tokens,
+    AbsoluteToken, IncrementalDecision, IncrementalTokensResult, changed_ranges_to_lines,
+    compute_incremental_tokens, decide_tokenization_strategy, decode_semantic_tokens,
+    encode_semantic_tokens, get_changed_ranges, is_large_structural_change, merge_tokens,
 };
 pub use refactor::handle_code_actions;
 pub use result_id::next_result_id;
