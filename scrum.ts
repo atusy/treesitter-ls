@@ -140,6 +140,35 @@ const scrum: ScrumDashboard = {
   // Design reference: __ignored/semantic-token-performance.md
   product_backlog: [
     {
+      id: "PBI-081",
+      story: {
+        role: "developer editing a document",
+        capability:
+          "have the incremental tokenization strategy decision actually used",
+        benefit:
+          "only changed regions are re-tokenized, reducing latency for small edits",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "UseIncremental strategy triggers compute_incremental_tokens()",
+          verification:
+            "Unit test verifies incremental path is invoked when strategy is UseIncremental",
+        },
+        {
+          criterion: "Unchanged regions preserve cached tokens",
+          verification:
+            "Integration test: edit on line N preserves tokens from lines outside changed range",
+        },
+        {
+          criterion: "Sprint 61 retrospective improvements completed",
+          verification:
+            "Both 'sprint' timing improvements marked as completed with outcomes documented",
+        },
+      ],
+      status: "ready",
+    },
+    {
       id: "PBI-079",
       story: {
         role: "developer editing a document with embedded languages (e.g., Markdown with code blocks)",
@@ -214,7 +243,34 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  retrospectives: [],
+  retrospectives: [
+    {
+      sprint: 61,
+      improvements: [
+        {
+          action:
+            "Verify incremental path fully wired - ensure compute_incremental_tokens() is used when UseIncremental strategy selected",
+          timing: "sprint",
+          status: "active",
+          outcome: null,
+        },
+        {
+          action:
+            "Add integration test verifying incremental path reduces token computation work (not just merge logic)",
+          timing: "sprint",
+          status: "active",
+          outcome: null,
+        },
+        {
+          action:
+            "Performance exceeded target by 4x (4.6ms vs 20ms target) - consider updating product goal metrics to reflect actual capability",
+          timing: "product",
+          status: "active",
+          outcome: null,
+        },
+      ],
+    },
+  ],
 };
 
 // JSON output (deno run scrum.ts | jq for queries)
