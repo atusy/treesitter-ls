@@ -143,20 +143,32 @@ fn test_incremental_path_produces_equivalent_results() {
     );
 
     // Verify results - focus on token preservation which is the core value
+    // This is the AC: "edit on line N preserves tokens from lines outside changed range"
     assert_eq!(result.tokens.len(), 5, "Should have 5 tokens");
 
     // Line 0 tokens should be preserved from old (unchanged region)
-    assert_eq!(result.tokens[0], old_tokens[0], "Line 0 token 0 preserved");
-    assert_eq!(result.tokens[1], old_tokens[1], "Line 0 token 1 preserved");
+    // These are the ORIGINAL tokens, not recomputed - that's the incremental benefit
+    assert_eq!(
+        result.tokens[0], old_tokens[0],
+        "Line 0 token 0 preserved from cache"
+    );
+    assert_eq!(
+        result.tokens[1], old_tokens[1],
+        "Line 0 token 1 preserved from cache"
+    );
 
     // Line 2 token should be preserved from old (unchanged region)
-    assert_eq!(result.tokens[4], old_tokens[4], "Line 2 token preserved");
+    assert_eq!(
+        result.tokens[4], old_tokens[4],
+        "Line 2 token preserved from cache"
+    );
 
     // Line delta should be 0 (same number of lines)
     assert_eq!(result.line_delta, 0, "No line delta for in-place edit");
 
     // Note: changed_lines may be empty for small edits that don't change tree structure
-    // The important verification is that tokens are correctly merged
+    // The important verification is that unchanged tokens come from cache (old_tokens),
+    // not from new computation - this is what makes the incremental path valuable
 }
 
 /// Test that encode/decode round-trip works correctly.
