@@ -221,7 +221,75 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 60,
+    pbi_id: "PBI-078",
+    goal: "Implement incremental tokenization using Tree-sitter changed_ranges() API",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "test_document_preserves_previous_tree: after parse_document, previous_tree field contains the old tree",
+        implementation:
+          "Add previous_tree: Option<Tree> field to Document; update parse_document to store old tree before replacing",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Tree-sitter trees are not Clone, need to handle ownership carefully",
+          "previous_tree is the edited version of old tree (after edit() calls)",
+        ],
+      },
+      {
+        test: "test_changed_ranges_returns_affected_regions: old_tree.changed_ranges(&new_tree) returns byte ranges",
+        implementation:
+          "Create get_changed_ranges(old_tree, new_tree) helper; return Option<Vec<Range>> (None = full recompute)",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Handle None old_tree case gracefully",
+          "Tree-sitter Range uses byte offsets, need to convert to lines for tokenization",
+        ],
+      },
+      {
+        test: "test_heuristic_large_change_triggers_full_recompute: >10 ranges OR >30% bytes = true",
+        implementation:
+          "Implement is_large_structural_change(ranges, doc_len) returning bool for fallback decision",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Thresholds: >10 changed ranges OR >30% of document bytes",
+          "This determines when incremental is worth the overhead",
+        ],
+      },
+      {
+        test: "test_incremental_tokens_preserves_unchanged: tokens outside changed ranges are copied from cache",
+        implementation:
+          "Implement compute_incremental_tokens(old_tokens, changed_ranges, doc, tree, queries) merging strategy",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Convert byte ranges to line ranges for token filtering",
+          "Merge: unchanged_before + recomputed_changed + unchanged_after",
+          "Handle line offset adjustments when lines are inserted/deleted",
+        ],
+      },
+      {
+        test: "test_semantic_tokens_uses_incremental_when_beneficial: integration with full_delta handler",
+        implementation:
+          "Integrate incremental tokenization into semantic_tokens_full_delta; add fallback path",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Use incremental when: has previous_tree AND not large_structural_change",
+          "Run DoD checks after integration",
+        ],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
