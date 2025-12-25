@@ -118,253 +118,155 @@ interface ScrumDashboard {
 const scrum: ScrumDashboard = {
   product_goal: {
     statement:
-      "Enable zero-configuration usage of treesitter-ls: users can start the LSP server and get syntax highlighting for any supported language without manual setup.",
+      "Achieve high-performance semantic tokens delta: minimize latency for syntax highlighting updates during editing by leveraging caching, efficient delta algorithms, and Tree-sitter's incremental parsing.",
     success_metrics: [
       {
-        metric: "Zero-config startup",
-        target: "Works with no initializationOptions",
+        metric: "Delta response (no change)",
+        target: "<5ms via cache hit",
       },
       {
-        metric: "Auto language detection",
-        target: "Detects language from LSP languageId",
+        metric: "Delta response (small edit)",
+        target: "<20ms via incremental",
       },
       {
-        metric: "Auto parser install",
-        target: "Installs missing parsers automatically",
+        metric: "Delta transfer size",
+        target: "Reduced via suffix matching",
       },
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-065
-  // For historical details: git log -- scrum.yaml
+  // Completed PBIs: PBI-001 through PBI-071
+  // For historical details: git log -- scrum.yaml, scrum.ts
+  // Design reference: __ignored/semantic-token-performance.md
   product_backlog: [
-    // ADR-0005: Language Detection Fallback Chain (Vertical Slices)
-    // Each PBI delivers end-to-end user value independently
-    // Dependencies: PBI-066 (foundation) -> PBI-067, PBI-068, PBI-070 (parallel)
+    // Phase 1: Foundation (from design doc)
     {
-      id: "PBI-066",
+      id: "PBI-072",
       story: {
         role: "treesitter-ls server",
         capability:
-          "check if a Tree-sitter parser is available for a given language name",
+          "use atomic sequential result_id generation instead of content hash",
         benefit:
-          "the fallback chain can continue to the next detection method when a parser is unavailable",
+          "result_id generation is faster and simpler, eliminating hash computation overhead",
       },
       acceptance_criteria: [
         {
-          criterion:
-            "has_parser_available(lang) returns true when parser is loaded in registry",
-          verification: "cargo test test_has_parser_available_when_loaded",
+          criterion: "next_result_id() returns monotonically increasing string IDs",
+          verification: "cargo test test_next_result_id_monotonic",
+        },
+        {
+          criterion: "Concurrent calls return unique IDs (no duplicates)",
+          verification: "cargo test test_next_result_id_concurrent",
         },
         {
           criterion:
-            "has_parser_available(lang) returns false when parser is not loaded",
-          verification: "cargo test test_has_parser_available_when_not_loaded",
-        },
-        {
-          criterion:
-            "Method is exposed on LanguageCoordinator for use by detection logic",
-          verification: "cargo test test_coordinator_has_parser_available",
+            "semantic_tokens_full result contains result_id from next_result_id()",
+          verification: "cargo test test_semantic_tokens_full_uses_atomic_id",
         },
       ],
-      status: "done",
+      status: "ready",
     },
     {
-      id: "PBI-067",
+      id: "PBI-073",
       story: {
-        role: "treesitter-ls user",
+        role: "treesitter-ls server",
         capability:
-          "have extensionless scripts (e.g., with shebang #!/usr/bin/env python) correctly highlighted",
+          "calculate semantic token deltas using prefix-suffix matching",
         benefit:
-          "I can work with scripts that have no file extension and still get syntax highlighting",
+          "delta payload size is minimized when changes occur in the middle of the document",
       },
-      // Vertical slice: detection logic + integration into document open flow
       acceptance_criteria: [
-        // Detection logic (unit tests)
         {
-          criterion: "Shebang '#!/usr/bin/env python' detects 'python'",
-          verification: "cargo test test_detect_shebang_python",
+          criterion: "diff_tokens finds common suffix after prefix",
+          verification: "cargo test test_diff_tokens_suffix_matching",
         },
         {
-          criterion: "Shebang '#!/bin/bash' detects 'bash'",
-          verification: "cargo test test_detect_shebang_bash",
+          criterion: "Line insertion invalidates suffix optimization (PBI-077 safety)",
+          verification: "cargo test test_diff_tokens_line_insertion_no_suffix",
         },
         {
-          criterion: "Shebang '#!/usr/bin/env node' detects 'javascript'",
-          verification: "cargo test test_detect_shebang_node",
+          criterion: "Same-line edit preserves suffix optimization",
+          verification: "cargo test test_diff_tokens_same_line_edit_suffix",
         },
         {
-          criterion: "Files without shebang return None from shebang detection",
-          verification: "cargo test test_detect_shebang_none",
-        },
-        // Integration into document open (end-to-end value delivery)
-        {
-          criterion:
-            "When languageId is 'plaintext' or missing, shebang detection kicks in",
-          verification:
-            "cargo test test_shebang_used_when_language_id_plaintext",
-        },
-        {
-          criterion:
-            "Shebang detection only runs when languageId parser unavailable (lazy I/O)",
-          verification:
-            "cargo test test_shebang_skipped_when_language_id_has_parser",
-        },
-        {
-          criterion:
-            "E2E: Opening extensionless script with shebang gets semantic tokens",
-          verification: "make test_nvim FILE=tests/test_lsp_shebang.lua",
+          criterion: "Empty delta when tokens unchanged",
+          verification: "cargo test test_diff_tokens_no_change",
         },
       ],
-      status: "done",
+      status: "draft",
     },
+    // Phase 2: Caching
     {
-      id: "PBI-068",
+      id: "PBI-074",
       story: {
-        role: "treesitter-ls user",
+        role: "treesitter-ls server",
         capability:
-          "have files with standard extensions get highlighting when languageId is unavailable",
+          "cache semantic tokens with validation metadata in a dedicated cache",
         benefit:
-          "I can open any file with a recognized extension and get syntax highlighting as fallback",
+          "repeated delta requests without changes return instantly without recomputation",
       },
-      // Vertical slice: extension extraction + integration as fallback after shebang
       acceptance_criteria: [
-        // Detection logic (unit tests)
         {
-          criterion: "Extension '.rs' returns 'rs' as parser name candidate",
-          verification: "cargo test test_detect_extension_rs",
+          criterion: "SemanticTokenCache stores tokens keyed by URL",
+          verification: "cargo test test_semantic_cache_store_retrieve",
         },
         {
-          criterion: "Extension '.py' returns 'py' as parser name candidate",
-          verification: "cargo test test_detect_extension_py",
+          criterion: "get_if_valid returns None when result_id mismatches",
+          verification: "cargo test test_semantic_cache_invalid_result_id",
         },
         {
-          criterion: "Files without extension return None",
-          verification: "cargo test test_detect_extension_none",
+          criterion: "Cache entries removed on document close",
+          verification: "cargo test test_semantic_cache_remove_on_close",
         },
         {
-          criterion: "Extension is extracted without the leading dot",
-          verification: "cargo test test_detect_extension_strips_dot",
-        },
-        // Integration as fallback in the chain
-        {
-          criterion: "Extension fallback runs after shebang detection fails",
-          verification: "cargo test test_extension_fallback_after_shebang",
-        },
-        {
-          criterion:
-            "Full chain: languageId -> shebang -> extension, stopping at first available parser",
-          verification: "cargo test test_full_detection_chain",
-        },
-        {
-          criterion:
-            "When no method finds available parser, None is returned gracefully",
-          verification:
-            "cargo test test_detection_chain_returns_none_when_all_fail",
+          criterion: "Delta handler uses cache for previous tokens lookup",
+          verification: "cargo test test_delta_handler_uses_cache",
         },
       ],
-      status: "done",
-    },
-    {
-      id: "PBI-070",
-      story: {
-        role: "treesitter-ls user",
-        capability:
-          "have injected language regions with common aliases (py, js, sh) get syntax highlighting",
-        benefit:
-          "I can use short language identifiers in any host language (Markdown, HTML, etc.) and still get highlighting",
-      },
-      // Vertical slice: alias normalization + integration into injection resolution
-      acceptance_criteria: [
-        // Alias normalization logic (unit tests)
-        {
-          criterion: "Alias 'py' normalizes to 'python'",
-          verification: "cargo test test_normalize_alias_py",
-        },
-        {
-          criterion: "Alias 'js' normalizes to 'javascript'",
-          verification: "cargo test test_normalize_alias_js",
-        },
-        {
-          criterion: "Alias 'sh' normalizes to 'bash'",
-          verification: "cargo test test_normalize_alias_sh",
-        },
-        {
-          criterion: "Non-alias identifiers pass through unchanged",
-          verification: "cargo test test_normalize_alias_passthrough",
-        },
-        // Integration into injection resolution
-        {
-          criterion:
-            "Direct identifier is tried first before alias normalization",
-          verification: "cargo test test_injection_direct_identifier_first",
-        },
-        {
-          criterion:
-            "Injection resolution uses alias normalization when direct lookup fails",
-          verification: "cargo test test_injection_uses_alias_normalization",
-        },
-        {
-          criterion:
-            "Unknown aliases with no available parser return None (graceful degradation)",
-          verification: "cargo test test_injection_unknown_alias_returns_none",
-        },
-        {
-          criterion:
-            "E2E: Markdown with ```py code fence gets Python semantic tokens",
-          verification:
-            "make test_nvim FILE=tests/test_lsp_injection_alias.lua",
-        },
-      ],
-      status: "done",
-    },
-    {
-      id: "PBI-071",
-      story: {
-        role: "treesitter-ls user",
-        capability:
-          "see progress feedback in my editor when parsers are being auto-installed",
-        benefit:
-          "I know the server is actively working and not stuck when opening files that require parser installation",
-      },
-      // Implementation: Use lsp_types::notification::Progress with WorkDoneProgressBegin/End
-      // Insert in maybe_auto_install_language after try_start_install and before finish_install
-      acceptance_criteria: [
-        // Progress notification helper (unit testable)
-        {
-          criterion:
-            "create_progress_begin returns ProgressParams with Begin variant and language in title",
-          verification: "cargo test test_create_progress_begin",
-        },
-        {
-          criterion:
-            "create_progress_end returns ProgressParams with End variant and success/failure message",
-          verification: "cargo test test_create_progress_end",
-        },
-        {
-          criterion:
-            "Progress token is unique per language (format: treesitter-ls/install/{language})",
-          verification: "cargo test test_progress_token_format",
-        },
-        // Integration into auto-install flow
-        {
-          criterion:
-            "maybe_auto_install_language sends Begin notification after starting install",
-          verification:
-            "cargo test --test test_auto_install_integration test_progress_begin_sent",
-        },
-        {
-          criterion:
-            "maybe_auto_install_language sends End notification with result status",
-          verification:
-            "cargo test --test test_auto_install_integration test_progress_end_sent",
-        },
-      ],
-      status: "done",
+      status: "draft",
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 54,
+    pbi_id: "PBI-072",
+    goal: "Implement atomic sequential result_id generation for semantic tokens",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "test_next_result_id_returns_string - verify next_result_id() returns a String type",
+        implementation: "Create ResultIdGenerator struct with next_result_id() method returning String",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "test_next_result_id_monotonic - verify sequential calls return increasing IDs",
+        implementation: "Use AtomicU64 counter, format as string with fetch_add(1, Ordering::SeqCst)",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "test_next_result_id_concurrent - verify thread safety with no duplicate IDs",
+        implementation: "AtomicU64 guarantees uniqueness across threads, test with multiple threads",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "test_semantic_tokens_full_uses_atomic_id - verify semantic_tokens_full returns result_id from generator",
+        implementation: "Integrate ResultIdGenerator into LspImpl, use in semantic_tokens_full handler",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
