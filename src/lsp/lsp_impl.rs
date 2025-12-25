@@ -5,7 +5,7 @@ use tower_lsp::{Client, LanguageServer};
 use tree_sitter::InputEdit;
 
 // Note: position_to_point from selection.rs is deprecated - use PositionMapper.position_to_point() instead
-use crate::analysis::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES};
+use crate::analysis::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES, SemanticTokenCache};
 use crate::analysis::{
     handle_code_actions, handle_goto_definition, handle_selection_range,
     handle_semantic_tokens_full_delta, next_result_id,
@@ -43,6 +43,8 @@ pub struct TreeSitterLs {
     language: LanguageCoordinator,
     parser_pool: Mutex<DocumentParserPool>,
     documents: DocumentStore,
+    /// Dedicated cache for semantic tokens with result_id validation
+    semantic_cache: SemanticTokenCache,
     root_path: ArcSwap<Option<PathBuf>>,
     /// Settings including auto_install flag
     settings: ArcSwap<WorkspaceSettings>,
@@ -59,6 +61,7 @@ impl std::fmt::Debug for TreeSitterLs {
             .field("language", &"LanguageCoordinator")
             .field("parser_pool", &"Mutex<DocumentParserPool>")
             .field("documents", &"DocumentStore")
+            .field("semantic_cache", &"SemanticTokenCache")
             .field("root_path", &"ArcSwap<Option<PathBuf>>")
             .field("settings", &"ArcSwap<WorkspaceSettings>")
             .field("installing_languages", &"InstallingLanguages")
@@ -80,6 +83,7 @@ impl TreeSitterLs {
             language,
             parser_pool: Mutex::new(parser_pool),
             documents: DocumentStore::new(),
+            semantic_cache: SemanticTokenCache::new(),
             root_path: ArcSwap::new(Arc::new(None)),
             settings: ArcSwap::new(Arc::new(WorkspaceSettings::default())),
             installing_languages: InstallingLanguages::new(),
