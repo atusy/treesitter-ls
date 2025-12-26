@@ -746,4 +746,39 @@ mod tests {
             "Empty offset directive should return DEFAULT_OFFSET"
         );
     }
+
+    #[test]
+    fn test_cacheable_injection_region_from_region_info() {
+        // Create a parser and parse some code to get a real Node
+        let mut parser = create_rust_parser();
+        let text = r#"fn main() { let s = "hello"; }"#;
+        let tree = parse_rust_code(&mut parser, text);
+        let root = tree.root_node();
+
+        // Create an injection query that matches the string
+        let query_str = r#"
+            ((string_literal) @injection.content
+              (#set! injection.language "markdown"))
+        "#;
+        let language = tree_sitter_rust::LANGUAGE.into();
+        let query = Query::new(&language, query_str).expect("valid query");
+
+        // Get injection regions
+        let regions = collect_all_injections(&root, text, Some(&query));
+        let regions = regions.expect("Should find injections");
+        assert!(!regions.is_empty(), "Should find at least one injection");
+
+        let region_info = &regions[0];
+
+        // Convert to CacheableInjectionRegion (owned, no lifetime)
+        let cacheable = CacheableInjectionRegion::from_region_info(region_info, "test-result-id");
+
+        // Verify all fields are captured correctly
+        assert_eq!(cacheable.language, "markdown");
+        assert_eq!(cacheable.byte_range.start, region_info.content_node.start_byte());
+        assert_eq!(cacheable.byte_range.end, region_info.content_node.end_byte());
+        assert_eq!(cacheable.line_range.start, region_info.content_node.start_position().row as u32);
+        assert_eq!(cacheable.line_range.end, region_info.content_node.end_position().row as u32);
+        assert_eq!(cacheable.result_id, "test-result-id");
+    }
 }
