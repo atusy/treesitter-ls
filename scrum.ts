@@ -227,6 +227,31 @@ const scrum: ScrumDashboard = {
       // Infrastructure (stable region IDs, InjectionTokenCache) in place for future optimization.
       status: "done",
     },
+    {
+      id: "PBI-085",
+      story: {
+        role: "developer using treesitter-ls with diverse parsers",
+        capability: "have the LSP continue functioning when a parser crashes",
+        benefit: "avoid losing all LSP features due to a single faulty parser",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Parser assertion failures are caught and don't crash the entire LSP",
+          verification: "Integration test: simulate parser crash, verify LSP remains responsive",
+        },
+        {
+          criterion: "Failed parser is marked as unavailable for the session",
+          verification: "Unit test: after parser failure, subsequent requests for that language are gracefully declined",
+        },
+        {
+          criterion: "User is notified when a parser fails",
+          verification: "Integration test: on parser failure, window/showMessage is sent to client",
+        },
+      ],
+      // Root cause: tree-sitter-zsh scanner.c:446 assertion failure in deserialize
+      // This is an upstream bug, but LSP should be resilient to parser failures
+      status: "draft",
+    },
   ],
 
   // No active sprint - all PBIs in product_backlog are done
