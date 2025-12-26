@@ -87,7 +87,7 @@ mod tests {
         let col_parent = if (content_start.row as i32 + offset_rows).max(0) == 0 {
             parent_start.column as i64
         } else {
-            0 as i64
+            0_i64
         };
         tree_sitter::Point::new(
             ((parent_start.row + content_start.row) as i64 + offset_rows as i64).max(0) as usize,

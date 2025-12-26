@@ -765,3 +765,181 @@ Some text instead of python block.
     // checks the OLD result_id which should still be in cache until explicit removal.
     // The implementation might need to handle this differently.
 }
+
+// ===========================================================================
+// AC3 (PBI-084): Stable region IDs preserve cache across parses
+// ===========================================================================
+
+/// Helper that preserves result_ids for unchanged injection regions.
+///
+/// This is the key optimization: instead of always generating new result_ids,
+/// we match existing regions by (language, byte_range) and preserve their IDs.
+fn populate_injection_map_with_stable_ids(
+    injection_map: &InjectionMap,
+    uri: &Url,
+    text: &str,
+    tree: &tree_sitter::Tree,
+    injection_query: Option<&Query>,
+) {
+    // Collect new injection regions
+    let Some(regions) = collect_all_injections(&tree.root_node(), text, injection_query) else {
+        // No query or no matches - clear and return
+        if injection_map.get(uri).is_some_and(|e| !e.is_empty()) {
+            injection_map.insert(uri.clone(), Vec::new());
+        }
+        return;
+    };
+
+    if regions.is_empty() {
+        injection_map.insert(uri.clone(), Vec::new());
+        return;
+    }
+
+    // Get existing regions for ID preservation
+    let existing_regions = injection_map.get(uri);
+    let existing_map: std::collections::HashMap<(&str, usize, usize), &CacheableInjectionRegion> =
+        existing_regions
+            .as_ref()
+            .map(|regions| {
+                regions
+                    .iter()
+                    .map(|r| {
+                        (
+                            (r.language.as_str(), r.byte_range.start, r.byte_range.end),
+                            r,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+    // Convert to CacheableInjectionRegion, reusing result_ids where possible
+    let cacheable_regions: Vec<CacheableInjectionRegion> = regions
+        .iter()
+        .map(|info| {
+            let language = info.language.as_str();
+            let start = info.content_node.start_byte();
+            let end = info.content_node.end_byte();
+            let key = (language, start, end);
+
+            // Check if we have an existing region with same (language, byte_range)
+            if let Some(existing) = existing_map.get(&key) {
+                // Reuse the existing result_id
+                CacheableInjectionRegion {
+                    language: existing.language.clone(),
+                    byte_range: existing.byte_range.clone(),
+                    line_range: existing.line_range.clone(),
+                    result_id: existing.result_id.clone(),
+                }
+            } else {
+                // Generate new result_id for new regions
+                CacheableInjectionRegion::from_region_info(info, &next_result_id())
+            }
+        })
+        .collect();
+
+    injection_map.insert(uri.clone(), cacheable_regions);
+}
+
+#[test]
+fn test_stable_region_id_preserved_after_edit_outside_injection() {
+    // AC3 (PBI-084): After edit outside injection, region_id for unchanged injection is preserved
+    //
+    // This is the key optimization: when editing host text (not touching injections),
+    // the injection regions retain their result_ids, enabling cache hits.
+
+    let injection_map = InjectionMap::new();
+    let uri = Url::parse("file:///test/stable_ids.md").unwrap();
+
+    // Document with one code block
+    let initial_text = r#"# Header
+
+```lua
+print("hello")
+```
+
+Footer text
+"#;
+
+    let mut parser = Parser::new();
+    let md_language: tree_sitter::Language = tree_sitter_md::LANGUAGE.into();
+    parser.set_language(&md_language).expect("set markdown");
+    let initial_tree = parser.parse(initial_text, None).expect("parse");
+
+    let injection_query_str = r#"
+        (fenced_code_block
+          (info_string
+            (language) @_lang)
+          (code_fence_content) @injection.content
+          (#set-lang-from-info-string! @_lang))
+    "#;
+    let injection_query = Query::new(&md_language, injection_query_str).expect("query");
+
+    // Initial population
+    populate_injection_map_with_stable_ids(
+        &injection_map,
+        &uri,
+        initial_text,
+        &initial_tree,
+        Some(&injection_query),
+    );
+
+    let initial_regions = injection_map.get(&uri).expect("should have regions");
+    assert_eq!(initial_regions.len(), 1, "Should have one lua region");
+    let initial_result_id = initial_regions[0].result_id.clone();
+    let initial_byte_range = initial_regions[0].byte_range.clone();
+
+    // Edit the header (outside the injection)
+    // "# Header" -> "# Modified Header"
+    let edited_text = r#"# Modified Header
+
+```lua
+print("hello")
+```
+
+Footer text
+"#;
+
+    let edited_tree = parser.parse(edited_text, None).expect("parse edited");
+
+    // Re-populate with stable IDs
+    populate_injection_map_with_stable_ids(
+        &injection_map,
+        &uri,
+        edited_text,
+        &edited_tree,
+        Some(&injection_query),
+    );
+
+    let updated_regions = injection_map.get(&uri).expect("should have regions");
+    assert_eq!(updated_regions.len(), 1, "Should still have one region");
+
+    // THE KEY ASSERTION: result_id should be PRESERVED for unchanged injection
+    // Note: byte_range will change since header is now longer, so result_id
+    // will actually be NEW. This test documents the EXPECTED behavior.
+    //
+    // For stable IDs to work, we need to match by something other than byte_range
+    // when the document structure changes. Options:
+    // 1. Content hash
+    // 2. AST path / node identity
+    // 3. Language + relative position (nth lua block)
+    //
+    // For now, this test will FAIL because byte_range changes when header grows.
+    // This documents the problem we need to solve.
+
+    let updated_result_id = &updated_regions[0].result_id;
+    let updated_byte_range = &updated_regions[0].byte_range;
+
+    // Header grew by "Modified ".len() = 9 chars, so byte_range shifts
+    assert_ne!(
+        initial_byte_range, *updated_byte_range,
+        "Byte range should shift when header changes"
+    );
+
+    // Currently FAILS: result_id is regenerated because byte_range changed
+    // After implementing stable IDs via content hash, this should pass.
+    assert_eq!(
+        initial_result_id, *updated_result_id,
+        "Result ID should be preserved for unchanged injection content"
+    );
+}

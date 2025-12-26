@@ -47,7 +47,7 @@ fn test_query_execution_on_multiple_trees() {
         })
         .collect();
 
-    let codes = vec!["fn alpha() {}", "fn beta() {}", "fn gamma() {}"];
+    let codes = ["fn alpha() {}", "fn beta() {}", "fn gamma() {}"];
 
     let trees: Vec<_> = codes
         .iter()

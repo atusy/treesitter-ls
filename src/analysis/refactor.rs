@@ -2014,15 +2014,15 @@ fn main() {
             let offset = crate::language::injection::parse_offset_directive_for_pattern(&query, i);
             if offset.is_none() {
                 found_no_offset = true;
-            } else if let Some(off) = offset {
-                if off.start_row == 2 {
-                    found_with_offset = true;
-                    // Verify the complete offset
-                    assert_eq!(off.start_row, 2, "Should have start_row offset of 2");
-                    assert_eq!(off.start_column, 0, "Should have start_column offset of 0");
-                    assert_eq!(off.end_row, 0, "Should have end_row offset of 0");
-                    assert_eq!(off.end_column, 0, "Should have end_column offset of 0");
-                }
+            } else if let Some(off) = offset
+                && off.start_row == 2
+            {
+                found_with_offset = true;
+                // Verify the complete offset
+                assert_eq!(off.start_row, 2, "Should have start_row offset of 2");
+                assert_eq!(off.start_column, 0, "Should have start_column offset of 0");
+                assert_eq!(off.end_row, 0, "Should have end_row offset of 0");
+                assert_eq!(off.end_column, 0, "Should have end_column offset of 0");
             }
         }
 

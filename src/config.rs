@@ -393,7 +393,7 @@ mod tests {
         capture_mappings.insert("_".to_string(), query_type_mappings);
 
         // Verify the mapping exists and contains expected values
-        assert!(capture_mappings.get("_").is_some());
+        assert!(capture_mappings.contains_key("_"));
         let wildcard_mappings = capture_mappings.get("_").unwrap();
         assert_eq!(
             wildcard_mappings.highlights.get("@module"),
