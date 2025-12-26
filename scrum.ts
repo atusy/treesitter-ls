@@ -138,40 +138,69 @@ const scrum: ScrumDashboard = {
   // Completed PBIs: PBI-001 through PBI-081
   // For historical details: git log -- scrum.yaml, scrum.ts
   // Design reference: __ignored/semantic-token-performance.md
+  // PBI-079 split into: PBI-082 (infrastructure) -> PBI-083 (invalidation) -> PBI-084 (perf)
   product_backlog: [
     {
-      id: "PBI-079",
+      id: "PBI-082",
       story: {
-        role: "developer editing a document with embedded languages (e.g., Markdown with code blocks)",
-        capability:
-          "have only affected injection regions re-tokenized when editing",
-        benefit:
-          "experience faster highlighting in multi-language documents where most injections remain unchanged",
+        role: "developer editing multi-language documents",
+        capability: "have injection regions tracked with byte ranges and cached tokens",
+        benefit: "enable targeted cache invalidation for injection-level incremental updates",
       },
       acceptance_criteria: [
         {
-          criterion:
-            "Injection regions are tracked with their byte/line ranges and cached tokens",
-          verification:
-            "Unit test verifies InjectionMap correctly tracks injection regions from parse tree",
+          criterion: "InjectionRegion struct captures language, byte range, line range, and result_id",
+          verification: "Unit test verifies InjectionRegion fields populated correctly from parse tree",
         },
         {
-          criterion:
-            "Only injections overlapping with changed ranges are re-tokenized",
-          verification:
-            "Integration test: edit in host document outside code blocks skips injection re-parse",
+          criterion: "InjectionMap tracks all injection regions for a document URI",
+          verification: "Unit test verifies InjectionMap stores/retrieves regions by URI",
         },
         {
-          criterion:
-            "Injection structure changes (add/remove code block) invalidate relevant caches",
-          verification:
-            "Test verifies adding new code block triggers fresh tokenization for that block",
+          criterion: "InjectionMap integrates with existing SemanticTokenCache",
+          verification: "Unit test verifies cached tokens associated with injection regions",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-083",
+      story: {
+        role: "developer editing multi-language documents",
+        capability: "have only injection regions overlapping edits re-tokenized",
+        benefit: "skip unnecessary re-parsing of unchanged code blocks",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Edit outside injection regions preserves all injection caches",
+          verification: "Integration test: edit in host text skips injection re-parse",
         },
         {
-          criterion:
-            "Performance improvement for documents with many unchanged injections",
-          verification:
-            "Benchmark shows reduced latency when editing outside injection regions",
+          criterion: "Edit inside injection region invalidates only that region's cache",
+          verification: "Integration test: edit in code block re-parses only that block",
+        },
+        {
+          criterion: "Structural changes (add/remove code block) update InjectionMap",
+          verification: "Test verifies new code block triggers fresh region tracking",
+        },
+      ],
+      status: "draft",
+    },
+    {
+      id: "PBI-084",
+      story: {
+        role: "developer editing documents with many code blocks",
+        capability: "experience <50% tokenization time when editing outside injections",
+        benefit: "faster highlighting in documentation-heavy files",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Benchmark infrastructure for injection-aware tokenization",
+          verification: "Benchmark script comparing full vs incremental on 5+ injection doc",
+        },
+        {
+          criterion: "Performance target met: <50% of full tokenization time",
+          verification: "Benchmark results documented in performance log",
         },
       ],
       status: "draft",
@@ -248,32 +277,7 @@ const scrum: ScrumDashboard = {
         },
       ],
     },
-    {
-      sprint: 61,
-      improvements: [
-        {
-          action:
-            "Verify incremental path fully wired - ensure compute_incremental_tokens() is used when UseIncremental strategy selected",
-          timing: "sprint",
-          status: "completed",
-          outcome: "Wired in Sprint 62 - compute_incremental_tokens() now invoked when UseIncremental selected",
-        },
-        {
-          action:
-            "Add integration test verifying incremental path reduces token computation work (not just merge logic)",
-          timing: "sprint",
-          status: "completed",
-          outcome: "Added test_incremental_wiring.rs with 4 tests verifying preservation of cached tokens",
-        },
-        {
-          action:
-            "Performance exceeded target by 4x (4.6ms vs 20ms target) - consider updating product goal metrics to reflect actual capability",
-          timing: "product",
-          status: "completed",
-          outcome: "Carried forward to Sprint 62 retrospective for tracking",
-        },
-      ],
-    },
+    // Sprint 61: All items completed - wiring verified, tests added, perf tracked in Sprint 62
   ],
 };
 
