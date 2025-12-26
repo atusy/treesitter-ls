@@ -409,7 +409,19 @@ impl TreeSitterLs {
     }
 
     /// Try to auto-install a language if not already being installed.
-    async fn maybe_auto_install_language(&self, language: &str, uri: Url, text: String) {
+    ///
+    /// # Arguments
+    /// * `language` - The language to install
+    /// * `uri` - The document URI that triggered the install
+    /// * `text` - The document text
+    /// * `is_injection` - True if this is an injection language (not the document's main language)
+    async fn maybe_auto_install_language(
+        &self,
+        language: &str,
+        uri: Url,
+        text: String,
+        is_injection: bool,
+    ) {
         // Try to start installation (returns false if already installing)
         if !self.installing_languages.try_start_install(language) {
             self.client
@@ -462,7 +474,7 @@ impl TreeSitterLs {
                 .send_notification::<Progress>(create_progress_end(language, true))
                 .await;
             self.installing_languages.finish_install(language);
-            self.reload_language_after_install(language, &data_dir, uri, text)
+            self.reload_language_after_install(language, &data_dir, uri, text, is_injection)
                 .await;
             return;
         }
@@ -497,7 +509,7 @@ impl TreeSitterLs {
                 .await;
 
             // Add the installed paths to search paths and reload
-            self.reload_language_after_install(&lang, &data_dir, uri, text)
+            self.reload_language_after_install(&lang, &data_dir, uri, text, is_injection)
                 .await;
         } else if parser_exists {
             // Parser compiled successfully but queries failed (e.g., already exist)
@@ -522,7 +534,7 @@ impl TreeSitterLs {
                 .await;
 
             // Still reload - parser is usable even without fresh queries
-            self.reload_language_after_install(&lang, &data_dir, uri, text)
+            self.reload_language_after_install(&lang, &data_dir, uri, text, is_injection)
                 .await;
         } else {
             // Send progress End notification (failure)
@@ -549,13 +561,24 @@ impl TreeSitterLs {
         }
     }
 
-    /// Reload a language after installation and re-parse affected documents.
+    /// Reload a language after installation and optionally re-parse the document.
+    ///
+    /// # Arguments
+    /// * `language` - The language that was installed
+    /// * `data_dir` - The data directory where parsers/queries are stored
+    /// * `uri` - The document URI that triggered the install
+    /// * `text` - The document text (used for re-parsing document languages)
+    /// * `is_injection` - If true, this is an injection language and we should NOT
+    ///   re-parse the document (which would use the wrong language).
+    ///   Instead, we just refresh semantic tokens so the injection
+    ///   gets highlighted on next request.
     async fn reload_language_after_install(
         &self,
         language: &str,
         data_dir: &std::path::Path,
         uri: Url,
         text: String,
+        is_injection: bool,
     ) {
         // The installed files are at:
         // - Parser: {data_dir}/parsers/{language}/libtree-sitter-{language}.so
@@ -590,16 +613,21 @@ impl TreeSitterLs {
         // Apply the updated settings
         self.apply_settings(updated_settings).await;
 
-        // Ensure the language is loaded BEFORE parsing
+        // Ensure the language is loaded
         // apply_settings only stores configuration but doesn't load the parser.
-        // parse_document uses detect_language which checks has_parser_available.
-        // Without ensure_language_loaded, has_parser_available returns false and
-        // the document won't be parsed, resulting in no syntax highlighting.
         let _load_result = self.language.ensure_language_loaded(language);
 
-        // Re-parse the document that triggered the install
-        self.parse_document(uri.clone(), text, Some(language), vec![])
-            .await;
+        // For document languages, re-parse the document that triggered the install.
+        // For injection languages, DON'T re-parse - the host document is already parsed
+        // with the correct language. Re-parsing with the injection language would break
+        // all highlighting. Instead, just refresh semantic tokens.
+        if !is_injection {
+            // Get the host language for this document (not the installed language)
+            let host_language = self.get_language_for_document(&uri);
+            let lang_for_parse = host_language.as_deref();
+            self.parse_document(uri.clone(), text, lang_for_parse, vec![])
+                .await;
+        }
 
         // Request semantic tokens refresh
         if self.client.semantic_tokens_refresh().await.is_ok() {
@@ -657,7 +685,8 @@ impl TreeSitterLs {
             if !load_result.success {
                 // Language not loaded - trigger auto-install with resolved name
                 // maybe_auto_install_language uses InstallingLanguages to prevent duplicates
-                self.maybe_auto_install_language(&resolved_lang, uri.clone(), text.clone())
+                // is_injection=true: Don't re-parse the document with injection language
+                self.maybe_auto_install_language(&resolved_lang, uri.clone(), text.clone(), true)
                     .await;
             }
         }
@@ -794,7 +823,8 @@ impl LanguageServer for TreeSitterLs {
 
             if !load_result.success && self.is_auto_install_enabled() {
                 // Language failed to load and auto-install is enabled
-                self.maybe_auto_install_language(lang, uri.clone(), text.clone())
+                // is_injection=false: This is the document's main language
+                self.maybe_auto_install_language(lang, uri.clone(), text.clone(), false)
                     .await;
             }
         }
