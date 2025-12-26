@@ -1,7 +1,39 @@
-//! Semantic token caching with result_id validation.
+//! Semantic token caching with result_id validation and injection region tracking.
 //!
-//! Provides a dedicated cache for semantic tokens keyed by document URL,
-//! enabling fast cache hits when result_id matches.
+//! This module provides three caching layers for semantic token performance:
+//!
+//! 1. **SemanticTokenCache** - Document-level token caching by URI with result_id validation.
+//!    Used for cache hits when the document version matches.
+//!
+//! 2. **InjectionMap** - Tracks all injection regions per document URI.
+//!    Each `CacheableInjectionRegion` stores language, byte/line ranges, and a result_id.
+//!    Enables targeted invalidation: when an edit occurs, only regions overlapping
+//!    the edit need re-tokenization (see PBI-083).
+//!
+//! 3. **InjectionTokenCache** - Per-injection token caching by (URI, region_id).
+//!    Stores tokens for individual code blocks, allowing cache reuse when
+//!    edits occur outside that injection region.
+//!
+//! ## Architecture
+//!
+//! ```text
+//! Document edit arrives
+//!        |
+//!        v
+//! InjectionMap.get(uri) -> Vec<CacheableInjectionRegion>
+//!        |
+//!        v
+//! Find regions overlapping edit (byte_range intersection)
+//!        |
+//!   +----+----+
+//!   |         |
+//!   v         v
+//! Overlapping:     Unchanged:
+//! Invalidate &     Reuse tokens from
+//! re-tokenize      InjectionTokenCache
+//! ```
+//!
+//! All caches use DashMap for thread-safe concurrent access.
 
 use crate::language::injection::CacheableInjectionRegion;
 use dashmap::DashMap;
