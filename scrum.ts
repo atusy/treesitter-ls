@@ -172,19 +172,31 @@ const scrum: ScrumDashboard = {
       },
       acceptance_criteria: [
         {
+          criterion: "InjectionMap and InjectionTokenCache wired into TreeSitterLs",
+          verification: "Unit test: TreeSitterLs has injection_map and injection_token_cache fields",
+        },
+        {
+          criterion: "CacheableInjectionRegion has contains_byte() helper for range lookup",
+          verification: "Unit test: contains_byte() returns true for byte within range, false outside",
+        },
+        {
+          criterion: "Injection regions populated after document parse",
+          verification: "Integration test: after parse_document(), InjectionMap contains regions for markdown with code blocks",
+        },
+        {
           criterion: "Edit outside injection regions preserves all injection caches",
-          verification: "Integration test: edit in host text skips injection re-parse",
+          verification: "Integration test: edit host text (line 0), verify InjectionTokenCache entries unchanged",
         },
         {
           criterion: "Edit inside injection region invalidates only that region's cache",
-          verification: "Integration test: edit in code block re-parses only that block",
+          verification: "Integration test: edit inside code block, verify only that region_id removed from cache",
         },
         {
-          criterion: "Structural changes (add/remove code block) update InjectionMap",
-          verification: "Test verifies new code block triggers fresh region tracking",
+          criterion: "Structural changes (add/remove code block) refresh InjectionMap",
+          verification: "Integration test: add new code block, verify InjectionMap updated with new region",
         },
       ],
-      status: "draft",
+      status: "done",
     },
     {
       id: "PBI-084",
@@ -221,6 +233,13 @@ const scrum: ScrumDashboard = {
   // Sprint 1-59 details: git log -- scrum.yaml, scrum.ts
   completed: [
     {
+      number: 64,
+      pbi_id: "PBI-083",
+      goal: "Wire injection tracking into TreeSitterLs for targeted cache invalidation",
+      status: "done",
+      subtasks: [],
+    },
+    {
       number: 63,
       pbi_id: "PBI-082",
       goal: "Establish injection region tracking infrastructure with byte ranges and cached token association",
@@ -234,19 +253,36 @@ const scrum: ScrumDashboard = {
       status: "done",
       subtasks: [],
     },
-    {
-      number: 61,
-      pbi_id: "PBI-080",
-      goal: "Enable incremental tokenization path using merge_tokens() for <20ms highlighting updates",
-      status: "done",
-      subtasks: [],
-    },
   ],
 
   // Sprint 62 retro: Tidy First worked well. Sprint item -> Sprint 63 subtask 1.
   // Product items: memory optimization (previous_text), update perf metrics (4.6ms vs 20ms)
   // Sprint 63 retro: Clean architecture, retro follow-through, all ACs verified with unit tests.
+  // Sprint 64 retro: Good TDD with integration tests, result_id regeneration issue noted.
   retrospectives: [
+    {
+      sprint: 64,
+      improvements: [
+        {
+          action: "Result IDs regenerate on every parse, making targeted caching less effective - consider stable IDs based on byte range",
+          timing: "product",
+          status: "active",
+          outcome: "Noted for PBI-084 optimization work",
+        },
+        {
+          action: "Integration tests for injection cache behavior were effective for validating AC logic",
+          timing: "immediate",
+          status: "completed",
+          outcome: "test_injection_map_integration.rs has 8 comprehensive tests",
+        },
+        {
+          action: "Benchmark script for injection-heavy docs still needed",
+          timing: "sprint",
+          status: "active",
+          outcome: "Carry forward to PBI-084 AC1",
+        },
+      ],
+    },
     {
       sprint: 63,
       improvements: [
@@ -259,20 +295,20 @@ const scrum: ScrumDashboard = {
         {
           action: "Wire InjectionMap/InjectionTokenCache into lsp_impl.rs for invalidation",
           timing: "sprint",
-          status: "active",
-          outcome: null,
+          status: "completed",
+          outcome: "Sprint 64 subtasks 2-6 implement wiring and invalidation logic",
         },
         {
           action: "Create benchmark script for injection-heavy docs before PBI-084",
           timing: "sprint",
           status: "active",
-          outcome: null,
+          outcome: "Deferred to PBI-084 AC1 (benchmark infrastructure)",
         },
         {
           action: "Add contains_byte() helper to CacheableInjectionRegion for simpler byte-range lookup",
           timing: "product",
-          status: "active",
-          outcome: null,
+          status: "completed",
+          outcome: "Sprint 64 subtask 1 implements contains_byte() helper",
         },
       ],
     },
