@@ -231,7 +231,7 @@ const scrum: ScrumDashboard = {
     number: 65,
     pbi_id: "PBI-084",
     goal: "Establish benchmark infrastructure and implement stable region IDs for injection cache optimization",
-    status: "review",
+    status: "done",
     subtasks: [
       // Subtask 1: AC1 - Benchmark baseline (structural)
       {
@@ -322,27 +322,57 @@ const scrum: ScrumDashboard = {
   // Product items: memory optimization (previous_text), update perf metrics (4.6ms vs 20ms)
   // Sprint 63 retro: Clean architecture, retro follow-through, all ACs verified with unit tests.
   // Sprint 64 retro: Good TDD with integration tests, result_id regeneration issue noted.
+  // Sprint 65 retro: Content hash for stable IDs worked well, benchmark infra established.
   retrospectives: [
+    {
+      sprint: 65,
+      improvements: [
+        {
+          action: "Content hash (FNV-1a) proved effective for stable region matching - simpler than AST-based approaches",
+          timing: "immediate",
+          status: "completed",
+          outcome: "CacheableInjectionRegion.content_hash enables cache reuse when document structure changes",
+        },
+        {
+          action: "Criterion benchmarks provide clear baseline metrics for optimization work",
+          timing: "immediate",
+          status: "completed",
+          outcome: "benches/injection_tokens.rs measures parse time (167µs full, 101µs incremental)",
+        },
+        {
+          action: "Parse time at 60% of full tokenization - cache hit optimization needed for <50% target",
+          timing: "product",
+          status: "active",
+          outcome: "Consider adding benchmark that includes full semantic token generation, not just parsing",
+        },
+        {
+          action: "Debug logging for cache hits aids in verifying optimization effectiveness",
+          timing: "immediate",
+          status: "completed",
+          outcome: "treesitter_ls::injection_cache target logs hits/misses at debug/trace level",
+        },
+      ],
+    },
     {
       sprint: 64,
       improvements: [
         {
           action: "Result IDs regenerate on every parse, making targeted caching less effective - consider stable IDs based on byte range",
           timing: "product",
-          status: "active",
-          outcome: "Noted for PBI-084 optimization work",
+          status: "completed",
+          outcome: "Sprint 65 implemented content_hash for stable ID matching",
         },
         {
           action: "Integration tests for injection cache behavior were effective for validating AC logic",
           timing: "immediate",
           status: "completed",
-          outcome: "test_injection_map_integration.rs has 8 comprehensive tests",
+          outcome: "test_injection_map_integration.rs has 10 comprehensive tests (including cache hit test)",
         },
         {
           action: "Benchmark script for injection-heavy docs still needed",
           timing: "sprint",
-          status: "active",
-          outcome: "Carry forward to PBI-084 AC1",
+          status: "completed",
+          outcome: "Sprint 65 created benches/injection_tokens.rs with criterion",
         },
       ],
     },
