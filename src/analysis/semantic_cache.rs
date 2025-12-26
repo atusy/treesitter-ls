@@ -368,4 +368,56 @@ mod tests {
         let other_uri = Url::parse("file:///other.md").unwrap();
         assert!(cache.get(&other_uri, "region-1").is_none());
     }
+
+    #[test]
+    fn test_injection_map_get_tokens_via_result_id() {
+        use crate::language::injection::CacheableInjectionRegion;
+
+        let injection_map = InjectionMap::new();
+        let token_cache = InjectionTokenCache::new();
+        let uri = Url::parse("file:///test.md").unwrap();
+
+        // Set up injection regions
+        let regions = vec![
+            CacheableInjectionRegion {
+                language: "lua".to_string(),
+                byte_range: 10..50,
+                line_range: 2..5,
+                result_id: "lua-region-1".to_string(),
+            },
+            CacheableInjectionRegion {
+                language: "python".to_string(),
+                byte_range: 100..200,
+                line_range: 10..20,
+                result_id: "python-region-2".to_string(),
+            },
+        ];
+        injection_map.insert(uri.clone(), regions);
+
+        // Set up cached tokens for each region
+        let lua_tokens = SemanticTokens {
+            result_id: Some("lua-tokens".to_string()),
+            data: vec![SemanticToken {
+                delta_line: 0,
+                delta_start: 0,
+                length: 3,
+                token_type: 0,
+                token_modifiers_bitset: 0,
+            }],
+        };
+        token_cache.store(&uri, "lua-region-1", lua_tokens);
+
+        // Find region containing byte offset and get its cached tokens
+        let regions = injection_map.get(&uri).unwrap();
+        let region_at_byte_30 = regions.iter().find(|r| r.byte_range.contains(&30));
+        assert!(region_at_byte_30.is_some(), "Should find region at byte 30");
+
+        let region = region_at_byte_30.unwrap();
+        assert_eq!(region.language, "lua");
+
+        // Use result_id to get cached tokens
+        let cached = token_cache.get(&uri, &region.result_id);
+        assert!(cached.is_some(), "Should have cached tokens for lua region");
+        assert_eq!(cached.unwrap().data[0].length, 3);
+    }
 }
