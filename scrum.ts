@@ -207,19 +207,79 @@ const scrum: ScrumDashboard = {
       },
       acceptance_criteria: [
         {
-          criterion: "Benchmark infrastructure for injection-aware tokenization",
-          verification: "Benchmark script comparing full vs incremental on 5+ injection doc",
+          criterion: "Benchmark test measures tokenization time for markdown with 5+ code blocks",
+          verification: "Cargo bench test outputs timing for full tokenization baseline",
         },
         {
-          criterion: "Performance target met: <50% of full tokenization time",
-          verification: "Benchmark results documented in performance log",
+          criterion: "Benchmark compares host-only edit vs code-block edit scenarios",
+          verification: "Bench test shows timing difference between edit outside vs inside injection",
+        },
+        {
+          criterion: "Stable region IDs preserve cache across parses for unchanged regions",
+          verification: "Unit test: edit outside injection, same region_id retained, cache hit logged",
+        },
+        {
+          criterion: "Edit outside injections achieves <50% of full tokenization time",
+          verification: "Bench shows host-edit scenario <50% of baseline full tokenization",
         },
       ],
-      status: "draft",
+      status: "ready",
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 65,
+    pbi_id: "PBI-084",
+    goal: "Establish benchmark infrastructure and implement stable region IDs for injection cache optimization",
+    status: "in_progress",
+    subtasks: [
+      // Subtask 1: AC1 - Benchmark baseline (structural)
+      {
+        test: "Cargo bench test exists that measures full tokenization time for markdown with 5+ code blocks",
+        implementation: "Create benches/injection_tokens.rs with criterion benchmark for full tokenization",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: ["Criterion.rs for accurate benchmarking", "Use realistic markdown with lua/python/rust blocks"],
+      },
+      // Subtask 2: AC2 - Benchmark scenarios (structural)
+      {
+        test: "Benchmark compares host-edit vs injection-edit tokenization times",
+        implementation: "Add benchmark cases: edit_header (outside) vs edit_code_block (inside)",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: ["Both scenarios should trigger semantic token refresh", "Measure time difference"],
+      },
+      // Subtask 3: AC3 - Stable region IDs (behavioral)
+      {
+        test: "After edit outside injection, region_id for unchanged injection is preserved",
+        implementation: "Modify populate_injection_map to reuse existing region_ids for unchanged byte ranges",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Key optimization: match by (language, byte_range)", "Only generate new ID if region is new"],
+      },
+      // Subtask 4: AC3 - Cache hit verification (behavioral)
+      {
+        test: "Edit outside injection results in cache hit for injection tokens",
+        implementation: "Add logging for cache hits in semantic token handlers",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Depends on stable region IDs", "Log when InjectionTokenCache returns cached tokens"],
+      },
+      // Subtask 5: AC4 - Performance target (behavioral)
+      {
+        test: "Benchmark shows host-edit <50% of full tokenization time",
+        implementation: "Run benchmarks, document results, tune if needed",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["May require additional optimization if target not met", "Document baseline vs optimized times"],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
