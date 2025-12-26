@@ -3,6 +3,7 @@
 //! Provides a dedicated cache for semantic tokens keyed by document URL,
 //! enabling fast cache hits when result_id matches.
 
+use crate::language::injection::CacheableInjectionRegion;
 use dashmap::DashMap;
 use tower_lsp::lsp_types::SemanticTokens;
 use url::Url;
@@ -52,6 +53,39 @@ impl SemanticTokenCache {
 }
 
 impl Default for SemanticTokenCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Thread-safe map of injection regions per document.
+///
+/// Tracks all `CacheableInjectionRegion`s for each document URI,
+/// enabling targeted cache invalidation when only specific injections change.
+pub struct InjectionMap {
+    regions: DashMap<Url, Vec<CacheableInjectionRegion>>,
+}
+
+impl InjectionMap {
+    /// Create a new empty injection map.
+    pub fn new() -> Self {
+        Self {
+            regions: DashMap::new(),
+        }
+    }
+
+    /// Store injection regions for a document, replacing any existing regions.
+    pub fn insert(&self, uri: Url, regions: Vec<CacheableInjectionRegion>) {
+        self.regions.insert(uri, regions);
+    }
+
+    /// Retrieve injection regions for a document.
+    pub fn get(&self, uri: &Url) -> Option<Vec<CacheableInjectionRegion>> {
+        self.regions.get(uri).map(|entry| entry.clone())
+    }
+}
+
+impl Default for InjectionMap {
     fn default() -> Self {
         Self::new()
     }
@@ -203,6 +237,9 @@ mod tests {
 
         // Non-existent URI returns None
         let other_uri = Url::parse("file:///other.md").unwrap();
-        assert!(map.get(&other_uri).is_none(), "Non-existent URI should return None");
+        assert!(
+            map.get(&other_uri).is_none(),
+            "Non-existent URI should return None"
+        );
     }
 }
