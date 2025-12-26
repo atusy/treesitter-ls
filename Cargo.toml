@@ -38,3 +38,8 @@ tree-sitter-rust = "0.23"
 tree-sitter-md = "0.3"
 tree-sitter-yaml = "0.7"
 streaming-iterator = "0.1"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "injection_tokens"
+harness = false
