@@ -173,6 +173,10 @@ impl TreeSitterLs {
     ///
     /// This enables targeted cache invalidation (PBI-083): when an edit occurs,
     /// we can check which injection regions overlap and only invalidate those.
+    ///
+    /// AC6: Also clears stale InjectionTokenCache entries for removed regions.
+    /// Since result_ids are regenerated on each parse, we clear the entire
+    /// document's injection token cache and let it be repopulated on demand.
     fn populate_injection_map(
         &self,
         uri: &Url,
@@ -183,7 +187,13 @@ impl TreeSitterLs {
         // Get the injection query for this language
         let injection_query = match self.language.get_injection_query(language_name) {
             Some(q) => q,
-            None => return, // No injection query = no injections to track
+            None => {
+                // No injection query = no injections to track
+                // Clear any stale injection caches
+                self.injection_map.clear(uri);
+                self.injection_token_cache.clear_document(uri);
+                return;
+            }
         };
 
         // Collect all injection regions from the parsed tree
@@ -191,10 +201,16 @@ impl TreeSitterLs {
             collect_all_injections(&tree.root_node(), text, Some(injection_query.as_ref()))
         {
             if regions.is_empty() {
-                // Clear any existing regions for this document
+                // Clear any existing regions and caches for this document
                 self.injection_map.clear(uri);
+                self.injection_token_cache.clear_document(uri);
                 return;
             }
+
+            // AC6: Clear stale caches before generating new result_ids
+            // Since we generate new result_ids for all regions, old cached tokens
+            // become orphaned. Clear them to avoid memory leaks.
+            self.injection_token_cache.clear_document(uri);
 
             // Convert to CacheableInjectionRegion with unique result_ids
             let cacheable_regions: Vec<CacheableInjectionRegion> = regions
