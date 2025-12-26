@@ -96,6 +96,52 @@ impl Default for InjectionMap {
     }
 }
 
+/// Thread-safe cache for per-injection semantic tokens.
+///
+/// Unlike `SemanticTokenCache` which stores tokens per document, this cache
+/// stores tokens keyed by (uri, region_id), enabling injection-level caching.
+pub struct InjectionTokenCache {
+    cache: DashMap<(Url, String), SemanticTokens>,
+}
+
+impl InjectionTokenCache {
+    /// Create a new empty cache.
+    pub fn new() -> Self {
+        Self {
+            cache: DashMap::new(),
+        }
+    }
+
+    /// Store semantic tokens for a specific injection region.
+    pub fn store(&self, uri: &Url, region_id: &str, tokens: SemanticTokens) {
+        self.cache
+            .insert((uri.clone(), region_id.to_string()), tokens);
+    }
+
+    /// Retrieve semantic tokens for a specific injection region.
+    pub fn get(&self, uri: &Url, region_id: &str) -> Option<SemanticTokens> {
+        self.cache
+            .get(&(uri.clone(), region_id.to_string()))
+            .map(|entry| entry.clone())
+    }
+
+    /// Remove cached tokens for a specific injection region.
+    pub fn remove(&self, uri: &Url, region_id: &str) {
+        self.cache.remove(&(uri.clone(), region_id.to_string()));
+    }
+
+    /// Remove all cached tokens for a document (all its injection regions).
+    pub fn clear_document(&self, uri: &Url) {
+        self.cache.retain(|key, _| &key.0 != uri);
+    }
+}
+
+impl Default for InjectionTokenCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
