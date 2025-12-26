@@ -83,6 +83,11 @@ impl InjectionMap {
     pub fn get(&self, uri: &Url) -> Option<Vec<CacheableInjectionRegion>> {
         self.regions.get(uri).map(|entry| entry.clone())
     }
+
+    /// Remove all injection regions for a document (e.g., on document close).
+    pub fn clear(&self, uri: &Url) {
+        self.regions.remove(uri);
+    }
 }
 
 impl Default for InjectionMap {
