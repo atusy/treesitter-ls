@@ -167,4 +167,42 @@ mod tests {
         let other_uri = Url::parse("file:///other.rs").unwrap();
         cache.remove(&other_uri); // Should not panic
     }
+
+    #[test]
+    fn test_injection_map_store_retrieve() {
+        use crate::language::injection::CacheableInjectionRegion;
+
+        let map = InjectionMap::new();
+        let uri = Url::parse("file:///test.md").unwrap();
+
+        let regions = vec![
+            CacheableInjectionRegion {
+                language: "lua".to_string(),
+                byte_range: 10..50,
+                line_range: 2..5,
+                result_id: "region-1".to_string(),
+            },
+            CacheableInjectionRegion {
+                language: "python".to_string(),
+                byte_range: 100..200,
+                line_range: 10..20,
+                result_id: "region-2".to_string(),
+            },
+        ];
+
+        // Insert regions
+        map.insert(uri.clone(), regions.clone());
+
+        // Retrieve regions
+        let retrieved = map.get(&uri);
+        assert!(retrieved.is_some(), "Should retrieve stored regions");
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.len(), 2, "Should have 2 regions");
+        assert_eq!(retrieved[0].language, "lua");
+        assert_eq!(retrieved[1].language, "python");
+
+        // Non-existent URI returns None
+        let other_uri = Url::parse("file:///other.md").unwrap();
+        assert!(map.get(&other_uri).is_none(), "Non-existent URI should return None");
+    }
 }
