@@ -978,7 +978,17 @@ impl LanguageServer for TreeSitterLs {
                 .recover_poison("semantic_tokens_full_delta parser_pool")
                 .unwrap();
 
-            // Check if we can use the incremental path
+            // Incremental Tokenization Path
+            // ==============================
+            // When UseIncremental strategy is selected AND we have all required state:
+            // 1. Decode previous tokens to absolute (line, column) format
+            // 2. Compute new tokens for the ENTIRE document (needed for changed regions)
+            // 3. Use Tree-sitter's changed_ranges() to find what lines changed
+            // 4. Merge: preserve old tokens outside changed lines, use new for changed lines
+            // 5. Encode back to delta format and compute LSP delta
+            //
+            // This preserves cached tokens for unchanged regions, reducing redundant work.
+            // Falls back to full path if any required state is missing.
             let use_incremental = matches!(strategy, IncrementalDecision::UseIncremental)
                 && previous_tokens.is_some()
                 && doc.previous_tree().is_some()
