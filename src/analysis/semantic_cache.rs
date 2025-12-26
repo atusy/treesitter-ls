@@ -242,4 +242,31 @@ mod tests {
             "Non-existent URI should return None"
         );
     }
+
+    #[test]
+    fn test_injection_map_clear() {
+        use crate::language::injection::CacheableInjectionRegion;
+
+        let map = InjectionMap::new();
+        let uri = Url::parse("file:///test.md").unwrap();
+
+        let regions = vec![CacheableInjectionRegion {
+            language: "lua".to_string(),
+            byte_range: 10..50,
+            line_range: 2..5,
+            result_id: "region-1".to_string(),
+        }];
+
+        // Insert and verify
+        map.insert(uri.clone(), regions);
+        assert!(map.get(&uri).is_some(), "Should have stored regions");
+
+        // Clear removes regions
+        map.clear(&uri);
+        assert!(map.get(&uri).is_none(), "Should return None after clear");
+
+        // Clearing non-existent URI is safe
+        let other_uri = Url::parse("file:///other.md").unwrap();
+        map.clear(&other_uri); // Should not panic
+    }
 }
