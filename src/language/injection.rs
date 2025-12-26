@@ -824,4 +824,24 @@ mod tests {
         );
         assert_eq!(cacheable.result_id, "test-result-id");
     }
+
+    #[test]
+    fn test_cacheable_injection_region_contains_byte() {
+        let region = CacheableInjectionRegion {
+            language: "lua".to_string(),
+            byte_range: 100..200,
+            line_range: 5..10,
+            result_id: "test-region".to_string(),
+        };
+
+        // Byte within range
+        assert!(region.contains_byte(100), "Start of range should be included");
+        assert!(region.contains_byte(150), "Middle of range should be included");
+        assert!(region.contains_byte(199), "End-1 of range should be included");
+
+        // Byte outside range
+        assert!(!region.contains_byte(99), "Before range should not be included");
+        assert!(!region.contains_byte(200), "End of range (exclusive) should not be included");
+        assert!(!region.contains_byte(300), "Far after range should not be included");
+    }
 }
