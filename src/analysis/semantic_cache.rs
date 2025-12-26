@@ -151,10 +151,32 @@ impl InjectionTokenCache {
     }
 
     /// Retrieve semantic tokens for a specific injection region.
+    ///
+    /// Returns `Some(tokens)` on cache hit, `None` on cache miss.
+    /// Cache hits are logged at debug level to help verify stable region ID optimization.
     pub fn get(&self, uri: &Url, region_id: &str) -> Option<SemanticTokens> {
-        self.cache
+        let result = self
+            .cache
             .get(&(uri.clone(), region_id.to_string()))
-            .map(|entry| entry.clone())
+            .map(|entry| entry.clone());
+
+        if result.is_some() {
+            log::debug!(
+                target: "treesitter_ls::injection_cache",
+                "Cache HIT for injection region '{}' in {}",
+                region_id,
+                uri.path()
+            );
+        } else {
+            log::trace!(
+                target: "treesitter_ls::injection_cache",
+                "Cache MISS for injection region '{}' in {}",
+                region_id,
+                uri.path()
+            );
+        }
+
+        result
     }
 
     /// Remove cached tokens for a specific injection region.

@@ -941,3 +941,119 @@ Footer text
         "Result ID should be preserved for unchanged injection content"
     );
 }
+
+#[test]
+fn test_cache_hit_after_edit_outside_injection() {
+    // AC3 (PBI-084) Subtask 4: Verify cache hit after edit outside injection
+    //
+    // This test verifies that when we edit host text (outside injection),
+    // the cached tokens for the injection can still be retrieved using
+    // the preserved result_id.
+
+    let injection_map = InjectionMap::new();
+    let injection_token_cache = treesitter_ls::analysis::InjectionTokenCache::new();
+    let uri = Url::parse("file:///test/cache_hit.md").unwrap();
+
+    // Document with one code block
+    let initial_text = r#"# Header
+
+```lua
+print("hello")
+```
+
+Footer text
+"#;
+
+    let mut parser = Parser::new();
+    let md_language: tree_sitter::Language = tree_sitter_md::LANGUAGE.into();
+    parser.set_language(&md_language).expect("set markdown");
+    let initial_tree = parser.parse(initial_text, None).expect("parse");
+
+    let injection_query_str = r#"
+        (fenced_code_block
+          (info_string
+            (language) @_lang)
+          (code_fence_content) @injection.content
+          (#set-lang-from-info-string! @_lang))
+    "#;
+    let injection_query = Query::new(&md_language, injection_query_str).expect("query");
+
+    // Initial population with stable IDs
+    populate_injection_map_with_stable_ids(
+        &injection_map,
+        &uri,
+        initial_text,
+        &initial_tree,
+        Some(&injection_query),
+    );
+
+    let initial_regions = injection_map.get(&uri).expect("should have regions");
+    assert_eq!(initial_regions.len(), 1, "Should have one lua region");
+    let initial_result_id = initial_regions[0].result_id.clone();
+
+    // Store tokens for the lua injection using the result_id
+    let lua_tokens = tower_lsp::lsp_types::SemanticTokens {
+        result_id: Some(initial_result_id.clone()),
+        data: vec![tower_lsp::lsp_types::SemanticToken {
+            delta_line: 0,
+            delta_start: 0,
+            length: 5,
+            token_type: 1, // function
+            token_modifiers_bitset: 0,
+        }],
+    };
+    injection_token_cache.store(&uri, &initial_result_id, lua_tokens);
+
+    // Verify cache is populated
+    assert!(
+        injection_token_cache
+            .get(&uri, &initial_result_id)
+            .is_some(),
+        "Should have cached tokens for initial result_id"
+    );
+
+    // Edit the header (outside the injection)
+    let edited_text = r#"# Modified Header
+
+```lua
+print("hello")
+```
+
+Footer text
+"#;
+
+    let edited_tree = parser.parse(edited_text, None).expect("parse edited");
+
+    // Re-populate with stable IDs
+    populate_injection_map_with_stable_ids(
+        &injection_map,
+        &uri,
+        edited_text,
+        &edited_tree,
+        Some(&injection_query),
+    );
+
+    let updated_regions = injection_map.get(&uri).expect("should have regions");
+    assert_eq!(updated_regions.len(), 1, "Should still have one region");
+    let updated_result_id = &updated_regions[0].result_id;
+
+    // THE KEY ASSERTION: result_id is preserved, so we can get a CACHE HIT
+    assert_eq!(
+        initial_result_id, *updated_result_id,
+        "Result ID should be preserved"
+    );
+
+    // CACHE HIT: We can retrieve the cached tokens using the updated result_id
+    let cached_tokens = injection_token_cache.get(&uri, updated_result_id);
+    assert!(
+        cached_tokens.is_some(),
+        "Should get CACHE HIT - tokens should still be retrievable after edit outside injection"
+    );
+
+    let tokens = cached_tokens.unwrap();
+    assert_eq!(tokens.data.len(), 1, "Should have one token");
+    assert_eq!(
+        tokens.data[0].token_type, 1,
+        "Token type should be preserved"
+    );
+}
