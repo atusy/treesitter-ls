@@ -52,8 +52,7 @@ pub struct TreeSitterLs {
     semantic_cache: SemanticTokenCache,
     /// Tracks injection regions per document for targeted invalidation
     injection_map: InjectionMap,
-    /// Per-injection semantic token cache (used in AC4/AC5 for targeted invalidation)
-    #[allow(dead_code)] // Will be used in subtasks 4-5 for cache invalidation
+    /// Per-injection semantic token cache (AC4/AC5 targeted invalidation)
     injection_token_cache: InjectionTokenCache,
     root_path: ArcSwap<Option<PathBuf>>,
     /// Settings including auto_install flag
@@ -130,6 +129,44 @@ impl TreeSitterLs {
     /// Check if auto-install is enabled.
     fn is_auto_install_enabled(&self) -> bool {
         self.settings.load().auto_install
+    }
+
+    /// Invalidate injection caches for regions that overlap with edits.
+    ///
+    /// Called BEFORE parse_document to use pre-edit byte offsets against pre-edit
+    /// injection regions. This implements AC4/AC5 (PBI-083): edits outside injections
+    /// preserve caches, edits inside invalidate only affected regions.
+    fn invalidate_overlapping_injection_caches(&self, uri: &Url, edits: &[InputEdit]) {
+        // Get pre-edit injection regions
+        let Some(regions) = self.injection_map.get(uri) else {
+            return; // No injection regions tracked for this document
+        };
+
+        if regions.is_empty() || edits.is_empty() {
+            return;
+        }
+
+        // Find all regions that overlap with any edit
+        for edit in edits {
+            let edit_start = edit.start_byte;
+            let edit_end = edit.old_end_byte;
+
+            for region in &regions {
+                // Check if edit overlaps with region's byte range
+                // Overlap: edit_start < region_end AND edit_end > region_start
+                if edit_start < region.byte_range.end && edit_end > region.byte_range.start {
+                    // This region is affected - invalidate its cache
+                    self.injection_token_cache.remove(uri, &region.result_id);
+                    log::debug!(
+                        target: "treesitter_ls::injection_cache",
+                        "Invalidated injection cache for {} region (edit bytes {}..{})",
+                        region.language,
+                        edit_start,
+                        edit_end
+                    );
+                }
+            }
+        }
     }
 
     /// Populate InjectionMap with injection regions from the parsed tree.
@@ -846,6 +883,10 @@ impl LanguageServer for TreeSitterLs {
                 edits.clear(); // Clear any previous edits since it's a full replacement
             }
         }
+
+        // Invalidate injection caches for regions overlapping with edits (AC4/AC5)
+        // Must be called BEFORE parse_document which updates the injection_map
+        self.invalidate_overlapping_injection_caches(&uri, &edits);
 
         // Parse the updated document with edit information
         self.parse_document(uri.clone(), text, language_id.as_deref(), edits)
