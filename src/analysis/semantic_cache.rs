@@ -298,12 +298,14 @@ mod tests {
                 byte_range: 10..50,
                 line_range: 2..5,
                 result_id: "region-1".to_string(),
+                content_hash: 12345,
             },
             CacheableInjectionRegion {
                 language: "python".to_string(),
                 byte_range: 100..200,
                 line_range: 10..20,
                 result_id: "region-2".to_string(),
+                content_hash: 67890,
             },
         ];
 
@@ -338,6 +340,7 @@ mod tests {
             byte_range: 10..50,
             line_range: 2..5,
             result_id: "region-1".to_string(),
+            content_hash: 12345,
         }];
 
         // Insert and verify
@@ -416,12 +419,14 @@ mod tests {
                 byte_range: 10..50,
                 line_range: 2..5,
                 result_id: "lua-region-1".to_string(),
+                content_hash: 11111,
             },
             CacheableInjectionRegion {
                 language: "python".to_string(),
                 byte_range: 100..200,
                 line_range: 10..20,
                 result_id: "python-region-2".to_string(),
+                content_hash: 22222,
             },
         ];
         injection_map.insert(uri.clone(), regions);

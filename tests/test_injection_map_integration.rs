@@ -23,7 +23,7 @@ fn populate_injection_map(
         // Convert to CacheableInjectionRegion with unique result_ids
         let cacheable_regions: Vec<CacheableInjectionRegion> = regions
             .iter()
-            .map(|info| CacheableInjectionRegion::from_region_info(info, &next_result_id()))
+            .map(|info| CacheableInjectionRegion::from_region_info(info, &next_result_id(), text))
             .collect();
 
         // Store in injection map
@@ -795,20 +795,15 @@ fn populate_injection_map_with_stable_ids(
         return;
     }
 
-    // Get existing regions for ID preservation
+    // Get existing regions for ID preservation - match by (language, content_hash)
     let existing_regions = injection_map.get(uri);
-    let existing_map: std::collections::HashMap<(&str, usize, usize), &CacheableInjectionRegion> =
+    let existing_map: std::collections::HashMap<(&str, u64), &CacheableInjectionRegion> =
         existing_regions
             .as_ref()
             .map(|regions| {
                 regions
                     .iter()
-                    .map(|r| {
-                        (
-                            (r.language.as_str(), r.byte_range.start, r.byte_range.end),
-                            r,
-                        )
-                    })
+                    .map(|r| ((r.language.as_str(), r.content_hash), r))
                     .collect()
             })
             .unwrap_or_default();
@@ -817,23 +812,26 @@ fn populate_injection_map_with_stable_ids(
     let cacheable_regions: Vec<CacheableInjectionRegion> = regions
         .iter()
         .map(|info| {
-            let language = info.language.as_str();
-            let start = info.content_node.start_byte();
-            let end = info.content_node.end_byte();
-            let key = (language, start, end);
+            // Compute hash for matching
+            let temp_region = CacheableInjectionRegion::from_region_info(info, "", text);
+            let key = (info.language.as_str(), temp_region.content_hash);
 
-            // Check if we have an existing region with same (language, byte_range)
+            // Check if we have an existing region with same (language, content_hash)
             if let Some(existing) = existing_map.get(&key) {
-                // Reuse the existing result_id
+                // Reuse the existing result_id - enable cache hit!
                 CacheableInjectionRegion {
-                    language: existing.language.clone(),
-                    byte_range: existing.byte_range.clone(),
-                    line_range: existing.line_range.clone(),
+                    language: temp_region.language,
+                    byte_range: temp_region.byte_range,
+                    line_range: temp_region.line_range,
                     result_id: existing.result_id.clone(),
+                    content_hash: temp_region.content_hash,
                 }
             } else {
                 // Generate new result_id for new regions
-                CacheableInjectionRegion::from_region_info(info, &next_result_id())
+                CacheableInjectionRegion {
+                    result_id: next_result_id(),
+                    ..temp_region
+                }
             }
         })
         .collect();

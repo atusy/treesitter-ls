@@ -207,16 +207,63 @@ impl TreeSitterLs {
                 return;
             }
 
-            // AC6: Clear stale caches before generating new result_ids
-            // Since we generate new result_ids for all regions, old cached tokens
-            // become orphaned. Clear them to avoid memory leaks.
-            self.injection_token_cache.clear_document(uri);
+            // Build map of existing regions by (language, content_hash) for stable ID matching
+            // This enables cache reuse when document structure changes but injection content stays same
+            let existing_regions = self.injection_map.get(uri);
+            let existing_by_hash: std::collections::HashMap<
+                (&str, u64),
+                &CacheableInjectionRegion,
+            > = existing_regions
+                .as_ref()
+                .map(|regions| {
+                    regions
+                        .iter()
+                        .map(|r| ((r.language.as_str(), r.content_hash), r))
+                        .collect()
+                })
+                .unwrap_or_default();
 
-            // Convert to CacheableInjectionRegion with unique result_ids
+            // Convert to CacheableInjectionRegion, reusing result_ids for unchanged content
             let cacheable_regions: Vec<CacheableInjectionRegion> = regions
                 .iter()
-                .map(|info| CacheableInjectionRegion::from_region_info(info, &next_result_id()))
+                .map(|info| {
+                    // Compute hash for the new region's content
+                    let temp_region = CacheableInjectionRegion::from_region_info(info, "", text);
+                    let key = (info.language.as_str(), temp_region.content_hash);
+
+                    // Check if we have an existing region with same (language, content_hash)
+                    if let Some(existing) = existing_by_hash.get(&key) {
+                        // Reuse the existing result_id - this enables cache hit!
+                        CacheableInjectionRegion {
+                            language: temp_region.language,
+                            byte_range: temp_region.byte_range,
+                            line_range: temp_region.line_range,
+                            result_id: existing.result_id.clone(),
+                            content_hash: temp_region.content_hash,
+                        }
+                    } else {
+                        // New content - generate new result_id
+                        CacheableInjectionRegion {
+                            result_id: next_result_id(),
+                            ..temp_region
+                        }
+                    }
+                })
                 .collect();
+
+            // Find stale region IDs that are no longer present
+            if let Some(old_regions) = existing_regions {
+                let new_hashes: std::collections::HashSet<_> = cacheable_regions
+                    .iter()
+                    .map(|r| (r.language.as_str(), r.content_hash))
+                    .collect();
+                for old in old_regions.iter() {
+                    if !new_hashes.contains(&(old.language.as_str(), old.content_hash)) {
+                        // This region no longer exists - clear its cache
+                        self.injection_token_cache.remove(uri, &old.result_id);
+                    }
+                }
+            }
 
             // Store in injection map
             self.injection_map.insert(uri.clone(), cacheable_regions);

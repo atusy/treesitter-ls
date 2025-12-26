@@ -244,18 +244,38 @@ pub struct CacheableInjectionRegion {
     pub line_range: Range<u32>,
     /// Unique identifier for associating with cached tokens
     pub result_id: String,
+    /// Hash of the content for stable region matching across parses.
+    /// When document structure changes (e.g., header edit), byte_range shifts
+    /// but content_hash stays the same for unchanged injections.
+    pub content_hash: u64,
 }
 
 impl CacheableInjectionRegion {
     /// Create from an InjectionRegionInfo, extracting position data from the node
-    pub fn from_region_info(info: &InjectionRegionInfo<'_>, result_id: &str) -> Self {
+    pub fn from_region_info(info: &InjectionRegionInfo<'_>, result_id: &str, text: &str) -> Self {
         let node = &info.content_node;
+        let content = &text[node.start_byte()..node.end_byte()];
         Self {
             language: info.language.clone(),
             byte_range: node.start_byte()..node.end_byte(),
             line_range: (node.start_position().row as u32)..(node.end_position().row as u32),
             result_id: result_id.to_string(),
+            content_hash: Self::hash_content(content),
         }
+    }
+
+    /// Compute a simple hash of content bytes for stable matching.
+    /// Uses FNV-1a for speed and good distribution.
+    fn hash_content(content: &str) -> u64 {
+        // FNV-1a hash
+        const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+        const FNV_PRIME: u64 = 0x100000001b3;
+        let mut hash = FNV_OFFSET;
+        for byte in content.bytes() {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(FNV_PRIME);
+        }
+        hash
     }
 
     /// Check if a byte offset falls within this injection region's byte range.
@@ -809,7 +829,8 @@ mod tests {
         let region_info = &regions[0];
 
         // Convert to CacheableInjectionRegion (owned, no lifetime)
-        let cacheable = CacheableInjectionRegion::from_region_info(region_info, "test-result-id");
+        let cacheable =
+            CacheableInjectionRegion::from_region_info(region_info, "test-result-id", text);
 
         // Verify all fields are captured correctly
         assert_eq!(cacheable.language, "markdown");
@@ -839,6 +860,7 @@ mod tests {
             byte_range: 100..200,
             line_range: 5..10,
             result_id: "test-region".to_string(),
+            content_hash: 12345,
         };
 
         // Byte within range
