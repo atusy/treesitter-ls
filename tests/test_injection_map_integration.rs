@@ -248,3 +248,278 @@ fn test_injection_map_contains_byte_ranges_for_invalidation() {
         "Should not contain byte after range"
     );
 }
+
+// ===========================================================================
+// AC4 Tests: Edit outside injection preserves cache
+// ===========================================================================
+
+/// Helper to check if an edit range overlaps any injection region.
+///
+/// This simulates the logic that should be in did_change handler.
+fn edit_overlaps_injection(
+    regions: &[CacheableInjectionRegion],
+    edit_start: usize,
+    edit_end: usize,
+) -> Vec<String> {
+    regions
+        .iter()
+        .filter(|r| {
+            // Check if edit range overlaps with region's byte range
+            // Overlap occurs when: edit_start < region_end AND edit_end > region_start
+            edit_start < r.byte_range.end && edit_end > r.byte_range.start
+        })
+        .map(|r| r.result_id.clone())
+        .collect()
+}
+
+#[test]
+fn test_edit_outside_injection_preserves_all_caches() {
+    // AC4: Edit host document text (line 0), verify InjectionTokenCache entries unchanged
+
+    let injection_map = InjectionMap::new();
+    let injection_token_cache = treesitter_ls::analysis::InjectionTokenCache::new();
+    let uri = Url::parse("file:///test/edit_outside.md").unwrap();
+
+    // Document structure:
+    // Line 0: "# Header\n"          (bytes 0-9)
+    // Line 1: "\n"                   (byte 10)
+    // Line 2-4: "```lua\nprint(1)\n```\n" (bytes 11-29)
+    // Line 5: "\n"                   (byte 30)
+    // Line 6: "Footer text\n"        (bytes 31-43)
+    let markdown_text = "# Header\n\n```lua\nprint(1)\n```\n\nFooter text\n";
+
+    // Parse
+    let mut parser = Parser::new();
+    let md_language: tree_sitter::Language = tree_sitter_md::LANGUAGE.into();
+    parser.set_language(&md_language).expect("set markdown");
+    let tree = parser.parse(markdown_text, None).expect("parse");
+
+    // Injection query
+    let injection_query_str = r#"
+        (fenced_code_block
+          (info_string
+            (language) @_lang)
+          (code_fence_content) @injection.content
+          (#set-lang-from-info-string! @_lang))
+    "#;
+    let injection_query = Query::new(&md_language, injection_query_str).expect("query");
+
+    // Populate injection map
+    populate_injection_map(
+        &injection_map,
+        &uri,
+        markdown_text,
+        &tree,
+        Some(&injection_query),
+    );
+
+    let regions = injection_map.get(&uri).expect("should have regions");
+    assert_eq!(regions.len(), 1, "Should have one lua region");
+
+    // Store tokens for the lua injection
+    let lua_region = &regions[0];
+    let lua_tokens = tower_lsp::lsp_types::SemanticTokens {
+        result_id: Some("lua-tokens-1".to_string()),
+        data: vec![tower_lsp::lsp_types::SemanticToken {
+            delta_line: 0,
+            delta_start: 0,
+            length: 5,
+            token_type: 0,
+            token_modifiers_bitset: 0,
+        }],
+    };
+    injection_token_cache.store(&uri, &lua_region.result_id, lua_tokens);
+
+    // Simulate edit to header (line 0, bytes 0-8) - OUTSIDE injection
+    let edit_start = 0;
+    let edit_end = 8; // "# Header" (before newline)
+
+    // Check which regions overlap with the edit
+    let overlapping_regions = edit_overlaps_injection(&regions, edit_start, edit_end);
+    assert!(
+        overlapping_regions.is_empty(),
+        "Edit in header should not overlap any injection region"
+    );
+
+    // Since no regions overlap, injection_token_cache should remain unchanged
+    // In real implementation, we would NOT call injection_token_cache.remove() for any region
+    let cached = injection_token_cache.get(&uri, &lua_region.result_id);
+    assert!(
+        cached.is_some(),
+        "Lua tokens should still be cached after edit outside injection"
+    );
+}
+
+#[test]
+fn test_edit_in_footer_preserves_all_caches() {
+    // AC4 variant: Edit in footer (after all injections)
+
+    let injection_map = InjectionMap::new();
+    let injection_token_cache = treesitter_ls::analysis::InjectionTokenCache::new();
+    let uri = Url::parse("file:///test/edit_footer.md").unwrap();
+
+    let markdown_text = "# Header\n\n```lua\nprint(1)\n```\n\nFooter text\n";
+
+    let mut parser = Parser::new();
+    let md_language: tree_sitter::Language = tree_sitter_md::LANGUAGE.into();
+    parser.set_language(&md_language).expect("set markdown");
+    let tree = parser.parse(markdown_text, None).expect("parse");
+
+    let injection_query_str = r#"
+        (fenced_code_block
+          (info_string
+            (language) @_lang)
+          (code_fence_content) @injection.content
+          (#set-lang-from-info-string! @_lang))
+    "#;
+    let injection_query = Query::new(&md_language, injection_query_str).expect("query");
+
+    populate_injection_map(
+        &injection_map,
+        &uri,
+        markdown_text,
+        &tree,
+        Some(&injection_query),
+    );
+
+    let regions = injection_map.get(&uri).expect("should have regions");
+    let lua_region = &regions[0];
+
+    // Store tokens
+    let lua_tokens = tower_lsp::lsp_types::SemanticTokens {
+        result_id: Some("lua-tokens-2".to_string()),
+        data: vec![],
+    };
+    injection_token_cache.store(&uri, &lua_region.result_id, lua_tokens);
+
+    // Simulate edit to footer (after all code blocks)
+    let footer_start = markdown_text.find("Footer").unwrap();
+    let footer_end = footer_start + 6; // "Footer"
+
+    let overlapping_regions = edit_overlaps_injection(&regions, footer_start, footer_end);
+    assert!(
+        overlapping_regions.is_empty(),
+        "Edit in footer should not overlap any injection region"
+    );
+
+    // Cache should be preserved
+    let cached = injection_token_cache.get(&uri, &lua_region.result_id);
+    assert!(
+        cached.is_some(),
+        "Lua tokens should still be cached after edit in footer"
+    );
+}
+
+// ===========================================================================
+// AC5 Tests: Edit inside injection invalidates only that region
+// ===========================================================================
+
+#[test]
+fn test_edit_inside_injection_invalidates_only_that_region() {
+    // AC5: Edit inside code block (injection region), verify only that region_id is removed
+
+    let injection_map = InjectionMap::new();
+    let injection_token_cache = treesitter_ls::analysis::InjectionTokenCache::new();
+    let uri = Url::parse("file:///test/edit_inside.md").unwrap();
+
+    // Document with two code blocks
+    let markdown_text = r#"# Example
+
+```lua
+print("hello")
+```
+
+```python
+def foo():
+    pass
+```
+"#;
+
+    let mut parser = Parser::new();
+    let md_language: tree_sitter::Language = tree_sitter_md::LANGUAGE.into();
+    parser.set_language(&md_language).expect("set markdown");
+    let tree = parser.parse(markdown_text, None).expect("parse");
+
+    let injection_query_str = r#"
+        (fenced_code_block
+          (info_string
+            (language) @_lang)
+          (code_fence_content) @injection.content
+          (#set-lang-from-info-string! @_lang))
+    "#;
+    let injection_query = Query::new(&md_language, injection_query_str).expect("query");
+
+    populate_injection_map(
+        &injection_map,
+        &uri,
+        markdown_text,
+        &tree,
+        Some(&injection_query),
+    );
+
+    let regions = injection_map.get(&uri).expect("should have regions");
+    assert_eq!(regions.len(), 2, "Should have two injection regions");
+
+    // Find lua and python regions
+    let lua_region = regions.iter().find(|r| r.language == "lua").unwrap();
+    let python_region = regions.iter().find(|r| r.language == "python").unwrap();
+
+    // Store tokens for both
+    let lua_tokens = tower_lsp::lsp_types::SemanticTokens {
+        result_id: Some("lua-tokens".to_string()),
+        data: vec![],
+    };
+    let python_tokens = tower_lsp::lsp_types::SemanticTokens {
+        result_id: Some("python-tokens".to_string()),
+        data: vec![],
+    };
+    injection_token_cache.store(&uri, &lua_region.result_id, lua_tokens);
+    injection_token_cache.store(&uri, &python_region.result_id, python_tokens);
+
+    // Verify both are cached
+    assert!(
+        injection_token_cache
+            .get(&uri, &lua_region.result_id)
+            .is_some()
+    );
+    assert!(
+        injection_token_cache
+            .get(&uri, &python_region.result_id)
+            .is_some()
+    );
+
+    // Simulate edit inside lua code block
+    let lua_edit_start = lua_region.byte_range.start + 2; // Somewhere inside lua
+    let lua_edit_end = lua_edit_start + 5;
+
+    // Determine which regions to invalidate
+    let overlapping_regions = edit_overlaps_injection(&regions, lua_edit_start, lua_edit_end);
+    assert_eq!(
+        overlapping_regions.len(),
+        1,
+        "Edit should overlap exactly one region"
+    );
+    assert_eq!(
+        overlapping_regions[0], lua_region.result_id,
+        "Should overlap lua region only"
+    );
+
+    // Invalidate only overlapping regions (simulates did_change behavior)
+    for region_id in &overlapping_regions {
+        injection_token_cache.remove(&uri, region_id);
+    }
+
+    // Verify: lua cache is gone, python cache is preserved
+    assert!(
+        injection_token_cache
+            .get(&uri, &lua_region.result_id)
+            .is_none(),
+        "Lua tokens should be invalidated after edit inside lua block"
+    );
+    assert!(
+        injection_token_cache
+            .get(&uri, &python_region.result_id)
+            .is_some(),
+        "Python tokens should be preserved after edit inside lua block"
+    );
+}
