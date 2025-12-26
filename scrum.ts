@@ -161,7 +161,7 @@ const scrum: ScrumDashboard = {
           verification: "Unit test verifies cached tokens associated with injection regions",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-083",
@@ -207,21 +207,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 63,
-    pbi_id: "PBI-082",
-    goal: "Establish injection region tracking infrastructure with byte ranges and cached token association",
-    status: "in_progress",
-    // Subtasks: 1=doc(retro), 2=InjectionRegion(AC1), 3-4=InjectionMap(AC2), 5-6=Cache(AC3)
-    subtasks: [
-      { test: "N/A", implementation: "Document UseIncremental wiring in lsp_impl.rs", type: "structural", status: "pending", commits: [], notes: [] },
-      { test: "InjectionRegion captures language/byte_range/line_range/result_id", implementation: "InjectionRegion struct with from_region_info()", type: "behavioral", status: "pending", commits: [], notes: [] },
-      { test: "InjectionMap stores/retrieves regions by URI", implementation: "InjectionMap with DashMap<Url, Vec<InjectionRegion>>", type: "behavioral", status: "pending", commits: [], notes: [] },
-      { test: "InjectionMap.clear(uri) removes regions", implementation: "Add clear() and update() methods", type: "behavioral", status: "pending", commits: [], notes: [] },
-      { test: "SemanticTokenCache stores tokens by (uri, region_id)", implementation: "Per-injection cache with DashMap", type: "behavioral", status: "pending", commits: [], notes: [] },
-      { test: "Cached tokens linked to regions via result_id", implementation: "Integration helper for region→token lookup", type: "behavioral", status: "pending", commits: [], notes: [] },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -232,8 +218,15 @@ const scrum: ScrumDashboard = {
   },
 
   // Historical sprints (keep recent 3 for learning)
-  // Sprint 1-58 details: git log -- scrum.yaml, scrum.ts
+  // Sprint 1-59 details: git log -- scrum.yaml, scrum.ts
   completed: [
+    {
+      number: 63,
+      pbi_id: "PBI-082",
+      goal: "Establish injection region tracking infrastructure with byte ranges and cached token association",
+      status: "done",
+      subtasks: [],
+    },
     {
       number: 62,
       pbi_id: "PBI-081",
@@ -248,18 +241,42 @@ const scrum: ScrumDashboard = {
       status: "done",
       subtasks: [],
     },
-    {
-      number: 60,
-      pbi_id: "PBI-078",
-      goal: "Implement incremental tokenization infrastructure using Tree-sitter changed_ranges() API",
-      status: "done",
-      subtasks: [],
-    },
   ],
 
-  // Sprint 62 retro: Tidy First worked well. Sprint item → Sprint 63 subtask 1.
+  // Sprint 62 retro: Tidy First worked well. Sprint item -> Sprint 63 subtask 1.
   // Product items: memory optimization (previous_text), update perf metrics (4.6ms vs 20ms)
-  retrospectives: [],
+  // Sprint 63 retro: Clean architecture, retro follow-through, all ACs verified with unit tests.
+  retrospectives: [
+    {
+      sprint: 63,
+      improvements: [
+        {
+          action: "Add module-level doc comment to semantic_cache.rs explaining injection cache architecture",
+          timing: "immediate",
+          status: "completed",
+          outcome: "Added comprehensive module docs with ASCII architecture diagram",
+        },
+        {
+          action: "Wire InjectionMap/InjectionTokenCache into lsp_impl.rs for invalidation",
+          timing: "sprint",
+          status: "active",
+          outcome: null,
+        },
+        {
+          action: "Create benchmark script for injection-heavy docs before PBI-084",
+          timing: "sprint",
+          status: "active",
+          outcome: null,
+        },
+        {
+          action: "Add contains_byte() helper to CacheableInjectionRegion for simpler byte-range lookup",
+          timing: "product",
+          status: "active",
+          outcome: null,
+        },
+      ],
+    },
+  ],
 };
 
 // JSON output (deno run scrum.ts | jq for queries)
