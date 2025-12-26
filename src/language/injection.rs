@@ -228,6 +228,37 @@ pub struct InjectionRegionInfo<'a> {
     pub pattern_index: usize,
 }
 
+use std::ops::Range;
+
+/// Owned injection region for caching (no lifetime dependency on parse tree)
+///
+/// Unlike `InjectionRegionInfo<'a>`, this struct owns all its data and can be
+/// stored in caches that outlive the parse tree. Created via `from_region_info()`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CacheableInjectionRegion {
+    /// The injection language (e.g., "lua", "yaml")
+    pub language: String,
+    /// Byte range of the injection content in the source
+    pub byte_range: Range<usize>,
+    /// Line range (0-indexed, inclusive start, exclusive end)
+    pub line_range: Range<u32>,
+    /// Unique identifier for associating with cached tokens
+    pub result_id: String,
+}
+
+impl CacheableInjectionRegion {
+    /// Create from an InjectionRegionInfo, extracting position data from the node
+    pub fn from_region_info(info: &InjectionRegionInfo<'_>, result_id: &str) -> Self {
+        let node = &info.content_node;
+        Self {
+            language: info.language.clone(),
+            byte_range: node.start_byte()..node.end_byte(),
+            line_range: (node.start_position().row as u32)..(node.end_position().row as u32),
+            result_id: result_id.to_string(),
+        }
+    }
+}
+
 /// Collects all injection regions in the document
 ///
 /// Unlike `detect_injection_with_content` which requires a specific node,
@@ -775,10 +806,22 @@ mod tests {
 
         // Verify all fields are captured correctly
         assert_eq!(cacheable.language, "markdown");
-        assert_eq!(cacheable.byte_range.start, region_info.content_node.start_byte());
-        assert_eq!(cacheable.byte_range.end, region_info.content_node.end_byte());
-        assert_eq!(cacheable.line_range.start, region_info.content_node.start_position().row as u32);
-        assert_eq!(cacheable.line_range.end, region_info.content_node.end_position().row as u32);
+        assert_eq!(
+            cacheable.byte_range.start,
+            region_info.content_node.start_byte()
+        );
+        assert_eq!(
+            cacheable.byte_range.end,
+            region_info.content_node.end_byte()
+        );
+        assert_eq!(
+            cacheable.line_range.start,
+            region_info.content_node.start_position().row as u32
+        );
+        assert_eq!(
+            cacheable.line_range.end,
+            region_info.content_node.end_position().row as u32
+        );
         assert_eq!(cacheable.result_id, "test-result-id");
     }
 }
