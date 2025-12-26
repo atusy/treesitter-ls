@@ -17,6 +17,7 @@ use crate::analysis::{
 use crate::config::{TreeSitterSettings, WorkspaceSettings};
 use crate::document::DocumentStore;
 use crate::error::LockResultExt;
+use crate::language::injection::{CacheableInjectionRegion, collect_all_injections};
 use crate::language::{DocumentParserPool, FailedParserRegistry, LanguageCoordinator};
 use crate::language::{LanguageEvent, LanguageLogLevel};
 use crate::lsp::{SettingsEvent, SettingsEventKind, SettingsSource, load_settings};
@@ -51,7 +52,8 @@ pub struct TreeSitterLs {
     semantic_cache: SemanticTokenCache,
     /// Tracks injection regions per document for targeted invalidation
     injection_map: InjectionMap,
-    /// Per-injection semantic token cache
+    /// Per-injection semantic token cache (used in AC4/AC5 for targeted invalidation)
+    #[allow(dead_code)] // Will be used in subtasks 4-5 for cache invalidation
     injection_token_cache: InjectionTokenCache,
     root_path: ArcSwap<Option<PathBuf>>,
     /// Settings including auto_install flag
@@ -130,6 +132,44 @@ impl TreeSitterLs {
         self.settings.load().auto_install
     }
 
+    /// Populate InjectionMap with injection regions from the parsed tree.
+    ///
+    /// This enables targeted cache invalidation (PBI-083): when an edit occurs,
+    /// we can check which injection regions overlap and only invalidate those.
+    fn populate_injection_map(
+        &self,
+        uri: &Url,
+        text: &str,
+        tree: &tree_sitter::Tree,
+        language_name: &str,
+    ) {
+        // Get the injection query for this language
+        let injection_query = match self.language.get_injection_query(language_name) {
+            Some(q) => q,
+            None => return, // No injection query = no injections to track
+        };
+
+        // Collect all injection regions from the parsed tree
+        if let Some(regions) =
+            collect_all_injections(&tree.root_node(), text, Some(injection_query.as_ref()))
+        {
+            if regions.is_empty() {
+                // Clear any existing regions for this document
+                self.injection_map.clear(uri);
+                return;
+            }
+
+            // Convert to CacheableInjectionRegion with unique result_ids
+            let cacheable_regions: Vec<CacheableInjectionRegion> = regions
+                .iter()
+                .map(|info| CacheableInjectionRegion::from_region_info(info, &next_result_id()))
+                .collect();
+
+            // Store in injection map
+            self.injection_map.insert(uri.clone(), cacheable_regions);
+        }
+    }
+
     async fn parse_document(
         &self,
         uri: Url,
@@ -193,6 +233,9 @@ impl TreeSitterLs {
 
             // Store the parsed document
             if let Some(tree) = parsed_tree {
+                // Populate InjectionMap with injection regions for targeted cache invalidation
+                self.populate_injection_map(&uri, &text, &tree, &language_name);
+
                 if !edits.is_empty() {
                     self.documents
                         .update_document(uri.clone(), text, Some(tree));
