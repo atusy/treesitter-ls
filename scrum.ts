@@ -230,33 +230,76 @@ const scrum: ScrumDashboard = {
     {
       id: "PBI-085",
       story: {
-        role: "developer using treesitter-ls with diverse parsers",
-        capability: "have the LSP continue functioning when a parser crashes",
-        benefit: "avoid losing all LSP features due to a single faulty parser",
+        role: "developer editing documents with code blocks in languages not yet installed",
+        capability: "have injection auto-install run in background with partial highlighting during install",
+        benefit: "continue editing while installation completes, then get full highlighting via refresh",
       },
       acceptance_criteria: [
         {
-          criterion: "Parser assertion failures are caught and don't crash the entire LSP",
-          verification: "Integration test: simulate parser crash, verify LSP remains responsive",
+          criterion: "Document language auto-install triggers re-parse and highlighting after completion",
+          verification: "E2E test: open file with uninstalled language, verify highlighting appears after install",
         },
         {
-          criterion: "Failed parser is marked as unavailable for the session",
-          verification: "Unit test: after parser failure, subsequent requests for that language are gracefully declined",
+          criterion: "Injection auto-install runs in background without blocking host highlighting",
+          verification: "E2E test: markdown with uninstalled injection, host tokens render immediately",
         },
         {
-          criterion: "User is notified when a parser fails",
-          verification: "Integration test: on parser failure, window/showMessage is sent to client",
+          criterion: "Injection highlighting appears via semantic_tokens_refresh after install completes",
+          verification: "E2E test: after injection language installs, code block receives highlighting",
+        },
+        {
+          criterion: "Multiple injection installs don't interfere with each other",
+          verification: "E2E test: markdown with 2 uninstalled languages, both eventually highlight",
         },
       ],
-      // Root cause: tree-sitter-zsh scanner.c:446 assertion failure in deserialize
-      // This is an upstream bug, but LSP should be resilient to parser failures
-      status: "draft",
+      // Root cause: check_injected_languages_auto_install blocks on await,
+      // and reload_language_after_install re-parses with wrong language context.
+      // Fix: spawn install tasks, preserve host tokens, merge injection tokens after.
+      status: "ready",
     },
   ],
 
-  // No active sprint - all PBIs in product_backlog are done
-  // Next: refine new PBIs for the product goal
-  sprint: null,
+  // Sprint 67: Fix auto-install highlighting bug
+  sprint: {
+    number: 67,
+    pbi_id: "PBI-085",
+    goal: "Fix auto-install blocking issue by spawning install tasks and preserving host highlighting",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "Unit test: check_injected_languages_auto_install spawns tasks instead of awaiting",
+        implementation: "Refactor to use tokio::spawn for non-blocking install, return immediately",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Unit test: reload_language_after_install only affects the installed language's tokens",
+        implementation: "Remove parse_document call from reload, only refresh semantic tokens",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Integration test: host highlighting preserved during injection install",
+        implementation: "Verify markdown tokens remain while code block language installs",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "E2E test: document language eventually gets highlighting after auto-install",
+        implementation: "Open file with uninstalled language, verify highlighting after install",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
