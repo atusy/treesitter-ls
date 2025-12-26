@@ -271,4 +271,36 @@ mod tests {
         assert!(!registry.is_failed("rust"));
         assert!(registry.failed_parsers().is_empty());
     }
+
+    #[test]
+    fn test_init_detects_crash_and_marks_failed() {
+        let temp = tempdir().unwrap();
+
+        // Simulate a crash: begin_parsing but never end_parsing
+        {
+            let registry = FailedParserRegistry::new(temp.path());
+            registry.init().unwrap();
+            registry.begin_parsing("zsh").unwrap();
+            // Simulated crash - no end_parsing() called
+        }
+
+        // Restart and init should detect the crash
+        {
+            let registry = FailedParserRegistry::new(temp.path());
+            registry.init().unwrap();
+            // The crashed parser should be marked as failed
+            assert!(registry.is_failed("zsh"));
+        }
+    }
+
+    #[test]
+    fn test_init_no_crash_no_failed_parsers() {
+        let temp = tempdir().unwrap();
+
+        // Normal startup - no crash
+        let registry = FailedParserRegistry::new(temp.path());
+        registry.init().unwrap();
+        // No parsers should be marked as failed
+        assert!(registry.failed_parsers().is_empty());
+    }
 }
