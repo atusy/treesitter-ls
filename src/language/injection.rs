@@ -257,6 +257,13 @@ impl CacheableInjectionRegion {
             result_id: result_id.to_string(),
         }
     }
+
+    /// Check if a byte offset falls within this injection region's byte range.
+    ///
+    /// Used for determining which injection regions overlap with an edit.
+    pub fn contains_byte(&self, byte: usize) -> bool {
+        self.byte_range.contains(&byte)
+    }
 }
 
 /// Collects all injection regions in the document
@@ -835,13 +842,31 @@ mod tests {
         };
 
         // Byte within range
-        assert!(region.contains_byte(100), "Start of range should be included");
-        assert!(region.contains_byte(150), "Middle of range should be included");
-        assert!(region.contains_byte(199), "End-1 of range should be included");
+        assert!(
+            region.contains_byte(100),
+            "Start of range should be included"
+        );
+        assert!(
+            region.contains_byte(150),
+            "Middle of range should be included"
+        );
+        assert!(
+            region.contains_byte(199),
+            "End-1 of range should be included"
+        );
 
         // Byte outside range
-        assert!(!region.contains_byte(99), "Before range should not be included");
-        assert!(!region.contains_byte(200), "End of range (exclusive) should not be included");
-        assert!(!region.contains_byte(300), "Far after range should not be included");
+        assert!(
+            !region.contains_byte(99),
+            "Before range should not be included"
+        );
+        assert!(
+            !region.contains_byte(200),
+            "End of range (exclusive) should not be included"
+        );
+        assert!(
+            !region.contains_byte(300),
+            "Far after range should not be included"
+        );
     }
 }
