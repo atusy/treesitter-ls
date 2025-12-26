@@ -274,4 +274,52 @@ mod tests {
         let other_uri = Url::parse("file:///other.md").unwrap();
         map.clear(&other_uri); // Should not panic
     }
+
+    #[test]
+    fn test_injection_token_cache_store_retrieve() {
+        let cache = InjectionTokenCache::new();
+        let uri = Url::parse("file:///test.md").unwrap();
+
+        let tokens1 = SemanticTokens {
+            result_id: Some("lua-region-1".to_string()),
+            data: vec![SemanticToken {
+                delta_line: 0,
+                delta_start: 0,
+                length: 5,
+                token_type: 0,
+                token_modifiers_bitset: 0,
+            }],
+        };
+
+        let tokens2 = SemanticTokens {
+            result_id: Some("python-region-2".to_string()),
+            data: vec![SemanticToken {
+                delta_line: 1,
+                delta_start: 2,
+                length: 10,
+                token_type: 1,
+                token_modifiers_bitset: 0,
+            }],
+        };
+
+        // Store tokens for different regions in same document
+        cache.store(&uri, "region-1", tokens1.clone());
+        cache.store(&uri, "region-2", tokens2.clone());
+
+        // Retrieve by (uri, region_id)
+        let retrieved1 = cache.get(&uri, "region-1");
+        assert!(retrieved1.is_some(), "Should retrieve tokens for region-1");
+        assert_eq!(retrieved1.unwrap().data[0].length, 5);
+
+        let retrieved2 = cache.get(&uri, "region-2");
+        assert!(retrieved2.is_some(), "Should retrieve tokens for region-2");
+        assert_eq!(retrieved2.unwrap().data[0].length, 10);
+
+        // Non-existent region returns None
+        assert!(cache.get(&uri, "region-3").is_none());
+
+        // Non-existent URI returns None
+        let other_uri = Url::parse("file:///other.md").unwrap();
+        assert!(cache.get(&other_uri, "region-1").is_none());
+    }
 }
