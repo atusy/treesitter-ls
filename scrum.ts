@@ -207,7 +207,21 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 63,
+    pbi_id: "PBI-082",
+    goal: "Establish injection region tracking infrastructure with byte ranges and cached token association",
+    status: "in_progress",
+    // Subtasks: 1=doc(retro), 2=InjectionRegion(AC1), 3-4=InjectionMap(AC2), 5-6=Cache(AC3)
+    subtasks: [
+      { test: "N/A", implementation: "Document UseIncremental wiring in lsp_impl.rs", type: "structural", status: "pending", commits: [], notes: [] },
+      { test: "InjectionRegion captures language/byte_range/line_range/result_id", implementation: "InjectionRegion struct with from_region_info()", type: "behavioral", status: "pending", commits: [], notes: [] },
+      { test: "InjectionMap stores/retrieves regions by URI", implementation: "InjectionMap with DashMap<Url, Vec<InjectionRegion>>", type: "behavioral", status: "pending", commits: [], notes: [] },
+      { test: "InjectionMap.clear(uri) removes regions", implementation: "Add clear() and update() methods", type: "behavioral", status: "pending", commits: [], notes: [] },
+      { test: "SemanticTokenCache stores tokens by (uri, region_id)", implementation: "Per-injection cache with DashMap", type: "behavioral", status: "pending", commits: [], notes: [] },
+      { test: "Cached tokens linked to regions via result_id", implementation: "Integration helper for region→token lookup", type: "behavioral", status: "pending", commits: [], notes: [] },
+    ],
+  },
 
   definition_of_done: {
     checks: [
@@ -243,42 +257,9 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  retrospectives: [
-    {
-      sprint: 62,
-      improvements: [
-        {
-          action:
-            "Tidy First applied well - previous_text structural change separated from behavioral wiring",
-          timing: "immediate",
-          status: "completed",
-          outcome: "Clean separation made review easier and reduced risk",
-        },
-        {
-          action:
-            "Document the UseIncremental -> compute_incremental_tokens() wiring in code comments for maintainability",
-          timing: "sprint",
-          status: "active",
-          outcome: null,
-        },
-        {
-          action:
-            "Evaluate memory optimization: previous_text storage vs on-demand diff computation",
-          timing: "product",
-          status: "active",
-          outcome: null,
-        },
-        {
-          action:
-            "Performance exceeded target by 4x (4.6ms vs 20ms target) - consider updating product goal metrics to reflect actual capability",
-          timing: "product",
-          status: "active",
-          outcome: null,
-        },
-      ],
-    },
-    // Sprint 61: All items completed - wiring verified, tests added, perf tracked in Sprint 62
-  ],
+  // Sprint 62 retro: Tidy First worked well. Sprint item → Sprint 63 subtask 1.
+  // Product items: memory optimization (previous_text), update perf metrics (4.6ms vs 20ms)
+  retrospectives: [],
 };
 
 // JSON output (deno run scrum.ts | jq for queries)
