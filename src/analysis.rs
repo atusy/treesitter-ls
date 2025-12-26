@@ -21,4 +21,4 @@ pub use semantic::{
     LEGEND_MODIFIERS, LEGEND_TYPES, handle_semantic_tokens_full, handle_semantic_tokens_full_delta,
     handle_semantic_tokens_range,
 };
-pub use semantic_cache::SemanticTokenCache;
+pub use semantic_cache::{InjectionMap, InjectionTokenCache, SemanticTokenCache};

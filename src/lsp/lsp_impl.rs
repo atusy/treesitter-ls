@@ -5,7 +5,10 @@ use tower_lsp::{Client, LanguageServer};
 use tree_sitter::InputEdit;
 
 // Note: position_to_point from selection.rs is deprecated - use PositionMapper.position_to_point() instead
-use crate::analysis::{DefinitionResolver, LEGEND_MODIFIERS, LEGEND_TYPES, SemanticTokenCache};
+use crate::analysis::{
+    DefinitionResolver, InjectionMap, InjectionTokenCache, LEGEND_MODIFIERS, LEGEND_TYPES,
+    SemanticTokenCache,
+};
 use crate::analysis::{
     IncrementalDecision, compute_incremental_tokens, decide_tokenization_strategy,
     decode_semantic_tokens, encode_semantic_tokens, handle_code_actions, handle_goto_definition,
@@ -46,6 +49,10 @@ pub struct TreeSitterLs {
     documents: DocumentStore,
     /// Dedicated cache for semantic tokens with result_id validation
     semantic_cache: SemanticTokenCache,
+    /// Tracks injection regions per document for targeted invalidation
+    injection_map: InjectionMap,
+    /// Per-injection semantic token cache
+    injection_token_cache: InjectionTokenCache,
     root_path: ArcSwap<Option<PathBuf>>,
     /// Settings including auto_install flag
     settings: ArcSwap<WorkspaceSettings>,
@@ -63,6 +70,8 @@ impl std::fmt::Debug for TreeSitterLs {
             .field("parser_pool", &"Mutex<DocumentParserPool>")
             .field("documents", &"DocumentStore")
             .field("semantic_cache", &"SemanticTokenCache")
+            .field("injection_map", &"InjectionMap")
+            .field("injection_token_cache", &"InjectionTokenCache")
             .field("root_path", &"ArcSwap<Option<PathBuf>>")
             .field("settings", &"ArcSwap<WorkspaceSettings>")
             .field("installing_languages", &"InstallingLanguages")
@@ -85,6 +94,8 @@ impl TreeSitterLs {
             parser_pool: Mutex::new(parser_pool),
             documents: DocumentStore::new(),
             semantic_cache: SemanticTokenCache::new(),
+            injection_map: InjectionMap::new(),
+            injection_token_cache: InjectionTokenCache::new(),
             root_path: ArcSwap::new(Arc::new(None)),
             settings: ArcSwap::new(Arc::new(WorkspaceSettings::default())),
             installing_languages: InstallingLanguages::new(),
