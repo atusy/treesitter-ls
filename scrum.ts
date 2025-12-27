@@ -177,8 +177,58 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  // Sprint 67 complete - PBI-085 done
-  sprint: null,
+  // Sprint 68: PBI-086 - LSP redirection for definition in injections
+  sprint: {
+    number: 68,
+    pbi_id: "PBI-086",
+    goal: "Enable go-to-definition navigation within Rust code blocks in Markdown documents",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "find_injection_at_position() returns injection region containing a given byte position",
+        implementation: "Add function to InjectionMap or create new module to locate injection by position",
+        type: "behavioral",
+        status: "green",
+        commits: [],
+        notes: [
+          "Reuse CacheableInjectionRegion from injection.rs",
+          "Pattern already used inline at line 471 of semantic_cache.rs",
+        ],
+      },
+      {
+        test: "extract_virtual_document() creates content string from injection byte range",
+        implementation: "Extract injection content from host document text using byte_range",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Virtual doc is just the text slice, no need for file I/O"],
+      },
+      {
+        test: "translate_host_to_virtual() converts host Position to virtual document Position",
+        implementation: "Map host line/col to virtual coordinates by subtracting injection start",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Host line 9 → virtual line 6 (9 - 3 = 6, where 3 is code block start)"],
+      },
+      {
+        test: "translate_virtual_to_host() converts virtual Position back to host Position",
+        implementation: "Map response position back by adding injection start offset",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Virtual line 1 → host line 4 (1 + 3 = 4)"],
+      },
+      {
+        test: "goto_definition handler redirects to rust-analyzer for Rust injection regions",
+        implementation: "Spawn rust-analyzer, send didOpen + definition request, translate response",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["E2E test verifies full flow: make test_nvim_file FILE=tests/test_lsp_definition.lua"],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
