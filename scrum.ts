@@ -280,7 +280,31 @@ const scrum: ScrumDashboard = {
 
   // Sprint 63-66 retro summaries: git log -- scrum.ts
   // Sprint 67 retro: Simple parameter fix addressed root cause; E2E tests deferred (invasive parser manipulation)
+  // Sprint 68 retro: PoC LSP redirection successful; test setup required multiple fixes
   retrospectives: [
+    {
+      sprint: 68,
+      improvements: [
+        {
+          action: "E2E test setup for temp files needs vim.cmd.write() to persist to disk for child neovim",
+          timing: "immediate",
+          status: "completed",
+          outcome: "Fixed test_lsp_definition.lua to write file before child opens it",
+        },
+        {
+          action: "Async LSP operations need explicit wait time in E2E tests (rust-analyzer spawn takes ~2s)",
+          timing: "immediate",
+          status: "completed",
+          outcome: "Added vim.wait(2000) after vim.lsp.buf.definition() call",
+        },
+        {
+          action: "PoC architecture (synchronous subprocess spawn per request) needs production refactoring",
+          timing: "product",
+          status: "active",
+          outcome: "Future PBI: consider connection pooling, async spawn, and language server lifecycle management",
+        },
+      ],
+    },
     {
       sprint: 67,
       improvements: [
