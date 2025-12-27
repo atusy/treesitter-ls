@@ -138,7 +138,44 @@ const scrum: ScrumDashboard = {
   // Completed PBIs: PBI-001 through PBI-085
   // For historical details: git log -- scrum.yaml, scrum.ts
   // Recent: PBI-082 (injection tracking), PBI-083 (cache invalidation), PBI-084 (perf), PBI-085 (auto-install)
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "PBI-086",
+      story: {
+        role: "developer editing Markdown with Rust code blocks",
+        capability:
+          "go-to-definition within a Rust code block redirects to the symbol definition",
+        benefit:
+          "I can navigate code inside documentation without switching to a separate Rust file",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "Cursor on a function call inside a Rust code block triggers textDocument/definition",
+          verification:
+            "make test_nvim_file FILE=tests/test_lsp_definition.lua",
+        },
+        {
+          criterion:
+            "treesitter-ls spawns rust-analyzer subprocess for the virtual document",
+          verification:
+            "pgrep -f rust-analyzer shows process spawned during test",
+        },
+        {
+          criterion:
+            "Position coordinates are translated between host and virtual document correctly",
+          verification:
+            "E2E test confirms cursor moves to line 4 (fn example definition)",
+        },
+        {
+          criterion: "No user configuration required - works with default settings",
+          verification:
+            "Test runs without any treesitter-ls configuration for redirection",
+        },
+      ],
+      status: "ready",
+    },
+  ],
 
   // Sprint 67 complete - PBI-085 done
   sprint: null,
