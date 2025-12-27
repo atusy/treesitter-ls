@@ -95,6 +95,10 @@ Merged mode considerations for future implementation:
 - Handle conflicting symbols gracefully (report as diagnostics from treesitter-ls, not language server)
 - Consider block ordering annotations for explicit concatenation order
 
+#### Feature-Specific Mode Overrides
+
+Even when merged mode is requested, some features may internally use separated virtual documents for performance or error isolation (e.g., `semanticTokens` benefits from smaller documents and tolerates syntax errors in individual blocks). Features requiring cross-block context (e.g., `diagnostics`, `goToDefinition`) should respect the user's mode selection.
+
 ### Virtual Document Identity
 
 Stable identity across edits is desirable—it allows language servers to maintain state (diagnostics, symbol caches) for each injection. However, Tree-sitter node IDs may persist across incremental parses only if reused, and reuse is not guaranteed. Simple URI schemes have limitations:
