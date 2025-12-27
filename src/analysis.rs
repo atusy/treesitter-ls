@@ -1,4 +1,3 @@
-pub mod definition;
 pub mod incremental_tokens;
 pub mod offset_calculator;
 pub mod refactor;
@@ -8,7 +7,6 @@ pub mod semantic;
 pub mod semantic_cache;
 
 // Re-export main types and functions
-pub use definition::{DefinitionResolver, handle_goto_definition};
 pub use incremental_tokens::{
     AbsoluteToken, IncrementalDecision, IncrementalTokensResult, changed_ranges_to_lines,
     compute_incremental_tokens, decide_tokenization_strategy, decode_semantic_tokens,

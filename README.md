@@ -8,7 +8,6 @@ A fast and flexible Language Server Protocol (LSP) server that leverages Tree-si
 
 - **🎨 Semantic Highlighting** - Full, range, and delta semantic tokens with customizable mappings
 - **🌐 Language Injection** - Syntax highlighting for embedded languages (e.g., Lua in Markdown code blocks)
-- **🔍 Go to Definition** - Language-agnostic navigation using Tree-sitter locals queries
 - **📝 Smart Selection** - Expand selection based on AST structure with injection awareness
 - **🔧 Code Actions** - Refactoring support (e.g., parameter reordering)
 
