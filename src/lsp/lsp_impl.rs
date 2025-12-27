@@ -6,12 +6,12 @@ use tree_sitter::InputEdit;
 
 // Note: position_to_point from selection.rs is deprecated - use PositionMapper.position_to_point() instead
 use crate::analysis::{
-    InjectionMap, InjectionTokenCache, LEGEND_MODIFIERS, LEGEND_TYPES, SemanticTokenCache,
+    IncrementalDecision, compute_incremental_tokens, decide_tokenization_strategy,
+    decode_semantic_tokens, encode_semantic_tokens, handle_code_actions, handle_selection_range,
+    handle_semantic_tokens_full_delta, next_result_id,
 };
 use crate::analysis::{
-    IncrementalDecision, compute_incremental_tokens, decide_tokenization_strategy,
-    decode_semantic_tokens, encode_semantic_tokens, handle_code_actions,
-    handle_selection_range, handle_semantic_tokens_full_delta, next_result_id,
+    InjectionMap, InjectionTokenCache, LEGEND_MODIFIERS, LEGEND_TYPES, SemanticTokenCache,
 };
 use crate::config::{TreeSitterSettings, WorkspaceSettings};
 use crate::document::DocumentStore;
