@@ -284,6 +284,14 @@ impl CacheableInjectionRegion {
     pub fn contains_byte(&self, byte: usize) -> bool {
         self.byte_range.contains(&byte)
     }
+
+    /// Extract the injection content from the host document text.
+    ///
+    /// Returns the substring of `host_text` corresponding to this region's byte range.
+    /// This is the "virtual document" content that would be sent to a language server.
+    pub fn extract_content<'a>(&self, host_text: &'a str) -> &'a str {
+        &host_text[self.byte_range.clone()]
+    }
 }
 
 /// Collects all injection regions in the document
@@ -890,5 +898,25 @@ mod tests {
             !region.contains_byte(300),
             "Far after range should not be included"
         );
+    }
+
+    #[test]
+    fn test_cacheable_injection_region_extract_content() {
+        // Simulate a Markdown document with a Rust code block
+        let host_text =
+            "# Title\n\n```rust\nfn main() {\n    println!(\"hello\");\n}\n```\n\nMore text";
+        //                0123456789...
+        // The code block content starts at byte 17 (after "```rust\n") and ends at byte 54
+
+        let region = CacheableInjectionRegion {
+            language: "rust".to_string(),
+            byte_range: 17..54, // "fn main() {\n    println!(\"hello\");\n}"
+            line_range: 3..6,
+            result_id: "test-region".to_string(),
+            content_hash: 12345,
+        };
+
+        let content = region.extract_content(host_text);
+        assert_eq!(content, "fn main() {\n    println!(\"hello\");\n}\n");
     }
 }
