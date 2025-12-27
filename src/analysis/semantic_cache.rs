@@ -120,6 +120,23 @@ impl InjectionMap {
     pub fn clear(&self, uri: &Url) {
         self.regions.remove(uri);
     }
+
+    /// Find the injection region containing the given byte position.
+    ///
+    /// Returns `Some(region)` if the position falls within an injection's byte range,
+    /// or `None` if the position is outside all injection regions or the URI is unknown.
+    pub fn find_at_position(
+        &self,
+        uri: &Url,
+        byte_position: usize,
+    ) -> Option<CacheableInjectionRegion> {
+        self.regions.get(uri).and_then(|regions| {
+            regions
+                .iter()
+                .find(|r| r.byte_range.contains(&byte_position))
+                .cloned()
+        })
+    }
 }
 
 impl Default for InjectionMap {
@@ -478,5 +495,55 @@ mod tests {
         let cached = token_cache.get(&uri, &region.result_id);
         assert!(cached.is_some(), "Should have cached tokens for lua region");
         assert_eq!(cached.unwrap().data[0].length, 3);
+    }
+
+    #[test]
+    fn test_injection_map_find_at_position() {
+        use crate::language::injection::CacheableInjectionRegion;
+
+        let map = InjectionMap::new();
+        let uri = Url::parse("file:///test.md").unwrap();
+
+        // Two injection regions: lua at bytes 10-50, python at bytes 100-200
+        let regions = vec![
+            CacheableInjectionRegion {
+                language: "lua".to_string(),
+                byte_range: 10..50,
+                line_range: 2..5,
+                result_id: "region-1".to_string(),
+                content_hash: 12345,
+            },
+            CacheableInjectionRegion {
+                language: "python".to_string(),
+                byte_range: 100..200,
+                line_range: 10..20,
+                result_id: "region-2".to_string(),
+                content_hash: 67890,
+            },
+        ];
+        map.insert(uri.clone(), regions);
+
+        // Find region containing byte 30 (should be lua)
+        let found = map.find_at_position(&uri, 30);
+        assert!(found.is_some(), "Should find region at byte 30");
+        assert_eq!(found.unwrap().language, "lua");
+
+        // Find region containing byte 150 (should be python)
+        let found = map.find_at_position(&uri, 150);
+        assert!(found.is_some(), "Should find region at byte 150");
+        assert_eq!(found.unwrap().language, "python");
+
+        // Byte 5 is before any region
+        let found = map.find_at_position(&uri, 5);
+        assert!(found.is_none(), "Byte 5 is not in any region");
+
+        // Byte 75 is between regions (gap)
+        let found = map.find_at_position(&uri, 75);
+        assert!(found.is_none(), "Byte 75 is in the gap between regions");
+
+        // Non-existent URI
+        let other_uri = Url::parse("file:///other.md").unwrap();
+        let found = map.find_at_position(&other_uri, 30);
+        assert!(found.is_none(), "Non-existent URI should return None");
     }
 }
