@@ -292,6 +292,20 @@ impl CacheableInjectionRegion {
     pub fn extract_content<'a>(&self, host_text: &'a str) -> &'a str {
         &host_text[self.byte_range.clone()]
     }
+
+    /// Translate a host document position to a virtual document position.
+    ///
+    /// Subtracts the injection region's start line from the host position's line.
+    /// Character (column) remains unchanged.
+    pub fn translate_host_to_virtual(
+        &self,
+        host_pos: tower_lsp::lsp_types::Position,
+    ) -> tower_lsp::lsp_types::Position {
+        tower_lsp::lsp_types::Position {
+            line: host_pos.line - self.line_range.start,
+            character: host_pos.character,
+        }
+    }
 }
 
 /// Collects all injection regions in the document
@@ -918,5 +932,49 @@ mod tests {
 
         let content = region.extract_content(host_text);
         assert_eq!(content, "fn main() {\n    println!(\"hello\");\n}\n");
+    }
+
+    #[test]
+    fn test_cacheable_injection_region_translate_host_to_virtual() {
+        use tower_lsp::lsp_types::Position;
+
+        // Markdown document structure:
+        // Line 0: "# Title"
+        // Line 1: ""
+        // Line 2: "```rust"
+        // Line 3: "fn example() {"      <- injection starts here (line_range.start = 3)
+        // Line 4: "    println!(...);"
+        // Line 5: "}"
+        // Line 6: ""
+        // Line 7: "fn main() {"
+        // Line 8: "    example();"       <- cursor here, host line 8
+        // Line 9: "}"
+        // Line 10: "```"
+
+        let region = CacheableInjectionRegion {
+            language: "rust".to_string(),
+            byte_range: 17..100,
+            line_range: 3..10, // Code block content spans lines 3-9
+            result_id: "test-region".to_string(),
+            content_hash: 12345,
+        };
+
+        // Host position: line 8, character 4 (cursor on "example" call)
+        let host_pos = Position {
+            line: 8,
+            character: 4,
+        };
+
+        // Virtual position should be: line 5 (8 - 3 = 5), character 4
+        let virtual_pos = region.translate_host_to_virtual(host_pos);
+
+        assert_eq!(
+            virtual_pos.line, 5,
+            "Line should be host_line - region_start_line"
+        );
+        assert_eq!(
+            virtual_pos.character, 4,
+            "Character should remain unchanged"
+        );
     }
 }
