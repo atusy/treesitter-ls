@@ -177,72 +177,8 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  // Sprint 68: PBI-086 - LSP redirection for definition in injections
-  sprint: {
-    number: 68,
-    pbi_id: "PBI-086",
-    goal: "Enable go-to-definition navigation within Rust code blocks in Markdown documents",
-    status: "done",
-    subtasks: [
-      {
-        test: "find_injection_at_position() returns injection region containing a given byte position",
-        implementation: "Add function to InjectionMap or create new module to locate injection by position",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "7177265", message: "feat(analysis): add find_at_position() to InjectionMap", phase: "green" },
-        ],
-        notes: [
-          "Reuse CacheableInjectionRegion from injection.rs",
-          "Pattern already used inline at line 471 of semantic_cache.rs",
-          "Skipped refactor - code is clean, existing test code pattern is not worth changing",
-        ],
-      },
-      {
-        test: "extract_virtual_document() creates content string from injection byte range",
-        implementation: "Extract injection content from host document text using byte_range",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "663f476", message: "feat(language): add extract_content() to CacheableInjectionRegion", phase: "green" },
-        ],
-        notes: ["Virtual doc is just the text slice, no need for file I/O", "Skipped refactor - single line implementation"],
-      },
-      {
-        test: "translate_host_to_virtual() converts host Position to virtual document Position",
-        implementation: "Map host line/col to virtual coordinates by subtracting injection start",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "4238864", message: "feat(language): add translate_host_to_virtual()", phase: "green" },
-        ],
-        notes: ["Host line 9 → virtual line 6 (9 - 3 = 6, where 3 is code block start)", "Skipped refactor - minimal implementation"],
-      },
-      {
-        test: "translate_virtual_to_host() converts virtual Position back to host Position",
-        implementation: "Map response position back by adding injection start offset",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "db1ddb2", message: "feat(language): add translate_virtual_to_host()", phase: "green" },
-        ],
-        notes: ["Virtual line 1 → host line 4 (1 + 3 = 4)", "Skipped refactor - minimal implementation"],
-      },
-      {
-        test: "goto_definition handler redirects to rust-analyzer for Rust injection regions",
-        implementation: "Spawn rust-analyzer, send didOpen + definition request, translate response",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "77b59e5", message: "feat(lsp): implement go-to-definition redirection for Rust injections", phase: "green" },
-        ],
-        notes: [
-          "E2E test verifies full flow: make test_nvim_file FILE=tests/test_lsp_definition.lua",
-          "Skipped refactor - PoC implementation, clean architecture to follow in future PBIs",
-        ],
-      },
-    ],
-  },
+  // No active sprint - backlog refinement needed for next PBI
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -256,6 +192,13 @@ const scrum: ScrumDashboard = {
   // Sprint 1-66 details: git log -- scrum.yaml, scrum.ts
   completed: [
     {
+      number: 68,
+      pbi_id: "PBI-086",
+      goal: "Enable go-to-definition navigation within Rust code blocks in Markdown documents",
+      status: "done",
+      subtasks: [],
+    },
+    {
       number: 67,
       pbi_id: "PBI-085",
       goal: "Fix auto-install blocking issue by spawning install tasks and preserving host highlighting",
@@ -266,13 +209,6 @@ const scrum: ScrumDashboard = {
       number: 66,
       pbi_id: "PBI-084",
       goal: "Analyze semantic token handler for cache integration feasibility",
-      status: "done",
-      subtasks: [],
-    },
-    {
-      number: 65,
-      pbi_id: "PBI-084",
-      goal: "Establish benchmark infrastructure and implement stable region IDs for injection cache optimization",
       status: "done",
       subtasks: [],
     },
@@ -348,35 +284,6 @@ const scrum: ScrumDashboard = {
           timing: "immediate",
           status: "completed",
           outcome: "Subtask 1 (explore) revealed high refactoring cost, enabling informed scope decision",
-        },
-      ],
-    },
-    {
-      sprint: 65,
-      improvements: [
-        {
-          action: "Content hash (FNV-1a) proved effective for stable region matching - simpler than AST-based approaches",
-          timing: "immediate",
-          status: "completed",
-          outcome: "CacheableInjectionRegion.content_hash enables cache reuse when document structure changes",
-        },
-        {
-          action: "Criterion benchmarks provide clear baseline metrics for optimization work",
-          timing: "immediate",
-          status: "completed",
-          outcome: "benches/injection_tokens.rs measures parse time (167µs full, 101µs incremental)",
-        },
-        {
-          action: "Parse time at 60% of full tokenization - cache hit optimization needed for <50% target",
-          timing: "product",
-          status: "active",
-          outcome: "Consider adding benchmark that includes full semantic token generation, not just parsing",
-        },
-        {
-          action: "Debug logging for cache hits aids in verifying optimization effectiveness",
-          timing: "immediate",
-          status: "completed",
-          outcome: "treesitter_ls::injection_cache target logs hits/misses at debug/trace level",
         },
       ],
     },
