@@ -306,6 +306,20 @@ impl CacheableInjectionRegion {
             character: host_pos.character,
         }
     }
+
+    /// Translate a virtual document position back to host document position.
+    ///
+    /// Adds the injection region's start line to the virtual position's line.
+    /// Character (column) remains unchanged.
+    pub fn translate_virtual_to_host(
+        &self,
+        virtual_pos: tower_lsp::lsp_types::Position,
+    ) -> tower_lsp::lsp_types::Position {
+        tower_lsp::lsp_types::Position {
+            line: virtual_pos.line + self.line_range.start,
+            character: virtual_pos.character,
+        }
+    }
 }
 
 /// Collects all injection regions in the document
@@ -976,5 +990,36 @@ mod tests {
             virtual_pos.character, 4,
             "Character should remain unchanged"
         );
+    }
+
+    #[test]
+    fn test_cacheable_injection_region_translate_virtual_to_host() {
+        use tower_lsp::lsp_types::Position;
+
+        // Same scenario as translate_host_to_virtual test, but reverse direction
+        // Injection region starts at line 3 in host document
+
+        let region = CacheableInjectionRegion {
+            language: "rust".to_string(),
+            byte_range: 17..100,
+            line_range: 3..10,
+            result_id: "test-region".to_string(),
+            content_hash: 12345,
+        };
+
+        // Virtual position: line 0, character 3 (fn definition at start of virtual doc)
+        // This corresponds to host line 3 (0 + 3 = 3)
+        let virtual_pos = Position {
+            line: 0,
+            character: 3,
+        };
+
+        let host_pos = region.translate_virtual_to_host(virtual_pos);
+
+        assert_eq!(
+            host_pos.line, 3,
+            "Line should be virtual_line + region_start_line"
+        );
+        assert_eq!(host_pos.character, 3, "Character should remain unchanged");
     }
 }
