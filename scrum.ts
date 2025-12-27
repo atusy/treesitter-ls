@@ -173,7 +173,7 @@ const scrum: ScrumDashboard = {
             "Test runs without any treesitter-ls configuration for redirection",
         },
       ],
-      status: "ready",
+      status: "done",
     },
   ],
 
@@ -182,7 +182,7 @@ const scrum: ScrumDashboard = {
     number: 68,
     pbi_id: "PBI-086",
     goal: "Enable go-to-definition navigation within Rust code blocks in Markdown documents",
-    status: "in_progress",
+    status: "done",
     subtasks: [
       {
         test: "find_injection_at_position() returns injection region containing a given byte position",
