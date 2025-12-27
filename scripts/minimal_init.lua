@@ -10,14 +10,8 @@ vim.lsp.config.treesitter_ls = {
 vim.lsp.enable("treesitter_ls")
 vim.lsp.log.set_level(vim.lsp.log_levels.DEBUG)
 
-vim.keymap.set("n", " d", function()
+vim.keymap.set("n", "gd", function()
 	vim.lsp.buf.definition()
-end)
-vim.keymap.set("n", " a", function()
-	vim.lsp.buf.code_action()
-end)
-vim.keymap.set({ "n", "v" }, " s", function()
-	vim.lsp.buf.selection_range(vim.v.count1)
 end)
 
 -- Disable builtin highlights
