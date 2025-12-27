@@ -789,6 +789,7 @@ impl LanguageServer for TreeSitterLs {
                     ),
                 ),
                 selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
+                definition_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
         })
@@ -1596,6 +1597,209 @@ impl LanguageServer for TreeSitterLs {
         };
 
         Ok(lsp_response)
+    }
+
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        log::debug!(
+            target: "treesitter_ls::definition",
+            "goto_definition called for {} at line {} col {}",
+            uri,
+            position.line,
+            position.character
+        );
+
+        // Get document
+        let Some(doc) = self.documents.get(&uri) else {
+            log::debug!(target: "treesitter_ls::definition", "No document found");
+            return Ok(None);
+        };
+        let text = doc.text();
+
+        // Get the language for this document
+        let Some(language_name) = self.get_language_for_document(&uri) else {
+            log::debug!(target: "treesitter_ls::definition", "No language detected");
+            return Ok(None);
+        };
+        log::debug!(target: "treesitter_ls::definition", "Language: {}", language_name);
+
+        // Get injection query to detect injection regions
+        let Some(injection_query) = self.language.get_injection_query(&language_name) else {
+            log::debug!(target: "treesitter_ls::definition", "No injection query for {}", language_name);
+            return Ok(None);
+        };
+
+        // Get the parse tree
+        let Some(tree) = doc.tree() else {
+            log::debug!(target: "treesitter_ls::definition", "No parse tree");
+            return Ok(None);
+        };
+
+        // Collect all injection regions
+        let injections = crate::language::injection::collect_all_injections(
+            &tree.root_node(),
+            text,
+            Some(injection_query.as_ref()),
+        );
+
+        let Some(injections) = injections else {
+            log::debug!(target: "treesitter_ls::definition", "No injections found");
+            return Ok(None);
+        };
+        log::debug!(target: "treesitter_ls::definition", "Found {} injection regions", injections.len());
+
+        // Convert Position to byte offset
+        let mapper = PositionMapper::new(text);
+        let Some(byte_offset) = mapper.position_to_byte(position) else {
+            log::debug!(target: "treesitter_ls::definition", "Failed to convert position to byte");
+            return Ok(None);
+        };
+        log::debug!(target: "treesitter_ls::definition", "Byte offset: {}", byte_offset);
+
+        // Find which injection region (if any) contains this position
+        let matching_region = injections.iter().find(|inj| {
+            let start = inj.content_node.start_byte();
+            let end = inj.content_node.end_byte();
+            log::debug!(target: "treesitter_ls::definition", "Region {} bytes {}..{}", inj.language, start, end);
+            byte_offset >= start && byte_offset < end
+        });
+
+        let Some(region) = matching_region else {
+            // Not in an injection region
+            log::debug!(target: "treesitter_ls::definition", "Position not in any injection region");
+            return Ok(None);
+        };
+        log::debug!(target: "treesitter_ls::definition", "Found matching region: {}", region.language);
+
+        // Only handle Rust for now (PoC)
+        if region.language != "rust" {
+            log::debug!(target: "treesitter_ls::definition", "Language {} not supported (only rust)", region.language);
+            return Ok(None);
+        }
+
+        // Create cacheable region for position translation
+        let cacheable = crate::language::injection::CacheableInjectionRegion::from_region_info(
+            region, "temp", text,
+        );
+
+        // Extract virtual document content
+        let virtual_content = cacheable.extract_content(text);
+        log::debug!(target: "treesitter_ls::definition", "Virtual content:\n{}", virtual_content);
+
+        // Translate host position to virtual position
+        let virtual_position = cacheable.translate_host_to_virtual(position);
+        log::debug!(
+            target: "treesitter_ls::definition",
+            "Translated position: host line {} -> virtual line {}",
+            position.line,
+            virtual_position.line
+        );
+
+        // Create a virtual URI for the injection
+        let virtual_uri = format!(
+            "file:///tmp/treesitter-ls-virtual-{}.rs",
+            std::process::id()
+        );
+
+        // Spawn rust-analyzer and get definition
+        log::debug!(target: "treesitter_ls::definition", "Spawning rust-analyzer...");
+        let definition = {
+            let mut conn = match super::redirection::LanguageServerConnection::spawn_rust_analyzer()
+            {
+                Some(c) => c,
+                None => {
+                    log::debug!(target: "treesitter_ls::definition", "Failed to spawn rust-analyzer");
+                    self.client
+                        .log_message(MessageType::WARNING, "Failed to spawn rust-analyzer")
+                        .await;
+                    return Ok(None);
+                }
+            };
+            log::debug!(target: "treesitter_ls::definition", "rust-analyzer spawned");
+
+            // Open the virtual document
+            conn.did_open(&virtual_uri, "rust", virtual_content);
+            log::debug!(target: "treesitter_ls::definition", "Virtual document opened");
+
+            // Request definition
+            // Connection will be dropped here, shutting down rust-analyzer
+            let result = conn.goto_definition(&virtual_uri, virtual_position);
+            log::debug!(target: "treesitter_ls::definition", "Definition response: {:?}", result);
+            result
+        };
+
+        // Translate response positions back to host document
+        let Some(def_response) = definition else {
+            log::debug!(target: "treesitter_ls::definition", "No definition response from rust-analyzer");
+            return Ok(None);
+        };
+        log::debug!(target: "treesitter_ls::definition", "Got definition response: {:?}", def_response);
+
+        // Map the response locations back to host document
+        let mapped_response = match def_response {
+            GotoDefinitionResponse::Scalar(loc) => {
+                let mapped_pos = cacheable.translate_virtual_to_host(loc.range.start);
+                let mapped_end = cacheable.translate_virtual_to_host(loc.range.end);
+                GotoDefinitionResponse::Scalar(Location {
+                    uri: uri.clone(),
+                    range: Range {
+                        start: mapped_pos,
+                        end: mapped_end,
+                    },
+                })
+            }
+            GotoDefinitionResponse::Array(locs) => {
+                let mapped: Vec<Location> = locs
+                    .into_iter()
+                    .map(|loc| {
+                        let mapped_pos = cacheable.translate_virtual_to_host(loc.range.start);
+                        let mapped_end = cacheable.translate_virtual_to_host(loc.range.end);
+                        Location {
+                            uri: uri.clone(),
+                            range: Range {
+                                start: mapped_pos,
+                                end: mapped_end,
+                            },
+                        }
+                    })
+                    .collect();
+                GotoDefinitionResponse::Array(mapped)
+            }
+            GotoDefinitionResponse::Link(links) => {
+                let mapped: Vec<LocationLink> = links
+                    .into_iter()
+                    .map(|link| {
+                        let mapped_start =
+                            cacheable.translate_virtual_to_host(link.target_range.start);
+                        let mapped_end = cacheable.translate_virtual_to_host(link.target_range.end);
+                        let sel_start =
+                            cacheable.translate_virtual_to_host(link.target_selection_range.start);
+                        let sel_end =
+                            cacheable.translate_virtual_to_host(link.target_selection_range.end);
+                        LocationLink {
+                            origin_selection_range: link.origin_selection_range,
+                            target_uri: uri.clone(),
+                            target_range: Range {
+                                start: mapped_start,
+                                end: mapped_end,
+                            },
+                            target_selection_range: Range {
+                                start: sel_start,
+                                end: sel_end,
+                            },
+                        }
+                    })
+                    .collect();
+                GotoDefinitionResponse::Link(mapped)
+            }
+        };
+
+        Ok(Some(mapped_response))
     }
 }
 
