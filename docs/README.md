@@ -1,6 +1,6 @@
 # treesitter-ls Documentation
 
-treesitter-ls is a Language Server Protocol (LSP) server that uses Tree-sitter for fast, accurate parsing. It provides semantic highlighting, go-to-definition, selection ranges, and code actions for any language with a Tree-sitter grammar.
+treesitter-ls is a Language Server Protocol (LSP) server that uses Tree-sitter for fast, accurate parsing. It provides semantic highlighting, selection ranges, and code actions for any language with a Tree-sitter grammar.
 
 ## Features
 
@@ -11,15 +11,6 @@ Provides LSP semantic tokens based on Tree-sitter `highlights.scm` queries. Work
 - Supports language injection (e.g., SQL in JavaScript template strings, code blocks in Markdown)
 - Uses nvim-treesitter query files for compatibility
 - Supports query inheritance (e.g., TypeScript inherits from `ecma`)
-
-### Go-to-Definition
-
-Jump to definitions using Tree-sitter `locals.scm` queries. Works for:
-
-- Variables
-- Functions
-- Imports
-- Parameters
 
 ### Selection Range
 
@@ -101,9 +92,6 @@ Configuration is provided via LSP `initializationOptions`. All options are optio
         "/path/to/highlights.scm",
         "/path/to/custom.scm"
       ],
-      "locals": [
-        "/path/to/locals.scm"
-      ],
       "injections": [
         "/path/to/injections.scm"
       ]
@@ -146,7 +134,6 @@ Per-language configuration. Usually not needed as treesitter-ls auto-detects lan
 |-------|-------------|
 | `library` | Explicit path to the parser library (`.so`, `.dylib`, `.dll`) |
 | `highlights` | Array of paths to highlight query files (`.scm`) |
-| `locals` | Array of paths to locals query files (for go-to-definition) |
 | `injections` | Array of paths to injection query files (for embedded languages) |
 
 #### `captureMappings`
@@ -181,7 +168,6 @@ You can also use a `treesitter-ls.toml` file in your project root:
 
 [languages.custom_lang]
 highlights = ["./queries/highlights.scm"]
-locals = ["./queries/locals.scm"]
 ```
 
 Project configuration is merged with LSP initialization options.

@@ -6,12 +6,11 @@ use tree_sitter::InputEdit;
 
 // Note: position_to_point from selection.rs is deprecated - use PositionMapper.position_to_point() instead
 use crate::analysis::{
-    DefinitionResolver, InjectionMap, InjectionTokenCache, LEGEND_MODIFIERS, LEGEND_TYPES,
-    SemanticTokenCache,
+    InjectionMap, InjectionTokenCache, LEGEND_MODIFIERS, LEGEND_TYPES, SemanticTokenCache,
 };
 use crate::analysis::{
     IncrementalDecision, compute_incremental_tokens, decide_tokenization_strategy,
-    decode_semantic_tokens, encode_semantic_tokens, handle_code_actions, handle_goto_definition,
+    decode_semantic_tokens, encode_semantic_tokens, handle_code_actions,
     handle_selection_range, handle_semantic_tokens_full_delta, next_result_id,
 };
 use crate::config::{TreeSitterSettings, WorkspaceSettings};
@@ -861,7 +860,6 @@ impl LanguageServer for TreeSitterLs {
                         },
                     ),
                 ),
-                definition_provider: Some(OneOf::Left(true)),
                 selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
                 ..ServerCapabilities::default()
             },
@@ -1535,38 +1533,6 @@ impl LanguageServer for TreeSitterLs {
         };
 
         Ok(Some(domain_range_result))
-    }
-
-    async fn goto_definition(
-        &self,
-        params: GotoDefinitionParams,
-    ) -> Result<Option<GotoDefinitionResponse>> {
-        let uri = params.text_document_position_params.text_document.uri;
-        let position = params.text_document_position_params.position;
-
-        // Get language for document
-        let Some(language_name) = self.get_language_for_document(&uri) else {
-            return Ok(None);
-        };
-
-        // Get locals query
-        let Some(locals_query) = self.language.get_locals_query(&language_name) else {
-            return Ok(None);
-        };
-
-        // Get document
-        let Some(doc) = self.documents.get(&uri) else {
-            return Ok(None);
-        };
-
-        // Use layer-aware handler
-        let resolver = DefinitionResolver::new();
-        let response = handle_goto_definition(&resolver, &doc, position, &locals_query, &uri);
-
-        Ok(response.and_then(|resp| match &resp {
-            GotoDefinitionResponse::Array(locations) if locations.is_empty() => None,
-            _ => Some(resp),
-        }))
     }
 
     async fn selection_range(
