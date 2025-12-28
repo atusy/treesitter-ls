@@ -17,9 +17,21 @@ Modern editors can only attach one LSP server per buffer, meaning users must cho
 
 The key insight is: **treesitter-ls already knows where injection regions are and what languages they contain**. It can act as an LSP proxy, forwarding requests for injection regions to appropriate language servers.
 
+### Language Server Constraints
+
+Language servers have requirements beyond the LSP protocol that affect this architecture:
+
+**Project Context**: Many language servers require project structure to function. rust-analyzer returns `null` for go-to-definition on standalone `.rs` files—it needs `Cargo.toml` and proper workspace context to build its symbol index.
+
+**Real Files on Disk**: Some servers index from the filesystem rather than relying solely on `didOpen` content. Virtual URIs (`file:///virtual/...`) are insufficient.
+
+**Indexing Time**: Language servers need time to index after `didOpen` before responding to queries. The `publishDiagnostics` notification signals indexing completion.
+
+These constraints mean redirection is not simply "forward request, return response"—it requires creating temporary project structures tailored to each language server.
+
 ## Decision
 
-**Implement LSP Client capability in treesitter-ls to redirect requests for injection regions to configured language servers.**
+**Implement LSP Client capability in treesitter-ls to redirect requests for injection regions to configured language servers, with server-specific workspace provisioning.**
 
 ### Architecture Overview
 
@@ -29,7 +41,8 @@ Editor                   treesitter-ls                    Language Servers
   │ ── textDocument/xxx ───▶  │                                  │
   │                           │ (Is cursor in injection?)        │
   │                           │                                  │
-  │                           │── YES ─▶ forward request ───────▶│ (e.g., rust-analyzer)
+  │                           │── YES ─▶ provision workspace ───▶│
+  │                           │          forward request         │ (e.g., rust-analyzer)
   │                           │          with offset adjustment  │
   │                           │                                  │
   │ ◀─── response ────────────│◀──────── response ───────────────│
@@ -37,6 +50,36 @@ Editor                   treesitter-ls                    Language Servers
   │                           │                                  │
   │                           │── NO ──▶ handle locally          │
   │                           │          (treesitter-ls logic)   │
+```
+
+### Server-Specific Workspace Provisioning
+
+Different language servers require different project structures:
+
+| Server | Required Files | Workspace Structure |
+|--------|----------------|---------------------|
+| rust-analyzer | `Cargo.toml` | `{temp}/Cargo.toml` + `{temp}/src/main.rs` |
+| pyright | None (optional `pyrightconfig.json`) | May work with virtual documents |
+| gopls | `go.mod` | `{temp}/go.mod` + `{temp}/main.go` |
+| typescript-language-server | None (optional `tsconfig.json`) | May work with virtual documents |
+
+For servers requiring real files:
+1. Create minimal temporary project structure
+2. Write injection content to appropriate file
+3. Initialize server with `rootUri` pointing to temp directory
+4. Wait for `publishDiagnostics` before querying
+5. Clean up temp directory on shutdown
+
+### Async Communication
+
+Language server communication uses synchronous stdio which blocks the thread. In treesitter-ls's async runtime (tokio), this requires `spawn_blocking` to avoid stalling other tasks.
+
+```rust
+let definition = tokio::task::spawn_blocking(move || {
+    let mut conn = LanguageServerConnection::spawn_rust_analyzer()?;
+    conn.did_open(&uri, "rust", &content)?;
+    conn.goto_definition(&uri, position)
+}).await.ok().flatten();
 ```
 
 ### Configuration
@@ -109,23 +152,24 @@ The existing `OffsetCalculator` in `src/analysis/offset_calculator.rs` provides 
 
 ### Negative
 
-- **Resource overhead**: Multiple language server processes consume memory
+- **Resource overhead**: Multiple language server processes consume memory; temp directories use disk space
 - **Complexity**: treesitter-ls becomes both server and client; protocol translation adds complexity
-- **Initialization latency**: Spawning language servers on first use adds delay
+- **Initialization latency**: Spawning language servers and waiting for indexing adds delay
 - **Debugging difficulty**: Multi-hop request/response makes troubleshooting harder
+- **Server-specific logic**: Each language server may need custom workspace provisioning
 
 ### Neutral
 
 - **Configuration burden**: Users must configure which servers to use per language
 - **Partial feature support**: Not all LSP methods will be redirected initially (incremental implementation)
-- **Server compatibility**: Some language servers may not handle virtual documents well
 
 ## Implementation Phases
 
-### Phase 1: Infrastructure
+### Phase 1: Infrastructure (Done)
 - LSP client implementation in treesitter-ls
-- Server lifecycle management (spawn, shutdown, health check)
-- Configuration parsing for server definitions
+- Server lifecycle management (spawn, shutdown)
+- Workspace provisioning for rust-analyzer
+- Offset translation
 
 ### Phase 2-5: Feature Implementation
 See [ADR-0008](0008-redirection-request-strategies.md) for per-method implementation details.

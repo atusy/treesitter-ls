@@ -116,13 +116,43 @@ Possible approaches:
 
 The choice affects implementation complexity vs. user experience. This ADR does not prescribe a specific scheme.
 
+### Virtual Document Materialization
+
+Virtual documents may be **logical** (in-memory only) or **materialized** (written to disk), depending on language server requirements:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Virtual Document Model                        │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Injection Content ──┬──▶ Logical Virtual Document              │
+│                      │    (in-memory, didOpen only)             │
+│                      │    For: pyright, typescript-ls           │
+│                      │                                          │
+│                      └──▶ Materialized Virtual Document         │
+│                           (temp file on disk + project files)   │
+│                           For: rust-analyzer, gopls             │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Why materialization is sometimes required**: Some language servers (notably rust-analyzer) index from the filesystem rather than relying solely on `didOpen` content. They return `null` for queries when files don't exist on disk or lack project context.
+
+For materialized documents:
+- Create temporary project structure (see [ADR-0006](0006-language-server-redirection.md#server-specific-workspace-provisioning))
+- Write injection content to real file
+- Use real file URI in LSP communication
+- Clean up on document close or server shutdown
+
 ### Virtual Document Lifecycle
 
-1. **Creation**: When injection region is first parsed, create virtual document in memory
-2. **URI**: Unique identifier for this injection (scheme TBD per identity approach above)
-3. **Registration**: Send `textDocument/didOpen` to language server with virtual URI and content
-4. **Sync**: On host document change, send `textDocument/didChange` for affected virtual documents
-5. **Cleanup**: Send `textDocument/didClose` when injection region is removed or host document closes
+1. **Creation**: When injection region is first parsed, create virtual document
+2. **Materialization** (if required): Write to temp file with project structure
+3. **URI**: Unique identifier—either virtual scheme or real temp file path
+4. **Registration**: Send `textDocument/didOpen` to language server
+5. **Wait for indexing**: For materialized documents, wait for `publishDiagnostics`
+6. **Sync**: On host document change, send `textDocument/didChange` (or rewrite temp file)
+7. **Cleanup**: Send `textDocument/didClose` and delete temp files when injection is removed or host closes
 
 ### Server Process Sharing
 
@@ -136,11 +166,13 @@ One language server process handles **all virtual documents** for that language,
 - **Simple offset translation**: One-to-one mapping between injection and virtual document
 - **Matches common patterns**: Documentation examples work out of the box
 - **Future flexibility**: Merged mode can be added without breaking existing behavior
+- **Server compatibility**: Materialization handles servers requiring real files
 
 ### Negative
 
 - **No cross-block navigation**: Cannot go-to-definition across blocks in separate mode
 - **Many virtual URIs**: Large documents with many injections create many virtual documents
+- **Disk overhead**: Materialized documents use temp disk space
 - **Merged mode complexity**: Future implementation requires line number preservation logic
 
 ### Neutral
@@ -150,9 +182,9 @@ One language server process handles **all virtual documents** for that language,
 
 ## Implementation Phases
 
-### Phase 1: Separate Mode Only
+### Phase 1: Separate Mode Only (Done)
 - Virtual document creation and lifecycle
-- URI scheme implementation
+- Materialization for rust-analyzer
 - Server process sharing
 
 ### Phase 2: Merged Mode (Future)
