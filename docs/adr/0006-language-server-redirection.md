@@ -94,9 +94,50 @@ These constraints mean redirection is not simply "forward request, return respon
 └─────────────────────────────────────────────────────────┘
 ```
 
+#### Spawn Strategy
+
+| Strategy | Trigger | First Request Latency | Resource Usage |
+|----------|---------|----------------------|----------------|
+| **Eager** | Injection detected during parse | Low (server pre-warmed) | Higher (may spawn unused) |
+| **Lazy** | First LSP request to injection | High (spawn + index) | Lower (only when needed) |
+
+**Recommended: Eager spawn** when injection is detected during document parsing or semantic token calculation. This eliminates user-perceived latency on first go-to-definition or hover.
+
+```
+Document Open/Edit
+       │
+       ▼
+┌─────────────────┐
+│ Parse document  │
+│ Detect injects  │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐     ┌─────────────────────────────┐
+│ For each new    │────▶│ Background: spawn server    │
+│ injection lang  │     │ Write temp workspace        │
+└─────────────────┘     │ Wait for publishDiagnostics │
+                        └─────────────────────────────┘
+         │
+         ▼
+  (User makes request)
+         │
+         ▼
+┌─────────────────┐
+│ Server ready    │ ──▶ Immediate response
+│ (already warm)  │
+└─────────────────┘
+```
+
+Injection detection already happens during:
+- `textDocument/semanticTokens` (we scan all injections for highlighting)
+- Incremental parsing on `textDocument/didChange`
+
+Spawning can piggyback on these existing code paths.
+
 Lifecycle:
-- **Spawn on first use**: When injection region of a language is first encountered
-- **Reuse**: Subsequent requests use existing connection
+- **Spawn on injection detection**: Background spawn when new language injection is found
+- **Reuse**: All subsequent requests use warm connection
 - **Idle shutdown**: After configurable timeout with no requests
 - **Crash recovery**: Detect dead servers and respawn
 
