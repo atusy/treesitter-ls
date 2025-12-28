@@ -45,18 +45,31 @@ T["markdown"] = create_file_test_set(".md", {
 T["markdown"]["definition"] = function()
 	-- Position cursor on "example" call on line 9, column 5 (on the 'e' of example)
 	child.cmd([[normal! 9G5|]])
+
+	-- Verify cursor is on line 9 before definition jump
+	local before = child.api.nvim_win_get_cursor(0)
+	MiniTest.expect.equality(before[1], 9, "Cursor should start on line 9")
+
+	-- Call definition in child vim
 	child.lua([[vim.lsp.buf.definition()]])
 
-	-- Wait for async LSP request/response (rust-analyzer spawn + initialize + query)
-	vim.wait(2000)
-
-	local line = 0
-	helper.wait(5000, function()
-		line = child.api.nvim_win_get_cursor(0)[1]
+	-- Poll child's cursor position until it moves to line 4 or timeout
+	-- This properly waits for the async LSP response in the child
+	local jumped = helper.wait(10000, function()
+		local line = child.api.nvim_win_get_cursor(0)[1]
 		return line == 4
-	end, 10)
+	end, 100)
 
-	MiniTest.expect.equality(line, 4)
+	-- Get final cursor position for error message
+	local after = child.api.nvim_win_get_cursor(0)
+
+	-- Assert the jump occurred
+
+	MiniTest.expect.equality(
+		after[1],
+		4,
+		("Definition jump failed: cursor at line %d, expected line 4"):format(after[1])
+	)
 end
 
 return T

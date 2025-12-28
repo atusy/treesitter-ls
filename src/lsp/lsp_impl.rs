@@ -1606,17 +1606,21 @@ impl LanguageServer for TreeSitterLs {
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
 
-        log::debug!(
-            target: "treesitter_ls::definition",
-            "goto_definition called for {} at line {} col {}",
-            uri,
-            position.line,
-            position.character
-        );
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!(
+                    "goto_definition called for {} at line {} col {}",
+                    uri, position.line, position.character
+                ),
+            )
+            .await;
 
         // Get document
         let Some(doc) = self.documents.get(&uri) else {
-            log::debug!(target: "treesitter_ls::definition", "No document found");
+            self.client
+                .log_message(MessageType::INFO, "No document found")
+                .await;
             return Ok(None);
         };
         let text = doc.text();
@@ -1630,7 +1634,12 @@ impl LanguageServer for TreeSitterLs {
 
         // Get injection query to detect injection regions
         let Some(injection_query) = self.language.get_injection_query(&language_name) else {
-            log::debug!(target: "treesitter_ls::definition", "No injection query for {}", language_name);
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    format!("No injection query for {}", language_name),
+                )
+                .await;
             return Ok(None);
         };
 
@@ -1648,10 +1657,17 @@ impl LanguageServer for TreeSitterLs {
         );
 
         let Some(injections) = injections else {
-            log::debug!(target: "treesitter_ls::definition", "No injections found");
+            self.client
+                .log_message(MessageType::INFO, "No injections found")
+                .await;
             return Ok(None);
         };
-        log::debug!(target: "treesitter_ls::definition", "Found {} injection regions", injections.len());
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!("Found {} injection regions", injections.len()),
+            )
+            .await;
 
         // Convert Position to byte offset
         let mapper = PositionMapper::new(text);
@@ -1662,83 +1678,139 @@ impl LanguageServer for TreeSitterLs {
         log::debug!(target: "treesitter_ls::definition", "Byte offset: {}", byte_offset);
 
         // Find which injection region (if any) contains this position
+        // Log all regions for debugging
+        for inj in &injections {
+            let start = inj.content_node.start_byte();
+            let end = inj.content_node.end_byte();
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    format!(
+                        "Region {} bytes {}..{}, contains {}? {}",
+                        inj.language,
+                        start,
+                        end,
+                        byte_offset,
+                        byte_offset >= start && byte_offset < end
+                    ),
+                )
+                .await;
+        }
         let matching_region = injections.iter().find(|inj| {
             let start = inj.content_node.start_byte();
             let end = inj.content_node.end_byte();
-            log::debug!(target: "treesitter_ls::definition", "Region {} bytes {}..{}", inj.language, start, end);
             byte_offset >= start && byte_offset < end
         });
 
         let Some(region) = matching_region else {
             // Not in an injection region
-            log::debug!(target: "treesitter_ls::definition", "Position not in any injection region");
+            self.client
+                .log_message(MessageType::INFO, "Position not in any injection region")
+                .await;
             return Ok(None);
         };
-        log::debug!(target: "treesitter_ls::definition", "Found matching region: {}", region.language);
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!("Found matching region: {}", region.language),
+            )
+            .await;
 
         // Only handle Rust for now (PoC)
         if region.language != "rust" {
-            log::debug!(target: "treesitter_ls::definition", "Language {} not supported (only rust)", region.language);
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    format!("Language {} not supported (only rust)", region.language),
+                )
+                .await;
             return Ok(None);
         }
 
         // Create cacheable region for position translation
+        self.client
+            .log_message(MessageType::INFO, "Creating cacheable region...")
+            .await;
         let cacheable = crate::language::injection::CacheableInjectionRegion::from_region_info(
             region, "temp", text,
         );
 
-        // Extract virtual document content
-        let virtual_content = cacheable.extract_content(text);
-        log::debug!(target: "treesitter_ls::definition", "Virtual content:\n{}", virtual_content);
+        // Extract virtual document content (own it for the blocking task)
+        let virtual_content = cacheable.extract_content(text).to_owned();
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!(
+                    "Virtual content ({} chars): {}",
+                    virtual_content.len(),
+                    &virtual_content[..virtual_content.len().min(50)]
+                ),
+            )
+            .await;
 
         // Translate host position to virtual position
         let virtual_position = cacheable.translate_host_to_virtual(position);
-        log::debug!(
-            target: "treesitter_ls::definition",
-            "Translated position: host line {} -> virtual line {}",
-            position.line,
-            virtual_position.line
-        );
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!(
+                    "Translated position: host line {} -> virtual line {}",
+                    position.line, virtual_position.line
+                ),
+            )
+            .await;
 
         // Create a virtual URI for the injection
         let virtual_uri = format!(
             "file:///tmp/treesitter-ls-virtual-{}.rs",
             std::process::id()
         );
+        self.client
+            .log_message(MessageType::INFO, format!("Virtual URI: {}", virtual_uri))
+            .await;
 
         // Spawn rust-analyzer and get definition
-        log::debug!(target: "treesitter_ls::definition", "Spawning rust-analyzer...");
-        let definition = {
-            let mut conn = match super::redirection::LanguageServerConnection::spawn_rust_analyzer()
-            {
-                Some(c) => c,
-                None => {
-                    log::debug!(target: "treesitter_ls::definition", "Failed to spawn rust-analyzer");
-                    self.client
-                        .log_message(MessageType::WARNING, "Failed to spawn rust-analyzer")
-                        .await;
-                    return Ok(None);
-                }
-            };
-            log::debug!(target: "treesitter_ls::definition", "rust-analyzer spawned");
+        // Use spawn_blocking because rust-analyzer communication is synchronous blocking I/O
+        self.client
+            .log_message(MessageType::INFO, "Spawning rust-analyzer...")
+            .await;
+        let virtual_uri_clone = virtual_uri.clone();
+        let definition = tokio::task::spawn_blocking(move || {
+            let mut conn = super::redirection::LanguageServerConnection::spawn_rust_analyzer()?;
 
             // Open the virtual document
-            conn.did_open(&virtual_uri, "rust", virtual_content);
-            log::debug!(target: "treesitter_ls::definition", "Virtual document opened");
+            conn.did_open(&virtual_uri_clone, "rust", &virtual_content)?;
 
-            // Request definition
+            // Request definition (no waiting here - let read_response_for_id handle it)
             // Connection will be dropped here, shutting down rust-analyzer
-            let result = conn.goto_definition(&virtual_uri, virtual_position);
-            log::debug!(target: "treesitter_ls::definition", "Definition response: {:?}", result);
-            result
-        };
+            conn.goto_definition(&virtual_uri_clone, virtual_position)
+        })
+        .await
+        .ok()
+        .flatten();
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!("Definition response: {:?}", definition),
+            )
+            .await;
 
         // Translate response positions back to host document
         let Some(def_response) = definition else {
-            log::debug!(target: "treesitter_ls::definition", "No definition response from rust-analyzer");
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    "No definition response from rust-analyzer",
+                )
+                .await;
             return Ok(None);
         };
-        log::debug!(target: "treesitter_ls::definition", "Got definition response: {:?}", def_response);
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!("Got definition response: {:?}", def_response),
+            )
+            .await;
 
         // Map the response locations back to host document
         let mapped_response = match def_response {
