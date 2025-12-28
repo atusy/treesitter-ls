@@ -31,74 +31,107 @@ These constraints mean redirection is not simply "forward request, return respon
 
 ## Decision
 
-**Implement LSP Client capability in treesitter-ls to redirect requests for injection regions to configured language servers, with server-specific workspace provisioning.**
+**Implement LSP Client capability in treesitter-ls to redirect requests for injection regions to configured language servers, with server-specific workspace provisioning and connection pooling.**
 
 ### Architecture Overview
 
 ```
-Editor                   treesitter-ls                    Language Servers
-  │                           │                                  │
-  │ ── textDocument/xxx ───▶  │                                  │
-  │                           │ (Is cursor in injection?)        │
-  │                           │                                  │
-  │                           │── YES ─▶ provision workspace ───▶│
-  │                           │          forward request         │ (e.g., rust-analyzer)
-  │                           │          with offset adjustment  │
-  │                           │                                  │
-  │ ◀─── response ────────────│◀──────── response ───────────────│
-  │                           │          with offset adjustment  │
-  │                           │                                  │
-  │                           │── NO ──▶ handle locally          │
-  │                           │          (treesitter-ls logic)   │
+┌─────────────────────────────────────────────────────────────────┐
+│                        treesitter-ls                             │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌──────────────┐    ┌─────────────────┐    ┌────────────────┐  │
+│  │ LSP Handler  │───▶│RedirectionRouter│───▶│ PositionMapper │  │
+│  │ (lsp_impl)   │    │                 │    │                │  │
+│  └──────────────┘    └────────┬────────┘    └────────────────┘  │
+│                               │                                  │
+│                               ▼                                  │
+│                      ┌─────────────────┐                        │
+│                      │   ServerPool    │                        │
+│                      │ ┌─────────────┐ │                        │
+│                      │ │rust-analyzer│ │  (on-demand spawn,    │
+│                      │ ├─────────────┤ │   connection reuse)   │
+│                      │ │  pyright    │ │                        │
+│                      │ ├─────────────┤ │                        │
+│                      │ │   gopls     │ │                        │
+│                      │ └─────────────┘ │                        │
+│                      └────────┬────────┘                        │
+│                               │                                  │
+│                               ▼                                  │
+│                      ┌─────────────────┐                        │
+│                      │WorkspaceManager │                        │
+│                      │ (temp projects) │                        │
+│                      └─────────────────┘                        │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### Server-Specific Workspace Provisioning
+### Server Connection Pool
 
-Different language servers require different project structures:
+**Critical for production**: Spawning a language server per request is unacceptable (multi-second latency). Connections must be pooled and reused.
 
-| Server | Required Files | Workspace Structure |
-|--------|----------------|---------------------|
-| rust-analyzer | `Cargo.toml` | `{temp}/Cargo.toml` + `{temp}/src/main.rs` |
-| pyright | None (optional `pyrightconfig.json`) | May work with virtual documents |
-| gopls | `go.mod` | `{temp}/go.mod` + `{temp}/main.go` |
-| typescript-language-server | None (optional `tsconfig.json`) | May work with virtual documents |
-
-For servers requiring real files:
-1. Create minimal temporary project structure
-2. Write injection content to appropriate file
-3. Initialize server with `rootUri` pointing to temp directory
-4. Wait for `publishDiagnostics` before querying
-5. Clean up temp directory on shutdown
-
-### Async Communication
-
-Language server communication uses synchronous stdio which blocks the thread. In treesitter-ls's async runtime (tokio), this requires `spawn_blocking` to avoid stalling other tasks.
-
-```rust
-let definition = tokio::task::spawn_blocking(move || {
-    let mut conn = LanguageServerConnection::spawn_rust_analyzer()?;
-    conn.did_open(&uri, "rust", &content)?;
-    conn.goto_definition(&uri, position)
-}).await.ok().flatten();
+```
+┌─────────────────────────────────────────────────────────┐
+│                    ServerPool                            │
+├─────────────────────────────────────────────────────────┤
+│                                                          │
+│  get_connection("rust")                                  │
+│       │                                                  │
+│       ▼                                                  │
+│  ┌─────────────────┐    ┌─────────────────────────────┐ │
+│  │ Connection      │ NO │ Spawn new server            │ │
+│  │ exists?         │───▶│ Wait for initialization     │ │
+│  └────────┬────────┘    │ Store in pool               │ │
+│           │ YES         └─────────────────────────────┘ │
+│           ▼                                              │
+│  ┌─────────────────┐                                    │
+│  │ Return existing │                                    │
+│  │ connection      │                                    │
+│  └─────────────────┘                                    │
+│                                                          │
+│  Idle timeout ───▶ Shutdown unused servers              │
+│                                                          │
+└─────────────────────────────────────────────────────────┘
 ```
 
-### Configuration
+Lifecycle:
+- **Spawn on first use**: When injection region of a language is first encountered
+- **Reuse**: Subsequent requests use existing connection
+- **Idle shutdown**: After configurable timeout with no requests
+- **Crash recovery**: Detect dead servers and respawn
 
-Redirection is configured separately from Tree-sitter language settings, using a **server-centric** model:
+### Server Registry and Configuration
+
+Redirection requires knowing which server to use for each language:
 
 ```json
 {
   "treesitter-ls": {
     "redirections": {
-      "rust-analyzer": { "languages": ["rust"], ... },
-      "pyright": { "languages": ["python"], ... },
-      "typos-lsp": { "languages": ["markdown", "asciidoc", "text"], ... }
+      "rust-analyzer": {
+        "languages": ["rust"],
+        "command": "rust-analyzer",
+        "args": [],
+        "workspaceType": "cargo"
+      },
+      "pyright": {
+        "languages": ["python"],
+        "command": "pyright-langserver",
+        "args": ["--stdio"],
+        "workspaceType": "none"
+      },
+      "gopls": {
+        "languages": ["go"],
+        "command": "gopls",
+        "args": [],
+        "workspaceType": "gomod"
+      }
     }
   }
 }
 ```
 
-#### Why Separate from `languages`
+#### Why Server-Centric Configuration
 
 | Concern | `languages` field | `redirections` field |
 |---------|-------------------|---------------------|
@@ -112,11 +145,34 @@ This separation allows:
 - **Multiple servers per language**: `pyright` + `ruff` for Python (both in `redirections`)
 - **Independent lifecycle**: Tree-sitter config doesn't affect server spawning
 
-#### Design Considerations
+### Workspace Provisioning
 
-- **Server lifecycle**: Servers are spawned on-demand when an injection region of a matching language is first encountered
-- **Process management**: Servers are kept alive for reuse; shutdown when no documents reference that language
-- **Multiple servers per language**: When multiple servers match, see [ADR-0008](0008-redirection-request-strategies.md) for merging rules
+Different language servers require different project structures:
+
+| Server | Workspace Type | Files Created |
+|--------|----------------|---------------|
+| rust-analyzer | `cargo` | `Cargo.toml`, `src/main.rs` |
+| gopls | `gomod` | `go.mod`, `main.go` |
+| pyright | `none` | (virtual document only) |
+| typescript-language-server | `none` | (virtual document only) |
+
+For servers requiring real files:
+1. Create minimal temporary project structure
+2. Write injection content to appropriate file
+3. Initialize server with `rootUri` pointing to temp directory
+4. Wait for `publishDiagnostics` before querying
+5. Clean up temp directory on shutdown
+
+### Async Communication
+
+Language server communication uses synchronous stdio which blocks the thread. In treesitter-ls's async runtime (tokio), this requires `spawn_blocking` to avoid stalling other tasks.
+
+```rust
+let result = tokio::task::spawn_blocking(move || {
+    let conn = pool.get_connection("rust")?;
+    conn.request(method, params)
+}).await.ok().flatten();
+```
 
 ### Offset Translation
 
@@ -139,7 +195,7 @@ Host Document (Markdown)          Virtual Document (Rust)
 Cursor at line 4, col 5 in host ──▶ line 1, col 5 in virtual
 ```
 
-The existing `OffsetCalculator` in `src/analysis/offset_calculator.rs` provides this translation capability.
+Translation is straightforward for positions within a single injection. See [ADR-0008](0008-redirection-request-strategies.md) for complex cases involving cross-file references.
 
 ## Consequences
 
@@ -149,29 +205,41 @@ The existing `OffsetCalculator` in `src/analysis/offset_calculator.rs` provides 
 - **No editor configuration**: Works transparently; editor only talks to treesitter-ls
 - **Leverages existing detection**: Reuses injection detection from Tree-sitter queries
 - **Progressive enhancement**: Falls back gracefully to Tree-sitter when servers unavailable
+- **Low latency**: Connection pooling enables fast responses after initial spawn
 
 ### Negative
 
 - **Resource overhead**: Multiple language server processes consume memory; temp directories use disk space
 - **Complexity**: treesitter-ls becomes both server and client; protocol translation adds complexity
-- **Initialization latency**: Spawning language servers and waiting for indexing adds delay
+- **Initial latency**: First request to a language incurs server spawn time
 - **Debugging difficulty**: Multi-hop request/response makes troubleshooting harder
 - **Server-specific logic**: Each language server may need custom workspace provisioning
 
 ### Neutral
 
 - **Configuration burden**: Users must configure which servers to use per language
-- **Partial feature support**: Not all LSP methods will be redirected initially (incremental implementation)
+- **Partial feature support**: Not all LSP methods will be redirected (see [ADR-0008](0008-redirection-request-strategies.md))
+- **Server availability**: Graceful degradation when servers not installed
 
 ## Implementation Phases
 
-### Phase 1: Infrastructure (Done)
-- LSP client implementation in treesitter-ls
-- Server lifecycle management (spawn, shutdown)
+### Phase 1: Infrastructure (PoC Done)
+- Basic LSP client implementation
 - Workspace provisioning for rust-analyzer
 - Offset translation
+- Go-to-definition working
 
-### Phase 2-5: Feature Implementation
+### Phase 2: Connection Pool
+- Server connection pooling
+- Idle timeout and cleanup
+- Crash recovery
+
+### Phase 3: Multi-Language Support
+- Configuration system for server registry
+- Workspace provisioner abstraction
+- Support for pyright, gopls, typescript-language-server
+
+### Phase 4+: Feature Expansion
 See [ADR-0008](0008-redirection-request-strategies.md) for per-method implementation details.
 
 ## Related Decisions
