@@ -1,4 +1,4 @@
-# ADR-0006: LSP Redirection Architecture for Injection Regions
+# ADR-0006: LSP Bridge Architecture for Injection Regions
 
 ## Status
 
@@ -15,7 +15,7 @@ Markdown code blocks and other injection regions (e.g., JavaScript inside HTML `
 
 Modern editors can only attach one LSP server per buffer, meaning users must choose between treesitter-ls (fast semantic tokens for the host document) and a language-specific server (full features but only for the primary language).
 
-The key insight is: **treesitter-ls already knows where injection regions are and what languages they contain**. It can act as an LSP proxy, forwarding requests for injection regions to appropriate language servers.
+The key insight is: **treesitter-ls already knows where injection regions are and what languages they contain**. It can act as an LSP bridge, connecting injection regions to appropriate language servers with position translation.
 
 ### Language Server Constraints
 
@@ -27,42 +27,42 @@ Language servers have requirements beyond the LSP protocol that affect this arch
 
 **Indexing Time**: Language servers need time to index after `didOpen` before responding to queries. The `publishDiagnostics` notification signals indexing completion.
 
-These constraints mean redirection is not simply "forward request, return response"—servers may need specific initialization options and real files on disk.
+These constraints mean bridging is not simply "forward request, return response"—servers may need specific initialization options and real files on disk.
 
 ## Decision
 
-**Implement LSP Client capability in treesitter-ls to redirect requests for injection regions to configured language servers, with user-provided initialization options and connection pooling.**
+**Implement LSP Bridge capability in treesitter-ls to connect injection regions to configured language servers, with position translation, user-provided initialization options, and connection pooling.**
 
 ### Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        treesitter-ls                             │
+│                        treesitter-ls                            │
 ├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
+│                                                                 │
 │  ┌──────────────┐    ┌─────────────────┐    ┌────────────────┐  │
-│  │ LSP Handler  │───▶│RedirectionRouter│───▶│ PositionMapper │  │
+│  │ LSP Handler  │───▶│  BridgeRouter   │───▶│ PositionMapper │  │
 │  │ (lsp_impl)   │    │                 │    │                │  │
 │  └──────────────┘    └────────┬────────┘    └────────────────┘  │
-│                               │                                  │
-│                               ▼                                  │
+│                               │                                 │
+│                               ▼                                 │
 │                      ┌─────────────────┐                        │
 │                      │   ServerPool    │                        │
 │                      │ ┌─────────────┐ │                        │
-│                      │ │rust-analyzer│ │  (on-demand spawn,    │
-│                      │ ├─────────────┤ │   connection reuse)   │
+│                      │ │rust-analyzer│ │  (on-demand spawn,     │
+│                      │ ├─────────────┤ │   connection reuse)    │
 │                      │ │  pyright    │ │                        │
 │                      │ ├─────────────┤ │                        │
 │                      │ │   gopls     │ │                        │
 │                      │ └─────────────┘ │                        │
 │                      └────────┬────────┘                        │
-│                               │                                  │
-│                               ▼                                  │
+│                               │                                 │
+│                               ▼                                 │
 │                      ┌─────────────────┐                        │
 │                      │  TempFileStore  │                        │
 │                      │ (injection.rs)  │                        │
 │                      └─────────────────┘                        │
-│                                                                  │
+│                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -72,25 +72,25 @@ These constraints mean redirection is not simply "forward request, return respon
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    ServerPool                            │
+│                    ServerPool                           │
 ├─────────────────────────────────────────────────────────┤
-│                                                          │
-│  get_connection("rust")                                  │
-│       │                                                  │
-│       ▼                                                  │
+│                                                         │
+│  get_connection("rust")                                 │
+│       │                                                 │
+│       ▼                                                 │
 │  ┌─────────────────┐    ┌─────────────────────────────┐ │
 │  │ Connection      │ NO │ Spawn new server            │ │
 │  │ exists?         │───▶│ Wait for initialization     │ │
 │  └────────┬────────┘    │ Store in pool               │ │
 │           │ YES         └─────────────────────────────┘ │
-│           ▼                                              │
+│           ▼                                             │
 │  ┌─────────────────┐                                    │
 │  │ Return existing │                                    │
 │  │ connection      │                                    │
 │  └─────────────────┘                                    │
-│                                                          │
+│                                                         │
 │  Idle timeout ───▶ Shutdown unused servers              │
-│                                                          │
+│                                                         │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -143,12 +143,12 @@ Lifecycle:
 
 ### Server Registry and Configuration
 
-Redirection requires knowing which server to use for each language:
+The bridge requires knowing which server to use for each language:
 
 ```json
 {
   "treesitter-ls": {
-    "redirections": {
+    "bridge": {
       "rust-analyzer": {
         "languages": ["rust"],
         "command": "rust-analyzer",
@@ -179,16 +179,16 @@ Redirection requires knowing which server to use for each language:
 
 #### Why Server-Centric Configuration
 
-| Concern | `languages` field | `redirections` field |
-|---------|-------------------|---------------------|
-| **Purpose** | Tree-sitter parser/query config | LSP server forwarding |
+| Concern | `languages` field | `bridge` field |
+|---------|-------------------|----------------|
+| **Purpose** | Tree-sitter parser/query config | LSP server connection |
 | **Primary key** | Language name | Server name |
 | **Scope** | One language per entry | One server → multiple filetypes |
 | **Example** | Parser paths, query sources | `typos-lsp` for markdown + asciidoc |
 
 This separation allows:
 - **Cross-cutting servers**: `typos-lsp` provides diagnostics for multiple languages
-- **Multiple servers per language**: `pyright` + `ruff` for Python (both in `redirections`)
+- **Multiple servers per language**: `pyright` + `ruff` for Python (both in `bridge`)
 - **Independent lifecycle**: Tree-sitter config doesn't affect server spawning
 
 ### Workspace Provisioning
@@ -227,7 +227,7 @@ treesitter-ls configuration points rust-analyzer to this file:
 
 ```json
 {
-  "redirections": {
+  "bridge": {
     "rust-analyzer": {
       "languages": ["rust"],
       "command": "rust-analyzer",
@@ -264,9 +264,9 @@ let result = tokio::task::spawn_blocking(move || {
 }).await.ok().flatten();
 ```
 
-### Offset Translation
+### Position Translation
 
-Injection regions exist at specific byte offsets within the host document. Redirected requests must translate positions:
+Injection regions exist at specific byte offsets within the host document. The bridge must translate positions bidirectionally:
 
 ```
 Host Document (Markdown)          Virtual Document (Rust)
@@ -307,7 +307,7 @@ Translation is straightforward for positions within a single injection. See [ADR
 ### Neutral
 
 - **Configuration optional**: Some servers (pyright) work out-of-the-box; others (rust-analyzer) benefit from `initializationOptions` for full functionality
-- **Partial feature support**: Not all LSP methods will be redirected (see [ADR-0008](0008-redirection-request-strategies.md))
+- **Partial feature support**: Not all LSP methods will be bridged (see [ADR-0008](0008-redirection-request-strategies.md))
 - **Server availability**: Graceful degradation when servers not installed
 
 ## Implementation Phases
@@ -334,4 +334,4 @@ See [ADR-0008](0008-redirection-request-strategies.md) for per-method implementa
 
 - [ADR-0005](0005-language-detection-fallback-chain.md): Language detection applies to both host documents and injection regions
 - [ADR-0007](0007-virtual-document-model.md): How multiple injections are represented as virtual documents
-- [ADR-0008](0008-redirection-request-strategies.md): Per-method redirection strategies
+- [ADR-0008](0008-redirection-request-strategies.md): Per-method bridge strategies

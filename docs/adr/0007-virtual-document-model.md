@@ -6,7 +6,7 @@ Proposed
 
 ## Context
 
-When redirecting LSP requests for injection regions (see [ADR-0006](0006-language-server-redirection.md)), we need to represent injection content to language servers. A host document may contain multiple injection regions of the same language (e.g., multiple Rust code blocks in Markdown).
+When bridging LSP requests for injection regions (see [ADR-0006](0006-language-server-redirection.md)), we need to represent injection content to language servers. A host document may contain multiple injection regions of the same language (e.g., multiple Rust code blocks in Markdown).
 
 The key question: **Should multiple injections of the same language be merged into a single virtual document, or kept separate?**
 
@@ -195,5 +195,5 @@ One language server process handles **all virtual documents** for that language,
 
 ## Related Decisions
 
-- [ADR-0006](0006-language-server-redirection.md): Core LSP redirection architecture
-- [ADR-0008](0008-redirection-request-strategies.md): Per-method redirection strategies
+- [ADR-0006](0006-language-server-redirection.md): Core LSP bridge architecture
+- [ADR-0008](0008-redirection-request-strategies.md): Per-method bridge strategies

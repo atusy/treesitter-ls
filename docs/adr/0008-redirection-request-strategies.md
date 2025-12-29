@@ -1,4 +1,4 @@
-# ADR-0008: Request-Specific Redirection Strategies
+# ADR-0008: Request-Specific Bridge Strategies
 
 ## Status
 
@@ -6,7 +6,7 @@ Proposed
 
 ## Context
 
-When redirecting LSP requests for injection regions (see [ADR-0006](0006-language-server-redirection.md)), different LSP methods have different characteristics:
+When bridging LSP requests for injection regions (see [ADR-0006](0006-language-server-redirection.md)), different LSP methods have different characteristics:
 
 | Method | Latency Sensitivity | treesitter-ls Capability | Language Server Value |
 |--------|---------------------|--------------------------|----------------------|
@@ -16,7 +16,7 @@ When redirecting LSP requests for injection regions (see [ADR-0006](0006-languag
 | Hover | Low | None | Full |
 | Diagnostics | Low (background) | None | Full |
 
-A single redirection strategy doesn't fit all methods. We need per-method strategies that balance latency, correctness, and user experience.
+A single bridge strategy doesn't fit all methods. We need per-method strategies that balance latency, correctness, and user experience.
 
 ### Injection Isolation Constraint
 
@@ -24,29 +24,29 @@ A single redirection strategy doesn't fit all methods. We need per-method strate
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Host Document: tutorial.md                                      │
-│                                                                  │
+│  Host Document: tutorial.md                                     │
+│                                                                 │
 │  ┌─────────────────────┐    ┌─────────────────────────────────┐ │
 │  │ ```rust             │    │ External crate file             │ │
 │  │ use serde::Serialize│    │ (serde/lib.rs)                  │ │
 │  │                     │    │                                 │ │
-│  │ #[derive(Serialize)]│    │ This file does NOT exist in    │ │
-│  │ struct Foo { ... }  │    │ our virtual workspace!         │ │
+│  │ #[derive(Serialize)]│    │ This file does NOT exist in     │ │
+│  │ struct Foo { ... }  │    │ our virtual workspace!          │ │
 │  │ ```                 │    │                                 │ │
 │  └─────────────────────┘    └─────────────────────────────────┘ │
-│         │                              ▲                         │
-│         │  go-to-definition            │                         │
-│         │  on "Serialize"              │                         │
-│         └──────────────────────────────┘                         │
-│                                                                  │
+│         │                              ▲                        │
+│         │  go-to-definition            │                        │
+│         │  on "Serialize"              │                        │
+│         └──────────────────────────────┘                        │
+│                                                                 │
 │  Result: Location in serde crate → FILTER OUT (not in injection)│
-│                                                                  │
+│                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ## Decision
 
-**Implement different redirection strategies based on LSP method characteristics, with careful handling of cross-file results and edit operations.**
+**Implement different bridge strategies based on LSP method characteristics, with careful handling of cross-file results and edit operations.**
 
 ### Strategy 1: Parallel Fetch with Progressive Refinement
 
@@ -57,27 +57,27 @@ A single redirection strategy doesn't fit all methods. We need per-method strate
  Request ──────────▶│      treesitter-ls          │
                     │  ┌─────────────────────┐    │
                     │  │ Tree-sitter tokens  │────│───▶ Immediate response
-                    │  │ (local, fast)       │    │     (use if redirect slow)
+                    │  │ (local, fast)       │    │     (use if bridge slow)
                     │  └─────────────────────┘    │
                     │           ▼                 │
                     │  ┌─────────────────────┐    │
-                    │  │ Redirect to server  │────│───▶ rust-analyzer
+                    │  │ Bridge to server    │────│───▶ rust-analyzer
                     │  │ (async)             │    │
                     │  └─────────────────────┘    │
                     │           │                 │
                     │           ▼                 │
                     │  ┌─────────────────────┐    │
                     │  │ Merge results       │────│───▶ Final response
-                    │  │ (prefer redirected) │    │     (replaces initial)
+                    │  │ (prefer bridged)    │    │     (replaces initial)
                     │  └─────────────────────┘    │
                     └─────────────────────────────┘
 ```
 
 **Behavior**:
-1. Fetch Tree-sitter tokens and redirected tokens **in parallel**
-2. If redirected response arrives first → use it directly
+1. Fetch Tree-sitter tokens and bridged tokens **in parallel**
+2. If bridged response arrives first → use it directly
 3. If Tree-sitter response arrives first → return it immediately as provisional response
-4. When redirected response arrives → send updated tokens (via `textDocument/semanticTokens/full` refresh mechanism)
+4. When bridged response arrives → send updated tokens (via `textDocument/semanticTokens/full` refresh mechanism)
 
 **Rationale**: Users see instant syntax highlighting from Tree-sitter while richer type-aware tokens arrive asynchronously.
 
@@ -151,17 +151,17 @@ These methods return edits that must be carefully validated.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Completion Response                           │
+│                    Completion Response                          │
 ├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  CompletionItem {                                                │
-│    label: "HashMap",                                             │
+│                                                                 │
+│  CompletionItem {                                               │
+│    label: "HashMap",                                            │
 │    textEdit: { range: ..., newText: "HashMap" },  ──▶ TRANSLATE │
-│    additionalTextEdits: [                                        │
-│      { range: {0,0}-{0,0}, newText: "use std::...\n" }           │
+│    additionalTextEdits: [                                       │
+│      { range: {0,0}-{0,0}, newText: "use std::...\n" }          │
 │    ]  ──────────────────────────────────────────────▶ VALIDATE  │
-│  }                                                               │
-│                                                                  │
+│  }                                                              │
+│                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -313,5 +313,5 @@ When multiple servers are configured for a language:
 
 ## Related Decisions
 
-- [ADR-0006](0006-language-server-redirection.md): Core LSP redirection architecture
+- [ADR-0006](0006-language-server-redirection.md): Core LSP bridge architecture
 - [ADR-0007](0007-virtual-document-model.md): How injections are represented as virtual documents
