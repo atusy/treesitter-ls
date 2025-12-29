@@ -21,17 +21,17 @@ The key insight is: **treesitter-ls already knows where injection regions are an
 
 Language servers have requirements beyond the LSP protocol that affect this architecture:
 
-**Project Context**: Many language servers require project structure to function. rust-analyzer returns `null` for go-to-definition on standalone `.rs` files—it needs `Cargo.toml` and proper workspace context to build its symbol index.
+**Project Context**: Many language servers require project structure to function. rust-analyzer returns `null` for go-to-definition on standalone `.rs` files—it needs a project definition (via `Cargo.toml` or `rust-project.json`/`linkedProjects`) to build its symbol index.
 
 **Real Files on Disk**: Some servers index from the filesystem rather than relying solely on `didOpen` content. Virtual URIs (`file:///virtual/...`) are insufficient.
 
 **Indexing Time**: Language servers need time to index after `didOpen` before responding to queries. The `publishDiagnostics` notification signals indexing completion.
 
-These constraints mean redirection is not simply "forward request, return response"—it requires creating temporary project structures tailored to each language server.
+These constraints mean redirection is not simply "forward request, return response"—servers may need specific initialization options and real files on disk.
 
 ## Decision
 
-**Implement LSP Client capability in treesitter-ls to redirect requests for injection regions to configured language servers, with server-specific workspace provisioning and connection pooling.**
+**Implement LSP Client capability in treesitter-ls to redirect requests for injection regions to configured language servers, with user-provided initialization options and connection pooling.**
 
 ### Architecture Overview
 
@@ -59,8 +59,8 @@ These constraints mean redirection is not simply "forward request, return respon
 │                               │                                  │
 │                               ▼                                  │
 │                      ┌─────────────────┐                        │
-│                      │WorkspaceManager │                        │
-│                      │ (temp projects) │                        │
+│                      │  TempFileStore  │                        │
+│                      │ (injection.rs)  │                        │
 │                      └─────────────────┘                        │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
@@ -152,25 +152,30 @@ Redirection requires knowing which server to use for each language:
       "rust-analyzer": {
         "languages": ["rust"],
         "command": "rust-analyzer",
-        "args": [],
-        "workspaceType": "cargo"
+        "initializationOptions": {
+          "linkedProjects": ["~/.config/treesitter-ls/rust-project.json"]
+        }
       },
       "pyright": {
         "languages": ["python"],
         "command": "pyright-langserver",
-        "args": ["--stdio"],
-        "workspaceType": "none"
+        "args": ["--stdio"]
       },
       "gopls": {
         "languages": ["go"],
-        "command": "gopls",
-        "args": [],
-        "workspaceType": "gomod"
+        "command": "gopls"
       }
     }
   }
 }
 ```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `languages` | Yes | Languages this server handles |
+| `command` | Yes | Server executable |
+| `args` | No | Command-line arguments |
+| `initializationOptions` | No | Passed to server's `initialize` request |
 
 #### Why Server-Centric Configuration
 
@@ -188,21 +193,65 @@ This separation allows:
 
 ### Workspace Provisioning
 
-Different language servers require different project structures:
+Different language servers have different project structure requirements:
 
-| Server | Workspace Type | Files Created |
-|--------|----------------|---------------|
-| rust-analyzer | `cargo` | `Cargo.toml`, `src/main.rs` |
-| gopls | `gomod` | `go.mod`, `main.go` |
-| pyright | `none` | (virtual document only) |
-| typescript-language-server | `none` | (virtual document only) |
+| Server | Requirement | Solution |
+|--------|-------------|----------|
+| rust-analyzer | Project context | `linkedProjects` pointing to user's `rust-project.json` |
+| gopls | Module context | v0.15.0+ has improved standalone file support |
+| pyright | None | Works with virtual documents via `didOpen` |
+| typescript-language-server | None | Works with virtual documents via `didOpen` |
 
-For servers requiring real files:
-1. Create minimal temporary project structure
-2. Write injection content to appropriate file
-3. Initialize server with `rootUri` pointing to temp directory
+#### Design: User-Configured LSP + Minimal File Creation
+
+treesitter-ls should be as simple as possible:
+1. **Create only the source file** with injection content
+2. **Pass user-provided settings** to the language server via `initializationOptions`
+3. **Let the language server** use its own configuration mechanisms
+
+For rust-analyzer, users maintain a `rust-project.json` that defines a virtual crate:
+
+```json
+// ~/.config/treesitter-ls/rust-project.json
+{
+  "sysroot_src": "~/.rustup/toolchains/stable-x86_64-apple-darwin/lib/rustlib/src/rust/library",
+  "crates": [{
+    "root_module": "/tmp/treesitter-ls/injection.rs",
+    "edition": "2021",
+    "deps": []
+  }]
+}
+```
+
+treesitter-ls configuration points rust-analyzer to this file:
+
+```json
+{
+  "redirections": {
+    "rust-analyzer": {
+      "languages": ["rust"],
+      "command": "rust-analyzer",
+      "initializationOptions": {
+        "linkedProjects": ["~/.config/treesitter-ls/rust-project.json"]
+      }
+    }
+  }
+}
+```
+
+**Benefits**:
+- treesitter-ls has zero language-specific knowledge
+- Users leverage familiar LSP configuration patterns
+- Full flexibility for any language server
+- Simpler implementation (just write one file)
+
+#### Provisioning Flow
+
+1. Create temporary file with injection content (e.g., `/tmp/treesitter-ls/injection.rs`)
+2. Initialize server with user-provided `initializationOptions`
+3. Send `didOpen` notification
 4. Wait for `publishDiagnostics` before querying
-5. Clean up temp directory on shutdown
+5. Clean up temp file on shutdown
 
 ### Async Communication
 
@@ -250,15 +299,14 @@ Translation is straightforward for positions within a single injection. See [ADR
 
 ### Negative
 
-- **Resource overhead**: Multiple language server processes consume memory; temp directories use disk space
+- **Resource overhead**: Multiple language server processes consume memory
 - **Complexity**: treesitter-ls becomes both server and client; protocol translation adds complexity
 - **Initial latency**: First request to a language incurs server spawn time
 - **Debugging difficulty**: Multi-hop request/response makes troubleshooting harder
-- **Server-specific logic**: Each language server may need custom workspace provisioning
 
 ### Neutral
 
-- **Configuration burden**: Users must configure which servers to use per language
+- **Configuration optional**: Some servers (pyright) work out-of-the-box; others (rust-analyzer) benefit from `initializationOptions` for full functionality
 - **Partial feature support**: Not all LSP methods will be redirected (see [ADR-0008](0008-redirection-request-strategies.md))
 - **Server availability**: Graceful degradation when servers not installed
 
@@ -266,7 +314,7 @@ Translation is straightforward for positions within a single injection. See [ADR
 
 ### Phase 1: Infrastructure (PoC Done)
 - Basic LSP client implementation
-- Workspace provisioning for rust-analyzer
+- Temporary source file creation
 - Offset translation
 - Go-to-definition working
 
@@ -275,10 +323,9 @@ Translation is straightforward for positions within a single injection. See [ADR
 - Idle timeout and cleanup
 - Crash recovery
 
-### Phase 3: Multi-Language Support
-- Configuration system for server registry
-- Workspace provisioner abstraction
-- Support for pyright, gopls, typescript-language-server
+### Phase 3: Configuration System
+- `initializationOptions` passthrough
+- Support for multiple language servers
 
 ### Phase 4+: Feature Expansion
 See [ADR-0008](0008-redirection-request-strategies.md) for per-method implementation details.
