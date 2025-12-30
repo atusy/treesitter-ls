@@ -28,197 +28,11 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-095 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-096 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
-  product_backlog: [
-    {
-      id: "PBI-096",
-      story: {
-        role: "documentation author with Rust code blocks",
-        capability:
-          "see progress indicators when rust-analyzer is spawning or processing",
-        benefit:
-          "I understand why responses are slow and know the system is working",
-      },
-      acceptance_criteria: [
-        {
-          criterion:
-            "Progress helper functions for rust-analyzer operations exist in progress.rs",
-          verification:
-            "Unit test: ra_progress_token, create_ra_progress_begin, create_ra_progress_end return correct ProgressParams",
-        },
-        {
-          criterion:
-            "goto_definition sends Begin progress before spawn_blocking and End progress after completion",
-          verification:
-            "E2E test: trigger go-to-definition on Rust code block, verify progress notification sequence",
-        },
-        {
-          criterion:
-            "hover sends Begin progress before spawn_blocking and End progress after completion",
-          verification:
-            "E2E test: trigger hover on Rust code block, verify progress notification sequence",
-        },
-        {
-          criterion:
-            "Progress End notification correctly indicates success or timeout/failure",
-          verification:
-            "Unit test: create_ra_progress_end with success=true/false returns appropriate messages",
-        },
-      ],
-      status: "ready",
-    },
-  ],
+  product_backlog: [],
 
-  sprint: {
-    number: 74,
-    pbi_id: "PBI-096",
-    goal:
-      "Documentation authors see progress indicators during rust-analyzer operations",
-    status: "review",
-    subtasks: [
-      {
-        test: "Unit test: ra_progress_token returns correct token format 'treesitter-ls/rust-analyzer/{operation}'",
-        implementation:
-          "Add ra_progress_token function in progress.rs following existing progress_token pattern",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "cc6b605",
-            message:
-              "feat(lsp): add ra_progress_token function for rust-analyzer operations",
-            phase: "green",
-          },
-        ],
-        notes: [],
-      },
-      {
-        test: "Unit test: create_ra_progress_begin returns ProgressParams with 'Waiting for rust-analyzer...' title",
-        implementation:
-          "Add create_ra_progress_begin function in progress.rs following create_progress_begin pattern",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "f7085f2",
-            message:
-              "feat(lsp): add create_ra_progress_begin for rust-analyzer progress",
-            phase: "green",
-          },
-        ],
-        notes: [],
-      },
-      {
-        test: "Unit test: create_ra_progress_end with success=true returns 'rust-analyzer completed' message",
-        implementation:
-          "Add create_ra_progress_end function in progress.rs with success message",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "c7de187",
-            message:
-              "feat(lsp): add create_ra_progress_end for rust-analyzer completion",
-            phase: "green",
-          },
-        ],
-        notes: ["Combined with subtask 4 using Obvious Implementation"],
-      },
-      {
-        test: "Unit test: create_ra_progress_end with success=false returns 'rust-analyzer timed out' message",
-        implementation:
-          "Update create_ra_progress_end to handle failure/timeout message",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "c7de187",
-            message:
-              "feat(lsp): add create_ra_progress_end for rust-analyzer completion",
-            phase: "green",
-          },
-        ],
-        notes: ["Combined with subtask 3 using Obvious Implementation"],
-      },
-      {
-        test: "Integration test: goto_definition sends Begin progress before spawn_blocking",
-        implementation:
-          "Add send_notification::<Progress>(create_ra_progress_begin) before spawn_blocking in goto_definition",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "6d84254",
-            message:
-              "feat(lsp): add progress notifications for rust-analyzer operations",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Combined with subtasks 6-8 using Obvious Implementation",
-          "Follow pattern in lsp_impl.rs lines 500-502 for auto-install progress",
-        ],
-      },
-      {
-        test: "Integration test: goto_definition sends End progress after spawn_blocking completes",
-        implementation:
-          "Add send_notification::<Progress>(create_ra_progress_end) after spawn_blocking result handling",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "6d84254",
-            message:
-              "feat(lsp): add progress notifications for rust-analyzer operations",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Combined with subtasks 5,7,8 using Obvious Implementation",
-          "Pass success=true if definition found, success=false if timeout/None",
-        ],
-      },
-      {
-        test: "Integration test: hover sends Begin progress before spawn_blocking",
-        implementation:
-          "Add send_notification::<Progress>(create_ra_progress_begin) before spawn_blocking in hover",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "6d84254",
-            message:
-              "feat(lsp): add progress notifications for rust-analyzer operations",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Combined with subtasks 5,6,8 using Obvious Implementation",
-          "Same pattern as goto_definition",
-        ],
-      },
-      {
-        test: "Integration test: hover sends End progress after spawn_blocking completes",
-        implementation:
-          "Add send_notification::<Progress>(create_ra_progress_end) after spawn_blocking result handling",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "6d84254",
-            message:
-              "feat(lsp): add progress notifications for rust-analyzer operations",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Combined with subtasks 5-7 using Obvious Implementation",
-          "Pass success=true if hover found, success=false if timeout/None",
-        ],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -228,8 +42,16 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-71: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-72: git log -- scrum.yaml, scrum.ts
   completed: [
+    {
+      number: 74,
+      pbi_id: "PBI-096",
+      goal:
+        "Documentation authors see progress indicators during rust-analyzer operations",
+      status: "done",
+      subtasks: [],
+    },
     {
       number: 73,
       pbi_id: "PBI-095",
@@ -238,31 +60,23 @@ const scrum: ScrumDashboard = {
       status: "done",
       subtasks: [],
     },
-    {
-      number: 72,
-      pbi_id: "PBI-094",
-      goal:
-        "Documentation authors can continue using go-to-definition after rust-analyzer crashes",
-      status: "done",
-      subtasks: [],
-    },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-71: git log -- scrum.yaml, scrum.ts
+  // Recent 2 retrospectives | Sprint 1-72: git log -- scrum.yaml, scrum.ts
   retrospectives: [
     {
-      sprint: 73,
+      sprint: 74,
       improvements: [
         {
           action:
-            "Document poll-based timeout pattern for blocking readers in CLAUDE.md",
+            "Document spawn_blocking + synchronous methods pattern for external language server communication in CLAUDE.md",
           timing: "sprint",
           status: "active",
           outcome: null,
         },
         {
           action:
-            "Consider serializing rust-analyzer tests to avoid parallel spawn race conditions",
+            "Consider adding timeout tests at tokio::time::timeout level for spawn_blocking calls",
           timing: "sprint",
           status: "active",
           outcome: null,
@@ -270,11 +84,12 @@ const scrum: ScrumDashboard = {
       ],
     },
     {
-      sprint: 72,
+      sprint: 73,
       improvements: [
         {
-          action: "Add E2E test for go-to-definition after rust-analyzer crash",
-          timing: "product",
+          action:
+            "Consider serializing rust-analyzer tests to avoid parallel spawn race conditions",
+          timing: "sprint",
           status: "active",
           outcome: null,
         },
