@@ -16,21 +16,28 @@ use tower_lsp::lsp_types::*;
 ///
 /// Creates the appropriate file structure based on workspace type:
 /// - Cargo: Creates Cargo.toml and src/main.rs
-/// - Generic: Creates virtual.<ext> file (not yet implemented)
+/// - Generic: Creates virtual.<ext> file only
 ///
 /// Returns the path to the virtual file that should be used for LSP operations.
 pub fn setup_workspace(
     temp_dir: &Path,
     workspace_type: WorkspaceType,
-    _extension: &str,
+    extension: &str,
 ) -> Option<PathBuf> {
     match workspace_type {
         WorkspaceType::Cargo => setup_cargo_workspace(temp_dir),
-        WorkspaceType::Generic => {
-            // TODO: Will be implemented in subtask 3
-            None
-        }
+        WorkspaceType::Generic => setup_generic_workspace(temp_dir, extension),
     }
+}
+
+/// Set up a generic workspace with just a virtual file.
+///
+/// Creates a single virtual.<ext> file in the temp directory.
+/// No project structure (Cargo.toml, package.json, etc.) is created.
+fn setup_generic_workspace(temp_dir: &Path, extension: &str) -> Option<PathBuf> {
+    let virtual_file = temp_dir.join(format!("virtual.{}", extension));
+    std::fs::write(&virtual_file, "").ok()?;
+    Some(virtual_file)
 }
 
 /// Set up workspace files with optional workspace type.
@@ -1116,7 +1123,10 @@ mod tests {
 
         // Call setup_workspace with Generic type and "py" extension
         let result = setup_workspace(&temp_path, WorkspaceType::Generic, "py");
-        assert!(result.is_some(), "setup_workspace should succeed for Generic");
+        assert!(
+            result.is_some(),
+            "setup_workspace should succeed for Generic"
+        );
 
         let virtual_file = result.unwrap();
 
@@ -1126,10 +1136,7 @@ mod tests {
             virtual_file, expected_virtual_file,
             "virtual_file should be virtual.py for Generic workspace"
         );
-        assert!(
-            expected_virtual_file.exists(),
-            "virtual.py should exist"
-        );
+        assert!(expected_virtual_file.exists(), "virtual.py should exist");
 
         // Verify NO Cargo.toml was created
         let cargo_toml = temp_path.join("Cargo.toml");
