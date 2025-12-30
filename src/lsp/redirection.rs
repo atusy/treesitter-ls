@@ -1118,4 +1118,59 @@ mod tests {
             "Expected None due to timeout, but got a response"
         );
     }
+
+    #[tokio::test]
+    async fn timeout_returns_graceful_none_not_panic() {
+        use std::time::Duration;
+
+        // Create a mock server that immediately closes stdout (simulates crash/error)
+        let mut process = Command::new("true") // 'true' exits immediately with status 0
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+
+        // Wait for process to exit so stdout becomes EOF
+        let _ = process.wait();
+
+        let stdout = process.stdout.take().unwrap();
+        let stdout_reader = BufReader::new(stdout);
+
+        let mut conn = LanguageServerConnection {
+            process: Command::new("cat") // Need a live process for struct
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+            request_id: 0,
+            stdout_reader,
+            temp_dir: None,
+            document_version: None,
+            timeout_duration: Duration::from_millis(100),
+        };
+
+        // Both methods should return None gracefully, not panic
+        // Test goto_definition_async
+        let goto_result = conn
+            .goto_definition_async("file:///test.rs", Position::new(0, 0))
+            .await;
+        assert!(
+            goto_result.is_none(),
+            "goto_definition should return None on timeout/error"
+        );
+
+        // Test hover_async
+        let hover_result = conn
+            .hover_async("file:///test.rs", Position::new(0, 0))
+            .await;
+        assert!(
+            hover_result.is_none(),
+            "hover should return None on timeout/error"
+        );
+
+        // The test passing without panic proves the methods handle
+        // timeout/error gracefully with Option<T> return type
+    }
 }
