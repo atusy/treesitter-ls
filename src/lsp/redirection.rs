@@ -1298,4 +1298,49 @@ mod tests {
             "src/main.rs should NOT exist for Generic workspace"
         );
     }
+
+    #[test]
+    fn language_server_connection_stores_connection_info_after_spawn() {
+        use crate::config::settings::BridgeServerConfig;
+
+        if !check_rust_analyzer_available() {
+            return;
+        }
+
+        let config = BridgeServerConfig {
+            command: "rust-analyzer".to_string(),
+            args: None,
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: None, // Defaults to Cargo
+        };
+
+        let conn = LanguageServerConnection::spawn(&config).unwrap();
+
+        // After spawn, connection should have connection_info populated
+        assert!(
+            conn.connection_info.is_some(),
+            "connection_info should be populated after spawn"
+        );
+
+        let conn_info = conn.connection_info.as_ref().unwrap();
+
+        // The temp_dir in ConnectionInfo should match the connection's temp_dir
+        assert!(
+            conn.temp_dir.is_some(),
+            "temp_dir should be set after spawn"
+        );
+        assert_eq!(
+            conn_info.temp_dir,
+            conn.temp_dir.clone().unwrap(),
+            "ConnectionInfo temp_dir should match LanguageServerConnection temp_dir"
+        );
+
+        // For Cargo workspace, virtual_file_path should be src/main.rs
+        let expected_virtual_file = conn.temp_dir.as_ref().unwrap().join("src").join("main.rs");
+        assert_eq!(
+            conn_info.virtual_file_path, expected_virtual_file,
+            "virtual_file_path should be src/main.rs for Cargo workspace"
+        );
+    }
 }
