@@ -1237,4 +1237,54 @@ mod tests {
         let expected_uri = format!("file://{}/virtual.py", temp_path.display());
         assert_eq!(uri.unwrap(), expected_uri);
     }
+
+    #[test]
+    fn write_virtual_file_writes_to_correct_path_for_cargo() {
+        use crate::config::settings::WorkspaceType;
+        use tempfile::tempdir;
+
+        let temp = tempdir().unwrap();
+        let temp_path = temp.path().to_path_buf();
+
+        // Setup Cargo workspace
+        let virtual_file = setup_workspace(&temp_path, WorkspaceType::Cargo, "rs").unwrap();
+        let conn_info = ConnectionInfo::new(temp_path.clone(), virtual_file.clone());
+
+        // Write content to virtual file
+        let content = "fn main() { println!(\"hello\"); }";
+        let result = conn_info.write_virtual_file(content);
+        assert!(result.is_ok(), "write_virtual_file should succeed");
+
+        // Verify content was written to src/main.rs
+        let main_rs = temp_path.join("src").join("main.rs");
+        let read_content = std::fs::read_to_string(&main_rs).unwrap();
+        assert_eq!(read_content, content);
+    }
+
+    #[test]
+    fn write_virtual_file_writes_to_correct_path_for_generic() {
+        use crate::config::settings::WorkspaceType;
+        use tempfile::tempdir;
+
+        let temp = tempdir().unwrap();
+        let temp_path = temp.path().to_path_buf();
+
+        // Setup Generic workspace
+        let virtual_file = setup_workspace(&temp_path, WorkspaceType::Generic, "py").unwrap();
+        let conn_info = ConnectionInfo::new(temp_path.clone(), virtual_file.clone());
+
+        // Write content to virtual file
+        let content = "print('hello')";
+        let result = conn_info.write_virtual_file(content);
+        assert!(result.is_ok(), "write_virtual_file should succeed");
+
+        // Verify content was written to virtual.py (NOT src/main.rs)
+        let virtual_py = temp_path.join("virtual.py");
+        let read_content = std::fs::read_to_string(&virtual_py).unwrap();
+        assert_eq!(read_content, content);
+
+        // Verify no src/main.rs was created
+        let main_rs = temp_path.join("src").join("main.rs");
+        assert!(!main_rs.exists(), "src/main.rs should NOT exist for Generic workspace");
+    }
 }
