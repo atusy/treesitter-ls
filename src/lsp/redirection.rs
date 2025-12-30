@@ -18,6 +18,8 @@ pub struct LanguageServerConnection {
     stdout_reader: BufReader<ChildStdout>,
     /// Temporary directory for the workspace (cleaned up on drop)
     temp_dir: Option<PathBuf>,
+    /// Track the version of the document currently open (None = not open yet)
+    document_version: Option<i32>,
 }
 
 impl LanguageServerConnection {
@@ -63,6 +65,7 @@ impl LanguageServerConnection {
             request_id: 0,
             stdout_reader,
             temp_dir: Some(temp_dir),
+            document_version: None,
         };
 
         // Send initialize request with workspace root
@@ -170,10 +173,13 @@ impl LanguageServerConnection {
         }
     }
 
-    /// Open a document in the language server and write it to the temp workspace.
+    /// Open or update a document in the language server and write it to the temp workspace.
     ///
     /// For rust-analyzer, we need to write the file to disk for proper indexing.
     /// The content is written to src/main.rs in the temp workspace.
+    ///
+    /// On first call, sends `textDocument/didOpen` and waits for indexing.
+    /// On subsequent calls, sends `textDocument/didChange` (no wait needed).
     pub fn did_open(&mut self, _uri: &str, language_id: &str, content: &str) -> Option<()> {
         // Write content to the actual file on disk (rust-analyzer needs this)
         if let Some(temp_dir) = &self.temp_dir {
@@ -184,21 +190,36 @@ impl LanguageServerConnection {
         // Use the real file URI from the temp workspace
         let real_uri = self.main_rs_uri()?;
 
-        let params = serde_json::json!({
-            "textDocument": {
-                "uri": real_uri,
-                "languageId": language_id,
-                "version": 1,
-                "text": content,
-            }
-        });
+        if let Some(version) = self.document_version {
+            // Document already open - send didChange instead
+            let new_version = version + 1;
+            let params = serde_json::json!({
+                "textDocument": {
+                    "uri": real_uri,
+                    "version": new_version,
+                },
+                "contentChanges": [{ "text": content }]
+            });
+            self.send_notification("textDocument/didChange", params)?;
+            self.document_version = Some(new_version);
+        } else {
+            // First time - send didOpen and wait for indexing
+            let params = serde_json::json!({
+                "textDocument": {
+                    "uri": real_uri,
+                    "languageId": language_id,
+                    "version": 1,
+                    "text": content,
+                }
+            });
+            self.send_notification("textDocument/didOpen", params)?;
+            self.document_version = Some(1);
 
-        self.send_notification("textDocument/didOpen", params)?;
-
-        // Wait for rust-analyzer to index the project.
-        // rust-analyzer needs time to parse the file and build its index.
-        // We wait for diagnostic notifications which indicate indexing is complete.
-        self.wait_for_indexing();
+            // Wait for rust-analyzer to index the project.
+            // rust-analyzer needs time to parse the file and build its index.
+            // We wait for diagnostic notifications which indicate indexing is complete.
+            self.wait_for_indexing();
+        }
 
         Some(())
     }
@@ -307,6 +328,11 @@ impl LanguageServerConnection {
     /// Check if the language server process is still alive
     pub fn is_alive(&mut self) -> bool {
         matches!(self.process.try_wait(), Ok(None))
+    }
+
+    /// Check if a document has already been opened in this connection
+    pub fn is_document_open(&self) -> bool {
+        self.document_version.is_some()
     }
 
     /// Shutdown the language server and clean up temp directory
@@ -735,5 +761,21 @@ mod tests {
         // Verify still alive (same process reused)
         let alive2 = pool.with_connection("rust-analyzer", |conn| conn.is_alive());
         assert!(alive2.unwrap(), "Second access: same process still alive");
+    }
+
+    #[test]
+    fn language_server_connection_tracks_open_documents() {
+        if !check_rust_analyzer_available() {
+            return;
+        }
+
+        let mut conn = LanguageServerConnection::spawn_rust_analyzer().unwrap();
+
+        // Initially, document should not be marked as open
+        assert!(!conn.is_document_open());
+
+        // After did_open, document should be marked as open
+        conn.did_open("file:///test.rs", "rust", "fn main() {}");
+        assert!(conn.is_document_open());
     }
 }
