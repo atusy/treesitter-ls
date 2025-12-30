@@ -135,11 +135,95 @@ const scrum: ScrumDashboard = {
             "Integration test: did_open writes to generic workspace virtual file correctly",
         },
       ],
-      status: "ready",
+      status: "done",
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 78,
+    pbi_id: "PBI-101",
+    goal:
+      "Documentation authors have spawn() use workspace_type configuration so the workspace type feature works end-to-end",
+    status: "done",
+    subtasks: [
+      {
+        test:
+          "Test that LanguageServerConnection stores ConnectionInfo after spawn",
+        implementation:
+          "Add connection_info: Option<ConnectionInfo> field to LanguageServerConnection struct",
+        type: "behavioral",
+        status: "completed",
+        commits: [
+          { hash: "23a892a", message: "test(spawn): add test for LanguageServerConnection stores ConnectionInfo", phase: "green" as const },
+          { hash: "128a0fe", message: "feat(spawn): add connection_info field to LanguageServerConnection", phase: "green" as const },
+        ],
+        notes: [
+          "ConnectionInfo already exists in redirection.rs with virtual_file_uri() and write_virtual_file() methods",
+        ],
+      },
+      {
+        test:
+          "Test that spawn() with generic workspace_type creates virtual file structure (not Cargo.toml)",
+        implementation:
+          "Replace hardcoded Cargo workspace creation in spawn() with setup_workspace_with_option() call",
+        type: "behavioral",
+        status: "completed",
+        commits: [
+          { hash: "68f7aca", message: "test(spawn): add tests for spawn() workspace_type integration", phase: "green" as const },
+          { hash: "5a51ba1", message: "feat(spawn): use setup_workspace_with_option() in spawn()", phase: "green" as const },
+        ],
+        notes: [
+          "setup_workspace_with_option() already exists and handles None -> Cargo default",
+          "Added language_to_extension() helper for mapping language names to extensions",
+        ],
+      },
+      {
+        test:
+          "Test that connection.virtual_file_uri() returns correct path after spawn (delegates to ConnectionInfo)",
+        implementation:
+          "Add virtual_file_uri() method that returns connection_info.virtual_file_uri()",
+        type: "behavioral",
+        status: "completed",
+        commits: [
+          { hash: "77067c7", message: "test(spawn): add test for connection.virtual_file_uri() method", phase: "green" as const },
+          { hash: "b0c26d4", message: "feat(spawn): add virtual_file_uri() method to LanguageServerConnection", phase: "green" as const },
+        ],
+        notes: [
+          "main_rs_uri() kept with doc note to prefer virtual_file_uri()",
+        ],
+      },
+      {
+        test:
+          "Test that did_open() writes to generic workspace virtual file correctly",
+        implementation:
+          "Update did_open() to use connection_info.write_virtual_file() instead of hardcoded path",
+        type: "behavioral",
+        status: "completed",
+        commits: [
+          { hash: "5098689", message: "test(spawn): add test for did_open() virtual file write", phase: "green" as const },
+          { hash: "8b96737", message: "refactor(spawn): update did_open() to use ConnectionInfo methods", phase: "refactoring" as const },
+        ],
+        notes: [
+          "Updated did_open() to use connection_info.write_virtual_file() and virtual_file_uri()",
+        ],
+      },
+      {
+        test:
+          "Test that goto_definition() and hover() use virtual_file_uri() for requests",
+        implementation:
+          "Update goto_definition() and hover() to use virtual_file_uri() instead of main_rs_uri()",
+        type: "behavioral",
+        status: "completed",
+        commits: [
+          { hash: "46dd3b5", message: "test(spawn): add test for goto_definition and hover using virtual_file_uri", phase: "green" as const },
+          { hash: "c89d89b", message: "refactor(spawn): update goto_definition and hover to use virtual_file_uri", phase: "refactoring" as const },
+        ],
+        notes: [
+          "Replaced main_rs_uri() calls with virtual_file_uri() in both methods",
+        ],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
