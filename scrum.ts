@@ -72,7 +72,7 @@ const scrum: ScrumDashboard = {
           verification: "Unit test: timeout produces None, not panic/error",
         },
       ],
-      status: "ready",
+      status: "done",
     },
   ],
 
@@ -81,7 +81,7 @@ const scrum: ScrumDashboard = {
     pbi_id: "PBI-095",
     goal:
       "Documentation authors get responsive go-to-definition even when rust-analyzer is slow",
-    status: "in_progress",
+    status: "done",
     subtasks: [
       {
         test:
