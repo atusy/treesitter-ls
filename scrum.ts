@@ -166,8 +166,8 @@ const scrum: ScrumDashboard = {
         implementation:
           "Add bridge: Option<BridgeSettings> field to TreeSitterSettings",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "0a43fc7", message: "feat(config): add optional bridge field to TreeSitterSettings", phase: "green" }],
         notes: [
           "Ensure backward compatibility - missing bridge field should parse to None",
         ],
