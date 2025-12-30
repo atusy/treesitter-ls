@@ -795,6 +795,7 @@ impl LanguageServer for TreeSitterLs {
                 ),
                 selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
                 ..ServerCapabilities::default()
             },
         })
@@ -1910,6 +1911,156 @@ impl LanguageServer for TreeSitterLs {
         };
 
         Ok(Some(mapped_response))
+    }
+
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!(
+                    "hover called for {} at line {} col {}",
+                    uri, position.line, position.character
+                ),
+            )
+            .await;
+
+        // Get document
+        let Some(doc) = self.documents.get(&uri) else {
+            self.client
+                .log_message(MessageType::INFO, "No document found")
+                .await;
+            return Ok(None);
+        };
+        let text = doc.text();
+
+        // Get the language for this document
+        let Some(language_name) = self.get_language_for_document(&uri) else {
+            log::debug!(target: "treesitter_ls::hover", "No language detected");
+            return Ok(None);
+        };
+
+        // Get injection query to detect injection regions
+        let Some(injection_query) = self.language.get_injection_query(&language_name) else {
+            return Ok(None);
+        };
+
+        // Get the parse tree
+        let Some(tree) = doc.tree() else {
+            return Ok(None);
+        };
+
+        // Collect all injection regions
+        let injections = crate::language::injection::collect_all_injections(
+            &tree.root_node(),
+            text,
+            Some(injection_query.as_ref()),
+        );
+
+        let Some(injections) = injections else {
+            return Ok(None);
+        };
+
+        // Convert Position to byte offset
+        let mapper = PositionMapper::new(text);
+        let Some(byte_offset) = mapper.position_to_byte(position) else {
+            return Ok(None);
+        };
+
+        // Find which injection region (if any) contains this position
+        let matching_region = injections.iter().find(|inj| {
+            let start = inj.content_node.start_byte();
+            let end = inj.content_node.end_byte();
+            byte_offset >= start && byte_offset < end
+        });
+
+        let Some(region) = matching_region else {
+            // Not in an injection region - return None
+            return Ok(None);
+        };
+
+        // Only handle Rust for now
+        if region.language != "rust" {
+            return Ok(None);
+        }
+
+        // Create cacheable region for position translation
+        let cacheable = crate::language::injection::CacheableInjectionRegion::from_region_info(
+            region, "temp", text,
+        );
+
+        // Extract virtual document content
+        let virtual_content = cacheable.extract_content(text).to_owned();
+
+        // Translate host position to virtual position
+        let virtual_position = cacheable.translate_host_to_virtual(position);
+
+        // Create a virtual URI for the injection
+        let virtual_uri = format!(
+            "file:///tmp/treesitter-ls-virtual-{}.rs",
+            std::process::id()
+        );
+
+        // Get rust-analyzer connection from pool
+        let pool_key = "rust-analyzer".to_string();
+
+        // Take connection from pool (will spawn if none exists)
+        let conn = match self.rust_analyzer_pool.take_connection(&pool_key) {
+            Some(c) => c,
+            None => {
+                self.client
+                    .log_message(MessageType::ERROR, "Failed to spawn rust-analyzer")
+                    .await;
+                return Ok(None);
+            }
+        };
+
+        let virtual_uri_clone = virtual_uri.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let mut conn = conn;
+            // Open the virtual document
+            conn.did_open(&virtual_uri_clone, "rust", &virtual_content);
+
+            // Request hover
+            let result = conn.hover(&virtual_uri_clone, virtual_position);
+
+            // Return both result and connection for pool return
+            (result, conn)
+        })
+        .await;
+
+        // Handle spawn_blocking result and return connection to pool
+        let hover = match result {
+            Ok((hover, conn)) => {
+                self.rust_analyzer_pool.return_connection(&pool_key, conn);
+                hover
+            }
+            Err(e) => {
+                self.client
+                    .log_message(MessageType::ERROR, format!("spawn_blocking failed: {}", e))
+                    .await;
+                None
+            }
+        };
+
+        // Translate hover response range back to host document (if present)
+        let Some(mut hover_response) = hover else {
+            return Ok(None);
+        };
+
+        // Translate the range if present
+        if let Some(range) = hover_response.range {
+            let mapped_start = cacheable.translate_virtual_to_host(range.start);
+            let mapped_end = cacheable.translate_virtual_to_host(range.end);
+            hover_response.range = Some(Range {
+                start: mapped_start,
+                end: mapped_end,
+            });
+        }
+
+        Ok(Some(hover_response))
     }
 }
 
