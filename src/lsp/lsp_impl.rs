@@ -29,7 +29,7 @@ use super::auto_install::{InstallingLanguages, get_injected_languages};
 use super::progress::{
     create_progress_begin, create_progress_end, create_ra_progress_begin, create_ra_progress_end,
 };
-use super::redirection::RustAnalyzerPool;
+use super::redirection::LanguageServerPool;
 
 fn lsp_legend_types() -> Vec<SemanticTokenType> {
     LEGEND_TYPES
@@ -63,8 +63,8 @@ pub struct TreeSitterLs {
     installing_languages: InstallingLanguages,
     /// Tracks parsers that have crashed
     failed_parsers: FailedParserRegistry,
-    /// Pool of rust-analyzer connections for Rust injection redirection
-    rust_analyzer_pool: RustAnalyzerPool,
+    /// Pool of language server connections for injection redirection
+    language_server_pool: LanguageServerPool,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -81,7 +81,7 @@ impl std::fmt::Debug for TreeSitterLs {
             .field("settings", &"ArcSwap<WorkspaceSettings>")
             .field("installing_languages", &"InstallingLanguages")
             .field("failed_parsers", &"FailedParserRegistry")
-            .field("rust_analyzer_pool", &"RustAnalyzerPool")
+            .field("language_server_pool", &"LanguageServerPool")
             .finish_non_exhaustive()
     }
 }
@@ -106,7 +106,7 @@ impl TreeSitterLs {
             settings: ArcSwap::new(Arc::new(WorkspaceSettings::default())),
             installing_languages: InstallingLanguages::new(),
             failed_parsers,
-            rust_analyzer_pool: RustAnalyzerPool::new(),
+            language_server_pool: LanguageServerPool::new(),
         }
     }
 
@@ -1854,7 +1854,7 @@ impl LanguageServer for TreeSitterLs {
         // Get rust-analyzer connection from pool (or spawn new one)
         // Use spawn_blocking because rust-analyzer communication is synchronous blocking I/O
         let pool_key = "rust-analyzer".to_string();
-        let has_existing = self.rust_analyzer_pool.has_connection(&pool_key);
+        let has_existing = self.language_server_pool.has_connection(&pool_key);
         self.client
             .log_message(
                 MessageType::INFO,
@@ -1866,7 +1866,7 @@ impl LanguageServer for TreeSitterLs {
             .await;
 
         // Take connection from pool (will spawn if none exists)
-        let conn = match self.rust_analyzer_pool.take_connection(&pool_key) {
+        let conn = match self.language_server_pool.take_connection(&pool_key) {
             Some(c) => c,
             None => {
                 self.client
@@ -1898,7 +1898,7 @@ impl LanguageServer for TreeSitterLs {
         // Handle spawn_blocking result and return connection to pool
         let (definition, success) = match result {
             Ok((def, conn)) => {
-                self.rust_analyzer_pool.return_connection(&pool_key, conn);
+                self.language_server_pool.return_connection(&pool_key, conn);
                 let is_some = def.is_some();
                 (def, is_some)
             }
@@ -2095,7 +2095,7 @@ impl LanguageServer for TreeSitterLs {
         let pool_key = "rust-analyzer".to_string();
 
         // Take connection from pool (will spawn if none exists)
-        let conn = match self.rust_analyzer_pool.take_connection(&pool_key) {
+        let conn = match self.language_server_pool.take_connection(&pool_key) {
             Some(c) => c,
             None => {
                 self.client
@@ -2127,7 +2127,7 @@ impl LanguageServer for TreeSitterLs {
         // Handle spawn_blocking result and return connection to pool
         let (hover, success) = match result {
             Ok((hover, conn)) => {
-                self.rust_analyzer_pool.return_connection(&pool_key, conn);
+                self.language_server_pool.return_connection(&pool_key, conn);
                 let is_some = hover.is_some();
                 (hover, is_some)
             }

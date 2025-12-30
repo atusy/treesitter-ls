@@ -440,13 +440,16 @@ impl Drop for LanguageServerConnection {
     }
 }
 
-/// Pool of rust-analyzer connections for reuse across go-to-definition requests
-/// Thread-safe via DashMap. Each connection is keyed by a unique name.
-pub struct RustAnalyzerPool {
+/// Pool of language server connections for reuse across requests.
+/// Thread-safe via DashMap. Each connection is keyed by a unique name (typically server name).
+///
+/// Previously named RustAnalyzerPool - now generalized for any language server configured
+/// via BridgeServerConfig.
+pub struct LanguageServerPool {
     connections: DashMap<String, (LanguageServerConnection, Instant)>,
 }
 
-impl RustAnalyzerPool {
+impl LanguageServerPool {
     /// Create a new empty pool
     pub fn new() -> Self {
         Self {
@@ -482,7 +485,7 @@ impl RustAnalyzerPool {
     }
 }
 
-impl Default for RustAnalyzerPool {
+impl Default for LanguageServerPool {
     fn default() -> Self {
         Self::new()
     }
@@ -535,7 +538,7 @@ mod tests {
             return;
         }
 
-        let pool = RustAnalyzerPool::new();
+        let pool = LanguageServerPool::new();
 
         // First take spawns a new connection
         let mut conn = pool.take_connection("test-key").unwrap();
