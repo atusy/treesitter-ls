@@ -43,22 +43,118 @@ const scrum: ScrumDashboard = {
       acceptance_criteria: [
         {
           criterion:
-            "Progress notification shown when rust-analyzer is spawning",
+            "Progress helper functions for rust-analyzer operations exist in progress.rs",
           verification:
-            "E2E test: trigger go-to-definition, observe progress indicator during spawn",
+            "Unit test: ra_progress_token, create_ra_progress_begin, create_ra_progress_end return correct ProgressParams",
         },
         {
           criterion:
-            "Progress notification shown during request processing",
+            "goto_definition sends Begin progress before spawn_blocking and End progress after completion",
           verification:
-            "E2E test: slow request shows processing indicator until complete",
+            "E2E test: trigger go-to-definition on Rust code block, verify progress notification sequence",
+        },
+        {
+          criterion:
+            "hover sends Begin progress before spawn_blocking and End progress after completion",
+          verification:
+            "E2E test: trigger hover on Rust code block, verify progress notification sequence",
+        },
+        {
+          criterion:
+            "Progress End notification correctly indicates success or timeout/failure",
+          verification:
+            "Unit test: create_ra_progress_end with success=true/false returns appropriate messages",
         },
       ],
       status: "ready",
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 74,
+    pbi_id: "PBI-096",
+    goal:
+      "Documentation authors see progress indicators during rust-analyzer operations",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "Unit test: ra_progress_token returns correct token format 'treesitter-ls/rust-analyzer/{operation}'",
+        implementation:
+          "Add ra_progress_token function in progress.rs following existing progress_token pattern",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Unit test: create_ra_progress_begin returns ProgressParams with 'Waiting for rust-analyzer...' title",
+        implementation:
+          "Add create_ra_progress_begin function in progress.rs following create_progress_begin pattern",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Unit test: create_ra_progress_end with success=true returns 'rust-analyzer completed' message",
+        implementation:
+          "Add create_ra_progress_end function in progress.rs with success message",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Unit test: create_ra_progress_end with success=false returns 'rust-analyzer timed out' message",
+        implementation:
+          "Update create_ra_progress_end to handle failure/timeout message",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Integration test: goto_definition sends Begin progress before spawn_blocking",
+        implementation:
+          "Add send_notification::<Progress>(create_ra_progress_begin) before spawn_blocking in goto_definition",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Follow pattern in lsp_impl.rs lines 500-502 for auto-install progress",
+        ],
+      },
+      {
+        test: "Integration test: goto_definition sends End progress after spawn_blocking completes",
+        implementation:
+          "Add send_notification::<Progress>(create_ra_progress_end) after spawn_blocking result handling",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Pass success=true if definition found, success=false if timeout/None",
+        ],
+      },
+      {
+        test: "Integration test: hover sends Begin progress before spawn_blocking",
+        implementation:
+          "Add send_notification::<Progress>(create_ra_progress_begin) before spawn_blocking in hover",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Same pattern as goto_definition"],
+      },
+      {
+        test: "Integration test: hover sends End progress after spawn_blocking completes",
+        implementation:
+          "Add send_notification::<Progress>(create_ra_progress_end) after spawn_blocking result handling",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Pass success=true if hover found, success=false if timeout/None"],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
