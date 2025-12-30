@@ -45,6 +45,25 @@ const scrum: ScrumDashboard = {
       ],
       status: "ready",
     },
+    {
+      id: "PBI-094",
+      story: {
+        role: "developer editing Lua files",
+        capability: "have unit tests detect concurrent LSP request race conditions",
+        benefit: "catch timing bugs earlier without relying on E2E tests",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Unit test simulates concurrent didOpen + semanticTokens/full",
+          verification: "cargo test test_concurrent_semantic_tokens",
+        },
+        {
+          criterion: "Unit test simulates concurrent didOpen + selection_range",
+          verification: "cargo test test_concurrent_selection_range",
+        },
+      ],
+      status: "draft",
+    },
   ],
 
   sprint: null,
@@ -57,7 +76,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 3) | Sprint 1-68: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-69: git log -- scrum.yaml, scrum.ts
   completed: [
     {
       number: 71,
@@ -120,17 +139,28 @@ const scrum: ScrumDashboard = {
       status: "done",
       subtasks: [],
     },
-    {
-      number: 69,
-      pbi_id: "PBI-087",
-      goal: "ServerPool for connection reuse (<200ms latency)",
-      status: "done",
-      subtasks: [],
-    },
   ],
 
-  // Recent 3 retrospectives | Sprint 1-67: git log -- scrum.yaml, scrum.ts
+  // Recent 2 retrospectives | Sprint 1-69: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    {
+      sprint: 71,
+      improvements: [
+        {
+          action: "Document Tower-LSP concurrent request processing pattern in CLAUDE.md",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "Added section on race conditions, solution patterns, and guidelines for new LSP handlers",
+        },
+        {
+          action: "Add unit tests for concurrent LSP request scenarios",
+          timing: "product",
+          status: "active",
+          outcome: null,
+        },
+      ],
+    },
     {
       sprint: 70,
       improvements: [
@@ -147,34 +177,6 @@ const scrum: ScrumDashboard = {
           timing: "product",
           status: "completed",
           outcome: "Created PBI-090 for Lua support; hover test is valid but needs CI setup",
-        },
-      ],
-    },
-    {
-      sprint: 69,
-      improvements: [
-        {
-          action: "cleanup_idle() needs timer wiring",
-          timing: "product",
-          status: "completed",
-          outcome: "Created PBI-091 for idle cleanup",
-        },
-        {
-          action: "ServerPool not yet in lsp_impl.rs",
-          timing: "sprint",
-          status: "completed",
-          outcome: "ServerPool integrated in Sprint 70",
-        },
-      ],
-    },
-    {
-      sprint: 68,
-      improvements: [
-        {
-          action: "PoC sync subprocess needs production refactor",
-          timing: "product",
-          status: "completed",
-          outcome: "ServerPool with connection reuse implemented in Sprint 69",
         },
       ],
     },
