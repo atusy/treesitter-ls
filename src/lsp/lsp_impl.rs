@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex};
 
 use super::auto_install::{InstallingLanguages, get_injected_languages};
 use super::progress::{create_progress_begin, create_progress_end};
-use super::redirection::ServerPool;
+use super::redirection::RustAnalyzerPool;
 
 fn lsp_legend_types() -> Vec<SemanticTokenType> {
     LEGEND_TYPES
@@ -61,10 +61,8 @@ pub struct TreeSitterLs {
     installing_languages: InstallingLanguages,
     /// Tracks parsers that have crashed
     failed_parsers: FailedParserRegistry,
-    /// Pool of language server connections for injection redirection
-    /// Currently unused - infrastructure for future integration (PBI-087)
-    #[allow(dead_code)]
-    server_pool: ServerPool,
+    /// Pool of rust-analyzer connections for Rust injection redirection
+    rust_analyzer_pool: RustAnalyzerPool,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -81,7 +79,7 @@ impl std::fmt::Debug for TreeSitterLs {
             .field("settings", &"ArcSwap<WorkspaceSettings>")
             .field("installing_languages", &"InstallingLanguages")
             .field("failed_parsers", &"FailedParserRegistry")
-            .field("server_pool", &"ServerPool")
+            .field("rust_analyzer_pool", &"RustAnalyzerPool")
             .finish_non_exhaustive()
     }
 }
@@ -106,7 +104,7 @@ impl TreeSitterLs {
             settings: ArcSwap::new(Arc::new(WorkspaceSettings::default())),
             installing_languages: InstallingLanguages::new(),
             failed_parsers,
-            server_pool: ServerPool::new(),
+            rust_analyzer_pool: RustAnalyzerPool::new(),
         }
     }
 
@@ -1776,25 +1774,58 @@ impl LanguageServer for TreeSitterLs {
             .log_message(MessageType::INFO, format!("Virtual URI: {}", virtual_uri))
             .await;
 
-        // Spawn rust-analyzer and get definition
+        // Get rust-analyzer connection from pool (or spawn new one)
         // Use spawn_blocking because rust-analyzer communication is synchronous blocking I/O
+        let pool_key = "rust-analyzer".to_string();
+        let has_existing = self.rust_analyzer_pool.has_connection(&pool_key);
         self.client
-            .log_message(MessageType::INFO, "Spawning rust-analyzer...")
+            .log_message(
+                MessageType::INFO,
+                format!(
+                    "Getting rust-analyzer from pool (existing: {})...",
+                    has_existing
+                ),
+            )
             .await;
+
+        // Take connection from pool (will spawn if none exists)
+        let conn = match self.rust_analyzer_pool.take_connection(&pool_key) {
+            Some(c) => c,
+            None => {
+                self.client
+                    .log_message(MessageType::ERROR, "Failed to spawn rust-analyzer")
+                    .await;
+                return Ok(None);
+            }
+        };
+
         let virtual_uri_clone = virtual_uri.clone();
-        let definition = tokio::task::spawn_blocking(move || {
-            let mut conn = super::redirection::LanguageServerConnection::spawn_rust_analyzer()?;
-
+        let result = tokio::task::spawn_blocking(move || {
+            let mut conn = conn;
             // Open the virtual document
-            conn.did_open(&virtual_uri_clone, "rust", &virtual_content)?;
+            conn.did_open(&virtual_uri_clone, "rust", &virtual_content);
 
-            // Request definition (no waiting here - let read_response_for_id handle it)
-            // Connection will be dropped here, shutting down rust-analyzer
-            conn.goto_definition(&virtual_uri_clone, virtual_position)
+            // Request definition
+            let result = conn.goto_definition(&virtual_uri_clone, virtual_position);
+
+            // Return both result and connection for pool return
+            (result, conn)
         })
-        .await
-        .ok()
-        .flatten();
+        .await;
+
+        // Handle spawn_blocking result and return connection to pool
+        let definition = match result {
+            Ok((def, conn)) => {
+                self.rust_analyzer_pool.return_connection(&pool_key, conn);
+                def
+            }
+            Err(e) => {
+                self.client
+                    .log_message(MessageType::ERROR, format!("spawn_blocking failed: {}", e))
+                    .await;
+                None
+            }
+        };
         self.client
             .log_message(
                 MessageType::INFO,
