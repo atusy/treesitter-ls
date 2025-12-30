@@ -9,62 +9,13 @@ const userStoryRoles = [
 
 const scrum: ScrumDashboard = {
   product_goal: {
-    statement:
-      "Extend LSP bridge with additional request types and fix E2E test gaps",
-    success_metrics: [
-      {
-        metric: "ADR-0006 Phase 2 partial",
-        target: "Crash recovery implemented (SATISFIED via get_or_spawn)",
-      },
-      {
-        metric: "ADR-0008 Strategy 2 expansion",
-        target: "signatureHelp delegation working in injection regions",
-      },
-      {
-        metric: "E2E test reliability",
-        target: "Standalone Lua files return semantic tokens and selection ranges (SATISFIED in Sprint 71)",
-      },
-    ],
+    statement: "",
+    success_metrics: [],
   },
 
   // Completed PBIs: PBI-001 through PBI-090, PBI-093 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
-  product_backlog: [
-    {
-      id: "PBI-092",
-      story: {
-        role: "Rustacean editing Markdown",
-        capability: "see function signatures when typing arguments in Rust code blocks",
-        benefit: "know parameter types without leaving the editor",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "signatureHelp delegated to rust-analyzer",
-          verification: "cargo test --test test_signature_help (new E2E test)",
-        },
-      ],
-      status: "ready",
-    },
-    {
-      id: "PBI-094",
-      story: {
-        role: "developer editing Lua files",
-        capability: "have unit tests detect concurrent LSP request race conditions",
-        benefit: "catch timing bugs earlier without relying on E2E tests",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "Unit test simulates concurrent didOpen + semanticTokens/full",
-          verification: "cargo test test_concurrent_semantic_tokens",
-        },
-        {
-          criterion: "Unit test simulates concurrent didOpen + selection_range",
-          verification: "cargo test test_concurrent_selection_range",
-        },
-      ],
-      status: "draft",
-    },
-  ],
+  product_backlog: [],
 
   sprint: null,
 
@@ -85,14 +36,17 @@ const scrum: ScrumDashboard = {
       status: "done",
       subtasks: [
         {
-          test: "minimal_init.lua configures searchPaths pointing to deps/treesitter",
-          implementation: "Add initializationOptions with searchPaths to LSP config",
+          test:
+            "minimal_init.lua configures searchPaths pointing to deps/treesitter",
+          implementation:
+            "Add initializationOptions with searchPaths to LSP config",
           type: "behavioral",
           status: "completed",
           commits: [
             {
               hash: "69c14b9",
-              message: "feat(lsp): fix race condition in semantic tokens for dynamically loaded languages",
+              message:
+                "feat(lsp): fix race condition in semantic tokens for dynamically loaded languages",
               phase: "green",
             },
           ],
@@ -103,31 +57,39 @@ const scrum: ScrumDashboard = {
         },
         {
           test: "E2E: test_lsp_semantic.lua passes for example.lua",
-          implementation: "Verify semantic tokens returned for standalone Lua files",
+          implementation:
+            "Verify semantic tokens returned for standalone Lua files",
           type: "behavioral",
           status: "completed",
           commits: [
             {
               hash: "69c14b9",
-              message: "feat(lsp): fix race condition in semantic tokens for dynamically loaded languages",
+              message:
+                "feat(lsp): fix race condition in semantic tokens for dynamically loaded languages",
               phase: "green",
             },
           ],
-          notes: ["2 tests pass: semantic tokens work for standalone .lua files"],
+          notes: [
+            "2 tests pass: semantic tokens work for standalone .lua files",
+          ],
         },
         {
           test: "E2E: test_lsp_select.lua passes for example.lua",
-          implementation: "Verify selection ranges work for standalone Lua files",
+          implementation:
+            "Verify selection ranges work for standalone Lua files",
           type: "behavioral",
           status: "completed",
           commits: [
             {
               hash: "69c14b9",
-              message: "feat(lsp): fix race condition in semantic tokens for dynamically loaded languages",
+              message:
+                "feat(lsp): fix race condition in semantic tokens for dynamically loaded languages",
               phase: "green",
             },
           ],
-          notes: ["17 tests pass: selection ranges work for standalone .lua files"],
+          notes: [
+            "17 tests pass: selection ranges work for standalone .lua files",
+          ],
         },
       ],
     },
@@ -147,7 +109,8 @@ const scrum: ScrumDashboard = {
       sprint: 71,
       improvements: [
         {
-          action: "Document Tower-LSP concurrent request processing pattern in CLAUDE.md",
+          action:
+            "Document Tower-LSP concurrent request processing pattern in CLAUDE.md",
           timing: "immediate",
           status: "completed",
           outcome:
@@ -176,7 +139,8 @@ const scrum: ScrumDashboard = {
             "Fix 4 failing E2E tests: Lua standalone (select x2, semantic x1), hover test env",
           timing: "product",
           status: "completed",
-          outcome: "Created PBI-090 for Lua support; hover test is valid but needs CI setup",
+          outcome:
+            "Created PBI-090 for Lua support; hover test is valid but needs CI setup",
         },
       ],
     },
