@@ -6,7 +6,7 @@ Proposed
 
 ## Context
 
-When bridging LSP requests for injection regions (see [ADR-0006](0006-language-server-redirection.md)), we need to represent injection content to language servers. A host document may contain multiple injection regions of the same language (e.g., multiple Rust code blocks in Markdown).
+When bridging LSP requests for injection regions (see [ADR-0006](0006-language-server-bridge.md)), we need to represent injection content to language servers. A host document may contain multiple injection regions of the same language (e.g., multiple Rust code blocks in Markdown).
 
 The key question: **Should multiple injections of the same language be merged into a single virtual document, or kept separate?**
 
@@ -139,7 +139,7 @@ Virtual documents may be **logical** (in-memory only) or **materialized** (writt
 **Why materialization is sometimes required**: Some language servers (notably rust-analyzer) index from the filesystem rather than relying solely on `didOpen` content. They return `null` for queries when files don't exist on disk or lack project context.
 
 For materialized documents:
-- Create temporary project structure (see [ADR-0006](0006-language-server-redirection.md#server-specific-workspace-provisioning))
+- Create temporary project structure (see [ADR-0006](0006-language-server-bridge.md#server-specific-workspace-provisioning))
 - Write injection content to real file
 - Use real file URI in LSP communication
 - Clean up on document close or server shutdown
@@ -195,5 +195,5 @@ One language server process handles **all virtual documents** for that language,
 
 ## Related Decisions
 
-- [ADR-0006](0006-language-server-redirection.md): Core LSP bridge architecture
-- [ADR-0008](0008-redirection-request-strategies.md): Per-method bridge strategies
+- [ADR-0006](0006-language-server-bridge.md): Core LSP bridge architecture
+- [ADR-0008](0008-language-server-bridge-request-strategies.md): Per-method bridge strategies
