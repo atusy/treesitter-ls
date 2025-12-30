@@ -511,7 +511,42 @@ pub struct CleanupStats {
 }
 
 /// The prefix used for all treesitter-ls temporary directories
-const TEMP_DIR_PREFIX: &str = "treesitter-ls-";
+pub const TEMP_DIR_PREFIX: &str = "treesitter-ls-";
+
+/// Default max age for stale temp directory cleanup (24 hours)
+pub const DEFAULT_CLEANUP_MAX_AGE: std::time::Duration =
+    std::time::Duration::from_secs(24 * 60 * 60);
+
+/// Perform startup cleanup of stale temp directories.
+///
+/// This is called during LSP server initialization to clean up
+/// orphaned temporary directories from crashed sessions.
+///
+/// The cleanup is non-blocking and logs any errors rather than failing.
+pub fn startup_cleanup() {
+    let temp_dir = std::env::temp_dir();
+
+    match cleanup_stale_temp_dirs(&temp_dir, DEFAULT_CLEANUP_MAX_AGE) {
+        Ok(stats) => {
+            if stats.dirs_removed > 0 || stats.dirs_failed > 0 {
+                log::info!(
+                    target: "treesitter_ls::cleanup",
+                    "Startup cleanup: removed {} stale dirs, kept {}, failed {}",
+                    stats.dirs_removed,
+                    stats.dirs_kept,
+                    stats.dirs_failed
+                );
+            }
+        }
+        Err(e) => {
+            log::warn!(
+                target: "treesitter_ls::cleanup",
+                "Startup cleanup failed to read temp directory: {}",
+                e
+            );
+        }
+    }
+}
 
 /// Clean up stale temporary directories created by treesitter-ls.
 ///
@@ -934,5 +969,28 @@ mod tests {
         // In this case both should succeed since we didn't actually block removal
         assert_eq!(stats.dirs_removed, 2, "Both directories should be removed");
         assert_eq!(stats.dirs_failed, 0, "No failures expected in this test");
+    }
+
+    #[test]
+    fn startup_cleanup_can_be_called_without_panic() {
+        // Test that startup_cleanup() can be called without panicking.
+        // It uses the real system temp dir, so we just verify it doesn't crash.
+        // Any stale directories it finds will be cleaned up.
+        startup_cleanup();
+
+        // If we get here, the function completed without panicking
+        // We can't easily verify the exact behavior since it uses the real temp dir,
+        // but we can verify the function signature and error handling work correctly.
+    }
+
+    #[test]
+    fn default_cleanup_max_age_is_24_hours() {
+        use std::time::Duration;
+
+        assert_eq!(
+            DEFAULT_CLEANUP_MAX_AGE,
+            Duration::from_secs(24 * 60 * 60),
+            "Default max age should be 24 hours"
+        );
     }
 }
