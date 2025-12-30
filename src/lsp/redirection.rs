@@ -296,10 +296,12 @@ impl Drop for LanguageServerConnection {
 }
 
 use std::collections::HashMap;
+use std::time::Instant;
 
-/// A pooled connection to a language server process
+/// A pooled connection to a language server process with usage tracking
 pub struct PooledConnection {
     process: Child,
+    last_used: Instant,
 }
 
 impl PooledConnection {
@@ -312,7 +314,10 @@ impl PooledConnection {
             .stderr(Stdio::null())
             .spawn()
             .ok()?;
-        Some(Self { process })
+        Some(Self {
+            process,
+            last_used: Instant::now(),
+        })
     }
 
     /// Check if the process is still alive
@@ -353,8 +358,16 @@ impl ServerPool {
     }
 
     /// Get a mutable reference to a connection for the given server name
+    /// Updates the last_used timestamp on access
     pub fn get_mut(&mut self, name: &str) -> Option<&mut PooledConnection> {
-        self.connections.get_mut(name)
+        let conn = self.connections.get_mut(name)?;
+        conn.last_used = Instant::now();
+        Some(conn)
+    }
+
+    /// Get the last_used timestamp for a connection
+    pub fn last_used(&self, name: &str) -> Option<Instant> {
+        self.connections.get(name).map(|conn| conn.last_used)
     }
 
     /// Get an existing live connection or spawn a new one if dead/missing
@@ -465,6 +478,9 @@ mod tests {
 
         // Get last_used timestamp and verify it's recent
         let last_used = pool.last_used("test-server").unwrap();
-        assert!(last_used > before, "last_used should be after the before timestamp");
+        assert!(
+            last_used > before,
+            "last_used should be after the before timestamp"
+        );
     }
 }
