@@ -144,8 +144,8 @@ const scrum: ScrumDashboard = {
         implementation:
           "Create BridgeServerConfig struct with serde derives in src/config/settings.rs",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "e7b75b8", message: "feat(config): add BridgeServerConfig struct for bridge server configuration", phase: "green" }],
         notes: [
           "Define: command: String, args: Option<Vec<String>>, languages: Vec<String>, initialization_options: Option<serde_json::Value>",
         ],
@@ -155,8 +155,8 @@ const scrum: ScrumDashboard = {
         implementation:
           "Create BridgeSettings with servers: HashMap<String, BridgeServerConfig> in settings.rs",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "46b4e6f", message: "feat(config): add BridgeSettings struct for server map configuration", phase: "green" }],
         notes: [
           "JSON schema: { bridge: { servers: { 'rust-analyzer': { command: '...', ... } } } }",
         ],
