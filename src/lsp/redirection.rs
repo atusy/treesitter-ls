@@ -526,6 +526,19 @@ impl LanguageServerConnection {
         self.document_version.is_some()
     }
 
+    /// Set the timeout duration for LSP requests
+    ///
+    /// This timeout applies to goto_definition_async, hover_async, and other
+    /// async request methods that support timeout.
+    pub fn set_timeout(&mut self, timeout: Duration) {
+        self.timeout_duration = timeout;
+    }
+
+    /// Get the current timeout duration
+    pub fn timeout(&self) -> Duration {
+        self.timeout_duration
+    }
+
     /// Shutdown the language server and clean up temp directory
     pub fn shutdown(&mut self) {
         if let Some(shutdown_id) = self.send_request("shutdown", serde_json::json!(null)) {
@@ -1003,5 +1016,41 @@ mod tests {
             result.is_none(),
             "Expected None due to timeout, but got a response"
         );
+    }
+
+    #[test]
+    fn timeout_is_configurable_via_set_timeout() {
+        use std::time::Duration;
+
+        // Create a mock server
+        let mut process = Command::new("cat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+
+        let stdout = process.stdout.take().unwrap();
+        let stdout_reader = BufReader::new(stdout);
+
+        let mut conn = LanguageServerConnection {
+            process,
+            request_id: 0,
+            stdout_reader,
+            temp_dir: None,
+            document_version: None,
+            timeout_duration: DEFAULT_REQUEST_TIMEOUT,
+        };
+
+        // Default timeout should be 5 seconds
+        assert_eq!(conn.timeout_duration, Duration::from_secs(5));
+
+        // Set a custom timeout
+        conn.set_timeout(Duration::from_secs(10));
+        assert_eq!(conn.timeout_duration, Duration::from_secs(10));
+
+        // Can set timeout to a shorter duration
+        conn.set_timeout(Duration::from_millis(500));
+        assert_eq!(conn.timeout_duration, Duration::from_millis(500));
     }
 }
