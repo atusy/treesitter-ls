@@ -1505,4 +1505,43 @@ mod tests {
             "virtual_file_path should be src/main.rs for Cargo workspace_type"
         );
     }
+
+    #[test]
+    fn connection_virtual_file_uri_delegates_to_connection_info() {
+        use crate::config::settings::BridgeServerConfig;
+
+        if !check_rust_analyzer_available() {
+            return;
+        }
+
+        let config = BridgeServerConfig {
+            command: "rust-analyzer".to_string(),
+            args: None,
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: None, // Defaults to Cargo
+        };
+
+        let conn = LanguageServerConnection::spawn(&config).unwrap();
+
+        // virtual_file_uri() on connection should delegate to connection_info
+        let uri = conn.virtual_file_uri();
+        assert!(uri.is_some(), "virtual_file_uri should return Some");
+
+        let uri = uri.unwrap();
+        // Should be a file:// URI ending in src/main.rs for Cargo workspace
+        assert!(uri.starts_with("file://"), "URI should start with file://");
+        assert!(
+            uri.ends_with("src/main.rs"),
+            "URI should end with src/main.rs for Cargo workspace"
+        );
+
+        // Should match what main_rs_uri() returns (for backward compat)
+        let main_rs_uri = conn.main_rs_uri();
+        assert_eq!(
+            uri,
+            main_rs_uri.unwrap(),
+            "virtual_file_uri should match main_rs_uri for Cargo workspace"
+        );
+    }
 }
