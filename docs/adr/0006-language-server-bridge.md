@@ -97,8 +97,6 @@ These constraints mean bridging is not simply "forward request, return response"
 │  │ connection      │                                    │
 │  └─────────────────┘                                    │
 │                                                         │
-│  Idle timeout ───▶ Shutdown unused servers              │
-│                                                         │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -246,7 +244,6 @@ Example:
 | Event | Action |
 |-------|--------|
 | Document closed | Delete temp files for that document |
-| Server idle shutdown | Delete temp files for that server's languages |
 | treesitter-ls startup | Clean stale files from previous sessions |
 | treesitter-ls shutdown | Delete all temp files |
 
@@ -439,27 +436,31 @@ Translation is straightforward for positions within a single injection. See [ADR
 ## Implementation Phases
 
 ### Phase 1: Infrastructure (PoC Complete)
+
 - [x] Basic LSP client implementation
 - [x] Temporary source file creation
 - [x] Offset translation
 - [x] Go-to-definition working
 
 ### Phase 2: Connection Pool
-- [ ] Server connection pooling with `maxConcurrentServers` limit
-- [ ] Idle timeout and cleanup
+
+- [ ] Server connection pooling
 - [ ] Crash recovery and respawn
 
 ### Phase 3: Configuration System
+
 - [ ] `initializationOptions` passthrough
 - [ ] Support for multiple language servers
 - [ ] Multi-server routing by capability
 
 ### Phase 4: Robustness
+
 - [ ] Ready detection with multiple signals
 - [ ] Request timeout handling
 - [ ] Startup cleanup of stale temp files
 
 ### Phase 5+: Feature Expansion
+
 See [ADR-0008](0008-language-server-bridge-request-strategies.md) for per-method implementation details.
 
 ## Related Decisions
