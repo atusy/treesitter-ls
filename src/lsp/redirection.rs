@@ -414,20 +414,22 @@ impl LanguageServerConnection {
 
     /// Open or update a document in the language server and write it to the temp workspace.
     ///
-    /// For rust-analyzer, we need to write the file to disk for proper indexing.
-    /// The content is written to src/main.rs in the temp workspace.
+    /// For language servers, we need to write the file to disk for proper indexing.
+    /// The content is written to the virtual file path based on workspace type:
+    /// - Cargo: src/main.rs
+    /// - Generic: virtual.<ext>
     ///
     /// On first call, sends `textDocument/didOpen` and waits for indexing.
     /// On subsequent calls, sends `textDocument/didChange` (no wait needed).
     pub fn did_open(&mut self, _uri: &str, language_id: &str, content: &str) -> Option<()> {
-        // Write content to the actual file on disk (rust-analyzer needs this)
-        if let Some(temp_dir) = &self.temp_dir {
-            let main_rs = temp_dir.join("src").join("main.rs");
-            std::fs::write(&main_rs, content).ok()?;
-        }
+        // Write content to the actual file on disk using ConnectionInfo
+        self.connection_info
+            .as_ref()?
+            .write_virtual_file(content)
+            .ok()?;
 
         // Use the real file URI from the temp workspace
-        let real_uri = self.main_rs_uri()?;
+        let real_uri = self.virtual_file_uri()?;
 
         if let Some(version) = self.document_version {
             // Document already open - send didChange instead
