@@ -3,10 +3,12 @@
 //! This module handles redirecting LSP requests for code inside injection regions
 //! (e.g., Rust code blocks in Markdown) to appropriate language servers.
 
+use dashmap::DashMap;
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdout, Command, Stdio};
+use std::time::Instant;
 use tower_lsp::lsp_types::*;
 
 /// Manages a connection to a language server subprocess with a temporary workspace
@@ -295,8 +297,75 @@ impl Drop for LanguageServerConnection {
     }
 }
 
-use dashmap::DashMap;
-use std::time::Instant;
+/// Pool of rust-analyzer connections for reuse across go-to-definition requests
+/// Thread-safe via DashMap. Each connection is keyed by a unique name.
+pub struct RustAnalyzerPool {
+    connections: DashMap<String, (LanguageServerConnection, Instant)>,
+}
+
+impl RustAnalyzerPool {
+    /// Create a new empty pool
+    pub fn new() -> Self {
+        Self {
+            connections: DashMap::new(),
+        }
+    }
+
+    /// Get or create a rust-analyzer connection for the given key.
+    /// Returns None if spawn fails.
+    /// The connection is removed from the pool during use and must be returned via `return_connection`.
+    pub fn take_connection(&self, key: &str) -> Option<LanguageServerConnection> {
+        // Try to take existing connection
+        if let Some((_, (conn, _))) = self.connections.remove(key) {
+            return Some(conn);
+        }
+        // Spawn new one
+        LanguageServerConnection::spawn_rust_analyzer()
+    }
+
+    /// Return a connection to the pool for reuse
+    pub fn return_connection(&self, key: &str, conn: LanguageServerConnection) {
+        self.connections
+            .insert(key.to_string(), (conn, Instant::now()));
+    }
+
+    /// Check if the pool has a connection for the given key
+    pub fn has_connection(&self, key: &str) -> bool {
+        self.connections.contains_key(key)
+    }
+
+    /// Get the number of pooled connections
+    pub fn len(&self) -> usize {
+        self.connections.len()
+    }
+
+    /// Check if pool is empty
+    pub fn is_empty(&self) -> bool {
+        self.connections.is_empty()
+    }
+
+    /// Clean up connections idle longer than the timeout
+    pub fn cleanup_idle(&self, timeout: std::time::Duration) {
+        let now = Instant::now();
+        let idle_keys: Vec<String> = self
+            .connections
+            .iter()
+            .filter(|entry| now.duration_since(entry.value().1) > timeout)
+            .map(|entry| entry.key().clone())
+            .collect();
+
+        for key in idle_keys {
+            // Remove will drop the connection, triggering shutdown
+            self.connections.remove(&key);
+        }
+    }
+}
+
+impl Default for RustAnalyzerPool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// A pooled connection to a language server process with usage tracking
 pub struct PooledConnection {
