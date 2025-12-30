@@ -30,7 +30,107 @@ const scrum: ScrumDashboard = {
 
   // Completed PBIs: PBI-001 through PBI-096 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "PBI-097",
+      story: {
+        role: "documentation author with Rust code blocks",
+        capability:
+          "configure bridge servers via initializationOptions so I can use different language servers beyond rust-analyzer",
+        benefit:
+          "I can get LSP features in Python, Go, TypeScript code blocks using my preferred language servers",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "User can specify bridge server configuration in LSP initializationOptions",
+          verification:
+            "Test that bridge.servers config is parsed from initializationOptions",
+        },
+        {
+          criterion:
+            "Server configuration includes command, args, languages, and initializationOptions",
+          verification:
+            "Test that all config fields are passed through to spawned server",
+        },
+        {
+          criterion:
+            "Connections spawn the configured command instead of hard-coded rust-analyzer",
+          verification:
+            "Test that spawn uses command from config, not hard-coded binary name",
+        },
+        {
+          criterion:
+            "Servers receive user-provided initializationOptions during initialize",
+          verification:
+            "Test that linkedProjects and other server options are passed through",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-098",
+      story: {
+        role: "documentation author with Rust code blocks",
+        capability:
+          "have the bridge route requests to the correct server based on injection language",
+        benefit:
+          "I get proper LSP features for each language in my mixed-language documents",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "Bridge routes requests to server configured for the injection language",
+          verification:
+            "Test rust injection goes to rust-analyzer, python to pyright",
+        },
+        {
+          criterion:
+            "Server pool is keyed by server name, not just 'rust-analyzer'",
+          verification:
+            "Test that multiple servers can be pooled simultaneously",
+        },
+        {
+          criterion:
+            "Graceful fallback when no server is configured for a language",
+          verification:
+            "Test that missing server config returns None without error",
+        },
+      ],
+      status: "refining",
+    },
+    {
+      id: "PBI-099",
+      story: {
+        role: "documentation author with Rust code blocks",
+        capability:
+          "have stale temp files cleaned up on treesitter-ls startup",
+        benefit:
+          "my temp directory does not fill up with orphaned files from crashed sessions",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "On startup, treesitter-ls scans for stale temp directories",
+          verification:
+            "Test that startup calls cleanup function for treesitter-ls temp dirs",
+        },
+        {
+          criterion:
+            "Temp directories older than 24 hours are removed",
+          verification:
+            "Test that old directories are removed, recent ones are kept",
+        },
+        {
+          criterion:
+            "Cleanup handles permission errors gracefully",
+          verification:
+            "Test that cleanup continues even if some files cannot be removed",
+        },
+      ],
+      status: "refining",
+    },
+  ],
 
   sprint: null,
 
