@@ -483,4 +483,21 @@ mod tests {
             "last_used should be after the before timestamp"
         );
     }
+
+    #[test]
+    fn server_pool_cleanup_idle_shuts_down_idle_connections() {
+        use std::time::Duration;
+
+        let mut pool = ServerPool::new();
+        pool.spawn_server("test-server", "cat", &[]);
+
+        // Wait 200ms (longer than the 100ms timeout we'll use)
+        std::thread::sleep(Duration::from_millis(200));
+
+        // Cleanup connections idle for more than 100ms
+        pool.cleanup_idle(Duration::from_millis(100));
+
+        // Connection should be removed from pool
+        assert!(pool.get("test-server").is_none());
+    }
 }
