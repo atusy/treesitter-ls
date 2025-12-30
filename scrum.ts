@@ -170,7 +170,7 @@ const scrum: ScrumDashboard = {
         implementation:
           "Call cleanup_stale_temp_dirs from TreeSitterLs::new or initialize method",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: [
           "Call cleanup in background to avoid blocking startup",
