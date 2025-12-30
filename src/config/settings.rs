@@ -720,4 +720,55 @@ mod tests {
         assert_eq!(injections.len(), 1, "Should have one injections item");
         assert_eq!(injections[0], "/path/to/injections.scm");
     }
+
+    #[test]
+    fn should_parse_bridge_server_config_with_workspace_type_cargo() {
+        // Test that BridgeServerConfig can deserialize workspace_type field with value 'cargo'
+        let config_json = r#"{
+            "command": "rust-analyzer",
+            "languages": ["rust"],
+            "workspaceType": "cargo"
+        }"#;
+
+        let config: BridgeServerConfig = serde_json::from_str(config_json).unwrap();
+
+        assert_eq!(config.command, "rust-analyzer");
+        assert_eq!(config.languages, vec!["rust".to_string()]);
+        assert_eq!(config.workspace_type, Some(WorkspaceType::Cargo));
+    }
+
+    #[test]
+    fn should_parse_bridge_server_config_with_workspace_type_generic() {
+        // Test that BridgeServerConfig can deserialize workspace_type field with value 'generic'
+        let config_json = r#"{
+            "command": "pyright-langserver",
+            "args": ["--stdio"],
+            "languages": ["python"],
+            "workspaceType": "generic"
+        }"#;
+
+        let config: BridgeServerConfig = serde_json::from_str(config_json).unwrap();
+
+        assert_eq!(config.command, "pyright-langserver");
+        assert_eq!(config.languages, vec!["python".to_string()]);
+        assert_eq!(config.workspace_type, Some(WorkspaceType::Generic));
+    }
+
+    #[test]
+    fn should_parse_bridge_server_config_without_workspace_type_defaults_to_none() {
+        // Test that missing workspace_type defaults to None (backward compatibility)
+        // The caller should treat None as Cargo for backward compat
+        let config_json = r#"{
+            "command": "rust-analyzer",
+            "languages": ["rust"]
+        }"#;
+
+        let config: BridgeServerConfig = serde_json::from_str(config_json).unwrap();
+
+        assert_eq!(config.command, "rust-analyzer");
+        assert!(
+            config.workspace_type.is_none(),
+            "Missing workspace_type should be None for backward compatibility"
+        );
+    }
 }
