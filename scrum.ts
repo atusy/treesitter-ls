@@ -96,7 +96,90 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 76,
+    pbi_id: "PBI-099",
+    goal:
+      "Documentation authors have stale temp files cleaned up automatically on startup, preventing temp directory pollution from crashed sessions",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "Test cleanup_stale_temp_dirs function exists and can be called",
+        implementation:
+          "Create cleanup_stale_temp_dirs function signature in src/lsp/redirection.rs that takes temp_dir path and max_age duration",
+        type: "behavioral",
+        status: "green",
+        commits: [],
+        notes: [
+          "Function signature: cleanup_stale_temp_dirs(temp_dir: &Path, max_age: Duration) -> io::Result<CleanupStats>",
+          "CleanupStats tracks dirs_removed and dirs_kept for logging",
+        ],
+      },
+      {
+        test: "Test cleanup identifies directories matching treesitter-ls-* prefix",
+        implementation:
+          "Implement directory scanning with prefix matching in cleanup_stale_temp_dirs",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Only scan for directories with treesitter-ls- prefix",
+          "Use std::fs::read_dir to list temp directory contents",
+        ],
+      },
+      {
+        test: "Test cleanup removes directories older than max_age threshold",
+        implementation:
+          "Add age check using directory metadata modified time, remove old directories",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Use metadata().modified() to get directory age",
+          "Default max_age is 24 hours (Duration::from_secs(24 * 60 * 60))",
+          "Use std::fs::remove_dir_all for removal",
+        ],
+      },
+      {
+        test: "Test cleanup keeps directories newer than max_age threshold",
+        implementation:
+          "Verify age comparison logic preserves recent directories",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Create test with fresh directory that should be kept",
+          "Verify it remains after cleanup runs",
+        ],
+      },
+      {
+        test: "Test cleanup continues gracefully when permission denied on some directories",
+        implementation:
+          "Wrap removal in error handling that logs and continues",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Use log::warn! for removal failures",
+          "Return Ok even if some removals fail",
+          "Track failed removals in CleanupStats",
+        ],
+      },
+      {
+        test: "Test startup calls cleanup function during initialization",
+        implementation:
+          "Call cleanup_stale_temp_dirs from TreeSitterLs::new or initialize method",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Call cleanup in background to avoid blocking startup",
+          "Use std::thread::spawn or tokio::spawn for async cleanup",
+          "Log cleanup results at info level",
+        ],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
