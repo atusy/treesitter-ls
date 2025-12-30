@@ -297,10 +297,33 @@ impl Drop for LanguageServerConnection {
 
 use std::collections::HashMap;
 
+/// A pooled connection to a language server process
+pub struct PooledConnection {
+    process: Child,
+}
+
+impl PooledConnection {
+    /// Spawn a new process with the given command and arguments
+    pub fn spawn(command: &str, args: &[&str]) -> Option<Self> {
+        let process = Command::new(command)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?;
+        Some(Self { process })
+    }
+
+    /// Check if the process is still alive
+    pub fn is_alive(&mut self) -> bool {
+        matches!(self.process.try_wait(), Ok(None))
+    }
+}
+
 /// Pool of language server connections for reuse across requests
 pub struct ServerPool {
-    #[allow(dead_code)] // Will be used in spawn_server
-    connections: HashMap<String, LanguageServerConnection>,
+    connections: HashMap<String, PooledConnection>,
 }
 
 impl ServerPool {
@@ -311,9 +334,16 @@ impl ServerPool {
         }
     }
 
+    /// Spawn a new server process and add it to the pool
+    pub fn spawn_server(&mut self, name: &str, command: &str, args: &[&str]) -> Option<()> {
+        let conn = PooledConnection::spawn(command, args)?;
+        self.connections.insert(name.to_string(), conn);
+        Some(())
+    }
+
     /// Get a connection for the given server name, if one exists
-    pub fn get(&self, _name: &str) -> Option<&LanguageServerConnection> {
-        None
+    pub fn get(&self, name: &str) -> Option<&PooledConnection> {
+        self.connections.get(name)
     }
 }
 
