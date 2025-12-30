@@ -21,6 +21,26 @@ pub struct BridgeServerConfig {
     pub initialization_options: Option<Value>,
 }
 
+/// Bridge settings containing configured language servers.
+///
+/// JSON schema:
+/// ```json
+/// {
+///   "bridge": {
+///     "servers": {
+///       "rust-analyzer": { "command": "rust-analyzer", "languages": ["rust"], ... },
+///       "pyright": { "command": "pyright-langserver", "args": ["--stdio"], "languages": ["python"] }
+///     }
+///   }
+/// }
+/// ```
+#[derive(Debug, Clone, Deserialize, serde::Serialize, Default, PartialEq, Eq)]
+pub struct BridgeSettings {
+    /// Map of server name to server configuration
+    #[serde(default)]
+    pub servers: HashMap<String, BridgeServerConfig>,
+}
+
 #[derive(Debug, Clone, Deserialize, serde::Serialize, Default, PartialEq, Eq)]
 pub struct QueryTypeMappings {
     #[serde(default)]
@@ -568,6 +588,50 @@ mod tests {
         assert!(config.args.is_none());
         assert_eq!(config.languages, vec!["python".to_string()]);
         assert!(config.initialization_options.is_none());
+    }
+
+    #[test]
+    fn should_parse_bridge_settings() {
+        // Test that BridgeSettings deserializes from servers map
+        let config_json = r#"{
+            "servers": {
+                "rust-analyzer": {
+                    "command": "rust-analyzer",
+                    "languages": ["rust"],
+                    "initializationOptions": {
+                        "linkedProjects": ["/path/to/Cargo.toml"]
+                    }
+                },
+                "pyright": {
+                    "command": "pyright-langserver",
+                    "args": ["--stdio"],
+                    "languages": ["python"]
+                }
+            }
+        }"#;
+
+        let settings: BridgeSettings = serde_json::from_str(config_json).unwrap();
+
+        assert_eq!(settings.servers.len(), 2);
+        assert!(settings.servers.contains_key("rust-analyzer"));
+        assert!(settings.servers.contains_key("pyright"));
+
+        let ra = &settings.servers["rust-analyzer"];
+        assert_eq!(ra.command, "rust-analyzer");
+        assert_eq!(ra.languages, vec!["rust".to_string()]);
+
+        let py = &settings.servers["pyright"];
+        assert_eq!(py.command, "pyright-langserver");
+        assert_eq!(py.args, Some(vec!["--stdio".to_string()]));
+    }
+
+    #[test]
+    fn should_parse_bridge_settings_empty() {
+        // Test that empty servers map is valid
+        let config_json = r#"{ "servers": {} }"#;
+
+        let settings: BridgeSettings = serde_json::from_str(config_json).unwrap();
+        assert!(settings.servers.is_empty());
     }
 
     #[test]
