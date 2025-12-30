@@ -304,6 +304,11 @@ impl LanguageServerConnection {
         serde_json::from_value(result.clone()).ok()
     }
 
+    /// Check if the language server process is still alive
+    pub fn is_alive(&mut self) -> bool {
+        matches!(self.process.try_wait(), Ok(None))
+    }
+
     /// Shutdown the language server and clean up temp directory
     pub fn shutdown(&mut self) {
         if let Some(shutdown_id) = self.send_request("shutdown", serde_json::json!(null)) {
@@ -638,6 +643,40 @@ mod tests {
         for handle in handles {
             handle.await.unwrap();
         }
+    }
+
+    #[test]
+    fn language_server_connection_is_alive_returns_true_for_live_process() {
+        // Skip if rust-analyzer is not installed
+        if std::process::Command::new("rust-analyzer")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let mut conn = LanguageServerConnection::spawn_rust_analyzer().unwrap();
+        assert!(conn.is_alive());
+    }
+
+    #[test]
+    fn language_server_connection_is_alive_returns_false_after_shutdown() {
+        // Skip if rust-analyzer is not installed
+        if std::process::Command::new("rust-analyzer")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let mut conn = LanguageServerConnection::spawn_rust_analyzer().unwrap();
+        conn.shutdown();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(!conn.is_alive());
     }
 
     #[test]
