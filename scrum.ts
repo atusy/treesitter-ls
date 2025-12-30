@@ -61,7 +61,7 @@ const scrum: ScrumDashboard = {
             "Test that cleanup continues even if some files cannot be removed",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-100",
@@ -101,7 +101,7 @@ const scrum: ScrumDashboard = {
     pbi_id: "PBI-099",
     goal:
       "Documentation authors have stale temp files cleaned up automatically on startup, preventing temp directory pollution from crashed sessions",
-    status: "in_progress",
+    status: "done",
     subtasks: [
       {
         test: "Test cleanup_stale_temp_dirs function exists and can be called",
