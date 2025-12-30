@@ -132,8 +132,11 @@ const scrum: ScrumDashboard = {
         implementation:
           "Extract cargo workspace setup into helper function; call from spawn() when workspace_type is None or Cargo",
         type: "behavioral",
-        status: "red",
-        commits: [],
+        status: "completed",
+        commits: [
+          { hash: "722528c", message: "test(workspace): add failing tests for Cargo workspace setup", phase: "green" as const },
+          { hash: "201b942", message: "feat(workspace): add setup_workspace helper functions for Cargo workspace", phase: "green" as const },
+        ],
         notes: [],
       },
       {
@@ -141,7 +144,7 @@ const scrum: ScrumDashboard = {
         implementation:
           "Add generic workspace setup in spawn() that creates only temp dir with virtual file path stored",
         type: "behavioral",
-        status: "pending",
+        status: "red",
         commits: [],
         notes: [],
       },
