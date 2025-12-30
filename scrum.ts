@@ -3,85 +3,104 @@
 // ============================================================
 
 const userStoryRoles = [
-  "Developer editing Markdown",
+  "Rustacean editing Markdown",
+  "developer editing Lua files",
 ] as const satisfies readonly string[]; // Must have at least one role. Avoid generic roles like "user" or "admin". Remove obsolete roles freely.
 
 const scrum: ScrumDashboard = {
   product_goal: {
     statement:
-      "Establish LSP bridge foundation with go-to-definition and hover for Rust in Markdown",
+      "Extend LSP bridge with additional request types and fix E2E test gaps",
     success_metrics: [
       {
-        metric: "ADR-0006 Phase 1 complete",
-        target:
-          "Basic LSP client, temp file creation, offset translation, goto_definition working (SATISFIED)",
+        metric: "ADR-0006 Phase 2 partial",
+        target: "Crash recovery implemented (SATISFIED via get_or_spawn)",
       },
       {
-        metric: "ADR-0007 materialization",
-        target:
-          "Rust injection content written to temp files for rust-analyzer (SATISFIED)",
+        metric: "ADR-0008 Strategy 2 expansion",
+        target: "signatureHelp delegation working in injection regions",
       },
       {
-        metric: "ADR-0008 Strategy 2 partial",
-        target:
-          "Full delegation for goto_definition and hover with position mapping (SATISFIED)",
+        metric: "E2E test reliability",
+        target: "Standalone Lua files return semantic tokens and selection ranges",
       },
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-089 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-093 | History: git log -- scrum.yaml, scrum.ts
+  // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
+  // PBI-093 (crash recovery): Already implemented in ServerPool.get_or_spawn() - DONE
   product_backlog: [
-    {
-      id: "PBI-088",
-      story: {
-        role: "Developer editing Markdown",
-        capability:
-          "configure which language servers handle which injection languages",
-        benefit:
-          "I can use rust-analyzer, pyright, gopls for code blocks in Markdown",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "TreeSitterSettings includes bridge.servers config",
-          verification: "cargo test test_bridge_config_parsing",
-        },
-        {
-          criterion: "initializationOptions passed to server's initialize",
-          verification: "Integration test verifies server receives options",
-        },
-        {
-          criterion: "Only configured servers spawned (security)",
-          verification: "Unknown language does not spawn process",
-        },
-        {
-          criterion: "Graceful fallback for unconfigured languages",
-          verification: "Semantic tokens work without bridge config",
-        },
-      ],
-      status: "draft", // ADR-0006 Phase 2-3: Configuration System
-    },
     {
       id: "PBI-090",
       story: {
-        role: "Developer editing Markdown",
-        capability: "see function signature help while typing in code blocks",
-        benefit: "I know what arguments are expected",
+        role: "developer editing Lua files",
+        capability: "see syntax highlighting for standalone .lua files",
+        benefit: "code is readable with proper keyword/string/comment colors",
       },
       acceptance_criteria: [
         {
-          criterion: "textDocument/signatureHelp forwarded",
-          verification: "E2E: signature shown on '('",
+          criterion: "Semantic tokens returned for .lua files",
+          verification: "make test_nvim_file FILE=tests/test_lsp_semantic.lua",
         },
         {
-          criterion: "Response passed through unchanged",
-          verification: "Unit: no position mapping needed",
+          criterion: "Selection ranges work for .lua files",
+          verification: "make test_nvim_file FILE=tests/test_lsp_select.lua",
         },
       ],
-      status: "draft",
+      status: "ready",
+    },
+    {
+      id: "PBI-092",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "see function signatures when typing arguments in Rust code blocks",
+        benefit: "know parameter types without leaving the editor",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "signatureHelp delegated to rust-analyzer",
+          verification: "cargo test --test test_signature_help (new E2E test)",
+        },
+      ],
+      status: "ready",
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 71,
+    pbi_id: "PBI-090",
+    goal: "Developer can see syntax highlighting for standalone Lua files",
+    status: "planning",
+    subtasks: [
+      {
+        test: "minimal_init.lua configures searchPaths pointing to deps/treesitter",
+        implementation: "Add initializationOptions with searchPaths to LSP config",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Root cause: LSP lacks searchPaths → ensure_language_loaded fails → no queries",
+        ],
+      },
+      {
+        test: "E2E: test_lsp_semantic.lua passes for example.lua",
+        implementation: "Verify semantic tokens returned for standalone Lua files",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "E2E: test_lsp_select.lua passes for example.lua",
+        implementation: "Verify selection ranges work for standalone Lua files",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
@@ -125,15 +144,16 @@ const scrum: ScrumDashboard = {
         {
           action: "Pre-existing E2E failures need documentation",
           timing: "sprint",
-          status: "active",
-          outcome: null,
+          status: "completed",
+          outcome:
+            "Root cause: standalone .lua files have no parser/queries (PBI-090); hover test needs rust-analyzer in CI",
         },
         {
           action:
-            "Fix 3 failing E2E tests (test_lsp_select x2, test_lsp_semantic x1)",
+            "Fix 4 failing E2E tests: Lua standalone (select x2, semantic x1), hover test env",
           timing: "product",
-          status: "active",
-          outcome: null,
+          status: "completed",
+          outcome: "Created PBI-090 for Lua support; hover test is valid but needs CI setup",
         },
       ],
     },
@@ -143,8 +163,8 @@ const scrum: ScrumDashboard = {
         {
           action: "cleanup_idle() needs timer wiring",
           timing: "product",
-          status: "active",
-          outcome: null,
+          status: "completed",
+          outcome: "Created PBI-091 for idle cleanup",
         },
         {
           action: "ServerPool not yet in lsp_impl.rs",
