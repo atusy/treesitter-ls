@@ -137,7 +137,7 @@ const scrum: ScrumDashboard = {
     pbi_id: "PBI-097",
     goal:
       "Documentation authors can configure bridge servers via initializationOptions for multi-language LSP support",
-    status: "in_progress",
+    status: "review",
     subtasks: [
       {
         test: "Test that BridgeServerConfig struct can deserialize command, args, languages, and initializationOptions fields",
@@ -221,8 +221,8 @@ const scrum: ScrumDashboard = {
         implementation:
           "Update lsp_impl to look up server config by name from settings.bridge.servers",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "e12b068", message: "feat(lsp): use bridge config from settings for language server connections", phase: "green" }],
         notes: [
           "Fall back to hard-coded rust-analyzer config if bridge.servers is empty/missing",
         ],
