@@ -1994,6 +1994,7 @@ dependencies = [
  "dashmap 6.1.0",
  "dirs",
  "env_logger",
+ "libc",
  "libloading",
  "line-index",
  "log",
