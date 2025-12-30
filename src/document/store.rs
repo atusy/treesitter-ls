@@ -42,10 +42,10 @@ impl DocumentStore {
     }
 
     pub fn insert(&self, uri: Url, text: String, language_id: Option<String>, tree: Option<Tree>) {
-        let document = if let (Some(lang), Some(t)) = (language_id, tree) {
-            Document::with_tree(text, lang, t)
-        } else {
-            Document::new(text)
+        let document = match (language_id, tree) {
+            (Some(lang), Some(t)) => Document::with_tree(text, lang, t),
+            (Some(lang), None) => Document::with_language(text, lang),
+            _ => Document::new(text),
         };
 
         self.documents.insert(uri, document);

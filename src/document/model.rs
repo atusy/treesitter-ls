@@ -37,6 +37,18 @@ impl Document {
         }
     }
 
+    /// Create with language but no tree yet (for early document registration)
+    pub fn with_language(text: String, language_id: String) -> Self {
+        Self {
+            text,
+            version: None,
+            language_id: Some(language_id),
+            tree: None,
+            previous_tree: None,
+            previous_text: None,
+        }
+    }
+
     /// Create with language and tree
     pub fn with_tree(text: String, language_id: String, tree: Tree) -> Self {
         Self {

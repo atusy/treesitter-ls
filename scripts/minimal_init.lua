@@ -1,6 +1,12 @@
 local cwd = vim.uv.cwd()
+-- Get default treesitter-ls data directory
+local data_dir = vim.fn.stdpath("data") .. "/treesitter-ls"
 vim.lsp.config.treesitter_ls = {
 	cmd = { cwd .. "/target/debug/treesitter-ls" },
+	init_options = {
+		-- Extend default search paths with project-specific deps for tests
+		searchPaths = { cwd .. "/deps/treesitter", data_dir },
+	},
 	on_init = function(client)
 		-- to use semanticTokens/full/delta
 		client.server_capabilities.semanticTokensProvider.range = false

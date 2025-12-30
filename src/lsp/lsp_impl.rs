@@ -817,9 +817,31 @@ impl LanguageServer for TreeSitterLs {
             .get_language_for_path(uri.path())
             .or_else(|| Some(language_id.clone()));
 
+        // Insert document immediately (without tree) so concurrent requests can find it.
+        // This handles race conditions where semanticTokens/full arrives before
+        // parse_document completes. The tree will be updated by parse_document.
+        self.documents
+            .insert(uri.clone(), text.clone(), language_name.clone(), None);
+
         // Check if we need to auto-install
+        let mut deferred_events = Vec::new();
         if let Some(ref lang) = language_name {
             let load_result = self.language.ensure_language_loaded(lang);
+
+            // Defer SemanticTokensRefresh events until after parse_document completes
+            // to avoid race condition where tokens are requested before tree exists.
+            // Log events immediately but defer refresh.
+            for event in &load_result.events {
+                match event {
+                    crate::language::LanguageEvent::SemanticTokensRefresh { .. } => {
+                        deferred_events.push(event.clone());
+                    }
+                    _ => {
+                        self.handle_language_events(std::slice::from_ref(event))
+                            .await;
+                    }
+                }
+            }
 
             if !load_result.success && self.is_auto_install_enabled() {
                 // Language failed to load and auto-install is enabled
@@ -836,6 +858,11 @@ impl LanguageServer for TreeSitterLs {
             vec![], // No edits for initial document open
         )
         .await;
+
+        // Now handle deferred SemanticTokensRefresh events after document is parsed
+        if !deferred_events.is_empty() {
+            self.handle_language_events(&deferred_events).await;
+        }
 
         // Check for injected languages and trigger auto-install for missing parsers
         // This must be called AFTER parse_document so we have access to the AST
@@ -1033,6 +1060,18 @@ impl LanguageServer for TreeSitterLs {
                 data: vec![],
             })));
         };
+
+        // Ensure language is loaded before trying to get queries.
+        // This handles the race condition where semanticTokens/full arrives
+        // before didOpen finishes loading the language.
+        let load_result = self.language.ensure_language_loaded(&language_name);
+        if !load_result.success {
+            return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+                result_id: None,
+                data: vec![],
+            })));
+        }
+
         let Some(query) = self.language.get_highlight_query(&language_name) else {
             return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                 result_id: None,
@@ -1048,12 +1087,47 @@ impl LanguageServer for TreeSitterLs {
                     data: vec![],
                 })));
             };
-            let text = doc.text();
-            let Some(tree) = doc.tree() else {
-                return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
-                    result_id: None,
-                    data: vec![],
-                })));
+            let text = doc.text().to_string();
+            let tree = match doc.tree() {
+                Some(t) => t.clone(),
+                None => {
+                    // Document has no tree yet - parse it now.
+                    // This handles the race condition where semantic tokens are
+                    // requested before didOpen finishes parsing.
+                    drop(doc); // Release lock before acquiring parser pool
+                    let sync_parse_result = {
+                        let mut pool = self
+                            .parser_pool
+                            .lock()
+                            .recover_poison("semantic_tokens_full sync_parse")
+                            .unwrap();
+                        if let Some(mut parser) = pool.acquire(&language_name) {
+                            let result = parser.parse(&text, None);
+                            pool.release(language_name.clone(), parser);
+                            result
+                        } else {
+                            None
+                        }
+                    }; // pool lock released here
+
+                    match sync_parse_result {
+                        Some(tree) => {
+                            // Update document with parsed tree
+                            self.documents.update_document(
+                                uri.clone(),
+                                text.clone(),
+                                Some(tree.clone()),
+                            );
+                            tree
+                        }
+                        None => {
+                            return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+                                result_id: None,
+                                data: vec![],
+                            })));
+                        }
+                    }
+                }
             };
 
             // Get capture mappings
@@ -1066,8 +1140,8 @@ impl LanguageServer for TreeSitterLs {
                 .recover_poison("semantic_tokens_full parser_pool")
                 .unwrap();
             crate::analysis::handle_semantic_tokens_full(
-                text,
-                tree,
+                &text,
+                &tree,
                 &query,
                 Some(&language_name),
                 Some(&capture_mappings),
@@ -1425,10 +1499,64 @@ impl LanguageServer for TreeSitterLs {
         let uri = params.text_document.uri;
         let positions = params.positions;
 
+        // Get language for document
+        let Some(language_name) = self.get_language_for_document(&uri) else {
+            return Ok(None);
+        };
+
+        // Ensure language is loaded (handles race condition with didOpen)
+        let load_result = self.language.ensure_language_loaded(&language_name);
+        if !load_result.success {
+            return Ok(None);
+        }
+
         // Get document
         let Some(doc) = self.documents.get(&uri) else {
             return Ok(None);
         };
+
+        // Check if document has a tree, if not parse it synchronously
+        if doc.tree().is_none() {
+            let text = doc.text().to_string();
+            drop(doc); // Release lock before acquiring parser pool
+
+            let sync_parse_result = {
+                let mut pool = self
+                    .parser_pool
+                    .lock()
+                    .recover_poison("selection_range sync_parse")
+                    .unwrap();
+                if let Some(mut parser) = pool.acquire(&language_name) {
+                    let result = parser.parse(&text, None);
+                    pool.release(language_name.clone(), parser);
+                    result
+                } else {
+                    None
+                }
+            };
+
+            if let Some(tree) = sync_parse_result {
+                self.documents
+                    .update_document(uri.clone(), text, Some(tree));
+            } else {
+                return Ok(None);
+            }
+
+            // Re-acquire document after update
+            let Some(doc) = self.documents.get(&uri) else {
+                return Ok(None);
+            };
+
+            // Use full injection parsing handler with coordinator and parser pool
+            let mut pool = self
+                .parser_pool
+                .lock()
+                .recover_poison("selection_range parser_pool")
+                .unwrap();
+            let result = handle_selection_range(&doc, &positions, &self.language, &mut pool);
+
+            return Ok(Some(result));
+        }
 
         // Use full injection parsing handler with coordinator and parser pool
         let mut pool = self
