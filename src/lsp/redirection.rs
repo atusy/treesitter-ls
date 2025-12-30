@@ -1172,4 +1172,42 @@ mod tests {
             "virtual_file should use the provided extension"
         );
     }
+
+    #[test]
+    fn virtual_file_uri_returns_main_rs_for_cargo_workspace() {
+        use crate::config::settings::WorkspaceType;
+        use tempfile::tempdir;
+
+        let temp = tempdir().unwrap();
+        let temp_path = temp.path().to_path_buf();
+
+        // Create a connection info with Cargo workspace
+        let virtual_file = setup_workspace(&temp_path, WorkspaceType::Cargo, "rs").unwrap();
+        let conn_info = ConnectionInfo::new(temp_path.clone(), virtual_file.clone());
+
+        // virtual_file_uri should return src/main.rs path
+        let uri = conn_info.virtual_file_uri();
+        assert!(uri.is_some());
+        let expected_uri = format!("file://{}/src/main.rs", temp_path.display());
+        assert_eq!(uri.unwrap(), expected_uri);
+    }
+
+    #[test]
+    fn virtual_file_uri_returns_virtual_ext_for_generic_workspace() {
+        use crate::config::settings::WorkspaceType;
+        use tempfile::tempdir;
+
+        let temp = tempdir().unwrap();
+        let temp_path = temp.path().to_path_buf();
+
+        // Create a connection info with Generic workspace
+        let virtual_file = setup_workspace(&temp_path, WorkspaceType::Generic, "py").unwrap();
+        let conn_info = ConnectionInfo::new(temp_path.clone(), virtual_file.clone());
+
+        // virtual_file_uri should return virtual.py path
+        let uri = conn_info.virtual_file_uri();
+        assert!(uri.is_some());
+        let expected_uri = format!("file://{}/virtual.py", temp_path.display());
+        assert_eq!(uri.unwrap(), expected_uri);
+    }
 }
