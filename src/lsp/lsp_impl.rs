@@ -427,6 +427,42 @@ impl TreeSitterLs {
         super::auto_install::get_language_for_document(uri, &self.language, &self.documents)
     }
 
+    /// Get bridge server config for a given language from settings.
+    ///
+    /// Looks up the bridge.servers configuration and finds a server that handles
+    /// the specified language. Returns None if no server is configured for this language.
+    ///
+    /// Falls back to a default rust-analyzer config if bridge.servers is not configured
+    /// but the language is "rust".
+    fn get_bridge_config_for_language(
+        &self,
+        language: &str,
+    ) -> Option<crate::config::settings::BridgeServerConfig> {
+        let settings = self.settings.load();
+
+        // First, check if bridge settings exist
+        if let Some(ref bridge) = settings.bridge {
+            // Look for a server that handles this language
+            for config in bridge.servers.values() {
+                if config.languages.iter().any(|l| l == language) {
+                    return Some(config.clone());
+                }
+            }
+        }
+
+        // Fallback: if no bridge config but language is rust, use default rust-analyzer
+        if language == "rust" {
+            return Some(crate::config::settings::BridgeServerConfig {
+                command: "rust-analyzer".to_string(),
+                args: None,
+                languages: vec!["rust".to_string()],
+                initialization_options: None,
+            });
+        }
+
+        None
+    }
+
     async fn apply_settings(&self, settings: WorkspaceSettings) {
         // Store settings for auto_install check
         self.settings.store(Arc::new(settings.clone()));
@@ -668,11 +704,12 @@ impl TreeSitterLs {
         }
 
         // Create updated settings
-        let updated_settings = WorkspaceSettings::with_auto_install(
+        let updated_settings = WorkspaceSettings::with_bridge(
             new_search_paths,
             current_settings.languages.clone(),
             current_settings.capture_mappings.clone(),
             current_settings.auto_install,
+            current_settings.bridge.clone(),
         );
 
         // Apply the updated settings
@@ -1798,17 +1835,6 @@ impl LanguageServer for TreeSitterLs {
             )
             .await;
 
-        // Only handle Rust for now (PoC)
-        if region.language != "rust" {
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    format!("Language {} not supported (only rust)", region.language),
-                )
-                .await;
-            return Ok(None);
-        }
-
         // Create cacheable region for position translation
         self.client
             .log_message(MessageType::INFO, "Creating cacheable region...")
@@ -1851,26 +1877,42 @@ impl LanguageServer for TreeSitterLs {
             .log_message(MessageType::INFO, format!("Virtual URI: {}", virtual_uri))
             .await;
 
-        // Get rust-analyzer connection from pool (or spawn new one)
-        // Use spawn_blocking because rust-analyzer communication is synchronous blocking I/O
-        let pool_key = "rust-analyzer".to_string();
+        // Get bridge server config for this language
+        // Use spawn_blocking because language server communication is synchronous blocking I/O
+        let Some(server_config) = self.get_bridge_config_for_language(&region.language) else {
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    format!(
+                        "No bridge server configured for language '{}'",
+                        region.language
+                    ),
+                )
+                .await;
+            return Ok(None);
+        };
+
+        let pool_key = server_config.command.clone();
         let has_existing = self.language_server_pool.has_connection(&pool_key);
         self.client
             .log_message(
                 MessageType::INFO,
                 format!(
-                    "Getting rust-analyzer from pool (existing: {})...",
-                    has_existing
+                    "Getting {} from pool (existing: {})...",
+                    pool_key, has_existing
                 ),
             )
             .await;
 
         // Take connection from pool (will spawn if none exists)
-        let conn = match self.language_server_pool.take_connection(&pool_key) {
+        let conn = match self
+            .language_server_pool
+            .take_connection(&pool_key, &server_config)
+        {
             Some(c) => c,
             None => {
                 self.client
-                    .log_message(MessageType::ERROR, "Failed to spawn rust-analyzer")
+                    .log_message(MessageType::ERROR, format!("Failed to spawn {}", pool_key))
                     .await;
                 return Ok(None);
             }
@@ -2069,10 +2111,19 @@ impl LanguageServer for TreeSitterLs {
             return Ok(None);
         };
 
-        // Only handle Rust for now
-        if region.language != "rust" {
+        // Get bridge server config for this language
+        let Some(server_config) = self.get_bridge_config_for_language(&region.language) else {
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    format!(
+                        "No bridge server configured for language: {}",
+                        region.language
+                    ),
+                )
+                .await;
             return Ok(None);
-        }
+        };
 
         // Create cacheable region for position translation
         let cacheable = crate::language::injection::CacheableInjectionRegion::from_region_info(
@@ -2091,15 +2142,21 @@ impl LanguageServer for TreeSitterLs {
             std::process::id()
         );
 
-        // Get rust-analyzer connection from pool
-        let pool_key = "rust-analyzer".to_string();
+        // Get language server connection from pool
+        let pool_key = server_config.command.clone();
 
         // Take connection from pool (will spawn if none exists)
-        let conn = match self.language_server_pool.take_connection(&pool_key) {
+        let conn = match self
+            .language_server_pool
+            .take_connection(&pool_key, &server_config)
+        {
             Some(c) => c,
             None => {
                 self.client
-                    .log_message(MessageType::ERROR, "Failed to spawn rust-analyzer")
+                    .log_message(
+                        MessageType::ERROR,
+                        format!("Failed to spawn language server: {}", server_config.command),
+                    )
                     .await;
                 return Ok(None);
             }

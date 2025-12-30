@@ -457,10 +457,18 @@ impl LanguageServerPool {
         }
     }
 
-    /// Get or create a rust-analyzer connection for the given key.
+    /// Get or create a language server connection for the given key.
     /// Returns None if spawn fails.
     /// The connection is removed from the pool during use and must be returned via `return_connection`.
-    pub fn take_connection(&self, key: &str) -> Option<LanguageServerConnection> {
+    ///
+    /// # Arguments
+    /// * `key` - Unique key for this connection (typically server name)
+    /// * `config` - Configuration for spawning a new connection if needed
+    pub fn take_connection(
+        &self,
+        key: &str,
+        config: &BridgeServerConfig,
+    ) -> Option<LanguageServerConnection> {
         // Try to take existing connection
         if let Some((_, (mut conn, _))) = self.connections.remove(key) {
             // Check if connection is still alive; if dead, spawn a new one
@@ -469,8 +477,8 @@ impl LanguageServerPool {
             }
             // Connection is dead, drop it and spawn a new one
         }
-        // Spawn new one
-        LanguageServerConnection::spawn_rust_analyzer()
+        // Spawn new one using config
+        LanguageServerConnection::spawn(config)
     }
 
     /// Return a connection to the pool for reuse
@@ -533,15 +541,23 @@ mod tests {
     }
 
     #[test]
-    fn rust_analyzer_pool_respawns_dead_connection() {
+    fn language_server_pool_respawns_dead_connection() {
+        use crate::config::settings::BridgeServerConfig;
+
         if !check_rust_analyzer_available() {
             return;
         }
 
         let pool = LanguageServerPool::new();
+        let config = BridgeServerConfig {
+            command: "rust-analyzer".to_string(),
+            args: None,
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+        };
 
         // First take spawns a new connection
-        let mut conn = pool.take_connection("test-key").unwrap();
+        let mut conn = pool.take_connection("test-key", &config).unwrap();
         assert!(conn.is_alive());
 
         // Kill the process to simulate a crash
@@ -553,7 +569,7 @@ mod tests {
         pool.return_connection("test-key", conn);
 
         // Next take should detect the dead connection and respawn
-        let mut conn2 = pool.take_connection("test-key").unwrap();
+        let mut conn2 = pool.take_connection("test-key", &config).unwrap();
         assert!(
             conn2.is_alive(),
             "Pool should have respawned dead connection"
