@@ -512,14 +512,14 @@ impl LanguageServerConnection {
 
     /// Request go-to-definition
     ///
-    /// Uses the actual file URI from the temp workspace, not the virtual URI.
+    /// Uses the virtual file URI from the temp workspace based on workspace type.
     pub fn goto_definition(
         &mut self,
         _uri: &str,
         position: Position,
     ) -> Option<GotoDefinitionResponse> {
-        // Use the real file URI from the temp workspace
-        let real_uri = self.main_rs_uri()?;
+        // Use the virtual file URI from the temp workspace
+        let real_uri = self.virtual_file_uri()?;
 
         let params = serde_json::json!({
             "textDocument": { "uri": real_uri },
@@ -540,10 +540,10 @@ impl LanguageServerConnection {
 
     /// Request hover information
     ///
-    /// Uses the actual file URI from the temp workspace, not the virtual URI.
+    /// Uses the virtual file URI from the temp workspace based on workspace type.
     pub fn hover(&mut self, _uri: &str, position: Position) -> Option<Hover> {
-        // Use the real file URI from the temp workspace
-        let real_uri = self.main_rs_uri()?;
+        // Use the virtual file URI from the temp workspace
+        let real_uri = self.virtual_file_uri()?;
 
         let params = serde_json::json!({
             "textDocument": { "uri": real_uri },
