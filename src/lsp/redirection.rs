@@ -407,4 +407,20 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(10));
         assert!(!conn.is_alive());
     }
+
+    #[test]
+    fn server_pool_get_or_spawn_respawns_dead_connection() {
+        let mut pool = ServerPool::new();
+        pool.spawn_server("test-server", "cat", &[]);
+
+        // Get connection and kill it
+        {
+            let conn = pool.get_mut("test-server").unwrap();
+            conn.kill();
+        }
+
+        // get_or_spawn should spawn a new connection
+        let conn = pool.get_or_spawn("test-server", "cat", &[]).unwrap();
+        assert!(conn.is_alive());
+    }
 }
