@@ -1558,4 +1558,43 @@ mod tests {
             "virtual_file_uri should match main_rs_uri for Cargo workspace"
         );
     }
+
+    #[test]
+    fn did_open_uses_connection_info_write_virtual_file() {
+        use crate::config::settings::BridgeServerConfig;
+
+        if !check_rust_analyzer_available() {
+            return;
+        }
+
+        let config = BridgeServerConfig {
+            command: "rust-analyzer".to_string(),
+            args: None,
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: None, // Defaults to Cargo
+        };
+
+        let mut conn = LanguageServerConnection::spawn(&config).unwrap();
+        let temp_dir = conn.temp_dir.clone().unwrap();
+
+        // Call did_open
+        let content = "fn main() { let x = 42; }";
+        conn.did_open("file:///test.rs", "rust", content);
+
+        // Verify content was written to the correct virtual file path
+        let conn_info = conn.connection_info.as_ref().unwrap();
+        let written_content = std::fs::read_to_string(&conn_info.virtual_file_path).unwrap();
+        assert_eq!(
+            written_content, content,
+            "did_open should write content to virtual_file_path"
+        );
+
+        // For Cargo workspace, this should be src/main.rs
+        let main_rs = temp_dir.join("src").join("main.rs");
+        assert_eq!(
+            conn_info.virtual_file_path, main_rs,
+            "virtual_file_path should be src/main.rs for Cargo workspace"
+        );
+    }
 }
