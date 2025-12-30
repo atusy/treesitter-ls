@@ -706,4 +706,57 @@ mod tests {
         assert_eq!(stats.dirs_kept, 0);
         assert_eq!(stats.dirs_failed, 0);
     }
+
+    #[test]
+    fn cleanup_identifies_directories_matching_treesitter_ls_prefix() {
+        use std::time::Duration;
+        use tempfile::tempdir;
+
+        let temp = tempdir().unwrap();
+
+        // Create directories with treesitter-ls- prefix
+        std::fs::create_dir(temp.path().join("treesitter-ls-ra-12345")).unwrap();
+        std::fs::create_dir(temp.path().join("treesitter-ls-rust-analyzer-67890")).unwrap();
+
+        // Create directories WITHOUT treesitter-ls- prefix (should be ignored)
+        std::fs::create_dir(temp.path().join("other-project-temp")).unwrap();
+        std::fs::create_dir(temp.path().join("random-dir")).unwrap();
+
+        // Use max_age of 0 so all directories are considered stale
+        let max_age = Duration::from_secs(0);
+
+        let result = cleanup_stale_temp_dirs(temp.path(), max_age);
+        assert!(result.is_ok());
+
+        let stats = result.unwrap();
+
+        // Should have removed 2 directories (only those with treesitter-ls- prefix)
+        assert_eq!(
+            stats.dirs_removed, 2,
+            "Should remove exactly 2 directories with treesitter-ls- prefix"
+        );
+
+        // Verify that the treesitter-ls directories are gone
+        assert!(
+            !temp.path().join("treesitter-ls-ra-12345").exists(),
+            "treesitter-ls-ra-12345 should be removed"
+        );
+        assert!(
+            !temp
+                .path()
+                .join("treesitter-ls-rust-analyzer-67890")
+                .exists(),
+            "treesitter-ls-rust-analyzer-67890 should be removed"
+        );
+
+        // Verify that non-matching directories are still there
+        assert!(
+            temp.path().join("other-project-temp").exists(),
+            "other-project-temp should NOT be removed"
+        );
+        assert!(
+            temp.path().join("random-dir").exists(),
+            "random-dir should NOT be removed"
+        );
+    }
 }
