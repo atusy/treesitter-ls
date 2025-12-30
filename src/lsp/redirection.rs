@@ -116,6 +116,8 @@ pub struct LanguageServerConnection {
     temp_dir: Option<PathBuf>,
     /// Track the version of the document currently open (None = not open yet)
     document_version: Option<i32>,
+    /// Connection info with virtual file path for workspace operations
+    pub connection_info: Option<ConnectionInfo>,
 }
 
 impl LanguageServerConnection {
@@ -156,12 +158,16 @@ impl LanguageServerConnection {
         let stdout = process.stdout.take()?;
         let stdout_reader = BufReader::new(stdout);
 
+        // Create ConnectionInfo for the workspace
+        let connection_info = ConnectionInfo::new(temp_dir.clone(), main_rs);
+
         let mut conn = Self {
             process,
             request_id: 0,
             stdout_reader,
             temp_dir: Some(temp_dir),
             document_version: None,
+            connection_info: Some(connection_info),
         };
 
         // Send initialize request with workspace root
@@ -239,12 +245,16 @@ impl LanguageServerConnection {
         let stdout = process.stdout.take()?;
         let stdout_reader = BufReader::new(stdout);
 
+        // Create ConnectionInfo for the workspace
+        let connection_info = ConnectionInfo::new(temp_dir.clone(), main_rs);
+
         let mut conn = Self {
             process,
             request_id: 0,
             stdout_reader,
             temp_dir: Some(temp_dir),
             document_version: None,
+            connection_info: Some(connection_info),
         };
 
         // Build initialize params, including initializationOptions from config if provided
