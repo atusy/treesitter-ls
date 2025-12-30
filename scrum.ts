@@ -132,7 +132,7 @@ const scrum: ScrumDashboard = {
         implementation:
           "Add age check using directory metadata modified time, remove old directories",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: [
           "Use metadata().modified() to get directory age",
@@ -145,7 +145,7 @@ const scrum: ScrumDashboard = {
         implementation:
           "Verify age comparison logic preserves recent directories",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: [
           "Create test with fresh directory that should be kept",
