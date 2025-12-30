@@ -295,6 +295,34 @@ impl Drop for LanguageServerConnection {
     }
 }
 
+use std::collections::HashMap;
+
+/// Pool of language server connections for reuse across requests
+pub struct ServerPool {
+    #[allow(dead_code)] // Will be used in spawn_server
+    connections: HashMap<String, LanguageServerConnection>,
+}
+
+impl ServerPool {
+    /// Create a new empty server pool
+    pub fn new() -> Self {
+        Self {
+            connections: HashMap::new(),
+        }
+    }
+
+    /// Get a connection for the given server name, if one exists
+    pub fn get(&self, _name: &str) -> Option<&LanguageServerConnection> {
+        None
+    }
+}
+
+impl Default for ServerPool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
