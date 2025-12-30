@@ -210,8 +210,8 @@ const scrum: ScrumDashboard = {
         implementation:
           "Rename RustAnalyzerPool to LanguageServerPool, update pool key usage",
         type: "structural",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "1949c5e", message: "refactor(lsp): rename RustAnalyzerPool to LanguageServerPool", phase: "refactoring" }],
         notes: [
           "Structural change - pool behavior remains same, just generalized naming",
         ],
