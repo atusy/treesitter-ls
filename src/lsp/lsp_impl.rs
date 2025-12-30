@@ -94,6 +94,9 @@ impl TreeSitterLs {
         // Initialize failed parser registry with crash detection
         let failed_parsers = Self::init_failed_parser_registry();
 
+        // Clean up stale temp directories from previous sessions in the background
+        std::thread::spawn(super::redirection::startup_cleanup);
+
         Self {
             client,
             language,
