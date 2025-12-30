@@ -217,6 +217,7 @@ mod tests {
             search_paths: Some(vec!["/search/path".to_string()]),
             capture_mappings: CaptureMappings::default(),
             auto_install: None,
+            bridge: None,
         };
 
         store.update_from_settings(&settings);

@@ -75,6 +75,9 @@ pub struct TreeSitterSettings {
     pub capture_mappings: CaptureMappings,
     #[serde(rename = "autoInstall")]
     pub auto_install: Option<bool>,
+    /// Optional bridge settings for configuring external language servers
+    #[serde(default)]
+    pub bridge: Option<BridgeSettings>,
 }
 
 // Domain types - internal representations used throughout the application
@@ -487,6 +490,7 @@ mod tests {
             languages: HashMap::new(),
             capture_mappings: HashMap::new(),
             auto_install: None,
+            bridge: None,
         };
 
         // Add multiple language configurations
@@ -632,6 +636,42 @@ mod tests {
 
         let settings: BridgeSettings = serde_json::from_str(config_json).unwrap();
         assert!(settings.servers.is_empty());
+    }
+
+    #[test]
+    fn should_parse_treesitter_settings_with_bridge() {
+        // Test that TreeSitterSettings includes optional bridge field
+        let config_json = r#"{
+            "searchPaths": ["/usr/local/lib"],
+            "bridge": {
+                "servers": {
+                    "rust-analyzer": {
+                        "command": "rust-analyzer",
+                        "languages": ["rust"]
+                    }
+                }
+            }
+        }"#;
+
+        let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
+
+        assert!(settings.bridge.is_some());
+        let bridge = settings.bridge.unwrap();
+        assert!(bridge.servers.contains_key("rust-analyzer"));
+        assert_eq!(bridge.servers["rust-analyzer"].command, "rust-analyzer");
+    }
+
+    #[test]
+    fn should_parse_treesitter_settings_without_bridge() {
+        // Backward compatibility: missing bridge field should be None
+        let config_json = r#"{
+            "searchPaths": ["/usr/local/lib"],
+            "languages": {}
+        }"#;
+
+        let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
+
+        assert!(settings.bridge.is_none());
     }
 
     #[test]
