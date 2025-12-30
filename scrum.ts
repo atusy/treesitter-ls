@@ -120,7 +120,7 @@ const scrum: ScrumDashboard = {
         implementation:
           "Implement directory scanning with prefix matching in cleanup_stale_temp_dirs",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: [
           "Only scan for directories with treesitter-ls- prefix",
