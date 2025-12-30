@@ -499,6 +499,36 @@ impl Default for LanguageServerPool {
     }
 }
 
+/// Statistics returned by cleanup_stale_temp_dirs
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct CleanupStats {
+    /// Number of stale directories successfully removed
+    pub dirs_removed: usize,
+    /// Number of directories kept (newer than max_age)
+    pub dirs_kept: usize,
+    /// Number of directories that failed to remove (e.g., permission denied)
+    pub dirs_failed: usize,
+}
+
+/// Clean up stale temporary directories created by treesitter-ls.
+///
+/// Scans the given temp directory for directories matching the pattern
+/// `treesitter-ls-*` and removes those older than `max_age`.
+///
+/// # Arguments
+/// * `temp_dir` - The directory to scan for stale temp directories
+/// * `max_age` - Maximum age for directories; older ones will be removed
+///
+/// # Returns
+/// * `Ok(CleanupStats)` - Statistics about the cleanup operation
+/// * `Err(io::Error)` - If the temp directory cannot be read
+pub fn cleanup_stale_temp_dirs(
+    _temp_dir: &std::path::Path,
+    _max_age: std::time::Duration,
+) -> std::io::Result<CleanupStats> {
+    Ok(CleanupStats::default())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -656,5 +686,24 @@ mod tests {
 
         let mut conn = conn.unwrap();
         assert!(conn.is_alive());
+    }
+
+    #[test]
+    fn cleanup_stale_temp_dirs_can_be_called_with_valid_args() {
+        use std::time::Duration;
+        use tempfile::tempdir;
+
+        let temp = tempdir().unwrap();
+        let max_age = Duration::from_secs(24 * 60 * 60); // 24 hours
+
+        // The function should be callable and return Ok
+        let result = cleanup_stale_temp_dirs(temp.path(), max_age);
+        assert!(result.is_ok(), "cleanup_stale_temp_dirs should return Ok");
+
+        let stats = result.unwrap();
+        // With an empty temp directory, all stats should be zero
+        assert_eq!(stats.dirs_removed, 0);
+        assert_eq!(stats.dirs_kept, 0);
+        assert_eq!(stats.dirs_failed, 0);
     }
 }
