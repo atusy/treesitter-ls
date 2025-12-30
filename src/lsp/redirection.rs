@@ -1105,4 +1105,64 @@ mod tests {
             "src/main.rs should exist for None workspace_type"
         );
     }
+
+    #[test]
+    fn setup_generic_workspace_creates_virtual_file_only() {
+        use crate::config::settings::WorkspaceType;
+        use tempfile::tempdir;
+
+        let temp = tempdir().unwrap();
+        let temp_path = temp.path().to_path_buf();
+
+        // Call setup_workspace with Generic type and "py" extension
+        let result = setup_workspace(&temp_path, WorkspaceType::Generic, "py");
+        assert!(result.is_some(), "setup_workspace should succeed for Generic");
+
+        let virtual_file = result.unwrap();
+
+        // Verify virtual.py was created
+        let expected_virtual_file = temp_path.join("virtual.py");
+        assert_eq!(
+            virtual_file, expected_virtual_file,
+            "virtual_file should be virtual.py for Generic workspace"
+        );
+        assert!(
+            expected_virtual_file.exists(),
+            "virtual.py should exist"
+        );
+
+        // Verify NO Cargo.toml was created
+        let cargo_toml = temp_path.join("Cargo.toml");
+        assert!(
+            !cargo_toml.exists(),
+            "Cargo.toml should NOT exist for Generic workspace"
+        );
+
+        // Verify NO src/ directory was created
+        let src_dir = temp_path.join("src");
+        assert!(
+            !src_dir.exists(),
+            "src/ directory should NOT exist for Generic workspace"
+        );
+    }
+
+    #[test]
+    fn setup_generic_workspace_uses_extension_in_filename() {
+        use crate::config::settings::WorkspaceType;
+        use tempfile::tempdir;
+
+        let temp = tempdir().unwrap();
+        let temp_path = temp.path().to_path_buf();
+
+        // Call setup_workspace with different extensions
+        let result_ts = setup_workspace(&temp_path, WorkspaceType::Generic, "ts");
+        assert!(result_ts.is_some());
+
+        let virtual_file = result_ts.unwrap();
+        assert_eq!(
+            virtual_file,
+            temp_path.join("virtual.ts"),
+            "virtual_file should use the provided extension"
+        );
+    }
 }
