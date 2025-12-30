@@ -527,9 +527,10 @@ const TEMP_DIR_PREFIX: &str = "treesitter-ls-";
 /// * `Err(io::Error)` - If the temp directory cannot be read
 pub fn cleanup_stale_temp_dirs(
     temp_dir: &std::path::Path,
-    _max_age: std::time::Duration,
+    max_age: std::time::Duration,
 ) -> std::io::Result<CleanupStats> {
     let mut stats = CleanupStats::default();
+    let now = std::time::SystemTime::now();
 
     // Read directory entries
     let entries = std::fs::read_dir(temp_dir)?;
@@ -552,7 +553,24 @@ pub fn cleanup_stale_temp_dirs(
             continue;
         }
 
-        // Remove the directory
+        // Check directory age using modification time
+        let is_stale = match entry.metadata() {
+            Ok(metadata) => match metadata.modified() {
+                Ok(modified) => match now.duration_since(modified) {
+                    Ok(age) => age > max_age,
+                    Err(_) => false, // Modified time is in the future - treat as fresh
+                },
+                Err(_) => true, // Can't get modified time - treat as stale
+            },
+            Err(_) => true, // Can't get metadata - treat as stale
+        };
+
+        if !is_stale {
+            stats.dirs_kept += 1;
+            continue;
+        }
+
+        // Remove the stale directory
         if std::fs::remove_dir_all(&path).is_ok() {
             stats.dirs_removed += 1;
         } else {
