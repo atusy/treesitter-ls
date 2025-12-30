@@ -28,7 +28,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-090, PBI-093 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-090, PBI-093, PBI-094 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
   product_backlog: [
     {
@@ -52,7 +52,7 @@ const scrum: ScrumDashboard = {
           verification: "No manual restart required; next request triggers respawn",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-095",
@@ -76,7 +76,55 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 73,
+    pbi_id: "PBI-095",
+    goal:
+      "Documentation authors get responsive go-to-definition even when rust-analyzer is slow",
+    status: "in_progress",
+    subtasks: [
+      {
+        test:
+          "goto_definition with mock slow server returns None after timeout (default 5s)",
+        implementation:
+          "Wrap read_response_for_id in tokio::time::timeout(), return None on Elapsed",
+        type: "behavioral",
+        status: "green",
+        commits: [],
+        notes: [
+          "Used poll()-based timeout on Unix instead of tokio::time::timeout for simpler integration with blocking BufReader",
+        ],
+      },
+      {
+        test:
+          "goto_definition timeout is configurable via connection parameter",
+        implementation:
+          "Add timeout_duration field to LanguageServerConnection, use in timeout() call",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "hover request also respects timeout configuration",
+        implementation:
+          "Apply same timeout pattern to hover() method for consistency",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "timeout returns graceful None, not panic or error propagation",
+        implementation:
+          "Verify Option<T> return type handles timeout as None, no unwrap/expect",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
