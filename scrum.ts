@@ -120,8 +120,11 @@ const scrum: ScrumDashboard = {
         implementation:
           "Add optional workspace_type field to BridgeServerConfig in settings.rs with WorkspaceType enum (Cargo, Generic)",
         type: "behavioral",
-        status: "red",
-        commits: [],
+        status: "completed",
+        commits: [
+          { hash: "1f41f3e", message: "test(workspace): add failing tests for WorkspaceType deserialization", phase: "green" as const },
+          { hash: "aac9562", message: "feat(workspace): add WorkspaceType enum and workspace_type field", phase: "green" as const },
+        ],
         notes: [],
       },
       {
@@ -129,7 +132,7 @@ const scrum: ScrumDashboard = {
         implementation:
           "Extract cargo workspace setup into helper function; call from spawn() when workspace_type is None or Cargo",
         type: "behavioral",
-        status: "pending",
+        status: "red",
         commits: [],
         notes: [],
       },
