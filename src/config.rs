@@ -113,11 +113,12 @@ impl From<&TreeSitterSettings> for WorkspaceSettings {
             .clone()
             .unwrap_or_else(default_search_paths);
 
-        WorkspaceSettings::with_auto_install(
+        WorkspaceSettings::with_bridge(
             search_paths,
             languages,
             capture_mappings,
             settings.auto_install.unwrap_or(true), // Default to true for zero-config
+            settings.bridge.clone(),
         )
     }
 }
@@ -160,8 +161,8 @@ impl From<&WorkspaceSettings> for TreeSitterSettings {
             search_paths,
             languages,
             capture_mappings,
-            auto_install: None, // WorkspaceSettings doesn't track auto_install
-            bridge: None,       // WorkspaceSettings doesn't track bridge
+            auto_install: Some(settings.auto_install),
+            bridge: settings.bridge.clone(),
         }
     }
 }

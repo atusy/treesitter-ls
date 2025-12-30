@@ -114,6 +114,7 @@ pub struct WorkspaceSettings {
     pub languages: HashMap<String, LanguageSettings>,
     pub capture_mappings: CaptureMappings,
     pub auto_install: bool,
+    pub bridge: Option<BridgeSettings>,
 }
 
 impl WorkspaceSettings {
@@ -127,6 +128,7 @@ impl WorkspaceSettings {
             languages,
             capture_mappings,
             auto_install: true, // Default to true for zero-config experience
+            bridge: None,
         }
     }
 
@@ -141,6 +143,23 @@ impl WorkspaceSettings {
             languages,
             capture_mappings,
             auto_install,
+            bridge: None,
+        }
+    }
+
+    pub fn with_bridge(
+        search_paths: Vec<String>,
+        languages: HashMap<String, LanguageSettings>,
+        capture_mappings: CaptureMappings,
+        auto_install: bool,
+        bridge: Option<BridgeSettings>,
+    ) -> Self {
+        Self {
+            search_paths,
+            languages,
+            capture_mappings,
+            auto_install,
+            bridge,
         }
     }
 }
