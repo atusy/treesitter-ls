@@ -294,3 +294,15 @@ impl Drop for LanguageServerConnection {
         self.shutdown();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn server_pool_new_returns_none_for_unknown_server() {
+        let pool = ServerPool::new();
+        let conn = pool.get("rust-analyzer");
+        assert!(conn.is_none());
+    }
+}
