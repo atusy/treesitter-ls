@@ -75,7 +75,7 @@ const scrum: ScrumDashboard = {
     pbi_id: "PBI-096",
     goal:
       "Documentation authors see progress indicators during rust-analyzer operations",
-    status: "in_progress",
+    status: "review",
     subtasks: [
       {
         test: "Unit test: ra_progress_token returns correct token format 'treesitter-ls/rust-analyzer/{operation}'",
