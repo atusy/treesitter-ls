@@ -3,14 +3,67 @@
 //! This module handles redirecting LSP requests for code inside injection regions
 //! (e.g., Rust code blocks in Markdown) to appropriate language servers.
 
-use crate::config::settings::BridgeServerConfig;
+use crate::config::settings::{BridgeServerConfig, WorkspaceType};
 use dashmap::DashMap;
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::time::Instant;
 use tower_lsp::lsp_types::*;
+
+/// Set up workspace files for a language server.
+///
+/// Creates the appropriate file structure based on workspace type:
+/// - Cargo: Creates Cargo.toml and src/main.rs
+/// - Generic: Creates virtual.<ext> file (not yet implemented)
+///
+/// Returns the path to the virtual file that should be used for LSP operations.
+pub fn setup_workspace(
+    temp_dir: &Path,
+    workspace_type: WorkspaceType,
+    _extension: &str,
+) -> Option<PathBuf> {
+    match workspace_type {
+        WorkspaceType::Cargo => setup_cargo_workspace(temp_dir),
+        WorkspaceType::Generic => {
+            // TODO: Will be implemented in subtask 3
+            None
+        }
+    }
+}
+
+/// Set up workspace files with optional workspace type.
+///
+/// If workspace_type is None, defaults to Cargo for backward compatibility.
+pub fn setup_workspace_with_option(
+    temp_dir: &Path,
+    workspace_type: Option<WorkspaceType>,
+    extension: &str,
+) -> Option<PathBuf> {
+    let effective_type = workspace_type.unwrap_or(WorkspaceType::Cargo);
+    setup_workspace(temp_dir, effective_type, extension)
+}
+
+/// Set up a Cargo workspace with Cargo.toml and src/main.rs.
+fn setup_cargo_workspace(temp_dir: &Path) -> Option<PathBuf> {
+    let src_dir = temp_dir.join("src");
+    std::fs::create_dir_all(&src_dir).ok()?;
+
+    // Write minimal Cargo.toml
+    let cargo_toml = temp_dir.join("Cargo.toml");
+    std::fs::write(
+        &cargo_toml,
+        "[package]\nname = \"virtual\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .ok()?;
+
+    // Create empty main.rs (will be overwritten by did_open)
+    let main_rs = src_dir.join("main.rs");
+    std::fs::write(&main_rs, "").ok()?;
+
+    Some(main_rs)
+}
 
 /// Manages a connection to a language server subprocess with a temporary workspace
 pub struct LanguageServerConnection {
@@ -1022,8 +1075,7 @@ mod tests {
 
         // Verify virtual_file points to src/main.rs
         assert_eq!(
-            virtual_file,
-            main_rs,
+            virtual_file, main_rs,
             "virtual_file should be src/main.rs for Cargo workspace"
         );
     }
@@ -1041,10 +1093,16 @@ mod tests {
 
         // Verify Cargo.toml was created
         let cargo_toml = temp_path.join("Cargo.toml");
-        assert!(cargo_toml.exists(), "Cargo.toml should exist for None workspace_type");
+        assert!(
+            cargo_toml.exists(),
+            "Cargo.toml should exist for None workspace_type"
+        );
 
         // Verify src/main.rs was created
         let main_rs = temp_path.join("src").join("main.rs");
-        assert!(main_rs.exists(), "src/main.rs should exist for None workspace_type");
+        assert!(
+            main_rs.exists(),
+            "src/main.rs should exist for None workspace_type"
+        );
     }
 }
