@@ -154,6 +154,14 @@ const scrum: ScrumDashboard = {
             "Reduced duplication from 32 lines to 13 lines; commit 201f254",
         },
         {
+          action:
+            "Fix hang on repeated go-to-definition by using didChange for already-open documents",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "Tracked document_version, send didChange on reuse; commit ee78d2b",
+        },
+        {
           action: "Add E2E test for go-to-definition after rust-analyzer crash",
           timing: "product",
           status: "active",
