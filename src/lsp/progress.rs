@@ -24,6 +24,21 @@ pub fn ra_progress_token(operation: &str) -> NumberOrString {
     NumberOrString::String(format!("treesitter-ls/rust-analyzer/{}", operation))
 }
 
+/// Creates a ProgressParams for the Begin phase of a rust-analyzer operation.
+///
+/// The title will be "Waiting for rust-analyzer..."
+pub fn create_ra_progress_begin(operation: &str) -> ProgressParams {
+    ProgressParams {
+        token: ra_progress_token(operation),
+        value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(WorkDoneProgressBegin {
+            title: "Waiting for rust-analyzer...".to_string(),
+            cancellable: Some(false),
+            message: None,
+            percentage: None,
+        })),
+    }
+}
+
 /// Creates a ProgressParams for the Begin phase of parser installation.
 ///
 /// The title will be "Installing {language} parser..."
@@ -73,6 +88,30 @@ mod tests {
             NumberOrString::Number(_) => {
                 panic!("Expected String token, got Number");
             }
+        }
+    }
+
+    #[test]
+    fn test_create_ra_progress_begin() {
+        let params = create_ra_progress_begin("goto_definition");
+
+        // Verify token format
+        match &params.token {
+            NumberOrString::String(s) => {
+                assert_eq!(s, "treesitter-ls/rust-analyzer/goto_definition");
+            }
+            NumberOrString::Number(_) => {
+                panic!("Expected String token, got Number");
+            }
+        }
+
+        // Verify it's a Begin variant with correct title
+        match params.value {
+            ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(begin)) => {
+                assert_eq!(begin.title, "Waiting for rust-analyzer...");
+                assert_eq!(begin.cancellable, Some(false));
+            }
+            _ => panic!("Expected WorkDoneProgress::Begin"),
         }
     }
 
