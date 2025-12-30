@@ -175,64 +175,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 70,
-    pbi_id: "PBI-089",
-    goal: "Users see type info when hovering over Rust symbols in Markdown code blocks",
-    status: "done",
-    subtasks: [
-      {
-        test: "hover() returns null when position is outside any injection region",
-        implementation: "Check byte offset against injection regions, return None if outside",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "f32dc57", message: "feat(lsp): add textDocument/hover support for Rust injections", phase: "green" },
-        ],
-        notes: ["Used Obvious Implementation - completed all 5 subtasks in single implementation", "E2E test written: test_lsp_hover.lua", "All acceptance criteria passing"],
-      },
-      {
-        test: "LanguageServerConnection.hover() sends textDocument/hover and parses response",
-        implementation: "Add hover() method to LanguageServerConnection similar to goto_definition()",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "f32dc57", message: "feat(lsp): add textDocument/hover support for Rust injections", phase: "green" },
-        ],
-        notes: ["Implemented in redirection.rs following goto_definition pattern"],
-      },
-      {
-        test: "hover response range is translated from virtual to host coordinates",
-        implementation: "Use CacheableInjectionRegion.translate_virtual_to_host() for range if present",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "f32dc57", message: "feat(lsp): add textDocument/hover support for Rust injections", phase: "green" },
-        ],
-        notes: ["Range translation in lsp_impl.rs lines 1926-1933"],
-      },
-      {
-        test: "hover() in lsp_impl.rs forwards request to rust-analyzer for Rust injections",
-        implementation: "Wire up hover() using pattern from goto_definition() with pool management",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "f32dc57", message: "feat(lsp): add textDocument/hover support for Rust injections", phase: "green" },
-        ],
-        notes: ["Full integration with RustAnalyzerPool and spawn_blocking"],
-      },
-      {
-        test: "E2E: Neovim vim.lsp.buf.hover() shows function signature in Markdown Rust block",
-        implementation: "Create test_lsp_hover.lua with MiniTest pattern from test_lsp_definition.lua",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "f32dc57", message: "feat(lsp): add textDocument/hover support for Rust injections", phase: "green" },
-        ],
-        notes: ["Test passing in full suite: make test_nvim shows test_lsp_hover.lua passes"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -242,15 +185,24 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 3) | Sprint 1-66: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 3) | Sprint 1-67: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 70, pbi_id: "PBI-089", goal: "Users see type info when hovering over Rust symbols in Markdown code blocks", status: "done", subtasks: [] },
     { number: 69, pbi_id: "PBI-087", goal: "ServerPool for connection reuse (<200ms latency)", status: "done", subtasks: [] },
     { number: 68, pbi_id: "PBI-086", goal: "Go-to-definition in Markdown Rust code blocks", status: "done", subtasks: [] },
-    { number: 67, pbi_id: "PBI-085", goal: "Fix auto-install blocking; preserve host highlighting", status: "done", subtasks: [] },
   ],
 
-  // Recent 3 retrospectives | Sprint 63-66: git log -- scrum.ts
+  // Recent 3 retrospectives | Sprint 68-70: git log -- scrum.ts
   retrospectives: [
+    {
+      sprint: 70,
+      improvements: [
+        { action: "Obvious Implementation is valid TDD when pattern is clear", timing: "immediate", status: "completed", outcome: "Added guidance to CLAUDE.md TDD section" },
+        { action: "ADR-0008 Priority 1 (hover) was accurate - low complexity, high value", timing: "immediate", status: "completed", outcome: "Single commit for complete feature" },
+        { action: "Pre-existing E2E failures need documentation", timing: "sprint", status: "active", outcome: null },
+        { action: "Fix 3 failing E2E tests (test_lsp_select x2, test_lsp_semantic x1)", timing: "product", status: "active", outcome: null },
+      ],
+    },
     {
       sprint: 69,
       improvements: [
