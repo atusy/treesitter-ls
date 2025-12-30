@@ -793,4 +793,68 @@ mod tests {
             "random-dir should NOT be removed"
         );
     }
+
+    #[test]
+    fn cleanup_removes_directories_older_than_max_age() {
+        use filetime::{FileTime, set_file_mtime};
+        use std::time::{Duration, SystemTime};
+        use tempfile::tempdir;
+
+        let temp = tempdir().unwrap();
+
+        // Create a directory and make it old (2 days ago)
+        let old_dir = temp.path().join("treesitter-ls-old-12345");
+        std::fs::create_dir(&old_dir).unwrap();
+
+        // Set modification time to 2 days ago
+        let two_days_ago = SystemTime::now() - Duration::from_secs(2 * 24 * 60 * 60);
+        let mtime = FileTime::from_system_time(two_days_ago);
+        set_file_mtime(&old_dir, mtime).unwrap();
+
+        // Use max_age of 24 hours
+        let max_age = Duration::from_secs(24 * 60 * 60);
+
+        let result = cleanup_stale_temp_dirs(temp.path(), max_age);
+        assert!(result.is_ok());
+
+        let stats = result.unwrap();
+
+        // The old directory should have been removed
+        assert_eq!(
+            stats.dirs_removed, 1,
+            "Should remove 1 directory older than max_age"
+        );
+        assert!(
+            !old_dir.exists(),
+            "Directory older than max_age should be removed"
+        );
+    }
+
+    #[test]
+    fn cleanup_keeps_directories_newer_than_max_age() {
+        use std::time::Duration;
+        use tempfile::tempdir;
+
+        let temp = tempdir().unwrap();
+
+        // Create a fresh directory (just now - definitely newer than 24h)
+        let fresh_dir = temp.path().join("treesitter-ls-fresh-12345");
+        std::fs::create_dir(&fresh_dir).unwrap();
+
+        // Use max_age of 24 hours
+        let max_age = Duration::from_secs(24 * 60 * 60);
+
+        let result = cleanup_stale_temp_dirs(temp.path(), max_age);
+        assert!(result.is_ok());
+
+        let stats = result.unwrap();
+
+        // The fresh directory should be kept
+        assert_eq!(stats.dirs_removed, 0, "Should NOT remove fresh directories");
+        assert_eq!(stats.dirs_kept, 1, "Should keep 1 fresh directory");
+        assert!(
+            fresh_dir.exists(),
+            "Directory newer than max_age should be kept"
+        );
+    }
 }
