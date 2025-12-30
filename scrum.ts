@@ -157,7 +157,7 @@ const scrum: ScrumDashboard = {
         implementation:
           "Wrap removal in error handling that logs and continues",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: [
           "Use log::warn! for removal failures",
