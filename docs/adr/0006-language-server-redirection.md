@@ -143,24 +143,11 @@ Injection detection already happens during:
 
 Spawning can piggyback on these existing code paths.
 
-#### Resource Limits
-
-To prevent resource exhaustion when many injections are detected:
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `maxConcurrentServers` | 5 | Maximum simultaneous language server processes |
-| `spawnQueueStrategy` | `"recent"` | Priority: `"recent"` (most recently edited) or `"fifo"` |
-| `eagerSpawn` | `true` | Set to `false` to use lazy spawning |
-
-When the limit is reached, least-recently-used servers are shut down to make room.
-
 #### Lifecycle
 
 - **Spawn on injection detection**: Background spawn when new language injection is found
 - **Reuse**: All subsequent requests use warm connection
-- **Idle shutdown**: After configurable timeout with no requests (default: 300s)
-- **Crash recovery**: Detect dead servers (broken pipe, exit code) and respawn on next request
+- **Crash recovery**: Detect dead servers (broken pipe, exit code) and respawn immediately
 
 ### Server Registry and Configuration
 
@@ -169,9 +156,6 @@ The bridge requires knowing which server to use for each language:
 ```json
 {
   "bridge": {
-    "idleTimeoutSeconds": 300,
-    "maxConcurrentServers": 5,
-    "eagerSpawn": true,
     "servers": {
       "rust-analyzer": {
         "languages": ["rust"],
@@ -196,9 +180,6 @@ The bridge requires knowing which server to use for each language:
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `idleTimeoutSeconds` | No | Seconds before idle server shutdown (default: 300) |
-| `maxConcurrentServers` | No | Maximum concurrent server processes (default: 5) |
-| `eagerSpawn` | No | Spawn servers on injection detection (default: true) |
 | `servers` | Yes | Server configurations keyed by server name |
 | `servers.*.languages` | Yes | Languages this server handles |
 | `servers.*.command` | Yes | Server executable |
@@ -208,16 +189,16 @@ The bridge requires knowing which server to use for each language:
 
 #### Multiple Servers Per Language
 
-When multiple servers are configured for the same language (e.g., `pyright` + `ruff` for Python), treesitter-ls routes requests based on **server capabilities**:
+When multiple servers are configured for the same language (e.g., `pyright` + `ruff` for Python), requests are only routed to servers with the required capability. The routing strategy among capable servers is **implementation-defined**:
 
-| Request Type | Routing Strategy |
-|--------------|------------------|
-| `textDocument/completion` | First server with `completionProvider` capability |
-| `textDocument/hover` | First server with `hoverProvider` capability |
-| `textDocument/publishDiagnostics` | **All** servers (diagnostics are merged) |
-| Other requests | First server that handles the language |
+| Strategy | Description | Trade-off |
+|----------|-------------|-----------|
+| **First** | Route to first capable server | Simple, low latency, but loses information from other servers |
+| **Aggregation** | Query all capable servers, merge responses | Richer results, but higher latency and merge complexity |
 
-This enables complementary servers: `pyright` for completions/hover, `ruff` for linting diagnostics.
+The appropriate strategy may vary by request type. For example, diagnostics benefit from aggregation (show warnings from all linters), while completion may prefer first (avoid duplicates).
+
+This enables complementary servers: `pyright` for type checking, `ruff` for linting.
 
 #### Why Server-Centric Configuration
 
@@ -386,7 +367,7 @@ match result {
 
 | Error Type | Detection | Recovery |
 |------------|-----------|----------|
-| Server crash | Broken pipe on read/write | Mark connection dead, respawn on next request |
+| Server crash | Broken pipe on read/write | Mark connection dead, respawn immediately |
 | Request timeout | `tokio::time::timeout` | Return `None`, log warning |
 | Malformed response | JSON parse error | Return `None`, log error |
 | Server busy | No response within timeout | Return `None`, consider increasing timeout |
