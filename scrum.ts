@@ -132,7 +132,103 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 75,
+    pbi_id: "PBI-097",
+    goal:
+      "Documentation authors can configure bridge servers via initializationOptions for multi-language LSP support",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "Test that BridgeServerConfig struct can deserialize command, args, languages, and initializationOptions fields",
+        implementation:
+          "Create BridgeServerConfig struct with serde derives in src/config/settings.rs",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Define: command: String, args: Option<Vec<String>>, languages: Vec<String>, initialization_options: Option<serde_json::Value>",
+        ],
+      },
+      {
+        test: "Test that BridgeSettings struct deserializes from bridge.servers map",
+        implementation:
+          "Create BridgeSettings with servers: HashMap<String, BridgeServerConfig> in settings.rs",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "JSON schema: { bridge: { servers: { 'rust-analyzer': { command: '...', ... } } } }",
+        ],
+      },
+      {
+        test: "Test that TreeSitterSettings includes optional bridge field that deserializes correctly",
+        implementation:
+          "Add bridge: Option<BridgeSettings> field to TreeSitterSettings",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Ensure backward compatibility - missing bridge field should parse to None",
+        ],
+      },
+      {
+        test: "Test that LanguageServerConnection::spawn accepts BridgeServerConfig and uses command from config",
+        implementation:
+          "Refactor spawn_rust_analyzer to generic spawn(config: &BridgeServerConfig) method",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Keep spawn_rust_analyzer as convenience wrapper or deprecate entirely",
+        ],
+      },
+      {
+        test: "Test that spawn passes args from config to Command::new",
+        implementation:
+          "Add .args() call using config.args.unwrap_or_default()",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Some language servers need specific args like --stdio or --lsp",
+        ],
+      },
+      {
+        test: "Test that spawn passes initializationOptions from config in initialize request",
+        implementation:
+          "Include config.initialization_options in init_params JSON",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "rust-analyzer uses linkedProjects, pyright uses venvPath, etc.",
+        ],
+      },
+      {
+        test: "Test that RustAnalyzerPool is replaced with generic LanguageServerPool keyed by server name",
+        implementation:
+          "Rename RustAnalyzerPool to LanguageServerPool, update pool key usage",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Structural change - pool behavior remains same, just generalized naming",
+        ],
+      },
+      {
+        test: "Test that lsp_impl uses bridge config from settings when spawning language servers",
+        implementation:
+          "Update lsp_impl to look up server config by name from settings.bridge.servers",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Fall back to hard-coded rust-analyzer config if bridge.servers is empty/missing",
+        ],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
