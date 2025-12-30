@@ -5,17 +5,76 @@
 const userStoryRoles = [
   "Rustacean editing Markdown",
   "developer editing Lua files",
+  "documentation author with Rust code blocks",
 ] as const satisfies readonly string[]; // Must have at least one role. Avoid generic roles like "user" or "admin". Remove obsolete roles freely.
 
 const scrum: ScrumDashboard = {
   product_goal: {
-    statement: "",
-    success_metrics: [],
+    statement:
+      "Improve LSP bridge go-to-definition to be production ready (ADR-0006, 0007, 0008)",
+    success_metrics: [
+      {
+        metric: "Connection pooling implemented",
+        target: "Server connections reused across requests",
+      },
+      {
+        metric: "Configuration system complete",
+        target: "User can configure bridge servers via initializationOptions",
+      },
+      {
+        metric: "Robustness features",
+        target: "Ready detection, timeout handling, crash recovery",
+      },
+    ],
   },
 
   // Completed PBIs: PBI-001 through PBI-090, PBI-093 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "PBI-094",
+      story: {
+        role: "documentation author with Rust code blocks",
+        capability:
+          "continue using go-to-definition after rust-analyzer crashes",
+        benefit:
+          "I don't lose productivity when the language server has issues",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "go-to-definition works after rust-analyzer process is killed",
+          verification:
+            "E2E test: goto-definition, kill rust-analyzer, goto-definition again succeeds",
+        },
+        {
+          criterion: "Server respawn happens automatically without user action",
+          verification: "No manual restart required; next request triggers respawn",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-095",
+      story: {
+        role: "documentation author with Rust code blocks",
+        capability:
+          "get a response within seconds even when rust-analyzer is slow",
+        benefit: "I'm not blocked waiting for a hung language server",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Request times out after configurable duration (default 5s)",
+          verification: "Unit test: mock slow server, verify timeout",
+        },
+        {
+          criterion: "Timeout returns graceful null response, not error",
+          verification: "Unit test: timeout produces None, not panic/error",
+        },
+      ],
+      status: "ready",
+    },
+  ],
 
   sprint: null,
 
@@ -27,8 +86,51 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-69: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-70: git log -- scrum.yaml, scrum.ts
   completed: [
+    {
+      number: 72,
+      pbi_id: "PBI-094",
+      goal:
+        "Documentation authors can continue using go-to-definition after rust-analyzer crashes",
+      status: "done",
+      subtasks: [
+        {
+          test:
+            "LanguageServerConnection.is_alive() returns true for live process, false after kill",
+          implementation:
+            "Add is_alive() method using process.try_wait() to check process state",
+          type: "behavioral",
+          status: "completed",
+          commits: [
+            {
+              hash: "ea2028c",
+              message:
+                "test(lsp): add is_alive() to LanguageServerConnection for crash detection",
+              phase: "green",
+            },
+          ],
+          notes: [],
+        },
+        {
+          test:
+            "RustAnalyzerPool.take_connection() respawns when existing connection is dead",
+          implementation:
+            "Check is_alive() before returning; if dead, spawn fresh connection",
+          type: "behavioral",
+          status: "completed",
+          commits: [
+            {
+              hash: "13ec61c",
+              message:
+                "feat(lsp): implement automatic crash recovery for rust-analyzer pool",
+              phase: "green",
+            },
+          ],
+          notes: [],
+        },
+      ],
+    },
     {
       number: 71,
       pbi_id: "PBI-090",
@@ -93,18 +195,29 @@ const scrum: ScrumDashboard = {
         },
       ],
     },
-    {
-      number: 70,
-      pbi_id: "PBI-089",
-      goal:
-        "Users see type info when hovering over Rust symbols in Markdown code blocks",
-      status: "done",
-      subtasks: [],
-    },
   ],
 
   // Recent 2 retrospectives | Sprint 1-69: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    {
+      sprint: 72,
+      improvements: [
+        {
+          action:
+            "Extract rust-analyzer availability check into test helper function",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "Reduced duplication from 32 lines to 13 lines; commit 201f254",
+        },
+        {
+          action: "Add E2E test for go-to-definition after rust-analyzer crash",
+          timing: "product",
+          status: "active",
+          outcome: null,
+        },
+      ],
+    },
     {
       sprint: 71,
       improvements: [
@@ -121,26 +234,6 @@ const scrum: ScrumDashboard = {
           timing: "product",
           status: "active",
           outcome: null,
-        },
-      ],
-    },
-    {
-      sprint: 70,
-      improvements: [
-        {
-          action: "Pre-existing E2E failures need documentation",
-          timing: "sprint",
-          status: "completed",
-          outcome:
-            "Root cause: standalone .lua files have no parser/queries (PBI-090); hover test needs rust-analyzer in CI",
-        },
-        {
-          action:
-            "Fix 4 failing E2E tests: Lua standalone (select x2, semantic x1), hover test env",
-          timing: "product",
-          status: "completed",
-          outcome:
-            "Created PBI-090 for Lua support; hover test is valid but needs CI setup",
         },
       ],
     },
