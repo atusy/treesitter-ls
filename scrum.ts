@@ -144,8 +144,11 @@ const scrum: ScrumDashboard = {
         implementation:
           "Add generic workspace setup in spawn() that creates only temp dir with virtual file path stored",
         type: "behavioral",
-        status: "red",
-        commits: [],
+        status: "completed",
+        commits: [
+          { hash: "261dae3", message: "test(workspace): add failing tests for Generic workspace setup", phase: "green" as const },
+          { hash: "3283763", message: "feat(workspace): add Generic workspace setup with virtual.<ext> file", phase: "green" as const },
+        ],
         notes: [],
       },
       {
@@ -153,7 +156,7 @@ const scrum: ScrumDashboard = {
         implementation:
           "Replace main_rs_uri() with virtual_file_uri() that returns path based on workspace_type and file extension",
         type: "behavioral",
-        status: "pending",
+        status: "red",
         commits: [],
         notes: [],
       },
