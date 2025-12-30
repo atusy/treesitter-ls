@@ -82,8 +82,15 @@ const scrum: ScrumDashboard = {
         implementation:
           "Add ra_progress_token function in progress.rs following existing progress_token pattern",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "cc6b605",
+            message:
+              "feat(lsp): add ra_progress_token function for rust-analyzer operations",
+            phase: "green",
+          },
+        ],
         notes: [],
       },
       {
