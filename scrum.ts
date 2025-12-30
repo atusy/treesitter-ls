@@ -7,12 +7,22 @@ const userStoryRoles = ["user"] as const satisfies readonly string[]; // Must ha
 const scrum: ScrumDashboard = {
   product_goal: {
     statement:
-      "Provide production ready language server bridge for go to definition",
+      "Establish LSP bridge foundation with go-to-definition and hover for Rust in Markdown",
     success_metrics: [
       {
-        metric: "ADR alignment",
+        metric: "ADR-0006 Phase 1 complete",
         target:
-          "AI review confirms the implementation aligns with ADR-0006, ADR-0007, ADR-0008",
+          "Basic LSP client, temp file creation, offset translation, goto_definition working (SATISFIED)",
+      },
+      {
+        metric: "ADR-0007 materialization",
+        target:
+          "Rust injection content written to temp files for rust-analyzer (SATISFIED)",
+      },
+      {
+        metric: "ADR-0008 Strategy 2 partial",
+        target:
+          "Full delegation for goto_definition and hover with position mapping (SATISFIED)",
       },
     ],
   },
@@ -32,7 +42,7 @@ const scrum: ScrumDashboard = {
         { criterion: "Only configured servers spawned (security)", verification: "Unknown language does not spawn process" },
         { criterion: "Graceful fallback for unconfigured languages", verification: "Semantic tokens work without bridge config" },
       ],
-      status: "draft",
+      status: "draft", // ADR-0006 Phase 2-3: Configuration System
     },
     {
       id: "PBI-090",
@@ -79,13 +89,13 @@ const scrum: ScrumDashboard = {
       sprint: 69,
       improvements: [
         { action: "cleanup_idle() needs timer wiring", timing: "product", status: "active", outcome: null },
-        { action: "ServerPool not yet in lsp_impl.rs", timing: "sprint", status: "active", outcome: null },
+        { action: "ServerPool not yet in lsp_impl.rs", timing: "sprint", status: "completed", outcome: "ServerPool integrated in Sprint 70" },
       ],
     },
     {
       sprint: 68,
       improvements: [
-        { action: "PoC sync subprocess needs production refactor", timing: "product", status: "active", outcome: "Consider pooling, async spawn" },
+        { action: "PoC sync subprocess needs production refactor", timing: "product", status: "completed", outcome: "ServerPool with connection reuse implemented in Sprint 69" },
       ],
     },
   ],
