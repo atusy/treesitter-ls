@@ -997,4 +997,54 @@ mod tests {
             "Default max age should be 24 hours"
         );
     }
+
+    #[test]
+    fn setup_cargo_workspace_creates_cargo_toml_and_src_main_rs() {
+        use crate::config::settings::WorkspaceType;
+        use tempfile::tempdir;
+
+        let temp = tempdir().unwrap();
+        let temp_path = temp.path().to_path_buf();
+
+        // Call setup_workspace with Cargo type
+        let result = setup_workspace(&temp_path, WorkspaceType::Cargo, "rs");
+        assert!(result.is_some(), "setup_workspace should succeed");
+
+        let virtual_file = result.unwrap();
+
+        // Verify Cargo.toml was created
+        let cargo_toml = temp_path.join("Cargo.toml");
+        assert!(cargo_toml.exists(), "Cargo.toml should exist");
+
+        // Verify src/main.rs was created
+        let main_rs = temp_path.join("src").join("main.rs");
+        assert!(main_rs.exists(), "src/main.rs should exist");
+
+        // Verify virtual_file points to src/main.rs
+        assert_eq!(
+            virtual_file,
+            main_rs,
+            "virtual_file should be src/main.rs for Cargo workspace"
+        );
+    }
+
+    #[test]
+    fn setup_cargo_workspace_none_defaults_to_cargo() {
+        use tempfile::tempdir;
+
+        let temp = tempdir().unwrap();
+        let temp_path = temp.path().to_path_buf();
+
+        // Call setup_workspace with None (should default to Cargo behavior)
+        let result = setup_workspace_with_option(&temp_path, None, "rs");
+        assert!(result.is_some(), "setup_workspace should succeed");
+
+        // Verify Cargo.toml was created
+        let cargo_toml = temp_path.join("Cargo.toml");
+        assert!(cargo_toml.exists(), "Cargo.toml should exist for None workspace_type");
+
+        // Verify src/main.rs was created
+        let main_rs = temp_path.join("src").join("main.rs");
+        assert!(main_rs.exists(), "src/main.rs should exist for None workspace_type");
+    }
 }
