@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Proposed (PoC validates core concepts; architecture under refinement)
 
 ## Context
 
@@ -15,7 +15,7 @@ Markdown code blocks and other injection regions (e.g., JavaScript inside HTML `
 
 Modern editors can only attach one LSP server per buffer, meaning users must choose between treesitter-ls (fast semantic tokens for the host document) and a language-specific server (full features but only for the primary language).
 
-The key insight is: **treesitter-ls already knows where injection regions are and what languages they contain**. It can act as an LSP bridge, connecting injection regions to appropriate language servers with position translation.
+The key insight is: **treesitter-ls already knows where injection regions are and what languages they contain**. It can act as an LSP Bridge, connecting injection regions to appropriate language servers with position translation.
 
 ### Language Server Constraints
 
@@ -25,7 +25,7 @@ Language servers have requirements beyond the LSP protocol that affect this arch
 
 **Real Files on Disk**: Some servers index from the filesystem rather than relying solely on `didOpen` content. Virtual URIs (`file:///virtual/...`) are insufficient.
 
-**Indexing Time**: Language servers need time to index after `didOpen` before responding to queries. The `publishDiagnostics` notification signals indexing completion.
+**Indexing Time**: Language servers need time to index after `didOpen` before responding to queries. The `publishDiagnostics` notification often signals indexing completion, though this is not guaranteed for all servers.
 
 These constraints mean bridging is not simply "forward request, return response"—servers may need specific initialization options and real files on disk.
 
@@ -59,12 +59,20 @@ These constraints mean bridging is not simply "forward request, return response"
 │                               │                                 │
 │                               ▼                                 │
 │                      ┌─────────────────┐                        │
-│                      │  TempFileStore  │                        │
-│                      │ (injection.rs)  │                        │
+│                      │ TempFileManager │                        │
+│                      │ (per-injection) │                        │
 │                      └─────────────────┘                        │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### Security Model
+
+**Only explicitly configured servers are spawned.** treesitter-ls does not auto-discover or execute arbitrary language servers based on injection content. A malicious code block cannot trigger execution of unregistered commands.
+
+- Servers must be listed in user configuration with explicit `command` field
+- No shell expansion or command interpolation in server commands
+- Temp files contain only extracted source code, never executable content
 
 ### Server Connection Pool
 
@@ -115,8 +123,8 @@ Document Open/Edit
          ▼
 ┌─────────────────┐     ┌─────────────────────────────┐
 │ For each new    │────▶│ Background: spawn server    │
-│ injection lang  │     │ Write temp workspace        │
-└─────────────────┘     │ Wait for publishDiagnostics │
+│ injection lang  │     │ Write temp file             │
+└─────────────────┘     │ Wait for ready signal       │
                         └─────────────────────────────┘
          │
          ▼
@@ -135,11 +143,24 @@ Injection detection already happens during:
 
 Spawning can piggyback on these existing code paths.
 
-Lifecycle:
+#### Resource Limits
+
+To prevent resource exhaustion when many injections are detected:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `maxConcurrentServers` | 5 | Maximum simultaneous language server processes |
+| `spawnQueueStrategy` | `"recent"` | Priority: `"recent"` (most recently edited) or `"fifo"` |
+| `eagerSpawn` | `true` | Set to `false` to use lazy spawning |
+
+When the limit is reached, least-recently-used servers are shut down to make room.
+
+#### Lifecycle
+
 - **Spawn on injection detection**: Background spawn when new language injection is found
 - **Reuse**: All subsequent requests use warm connection
-- **Idle shutdown**: After configurable timeout with no requests
-- **Crash recovery**: Detect dead servers and respawn
+- **Idle shutdown**: After configurable timeout with no requests (default: 300s)
+- **Crash recovery**: Detect dead servers (broken pipe, exit code) and respawn on next request
 
 ### Server Registry and Configuration
 
@@ -147,8 +168,11 @@ The bridge requires knowing which server to use for each language:
 
 ```json
 {
-  "treesitter-ls": {
-    "bridge": {
+  "bridge": {
+    "idleTimeoutSeconds": 300,
+    "maxConcurrentServers": 5,
+    "eagerSpawn": true,
+    "servers": {
       "rust-analyzer": {
         "languages": ["rust"],
         "command": "rust-analyzer",
@@ -172,10 +196,28 @@ The bridge requires knowing which server to use for each language:
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `languages` | Yes | Languages this server handles |
-| `command` | Yes | Server executable |
-| `args` | No | Command-line arguments |
-| `initializationOptions` | No | Passed to server's `initialize` request |
+| `idleTimeoutSeconds` | No | Seconds before idle server shutdown (default: 300) |
+| `maxConcurrentServers` | No | Maximum concurrent server processes (default: 5) |
+| `eagerSpawn` | No | Spawn servers on injection detection (default: true) |
+| `servers` | Yes | Server configurations keyed by server name |
+| `servers.*.languages` | Yes | Languages this server handles |
+| `servers.*.command` | Yes | Server executable |
+| `servers.*.args` | No | Command-line arguments |
+| `servers.*.initializationOptions` | No | Passed to server's `initialize` request |
+| `servers.*.rootUri` | No | Workspace root URI for servers that require it |
+
+#### Multiple Servers Per Language
+
+When multiple servers are configured for the same language (e.g., `pyright` + `ruff` for Python), treesitter-ls routes requests based on **server capabilities**:
+
+| Request Type | Routing Strategy |
+|--------------|------------------|
+| `textDocument/completion` | First server with `completionProvider` capability |
+| `textDocument/hover` | First server with `hoverProvider` capability |
+| `textDocument/publishDiagnostics` | **All** servers (diagnostics are merged) |
+| Other requests | First server that handles the language |
+
+This enables complementary servers: `pyright` for completions/hover, `ruff` for linting diagnostics.
 
 #### Why Server-Centric Configuration
 
@@ -188,8 +230,46 @@ The bridge requires knowing which server to use for each language:
 
 This separation allows:
 - **Cross-cutting servers**: `typos-lsp` provides diagnostics for multiple languages
-- **Multiple servers per language**: `pyright` + `ruff` for Python (both in `bridge`)
+- **Multiple servers per language**: `pyright` + `ruff` for Python (both in `bridge.servers`)
 - **Independent lifecycle**: Tree-sitter config doesn't affect server spawning
+
+### Temporary File Management
+
+Injection content must be written to disk for servers that require real files.
+
+#### File Naming Strategy
+
+Temp files use deterministic, unique paths to support multiple concurrent injections:
+
+```
+{temp_dir}/treesitter-ls/{document_hash}/{language}_{injection_index}.{ext}
+```
+
+Example:
+```
+/tmp/treesitter-ls/a1b2c3d4/rust_0.rs
+/tmp/treesitter-ls/a1b2c3d4/rust_1.rs
+/tmp/treesitter-ls/e5f6g7h8/python_0.py
+```
+
+| Component | Source |
+|-----------|--------|
+| `{temp_dir}` | `std::env::temp_dir()` (cross-platform) |
+| `{document_hash}` | Hash of host document URI |
+| `{language}` | Injection language name |
+| `{injection_index}` | 0-based index within document |
+| `{ext}` | Language-appropriate extension |
+
+#### Cleanup Strategy
+
+| Event | Action |
+|-------|--------|
+| Document closed | Delete temp files for that document |
+| Server idle shutdown | Delete temp files for that server's languages |
+| treesitter-ls startup | Clean stale files from previous sessions |
+| treesitter-ls shutdown | Delete all temp files |
+
+Startup cleanup handles crash recovery: scan `{temp_dir}/treesitter-ls/` and remove directories older than 24 hours.
 
 ### Workspace Provisioning
 
@@ -223,16 +303,20 @@ For rust-analyzer, users maintain a `rust-project.json` that defines a virtual c
 }
 ```
 
+> **Note**: The `root_module` path should match the temp file location used by treesitter-ls. For multiple injections, consider using a glob pattern if rust-analyzer supports it, or configure multiple crate entries.
+
 treesitter-ls configuration points rust-analyzer to this file:
 
 ```json
 {
   "bridge": {
-    "rust-analyzer": {
-      "languages": ["rust"],
-      "command": "rust-analyzer",
-      "initializationOptions": {
-        "linkedProjects": ["~/.config/treesitter-ls/rust-project.json"]
+    "servers": {
+      "rust-analyzer": {
+        "languages": ["rust"],
+        "command": "rust-analyzer",
+        "initializationOptions": {
+          "linkedProjects": ["~/.config/treesitter-ls/rust-project.json"]
+        }
       }
     }
   }
@@ -243,26 +327,74 @@ treesitter-ls configuration points rust-analyzer to this file:
 - treesitter-ls has zero language-specific knowledge
 - Users leverage familiar LSP configuration patterns
 - Full flexibility for any language server
-- Simpler implementation (just write one file)
+- Simpler implementation (just write source files)
 
 #### Provisioning Flow
 
-1. Create temporary file with injection content (e.g., `/tmp/treesitter-ls/injection.rs`)
+1. Create temporary file with injection content using deterministic path
 2. Initialize server with user-provided `initializationOptions`
 3. Send `didOpen` notification
-4. Wait for `publishDiagnostics` before querying
-5. Clean up temp file on shutdown
+4. Wait for ready signal (see below)
+5. Clean up temp files on document close or shutdown
 
-### Async Communication
+#### Ready Detection
+
+Detecting when a server has finished indexing and is ready for queries:
+
+| Method | Reliability | Timeout |
+|--------|-------------|---------|
+| `publishDiagnostics` received | Medium (some servers don't send for valid code) | 5s |
+| `window/workDoneProgress` completion | High (when supported) | 10s |
+| Configurable delay | Low (guessing) | N/A |
+| Timeout fallback | Always | 5s default |
+
+Implementation uses a multi-signal approach:
+1. Start timeout timer (configurable, default 5s)
+2. Listen for `publishDiagnostics` or `workDoneProgress/end`
+3. Mark ready on first signal OR timeout expiration
+4. Log warning if timeout was hit (suggests misconfiguration)
+
+### Async Communication and Error Handling
 
 Language server communication uses synchronous stdio which blocks the thread. In treesitter-ls's async runtime (tokio), this requires `spawn_blocking` to avoid stalling other tasks.
 
 ```rust
-let result = tokio::task::spawn_blocking(move || {
-    let conn = pool.get_connection("rust")?;
-    conn.request(method, params)
-}).await.ok().flatten();
+let result = tokio::time::timeout(
+    Duration::from_secs(request_timeout_secs),
+    tokio::task::spawn_blocking(move || {
+        let conn = pool.get_connection("rust")?;
+        conn.request(method, params)
+    })
+).await;
+
+match result {
+    Ok(Ok(response)) => response,
+    Ok(Err(e)) => {
+        // Server error (e.g., invalid request)
+        log::warn!("Bridge request failed: {}", e);
+        None
+    }
+    Err(_) => {
+        // Timeout - server may be hung
+        log::warn!("Bridge request timed out after {}s", request_timeout_secs);
+        None
+    }
+}
 ```
+
+#### Error Handling Strategy
+
+| Error Type | Detection | Recovery |
+|------------|-----------|----------|
+| Server crash | Broken pipe on read/write | Mark connection dead, respawn on next request |
+| Request timeout | `tokio::time::timeout` | Return `None`, log warning |
+| Malformed response | JSON parse error | Return `None`, log error |
+| Server busy | No response within timeout | Return `None`, consider increasing timeout |
+
+Cancellation: When the user moves the cursor before a response arrives, the LSP client typically sends a new request. treesitter-ls should:
+1. Not block waiting for the old response
+2. Allow the old request to complete in background (result discarded)
+3. Process the new request immediately
 
 ### Position Translation
 
@@ -285,6 +417,17 @@ Host Document (Markdown)          Virtual Document (Rust)
 Cursor at line 4, col 5 in host ──▶ line 1, col 5 in virtual
 ```
 
+#### Translation Details
+
+For a single injection region starting at host line `H` and column `C`:
+
+| Direction | Formula |
+|-----------|---------|
+| Host → Virtual | `virtual_line = host_line - H`, `virtual_col = host_col - C` (first line only) |
+| Virtual → Host | `host_line = virtual_line + H`, `host_col = virtual_col + C` (first line only) |
+
+For multiple injections of the same language in one document, see [ADR-0007](0007-virtual-document-model.md) for virtual document strategies.
+
 Translation is straightforward for positions within a single injection. See [ADR-0008](0008-redirection-request-strategies.md) for complex cases involving cross-file references.
 
 ## Consequences
@@ -296,13 +439,15 @@ Translation is straightforward for positions within a single injection. See [ADR
 - **Leverages existing detection**: Reuses injection detection from Tree-sitter queries
 - **Progressive enhancement**: Falls back gracefully to Tree-sitter when servers unavailable
 - **Low latency**: Connection pooling enables fast responses after initial spawn
+- **Secure by design**: Only user-configured servers are spawned
 
 ### Negative
 
 - **Resource overhead**: Multiple language server processes consume memory
 - **Complexity**: treesitter-ls becomes both server and client; protocol translation adds complexity
-- **Initial latency**: First request to a language incurs server spawn time
+- **Initial latency**: First request to a language incurs server spawn time (mitigated by eager spawn)
 - **Debugging difficulty**: Multi-hop request/response makes troubleshooting harder
+- **Configuration burden**: Some servers (rust-analyzer) require non-trivial setup
 
 ### Neutral
 
@@ -312,22 +457,28 @@ Translation is straightforward for positions within a single injection. See [ADR
 
 ## Implementation Phases
 
-### Phase 1: Infrastructure (PoC Done)
-- Basic LSP client implementation
-- Temporary source file creation
-- Offset translation
-- Go-to-definition working
+### Phase 1: Infrastructure (PoC Complete)
+- [x] Basic LSP client implementation
+- [x] Temporary source file creation
+- [x] Offset translation
+- [x] Go-to-definition working
 
 ### Phase 2: Connection Pool
-- Server connection pooling
-- Idle timeout and cleanup
-- Crash recovery
+- [ ] Server connection pooling with `maxConcurrentServers` limit
+- [ ] Idle timeout and cleanup
+- [ ] Crash recovery and respawn
 
 ### Phase 3: Configuration System
-- `initializationOptions` passthrough
-- Support for multiple language servers
+- [ ] `initializationOptions` passthrough
+- [ ] Support for multiple language servers
+- [ ] Multi-server routing by capability
 
-### Phase 4+: Feature Expansion
+### Phase 4: Robustness
+- [ ] Ready detection with multiple signals
+- [ ] Request timeout handling
+- [ ] Startup cleanup of stale temp files
+
+### Phase 5+: Feature Expansion
 See [ADR-0008](0008-redirection-request-strategies.md) for per-method implementation details.
 
 ## Related Decisions
