@@ -19,24 +19,19 @@ jobs:
           # Linux x86_64
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            archive: tar.gz
-          # Linux ARM64
+          # Linux ARM64 (using cross for proper cross-compilation)
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-            archive: tar.gz
             cross: true
           # macOS x86_64 (Intel)
           - target: x86_64-apple-darwin
-            os: macos-latest
-            archive: tar.gz
+            os: macos-13
           # macOS ARM64 (Apple Silicon)
           - target: aarch64-apple-darwin
             os: macos-latest
-            archive: tar.gz
           # Windows x86_64
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            archive: zip
 
     steps:
       - name: Checkout
@@ -47,29 +42,27 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install cross-compilation tools
+      - name: Install cross
         if: matrix.cross
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+        run: cargo install cross --git https://github.com/cross-rs/cross
 
-      - name: Build binary
-        shell: bash
-        run: |
-          if [ "${{ matrix.cross }}" = "true" ]; then
-            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
-          fi
-          cargo build --release --target ${{ matrix.target }}
+      - name: Build binary (cross)
+        if: matrix.cross
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Build binary (native)
+        if: ${{ !matrix.cross }}
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package (Unix)
-        if: matrix.os != 'windows-latest'
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           tar czvf ${{ env.BINARY_NAME }}-${{ github.ref_name }}-${{ matrix.target }}.tar.gz \
             -C target/${{ matrix.target }}/release ${{ env.BINARY_NAME }}
 
       - name: Package (Windows)
-        if: matrix.os == 'windows-latest'
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           Compress-Archive `
