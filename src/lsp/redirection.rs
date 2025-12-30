@@ -97,6 +97,14 @@ impl ConnectionInfo {
     pub fn virtual_file_uri(&self) -> Option<String> {
         Some(format!("file://{}", self.virtual_file_path.display()))
     }
+
+    /// Write content to the virtual file.
+    ///
+    /// This writes to the path stored in virtual_file_path, which could be
+    /// src/main.rs for Cargo workspaces or virtual.<ext> for Generic workspaces.
+    pub fn write_virtual_file(&self, content: &str) -> std::io::Result<()> {
+        std::fs::write(&self.virtual_file_path, content)
+    }
 }
 
 /// Manages a connection to a language server subprocess with a temporary workspace
@@ -1285,6 +1293,9 @@ mod tests {
 
         // Verify no src/main.rs was created
         let main_rs = temp_path.join("src").join("main.rs");
-        assert!(!main_rs.exists(), "src/main.rs should NOT exist for Generic workspace");
+        assert!(
+            !main_rs.exists(),
+            "src/main.rs should NOT exist for Generic workspace"
+        );
     }
 }
