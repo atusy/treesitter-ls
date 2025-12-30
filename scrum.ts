@@ -177,8 +177,8 @@ const scrum: ScrumDashboard = {
         implementation:
           "Refactor spawn_rust_analyzer to generic spawn(config: &BridgeServerConfig) method",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "e0a0cc5", message: "feat(lsp): add generic spawn method accepting BridgeServerConfig", phase: "green" }],
         notes: [
           "Keep spawn_rust_analyzer as convenience wrapper or deprecate entirely",
         ],
@@ -188,8 +188,8 @@ const scrum: ScrumDashboard = {
         implementation:
           "Add .args() call using config.args.unwrap_or_default()",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "e0a0cc5", message: "feat(lsp): add generic spawn method accepting BridgeServerConfig", phase: "green" }],
         notes: [
           "Some language servers need specific args like --stdio or --lsp",
         ],
@@ -199,8 +199,8 @@ const scrum: ScrumDashboard = {
         implementation:
           "Include config.initialization_options in init_params JSON",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "e0a0cc5", message: "feat(lsp): add generic spawn method accepting BridgeServerConfig", phase: "green" }],
         notes: [
           "rust-analyzer uses linkedProjects, pyright uses venvPath, etc.",
         ],
