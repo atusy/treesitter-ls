@@ -39,6 +39,24 @@ pub fn create_ra_progress_begin(operation: &str) -> ProgressParams {
     }
 }
 
+/// Creates a ProgressParams for the End phase of a rust-analyzer operation.
+///
+/// The message will indicate success or timeout.
+pub fn create_ra_progress_end(operation: &str, success: bool) -> ProgressParams {
+    let message = if success {
+        "rust-analyzer completed".to_string()
+    } else {
+        "rust-analyzer timed out".to_string()
+    };
+
+    ProgressParams {
+        token: ra_progress_token(operation),
+        value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(WorkDoneProgressEnd {
+            message: Some(message),
+        })),
+    }
+}
+
 /// Creates a ProgressParams for the Begin phase of parser installation.
 ///
 /// The title will be "Installing {language} parser..."
@@ -112,6 +130,62 @@ mod tests {
                 assert_eq!(begin.cancellable, Some(false));
             }
             _ => panic!("Expected WorkDoneProgress::Begin"),
+        }
+    }
+
+    #[test]
+    fn test_create_ra_progress_end_success() {
+        let params = create_ra_progress_end("goto_definition", true);
+
+        // Verify token format
+        match &params.token {
+            NumberOrString::String(s) => {
+                assert_eq!(s, "treesitter-ls/rust-analyzer/goto_definition");
+            }
+            NumberOrString::Number(_) => {
+                panic!("Expected String token, got Number");
+            }
+        }
+
+        // Verify it's an End variant with success message
+        match params.value {
+            ProgressParamsValue::WorkDone(WorkDoneProgress::End(end)) => {
+                let msg = end.message.expect("Expected message");
+                assert!(
+                    msg.contains("completed"),
+                    "Expected 'completed' in message, got: {}",
+                    msg
+                );
+            }
+            _ => panic!("Expected WorkDoneProgress::End"),
+        }
+    }
+
+    #[test]
+    fn test_create_ra_progress_end_timeout() {
+        let params = create_ra_progress_end("hover", false);
+
+        // Verify token format
+        match &params.token {
+            NumberOrString::String(s) => {
+                assert_eq!(s, "treesitter-ls/rust-analyzer/hover");
+            }
+            NumberOrString::Number(_) => {
+                panic!("Expected String token, got Number");
+            }
+        }
+
+        // Verify it's an End variant with timeout message
+        match params.value {
+            ProgressParamsValue::WorkDone(WorkDoneProgress::End(end)) => {
+                let msg = end.message.expect("Expected message");
+                assert!(
+                    msg.contains("timed out"),
+                    "Expected 'timed out' in message, got: {}",
+                    msg
+                );
+            }
+            _ => panic!("Expected WorkDoneProgress::End"),
         }
     }
 
