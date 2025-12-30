@@ -312,11 +312,25 @@ impl LanguageServerConnection {
         Some(conn)
     }
 
-    /// Get the URI for the virtual main.rs file in the temp workspace
+    /// Get the URI for the virtual main.rs file in the temp workspace.
+    ///
+    /// Note: Prefer virtual_file_uri() which works for all workspace types.
+    /// This method is kept for backward compatibility with Cargo workspaces.
     pub fn main_rs_uri(&self) -> Option<String> {
         self.temp_dir
             .as_ref()
             .map(|dir| format!("file://{}/src/main.rs", dir.display()))
+    }
+
+    /// Get the URI for the virtual file in the temp workspace.
+    ///
+    /// Returns the appropriate file URI based on workspace_type:
+    /// - Cargo: file://<temp>/src/main.rs
+    /// - Generic: file://<temp>/virtual.<ext>
+    pub fn virtual_file_uri(&self) -> Option<String> {
+        self.connection_info
+            .as_ref()
+            .and_then(|info| info.virtual_file_uri())
     }
 
     /// Send a JSON-RPC request, returns the request ID
