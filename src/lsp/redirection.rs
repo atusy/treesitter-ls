@@ -276,6 +276,34 @@ impl LanguageServerConnection {
         serde_json::from_value(result.clone()).ok()
     }
 
+    /// Request hover information
+    ///
+    /// Uses the actual file URI from the temp workspace, not the virtual URI.
+    pub fn hover(&mut self, _uri: &str, position: Position) -> Option<Hover> {
+        // Use the real file URI from the temp workspace
+        let real_uri = self.main_rs_uri()?;
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let req_id = self.send_request("textDocument/hover", params)?;
+
+        // Read response (skipping notifications until we get the matching response)
+        let response = self.read_response_for_id(req_id)?;
+
+        // Extract result
+        let result = response.get("result")?;
+
+        // Parse as Hover (result can be null if no hover info available)
+        if result.is_null() {
+            return None;
+        }
+
+        serde_json::from_value(result.clone()).ok()
+    }
+
     /// Shutdown the language server and clean up temp directory
     pub fn shutdown(&mut self) {
         if let Some(shutdown_id) = self.send_request("shutdown", serde_json::json!(null)) {
