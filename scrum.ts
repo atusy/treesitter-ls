@@ -106,77 +106,40 @@ const scrum: ScrumDashboard = {
       ],
       status: "done",
     },
+    {
+      id: "PBI-101",
+      story: {
+        role: "documentation author with Rust code blocks",
+        capability:
+          "have spawn() use the workspace_type configuration to create appropriate workspace structure",
+        benefit:
+          "the workspace type feature works end-to-end, not just as infrastructure",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "LanguageServerConnection::spawn() uses setup_workspace() based on config.workspace_type",
+          verification:
+            "Integration test: spawn with generic workspace_type creates virtual file structure",
+        },
+        {
+          criterion:
+            "LanguageServerConnection stores ConnectionInfo for virtual file operations",
+          verification:
+            "Unit test: connection.virtual_file_uri() returns correct path after spawn",
+        },
+        {
+          criterion:
+            "did_open() uses ConnectionInfo.write_virtual_file() instead of hardcoded path",
+          verification:
+            "Integration test: did_open writes to generic workspace virtual file correctly",
+        },
+      ],
+      status: "ready",
+    },
   ],
 
-  sprint: {
-    number: 77,
-    pbi_id: "PBI-100",
-    goal:
-      "Documentation authors can configure workspace setup per bridge server type so each language server gets the project structure it needs",
-    status: "review",
-    subtasks: [
-      {
-        test: "Unit test: BridgeServerConfig deserializes workspace_type field with values 'cargo' and 'generic'; None defaults to 'cargo'",
-        implementation:
-          "Add optional workspace_type field to BridgeServerConfig in settings.rs with WorkspaceType enum (Cargo, Generic)",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "1f41f3e", message: "test(workspace): add failing tests for WorkspaceType deserialization", phase: "green" as const },
-          { hash: "aac9562", message: "feat(workspace): add WorkspaceType enum and workspace_type field", phase: "green" as const },
-        ],
-        notes: [],
-      },
-      {
-        test: "Unit test: spawn with workspace_type=None or Cargo creates Cargo.toml and src/main.rs in temp directory",
-        implementation:
-          "Extract cargo workspace setup into helper function; call from spawn() when workspace_type is None or Cargo",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "722528c", message: "test(workspace): add failing tests for Cargo workspace setup", phase: "green" as const },
-          { hash: "201b942", message: "feat(workspace): add setup_workspace helper functions for Cargo workspace", phase: "green" as const },
-        ],
-        notes: [],
-      },
-      {
-        test: "Unit test: spawn with workspace_type=Generic creates temp dir with virtual file (no Cargo.toml, no src/)",
-        implementation:
-          "Add generic workspace setup in spawn() that creates only temp dir with virtual file path stored",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "261dae3", message: "test(workspace): add failing tests for Generic workspace setup", phase: "green" as const },
-          { hash: "3283763", message: "feat(workspace): add Generic workspace setup with virtual.<ext> file", phase: "green" as const },
-        ],
-        notes: [],
-      },
-      {
-        test: "Unit test: virtual_file_uri returns src/main.rs for Cargo workspace, virtual.<ext> for Generic workspace",
-        implementation:
-          "Replace main_rs_uri() with virtual_file_uri() that returns path based on workspace_type and file extension",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "14b1adb", message: "test(workspace): add failing tests for virtual_file_uri per workspace type", phase: "green" as const },
-          { hash: "711a6a5", message: "feat(workspace): add ConnectionInfo struct with virtual_file_uri method", phase: "green" as const },
-        ],
-        notes: [],
-      },
-      {
-        test: "Unit test: did_open with Generic workspace writes to virtual.<ext> not src/main.rs",
-        implementation:
-          "Update did_open() to use virtual_file_uri() for file path instead of hardcoded src/main.rs",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "b6a659c", message: "test(workspace): add failing tests for write_virtual_file per workspace type", phase: "green" as const },
-          { hash: "2e29ebb", message: "feat(workspace): add write_virtual_file method to ConnectionInfo", phase: "green" as const },
-        ],
-        notes: [],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -189,6 +152,14 @@ const scrum: ScrumDashboard = {
   // Historical sprints (recent 2) | Sprint 1-72: git log -- scrum.yaml, scrum.ts
   completed: [
     {
+      number: 77,
+      pbi_id: "PBI-100",
+      goal:
+        "Documentation authors can configure workspace setup per bridge server type so each language server gets the project structure it needs",
+      status: "done",
+      subtasks: [],
+    },
+    {
       number: 76,
       pbi_id: "PBI-099",
       goal:
@@ -196,18 +167,22 @@ const scrum: ScrumDashboard = {
       status: "done",
       subtasks: [],
     },
-    {
-      number: 75,
-      pbi_id: "PBI-097",
-      goal:
-        "Documentation authors can configure bridge servers via initializationOptions for multi-language LSP support",
-      status: "done",
-      subtasks: [],
-    },
   ],
 
   // Recent 2 retrospectives | Sprint 1-72: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    {
+      sprint: 77,
+      improvements: [
+        {
+          action:
+            "Integrate ConnectionInfo and setup_workspace() into LanguageServerConnection::spawn() to complete the workspace type feature end-to-end",
+          timing: "product",
+          status: "active",
+          outcome: null,
+        },
+      ],
+    },
     {
       sprint: 76,
       improvements: [
@@ -220,10 +195,6 @@ const scrum: ScrumDashboard = {
             "Analyzed: cleanup code has logical connection to redirection (creates temp dirs). Current location acceptable. No action needed unless cleanup features expand significantly.",
         },
       ],
-    },
-    {
-      sprint: 75,
-      improvements: [],
     },
   ],
 };
