@@ -31,9 +31,6 @@ tower-lsp = "0.20"
 tree-sitter = "0.26"
 url = "2"
 
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
-
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3"

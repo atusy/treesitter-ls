@@ -1,7 +1,25 @@
 use serde::Deserialize;
+use serde_json::Value;
 use std::collections::HashMap;
 
 pub type CaptureMapping = HashMap<String, String>;
+
+/// Configuration for a bridge language server.
+///
+/// This is used to configure external language servers (like rust-analyzer, pyright)
+/// that treesitter-ls can redirect requests to for injection regions.
+#[derive(Debug, Clone, Deserialize, serde::Serialize, PartialEq, Eq)]
+pub struct BridgeServerConfig {
+    /// The command to spawn the language server (e.g., "rust-analyzer", "pyright")
+    pub command: String,
+    /// Optional command-line arguments to pass to the server
+    pub args: Option<Vec<String>>,
+    /// Languages this server handles (e.g., ["rust"], ["python"])
+    pub languages: Vec<String>,
+    /// Optional initialization options to pass to the server during initialize
+    #[serde(rename = "initializationOptions")]
+    pub initialization_options: Option<Value>,
+}
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize, Default, PartialEq, Eq)]
 pub struct QueryTypeMappings {
@@ -508,6 +526,48 @@ mod tests {
 
         assert_eq!(settings.library, Some("/path/to/parser.so".to_string()));
         assert_eq!(settings.highlights, vec!["/path/to/highlights.scm"]);
+    }
+
+    #[test]
+    fn should_parse_bridge_server_config() {
+        // Test that BridgeServerConfig can deserialize all fields:
+        // command (required), args (optional), languages (required), initialization_options (optional)
+        let config_json = r#"{
+            "command": "rust-analyzer",
+            "args": ["--log-file", "/tmp/ra.log"],
+            "languages": ["rust"],
+            "initializationOptions": {
+                "linkedProjects": ["/path/to/Cargo.toml"]
+            }
+        }"#;
+
+        let config: BridgeServerConfig = serde_json::from_str(config_json).unwrap();
+
+        assert_eq!(config.command, "rust-analyzer");
+        assert_eq!(
+            config.args,
+            Some(vec!["--log-file".to_string(), "/tmp/ra.log".to_string()])
+        );
+        assert_eq!(config.languages, vec!["rust".to_string()]);
+        assert!(config.initialization_options.is_some());
+        let init_opts = config.initialization_options.unwrap();
+        assert!(init_opts.get("linkedProjects").is_some());
+    }
+
+    #[test]
+    fn should_parse_bridge_server_config_minimal() {
+        // Test that only required fields need to be present
+        let config_json = r#"{
+            "command": "pyright",
+            "languages": ["python"]
+        }"#;
+
+        let config: BridgeServerConfig = serde_json::from_str(config_json).unwrap();
+
+        assert_eq!(config.command, "pyright");
+        assert!(config.args.is_none());
+        assert_eq!(config.languages, vec!["python".to_string()]);
+        assert!(config.initialization_options.is_none());
     }
 
     #[test]
