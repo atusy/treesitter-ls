@@ -385,4 +385,20 @@ mod tests {
         // Use pointer equality to verify same connection
         assert!(std::ptr::eq(conn1, conn2));
     }
+
+    #[test]
+    fn pooled_connection_is_alive_returns_true_for_live_process() {
+        let mut conn = PooledConnection::spawn("cat", &[]).unwrap();
+        assert!(conn.is_alive());
+    }
+
+    #[test]
+    fn pooled_connection_is_alive_returns_false_for_dead_process() {
+        let mut conn = PooledConnection::spawn("cat", &[]).unwrap();
+        // Kill the process
+        conn.kill();
+        // Wait a bit for process to terminate
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        assert!(!conn.is_alive());
+    }
 }
