@@ -68,115 +68,97 @@ const scrum: ScrumDashboard = {
       story: {
         role: "documentation author with Rust code blocks",
         capability:
-          "configure workspace setup per bridge server type (e.g., Cargo.toml for rust-analyzer, venv for pyright)",
+          "configure workspace setup per bridge server type (e.g., Cargo.toml for rust-analyzer, plain file for pyright)",
         benefit:
           "each language server gets the project structure it needs without hard-coded assumptions",
       },
       acceptance_criteria: [
         {
           criterion:
-            "BridgeServerConfig accepts optional workspace_type field",
+            "BridgeServerConfig accepts optional workspace_type field with values 'cargo' or 'generic'",
           verification:
-            "Test that workspace_type can be 'cargo', 'generic', or custom type",
+            "Unit test: BridgeServerConfig deserializes workspace_type field; None defaults to 'cargo' for backward compatibility",
         },
         {
           criterion:
-            "Spawn creates appropriate workspace structure based on workspace_type",
+            "spawn() creates Cargo.toml and src/main.rs when workspace_type is 'cargo' (or None for backward compat)",
           verification:
-            "Test that cargo type creates Cargo.toml, generic type creates empty workspace",
+            "Unit test: spawn with cargo workspace_type creates Cargo.toml and src/main.rs in temp directory",
         },
         {
           criterion:
-            "Default workspace_type is 'generic' for non-rust servers",
+            "spawn() creates only temp directory with single virtual file when workspace_type is 'generic'",
           verification:
-            "Test that pyright config without workspace_type uses generic workspace",
+            "Unit test: spawn with generic workspace_type creates temp dir with virtual.<ext> file, no Cargo.toml",
+        },
+        {
+          criterion:
+            "main_rs_uri() replaced with virtual_file_uri() that returns appropriate path per workspace_type",
+          verification:
+            "Unit test: virtual_file_uri returns src/main.rs for cargo, virtual.py for generic python",
+        },
+        {
+          criterion:
+            "did_open() writes content to correct virtual file path based on workspace_type",
+          verification:
+            "Unit test: did_open with generic workspace writes to virtual.<ext> not src/main.rs",
         },
       ],
-      status: "draft",
+      status: "ready",
     },
   ],
 
   sprint: {
-    number: 76,
-    pbi_id: "PBI-099",
+    number: 77,
+    pbi_id: "PBI-100",
     goal:
-      "Documentation authors have stale temp files cleaned up automatically on startup, preventing temp directory pollution from crashed sessions",
-    status: "done",
+      "Documentation authors can configure workspace setup per bridge server type so each language server gets the project structure it needs",
+    status: "in_progress",
     subtasks: [
       {
-        test: "Test cleanup_stale_temp_dirs function exists and can be called",
+        test: "Unit test: BridgeServerConfig deserializes workspace_type field with values 'cargo' and 'generic'; None defaults to 'cargo'",
         implementation:
-          "Create cleanup_stale_temp_dirs function signature in src/lsp/redirection.rs that takes temp_dir path and max_age duration",
+          "Add optional workspace_type field to BridgeServerConfig in settings.rs with WorkspaceType enum (Cargo, Generic)",
         type: "behavioral",
-        status: "green",
+        status: "red",
         commits: [],
-        notes: [
-          "Function signature: cleanup_stale_temp_dirs(temp_dir: &Path, max_age: Duration) -> io::Result<CleanupStats>",
-          "CleanupStats tracks dirs_removed and dirs_kept for logging",
-        ],
+        notes: [],
       },
       {
-        test: "Test cleanup identifies directories matching treesitter-ls-* prefix",
+        test: "Unit test: spawn with workspace_type=None or Cargo creates Cargo.toml and src/main.rs in temp directory",
         implementation:
-          "Implement directory scanning with prefix matching in cleanup_stale_temp_dirs",
+          "Extract cargo workspace setup into helper function; call from spawn() when workspace_type is None or Cargo",
         type: "behavioral",
-        status: "green",
+        status: "pending",
         commits: [],
-        notes: [
-          "Only scan for directories with treesitter-ls- prefix",
-          "Use std::fs::read_dir to list temp directory contents",
-        ],
+        notes: [],
       },
       {
-        test: "Test cleanup removes directories older than max_age threshold",
+        test: "Unit test: spawn with workspace_type=Generic creates temp dir with virtual file (no Cargo.toml, no src/)",
         implementation:
-          "Add age check using directory metadata modified time, remove old directories",
+          "Add generic workspace setup in spawn() that creates only temp dir with virtual file path stored",
         type: "behavioral",
-        status: "green",
+        status: "pending",
         commits: [],
-        notes: [
-          "Use metadata().modified() to get directory age",
-          "Default max_age is 24 hours (Duration::from_secs(24 * 60 * 60))",
-          "Use std::fs::remove_dir_all for removal",
-        ],
+        notes: [],
       },
       {
-        test: "Test cleanup keeps directories newer than max_age threshold",
+        test: "Unit test: virtual_file_uri returns src/main.rs for Cargo workspace, virtual.<ext> for Generic workspace",
         implementation:
-          "Verify age comparison logic preserves recent directories",
+          "Replace main_rs_uri() with virtual_file_uri() that returns path based on workspace_type and file extension",
         type: "behavioral",
-        status: "green",
+        status: "pending",
         commits: [],
-        notes: [
-          "Create test with fresh directory that should be kept",
-          "Verify it remains after cleanup runs",
-        ],
+        notes: [],
       },
       {
-        test: "Test cleanup continues gracefully when permission denied on some directories",
+        test: "Unit test: did_open with Generic workspace writes to virtual.<ext> not src/main.rs",
         implementation:
-          "Wrap removal in error handling that logs and continues",
+          "Update did_open() to use virtual_file_uri() for file path instead of hardcoded src/main.rs",
         type: "behavioral",
-        status: "green",
+        status: "pending",
         commits: [],
-        notes: [
-          "Use log::warn! for removal failures",
-          "Return Ok even if some removals fail",
-          "Track failed removals in CleanupStats",
-        ],
-      },
-      {
-        test: "Test startup calls cleanup function during initialization",
-        implementation:
-          "Call cleanup_stale_temp_dirs from TreeSitterLs::new or initialize method",
-        type: "behavioral",
-        status: "green",
-        commits: [],
-        notes: [
-          "Call cleanup in background to avoid blocking startup",
-          "Use std::thread::spawn or tokio::spawn for async cleanup",
-          "Log cleanup results at info level",
-        ],
+        notes: [],
       },
     ],
   },
@@ -192,18 +174,18 @@ const scrum: ScrumDashboard = {
   // Historical sprints (recent 2) | Sprint 1-72: git log -- scrum.yaml, scrum.ts
   completed: [
     {
-      number: 75,
-      pbi_id: "PBI-097",
+      number: 76,
+      pbi_id: "PBI-099",
       goal:
-        "Documentation authors can configure bridge servers via initializationOptions for multi-language LSP support",
+        "Documentation authors have stale temp files cleaned up automatically on startup, preventing temp directory pollution from crashed sessions",
       status: "done",
       subtasks: [],
     },
     {
-      number: 74,
-      pbi_id: "PBI-096",
+      number: 75,
+      pbi_id: "PBI-097",
       goal:
-        "Documentation authors see progress indicators during rust-analyzer operations",
+        "Documentation authors can configure bridge servers via initializationOptions for multi-language LSP support",
       status: "done",
       subtasks: [],
     },
@@ -212,27 +194,21 @@ const scrum: ScrumDashboard = {
   // Recent 2 retrospectives | Sprint 1-72: git log -- scrum.yaml, scrum.ts
   retrospectives: [
     {
-      sprint: 75,
-      improvements: [],
-    },
-    {
-      sprint: 74,
+      sprint: 76,
       improvements: [
         {
           action:
-            "Document spawn_blocking + synchronous methods pattern for external language server communication in CLAUDE.md",
-          timing: "sprint",
-          status: "active",
-          outcome: null,
-        },
-        {
-          action:
-            "Consider adding timeout tests at tokio::time::timeout level for spawn_blocking calls",
-          timing: "sprint",
-          status: "active",
-          outcome: null,
+            "Consider extracting cleanup module from redirection.rs if cleanup features grow",
+          timing: "product",
+          status: "completed",
+          outcome:
+            "Analyzed: cleanup code has logical connection to redirection (creates temp dirs). Current location acceptable. No action needed unless cleanup features expand significantly.",
         },
       ],
+    },
+    {
+      sprint: 75,
+      improvements: [],
     },
   ],
 };
