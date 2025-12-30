@@ -525,6 +525,21 @@ impl Default for ServerPool {
 mod tests {
     use super::*;
 
+    /// Helper to check if rust-analyzer is available for testing.
+    /// Returns true if available, false if should skip test.
+    fn check_rust_analyzer_available() -> bool {
+        if std::process::Command::new("rust-analyzer")
+            .arg("--version")
+            .output()
+            .is_ok()
+        {
+            true
+        } else {
+            eprintln!("Skipping: rust-analyzer not installed");
+            false
+        }
+    }
+
     #[test]
     fn server_pool_new_returns_false_for_unknown_server() {
         let pool = ServerPool::new();
@@ -651,13 +666,7 @@ mod tests {
 
     #[test]
     fn language_server_connection_is_alive_returns_true_for_live_process() {
-        // Skip if rust-analyzer is not installed
-        if std::process::Command::new("rust-analyzer")
-            .arg("--version")
-            .output()
-            .is_err()
-        {
-            eprintln!("Skipping: rust-analyzer not installed");
+        if !check_rust_analyzer_available() {
             return;
         }
 
@@ -667,13 +676,7 @@ mod tests {
 
     #[test]
     fn language_server_connection_is_alive_returns_false_after_shutdown() {
-        // Skip if rust-analyzer is not installed
-        if std::process::Command::new("rust-analyzer")
-            .arg("--version")
-            .output()
-            .is_err()
-        {
-            eprintln!("Skipping: rust-analyzer not installed");
+        if !check_rust_analyzer_available() {
             return;
         }
 
@@ -685,13 +688,7 @@ mod tests {
 
     #[test]
     fn rust_analyzer_pool_respawns_dead_connection() {
-        // Skip if rust-analyzer is not installed
-        if std::process::Command::new("rust-analyzer")
-            .arg("--version")
-            .output()
-            .is_err()
-        {
-            eprintln!("Skipping: rust-analyzer not installed");
+        if !check_rust_analyzer_available() {
             return;
         }
 
@@ -719,13 +716,7 @@ mod tests {
 
     #[test]
     fn server_pool_rust_analyzer_reused_across_requests() {
-        // Skip if rust-analyzer is not installed
-        if std::process::Command::new("rust-analyzer")
-            .arg("--version")
-            .output()
-            .is_err()
-        {
-            eprintln!("Skipping: rust-analyzer not installed");
+        if !check_rust_analyzer_available() {
             return;
         }
 
