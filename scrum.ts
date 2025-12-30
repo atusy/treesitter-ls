@@ -136,64 +136,7 @@ const scrum: ScrumDashboard = {
       pbi_id: "PBI-090",
       goal: "Developer can see syntax highlighting for standalone Lua files",
       status: "done",
-      subtasks: [
-        {
-          test:
-            "minimal_init.lua configures searchPaths pointing to deps/treesitter",
-          implementation:
-            "Add initializationOptions with searchPaths to LSP config",
-          type: "behavioral",
-          status: "completed",
-          commits: [
-            {
-              hash: "69c14b9",
-              message:
-                "feat(lsp): fix race condition in semantic tokens for dynamically loaded languages",
-              phase: "green",
-            },
-          ],
-          notes: [
-            "Root cause: Tower-LSP concurrent requests - semanticTokens/full arrived before didOpen completed parsing",
-            "Solution: Early document registration with language_id, synchronous parsing fallback, on-demand language loading",
-          ],
-        },
-        {
-          test: "E2E: test_lsp_semantic.lua passes for example.lua",
-          implementation:
-            "Verify semantic tokens returned for standalone Lua files",
-          type: "behavioral",
-          status: "completed",
-          commits: [
-            {
-              hash: "69c14b9",
-              message:
-                "feat(lsp): fix race condition in semantic tokens for dynamically loaded languages",
-              phase: "green",
-            },
-          ],
-          notes: [
-            "2 tests pass: semantic tokens work for standalone .lua files",
-          ],
-        },
-        {
-          test: "E2E: test_lsp_select.lua passes for example.lua",
-          implementation:
-            "Verify selection ranges work for standalone Lua files",
-          type: "behavioral",
-          status: "completed",
-          commits: [
-            {
-              hash: "69c14b9",
-              message:
-                "feat(lsp): fix race condition in semantic tokens for dynamically loaded languages",
-              phase: "green",
-            },
-          ],
-          notes: [
-            "17 tests pass: selection ranges work for standalone .lua files",
-          ],
-        },
-      ],
+      subtasks: [],
     },
   ],
 
