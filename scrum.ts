@@ -118,11 +118,13 @@ interface ScrumDashboard {
 const scrum: ScrumDashboard = {
   product_goal: {
     statement:
-      "Achieve high-performance semantic tokens delta: minimize latency for syntax highlighting updates during editing by leveraging caching, efficient delta algorithms, and Tree-sitter's incremental parsing.",
+      "Provide production ready language server bridge for go to definition",
     success_metrics: [
-      { metric: "Delta response (no change)", target: "<5ms via cache hit" },
-      { metric: "Delta response (small edit)", target: "<20ms via incremental" },
-      { metric: "Delta transfer size", target: "Reduced via suffix matching" },
+      {
+        metric: "ADR alignment",
+        target:
+          "AI review confirms the implementation aligns with ADR-0006, ADR-0007, ADR-0008",
+      },
     ],
   },
 
