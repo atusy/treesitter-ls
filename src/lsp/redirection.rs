@@ -349,8 +349,12 @@ impl RustAnalyzerPool {
     /// The connection is removed from the pool during use and must be returned via `return_connection`.
     pub fn take_connection(&self, key: &str) -> Option<LanguageServerConnection> {
         // Try to take existing connection
-        if let Some((_, (conn, _))) = self.connections.remove(key) {
-            return Some(conn);
+        if let Some((_, (mut conn, _))) = self.connections.remove(key) {
+            // Check if connection is still alive; if dead, spawn a new one
+            if conn.is_alive() {
+                return Some(conn);
+            }
+            // Connection is dead, drop it and spawn a new one
         }
         // Spawn new one
         LanguageServerConnection::spawn_rust_analyzer()
@@ -677,6 +681,40 @@ mod tests {
         conn.shutdown();
         std::thread::sleep(std::time::Duration::from_millis(50));
         assert!(!conn.is_alive());
+    }
+
+    #[test]
+    fn rust_analyzer_pool_respawns_dead_connection() {
+        // Skip if rust-analyzer is not installed
+        if std::process::Command::new("rust-analyzer")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let pool = RustAnalyzerPool::new();
+
+        // First take spawns a new connection
+        let mut conn = pool.take_connection("test-key").unwrap();
+        assert!(conn.is_alive());
+
+        // Kill the process to simulate a crash
+        conn.shutdown();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(!conn.is_alive());
+
+        // Return the dead connection to the pool
+        pool.return_connection("test-key", conn);
+
+        // Next take should detect the dead connection and respawn
+        let mut conn2 = pool.take_connection("test-key").unwrap();
+        assert!(
+            conn2.is_alive(),
+            "Pool should have respawned dead connection"
+        );
     }
 
     #[test]
