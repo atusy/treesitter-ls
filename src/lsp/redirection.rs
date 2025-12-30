@@ -370,6 +370,24 @@ impl ServerPool {
         self.connections.get(name).map(|conn| conn.last_used)
     }
 
+    /// Clean up connections that have been idle longer than the timeout
+    /// Kills the process and removes it from the pool
+    pub fn cleanup_idle(&mut self, timeout: std::time::Duration) {
+        let now = Instant::now();
+        let idle_servers: Vec<String> = self
+            .connections
+            .iter()
+            .filter(|(_, conn)| now.duration_since(conn.last_used) > timeout)
+            .map(|(name, _)| name.clone())
+            .collect();
+
+        for name in idle_servers {
+            if let Some(mut conn) = self.connections.remove(&name) {
+                conn.kill();
+            }
+        }
+    }
+
     /// Get an existing live connection or spawn a new one if dead/missing
     pub fn get_or_spawn(
         &mut self,
