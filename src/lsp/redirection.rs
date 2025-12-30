@@ -518,4 +518,32 @@ mod tests {
         // Connection should be removed from pool
         assert!(pool.get("test-server").is_none());
     }
+
+    #[tokio::test]
+    async fn server_pool_concurrent_access_no_panics() {
+        use std::sync::Arc;
+
+        let pool = Arc::new(ServerPool::new());
+
+        // Spawn server once
+        pool.spawn_server("test-server", "cat", &[]);
+
+        // Spawn 10 concurrent tasks accessing the pool
+        let handles: Vec<_> = (0..10)
+            .map(|_| {
+                let pool = Arc::clone(&pool);
+                tokio::spawn(async move {
+                    // Access the pool multiple times
+                    for _ in 0..10 {
+                        let _ = pool.get("test-server");
+                    }
+                })
+            })
+            .collect();
+
+        // Wait for all tasks to complete
+        for handle in handles {
+            handle.await.unwrap();
+        }
+    }
 }
