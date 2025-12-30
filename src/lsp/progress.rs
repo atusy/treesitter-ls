@@ -16,6 +16,14 @@ pub fn progress_token(language: &str) -> NumberOrString {
     NumberOrString::String(format!("treesitter-ls/install/{}", language))
 }
 
+/// Creates a progress token for a rust-analyzer operation.
+///
+/// Format: `treesitter-ls/rust-analyzer/{operation}`
+/// Each operation (goto_definition, hover) gets a unique token.
+pub fn ra_progress_token(operation: &str) -> NumberOrString {
+    NumberOrString::String(format!("treesitter-ls/rust-analyzer/{}", operation))
+}
+
 /// Creates a ProgressParams for the Begin phase of parser installation.
 ///
 /// The title will be "Installing {language} parser..."
@@ -52,6 +60,21 @@ pub fn create_progress_end(language: &str, success: bool) -> ProgressParams {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_ra_progress_token_format() {
+        let token = ra_progress_token("goto_definition");
+
+        // Token should be a string with the format treesitter-ls/rust-analyzer/{operation}
+        match token {
+            NumberOrString::String(s) => {
+                assert_eq!(s, "treesitter-ls/rust-analyzer/goto_definition");
+            }
+            NumberOrString::Number(_) => {
+                panic!("Expected String token, got Number");
+            }
+        }
+    }
 
     #[test]
     fn test_progress_token_format() {
