@@ -15,7 +15,8 @@ A fast and flexible Language Server Protocol (LSP) server that leverages Tree-si
 ## Installation
 
 ### Pre-built Binaries
-*Coming soon*
+
+Download the latest release for your platform from [GitHub Releases](https://github.com/atusy/treesitter-ls/releases)
 
 ### Build from Source
 
