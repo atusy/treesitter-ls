@@ -28,105 +28,37 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-090, PBI-093, PBI-094 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-095 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
   product_backlog: [
     {
-      id: "PBI-094",
+      id: "PBI-096",
       story: {
         role: "documentation author with Rust code blocks",
         capability:
-          "continue using go-to-definition after rust-analyzer crashes",
+          "see progress indicators when rust-analyzer is spawning or processing",
         benefit:
-          "I don't lose productivity when the language server has issues",
+          "I understand why responses are slow and know the system is working",
       },
       acceptance_criteria: [
         {
           criterion:
-            "go-to-definition works after rust-analyzer process is killed",
+            "Progress notification shown when rust-analyzer is spawning",
           verification:
-            "E2E test: goto-definition, kill rust-analyzer, goto-definition again succeeds",
+            "E2E test: trigger go-to-definition, observe progress indicator during spawn",
         },
         {
-          criterion: "Server respawn happens automatically without user action",
-          verification: "No manual restart required; next request triggers respawn",
+          criterion:
+            "Progress notification shown during request processing",
+          verification:
+            "E2E test: slow request shows processing indicator until complete",
         },
       ],
-      status: "done",
-    },
-    {
-      id: "PBI-095",
-      story: {
-        role: "documentation author with Rust code blocks",
-        capability:
-          "get a response within seconds even when rust-analyzer is slow",
-        benefit: "I'm not blocked waiting for a hung language server",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "Request times out after configurable duration (default 5s)",
-          verification: "Unit test: mock slow server, verify timeout",
-        },
-        {
-          criterion: "Timeout returns graceful null response, not error",
-          verification: "Unit test: timeout produces None, not panic/error",
-        },
-      ],
-      status: "done",
+      status: "ready",
     },
   ],
 
-  sprint: {
-    number: 73,
-    pbi_id: "PBI-095",
-    goal:
-      "Documentation authors get responsive go-to-definition even when rust-analyzer is slow",
-    status: "done",
-    subtasks: [
-      {
-        test:
-          "goto_definition with mock slow server returns None after timeout (default 5s)",
-        implementation:
-          "Wrap read_response_for_id in tokio::time::timeout(), return None on Elapsed",
-        type: "behavioral",
-        status: "green",
-        commits: [],
-        notes: [
-          "Used poll()-based timeout on Unix instead of tokio::time::timeout for simpler integration with blocking BufReader",
-        ],
-      },
-      {
-        test:
-          "goto_definition timeout is configurable via connection parameter",
-        implementation:
-          "Add timeout_duration field to LanguageServerConnection, use in timeout() call",
-        type: "behavioral",
-        status: "green",
-        commits: [],
-        notes: [],
-      },
-      {
-        test: "hover request also respects timeout configuration",
-        implementation:
-          "Apply same timeout pattern to hover() method for consistency",
-        type: "behavioral",
-        status: "green",
-        commits: [],
-        notes: [],
-      },
-      {
-        test: "timeout returns graceful None, not panic or error propagation",
-        implementation:
-          "Verify Option<T> return type handles timeout as None, no unwrap/expect",
-        type: "behavioral",
-        status: "green",
-        commits: [],
-        notes: [
-          "Implementation already uses Option<T> and ? operator for graceful error handling",
-        ],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -136,102 +68,52 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-70: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-71: git log -- scrum.yaml, scrum.ts
   completed: [
+    {
+      number: 73,
+      pbi_id: "PBI-095",
+      goal:
+        "Documentation authors get responsive go-to-definition even when rust-analyzer is slow",
+      status: "done",
+      subtasks: [],
+    },
     {
       number: 72,
       pbi_id: "PBI-094",
       goal:
         "Documentation authors can continue using go-to-definition after rust-analyzer crashes",
       status: "done",
-      subtasks: [
-        {
-          test:
-            "LanguageServerConnection.is_alive() returns true for live process, false after kill",
-          implementation:
-            "Add is_alive() method using process.try_wait() to check process state",
-          type: "behavioral",
-          status: "completed",
-          commits: [
-            {
-              hash: "ea2028c",
-              message:
-                "test(lsp): add is_alive() to LanguageServerConnection for crash detection",
-              phase: "green",
-            },
-          ],
-          notes: [],
-        },
-        {
-          test:
-            "RustAnalyzerPool.take_connection() respawns when existing connection is dead",
-          implementation:
-            "Check is_alive() before returning; if dead, spawn fresh connection",
-          type: "behavioral",
-          status: "completed",
-          commits: [
-            {
-              hash: "13ec61c",
-              message:
-                "feat(lsp): implement automatic crash recovery for rust-analyzer pool",
-              phase: "green",
-            },
-          ],
-          notes: [],
-        },
-      ],
-    },
-    {
-      number: 71,
-      pbi_id: "PBI-090",
-      goal: "Developer can see syntax highlighting for standalone Lua files",
-      status: "done",
       subtasks: [],
     },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-69: git log -- scrum.yaml, scrum.ts
+  // Recent 2 retrospectives | Sprint 1-71: git log -- scrum.yaml, scrum.ts
   retrospectives: [
     {
-      sprint: 72,
+      sprint: 73,
       improvements: [
         {
           action:
-            "Extract rust-analyzer availability check into test helper function",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "Reduced duplication from 32 lines to 13 lines; commit 201f254",
+            "Document poll-based timeout pattern for blocking readers in CLAUDE.md",
+          timing: "sprint",
+          status: "active",
+          outcome: null,
         },
         {
           action:
-            "Fix hang on repeated go-to-definition by using didChange for already-open documents",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "Tracked document_version, send didChange on reuse; commit ee78d2b",
-        },
-        {
-          action: "Add E2E test for go-to-definition after rust-analyzer crash",
-          timing: "product",
+            "Consider serializing rust-analyzer tests to avoid parallel spawn race conditions",
+          timing: "sprint",
           status: "active",
           outcome: null,
         },
       ],
     },
     {
-      sprint: 71,
+      sprint: 72,
       improvements: [
         {
-          action:
-            "Document Tower-LSP concurrent request processing pattern in CLAUDE.md",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "Added section on race conditions, solution patterns, and guidelines for new LSP handlers",
-        },
-        {
-          action: "Add unit tests for concurrent LSP request scenarios",
+          action: "Add E2E test for go-to-definition after rust-analyzer crash",
           timing: "product",
           status: "active",
           outcome: null,
