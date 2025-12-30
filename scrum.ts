@@ -98,8 +98,15 @@ const scrum: ScrumDashboard = {
         implementation:
           "Add create_ra_progress_begin function in progress.rs following create_progress_begin pattern",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "f7085f2",
+            message:
+              "feat(lsp): add create_ra_progress_begin for rust-analyzer progress",
+            phase: "green",
+          },
+        ],
         notes: [],
       },
       {
