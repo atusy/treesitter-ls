@@ -127,8 +127,67 @@ impl TreeSitterLs {
     }
 
     /// Check if auto-install is enabled.
+    ///
+    /// Returns `false` if:
+    /// - `autoInstall` is explicitly set to `false` in settings
+    /// - `searchPaths` doesn't include the default data directory (auto-install
+    ///   would install to a location that isn't being searched)
     fn is_auto_install_enabled(&self) -> bool {
-        self.settings.load().auto_install
+        let settings = self.settings.load();
+
+        // If explicitly disabled, return false
+        if !settings.auto_install {
+            return false;
+        }
+
+        // Check if searchPaths includes the default data directory
+        // If not, auto-install would be useless (installed parsers wouldn't be found)
+        self.search_paths_include_default_data_dir(&settings.search_paths)
+    }
+
+    /// Check if the given search paths include the default data directory.
+    fn search_paths_include_default_data_dir(&self, search_paths: &[String]) -> bool {
+        let Some(default_dir) = crate::install::default_data_dir() else {
+            // Can't determine default dir - allow auto-install anyway
+            return true;
+        };
+
+        let default_str = default_dir.to_string_lossy();
+        search_paths.iter().any(|p| p == default_str.as_ref())
+    }
+
+    /// Notify user that parser is missing and needs manual installation.
+    ///
+    /// Called when a parser fails to load and auto-install is disabled
+    /// (either explicitly or because searchPaths doesn't include the default data dir).
+    async fn notify_parser_missing(&self, language: &str) {
+        let settings = self.settings.load();
+
+        // Check why auto-install is disabled
+        let reason = if !settings.auto_install {
+            "autoInstall is disabled".to_string()
+        } else if !self.search_paths_include_default_data_dir(&settings.search_paths) {
+            let default_dir = crate::install::default_data_dir()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| "<unknown>".to_string());
+            format!(
+                "searchPaths does not include the default data directory ({})",
+                default_dir
+            )
+        } else {
+            "unknown reason".to_string()
+        };
+
+        self.client
+            .log_message(
+                MessageType::WARNING,
+                format!(
+                    "Parser for '{}' not found. Auto-install is disabled because {}. \
+                     Please install the parser manually using: treesitter-ls language install {}",
+                    language, reason, language
+                ),
+            )
+            .await;
     }
 
     /// Invalidate injection caches for regions that overlap with edits.
@@ -640,22 +699,17 @@ impl TreeSitterLs {
         }
     }
 
-    /// Check injected languages and trigger auto-install for missing parsers.
+    /// Check injected languages and handle missing parsers.
     ///
     /// This function:
-    /// 1. Returns early if auto-install is not enabled
-    /// 2. Gets unique injected languages from the document
-    /// 3. For each language, checks if it's already loaded
-    /// 4. For languages not loaded, triggers maybe_auto_install_language()
+    /// 1. Gets unique injected languages from the document
+    /// 2. For each language, checks if it's already loaded
+    /// 3. If not loaded and auto-install is enabled, triggers maybe_auto_install_language()
+    /// 4. If not loaded and auto-install is disabled, notifies user
     ///
     /// The InstallingLanguages tracker in maybe_auto_install_language prevents
     /// duplicate install attempts.
     async fn check_injected_languages_auto_install(&self, uri: &Url) {
-        // Early return if auto-install is not enabled
-        if !self.is_auto_install_enabled() {
-            return;
-        }
-
         // Get unique injected languages from the document
         let languages = get_injected_languages(uri, &self.language, &self.documents);
 
@@ -663,10 +717,16 @@ impl TreeSitterLs {
             return;
         }
 
+        let auto_install_enabled = self.is_auto_install_enabled();
+
         // Get document text for auto-install (needed by maybe_auto_install_language)
-        let text = match self.documents.get(uri) {
-            Some(doc) => doc.text().to_string(),
-            None => return,
+        let text = if auto_install_enabled {
+            match self.documents.get(uri) {
+                Some(doc) => Some(doc.text().to_string()),
+                None => None,
+            }
+        } else {
+            None
         };
 
         // Check each injected language and trigger auto-install if not loaded
@@ -683,11 +743,23 @@ impl TreeSitterLs {
 
             let load_result = self.language.ensure_language_loaded(&resolved_lang);
             if !load_result.success {
-                // Language not loaded - trigger auto-install with resolved name
-                // maybe_auto_install_language uses InstallingLanguages to prevent duplicates
-                // is_injection=true: Don't re-parse the document with injection language
-                self.maybe_auto_install_language(&resolved_lang, uri.clone(), text.clone(), true)
-                    .await;
+                if auto_install_enabled {
+                    if let Some(ref text) = text {
+                        // Language not loaded - trigger auto-install with resolved name
+                        // maybe_auto_install_language uses InstallingLanguages to prevent duplicates
+                        // is_injection=true: Don't re-parse the document with injection language
+                        self.maybe_auto_install_language(
+                            &resolved_lang,
+                            uri.clone(),
+                            text.clone(),
+                            true,
+                        )
+                        .await;
+                    }
+                } else {
+                    // Notify user that parser is missing and needs manual installation
+                    self.notify_parser_missing(&resolved_lang).await;
+                }
             }
         }
     }
@@ -843,11 +915,16 @@ impl LanguageServer for TreeSitterLs {
                 }
             }
 
-            if !load_result.success && self.is_auto_install_enabled() {
-                // Language failed to load and auto-install is enabled
-                // is_injection=false: This is the document's main language
-                self.maybe_auto_install_language(lang, uri.clone(), text.clone(), false)
-                    .await;
+            if !load_result.success {
+                if self.is_auto_install_enabled() {
+                    // Language failed to load and auto-install is enabled
+                    // is_injection=false: This is the document's main language
+                    self.maybe_auto_install_language(lang, uri.clone(), text.clone(), false)
+                        .await;
+                } else {
+                    // Notify user that parser is missing and needs manual installation
+                    self.notify_parser_missing(lang).await;
+                }
             }
         }
 
