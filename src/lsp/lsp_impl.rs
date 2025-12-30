@@ -460,6 +460,7 @@ impl TreeSitterLs {
                 args: None,
                 languages: vec!["rust".to_string()],
                 initialization_options: None,
+                workspace_type: None, // Default to Cargo (backward compat)
             });
         }
 
