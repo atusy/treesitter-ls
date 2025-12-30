@@ -28,40 +28,10 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-097 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-098 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
+  // PBI-098: Language-based routing - already implemented as part of PBI-097 (configurable bridge servers)
   product_backlog: [
-    {
-      id: "PBI-098",
-      story: {
-        role: "documentation author with Rust code blocks",
-        capability:
-          "have the bridge route requests to the correct server based on injection language",
-        benefit:
-          "I get proper LSP features for each language in my mixed-language documents",
-      },
-      acceptance_criteria: [
-        {
-          criterion:
-            "Bridge routes requests to server configured for the injection language",
-          verification:
-            "Test rust injection goes to rust-analyzer, python to pyright",
-        },
-        {
-          criterion:
-            "Server pool is keyed by server name, not just 'rust-analyzer'",
-          verification:
-            "Test that multiple servers can be pooled simultaneously",
-        },
-        {
-          criterion:
-            "Graceful fallback when no server is configured for a language",
-          verification:
-            "Test that missing server config returns None without error",
-        },
-      ],
-      status: "refining",
-    },
     {
       id: "PBI-099",
       story: {
