@@ -179,7 +179,7 @@ const scrum: ScrumDashboard = {
     number: 70,
     pbi_id: "PBI-089",
     goal: "Users see type info when hovering over Rust symbols in Markdown code blocks",
-    status: "in_progress",
+    status: "review",
     subtasks: [
       {
         test: "hover() returns null when position is outside any injection region",
@@ -230,6 +230,14 @@ const scrum: ScrumDashboard = {
           { hash: "f32dc57", message: "feat(lsp): add textDocument/hover support for Rust injections", phase: "green" },
         ],
         notes: ["Test passing: make test_nvim_file FILE=tests/test_lsp_hover.lua"],
+      },
+      {
+        test: "E2E hover test is stable when run in full test suite",
+        implementation: "Fix timing/race condition causing flaky hover test failures",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Sprint Review REJECTED: hover test flaky in full suite", "Passes alone, fails with other tests (resource contention)"],
       },
     ],
   },
