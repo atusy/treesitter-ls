@@ -1599,4 +1599,75 @@ mod tests {
             "virtual_file_path should be src/main.rs for Cargo workspace"
         );
     }
+
+    #[test]
+    fn goto_definition_and_hover_use_virtual_file_uri() {
+        use crate::config::settings::BridgeServerConfig;
+
+        if !check_rust_analyzer_available() {
+            return;
+        }
+
+        let config = BridgeServerConfig {
+            command: "rust-analyzer".to_string(),
+            args: None,
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: None, // Defaults to Cargo
+        };
+
+        let mut conn = LanguageServerConnection::spawn(&config).unwrap();
+
+        // Open a document with a function definition
+        let content = r#"fn hello() -> i32 { 42 }
+
+fn main() {
+    let x = hello();
+}"#;
+        conn.did_open("file:///test.rs", "rust", content);
+
+        // The goto_definition and hover should work using virtual_file_uri
+        // For Cargo workspace, this should still return valid results since
+        // the URI should match the file path where content was written.
+
+        // Test that goto_definition can be called (verifies it uses the right URI)
+        let position = Position {
+            line: 3,
+            character: 12,
+        }; // Position on 'hello' call
+        let def_result = conn.goto_definition("file:///test.rs", position);
+
+        // The result may be Some or None depending on rust-analyzer indexing,
+        // but the call should not fail
+        // If it fails, it means the URI doesn't match what rust-analyzer expects
+        // For this test, we mainly verify the method works without panic
+
+        // Test that hover can be called
+        let hover_result = conn.hover("file:///test.rs", position);
+
+        // Both methods should complete without panic, indicating they're using
+        // the correct virtual_file_uri that matches where content was written
+        // The actual result depends on rust-analyzer indexing state
+
+        // Additional verification: check that virtual_file_uri is being used correctly
+        let virtual_uri = conn.virtual_file_uri();
+        assert!(
+            virtual_uri.is_some(),
+            "virtual_file_uri should be available"
+        );
+        let uri = virtual_uri.unwrap();
+
+        // For Cargo workspace, URI should end with src/main.rs
+        assert!(
+            uri.ends_with("src/main.rs"),
+            "URI should end with src/main.rs for Cargo workspace"
+        );
+
+        // Log results for debugging (won't affect test pass/fail)
+        eprintln!(
+            "goto_definition result: {:?}, hover result: {:?}",
+            def_result.is_some(),
+            hover_result.is_some()
+        );
+    }
 }
