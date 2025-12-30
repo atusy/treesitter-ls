@@ -101,7 +101,7 @@ const scrum: ScrumDashboard = {
         implementation:
           "Add timeout_duration field to LanguageServerConnection, use in timeout() call",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: [],
       },
