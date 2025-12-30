@@ -61,7 +61,7 @@ const scrum: ScrumDashboard = {
             "Test that cleanup continues even if some files cannot be removed",
         },
       ],
-      status: "refining",
+      status: "ready",
     },
     {
       id: "PBI-100",
