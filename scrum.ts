@@ -146,9 +146,17 @@ const scrum: ScrumDashboard = {
         implementation:
           "Add send_notification::<Progress>(create_ra_progress_begin) before spawn_blocking in goto_definition",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "6d84254",
+            message:
+              "feat(lsp): add progress notifications for rust-analyzer operations",
+            phase: "green",
+          },
+        ],
         notes: [
+          "Combined with subtasks 6-8 using Obvious Implementation",
           "Follow pattern in lsp_impl.rs lines 500-502 for auto-install progress",
         ],
       },
@@ -157,9 +165,17 @@ const scrum: ScrumDashboard = {
         implementation:
           "Add send_notification::<Progress>(create_ra_progress_end) after spawn_blocking result handling",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "6d84254",
+            message:
+              "feat(lsp): add progress notifications for rust-analyzer operations",
+            phase: "green",
+          },
+        ],
         notes: [
+          "Combined with subtasks 5,7,8 using Obvious Implementation",
           "Pass success=true if definition found, success=false if timeout/None",
         ],
       },
@@ -168,18 +184,38 @@ const scrum: ScrumDashboard = {
         implementation:
           "Add send_notification::<Progress>(create_ra_progress_begin) before spawn_blocking in hover",
         type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: ["Same pattern as goto_definition"],
+        status: "completed",
+        commits: [
+          {
+            hash: "6d84254",
+            message:
+              "feat(lsp): add progress notifications for rust-analyzer operations",
+            phase: "green",
+          },
+        ],
+        notes: [
+          "Combined with subtasks 5,6,8 using Obvious Implementation",
+          "Same pattern as goto_definition",
+        ],
       },
       {
         test: "Integration test: hover sends End progress after spawn_blocking completes",
         implementation:
           "Add send_notification::<Progress>(create_ra_progress_end) after spawn_blocking result handling",
         type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: ["Pass success=true if hover found, success=false if timeout/None"],
+        status: "completed",
+        commits: [
+          {
+            hash: "6d84254",
+            message:
+              "feat(lsp): add progress notifications for rust-analyzer operations",
+            phase: "green",
+          },
+        ],
+        notes: [
+          "Combined with subtasks 5-7 using Obvious Implementation",
+          "Pass success=true if hover found, success=false if timeout/None",
+        ],
       },
     ],
   },
