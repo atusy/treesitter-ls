@@ -72,6 +72,33 @@ fn setup_cargo_workspace(temp_dir: &Path) -> Option<PathBuf> {
     Some(main_rs)
 }
 
+/// Information about the workspace for a language server connection.
+///
+/// This struct holds the temp directory path and the virtual file path,
+/// and provides methods to get URIs for the virtual file.
+#[derive(Debug, Clone)]
+pub struct ConnectionInfo {
+    /// Temporary directory for the workspace
+    pub temp_dir: PathBuf,
+    /// Path to the virtual file (e.g., src/main.rs or virtual.py)
+    pub virtual_file_path: PathBuf,
+}
+
+impl ConnectionInfo {
+    /// Create a new ConnectionInfo with the given temp directory and virtual file path.
+    pub fn new(temp_dir: PathBuf, virtual_file_path: PathBuf) -> Self {
+        Self {
+            temp_dir,
+            virtual_file_path,
+        }
+    }
+
+    /// Get the URI for the virtual file in the temp workspace.
+    pub fn virtual_file_uri(&self) -> Option<String> {
+        Some(format!("file://{}", self.virtual_file_path.display()))
+    }
+}
+
 /// Manages a connection to a language server subprocess with a temporary workspace
 pub struct LanguageServerConnection {
     process: Child,
