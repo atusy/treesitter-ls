@@ -4,6 +4,20 @@ use std::collections::HashMap;
 
 pub type CaptureMapping = HashMap<String, String>;
 
+/// Workspace type for bridge language server connections.
+///
+/// Determines the project structure created in the temp directory:
+/// - Cargo: Creates Cargo.toml and src/main.rs (for rust-analyzer)
+/// - Generic: Creates only a virtual.<ext> file (for language servers that don't need project structure)
+#[derive(Debug, Clone, Copy, Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkspaceType {
+    /// Cargo workspace with Cargo.toml and src/main.rs
+    Cargo,
+    /// Generic workspace with just a virtual file
+    Generic,
+}
+
 /// Configuration for a bridge language server.
 ///
 /// This is used to configure external language servers (like rust-analyzer, pyright)
@@ -19,6 +33,9 @@ pub struct BridgeServerConfig {
     /// Optional initialization options to pass to the server during initialize
     #[serde(rename = "initializationOptions")]
     pub initialization_options: Option<Value>,
+    /// Workspace type for this server (defaults to None, meaning Cargo for backward compat)
+    #[serde(rename = "workspaceType")]
+    pub workspace_type: Option<WorkspaceType>,
 }
 
 /// Bridge settings containing configured language servers.

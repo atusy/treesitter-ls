@@ -685,6 +685,7 @@ mod tests {
             args: None,
             languages: vec!["rust".to_string()],
             initialization_options: None,
+            workspace_type: None,
         };
 
         // First take spawns a new connection
@@ -721,6 +722,7 @@ mod tests {
             args: None,
             languages: vec!["rust".to_string()],
             initialization_options: None,
+            workspace_type: None,
         };
 
         if !check_rust_analyzer_available() {
@@ -747,6 +749,7 @@ mod tests {
             args: None, // rust-analyzer doesn't need extra args for basic operation
             languages: vec!["rust".to_string()],
             initialization_options: None,
+            workspace_type: None,
         };
 
         if !check_rust_analyzer_available() {
@@ -772,6 +775,7 @@ mod tests {
             args: None,
             languages: vec!["rust".to_string()],
             initialization_options: Some(init_opts),
+            workspace_type: None,
         };
 
         if !check_rust_analyzer_available() {
