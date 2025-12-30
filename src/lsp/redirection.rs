@@ -12,6 +12,42 @@ use std::process::{Child, ChildStdout, Command, Stdio};
 use std::time::Instant;
 use tower_lsp::lsp_types::*;
 
+/// Map language name to file extension.
+///
+/// Used when creating virtual files for Generic workspaces.
+/// Returns a reasonable extension for common languages.
+fn language_to_extension(language: &str) -> &'static str {
+    match language.to_lowercase().as_str() {
+        "rust" => "rs",
+        "python" => "py",
+        "javascript" => "js",
+        "typescript" => "ts",
+        "lua" => "lua",
+        "go" => "go",
+        "c" => "c",
+        "cpp" | "c++" => "cpp",
+        "java" => "java",
+        "ruby" => "rb",
+        "php" => "php",
+        "swift" => "swift",
+        "kotlin" => "kt",
+        "scala" => "scala",
+        "haskell" => "hs",
+        "elixir" => "ex",
+        "erlang" => "erl",
+        "clojure" => "clj",
+        "r" => "r",
+        "julia" => "jl",
+        "dart" => "dart",
+        "vim" => "vim",
+        "zig" => "zig",
+        "ocaml" => "ml",
+        "fsharp" | "f#" => "fs",
+        "csharp" | "c#" => "cs",
+        _ => "txt", // Default fallback
+    }
+}
+
 /// Set up workspace files for a language server.
 ///
 /// Creates the appropriate file structure based on workspace type:
@@ -195,9 +231,7 @@ impl LanguageServerConnection {
     /// - Uses the command from config
     /// - Passes args from config to Command
     /// - Passes initializationOptions from config in initialize request
-    ///
-    /// Note: Currently creates a Cargo workspace for rust-analyzer compatibility.
-    /// In the future, workspace setup should be configurable per server type.
+    /// - Creates workspace structure based on config.workspace_type
     pub fn spawn(config: &BridgeServerConfig) -> Option<Self> {
         // Create a temporary directory for the workspace
         // Use unique counter to avoid conflicts between parallel tests
@@ -209,21 +243,18 @@ impl LanguageServerConnection {
             std::process::id(),
             counter
         ));
-        let src_dir = temp_dir.join("src");
-        std::fs::create_dir_all(&src_dir).ok()?;
+        std::fs::create_dir_all(&temp_dir).ok()?;
 
-        // Write minimal Cargo.toml (needed for rust-analyzer)
-        // TODO: Make workspace setup configurable per server type
-        let cargo_toml = temp_dir.join("Cargo.toml");
-        std::fs::write(
-            &cargo_toml,
-            "[package]\nname = \"virtual\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-        )
-        .ok()?;
+        // Determine extension from first language in config, default to "rs" for Cargo compat
+        let extension = config
+            .languages
+            .first()
+            .map(|lang| language_to_extension(lang))
+            .unwrap_or("rs");
 
-        // Create empty main.rs (will be overwritten by did_open)
-        let main_rs = src_dir.join("main.rs");
-        std::fs::write(&main_rs, "").ok()?;
+        // Set up workspace structure based on workspace_type
+        let virtual_file_path =
+            setup_workspace_with_option(&temp_dir, config.workspace_type, extension)?;
 
         let root_uri = format!("file://{}", temp_dir.display());
 
@@ -246,7 +277,7 @@ impl LanguageServerConnection {
         let stdout_reader = BufReader::new(stdout);
 
         // Create ConnectionInfo for the workspace
-        let connection_info = ConnectionInfo::new(temp_dir.clone(), main_rs);
+        let connection_info = ConnectionInfo::new(temp_dir.clone(), virtual_file_path);
 
         let mut conn = Self {
             process,
