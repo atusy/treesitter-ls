@@ -510,6 +510,9 @@ pub struct CleanupStats {
     pub dirs_failed: usize,
 }
 
+/// The prefix used for all treesitter-ls temporary directories
+const TEMP_DIR_PREFIX: &str = "treesitter-ls-";
+
 /// Clean up stale temporary directories created by treesitter-ls.
 ///
 /// Scans the given temp directory for directories matching the pattern
@@ -523,10 +526,41 @@ pub struct CleanupStats {
 /// * `Ok(CleanupStats)` - Statistics about the cleanup operation
 /// * `Err(io::Error)` - If the temp directory cannot be read
 pub fn cleanup_stale_temp_dirs(
-    _temp_dir: &std::path::Path,
+    temp_dir: &std::path::Path,
     _max_age: std::time::Duration,
 ) -> std::io::Result<CleanupStats> {
-    Ok(CleanupStats::default())
+    let mut stats = CleanupStats::default();
+
+    // Read directory entries
+    let entries = std::fs::read_dir(temp_dir)?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+
+        // Skip non-directories
+        if !path.is_dir() {
+            continue;
+        }
+
+        // Check if directory name matches our prefix
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+
+        if !name.starts_with(TEMP_DIR_PREFIX) {
+            continue;
+        }
+
+        // Remove the directory
+        if std::fs::remove_dir_all(&path).is_ok() {
+            stats.dirs_removed += 1;
+        } else {
+            stats.dirs_failed += 1;
+        }
+    }
+
+    Ok(stats)
 }
 
 #[cfg(test)]
