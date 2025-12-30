@@ -488,9 +488,10 @@ impl LanguageServerConnection {
         }
     }
 
-    /// Request hover information
+    /// Request hover information (synchronous version)
     ///
     /// Uses the actual file URI from the temp workspace, not the virtual URI.
+    /// Note: This method may block indefinitely. For timeout support, use `hover_async`.
     pub fn hover(&mut self, _uri: &str, position: Position) -> Option<Hover> {
         // Use the real file URI from the temp workspace
         let real_uri = self.main_rs_uri()?;
@@ -504,6 +505,36 @@ impl LanguageServerConnection {
 
         // Read response (skipping notifications until we get the matching response)
         let response = self.read_response_for_id(req_id)?;
+
+        // Extract result
+        let result = response.get("result")?;
+
+        // Parse as Hover (result can be null if no hover info available)
+        if result.is_null() {
+            return None;
+        }
+
+        serde_json::from_value(result.clone()).ok()
+    }
+
+    /// Request hover information with timeout support (async version)
+    ///
+    /// Returns None if the request times out or fails.
+    /// Uses the configured timeout_duration for the request.
+    pub async fn hover_async(&mut self, _uri: &str, position: Position) -> Option<Hover> {
+        // Use the real file URI from the temp workspace
+        let real_uri = self.main_rs_uri()?;
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let req_id = self.send_request("textDocument/hover", params)?;
+
+        // Read response with timeout (uses poll-based timeout on Unix)
+        let timeout = self.timeout_duration;
+        let response = self.read_response_with_timeout_sync(req_id, timeout)?;
 
         // Extract result
         let result = response.get("result")?;
@@ -1052,5 +1083,39 @@ mod tests {
         // Can set timeout to a shorter duration
         conn.set_timeout(Duration::from_millis(500));
         assert_eq!(conn.timeout_duration, Duration::from_millis(500));
+    }
+
+    #[tokio::test]
+    async fn hover_returns_none_after_timeout() {
+        use std::time::Duration;
+
+        // Create a mock slow server that never responds
+        let mut process = Command::new("cat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+
+        let stdout = process.stdout.take().unwrap();
+        let stdout_reader = BufReader::new(stdout);
+
+        let mut conn = LanguageServerConnection {
+            process,
+            request_id: 0,
+            stdout_reader,
+            temp_dir: None,
+            document_version: None,
+            timeout_duration: Duration::from_millis(100), // 100ms timeout for test
+        };
+
+        // hover_async should timeout and return None (not hang forever)
+        let result = conn
+            .hover_async("file:///test.rs", Position::new(0, 0))
+            .await;
+        assert!(
+            result.is_none(),
+            "Expected None due to timeout, but got a response"
+        );
     }
 }
