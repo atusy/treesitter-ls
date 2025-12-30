@@ -46,6 +46,9 @@ pub fn merge_settings(
 
                 // Prefer primary auto_install, fall back to fallback
                 auto_install: primary.auto_install.or(fallback.auto_install),
+
+                // Prefer primary bridge, fall back to fallback
+                bridge: primary.bridge.or(fallback.bridge),
             };
             Some(merged)
         }
@@ -158,6 +161,7 @@ impl From<&WorkspaceSettings> for TreeSitterSettings {
             languages,
             capture_mappings,
             auto_install: None, // WorkspaceSettings doesn't track auto_install
+            bridge: None,       // WorkspaceSettings doesn't track bridge
         }
     }
 }
@@ -222,6 +226,7 @@ mod tests {
             languages: HashMap::new(),
             capture_mappings: HashMap::new(),
             auto_install: None,
+            bridge: None,
         };
         let result = merge_settings(Some(fallback.clone()), None).unwrap();
         assert_eq!(
@@ -237,6 +242,7 @@ mod tests {
             languages: HashMap::new(),
             capture_mappings: HashMap::new(),
             auto_install: None,
+            bridge: None,
         };
         let result = merge_settings(None, Some(primary.clone())).unwrap();
         assert_eq!(
@@ -263,6 +269,7 @@ mod tests {
             languages: fallback_languages,
             capture_mappings: HashMap::new(),
             auto_install: None,
+            bridge: None,
         };
 
         let mut primary_languages = HashMap::new();
@@ -281,6 +288,7 @@ mod tests {
             languages: primary_languages,
             capture_mappings: HashMap::new(),
             auto_install: None,
+            bridge: None,
         };
 
         let result = merge_settings(Some(fallback), Some(primary)).unwrap();
@@ -325,6 +333,7 @@ mod tests {
             languages: HashMap::new(),
             capture_mappings: fallback_mappings,
             auto_install: None,
+            bridge: None,
         };
 
         let mut primary_mappings = HashMap::new();
@@ -349,6 +358,7 @@ mod tests {
             languages: HashMap::new(),
             capture_mappings: primary_mappings,
             auto_install: None,
+            bridge: None,
         };
 
         let result = merge_settings(Some(fallback), Some(primary)).unwrap();
@@ -414,6 +424,7 @@ mod tests {
             languages: HashMap::new(),
             capture_mappings: HashMap::new(),
             auto_install: None,
+            bridge: None,
         };
 
         let workspace: WorkspaceSettings = WorkspaceSettings::from(&settings);
@@ -441,6 +452,7 @@ mod tests {
             languages: HashMap::new(),
             capture_mappings: HashMap::new(),
             auto_install: None,
+            bridge: None,
         };
 
         let workspace: WorkspaceSettings = WorkspaceSettings::from(&settings);
@@ -461,6 +473,7 @@ mod tests {
             languages: HashMap::new(),
             capture_mappings: HashMap::new(),
             auto_install: None,
+            bridge: None,
         };
 
         let workspace: WorkspaceSettings = WorkspaceSettings::from(&settings);
@@ -483,6 +496,7 @@ mod tests {
             languages: HashMap::new(),
             capture_mappings: HashMap::new(),
             auto_install: None, // Not specified
+            bridge: None,
         };
 
         let workspace: WorkspaceSettings = WorkspaceSettings::from(&settings);
@@ -501,6 +515,7 @@ mod tests {
             languages: HashMap::new(),
             capture_mappings: HashMap::new(),
             auto_install: Some(true),
+            bridge: None,
         };
 
         let workspace: WorkspaceSettings = WorkspaceSettings::from(&settings);
@@ -515,6 +530,7 @@ mod tests {
             languages: HashMap::new(),
             capture_mappings: HashMap::new(),
             auto_install: Some(false),
+            bridge: None,
         };
 
         let workspace: WorkspaceSettings = WorkspaceSettings::from(&settings);

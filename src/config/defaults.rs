@@ -15,6 +15,7 @@ pub fn default_settings() -> TreeSitterSettings {
         languages: HashMap::new(),
         capture_mappings: default_capture_mappings(),
         auto_install: Some(true),
+        bridge: None,
     }
 }
 
