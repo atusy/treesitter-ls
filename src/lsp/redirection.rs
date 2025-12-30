@@ -333,4 +333,13 @@ mod tests {
         let conn = pool.get("rust-analyzer");
         assert!(conn.is_none());
     }
+
+    #[test]
+    fn server_pool_spawn_then_get_returns_some() {
+        let mut pool = ServerPool::new();
+        // Spawn a simple server (use 'cat' as a mock - it reads stdin and exits)
+        pool.spawn_server("test-server", "cat", &[]);
+        let conn = pool.get("test-server");
+        assert!(conn.is_some());
+    }
 }
