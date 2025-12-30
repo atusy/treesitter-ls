@@ -110,7 +110,7 @@ const scrum: ScrumDashboard = {
         implementation:
           "Apply same timeout pattern to hover() method for consistency",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: [],
       },
