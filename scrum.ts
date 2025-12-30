@@ -66,7 +66,7 @@ const scrum: ScrumDashboard = {
             "Test that linkedProjects and other server options are passed through",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-098",
@@ -137,7 +137,7 @@ const scrum: ScrumDashboard = {
     pbi_id: "PBI-097",
     goal:
       "Documentation authors can configure bridge servers via initializationOptions for multi-language LSP support",
-    status: "review",
+    status: "done",
     subtasks: [
       {
         test: "Test that BridgeServerConfig struct can deserialize command, args, languages, and initializationOptions fields",
