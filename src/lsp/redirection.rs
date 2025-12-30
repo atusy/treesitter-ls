@@ -319,6 +319,12 @@ impl PooledConnection {
     pub fn is_alive(&mut self) -> bool {
         matches!(self.process.try_wait(), Ok(None))
     }
+
+    /// Kill the process
+    pub fn kill(&mut self) {
+        let _ = self.process.kill();
+        let _ = self.process.wait();
+    }
 }
 
 /// Pool of language server connections for reuse across requests
