@@ -372,4 +372,17 @@ mod tests {
         let conn = pool.get("test-server");
         assert!(conn.is_some());
     }
+
+    #[test]
+    fn server_pool_get_twice_returns_same_connection() {
+        let mut pool = ServerPool::new();
+        pool.spawn_server("test-server", "cat", &[]);
+
+        // Get connection twice and verify they point to the same instance
+        let conn1 = pool.get("test-server").unwrap();
+        let conn2 = pool.get("test-server").unwrap();
+
+        // Use pointer equality to verify same connection
+        assert!(std::ptr::eq(conn1, conn2));
+    }
 }
