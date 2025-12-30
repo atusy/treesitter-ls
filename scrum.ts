@@ -104,7 +104,7 @@ const scrum: ScrumDashboard = {
             "Unit test: did_open with generic workspace writes to virtual.<ext> not src/main.rs",
         },
       ],
-      status: "ready",
+      status: "done",
     },
   ],
 
@@ -113,7 +113,7 @@ const scrum: ScrumDashboard = {
     pbi_id: "PBI-100",
     goal:
       "Documentation authors can configure workspace setup per bridge server type so each language server gets the project structure it needs",
-    status: "in_progress",
+    status: "review",
     subtasks: [
       {
         test: "Unit test: BridgeServerConfig deserializes workspace_type field with values 'cargo' and 'generic'; None defaults to 'cargo'",
@@ -168,8 +168,11 @@ const scrum: ScrumDashboard = {
         implementation:
           "Update did_open() to use virtual_file_uri() for file path instead of hardcoded src/main.rs",
         type: "behavioral",
-        status: "red",
-        commits: [],
+        status: "completed",
+        commits: [
+          { hash: "b6a659c", message: "test(workspace): add failing tests for write_virtual_file per workspace type", phase: "green" as const },
+          { hash: "2e29ebb", message: "feat(workspace): add write_virtual_file method to ConnectionInfo", phase: "green" as const },
+        ],
         notes: [],
       },
     ],
