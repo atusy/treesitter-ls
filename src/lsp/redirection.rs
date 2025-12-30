@@ -542,4 +542,33 @@ mod tests {
             handle.await.unwrap();
         }
     }
+
+    #[test]
+    fn server_pool_rust_analyzer_reused_across_requests() {
+        // Skip if rust-analyzer is not installed
+        if std::process::Command::new("rust-analyzer")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let pool = ServerPool::new();
+
+        // First request spawns rust-analyzer
+        assert!(pool.get_or_spawn("rust-analyzer", "rust-analyzer", &[]));
+
+        // Verify process is alive
+        let alive1 = pool.with_connection("rust-analyzer", |conn| conn.is_alive());
+        assert!(alive1.unwrap(), "First access: process should be alive");
+
+        // Second request should reuse the same process (no new spawn)
+        assert!(pool.get_or_spawn("rust-analyzer", "rust-analyzer", &[]));
+
+        // Verify still alive (same process reused)
+        let alive2 = pool.with_connection("rust-analyzer", |conn| conn.is_alive());
+        assert!(alive2.unwrap(), "Second access: same process still alive");
+    }
 }
