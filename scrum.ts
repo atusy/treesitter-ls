@@ -28,46 +28,9 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-096 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-097 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
   product_backlog: [
-    {
-      id: "PBI-097",
-      story: {
-        role: "documentation author with Rust code blocks",
-        capability:
-          "configure bridge servers via initializationOptions so I can use different language servers beyond rust-analyzer",
-        benefit:
-          "I can get LSP features in Python, Go, TypeScript code blocks using my preferred language servers",
-      },
-      acceptance_criteria: [
-        {
-          criterion:
-            "User can specify bridge server configuration in LSP initializationOptions",
-          verification:
-            "Test that bridge.servers config is parsed from initializationOptions",
-        },
-        {
-          criterion:
-            "Server configuration includes command, args, languages, and initializationOptions",
-          verification:
-            "Test that all config fields are passed through to spawned server",
-        },
-        {
-          criterion:
-            "Connections spawn the configured command instead of hard-coded rust-analyzer",
-          verification:
-            "Test that spawn uses command from config, not hard-coded binary name",
-        },
-        {
-          criterion:
-            "Servers receive user-provided initializationOptions during initialize",
-          verification:
-            "Test that linkedProjects and other server options are passed through",
-        },
-      ],
-      status: "done",
-    },
     {
       id: "PBI-098",
       story: {
@@ -130,105 +93,40 @@ const scrum: ScrumDashboard = {
       ],
       status: "refining",
     },
+    {
+      id: "PBI-100",
+      story: {
+        role: "documentation author with Rust code blocks",
+        capability:
+          "configure workspace setup per bridge server type (e.g., Cargo.toml for rust-analyzer, venv for pyright)",
+        benefit:
+          "each language server gets the project structure it needs without hard-coded assumptions",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "BridgeServerConfig accepts optional workspace_type field",
+          verification:
+            "Test that workspace_type can be 'cargo', 'generic', or custom type",
+        },
+        {
+          criterion:
+            "Spawn creates appropriate workspace structure based on workspace_type",
+          verification:
+            "Test that cargo type creates Cargo.toml, generic type creates empty workspace",
+        },
+        {
+          criterion:
+            "Default workspace_type is 'generic' for non-rust servers",
+          verification:
+            "Test that pyright config without workspace_type uses generic workspace",
+        },
+      ],
+      status: "draft",
+    },
   ],
 
-  sprint: {
-    number: 75,
-    pbi_id: "PBI-097",
-    goal:
-      "Documentation authors can configure bridge servers via initializationOptions for multi-language LSP support",
-    status: "done",
-    subtasks: [
-      {
-        test: "Test that BridgeServerConfig struct can deserialize command, args, languages, and initializationOptions fields",
-        implementation:
-          "Create BridgeServerConfig struct with serde derives in src/config/settings.rs",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "e7b75b8", message: "feat(config): add BridgeServerConfig struct for bridge server configuration", phase: "green" }],
-        notes: [
-          "Define: command: String, args: Option<Vec<String>>, languages: Vec<String>, initialization_options: Option<serde_json::Value>",
-        ],
-      },
-      {
-        test: "Test that BridgeSettings struct deserializes from bridge.servers map",
-        implementation:
-          "Create BridgeSettings with servers: HashMap<String, BridgeServerConfig> in settings.rs",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "46b4e6f", message: "feat(config): add BridgeSettings struct for server map configuration", phase: "green" }],
-        notes: [
-          "JSON schema: { bridge: { servers: { 'rust-analyzer': { command: '...', ... } } } }",
-        ],
-      },
-      {
-        test: "Test that TreeSitterSettings includes optional bridge field that deserializes correctly",
-        implementation:
-          "Add bridge: Option<BridgeSettings> field to TreeSitterSettings",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "0a43fc7", message: "feat(config): add optional bridge field to TreeSitterSettings", phase: "green" }],
-        notes: [
-          "Ensure backward compatibility - missing bridge field should parse to None",
-        ],
-      },
-      {
-        test: "Test that LanguageServerConnection::spawn accepts BridgeServerConfig and uses command from config",
-        implementation:
-          "Refactor spawn_rust_analyzer to generic spawn(config: &BridgeServerConfig) method",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "e0a0cc5", message: "feat(lsp): add generic spawn method accepting BridgeServerConfig", phase: "green" }],
-        notes: [
-          "Keep spawn_rust_analyzer as convenience wrapper or deprecate entirely",
-        ],
-      },
-      {
-        test: "Test that spawn passes args from config to Command::new",
-        implementation:
-          "Add .args() call using config.args.unwrap_or_default()",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "e0a0cc5", message: "feat(lsp): add generic spawn method accepting BridgeServerConfig", phase: "green" }],
-        notes: [
-          "Some language servers need specific args like --stdio or --lsp",
-        ],
-      },
-      {
-        test: "Test that spawn passes initializationOptions from config in initialize request",
-        implementation:
-          "Include config.initialization_options in init_params JSON",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "e0a0cc5", message: "feat(lsp): add generic spawn method accepting BridgeServerConfig", phase: "green" }],
-        notes: [
-          "rust-analyzer uses linkedProjects, pyright uses venvPath, etc.",
-        ],
-      },
-      {
-        test: "Test that RustAnalyzerPool is replaced with generic LanguageServerPool keyed by server name",
-        implementation:
-          "Rename RustAnalyzerPool to LanguageServerPool, update pool key usage",
-        type: "structural",
-        status: "completed",
-        commits: [{ hash: "1949c5e", message: "refactor(lsp): rename RustAnalyzerPool to LanguageServerPool", phase: "refactoring" }],
-        notes: [
-          "Structural change - pool behavior remains same, just generalized naming",
-        ],
-      },
-      {
-        test: "Test that lsp_impl uses bridge config from settings when spawning language servers",
-        implementation:
-          "Update lsp_impl to look up server config by name from settings.bridge.servers",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "e12b068", message: "feat(lsp): use bridge config from settings for language server connections", phase: "green" }],
-        notes: [
-          "Fall back to hard-coded rust-analyzer config if bridge.servers is empty/missing",
-        ],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -241,6 +139,14 @@ const scrum: ScrumDashboard = {
   // Historical sprints (recent 2) | Sprint 1-72: git log -- scrum.yaml, scrum.ts
   completed: [
     {
+      number: 75,
+      pbi_id: "PBI-097",
+      goal:
+        "Documentation authors can configure bridge servers via initializationOptions for multi-language LSP support",
+      status: "done",
+      subtasks: [],
+    },
+    {
       number: 74,
       pbi_id: "PBI-096",
       goal:
@@ -248,18 +154,14 @@ const scrum: ScrumDashboard = {
       status: "done",
       subtasks: [],
     },
-    {
-      number: 73,
-      pbi_id: "PBI-095",
-      goal:
-        "Documentation authors get responsive go-to-definition even when rust-analyzer is slow",
-      status: "done",
-      subtasks: [],
-    },
   ],
 
   // Recent 2 retrospectives | Sprint 1-72: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    {
+      sprint: 75,
+      improvements: [],
+    },
     {
       sprint: 74,
       improvements: [
@@ -273,18 +175,6 @@ const scrum: ScrumDashboard = {
         {
           action:
             "Consider adding timeout tests at tokio::time::timeout level for spawn_blocking calls",
-          timing: "sprint",
-          status: "active",
-          outcome: null,
-        },
-      ],
-    },
-    {
-      sprint: 73,
-      improvements: [
-        {
-          action:
-            "Consider serializing rust-analyzer tests to avoid parallel spawn race conditions",
           timing: "sprint",
           status: "active",
           outcome: null,
