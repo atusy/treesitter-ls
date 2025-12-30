@@ -725,10 +725,7 @@ impl TreeSitterLs {
 
         // Get document text for auto-install (needed by maybe_auto_install_language)
         let text = if auto_install_enabled {
-            match self.documents.get(uri) {
-                Some(doc) => Some(doc.text().to_string()),
-                None => None,
-            }
+            self.documents.get(uri).map(|doc| doc.text().to_string())
         } else {
             None
         };
