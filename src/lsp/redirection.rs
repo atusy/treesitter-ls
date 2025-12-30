@@ -351,6 +351,32 @@ impl ServerPool {
     pub fn get(&self, name: &str) -> Option<&PooledConnection> {
         self.connections.get(name)
     }
+
+    /// Get a mutable reference to a connection for the given server name
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut PooledConnection> {
+        self.connections.get_mut(name)
+    }
+
+    /// Get an existing live connection or spawn a new one if dead/missing
+    pub fn get_or_spawn(
+        &mut self,
+        name: &str,
+        command: &str,
+        args: &[&str],
+    ) -> Option<&mut PooledConnection> {
+        // Check if we need to respawn (connection dead or missing)
+        let needs_spawn = match self.connections.get_mut(name) {
+            Some(conn) => !conn.is_alive(),
+            None => true,
+        };
+
+        if needs_spawn {
+            let conn = PooledConnection::spawn(command, args)?;
+            self.connections.insert(name.to_string(), conn);
+        }
+
+        self.connections.get_mut(name)
+    }
 }
 
 impl Default for ServerPool {
