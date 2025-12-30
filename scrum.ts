@@ -153,11 +153,12 @@ const scrum: ScrumDashboard = {
         benefit: "I understand APIs without leaving my Markdown documentation",
       },
       acceptance_criteria: [
-        { criterion: "textDocument/hover forwarded to configured server", verification: "E2E: hover shows fn signature" },
-        { criterion: "Response range translated to host coordinates", verification: "Unit: virtual (0,5) -> host (10,5)" },
-        { criterion: "Returns null when server unavailable", verification: "Unit: graceful degradation" },
+        { criterion: "textDocument/hover forwarded to rust-analyzer for Rust injections", verification: "cargo test test_hover_rust_injection" },
+        { criterion: "Response range translated from virtual to host coordinates", verification: "cargo test test_hover_range_translation" },
+        { criterion: "Returns null when position outside injection region", verification: "cargo test test_hover_outside_injection_returns_null" },
+        { criterion: "E2E: Neovim shows hover info in Markdown Rust block", verification: "make test_nvim_file FILE=tests/test_lsp_hover.lua" },
       ],
-      status: "draft",
+      status: "ready",
     },
     {
       id: "PBI-090",
@@ -174,7 +175,54 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 70,
+    pbi_id: "PBI-089",
+    goal: "Users see type info when hovering over Rust symbols in Markdown code blocks",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "hover() returns null when position is outside any injection region",
+        implementation: "Check byte offset against injection regions, return None if outside",
+        type: "behavioral",
+        status: "red",
+        commits: [],
+        notes: ["E2E test written: test_lsp_hover.lua - hover on function call shows signature"],
+      },
+      {
+        test: "LanguageServerConnection.hover() sends textDocument/hover and parses response",
+        implementation: "Add hover() method to LanguageServerConnection similar to goto_definition()",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "hover response range is translated from virtual to host coordinates",
+        implementation: "Use CacheableInjectionRegion.translate_virtual_to_host() for range if present",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "hover() in lsp_impl.rs forwards request to rust-analyzer for Rust injections",
+        implementation: "Wire up hover() using pattern from goto_definition() with pool management",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "E2E: Neovim vim.lsp.buf.hover() shows function signature in Markdown Rust block",
+        implementation: "Create test_lsp_hover.lua with MiniTest pattern from test_lsp_definition.lua",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
