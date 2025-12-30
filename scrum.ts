@@ -2,7 +2,9 @@
 // Dashboard Data (AI edits this section)
 // ============================================================
 
-const userStoryRoles = ["user"] as const satisfies readonly string[]; // Must have at least one role. Avoid generic roles like "user" or "admin". Remove obsolete roles freely.
+const userStoryRoles = [
+  "Developer editing Markdown",
+] as const satisfies readonly string[]; // Must have at least one role. Avoid generic roles like "user" or "admin". Remove obsolete roles freely.
 
 const scrum: ScrumDashboard = {
   product_goal: {
@@ -32,28 +34,48 @@ const scrum: ScrumDashboard = {
     {
       id: "PBI-088",
       story: {
-        role: "user",
-        capability: "configure which language servers handle which injection languages",
-        benefit: "I can use rust-analyzer, pyright, gopls for code blocks in Markdown",
+        role: "Developer editing Markdown",
+        capability:
+          "configure which language servers handle which injection languages",
+        benefit:
+          "I can use rust-analyzer, pyright, gopls for code blocks in Markdown",
       },
       acceptance_criteria: [
-        { criterion: "TreeSitterSettings includes bridge.servers config", verification: "cargo test test_bridge_config_parsing" },
-        { criterion: "initializationOptions passed to server's initialize", verification: "Integration test verifies server receives options" },
-        { criterion: "Only configured servers spawned (security)", verification: "Unknown language does not spawn process" },
-        { criterion: "Graceful fallback for unconfigured languages", verification: "Semantic tokens work without bridge config" },
+        {
+          criterion: "TreeSitterSettings includes bridge.servers config",
+          verification: "cargo test test_bridge_config_parsing",
+        },
+        {
+          criterion: "initializationOptions passed to server's initialize",
+          verification: "Integration test verifies server receives options",
+        },
+        {
+          criterion: "Only configured servers spawned (security)",
+          verification: "Unknown language does not spawn process",
+        },
+        {
+          criterion: "Graceful fallback for unconfigured languages",
+          verification: "Semantic tokens work without bridge config",
+        },
       ],
       status: "draft", // ADR-0006 Phase 2-3: Configuration System
     },
     {
       id: "PBI-090",
       story: {
-        role: "user",
+        role: "Developer editing Markdown",
         capability: "see function signature help while typing in code blocks",
         benefit: "I know what arguments are expected",
       },
       acceptance_criteria: [
-        { criterion: "textDocument/signatureHelp forwarded", verification: "E2E: signature shown on '('" },
-        { criterion: "Response passed through unchanged", verification: "Unit: no position mapping needed" },
+        {
+          criterion: "textDocument/signatureHelp forwarded",
+          verification: "E2E: signature shown on '('",
+        },
+        {
+          criterion: "Response passed through unchanged",
+          verification: "Unit: no position mapping needed",
+        },
       ],
       status: "draft",
     },
@@ -71,9 +93,28 @@ const scrum: ScrumDashboard = {
 
   // Historical sprints (recent 3) | Sprint 1-67: git log -- scrum.yaml, scrum.ts
   completed: [
-    { number: 70, pbi_id: "PBI-089", goal: "Users see type info when hovering over Rust symbols in Markdown code blocks", status: "done", subtasks: [] },
-    { number: 69, pbi_id: "PBI-087", goal: "ServerPool for connection reuse (<200ms latency)", status: "done", subtasks: [] },
-    { number: 68, pbi_id: "PBI-086", goal: "Go-to-definition in Markdown Rust code blocks", status: "done", subtasks: [] },
+    {
+      number: 70,
+      pbi_id: "PBI-089",
+      goal:
+        "Users see type info when hovering over Rust symbols in Markdown code blocks",
+      status: "done",
+      subtasks: [],
+    },
+    {
+      number: 69,
+      pbi_id: "PBI-087",
+      goal: "ServerPool for connection reuse (<200ms latency)",
+      status: "done",
+      subtasks: [],
+    },
+    {
+      number: 68,
+      pbi_id: "PBI-086",
+      goal: "Go-to-definition in Markdown Rust code blocks",
+      status: "done",
+      subtasks: [],
+    },
   ],
 
   // Recent 3 retrospectives | Sprint 1-67: git log -- scrum.yaml, scrum.ts
@@ -81,21 +122,47 @@ const scrum: ScrumDashboard = {
     {
       sprint: 70,
       improvements: [
-        { action: "Pre-existing E2E failures need documentation", timing: "sprint", status: "active", outcome: null },
-        { action: "Fix 3 failing E2E tests (test_lsp_select x2, test_lsp_semantic x1)", timing: "product", status: "active", outcome: null },
+        {
+          action: "Pre-existing E2E failures need documentation",
+          timing: "sprint",
+          status: "active",
+          outcome: null,
+        },
+        {
+          action:
+            "Fix 3 failing E2E tests (test_lsp_select x2, test_lsp_semantic x1)",
+          timing: "product",
+          status: "active",
+          outcome: null,
+        },
       ],
     },
     {
       sprint: 69,
       improvements: [
-        { action: "cleanup_idle() needs timer wiring", timing: "product", status: "active", outcome: null },
-        { action: "ServerPool not yet in lsp_impl.rs", timing: "sprint", status: "completed", outcome: "ServerPool integrated in Sprint 70" },
+        {
+          action: "cleanup_idle() needs timer wiring",
+          timing: "product",
+          status: "active",
+          outcome: null,
+        },
+        {
+          action: "ServerPool not yet in lsp_impl.rs",
+          timing: "sprint",
+          status: "completed",
+          outcome: "ServerPool integrated in Sprint 70",
+        },
       ],
     },
     {
       sprint: 68,
       improvements: [
-        { action: "PoC sync subprocess needs production refactor", timing: "product", status: "completed", outcome: "ServerPool with connection reuse implemented in Sprint 69" },
+        {
+          action: "PoC sync subprocess needs production refactor",
+          timing: "product",
+          status: "completed",
+          outcome: "ServerPool with connection reuse implemented in Sprint 69",
+        },
       ],
     },
   ],
