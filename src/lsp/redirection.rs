@@ -5,11 +5,14 @@
 
 use dashmap::DashMap;
 use serde_json::Value;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read as _, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdout, Command, Stdio};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tower_lsp::lsp_types::*;
+
+/// Default timeout for LSP requests (5 seconds)
+pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Manages a connection to a language server subprocess with a temporary workspace
 pub struct LanguageServerConnection {
@@ -20,6 +23,8 @@ pub struct LanguageServerConnection {
     temp_dir: Option<PathBuf>,
     /// Track the version of the document currently open (None = not open yet)
     document_version: Option<i32>,
+    /// Timeout duration for LSP requests
+    timeout_duration: Duration,
 }
 
 impl LanguageServerConnection {
@@ -66,6 +71,7 @@ impl LanguageServerConnection {
             stdout_reader,
             temp_dir: Some(temp_dir),
             document_version: None,
+            timeout_duration: DEFAULT_REQUEST_TIMEOUT,
         };
 
         // Send initialize request with workspace root
@@ -269,9 +275,10 @@ impl LanguageServerConnection {
         }
     }
 
-    /// Request go-to-definition
+    /// Request go-to-definition (synchronous version)
     ///
     /// Uses the actual file URI from the temp workspace, not the virtual URI.
+    /// Note: This method may block indefinitely. For timeout support, use `goto_definition_async`.
     pub fn goto_definition(
         &mut self,
         _uri: &str,
@@ -295,6 +302,190 @@ impl LanguageServerConnection {
 
         // Parse as GotoDefinitionResponse
         serde_json::from_value(result.clone()).ok()
+    }
+
+    /// Request go-to-definition with timeout support (async version)
+    ///
+    /// Returns None if the request times out or fails.
+    /// Uses the configured timeout_duration for the request.
+    pub async fn goto_definition_async(
+        &mut self,
+        _uri: &str,
+        position: Position,
+    ) -> Option<GotoDefinitionResponse> {
+        // Use the real file URI from the temp workspace
+        let real_uri = self.main_rs_uri()?;
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let req_id = self.send_request("textDocument/definition", params)?;
+
+        // Read response with timeout (uses poll-based timeout on Unix)
+        let timeout = self.timeout_duration;
+        let response = self.read_response_with_timeout_sync(req_id, timeout)?;
+
+        // Extract result
+        let result = response.get("result")?;
+
+        // Parse as GotoDefinitionResponse
+        serde_json::from_value(result.clone()).ok()
+    }
+
+    /// Read a single byte with timeout using poll() on Unix
+    ///
+    /// Returns Some(byte) if read succeeds, None on timeout or error.
+    fn read_byte_with_timeout(&mut self, timeout: Duration) -> Option<u8> {
+        // First, check if there's data already in the BufReader's buffer
+        // If so, we can read immediately without polling
+        if !self.stdout_reader.buffer().is_empty() {
+            let mut buf = [0u8; 1];
+            match self.stdout_reader.read(&mut buf) {
+                Ok(1) => return Some(buf[0]),
+                _ => return None,
+            }
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+
+            // No buffered data, need to wait for new data from the fd
+            let fd = self.stdout_reader.get_ref().as_raw_fd();
+
+            // Use poll() to wait for data with timeout
+            let timeout_ms = timeout.as_millis() as i32;
+            let mut pollfd = libc::pollfd {
+                fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+
+            let poll_result = unsafe { libc::poll(&mut pollfd, 1, timeout_ms) };
+
+            if poll_result <= 0 {
+                // Timeout (0) or error (-1)
+                return None;
+            }
+
+            // Data is available, read through the BufReader to maintain buffering
+            let mut buf = [0u8; 1];
+            match self.stdout_reader.read(&mut buf) {
+                Ok(1) => Some(buf[0]),
+                _ => None,
+            }
+        }
+
+        #[cfg(not(unix))]
+        {
+            // Fallback: just do blocking read (no timeout on non-Unix)
+            let mut buf = [0u8; 1];
+            match self.stdout_reader.read(&mut buf) {
+                Ok(1) => Some(buf[0]),
+                _ => None,
+            }
+        }
+    }
+
+    /// Read a line from the stdout reader with timeout
+    fn read_line_with_timeout(&mut self, timeout: Duration) -> Option<String> {
+        let deadline = Instant::now() + timeout;
+        let mut line = String::new();
+
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return None; // Timeout
+            }
+
+            match self.read_byte_with_timeout(remaining) {
+                Some(b'\n') => {
+                    return Some(line);
+                }
+                Some(b) => {
+                    line.push(b as char);
+                }
+                None => {
+                    // Timeout or error
+                    return None;
+                }
+            }
+        }
+    }
+
+    /// Read exact number of bytes with timeout
+    fn read_exact_with_timeout(&mut self, buf: &mut [u8], timeout: Duration) -> Option<()> {
+        let deadline = Instant::now() + timeout;
+
+        for byte in buf.iter_mut() {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return None; // Timeout
+            }
+
+            *byte = self.read_byte_with_timeout(remaining)?;
+        }
+        Some(())
+    }
+
+    /// Read a JSON-RPC response with timeout
+    ///
+    /// Returns None if the request times out or fails.
+    fn read_response_with_timeout_sync(
+        &mut self,
+        expected_id: i64,
+        timeout: Duration,
+    ) -> Option<Value> {
+        let deadline = Instant::now() + timeout;
+
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return None; // Timeout
+            }
+
+            // Read headers
+            let mut content_length = 0;
+            loop {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return None;
+                }
+
+                let line = self.read_line_with_timeout(remaining)?;
+                let line = line.trim();
+                if line.is_empty() {
+                    break;
+                }
+                if let Some(len_str) = line.strip_prefix("Content-Length:") {
+                    content_length = len_str.trim().parse().ok()?;
+                }
+            }
+
+            if content_length == 0 {
+                return None;
+            }
+
+            // Read content
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return None;
+            }
+            let mut content = vec![0u8; content_length];
+            self.read_exact_with_timeout(&mut content, remaining)?;
+
+            let message: Value = serde_json::from_slice(&content).ok()?;
+
+            // Check if this is the response we're looking for
+            if let Some(id) = message.get("id")
+                && id.as_i64() == Some(expected_id)
+            {
+                return Some(message);
+            }
+            // Otherwise it's a notification or different response - skip it
+        }
     }
 
     /// Request hover information
@@ -777,5 +968,40 @@ mod tests {
         // After did_open, document should be marked as open
         conn.did_open("file:///test.rs", "rust", "fn main() {}");
         assert!(conn.is_document_open());
+    }
+
+    #[tokio::test]
+    async fn goto_definition_returns_none_after_timeout() {
+        use std::time::Duration;
+
+        // Create a mock slow server using 'sleep' that never responds
+        // We spawn a process that reads stdin but never writes anything back
+        let mut process = Command::new("cat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+
+        let stdout = process.stdout.take().unwrap();
+        let stdout_reader = BufReader::new(stdout);
+
+        let mut conn = LanguageServerConnection {
+            process,
+            request_id: 0,
+            stdout_reader,
+            temp_dir: None,
+            document_version: None,
+            timeout_duration: Duration::from_millis(100), // 100ms timeout for test
+        };
+
+        // goto_definition should timeout and return None (not hang forever)
+        let result = conn
+            .goto_definition_async("file:///test.rs", Position::new(0, 0))
+            .await;
+        assert!(
+            result.is_none(),
+            "Expected None due to timeout, but got a response"
+        );
     }
 }
