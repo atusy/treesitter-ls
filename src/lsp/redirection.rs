@@ -449,4 +449,22 @@ mod tests {
         let conn = pool.get_or_spawn("test-server", "cat", &[]).unwrap();
         assert!(conn.is_alive());
     }
+
+    #[test]
+    fn server_pool_get_updates_last_used_timestamp() {
+        use std::time::Instant;
+
+        let mut pool = ServerPool::new();
+        pool.spawn_server("test-server", "cat", &[]);
+
+        let before = Instant::now();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        // Access the connection
+        let _ = pool.get_mut("test-server");
+
+        // Get last_used timestamp and verify it's recent
+        let last_used = pool.last_used("test-server").unwrap();
+        assert!(last_used > before, "last_used should be after the before timestamp");
+    }
 }
