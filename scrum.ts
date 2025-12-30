@@ -156,8 +156,11 @@ const scrum: ScrumDashboard = {
         implementation:
           "Replace main_rs_uri() with virtual_file_uri() that returns path based on workspace_type and file extension",
         type: "behavioral",
-        status: "red",
-        commits: [],
+        status: "completed",
+        commits: [
+          { hash: "14b1adb", message: "test(workspace): add failing tests for virtual_file_uri per workspace type", phase: "green" as const },
+          { hash: "711a6a5", message: "feat(workspace): add ConnectionInfo struct with virtual_file_uri method", phase: "green" as const },
+        ],
         notes: [],
       },
       {
@@ -165,7 +168,7 @@ const scrum: ScrumDashboard = {
         implementation:
           "Update did_open() to use virtual_file_uri() for file path instead of hardcoded src/main.rs",
         type: "behavioral",
-        status: "pending",
+        status: "red",
         commits: [],
         notes: [],
       },
