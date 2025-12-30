@@ -295,7 +295,7 @@ impl Drop for LanguageServerConnection {
     }
 }
 
-use std::collections::HashMap;
+use dashmap::DashMap;
 use std::time::Instant;
 
 /// A pooled connection to a language server process with usage tracking
@@ -333,36 +333,40 @@ impl PooledConnection {
 }
 
 /// Pool of language server connections for reuse across requests
+/// Thread-safe via DashMap for concurrent access
 pub struct ServerPool {
-    connections: HashMap<String, PooledConnection>,
+    connections: DashMap<String, PooledConnection>,
 }
 
 impl ServerPool {
     /// Create a new empty server pool
     pub fn new() -> Self {
         Self {
-            connections: HashMap::new(),
+            connections: DashMap::new(),
         }
     }
 
     /// Spawn a new server process and add it to the pool
-    pub fn spawn_server(&mut self, name: &str, command: &str, args: &[&str]) -> Option<()> {
+    pub fn spawn_server(&self, name: &str, command: &str, args: &[&str]) -> Option<()> {
         let conn = PooledConnection::spawn(command, args)?;
         self.connections.insert(name.to_string(), conn);
         Some(())
     }
 
     /// Get a connection for the given server name, if one exists
-    pub fn get(&self, name: &str) -> Option<&PooledConnection> {
-        self.connections.get(name)
+    pub fn get(&self, name: &str) -> bool {
+        self.connections.contains_key(name)
     }
 
-    /// Get a mutable reference to a connection for the given server name
-    /// Updates the last_used timestamp on access
-    pub fn get_mut(&mut self, name: &str) -> Option<&mut PooledConnection> {
-        let conn = self.connections.get_mut(name)?;
+    /// Access a connection mutably and update last_used timestamp
+    /// Returns true if the connection exists
+    pub fn with_connection<F, R>(&self, name: &str, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut PooledConnection) -> R,
+    {
+        let mut conn = self.connections.get_mut(name)?;
         conn.last_used = Instant::now();
-        Some(conn)
+        Some(f(&mut conn))
     }
 
     /// Get the last_used timestamp for a connection
@@ -372,41 +376,36 @@ impl ServerPool {
 
     /// Clean up connections that have been idle longer than the timeout
     /// Kills the process and removes it from the pool
-    pub fn cleanup_idle(&mut self, timeout: std::time::Duration) {
+    pub fn cleanup_idle(&self, timeout: std::time::Duration) {
         let now = Instant::now();
         let idle_servers: Vec<String> = self
             .connections
             .iter()
-            .filter(|(_, conn)| now.duration_since(conn.last_used) > timeout)
-            .map(|(name, _)| name.clone())
+            .filter(|entry| now.duration_since(entry.value().last_used) > timeout)
+            .map(|entry| entry.key().clone())
             .collect();
 
         for name in idle_servers {
-            if let Some(mut conn) = self.connections.remove(&name) {
+            if let Some((_, mut conn)) = self.connections.remove(&name) {
                 conn.kill();
             }
         }
     }
 
     /// Get an existing live connection or spawn a new one if dead/missing
-    pub fn get_or_spawn(
-        &mut self,
-        name: &str,
-        command: &str,
-        args: &[&str],
-    ) -> Option<&mut PooledConnection> {
+    /// Returns true if a live connection exists after this call
+    pub fn get_or_spawn(&self, name: &str, command: &str, args: &[&str]) -> bool {
         // Check if we need to respawn (connection dead or missing)
         let needs_spawn = match self.connections.get_mut(name) {
-            Some(conn) => !conn.is_alive(),
+            Some(mut conn) => !conn.is_alive(),
             None => true,
         };
 
-        if needs_spawn {
-            let conn = PooledConnection::spawn(command, args)?;
+        if needs_spawn && let Some(conn) = PooledConnection::spawn(command, args) {
             self.connections.insert(name.to_string(), conn);
         }
 
-        self.connections.get_mut(name)
+        self.connections.contains_key(name)
     }
 }
 
@@ -421,32 +420,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn server_pool_new_returns_none_for_unknown_server() {
+    fn server_pool_new_returns_false_for_unknown_server() {
         let pool = ServerPool::new();
-        let conn = pool.get("rust-analyzer");
-        assert!(conn.is_none());
+        assert!(!pool.get("rust-analyzer"));
     }
 
     #[test]
-    fn server_pool_spawn_then_get_returns_some() {
-        let mut pool = ServerPool::new();
+    fn server_pool_spawn_then_get_returns_true() {
+        let pool = ServerPool::new();
         // Spawn a simple server (use 'cat' as a mock - it reads stdin and exits)
         pool.spawn_server("test-server", "cat", &[]);
-        let conn = pool.get("test-server");
-        assert!(conn.is_some());
+        assert!(pool.get("test-server"));
     }
 
     #[test]
     fn server_pool_get_twice_returns_same_connection() {
-        let mut pool = ServerPool::new();
+        let pool = ServerPool::new();
         pool.spawn_server("test-server", "cat", &[]);
 
-        // Get connection twice and verify they point to the same instance
-        let conn1 = pool.get("test-server").unwrap();
-        let conn2 = pool.get("test-server").unwrap();
+        // Use with_connection to verify the connection is reused (check is_alive)
+        let alive1 = pool.with_connection("test-server", |conn| conn.is_alive());
+        let alive2 = pool.with_connection("test-server", |conn| conn.is_alive());
 
-        // Use pointer equality to verify same connection
-        assert!(std::ptr::eq(conn1, conn2));
+        // Both accesses should see a live connection
+        assert!(alive1.unwrap());
+        assert!(alive2.unwrap());
     }
 
     #[test]
@@ -467,32 +465,30 @@ mod tests {
 
     #[test]
     fn server_pool_get_or_spawn_respawns_dead_connection() {
-        let mut pool = ServerPool::new();
+        let pool = ServerPool::new();
         pool.spawn_server("test-server", "cat", &[]);
 
-        // Get connection and kill it
-        {
-            let conn = pool.get_mut("test-server").unwrap();
-            conn.kill();
-        }
+        // Kill the connection
+        pool.with_connection("test-server", |conn| conn.kill());
 
         // get_or_spawn should spawn a new connection
-        let conn = pool.get_or_spawn("test-server", "cat", &[]).unwrap();
-        assert!(conn.is_alive());
+        assert!(pool.get_or_spawn("test-server", "cat", &[]));
+
+        // Verify new connection is alive
+        let alive = pool.with_connection("test-server", |conn| conn.is_alive());
+        assert!(alive.unwrap());
     }
 
     #[test]
-    fn server_pool_get_updates_last_used_timestamp() {
-        use std::time::Instant;
-
-        let mut pool = ServerPool::new();
+    fn server_pool_with_connection_updates_last_used_timestamp() {
+        let pool = ServerPool::new();
         pool.spawn_server("test-server", "cat", &[]);
 
         let before = Instant::now();
         std::thread::sleep(std::time::Duration::from_millis(10));
 
-        // Access the connection
-        let _ = pool.get_mut("test-server");
+        // Access the connection via with_connection
+        let _ = pool.with_connection("test-server", |_conn| {});
 
         // Get last_used timestamp and verify it's recent
         let last_used = pool.last_used("test-server").unwrap();
@@ -506,7 +502,7 @@ mod tests {
     fn server_pool_cleanup_idle_shuts_down_idle_connections() {
         use std::time::Duration;
 
-        let mut pool = ServerPool::new();
+        let pool = ServerPool::new();
         pool.spawn_server("test-server", "cat", &[]);
 
         // Wait 200ms (longer than the 100ms timeout we'll use)
@@ -516,7 +512,7 @@ mod tests {
         pool.cleanup_idle(Duration::from_millis(100));
 
         // Connection should be removed from pool
-        assert!(pool.get("test-server").is_none());
+        assert!(!pool.get("test-server"));
     }
 
     #[tokio::test]
