@@ -120,64 +120,58 @@ const scrum: ScrumDashboard = {
     statement:
       "Achieve high-performance semantic tokens delta: minimize latency for syntax highlighting updates during editing by leveraging caching, efficient delta algorithms, and Tree-sitter's incremental parsing.",
     success_metrics: [
-      {
-        metric: "Delta response (no change)",
-        target: "<5ms via cache hit",
-      },
-      {
-        metric: "Delta response (small edit)",
-        target: "<20ms via incremental",
-      },
-      {
-        metric: "Delta transfer size",
-        target: "Reduced via suffix matching",
-      },
+      { metric: "Delta response (no change)", target: "<5ms via cache hit" },
+      { metric: "Delta response (small edit)", target: "<20ms via incremental" },
+      { metric: "Delta transfer size", target: "Reduced via suffix matching" },
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-085
-  // For historical details: git log -- scrum.yaml, scrum.ts
-  // Recent: PBI-082 (injection tracking), PBI-083 (cache invalidation), PBI-084 (perf), PBI-085 (auto-install)
+  // Completed PBIs: PBI-001 through PBI-087 | History: git log -- scrum.yaml, scrum.ts
   product_backlog: [
     {
-      id: "PBI-086",
+      id: "PBI-088",
       story: {
-        role: "developer editing Markdown with Rust code blocks",
-        capability:
-          "go-to-definition within a Rust code block redirects to the symbol definition",
-        benefit:
-          "I can navigate code inside documentation without switching to a separate Rust file",
+        role: "user",
+        capability: "configure which language servers handle which injection languages",
+        benefit: "I can use rust-analyzer, pyright, gopls for code blocks in Markdown",
       },
       acceptance_criteria: [
-        {
-          criterion:
-            "Cursor on a function call inside a Rust code block triggers textDocument/definition",
-          verification:
-            "make test_nvim_file FILE=tests/test_lsp_definition.lua",
-        },
-        {
-          criterion:
-            "treesitter-ls spawns rust-analyzer subprocess for the virtual document",
-          verification:
-            "pgrep -f rust-analyzer shows process spawned during test",
-        },
-        {
-          criterion:
-            "Position coordinates are translated between host and virtual document correctly",
-          verification:
-            "E2E test confirms cursor moves to line 4 (fn example definition)",
-        },
-        {
-          criterion: "No user configuration required - works with default settings",
-          verification:
-            "Test runs without any treesitter-ls configuration for redirection",
-        },
+        { criterion: "TreeSitterSettings includes bridge.servers config", verification: "cargo test test_bridge_config_parsing" },
+        { criterion: "initializationOptions passed to server's initialize", verification: "Integration test verifies server receives options" },
+        { criterion: "Only configured servers spawned (security)", verification: "Unknown language does not spawn process" },
+        { criterion: "Graceful fallback for unconfigured languages", verification: "Semantic tokens work without bridge config" },
       ],
-      status: "done",
+      status: "draft",
+    },
+    {
+      id: "PBI-089",
+      story: {
+        role: "user",
+        capability: "see type info and docs when hovering over symbols in code blocks",
+        benefit: "I understand APIs without leaving my Markdown documentation",
+      },
+      acceptance_criteria: [
+        { criterion: "textDocument/hover forwarded to configured server", verification: "E2E: hover shows fn signature" },
+        { criterion: "Response range translated to host coordinates", verification: "Unit: virtual (0,5) -> host (10,5)" },
+        { criterion: "Returns null when server unavailable", verification: "Unit: graceful degradation" },
+      ],
+      status: "draft",
+    },
+    {
+      id: "PBI-090",
+      story: {
+        role: "user",
+        capability: "see function signature help while typing in code blocks",
+        benefit: "I know what arguments are expected",
+      },
+      acceptance_criteria: [
+        { criterion: "textDocument/signatureHelp forwarded", verification: "E2E: signature shown on '('" },
+        { criterion: "Response passed through unchanged", verification: "Unit: no position mapping needed" },
+      ],
+      status: "draft",
     },
   ],
 
-  // No active sprint - backlog refinement needed for next PBI
   sprint: null,
 
   definition_of_done: {
@@ -188,103 +182,39 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (keep recent 3 for learning)
-  // Sprint 1-66 details: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 3) | Sprint 1-66: git log -- scrum.yaml, scrum.ts
   completed: [
-    {
-      number: 68,
-      pbi_id: "PBI-086",
-      goal: "Enable go-to-definition navigation within Rust code blocks in Markdown documents",
-      status: "done",
-      subtasks: [],
-    },
-    {
-      number: 67,
-      pbi_id: "PBI-085",
-      goal: "Fix auto-install blocking issue by spawning install tasks and preserving host highlighting",
-      status: "done",
-      subtasks: [],
-    },
-    {
-      number: 66,
-      pbi_id: "PBI-084",
-      goal: "Analyze semantic token handler for cache integration feasibility",
-      status: "done",
-      subtasks: [],
-    },
+    { number: 69, pbi_id: "PBI-087", goal: "ServerPool for connection reuse (<200ms latency)", status: "done", subtasks: [] },
+    { number: 68, pbi_id: "PBI-086", goal: "Go-to-definition in Markdown Rust code blocks", status: "done", subtasks: [] },
+    { number: 67, pbi_id: "PBI-085", goal: "Fix auto-install blocking; preserve host highlighting", status: "done", subtasks: [] },
   ],
 
-  // Sprint 63-66 retro summaries: git log -- scrum.ts
-  // Sprint 67 retro: Simple parameter fix addressed root cause; E2E tests deferred (invasive parser manipulation)
-  // Sprint 68 retro: PoC LSP redirection successful; test setup required multiple fixes
+  // Recent 3 retrospectives | Sprint 63-66: git log -- scrum.ts
   retrospectives: [
+    {
+      sprint: 69,
+      improvements: [
+        { action: "DashMap simplifies thread-safe primitives", timing: "immediate", status: "completed", outcome: "Minimal boilerplate for ServerPool" },
+        { action: "Mock server (cat) enables fast unit tests", timing: "immediate", status: "completed", outcome: "Tests run <1s" },
+        { action: "cleanup_idle() needs timer wiring", timing: "product", status: "active", outcome: null },
+        { action: "ServerPool not yet in lsp_impl.rs", timing: "sprint", status: "active", outcome: null },
+        { action: "get_or_spawn() handles crashed recovery", timing: "immediate", status: "completed", outcome: "Atomic respawn on is_alive() failure" },
+      ],
+    },
     {
       sprint: 68,
       improvements: [
-        {
-          action: "E2E test setup for temp files needs vim.cmd.write() to persist to disk for child neovim",
-          timing: "immediate",
-          status: "completed",
-          outcome: "Fixed test_lsp_definition.lua to write file before child opens it",
-        },
-        {
-          action: "Async LSP operations need explicit wait time in E2E tests (rust-analyzer spawn takes ~2s)",
-          timing: "immediate",
-          status: "completed",
-          outcome: "Added vim.wait(2000) after vim.lsp.buf.definition() call",
-        },
-        {
-          action: "PoC architecture (synchronous subprocess spawn per request) needs production refactoring",
-          timing: "product",
-          status: "active",
-          outcome: "Future PBI: consider connection pooling, async spawn, and language server lifecycle management",
-        },
+        { action: "E2E temp files need vim.cmd.write()", timing: "immediate", status: "completed", outcome: "Child neovim sees persisted file" },
+        { action: "LSP ops need explicit wait (~2s for rust-analyzer)", timing: "immediate", status: "completed", outcome: "Added vim.wait(2000)" },
+        { action: "PoC sync subprocess needs production refactor", timing: "product", status: "active", outcome: "Consider pooling, async spawn" },
       ],
     },
     {
       sprint: 67,
       improvements: [
-        {
-          action: "Simple is_injection parameter effectively fixed the root cause without async complexity",
-          timing: "immediate",
-          status: "completed",
-          outcome: "Avoided tokio::spawn complexity by fixing the actual bug (wrong re-parse language)",
-        },
-        {
-          action: "E2E tests for auto-install are invasive (require parser deletion/reinstall)",
-          timing: "product",
-          status: "active",
-          outcome: "Consider dedicated test environment with temporary parser directories for isolation",
-        },
-        {
-          action: "Bug reports with clear symptom descriptions enable fast root cause analysis",
-          timing: "immediate",
-          status: "completed",
-          outcome: "User's 'doc lang=no highlight, injection=all disappears' mapped directly to code flow",
-        },
-      ],
-    },
-    {
-      sprint: 66,
-      improvements: [
-        {
-          action: "Pure-function module (semantic.rs) is hard to wire with cache state - consider architecture alternatives",
-          timing: "product",
-          status: "active",
-          outcome: "Future PBI: may need to pass cache as parameter or restructure module",
-        },
-        {
-          action: "60% improvement from incremental parsing is substantial and ready for use",
-          timing: "immediate",
-          status: "completed",
-          outcome: "PBI-084 marked done with documented limitation (AC4 at 60%, not <50%)",
-        },
-        {
-          action: "Exploration-first sprints useful for understanding complexity before committing",
-          timing: "immediate",
-          status: "completed",
-          outcome: "Subtask 1 (explore) revealed high refactoring cost, enabling informed scope decision",
-        },
+        { action: "Simple is_injection param fixed root cause", timing: "immediate", status: "completed", outcome: "Avoided tokio::spawn complexity" },
+        { action: "E2E auto-install tests are invasive", timing: "product", status: "active", outcome: "Need isolated parser directories" },
+        { action: "Clear symptom descriptions enable fast analysis", timing: "immediate", status: "completed", outcome: "User report mapped to code flow" },
       ],
     },
   ],
