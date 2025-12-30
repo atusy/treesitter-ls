@@ -6,7 +6,7 @@ Proposed
 
 ## Context
 
-When bridging LSP requests for injection regions (see [ADR-0006](0006-language-server-redirection.md)), different LSP methods have different characteristics:
+When bridging LSP requests for injection regions (see [ADR-0006](0006-language-server-bridge.md)), different LSP methods have different characteristics:
 
 | Method | Latency Sensitivity | treesitter-ls Capability | Language Server Value |
 |--------|---------------------|--------------------------|----------------------|
@@ -313,5 +313,5 @@ When multiple servers are configured for a language:
 
 ## Related Decisions
 
-- [ADR-0006](0006-language-server-redirection.md): Core LSP bridge architecture
-- [ADR-0007](0007-virtual-document-model.md): How injections are represented as virtual documents
+- [ADR-0006](0006-language-server-bridge.md): Core LSP bridge architecture
+- [ADR-0007](0007-language-server-bridge-virtual-document-model.md): How injections are represented as virtual documents
