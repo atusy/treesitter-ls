@@ -114,18 +114,32 @@ const scrum: ScrumDashboard = {
         implementation:
           "Add create_ra_progress_end function in progress.rs with success message",
         type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "c7de187",
+            message:
+              "feat(lsp): add create_ra_progress_end for rust-analyzer completion",
+            phase: "green",
+          },
+        ],
+        notes: ["Combined with subtask 4 using Obvious Implementation"],
       },
       {
         test: "Unit test: create_ra_progress_end with success=false returns 'rust-analyzer timed out' message",
         implementation:
           "Update create_ra_progress_end to handle failure/timeout message",
         type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "c7de187",
+            message:
+              "feat(lsp): add create_ra_progress_end for rust-analyzer completion",
+            phase: "green",
+          },
+        ],
+        notes: ["Combined with subtask 3 using Obvious Implementation"],
       },
       {
         test: "Integration test: goto_definition sends Begin progress before spawn_blocking",
