@@ -181,7 +181,7 @@ The bridge requires knowing which server to use for each language:
 | `servers.*.cmd` | Yes | Command array: first element is program, rest are arguments |
 | `servers.*.languages` | Yes | Languages this server handles |
 | `servers.*.initializationOptions` | No | Passed to server's `initialize` request |
-| `servers.*.workspaceType` | No | Workspace type: "cargo" or "generic" (default) |
+| `servers.*.workspaceType` | No | **Deprecated**: "cargo" creates Cargo.toml scaffolding. Will be removed in future; use `initializationOptions.linkedProjects` instead |
 | `servers.*.rootUri` | No | Workspace root URI for servers that require it |
 
 #### Multiple Servers Per Language
@@ -291,7 +291,6 @@ treesitter-ls configuration points rust-analyzer to this file:
       "rust-analyzer": {
         "cmd": ["rust-analyzer"],
         "languages": ["rust"],
-        "workspaceType": "cargo",
         "initializationOptions": {
           "linkedProjects": ["~/.config/treesitter-ls/rust-project.json"]
         }
