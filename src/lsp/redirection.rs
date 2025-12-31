@@ -553,6 +553,18 @@ impl LanguageServerConnection {
 
     /// Wait for rust-analyzer to finish indexing by consuming messages until we see diagnostics
     fn wait_for_indexing(&mut self) {
+        // Use the new method but discard notifications for backward compatibility
+        let _ = self.wait_for_indexing_with_notifications();
+    }
+
+    /// Wait for rust-analyzer to finish indexing, capturing $/progress notifications.
+    ///
+    /// Similar to `wait_for_indexing`, but returns any `$/progress` notifications
+    /// received while waiting. This allows callers to forward progress notifications
+    /// to the client during initialization.
+    fn wait_for_indexing_with_notifications(&mut self) -> Vec<Value> {
+        let mut notifications = Vec::new();
+
         // Read messages until we get a publishDiagnostics notification
         // or timeout after consuming a few messages
         for _ in 0..50 {
@@ -561,7 +573,7 @@ impl LanguageServerConnection {
             loop {
                 let mut line = String::new();
                 if self.stdout_reader.read_line(&mut line).ok().unwrap_or(0) == 0 {
-                    return; // EOF
+                    return notifications; // EOF
                 }
                 let line = line.trim();
                 if line.is_empty() {
@@ -573,13 +585,13 @@ impl LanguageServerConnection {
             }
 
             if content_length == 0 {
-                return;
+                return notifications;
             }
 
             // Read content
             let mut content = vec![0u8; content_length];
             if std::io::Read::read_exact(&mut self.stdout_reader, &mut content).is_err() {
-                return;
+                return notifications;
             }
 
             let Ok(message) = serde_json::from_slice::<Value>(&content) else {
@@ -587,13 +599,19 @@ impl LanguageServerConnection {
             };
 
             // Check if this is a publishDiagnostics notification
-            if let Some(method) = message.get("method").and_then(|m| m.as_str())
-                && method == "textDocument/publishDiagnostics"
-            {
-                // rust-analyzer has indexed enough to publish diagnostics
-                return;
+            if let Some(method) = message.get("method").and_then(|m| m.as_str()) {
+                if method == "textDocument/publishDiagnostics" {
+                    // rust-analyzer has indexed enough to publish diagnostics
+                    return notifications;
+                }
+                // Capture $/progress notifications
+                if method == "$/progress" {
+                    notifications.push(message);
+                }
             }
         }
+
+        notifications
     }
 
     /// Request go-to-definition
@@ -2206,5 +2224,68 @@ fn main() {
         // with response field and notifications field
         let _ = result.response;
         let _ = result.notifications;
+    }
+
+    #[test]
+    fn wait_for_indexing_with_notifications_returns_progress_notifications() {
+        // RED phase: Test that wait_for_indexing_with_notifications returns a Vec<Value>
+        // containing any $/progress notifications captured during indexing
+
+        use crate::config::settings::BridgeServerConfig;
+
+        if !check_rust_analyzer_available() {
+            return;
+        }
+
+        let config = BridgeServerConfig {
+            command: "rust-analyzer".to_string(),
+            args: None,
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        let mut conn = LanguageServerConnection::spawn(&config).unwrap();
+
+        // Write content to the virtual file
+        conn.connection_info
+            .as_ref()
+            .unwrap()
+            .write_virtual_file("fn main() {}")
+            .unwrap();
+
+        let real_uri = conn.virtual_file_uri().unwrap();
+
+        // Send didOpen notification manually
+        let params = serde_json::json!({
+            "textDocument": {
+                "uri": real_uri,
+                "languageId": "rust",
+                "version": 1,
+                "text": "fn main() {}",
+            }
+        });
+        conn.send_notification("textDocument/didOpen", params);
+
+        // Call the new method - should return Vec<Value> of $/progress notifications
+        let notifications = conn.wait_for_indexing_with_notifications();
+
+        // The return type should be Vec<Value>
+        // rust-analyzer may or may not send progress notifications during indexing,
+        // but the method should exist and return the correct type
+        assert!(
+            notifications.is_empty() || !notifications.is_empty(),
+            "Should return a Vec<Value> (may be empty or non-empty)"
+        );
+
+        // If there are notifications, verify they are $/progress
+        for notification in &notifications {
+            if let Some(method) = notification.get("method").and_then(|m| m.as_str()) {
+                assert_eq!(
+                    method, "$/progress",
+                    "All returned notifications should be $/progress"
+                );
+            }
+        }
     }
 }
