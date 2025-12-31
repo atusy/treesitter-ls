@@ -22,18 +22,20 @@ vim.api.nvim_create_autocmd("FileType", {
 	end,
 })
 
-local progress_messages = {}
+_G.progress_messages = {}
 
 vim.api.nvim_create_autocmd("LspProgress", {
 	callback = function(ev)
 		local msg = ev.data.params.value.kind .. ": " .. ev.data.params.value.title
-		table.insert(progress_messages, msg)
+		table.insert(_G.progress_messages, msg)
 		vim.notify(msg)
 	end,
 })
 
 vim.api.nvim_create_user_command("LspProgress", function()
-	vim.print(progress_messages)
+	for _, msg in ipairs(_G.progress_messages) do
+		vim.print(msg)
+	end
 end, {})
 
 _G.helper = {}
