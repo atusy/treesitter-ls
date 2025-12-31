@@ -170,6 +170,14 @@ impl LanguageConfig {
             && (self.highlights.is_some() || self.injections.is_some() || self.locals.is_some())
     }
 
+    /// Check if this config uses the deprecated array format for bridge (PBI-123).
+    ///
+    /// Returns true if `bridge` is set to the array format (e.g., `["rust", "python"]`),
+    /// indicating the user should migrate to the new map format with '_' wildcard.
+    pub fn uses_deprecated_bridge_array(&self) -> bool {
+        matches!(&self.bridge, Some(BridgeConfig::Array(_)))
+    }
+
     /// Get the effective parser path, preferring `parser` over `library`.
     ///
     /// This method returns the parser path, using the new `parser` field
@@ -353,6 +361,15 @@ impl TreeSitterSettings {
                 log::warn!(
                     "[{}] Configuration uses deprecated 'highlights', 'injections', or 'locals' fields. \
                      Please use 'queries' array instead. These fields will be removed in a future version.",
+                    lang_name
+                );
+            }
+            // PBI-123: Warn about deprecated bridge array format
+            if config.uses_deprecated_bridge_array() {
+                log::warn!(
+                    "[{}] Configuration uses deprecated 'bridge' array format (e.g., ['rust', 'python']). \
+                     Please migrate to map format with '_' default: bridge = {{ \"_\" = {{ enabled = true }} }}. \
+                     The array format will be removed in a future version.",
                     lang_name
                 );
             }
@@ -2079,6 +2096,55 @@ mod tests {
         assert!(
             !config.is_language_bridgeable("python"),
             "python should NOT be bridgeable ('_' is disabled)"
+        );
+    }
+
+    // TDD Cycle 5: Deprecation detection for array format
+
+    #[test]
+    fn uses_deprecated_bridge_array_detects_array_format() {
+        // TDD RED: Returns true when bridge is BridgeConfig::Array
+        let config_json = r#"{
+            "parser": "/path/to/parser.so",
+            "bridge": ["rust", "python"]
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        assert!(
+            config.uses_deprecated_bridge_array(),
+            "Should detect deprecated array format"
+        );
+    }
+
+    #[test]
+    fn uses_deprecated_bridge_array_returns_false_for_map() {
+        // TDD RED: Returns false when bridge is BridgeConfig::Map
+        let config_json = r#"{
+            "parser": "/path/to/parser.so",
+            "bridge": {"_": {"enabled": true}}
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        assert!(
+            !config.uses_deprecated_bridge_array(),
+            "Should NOT flag map format as deprecated"
+        );
+    }
+
+    #[test]
+    fn uses_deprecated_bridge_array_returns_false_for_none() {
+        // TDD RED: Returns false when bridge is None
+        let config_json = r#"{
+            "parser": "/path/to/parser.so"
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        assert!(
+            !config.uses_deprecated_bridge_array(),
+            "Should NOT flag missing bridge as deprecated"
         );
     }
 }
