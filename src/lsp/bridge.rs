@@ -19,7 +19,9 @@ pub use pool::LanguageServerPool;
 pub use text_document::{
     CodeActionWithNotifications, CompletionWithNotifications, DocumentHighlightWithNotifications,
     FormattingWithNotifications, GotoDefinitionWithNotifications, HoverWithNotifications,
-    ImplementationWithNotifications, InlayHintWithNotifications, ReferencesWithNotifications,
-    RenameWithNotifications, SignatureHelpWithNotifications, TypeDefinitionWithNotifications,
+    ImplementationWithNotifications, IncomingCallsWithNotifications, InlayHintWithNotifications,
+    OutgoingCallsWithNotifications, PrepareCallHierarchyWithNotifications,
+    ReferencesWithNotifications, RenameWithNotifications, SignatureHelpWithNotifications,
+    TypeDefinitionWithNotifications,
 };
 pub use workspace::{setup_workspace, setup_workspace_with_option};
