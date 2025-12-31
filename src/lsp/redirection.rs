@@ -210,13 +210,16 @@ impl LanguageServerConnection {
     ///
     /// Returns `Some((connection, notifications))` on success, or `None` on failure.
     pub fn spawn_with_notifications(config: &BridgeServerConfig) -> Option<(Self, Vec<Value>)> {
+        // cmd must have at least one element (the program)
+        let program = config.cmd.first()?;
+
         // Create a temporary directory for the workspace
         // Use unique counter to avoid conflicts between parallel tests
         static SPAWN_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let counter = SPAWN_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let temp_dir = std::env::temp_dir().join(format!(
             "treesitter-ls-{}-{}-{}",
-            config.command,
+            program,
             std::process::id(),
             counter
         ));
@@ -235,16 +238,16 @@ impl LanguageServerConnection {
 
         let root_uri = format!("file://{}", temp_dir.display());
 
-        // Build command with optional args from config
-        let mut cmd = Command::new(&config.command);
+        // Build command: first element is program, rest are args
+        let mut cmd = Command::new(program);
         cmd.current_dir(&temp_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
 
-        // Add args from config if provided
-        if let Some(ref args) = config.args {
-            cmd.args(args);
+        // Add args from cmd[1..] if present
+        if config.cmd.len() > 1 {
+            cmd.args(&config.cmd[1..]);
         }
 
         let mut process = cmd.spawn().ok()?;
@@ -1096,8 +1099,7 @@ mod tests {
         }
 
         let config = BridgeServerConfig {
-            command: "rust-analyzer".to_string(),
-            args: None,
+            cmd: vec!["rust-analyzer".to_string()],
             languages: vec!["rust".to_string()],
             initialization_options: None,
             workspace_type: Some(WorkspaceType::Cargo),
@@ -1116,8 +1118,7 @@ mod tests {
         }
 
         let config = BridgeServerConfig {
-            command: "rust-analyzer".to_string(),
-            args: None,
+            cmd: vec!["rust-analyzer".to_string()],
             languages: vec!["rust".to_string()],
             initialization_options: None,
             workspace_type: Some(WorkspaceType::Cargo),
@@ -1139,8 +1140,7 @@ mod tests {
 
         let pool = LanguageServerPool::new();
         let config = BridgeServerConfig {
-            command: "rust-analyzer".to_string(),
-            args: None,
+            cmd: vec!["rust-analyzer".to_string()],
             languages: vec!["rust".to_string()],
             initialization_options: None,
             workspace_type: Some(WorkspaceType::Cargo),
@@ -1176,8 +1176,7 @@ mod tests {
 
         // Create a config for rust-analyzer
         let config = BridgeServerConfig {
-            command: "rust-analyzer".to_string(),
-            args: None,
+            cmd: vec!["rust-analyzer".to_string()],
             languages: vec!["rust".to_string()],
             initialization_options: None,
             workspace_type: None,
@@ -1203,8 +1202,7 @@ mod tests {
         // We use rust-analyzer since it's available and accepts --version
         // Note: This test verifies the code path; in production args like --log-file would be used
         let config = BridgeServerConfig {
-            command: "rust-analyzer".to_string(),
-            args: None, // rust-analyzer doesn't need extra args for basic operation
+            cmd: vec!["rust-analyzer".to_string()], // rust-analyzer doesn't need extra args for basic operation
             languages: vec!["rust".to_string()],
             initialization_options: None,
             workspace_type: None,
@@ -1229,8 +1227,7 @@ mod tests {
         });
 
         let config = BridgeServerConfig {
-            command: "rust-analyzer".to_string(),
-            args: None,
+            cmd: vec!["rust-analyzer".to_string()],
             languages: vec!["rust".to_string()],
             initialization_options: Some(init_opts),
             workspace_type: None,
@@ -1684,8 +1681,7 @@ mod tests {
         }
 
         let config = BridgeServerConfig {
-            command: "rust-analyzer".to_string(),
-            args: None,
+            cmd: vec!["rust-analyzer".to_string()],
             languages: vec!["rust".to_string()],
             initialization_options: None,
             workspace_type: Some(crate::config::settings::WorkspaceType::Cargo), // Explicit Cargo for rust-analyzer
@@ -1773,8 +1769,7 @@ mod tests {
         // Create a config with Generic workspace_type
         // Use a non-existent command so the process spawn fails, but workspace is still set up
         let config = BridgeServerConfig {
-            command: "nonexistent-server-for-testing".to_string(),
-            args: None,
+            cmd: vec!["nonexistent-server-for-testing".to_string()],
             languages: vec!["python".to_string()],
             initialization_options: None,
             workspace_type: Some(WorkspaceType::Generic),
@@ -1811,8 +1806,7 @@ mod tests {
 
         // Test with Cargo workspace_type (explicit, same as default)
         let config_cargo = BridgeServerConfig {
-            command: "rust-analyzer".to_string(),
-            args: None,
+            cmd: vec!["rust-analyzer".to_string()],
             languages: vec!["rust".to_string()],
             initialization_options: None,
             workspace_type: Some(WorkspaceType::Cargo),
@@ -1849,8 +1843,7 @@ mod tests {
         }
 
         let config = BridgeServerConfig {
-            command: "rust-analyzer".to_string(),
-            args: None,
+            cmd: vec!["rust-analyzer".to_string()],
             languages: vec!["rust".to_string()],
             initialization_options: None,
             workspace_type: Some(crate::config::settings::WorkspaceType::Cargo), // Explicit Cargo for rust-analyzer
@@ -1888,8 +1881,7 @@ mod tests {
         }
 
         let config = BridgeServerConfig {
-            command: "rust-analyzer".to_string(),
-            args: None,
+            cmd: vec!["rust-analyzer".to_string()],
             languages: vec!["rust".to_string()],
             initialization_options: None,
             workspace_type: Some(crate::config::settings::WorkspaceType::Cargo), // Explicit Cargo for rust-analyzer
@@ -1927,8 +1919,7 @@ mod tests {
         }
 
         let config = BridgeServerConfig {
-            command: "rust-analyzer".to_string(),
-            args: None,
+            cmd: vec!["rust-analyzer".to_string()],
             languages: vec!["rust".to_string()],
             initialization_options: None,
             workspace_type: Some(crate::config::settings::WorkspaceType::Cargo), // Explicit Cargo for rust-analyzer
@@ -1997,8 +1988,7 @@ fn main() {
         // Create a config that will work (if rust-analyzer is available)
         // or use a non-existent command to test the non-blocking aspect
         let config = BridgeServerConfig {
-            command: "nonexistent-server-for-testing-eager-spawn".to_string(),
-            args: None,
+            cmd: vec!["nonexistent-server-for-testing-eager-spawn".to_string()],
             languages: vec!["rust".to_string()],
             initialization_options: None,
             workspace_type: None,
@@ -2034,8 +2024,7 @@ fn main() {
         }
 
         let config = BridgeServerConfig {
-            command: "rust-analyzer".to_string(),
-            args: None,
+            cmd: vec!["rust-analyzer".to_string()],
             languages: vec!["rust".to_string()],
             initialization_options: None,
             workspace_type: None,
@@ -2133,8 +2122,7 @@ fn main() {
         }
 
         let config = BridgeServerConfig {
-            command: "rust-analyzer".to_string(),
-            args: None,
+            cmd: vec!["rust-analyzer".to_string()],
             languages: vec!["rust".to_string()],
             initialization_options: None,
             workspace_type: None,

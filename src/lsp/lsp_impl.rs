@@ -822,7 +822,7 @@ impl TreeSitterLs {
                 continue;
             };
 
-            let pool_key = config.command.clone();
+            let pool_key = config.cmd.first().cloned().unwrap_or_default();
 
             // Create a channel for receiving progress notifications
             let (tx, mut rx) = tokio::sync::mpsc::channel::<serde_json::Value>(100);
@@ -1945,7 +1945,7 @@ impl LanguageServer for TreeSitterLs {
             return Ok(None);
         };
 
-        let pool_key = server_config.command.clone();
+        let pool_key = server_config.cmd.first().cloned().unwrap_or_default();
         let has_existing = self.language_server_pool.has_connection(&pool_key);
         self.client
             .log_message(
@@ -2198,7 +2198,7 @@ impl LanguageServer for TreeSitterLs {
         );
 
         // Get language server connection from pool
-        let pool_key = server_config.command.clone();
+        let pool_key = server_config.cmd.first().cloned().unwrap_or_default();
 
         // Take connection from pool (will spawn if none exists)
         let conn = match self
@@ -2210,7 +2210,7 @@ impl LanguageServer for TreeSitterLs {
                 self.client
                     .log_message(
                         MessageType::ERROR,
-                        format!("Failed to spawn language server: {}", server_config.command),
+                        format!("Failed to spawn language server: {}", pool_key),
                     )
                     .await;
                 return Ok(None);
