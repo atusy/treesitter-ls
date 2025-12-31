@@ -8,6 +8,7 @@ mod document_highlight;
 mod formatting;
 mod hover;
 mod implementation;
+mod inlay_hint;
 mod references;
 mod rename;
 mod selection_range;
