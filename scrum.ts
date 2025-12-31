@@ -29,67 +29,263 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-119 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-120 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
   product_backlog: [
     {
-      id: "PBI-120",
+      id: "PBI-121",
       story: {
-        role: "developer editing Lua files",
+        role: "Rustacean editing Markdown",
         capability:
-          "configure language parser and queries using a unified schema with 'parser' field and 'queries' array",
+          "maintain and extend lsp_impl.rs through a modular file structure where each LSP text document feature lives in its own file",
         benefit:
-          "I have a cleaner, more flexible configuration that supports custom query kinds and explicit ordering",
+          "the codebase is easier to navigate, understand, and modify without risk of merge conflicts",
       },
       acceptance_criteria: [
         {
           criterion:
-            "New schema accepts 'parser' field as alias for 'library' (both work during deprecation period)",
+            "Phase 1: semantic_tokens methods (semantic_tokens_full, semantic_tokens_full_delta, semantic_tokens_range) extracted to lsp_impl/text_document/semantic_tokens.rs",
           verification:
-            "Unit test: LanguageConfig deserializes both {parser: '/path'} and {library: '/path'} to same internal representation",
+            "All existing tests pass; module structure: lsp_impl.rs delegates to lsp_impl/text_document/semantic_tokens.rs",
         },
         {
           criterion:
-            "New schema accepts 'queries' array with {path, kind?} objects",
+            "Phase 2: completion method extracted to lsp_impl/text_document/completion.rs",
           verification:
-            "Unit test: LanguageConfig deserializes queries: [{path: '/p.scm'}] and infers kind from filename",
+            "All existing tests pass; completion logic isolated in dedicated module",
         },
         {
           criterion:
-            "Query kind is inferred from filename when not specified (e.g., 'highlights.scm' -> 'highlights')",
+            "Phase 3: hover method extracted to lsp_impl/text_document/hover.rs",
           verification:
-            "Unit test: infer_query_kind('highlights.scm') returns 'highlights', 'injections.scm' returns 'injections'",
+            "All existing tests pass; hover logic isolated in dedicated module",
         },
         {
           criterion:
-            "Explicit 'kind' field in query object overrides filename inference",
+            "Phase 4: goto_definition method extracted to lsp_impl/text_document/definition.rs",
           verification:
-            "Unit test: {path: '/custom.scm', kind: 'injections'} is treated as injections query",
+            "All existing tests pass; definition logic isolated in dedicated module",
         },
         {
           criterion:
-            "Old schema fields (library, highlights, locals, injections) still work but emit deprecation warning to LSP log",
+            "Phase 5: references method extracted to lsp_impl/text_document/references.rs",
           verification:
-            "Unit test: Deserializing old schema succeeds; integration test: deprecation warning appears in LSP log",
+            "All existing tests pass; references logic isolated in dedicated module",
         },
         {
           criterion:
-            "Internal LanguageSettings uses unified queries representation regardless of input schema format",
+            "Phase 6: rename method extracted to lsp_impl/text_document/rename.rs",
           verification:
-            "Unit test: Both old and new schema formats convert to identical LanguageSettings with queries Vec<QueryConfig>",
+            "All existing tests pass; rename logic isolated in dedicated module",
         },
         {
-          criterion: "Documentation updated with new schema and migration guide",
+          criterion:
+            "Phase 7: formatting method extracted to lsp_impl/text_document/formatting.rs",
           verification:
-            "README shows new schema as primary, old schema as deprecated with migration examples",
+            "All existing tests pass; formatting logic isolated in dedicated module",
+        },
+        {
+          criterion:
+            "Phase 8: code_action method extracted to lsp_impl/text_document/code_action.rs",
+          verification:
+            "All existing tests pass; code_action logic isolated in dedicated module",
+        },
+        {
+          criterion:
+            "Phase 9: selection_range and signature_help extracted to respective modules",
+          verification:
+            "All existing tests pass; final text_document submodules complete with mod.rs re-exports",
         },
       ],
-      status: "done",
+      status: "ready",
+    },
+    {
+      id: "PBI-122",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability:
+          "configure bridge servers at the top-level 'languageServers' field instead of nested 'bridge.servers'",
+        benefit:
+          "the config structure is flatter and the field name clearly indicates LSP servers",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "Top-level 'languageServers' field added to TreeSitterSettings schema",
+          verification:
+            "Config with languageServers.rust-analyzer works; unit tests verify deserialization",
+        },
+        {
+          criterion:
+            "bridge.servers deprecated but still functional (backwards compatibility)",
+          verification:
+            "Config with bridge.servers continues to work; effective_language_servers() returns merged result",
+        },
+        {
+          criterion:
+            "Deprecation warning logged when bridge.servers is used",
+          verification:
+            "log_deprecation_warnings() warns about bridge.servers usage",
+        },
+        {
+          criterion:
+            "Documentation updated with migration guide",
+          verification:
+            "README.md shows languageServers at top level with Before/After examples",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-123",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability:
+          "configure bridge enabled/disabled per injection language with cascading defaults using '_' wildcard pattern",
+        benefit:
+          "I can set global defaults once and override only when needed, reducing config verbosity",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "languages.<host>.bridge changes from array to map with '_' key support",
+          verification:
+            "Config with languages.markdown.bridge._ = {enabled: true} works; unit tests verify",
+        },
+        {
+          criterion:
+            "BridgeLanguageConfig type with 'enabled' (bool) field created",
+          verification:
+            "languages.markdown.bridge.rust = {enabled: false} disables rust bridging in markdown",
+        },
+        {
+          criterion:
+            "Cascade resolution: host.injection > host._ (specific overrides default)",
+          verification:
+            "Unit tests verify enabled field inherits from '_' when not specified",
+        },
+        {
+          criterion:
+            "Backwards compatibility: array format still works via effective_bridge()",
+          verification:
+            "Old bridge: ['rust', 'python'] config continues to work; deprecation warning logged",
+        },
+        {
+          criterion:
+            "Documentation updated with new bridge config syntax",
+          verification:
+            "README.md shows Before/After examples for bridge config migration",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-124",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability:
+          "configure global bridge defaults at languages._ level for all host languages",
+        benefit:
+          "I can set one default that applies to all host languages without repeating config",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "Schema supports '_' key in languages map as default for all host languages",
+          verification:
+            "Config with languages._.bridge._ applies to all host/injection pairs",
+        },
+        {
+          criterion:
+            "Four-level cascade: host.injection > host._ > _.injection > _._",
+          verification:
+            "Unit tests verify correct precedence order",
+        },
+        {
+          criterion:
+            "Documentation updated with full cascade examples",
+          verification:
+            "README.md shows cascade resolution table and examples",
+        },
+      ],
+      status: "draft",
+      // Note: Depends on PBI-123; may be combined with it if scope is small
+    },
+    {
+      id: "PBI-125",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability:
+          "configure bridge 'mode' to control how injection content is sent to bridge servers",
+        benefit:
+          "I can optimize bridge behavior for different use cases (isolated vs context-aware)",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "BridgeLanguageConfig supports 'mode' field with defined semantics",
+          verification:
+            "mode field accepted in config; semantics documented",
+        },
+        {
+          criterion:
+            "E2E tests verify mode behavior differences",
+          verification:
+            "make test_nvim includes tests demonstrating mode effects",
+        },
+      ],
+      status: "draft",
+      // Note: Needs refinement - 'separate' vs 'merged' semantics unclear.
+      // Consider: What problem does mode solve? What are the use cases?
+      // Options: (1) separate = each injection isolated, (2) merged = all injections combined
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 101,
+    pbi_id: "PBI-121",
+    goal: "Extract completion method to lsp_impl/text_document/completion.rs",
+    status: "done",
+    subtasks: [
+      {
+        test: "Verify 'make test && make check' passes before refactoring",
+        implementation:
+          "Baseline verification - ensure all tests pass before starting structural changes",
+        type: "structural",
+        status: "completed",
+        commits: [],
+        notes: ["336 unit tests + 7 integration tests passed"],
+      },
+      {
+        test: "Verify 'make test && make check' passes after creating completion.rs with module declaration",
+        implementation:
+          "Create lsp_impl/text_document/completion.rs with empty impl TreeSitterLs block; add mod completion to text_document/mod.rs",
+        type: "structural",
+        status: "completed",
+        commits: [{ hash: "789842a", message: "refactor(lsp): extract semantic_tokens to dedicated module", phase: "green" as CommitPhase }],
+        notes: ["Also committed Sprint 100 semantic_tokens extraction in same commit"],
+      },
+      {
+        test: "Verify 'make test && make check' passes after moving completion method",
+        implementation:
+          "Move completion method from lsp_impl.rs to completion.rs; update imports and re-exports",
+        type: "structural",
+        status: "completed",
+        commits: [{ hash: "dc4ea8c", message: "refactor(lsp): extract completion to dedicated module", phase: "green" as CommitPhase }],
+        notes: [],
+      },
+      {
+        test: "Run full test suite: 'make test && make check'",
+        implementation:
+          "Final verification that all tests pass with no behavioral change; completion logic fully isolated",
+        type: "structural",
+        status: "completed",
+        commits: [],
+        notes: ["336 unit tests passed, all clippy and fmt checks pass"],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
@@ -102,16 +298,16 @@ const scrum: ScrumDashboard = {
   // Historical sprints (recent 2) | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   completed: [
     {
-      number: 99,
-      pbi_id: "PBI-120",
-      goal: "Document new config schema with migration guide",
+      number: 101,
+      pbi_id: "PBI-121",
+      goal: "Extract completion method to lsp_impl/text_document/completion.rs",
       status: "done",
       subtasks: [],
     },
     {
-      number: 98,
-      pbi_id: "PBI-120",
-      goal: "Add queries array with kind inference from filename",
+      number: 100,
+      pbi_id: "PBI-121",
+      goal: "Extract semantic_tokens methods to dedicated module (Phase 1)",
       status: "done",
       subtasks: [],
     },
