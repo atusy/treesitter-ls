@@ -11,6 +11,7 @@ use super::hover::HoverWithNotifications;
 use super::references::ReferencesWithNotifications;
 use super::rename::RenameWithNotifications;
 use super::signature_help::SignatureHelpWithNotifications;
+use super::type_definition::TypeDefinitionWithNotifications;
 use super::workspace::{language_to_extension, setup_workspace_with_option};
 use crate::config::settings::BridgeServerConfig;
 use serde_json::Value;
@@ -518,6 +519,51 @@ impl LanguageServerConnection {
             .and_then(|r| serde_json::from_value(r).ok());
 
         GotoDefinitionWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request go-to-type-definition, capturing $/progress notifications.
+    ///
+    /// Unlike `goto_definition_with_notifications`, this sends the
+    /// `textDocument/typeDefinition` request which navigates to the type
+    /// of the symbol under the cursor rather than its definition.
+    pub fn type_definition_with_notifications(
+        &mut self,
+        _uri: &str,
+        position: Position,
+    ) -> TypeDefinitionWithNotifications {
+        // Use the virtual file URI from the temp workspace
+        let Some(real_uri) = self.virtual_file_uri() else {
+            return TypeDefinitionWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let Some(req_id) = self.send_request("textDocument/typeDefinition", params) else {
+            return TypeDefinitionWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id);
+
+        // Extract and parse the goto type definition response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        TypeDefinitionWithNotifications {
             response,
             notifications: result.notifications,
         }
