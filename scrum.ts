@@ -71,72 +71,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 82,
-    pbi_id: "PBI-105",
-    goal:
-      "Make redirection.rs language-agnostic by removing hardcoded rust-analyzer and Cargo defaults so bridge servers are fully configurable via initializationOptions",
-    status: "done",
-    subtasks: [
-      {
-        test: "E2E tests still pass after adding explicit rust-analyzer bridge config to minimal_init.lua",
-        implementation:
-          "Add bridge.servers configuration with rust-analyzer command and languages: ['rust'] to minimal_init.lua initializationOptions",
-        type: "structural",
-        status: "completed",
-        commits: [],
-        notes: [
-          "Structural change - makes E2E tests work with explicit config before removing fallback",
-          "Must add workspace_type: 'Cargo' to maintain current behavior for rust",
-        ],
-      },
-      {
-        test: "get_bridge_config_for_language returns None for rust when no bridge config exists (grep shows no rust-analyzer hardcoding)",
-        implementation:
-          "Remove lines 454-463 in lsp_impl.rs that provide hardcoded rust-analyzer fallback",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: [
-          "After removing fallback, bridge config is purely user-driven",
-          "E2E tests must already have explicit config from subtask 1",
-        ],
-      },
-      {
-        test: "setup_workspace_with_option(None) creates Generic workspace (virtual.ext), not Cargo (Cargo.toml + src/main.rs)",
-        implementation:
-          "Change line 118 in redirection.rs from WorkspaceType::Cargo to WorkspaceType::Generic",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: [
-          "Update existing test setup_cargo_workspace_none_defaults_to_cargo to expect Generic",
-          "May need to update test name to setup_workspace_with_option_none_defaults_to_generic",
-        ],
-      },
-      {
-        test: "spawn_rust_analyzer() is removed - grep shows no matches in src/",
-        implementation:
-          "Delete spawn_rust_analyzer() method (lines 191-257) and update all tests using it to use spawn() with explicit BridgeServerConfig",
-        type: "structural",
-        status: "completed",
-        commits: [],
-        notes: [
-          "Tests to update: language_server_connection_is_alive_*, language_server_pool_respawns_dead_connection",
-          "Each test needs explicit config with command: rust-analyzer, workspace_type: Cargo",
-        ],
-      },
-      {
-        test: "All unit tests pass and cargo clippy shows no warnings",
-        implementation:
-          "Run make test and make check to verify all changes work together",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Final verification subtask"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -149,18 +84,18 @@ const scrum: ScrumDashboard = {
   // Historical sprints (recent 2) | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   completed: [
     {
-      number: 81,
-      pbi_id: "PBI-104",
+      number: 82,
+      pbi_id: "PBI-105",
       goal:
-        "Documentation authors see rust-analyzer progress notifications during server initialization (not just during requests) so they know indexing status as soon as they open a file",
+        "Make redirection.rs language-agnostic by removing hardcoded rust-analyzer and Cargo defaults",
       status: "done",
       subtasks: [],
     },
     {
-      number: 80,
-      pbi_id: "PBI-103",
+      number: 81,
+      pbi_id: "PBI-104",
       goal:
-        "Documentation authors see actual rust-analyzer progress notifications instead of synthetic 'Waiting' messages so they know exactly what rust-analyzer is doing",
+        "Documentation authors see rust-analyzer progress notifications during server initialization",
       status: "done",
       subtasks: [],
     },
@@ -168,6 +103,27 @@ const scrum: ScrumDashboard = {
 
   // Recent 2 retrospectives | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    {
+      sprint: 82,
+      improvements: [
+        {
+          action:
+            "Serde rename attributes need verification in integration tests - camelCase mismatch caught by E2E test, not unit test",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "E2E tests provide essential coverage for JSON serialization boundaries; unit tests don't catch schema mismatches with external clients",
+        },
+        {
+          action:
+            "Avoid unit tests with blocking BufReader::read_line() on external processes - use E2E tests for external process integration",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "Removed 8 blocking tests from redirection.rs; E2E tests in test_lsp_definition.lua and test_lsp_notification.lua provide reliable coverage",
+        },
+      ],
+    },
     {
       sprint: 81,
       improvements: [
@@ -186,25 +142,6 @@ const scrum: ScrumDashboard = {
           status: "completed",
           outcome:
             "Clean API: spawn returns (conn, notifications), did_open returns Vec<Value>, background spawn uses channel",
-        },
-      ],
-    },
-    {
-      sprint: 80,
-      improvements: [
-        {
-          action:
-            "ResponseWithNotifications pattern cleanly separates concerns - reuse for other notification types (e.g., diagnostics)",
-          timing: "product",
-          status: "active",
-          outcome: null,
-        },
-        {
-          action:
-            "Notification forwarding duplicated in goto_definition and hover - consider extracting helper method",
-          timing: "product",
-          status: "active",
-          outcome: null,
         },
       ],
     },
