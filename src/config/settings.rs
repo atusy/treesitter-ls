@@ -37,6 +37,18 @@ pub struct BridgeServerConfig {
     pub workspace_type: Option<WorkspaceType>,
 }
 
+/// Configuration for bridge behavior for a specific injection language (PBI-123).
+///
+/// Used in the new map-based bridge config: `bridge: { "rust": { enabled: true } }`
+#[derive(Debug, Clone, Deserialize, serde::Serialize, Default, PartialEq, Eq)]
+pub struct BridgeLanguageConfig {
+    /// Whether bridging is enabled for this language.
+    /// - Some(true): Bridging is enabled
+    /// - Some(false): Bridging is disabled
+    /// - None: Inherit from default ('_') or global defaults
+    pub enabled: Option<bool>,
+}
+
 /// Bridge settings containing configured language servers.
 ///
 /// JSON schema:
@@ -1813,5 +1825,38 @@ mod tests {
         // Call log_deprecation_warnings - this should not panic and should log a warning
         // (We can't easily verify the log output in unit tests, but we verify it runs)
         settings.log_deprecation_warnings();
+    }
+
+    // PBI-123: Bridge per injection with '_' wildcard defaults
+    // TDD Cycle 1: BridgeLanguageConfig struct
+
+    #[test]
+    fn should_deserialize_bridge_language_config_with_enabled_true() {
+        // TDD RED: BridgeLanguageConfig should deserialize {enabled: true}
+        let config_json = r#"{"enabled": true}"#;
+
+        let config: BridgeLanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        assert_eq!(config.enabled, Some(true));
+    }
+
+    #[test]
+    fn should_deserialize_bridge_language_config_with_enabled_false() {
+        // TDD RED: BridgeLanguageConfig should deserialize {enabled: false}
+        let config_json = r#"{"enabled": false}"#;
+
+        let config: BridgeLanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        assert_eq!(config.enabled, Some(false));
+    }
+
+    #[test]
+    fn should_deserialize_bridge_language_config_with_empty_object() {
+        // TDD RED: BridgeLanguageConfig should deserialize {} with enabled as None
+        let config_json = r#"{}"#;
+
+        let config: BridgeLanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        assert_eq!(config.enabled, None);
     }
 }
