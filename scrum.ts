@@ -229,14 +229,64 @@ const scrum: ScrumDashboard = {
       ],
       status: "done",
     },
+    {
+      id: "PBI-117",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability:
+          "get code actions from both the Rust code block AND the Markdown document",
+        benefit:
+          "I can access both language-specific and host document code actions in one place",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "Code actions from injection region (child) are returned first",
+          verification:
+            "E2E test verifies bridged actions appear before treesitter-ls actions",
+        },
+        {
+          criterion:
+            "Code actions from host document (parent) are appended after child actions",
+          verification:
+            "E2E test verifies treesitter-ls Inspect token action appears after bridged actions",
+        },
+        {
+          criterion:
+            "E2E test verifies merged code actions show child actions before parent actions",
+          verification:
+            "make test_nvim_file FILE=tests/test_lsp_code_action.lua passes with ordering assertions",
+        },
+      ],
+      status: "done",
+    },
   ],
 
   sprint: {
-    number: 93,
-    pbi_id: "PBI-116",
-    goal: "Bridge textDocument/formatting for injection regions",
+    number: 94,
+    pbi_id: "PBI-117",
+    goal: "Merge code actions from injection (child) and host (parent) languages",
     status: "done",
-    subtasks: [],
+    subtasks: [
+      {
+        test: "E2E test verifies merged code actions order: child before parent",
+        implementation:
+          "Update test_lsp_code_action.lua to check Inspect token appears after bridged actions",
+        type: "behavioral",
+        status: "completed",
+        commits: [],
+        notes: ["Test added that validates child actions come before parent Inspect token action"],
+      },
+      {
+        test: "code_action handler concatenates bridged and treesitter-ls actions",
+        implementation:
+          "Modify code_action in lsp_impl.rs to get both bridged and parent actions, concatenate them",
+        type: "behavioral",
+        status: "completed",
+        commits: [],
+        notes: ["Used Obvious Implementation - merged both action lists with child first, parent second"],
+      },
+    ],
   },
 
   definition_of_done: {
@@ -250,16 +300,16 @@ const scrum: ScrumDashboard = {
   // Historical sprints (recent 2) | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   completed: [
     {
-      number: 93,
-      pbi_id: "PBI-116",
-      goal: "Bridge textDocument/formatting for injection regions",
+      number: 94,
+      pbi_id: "PBI-117",
+      goal: "Merge code actions from injection (child) and host (parent) languages",
       status: "done",
       subtasks: [],
     },
     {
-      number: 92,
-      pbi_id: "PBI-115",
-      goal: "Bridge textDocument/codeAction for injection regions",
+      number: 93,
+      pbi_id: "PBI-116",
+      goal: "Bridge textDocument/formatting for injection regions",
       status: "done",
       subtasks: [],
     },
@@ -267,6 +317,19 @@ const scrum: ScrumDashboard = {
 
   // Recent 2 retrospectives | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    {
+      sprint: 94,
+      improvements: [
+        {
+          action:
+            "Code action merging uses Obvious Implementation - get bridged actions first, then parent actions, concatenate",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "Code action merging completed with child actions before parent actions for consistent UX",
+        },
+      ],
+    },
     {
       sprint: 93,
       improvements: [
@@ -277,19 +340,6 @@ const scrum: ScrumDashboard = {
           status: "completed",
           outcome:
             "Formatting bridging completed by iterating all injection regions and translating TextEdit ranges to host document coordinates",
-        },
-      ],
-    },
-    {
-      sprint: 92,
-      improvements: [
-        {
-          action:
-            "CodeAction bridging follows rename pattern with WorkspaceEdit translation - Obvious Implementation",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "CodeAction bridging completed by reusing WorkspaceEdit translation pattern with additional Diagnostic range translation",
         },
       ],
     },
