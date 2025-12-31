@@ -26,9 +26,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use super::auto_install::{InstallingLanguages, get_injected_languages};
-use super::progress::{
-    create_progress_begin, create_progress_end, create_ra_progress_begin, create_ra_progress_end,
-};
+use super::progress::{create_progress_begin, create_progress_end};
 use super::redirection::LanguageServerPool;
 
 fn lsp_legend_types() -> Vec<SemanticTokenType> {
@@ -1957,19 +1955,15 @@ impl LanguageServer for TreeSitterLs {
             }
         };
 
-        // Send Begin progress notification before spawn_blocking
-        self.client
-            .send_notification::<Progress>(create_ra_progress_begin("goto_definition"))
-            .await;
-
         let virtual_uri_clone = virtual_uri.clone();
         let result = tokio::task::spawn_blocking(move || {
             let mut conn = conn;
             // Open the virtual document
             conn.did_open(&virtual_uri_clone, "rust", &virtual_content);
 
-            // Request definition
-            let result = conn.goto_definition(&virtual_uri_clone, virtual_position);
+            // Request definition with notifications capture
+            let result =
+                conn.goto_definition_with_notifications(&virtual_uri_clone, virtual_position);
 
             // Return both result and connection for pool return
             (result, conn)
@@ -1977,24 +1971,30 @@ impl LanguageServer for TreeSitterLs {
         .await;
 
         // Handle spawn_blocking result and return connection to pool
-        let (definition, success) = match result {
-            Ok((def, conn)) => {
+        let (definition, notifications) = match result {
+            Ok((result, conn)) => {
                 self.language_server_pool.return_connection(&pool_key, conn);
-                let is_some = def.is_some();
-                (def, is_some)
+                (result.response, result.notifications)
             }
             Err(e) => {
                 self.client
                     .log_message(MessageType::ERROR, format!("spawn_blocking failed: {}", e))
                     .await;
-                (None, false)
+                (None, vec![])
             }
         };
 
-        // Send End progress notification after spawn_blocking
-        self.client
-            .send_notification::<Progress>(create_ra_progress_end("goto_definition", success))
-            .await;
+        // Forward captured progress notifications to the client
+        for notification in notifications {
+            if let Some(params) = notification.get("params")
+                && let Ok(progress_params) =
+                    serde_json::from_value::<ProgressParams>(params.clone())
+            {
+                self.client
+                    .send_notification::<Progress>(progress_params)
+                    .await;
+            }
+        }
 
         self.client
             .log_message(
@@ -2201,19 +2201,14 @@ impl LanguageServer for TreeSitterLs {
             }
         };
 
-        // Send Begin progress notification before spawn_blocking
-        self.client
-            .send_notification::<Progress>(create_ra_progress_begin("hover"))
-            .await;
-
         let virtual_uri_clone = virtual_uri.clone();
         let result = tokio::task::spawn_blocking(move || {
             let mut conn = conn;
             // Open the virtual document
             conn.did_open(&virtual_uri_clone, "rust", &virtual_content);
 
-            // Request hover
-            let result = conn.hover(&virtual_uri_clone, virtual_position);
+            // Request hover with notifications capture
+            let result = conn.hover_with_notifications(&virtual_uri_clone, virtual_position);
 
             // Return both result and connection for pool return
             (result, conn)
@@ -2221,24 +2216,30 @@ impl LanguageServer for TreeSitterLs {
         .await;
 
         // Handle spawn_blocking result and return connection to pool
-        let (hover, success) = match result {
-            Ok((hover, conn)) => {
+        let (hover, notifications) = match result {
+            Ok((result, conn)) => {
                 self.language_server_pool.return_connection(&pool_key, conn);
-                let is_some = hover.is_some();
-                (hover, is_some)
+                (result.response, result.notifications)
             }
             Err(e) => {
                 self.client
                     .log_message(MessageType::ERROR, format!("spawn_blocking failed: {}", e))
                     .await;
-                (None, false)
+                (None, vec![])
             }
         };
 
-        // Send End progress notification after spawn_blocking
-        self.client
-            .send_notification::<Progress>(create_ra_progress_end("hover", success))
-            .await;
+        // Forward captured progress notifications to the client
+        for notification in notifications {
+            if let Some(params) = notification.get("params")
+                && let Ok(progress_params) =
+                    serde_json::from_value::<ProgressParams>(params.clone())
+            {
+                self.client
+                    .send_notification::<Progress>(progress_params)
+                    .await;
+            }
+        }
 
         // Translate hover response range back to host document (if present)
         let Some(mut hover_response) = hover else {
