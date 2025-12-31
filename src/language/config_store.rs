@@ -153,6 +153,7 @@ mod tests {
         configs.insert(
             "rust".to_string(),
             LanguageConfig {
+                parser: None,
                 library: Some("/path/to/rust.so".to_string()),
                 highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
                 locals: None,
@@ -207,6 +208,7 @@ mod tests {
                 langs.insert(
                     "python".to_string(),
                     LanguageConfig {
+                        parser: None,
                         library: None,
                         highlights: None,
                         locals: None,
@@ -239,6 +241,7 @@ mod tests {
         configs.insert(
             "go".to_string(),
             LanguageConfig {
+                parser: None,
                 library: None,
                 highlights: None,
                 locals: None,

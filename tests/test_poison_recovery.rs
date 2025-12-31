@@ -115,6 +115,7 @@ fn test_config_store_recovers_from_poisoned_lock() {
     new_configs.insert(
         "rust".to_string(),
         LanguageConfig {
+            parser: None,
             library: Some("/path/to/rust.so".to_string()),
             highlights: None,
             locals: None,

@@ -62,8 +62,9 @@ impl From<&LanguageConfig> for LanguageSettings {
         let injections = config.injections.clone();
         let bridge = config.bridge.clone();
 
+        // PBI-120: Use effective_parser() which prefers 'parser' over deprecated 'library'
         LanguageSettings::with_bridge(
-            config.library.clone(),
+            config.effective_parser().cloned(),
             highlights,
             locals,
             injections,
@@ -83,6 +84,7 @@ impl From<&LanguageSettings> for LanguageConfig {
         let injections = settings.injections.clone();
 
         LanguageConfig {
+            parser: settings.library.clone(), // PBI-120: parser is the canonical field
             library: settings.library.clone(),
             // filetypes removed from LanguageConfig (PBI-061)
             highlights,
@@ -266,6 +268,7 @@ mod tests {
         fallback_languages.insert(
             "rust".to_string(),
             LanguageConfig {
+                parser: None,
                 library: Some("/fallback/rust.so".to_string()),
                 highlights: None,
                 locals: None,
@@ -286,6 +289,7 @@ mod tests {
         primary_languages.insert(
             "rust".to_string(),
             LanguageConfig {
+                parser: None,
                 library: Some("/primary/rust.so".to_string()),
                 highlights: None,
                 locals: None,
@@ -593,6 +597,7 @@ mod tests {
     #[test]
     fn test_language_settings_from_config_preserves_injections() {
         let config = LanguageConfig {
+            parser: None,
             library: Some("/path/to/parser.so".to_string()),
             highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
             locals: None,

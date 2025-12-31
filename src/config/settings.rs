@@ -71,6 +71,11 @@ pub type CaptureMappings = HashMap<String, QueryTypeMappings>;
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct LanguageConfig {
+    /// Path to the tree-sitter parser shared library.
+    /// This is the new canonical field name (PBI-120).
+    pub parser: Option<String>,
+    /// Deprecated: Use `parser` instead.
+    /// Path to the tree-sitter parser shared library.
     pub library: Option<String>,
     /// Query file paths for syntax highlighting
     pub highlights: Option<Vec<String>>,
@@ -83,6 +88,24 @@ pub struct LanguageConfig {
     /// - Some([]): Bridge NOTHING (disable bridging for this host)
     /// - Some(["python", "r"]): Bridge only the specified languages
     pub bridge: Option<Vec<String>>,
+}
+
+impl LanguageConfig {
+    /// Check if this config uses the deprecated `library` field.
+    ///
+    /// Returns true if `library` is set but `parser` is not,
+    /// indicating the user is using the deprecated field name.
+    pub fn uses_deprecated_library(&self) -> bool {
+        self.library.is_some() && self.parser.is_none()
+    }
+
+    /// Get the effective parser path, preferring `parser` over `library`.
+    ///
+    /// This method returns the parser path, using the new `parser` field
+    /// if available, otherwise falling back to the deprecated `library` field.
+    pub fn effective_parser(&self) -> Option<&String> {
+        self.parser.as_ref().or(self.library.as_ref())
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, serde::Serialize)]
@@ -99,6 +122,23 @@ pub struct TreeSitterSettings {
     /// Optional bridge settings for configuring external language servers
     #[serde(default)]
     pub bridge: Option<BridgeSettings>,
+}
+
+impl TreeSitterSettings {
+    /// Log deprecation warnings for any deprecated configuration fields.
+    ///
+    /// Call this after deserializing settings to warn users about deprecated field usage.
+    pub fn log_deprecation_warnings(&self) {
+        for (lang_name, config) in &self.languages {
+            if config.uses_deprecated_library() {
+                log::warn!(
+                    "[{}] Configuration uses deprecated 'library' field. Please use 'parser' instead. \
+                     The 'library' field will be removed in a future version.",
+                    lang_name
+                );
+            }
+        }
+    }
 }
 
 // Domain types - internal representations used throughout the application
@@ -578,6 +618,7 @@ mod tests {
             config.languages.insert(
                 lang.to_string(),
                 LanguageConfig {
+                    parser: None,
                     library: Some(format!("/usr/lib/libtree-sitter-{}.so", lang)),
                     highlights: Some(vec![format!("/etc/treesitter/{}/highlights.scm", lang)]),
                     locals: None,
@@ -600,6 +641,7 @@ mod tests {
         // PBI-061: filetypes field should be removed from LanguageConfig
         // Language detection now relies entirely on languageId from DidOpen
         let config = LanguageConfig {
+            parser: None,
             library: Some("/path/to/parser.so".to_string()),
             highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
             locals: None,
@@ -946,6 +988,126 @@ mod tests {
         assert!(
             !settings.is_language_bridgeable("rust"),
             "Empty bridge should not allow rust"
+        );
+    }
+
+    // PBI-120: parser field as alias for library
+    #[test]
+    fn should_deserialize_parser_field_as_library_alias() {
+        // TDD GREEN: parser field should be accepted and deserialize correctly
+        let config_json = r#"{
+            "parser": "/path/to/lua.so",
+            "highlights": ["/path/to/highlights.scm"]
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        assert_eq!(
+            config.parser,
+            Some("/path/to/lua.so".to_string()),
+            "parser field should deserialize correctly"
+        );
+    }
+
+    #[test]
+    fn should_deserialize_library_field_for_backwards_compat() {
+        // PBI-120: library field must continue to work for backwards compatibility
+        let config_json = r#"{
+            "library": "/path/to/lua.so",
+            "highlights": ["/path/to/highlights.scm"]
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        assert_eq!(
+            config.library,
+            Some("/path/to/lua.so".to_string()),
+            "library field should still deserialize for backwards compatibility"
+        );
+    }
+
+    #[test]
+    fn should_detect_deprecated_library_field_usage() {
+        // PBI-120: When 'library' is used without 'parser', it's deprecated usage
+        let config_json = r#"{
+            "library": "/path/to/lua.so",
+            "highlights": ["/path/to/highlights.scm"]
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        // uses_deprecated_library returns true when library is set but parser is not
+        assert!(
+            config.uses_deprecated_library(),
+            "should detect deprecated library field usage"
+        );
+    }
+
+    #[test]
+    fn should_not_detect_deprecation_when_parser_is_used() {
+        // PBI-120: When 'parser' is used, no deprecation warning needed
+        let config_json = r#"{
+            "parser": "/path/to/lua.so",
+            "highlights": ["/path/to/highlights.scm"]
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        // uses_deprecated_library returns false when parser is set
+        assert!(
+            !config.uses_deprecated_library(),
+            "should not flag deprecation when parser is used"
+        );
+    }
+
+    #[test]
+    fn effective_parser_should_prefer_parser_over_library() {
+        // PBI-120: effective_parser() should prefer parser over library
+        let config_json = r#"{
+            "parser": "/new/path/to/parser.so",
+            "library": "/old/path/to/library.so",
+            "highlights": ["/path/to/highlights.scm"]
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        assert_eq!(
+            config.effective_parser(),
+            Some(&"/new/path/to/parser.so".to_string()),
+            "should prefer parser field when both are set"
+        );
+    }
+
+    #[test]
+    fn effective_parser_should_fall_back_to_library() {
+        // PBI-120: When only library is set, effective_parser() should return it
+        let config_json = r#"{
+            "library": "/path/to/library.so",
+            "highlights": ["/path/to/highlights.scm"]
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        assert_eq!(
+            config.effective_parser(),
+            Some(&"/path/to/library.so".to_string()),
+            "should fall back to library when parser is not set"
+        );
+    }
+
+    #[test]
+    fn effective_parser_should_return_none_when_neither_set() {
+        // PBI-120: When neither parser nor library is set, return None
+        let config_json = r#"{
+            "highlights": ["/path/to/highlights.scm"]
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        assert_eq!(
+            config.effective_parser(),
+            None,
+            "should return None when neither parser nor library is set"
         );
     }
 

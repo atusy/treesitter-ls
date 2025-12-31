@@ -89,6 +89,8 @@ fn load_toml_settings(
                 events.push(SettingsEvent::info(
                     "Successfully loaded treesitter-ls.toml",
                 ));
+                // PBI-120: Log deprecation warnings for deprecated config fields
+                settings.log_deprecation_warnings();
                 Some(settings)
             }
             Err(err) => {
@@ -120,6 +122,8 @@ fn parse_override_settings(
                 "Parsed {} as TreeSitterSettings",
                 source.description()
             )));
+            // PBI-120: Log deprecation warnings for deprecated config fields
+            settings.log_deprecation_warnings();
             Some(settings)
         }
         Err(err) => {
