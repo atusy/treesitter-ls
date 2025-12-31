@@ -31,210 +31,9 @@ const scrum: ScrumDashboard = {
   // Completed PBIs: PBI-001 through PBI-108 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects approach too slow for E2E tests
-  product_backlog: [
-    {
-      id: "PBI-108",
-      story: {
-        role: "documentation author with Rust code blocks",
-        capability:
-          "configure which injection languages are bridged per host document type",
-        benefit:
-          "I can have R-only bridging in Rmd files while bridging both Python and R in Quarto files, avoiding unnecessary server spawns and tailoring LSP features to my workflow",
-      },
-      acceptance_criteria: [
-        {
-          criterion:
-            "languages.<filetype>.bridge accepts an array of language names to bridge only those languages",
-          verification:
-            "cargo test test_bridge_filter_allows_specified_languages",
-        },
-        {
-          criterion:
-            "languages.<filetype>.bridge: [] disables all bridging for that host filetype",
-          verification: "cargo test test_bridge_filter_empty_disables_bridging",
-        },
-        {
-          criterion:
-            "languages.<filetype>.bridge omitted or null bridges all configured languages (default behavior)",
-          verification:
-            "cargo test test_bridge_filter_null_bridges_all_languages",
-        },
-        {
-          criterion:
-            "Bridge filtering is applied at request time before routing to language servers",
-          verification:
-            "cargo test test_bridge_router_respects_host_filter",
-        },
-      ],
-      status: "done",
-    },
-  ],
+  product_backlog: [],
 
-  sprint: {
-    number: 85,
-    pbi_id: "PBI-108",
-    goal:
-      "Add per-host language bridge filter configuration to control which injection languages are bridged",
-    status: "done",
-    subtasks: [
-      {
-        test: "LanguageConfig parses bridge field as Option<Vec<String>> - test with array ['python', 'r'], empty array [], and null/omitted",
-        implementation:
-          "Add 'bridge: Option<Vec<String>>' field to LanguageConfig struct in settings.rs with serde deserialization",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "278c076",
-            message:
-              "feat(config): add per-host language bridge filter for injection redirection",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "AC1: languages.<filetype>.bridge accepts array of language names",
-          "AC2: empty array disables bridging",
-          "AC3: null/omitted bridges all",
-          "Already implemented - tests exist in settings.rs",
-        ],
-      },
-      {
-        test: "LanguageSettings domain type includes bridge field - verify conversion from LanguageConfig preserves bridge filter",
-        implementation:
-          "Add 'bridge: Option<Vec<String>>' to LanguageSettings struct and update constructor/conversion",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "278c076",
-            message:
-              "feat(config): add per-host language bridge filter for injection redirection",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Domain layer needs the bridge filter to pass to LSP layer",
-          "Already implemented - field exists and with_bridge constructor works",
-        ],
-      },
-      {
-        test: "WorkspaceSettings.languages map propagates bridge field from TreeSitterSettings parsing",
-        implementation:
-          "Update TreeSitterSettings to WorkspaceSettings conversion to include bridge field in LanguageSettings",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "278c076",
-            message:
-              "feat(config): add per-host language bridge filter for injection redirection",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Conversion in config.rs From implementations",
-          "Already implemented - bridge field propagates through all conversions",
-        ],
-      },
-      {
-        test: "is_language_bridgeable(host_lang, injection_lang) returns true when bridge is None (default bridges all)",
-        implementation:
-          "Add is_language_bridgeable helper function that checks bridge filter - None means bridge all",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "278c076",
-            message:
-              "feat(config): add per-host language bridge filter for injection redirection",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "AC3 verification: null/omitted bridges all configured languages",
-          "Test: test_bridge_filter_null_bridges_all_languages",
-        ],
-      },
-      {
-        test: "is_language_bridgeable returns false when bridge is empty array []",
-        implementation:
-          "Extend is_language_bridgeable to return false for empty bridge array",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "278c076",
-            message:
-              "feat(config): add per-host language bridge filter for injection redirection",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "AC2 verification: empty array disables bridging",
-          "Test: test_bridge_filter_empty_disables_bridging",
-        ],
-      },
-      {
-        test: "is_language_bridgeable returns true only when injection language is in bridge array",
-        implementation:
-          "Complete is_language_bridgeable to check if injection_lang is contained in bridge array",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "278c076",
-            message:
-              "feat(config): add per-host language bridge filter for injection redirection",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "AC1 verification: bridge only specified languages",
-          "Test: test_bridge_filter_allows_specified_languages",
-        ],
-      },
-      {
-        test: "get_bridge_config_for_language respects host document's bridge filter before returning config",
-        implementation:
-          "Modify get_bridge_config_for_language in lsp_impl.rs to take host_language parameter and check is_language_bridgeable",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "278c076",
-            message:
-              "feat(config): add per-host language bridge filter for injection redirection",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "AC4 verification: Bridge filtering applied at request time before routing",
-          "Returns None if injection language not allowed for host",
-          "Test: test_bridge_router_respects_host_filter",
-        ],
-      },
-      {
-        test: "eager_spawn_for_injections respects bridge filter - only spawns servers for allowed injection languages",
-        implementation:
-          "Update eager_spawn_for_injections to filter injection languages through is_language_bridgeable before spawning",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "278c076",
-            message:
-              "feat(config): add per-host language bridge filter for injection redirection",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Prevents unnecessary server spawns for disallowed bridges",
-          "Uses host document language to lookup bridge filter",
-          "Filter checked via get_bridge_config_for_language",
-        ],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -247,6 +46,14 @@ const scrum: ScrumDashboard = {
   // Historical sprints (recent 2) | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   completed: [
     {
+      number: 85,
+      pbi_id: "PBI-108",
+      goal:
+        "Add per-host language bridge filter configuration to control which injection languages are bridged",
+      status: "done",
+      subtasks: [],
+    },
+    {
       number: 84,
       pbi_id: "PBI-107",
       goal:
@@ -254,18 +61,31 @@ const scrum: ScrumDashboard = {
       status: "cancelled",
       subtasks: [],
     },
-    {
-      number: 83,
-      pbi_id: "PBI-106",
-      goal:
-        "Simplify BridgeServerConfig by merging 'command' and 'args' into single 'cmd' array",
-      status: "done",
-      subtasks: [],
-    },
   ],
 
   // Recent 2 retrospectives | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    {
+      sprint: 85,
+      improvements: [
+        {
+          action:
+            "Obvious Implementation strategy is effective for well-understood patterns - 8 subtasks completed in single commit when following established codebase conventions",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "Feature delivered efficiently by recognizing config field addition pattern was identical to existing fields (highlights, locals, injections)",
+        },
+        {
+          action:
+            "Design configuration with sensible defaults (None = bridge all) to maintain backward compatibility while adding new filtering capability",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "Existing users unaffected - new bridge filter is opt-in; only users who explicitly configure it see behavioral changes",
+        },
+      ],
+    },
     {
       sprint: 84,
       improvements: [
@@ -284,27 +104,6 @@ const scrum: ScrumDashboard = {
           status: "completed",
           outcome:
             "Sprint cancelled after discovering linkedProjects approach causes test timeouts; pragmatic decision to defer removal",
-        },
-      ],
-    },
-    {
-      sprint: 83,
-      improvements: [
-        {
-          action:
-            "Update ADRs alongside code changes - ADR-0006 was outdated with old command+args schema",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "ADR-0006 updated to reflect new cmd array format; documentation stays in sync with implementation",
-        },
-        {
-          action:
-            "Simpler config schema reduces user confusion - cmd array matches vim.lsp.config pattern",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "Users now write cmd = { 'rust-analyzer' } instead of command = 'rust-analyzer' with optional args",
         },
       ],
     },
