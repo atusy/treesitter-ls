@@ -102,16 +102,16 @@ const scrum: ScrumDashboard = {
   // Historical sprints (recent 2) | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   completed: [
     {
-      number: 97,
+      number: 98,
       pbi_id: "PBI-120",
-      goal: "Add parser field as alias for library with deprecation warning",
+      goal: "Add queries array with kind inference from filename",
       status: "done",
       subtasks: [],
     },
     {
-      number: 96,
-      pbi_id: "PBI-119",
-      goal: "Use XDG Base Directory paths on macOS for cross-platform consistency",
+      number: 97,
+      pbi_id: "PBI-120",
+      goal: "Add parser field as alias for library with deprecation warning",
       status: "done",
       subtasks: [],
     },
@@ -119,6 +119,41 @@ const scrum: ScrumDashboard = {
 
   // Recent 2 retrospectives | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    {
+      sprint: 98,
+      improvements: [
+        {
+          action:
+            "Clean TDD implementation with ~20 new tests - effective_queries() pattern elegantly handles both old and new config formats, consistent with effective_parser() from Sprint 97",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "QueryConfig type with infer_query_kind() using file stem provides simple, predictable API; unified representation simplifies all downstream query consumption code",
+        },
+        {
+          action:
+            "Extended existing deprecation warning pattern seamlessly - uses_deprecated_query_fields() and log_deprecation_warnings() extension followed established pattern from Sprint 97",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "Deprecation detection for highlights/injections/locals fields integrated without any architectural changes; pattern proves reusable across deprecation scenarios",
+        },
+        {
+          action:
+            "Consider splitting multi-phase PBIs upfront - PBI-120 spans 3 sprints (97-99); in future, might define Phase 1/2/3 as separate PBIs at refinement time",
+          timing: "sprint",
+          status: "active",
+          outcome: null,
+        },
+        {
+          action:
+            "E2E test naming issue (treesitter_ls vs treesitter-ls) still needs fixing - carried forward from Sprint 96/97",
+          timing: "sprint",
+          status: "active",
+          outcome: null,
+        },
+      ],
+    },
     {
       sprint: 97,
       improvements: [
@@ -137,33 +172,6 @@ const scrum: ScrumDashboard = {
           status: "completed",
           outcome:
             "Pattern established: separate fields rather than serde alias enables detection of deprecated usage while maintaining full backwards compatibility",
-        },
-        {
-          action:
-            "Consider splitting multi-phase PBIs (like PBI-120) into separate PBIs for clearer sprint scope",
-          timing: "sprint",
-          status: "active",
-          outcome: null,
-        },
-        {
-          action:
-            "E2E test naming issue (treesitter_ls vs treesitter-ls) still needs fixing - carried forward from Sprint 96",
-          timing: "sprint",
-          status: "active",
-          outcome: null,
-        },
-      ],
-    },
-    {
-      sprint: 96,
-      improvements: [
-        {
-          action:
-            "Clean TDD cycle - tests first defined expected XDG behavior, then simple implementation checking env var with consistent fallback",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "XDG_DATA_HOME support implemented with 309 unit tests passing; macOS now uses ~/.local/share/treesitter-ls matching Linux for cross-platform consistency",
         },
       ],
     },
