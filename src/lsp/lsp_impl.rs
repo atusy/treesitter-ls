@@ -1241,6 +1241,10 @@ impl LanguageServer for TreeSitterLs {
                 implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
                 declaration_provider: Some(DeclarationCapability::Simple(true)),
                 document_highlight_provider: Some(OneOf::Left(true)),
+                document_link_provider: Some(DocumentLinkOptions {
+                    resolve_provider: Some(false),
+                    work_done_progress_options: Default::default(),
+                }),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 completion_provider: Some(CompletionOptions {
                     trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
@@ -1593,6 +1597,10 @@ impl LanguageServer for TreeSitterLs {
         params: DocumentHighlightParams,
     ) -> Result<Option<Vec<DocumentHighlight>>> {
         self.document_highlight_impl(params).await
+    }
+
+    async fn document_link(&self, params: DocumentLinkParams) -> Result<Option<Vec<DocumentLink>>> {
+        self.document_link_impl(params).await
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
