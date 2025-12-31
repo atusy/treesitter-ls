@@ -31,9 +31,112 @@ const scrum: ScrumDashboard = {
   // Completed PBIs: PBI-001 through PBI-104 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
   // PBI-098: Language-based routing - already implemented as part of PBI-097 (configurable bridge servers)
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "PBI-105",
+      story: {
+        role: "developer editing Lua files",
+        capability:
+          "have redirection.rs be language-agnostic with no hardcoded rust-analyzer or Cargo defaults",
+        benefit:
+          "bridge servers are fully configurable via initializationOptions, no special-casing for any language",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "spawn_rust_analyzer() method is removed from LanguageServerConnection",
+          verification:
+            "Grep for spawn_rust_analyzer shows no matches in src/",
+        },
+        {
+          criterion:
+            "get_bridge_config_for_language() has no hardcoded rust-analyzer fallback",
+          verification:
+            "Grep for 'rust-analyzer' in lsp_impl.rs shows no matches except comments/logs",
+        },
+        {
+          criterion:
+            "WorkspaceType defaults to Generic (not Cargo) when not specified",
+          verification:
+            "Unit test: None workspace_type defaults to Generic",
+        },
+        {
+          criterion:
+            "scripts/minimal_init.lua configures rust-analyzer bridge server via initializationOptions",
+          verification:
+            "E2E tests pass with explicit bridge config in minimal_init.lua",
+        },
+      ],
+      status: "ready",
+    },
+  ],
 
-  sprint: null,
+  sprint: {
+    number: 82,
+    pbi_id: "PBI-105",
+    goal:
+      "Make redirection.rs language-agnostic by removing hardcoded rust-analyzer and Cargo defaults so bridge servers are fully configurable via initializationOptions",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "E2E tests still pass after adding explicit rust-analyzer bridge config to minimal_init.lua",
+        implementation:
+          "Add bridge.servers configuration with rust-analyzer command and languages: ['rust'] to minimal_init.lua initializationOptions",
+        type: "structural",
+        status: "completed",
+        commits: [],
+        notes: [
+          "Structural change - makes E2E tests work with explicit config before removing fallback",
+          "Must add workspace_type: 'Cargo' to maintain current behavior for rust",
+        ],
+      },
+      {
+        test: "get_bridge_config_for_language returns None for rust when no bridge config exists (grep shows no rust-analyzer hardcoding)",
+        implementation:
+          "Remove lines 454-463 in lsp_impl.rs that provide hardcoded rust-analyzer fallback",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "After removing fallback, bridge config is purely user-driven",
+          "E2E tests must already have explicit config from subtask 1",
+        ],
+      },
+      {
+        test: "setup_workspace_with_option(None) creates Generic workspace (virtual.ext), not Cargo (Cargo.toml + src/main.rs)",
+        implementation:
+          "Change line 118 in redirection.rs from WorkspaceType::Cargo to WorkspaceType::Generic",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Update existing test setup_cargo_workspace_none_defaults_to_cargo to expect Generic",
+          "May need to update test name to setup_workspace_with_option_none_defaults_to_generic",
+        ],
+      },
+      {
+        test: "spawn_rust_analyzer() is removed - grep shows no matches in src/",
+        implementation:
+          "Delete spawn_rust_analyzer() method (lines 191-257) and update all tests using it to use spawn() with explicit BridgeServerConfig",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Tests to update: language_server_connection_is_alive_*, language_server_pool_respawns_dead_connection",
+          "Each test needs explicit config with command: rust-analyzer, workspace_type: Cargo",
+        ],
+      },
+      {
+        test: "All unit tests pass and cargo clippy shows no warnings",
+        implementation:
+          "Run make test and make check to verify all changes work together",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Final verification subtask"],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
