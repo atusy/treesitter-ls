@@ -14,6 +14,7 @@ mod pool;
 mod references;
 mod rename;
 mod signature_help;
+mod type_definition;
 mod workspace;
 
 // Re-export public types and functions
@@ -31,4 +32,5 @@ pub use pool::LanguageServerPool;
 pub use references::ReferencesWithNotifications;
 pub use rename::RenameWithNotifications;
 pub use signature_help::SignatureHelpWithNotifications;
+pub use type_definition::TypeDefinitionWithNotifications;
 pub use workspace::{setup_workspace, setup_workspace_with_option};
