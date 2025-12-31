@@ -29,7 +29,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-110 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-111 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
   product_backlog: [
@@ -58,7 +58,7 @@ const scrum: ScrumDashboard = {
           verification: "E2E test verifies completion textEdit range is in Markdown line numbers, not virtual document line numbers",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     // Draft PBIs (refine to ready before sprint): PBI-112 signatureHelp, PBI-113 references,
     // PBI-114 rename, PBI-115 codeAction, PBI-116 formatting
@@ -77,16 +77,16 @@ const scrum: ScrumDashboard = {
   // Historical sprints (recent 2) | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   completed: [
     {
-      number: 87,
-      pbi_id: "PBI-110",
-      goal: "Refactor redirection.rs into bridge/ module structure",
+      number: 88,
+      pbi_id: "PBI-111",
+      goal: "Bridge textDocument/completion for injection regions",
       status: "done",
       subtasks: [],
     },
     {
-      number: 86,
-      pbi_id: "PBI-109",
-      goal: "Update Product Goal statement to reflect expanded bridge vision",
+      number: 87,
+      pbi_id: "PBI-110",
+      goal: "Refactor redirection.rs into bridge/ module structure",
       status: "done",
       subtasks: [],
     },
@@ -94,6 +94,27 @@ const scrum: ScrumDashboard = {
 
   // Recent 2 retrospectives | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    {
+      sprint: 88,
+      improvements: [
+        {
+          action:
+            "Follow hover bridging pattern closely for new bridged features - reduces implementation time",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "Completion bridging implementation reused hover pattern for position translation and notification forwarding",
+        },
+        {
+          action:
+            "Use buf_request_sync in E2E tests for reliable async LSP testing instead of popup-based testing",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "E2E test uses vim.lsp.buf_request_sync which is more reliable than checking popup visibility",
+        },
+      ],
+    },
     {
       sprint: 87,
       improvements: [
@@ -104,27 +125,6 @@ const scrum: ScrumDashboard = {
           status: "completed",
           outcome:
             "Module files clearly named (bridge.rs, cleanup.rs, etc.) instead of multiple mod.rs tabs in editor",
-        },
-        {
-          action:
-            "Renamed 'redirection' to 'bridge' for clearer domain language matching ADR terminology",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "Module and file naming now aligns with 'LSP Bridge' concept from ADR-0006",
-        },
-      ],
-    },
-    {
-      sprint: 86,
-      improvements: [
-        {
-          action:
-            "Verification-only sprints (checking existing state) complete quickly when criteria are already satisfied",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "Sprint 86 completed immediately by confirming Product Goal already reflected expanded bridge vision",
         },
       ],
     },
