@@ -29,7 +29,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-108 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-109 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects approach too slow for E2E tests
   product_backlog: [
@@ -51,7 +51,7 @@ const scrum: ScrumDashboard = {
           verification: "Verify success_metrics list includes bridge coverage, modular architecture, and E2E tests",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-110",
@@ -197,7 +197,25 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 86,
+    pbi_id: "PBI-109",
+    goal: "Update Product Goal statement to reflect expanded bridge vision",
+    status: "done",
+    subtasks: [
+      {
+        test: "Verify Product Goal statement mentions expanded bridge support",
+        implementation: "Read scrum.ts and confirm product_goal.statement reflects expanded bridge vision per ADR-0006, 0007, 0008",
+        type: "behavioral",
+        status: "completed",
+        commits: [],
+        notes: [
+          "Product Goal statement verified: 'Expand LSP bridge to support most language server features indirectly through bridging (ADR-0006, 0007, 0008)'",
+          "Success metrics verified: bridge coverage, modular architecture, E2E test coverage all present",
+        ],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
