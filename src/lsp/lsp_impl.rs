@@ -1500,7 +1500,7 @@ mod tests {
         // We test the is_language_bridgeable logic directly since get_bridge_config_for_language
         // requires full server initialization which is tested in E2E tests.
 
-        use crate::config::LanguageSettings;
+        use crate::config::{BridgeConfig, LanguageSettings};
 
         // Host markdown with bridge filter: only python and r
         let markdown_settings = LanguageSettings::with_bridge(
@@ -1508,7 +1508,10 @@ mod tests {
             vec![],
             None,
             None,
-            Some(vec!["python".to_string(), "r".to_string()]),
+            Some(BridgeConfig::Array(vec![
+                "python".to_string(),
+                "r".to_string(),
+            ])),
         );
 
         // Router should allow python (in filter)
@@ -1543,7 +1546,8 @@ mod tests {
         );
 
         // Host rmd with empty bridge filter (disable all)
-        let rmd_settings = LanguageSettings::with_bridge(None, vec![], None, None, Some(vec![]));
+        let rmd_settings =
+            LanguageSettings::with_bridge(None, vec![], None, None, Some(BridgeConfig::Array(vec![])));
 
         // Router should block all languages
         assert!(

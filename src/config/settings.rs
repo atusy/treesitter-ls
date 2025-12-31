@@ -142,11 +142,14 @@ pub struct LanguageConfig {
     /// Each entry specifies a query file path and optional kind.
     /// If kind is not specified, it will be inferred from the filename.
     pub queries: Option<Vec<QueryConfig>>,
-    /// Languages to bridge for this host filetype.
-    /// - None (omitted): Bridge ALL configured languages (default behavior)
-    /// - Some([]): Bridge NOTHING (disable bridging for this host)
-    /// - Some(["python", "r"]): Bridge only the specified languages
-    pub bridge: Option<Vec<String>>,
+    /// Languages to bridge for this host filetype (PBI-123).
+    ///
+    /// Supports two formats:
+    /// - Array (deprecated): `["rust", "python"]` - bridges listed languages
+    /// - Map (new): `{"_": {enabled: true}, "rust": {enabled: false}}` - per-language with '_' default
+    ///
+    /// When None (omitted), bridges ALL configured languages.
+    pub bridge: Option<BridgeConfig>,
 }
 
 impl LanguageConfig {
@@ -229,6 +232,42 @@ impl LanguageConfig {
             }
 
             result
+        }
+    }
+
+    /// Check if a language is allowed for bridging based on the bridge configuration (PBI-123).
+    ///
+    /// Cascade resolution (specific language > '_' default > global default):
+    /// - For Map format: checks specific language first, then '_' default
+    /// - For Array format: checks if language is in the array
+    /// - For None: returns true (bridge all languages)
+    ///
+    /// Returns:
+    /// - `true` if bridging is enabled for the injection language
+    /// - `false` if bridging is disabled
+    pub fn is_language_bridgeable(&self, injection_language: &str) -> bool {
+        match &self.bridge {
+            None => true, // Default: bridge all configured languages
+            Some(BridgeConfig::Array(allowed)) => {
+                if allowed.is_empty() {
+                    false // Empty array: bridge nothing
+                } else {
+                    allowed.iter().any(|l| l == injection_language)
+                }
+            }
+            Some(BridgeConfig::Map(map)) => {
+                // Cascade: specific language > '_' default
+                if let Some(lang_config) = map.get(injection_language) {
+                    // Specific config exists - use its enabled value, default to true
+                    lang_config.enabled.unwrap_or(true)
+                } else if let Some(default_config) = map.get("_") {
+                    // Fall back to '_' default
+                    default_config.enabled.unwrap_or(true)
+                } else {
+                    // No specific config, no default - bridge by default
+                    true
+                }
+            }
         }
     }
 }
@@ -330,11 +369,14 @@ pub struct LanguageSettings {
     pub highlights: Vec<String>,
     pub locals: Option<Vec<String>>,
     pub injections: Option<Vec<String>>,
-    /// Languages to bridge for this host filetype.
-    /// - None (omitted): Bridge ALL configured languages (default behavior)
-    /// - Some([]): Bridge NOTHING (disable bridging for this host)
-    /// - Some(["python", "r"]): Bridge only the specified languages
-    pub bridge: Option<Vec<String>>,
+    /// Languages to bridge for this host filetype (PBI-123).
+    ///
+    /// Supports two formats:
+    /// - Array (deprecated): `["rust", "python"]` - bridges listed languages
+    /// - Map (new): `{"_": {enabled: true}, "rust": {enabled: false}}` - per-language with '_' default
+    ///
+    /// When None (omitted), bridges ALL configured languages.
+    pub bridge: Option<BridgeConfig>,
 }
 
 impl LanguageSettings {
@@ -359,7 +401,7 @@ impl LanguageSettings {
         highlights: Vec<String>,
         locals: Option<Vec<String>>,
         injections: Option<Vec<String>>,
-        bridge: Option<Vec<String>>,
+        bridge: Option<BridgeConfig>,
     ) -> Self {
         Self {
             library,
@@ -370,18 +412,39 @@ impl LanguageSettings {
         }
     }
 
-    /// Check if a language is allowed for bridging based on the bridge filter.
+    /// Check if a language is allowed for bridging based on the bridge configuration (PBI-123).
+    ///
+    /// Cascade resolution (specific language > '_' default > global default):
+    /// - For Map format: checks specific language first, then '_' default
+    /// - For Array format: checks if language is in the array
+    /// - For None: returns true (bridge all languages)
     ///
     /// Returns:
-    /// - `true` if `bridge` is `None` (default: bridge all languages)
-    /// - `false` if `bridge` is `Some([])` (empty: bridge nothing)
-    /// - `true` if `bridge` contains the injection language
-    /// - `false` otherwise
+    /// - `true` if bridging is enabled for the injection language
+    /// - `false` if bridging is disabled
     pub fn is_language_bridgeable(&self, injection_language: &str) -> bool {
         match &self.bridge {
             None => true, // Default: bridge all configured languages
-            Some(allowed) if allowed.is_empty() => false, // Empty: bridge nothing
-            Some(allowed) => allowed.iter().any(|l| l == injection_language),
+            Some(BridgeConfig::Array(allowed)) => {
+                if allowed.is_empty() {
+                    false // Empty array: bridge nothing
+                } else {
+                    allowed.iter().any(|l| l == injection_language)
+                }
+            }
+            Some(BridgeConfig::Map(map)) => {
+                // Cascade: specific language > '_' default
+                if let Some(lang_config) = map.get(injection_language) {
+                    // Specific config exists - use its enabled value, default to true
+                    lang_config.enabled.unwrap_or(true)
+                } else if let Some(default_config) = map.get("_") {
+                    // Fall back to '_' default
+                    default_config.enabled.unwrap_or(true)
+                } else {
+                    // No specific config, no default - bridge by default
+                    true
+                }
+            }
         }
     }
 }
@@ -1067,7 +1130,7 @@ mod tests {
 
     #[test]
     fn should_parse_language_config_with_bridge_array() {
-        // PBI-108: LanguageConfig should parse bridge field as Option<Vec<String>>
+        // PBI-108/PBI-123: LanguageConfig should parse bridge field as BridgeConfig::Array
         // AC1: languages.<filetype>.bridge accepts an array of language names
         let config_json = r#"{
             "library": "/path/to/parser.so",
@@ -1078,15 +1141,19 @@ mod tests {
         let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
 
         assert!(config.bridge.is_some(), "bridge field should be Some");
-        let bridge = config.bridge.unwrap();
-        assert_eq!(bridge.len(), 2);
-        assert_eq!(bridge[0], "python");
-        assert_eq!(bridge[1], "r");
+        match config.bridge.as_ref().unwrap() {
+            BridgeConfig::Array(arr) => {
+                assert_eq!(arr.len(), 2);
+                assert_eq!(arr[0], "python");
+                assert_eq!(arr[1], "r");
+            }
+            BridgeConfig::Map(_) => panic!("Expected Array, got Map"),
+        }
     }
 
     #[test]
     fn should_parse_language_config_with_empty_bridge_array() {
-        // PBI-108: Empty bridge array should disable all bridging
+        // PBI-108/PBI-123: Empty bridge array should disable all bridging
         // AC2: bridge: [] disables all bridging for that host filetype
         let config_json = r#"{
             "library": "/path/to/parser.so",
@@ -1097,8 +1164,12 @@ mod tests {
         let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
 
         assert!(config.bridge.is_some(), "bridge field should be Some([])");
-        let bridge = config.bridge.unwrap();
-        assert!(bridge.is_empty(), "bridge array should be empty");
+        match config.bridge.as_ref().unwrap() {
+            BridgeConfig::Array(arr) => {
+                assert!(arr.is_empty(), "bridge array should be empty");
+            }
+            BridgeConfig::Map(_) => panic!("Expected Array, got Map"),
+        }
     }
 
     #[test]
@@ -1150,13 +1221,13 @@ mod tests {
 
     #[test]
     fn test_bridge_filter_empty_disables_bridging() {
-        // PBI-108 AC2: bridge: [] disables all bridging for that host filetype
+        // PBI-108/PBI-123 AC2: bridge: [] disables all bridging for that host filetype
         let settings = LanguageSettings::with_bridge(
             None,
             vec!["/path/to/highlights.scm".to_string()],
             None,
             None,
-            Some(vec![]), // Empty array disables all bridging
+            Some(BridgeConfig::Array(vec![])), // Empty array disables all bridging
         );
 
         // Empty array should disable all bridging
@@ -1584,14 +1655,17 @@ mod tests {
 
     #[test]
     fn test_bridge_filter_allows_specified_languages() {
-        // PBI-108 AC1: languages.<filetype>.bridge accepts an array of language names
+        // PBI-108/PBI-123 AC1: languages.<filetype>.bridge accepts an array of language names
         // Only languages in the array should be bridgeable
         let settings = LanguageSettings::with_bridge(
             None,
             vec!["/path/to/highlights.scm".to_string()],
             None,
             None,
-            Some(vec!["python".to_string(), "r".to_string()]),
+            Some(BridgeConfig::Array(vec![
+                "python".to_string(),
+                "r".to_string(),
+            ])),
         );
 
         // Specified languages should be allowed
@@ -1940,5 +2014,71 @@ mod tests {
             }
             BridgeConfig::Map(_) => panic!("Expected Array, got Map"),
         }
+    }
+
+    // TDD Cycle 3: Cascade resolution (specific > '_')
+
+    #[test]
+    fn effective_bridge_resolves_specific_over_default() {
+        // TDD RED: rust config takes precedence over '_' default
+        // Given: {"_": {enabled: true}, "rust": {enabled: false}}
+        // When: checking if rust is bridgeable
+        // Then: should return false (specific rust config wins)
+        let config_json = r#"{
+            "parser": "/path/to/parser.so",
+            "bridge": {"_": {"enabled": true}, "rust": {"enabled": false}}
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        // is_language_bridgeable should check specific language first, then fall back to '_'
+        assert!(
+            !config.is_language_bridgeable("rust"),
+            "rust should NOT be bridgeable (specific override)"
+        );
+        assert!(
+            config.is_language_bridgeable("python"),
+            "python should be bridgeable (uses '_' default)"
+        );
+    }
+
+    #[test]
+    fn effective_bridge_uses_default_when_no_specific() {
+        // TDD RED: When only '_' is specified, all languages use it
+        let config_json = r#"{
+            "parser": "/path/to/parser.so",
+            "bridge": {"_": {"enabled": true}}
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        assert!(
+            config.is_language_bridgeable("rust"),
+            "rust should be bridgeable via '_' default"
+        );
+        assert!(
+            config.is_language_bridgeable("python"),
+            "python should be bridgeable via '_' default"
+        );
+    }
+
+    #[test]
+    fn effective_bridge_default_disabled() {
+        // TDD RED: When '_' is disabled, all unspecified languages are disabled
+        let config_json = r#"{
+            "parser": "/path/to/parser.so",
+            "bridge": {"_": {"enabled": false}, "rust": {"enabled": true}}
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        assert!(
+            config.is_language_bridgeable("rust"),
+            "rust should be bridgeable (specific override)"
+        );
+        assert!(
+            !config.is_language_bridgeable("python"),
+            "python should NOT be bridgeable ('_' is disabled)"
+        );
     }
 }
