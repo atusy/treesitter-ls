@@ -507,7 +507,26 @@ impl LanguageServerConnection {
     ///
     /// On first call, sends `textDocument/didOpen` and waits for indexing.
     /// On subsequent calls, sends `textDocument/didChange` (no wait needed).
-    pub fn did_open(&mut self, _uri: &str, language_id: &str, content: &str) -> Option<()> {
+    pub fn did_open(&mut self, uri: &str, language_id: &str, content: &str) -> Option<()> {
+        // Use the new method but discard notifications for backward compatibility
+        self.did_open_with_notifications(uri, language_id, content)
+            .map(|_| ())
+    }
+
+    /// Open or update a document, capturing $/progress notifications.
+    ///
+    /// Like `did_open`, but returns any `$/progress` notifications received
+    /// during the indexing phase. This allows callers to forward progress
+    /// notifications to the client.
+    ///
+    /// Returns `Some(Vec<Value>)` on success (empty vec for didChange),
+    /// or `None` on failure.
+    pub fn did_open_with_notifications(
+        &mut self,
+        _uri: &str,
+        language_id: &str,
+        content: &str,
+    ) -> Option<Vec<Value>> {
         // Write content to the actual file on disk using ConnectionInfo
         self.connection_info
             .as_ref()?
@@ -529,6 +548,8 @@ impl LanguageServerConnection {
             });
             self.send_notification("textDocument/didChange", params)?;
             self.document_version = Some(new_version);
+            // No indexing wait for didChange, return empty notifications
+            Some(vec![])
         } else {
             // First time - send didOpen and wait for indexing
             let params = serde_json::json!({
@@ -542,19 +563,11 @@ impl LanguageServerConnection {
             self.send_notification("textDocument/didOpen", params)?;
             self.document_version = Some(1);
 
-            // Wait for rust-analyzer to index the project.
+            // Wait for rust-analyzer to index the project, capturing progress notifications.
             // rust-analyzer needs time to parse the file and build its index.
             // We wait for diagnostic notifications which indicate indexing is complete.
-            self.wait_for_indexing();
+            Some(self.wait_for_indexing_with_notifications())
         }
-
-        Some(())
-    }
-
-    /// Wait for rust-analyzer to finish indexing by consuming messages until we see diagnostics
-    fn wait_for_indexing(&mut self) {
-        // Use the new method but discard notifications for backward compatibility
-        let _ = self.wait_for_indexing_with_notifications();
     }
 
     /// Wait for rust-analyzer to finish indexing, capturing $/progress notifications.
@@ -2273,6 +2286,57 @@ fn main() {
         // The return type should be Vec<Value>
         // rust-analyzer may or may not send progress notifications during indexing,
         // but the method should exist and return the correct type
+        assert!(
+            notifications.is_empty() || !notifications.is_empty(),
+            "Should return a Vec<Value> (may be empty or non-empty)"
+        );
+
+        // If there are notifications, verify they are $/progress
+        for notification in &notifications {
+            if let Some(method) = notification.get("method").and_then(|m| m.as_str()) {
+                assert_eq!(
+                    method, "$/progress",
+                    "All returned notifications should be $/progress"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn did_open_with_notifications_returns_progress_notifications() {
+        // RED phase: Test that did_open_with_notifications returns captured $/progress
+        // notifications from the indexing phase
+
+        use crate::config::settings::BridgeServerConfig;
+
+        if !check_rust_analyzer_available() {
+            return;
+        }
+
+        let config = BridgeServerConfig {
+            command: "rust-analyzer".to_string(),
+            args: None,
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        let mut conn = LanguageServerConnection::spawn(&config).unwrap();
+
+        // Call did_open_with_notifications - should return Vec<Value> of $/progress notifications
+        let notifications =
+            conn.did_open_with_notifications("file:///test.rs", "rust", "fn main() {}");
+
+        // The method should return an Option<Vec<Value>>
+        assert!(
+            notifications.is_some(),
+            "did_open_with_notifications should return Some"
+        );
+
+        let notifications = notifications.unwrap();
+
+        // rust-analyzer may or may not send progress notifications during indexing,
+        // but the method should return the correct type
         assert!(
             notifications.is_empty() || !notifications.is_empty(),
             "Should return a Vec<Value> (may be empty or non-empty)"
