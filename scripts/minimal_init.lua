@@ -2,6 +2,17 @@ local cwd = vim.uv.cwd()
 -- Get default treesitter-ls data directory
 vim.lsp.config.treesitter_ls = {
 	cmd = { cwd .. "/target/debug/treesitter-ls" },
+	init_options = {
+		bridge = {
+			servers = {
+				["rust-analyzer"] = {
+					command = "rust-analyzer",
+					languages = { "rust" },
+					workspace_type = "cargo",
+				},
+			},
+		},
+	},
 	on_init = function(client)
 		-- to use semanticTokens/full/delta
 		client.server_capabilities.semanticTokensProvider.range = false
