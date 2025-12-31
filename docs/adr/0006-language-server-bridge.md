@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (PoC validates core concepts; architecture under refinement)
+Approved
 
 ## Context
 
@@ -462,27 +462,27 @@ Translation is straightforward for positions within a single injection. See [ADR
 
 ### Phase 1: Infrastructure (PoC Complete)
 
-- [x] Basic LSP client implementation
-- [x] Temporary source file creation
-- [x] Offset translation
-- [x] Go-to-definition working
+-  Basic LSP client implementation
+-  Temporary source file creation
+-  Offset translation
+-  Go-to-definition working
 
 ### Phase 2: Connection Pool
 
-- [ ] Server connection pooling
-- [ ] Crash recovery and respawn
+-  Server connection pooling
+-  Crash recovery and respawn
 
 ### Phase 3: Configuration System
 
-- [ ] `initializationOptions` passthrough
-- [ ] Support for multiple language servers
-- [ ] Multi-server routing by capability
+-  `initializationOptions` passthrough
+-  Support for multiple language servers
+-  Multi-server routing by capability
 
 ### Phase 4: Robustness
 
-- [ ] Ready detection with multiple signals
-- [ ] Request timeout handling
-- [ ] Startup cleanup of stale temp files
+-  Ready detection with multiple signals
+-  Request timeout handling
+-  Startup cleanup of stale temp files
 
 ### Phase 5+: Feature Expansion
 
