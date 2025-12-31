@@ -29,10 +29,10 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-125 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-126 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
-  // PBI-120-125: Done - bridge features and text_document/ directory restructure
+  // PBI-120-126: Done - bridge features, text_document/ directory restructure, declaration
   product_backlog: [
     {
       id: "PBI-125",
@@ -75,14 +75,14 @@ const scrum: ScrumDashboard = {
         },
         {
           criterion: "Declaration request forwarded to bridged language server",
-          verification: "LanguageServerConnection has goto_declaration method that sends textDocument/declaration request",
+          verification: "LanguageServerConnection has declaration_with_notifications method that sends textDocument/declaration request",
         },
         {
           criterion: "E2E test verifies declaration works in injection regions",
           verification: "test_lsp_declaration.lua passes with rust-analyzer in Markdown code block",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-127",
@@ -144,7 +144,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null, // Sprint 102 (PBI-125) completed - bridge text_document directory restructure
+  sprint: null, // Sprint 103 (PBI-126) completed - textDocument/declaration bridge
 
   definition_of_done: {
     checks: [
@@ -154,27 +154,26 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-99: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-100: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 103, pbi_id: "PBI-126", goal: "Add textDocument/declaration bridge support", status: "done", subtasks: [] },
     { number: 102, pbi_id: "PBI-125", goal: "Restructure bridge directory with text_document/ subdirectory", status: "done", subtasks: [] },
-    { number: 101, pbi_id: "PBI-124", goal: "Add textDocument/documentHighlight bridge support", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-98: modular refactoring pattern, E2E indexing waits
+  // Recent 2 retrospectives | Sprint 1-99: modular refactoring pattern, E2E indexing waits
   retrospectives: [
+    {
+      sprint: 103,
+      improvements: [
+        { action: "Declaration bridge follows same pattern as definition/typeDefinition/implementation: copy-adapt in ~10 min", timing: "immediate", status: "completed", outcome: "Sprint 103 completed rapidly; GotoDefinitionResponse-based methods are now fully predictable" },
+        { action: "GotoDeclarationParams/Response are type aliases in lsp_types::request, but using GotoDefinitionParams/Response works directly", timing: "immediate", status: "completed", outcome: "No import changes needed; tower-lsp accepts GotoDefinitionParams for declaration endpoint" },
+      ],
+    },
     {
       sprint: 100,
       improvements: [
         { action: "Copy-and-adapt pattern from Sprint 99 proved highly effective: implementation.rs copied from type_definition.rs with 3 string replacements", timing: "immediate", status: "completed", outcome: "Sprint 100 completed in fraction of Sprint 99 time due to established pattern" },
         { action: "Bridge feature velocity now predictable: ~15 min per new GotoDefinitionResponse-based method (definition, typeDefinition, implementation)", timing: "immediate", status: "completed", outcome: "documentHighlight (PBI-124) should follow same pattern with DocumentHighlight response type" },
-      ],
-    },
-    {
-      sprint: 99,
-      improvements: [
-        { action: "Established reusable bridge pattern: typeDefinition implemented by copying definition.rs with minimal changes", timing: "immediate", status: "completed", outcome: "New bridge features can follow copy-and-adapt pattern" },
-        { action: "E2E tests for language servers with indexing require explicit wait; added vim.uv.sleep(2000)", timing: "immediate", status: "completed", outcome: "test_lsp_type_definition.lua passes reliably" },
-        { action: "Consider code generation or macro for bridge methods - definition/typeDefinition/implementation share 95%+ identical code", timing: "product", status: "active", outcome: null },
       ],
     },
   ],
