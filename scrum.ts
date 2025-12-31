@@ -260,31 +260,71 @@ const scrum: ScrumDashboard = {
       ],
       status: "done",
     },
+    {
+      id: "PBI-118",
+      story: {
+        role: "developer editing Lua files",
+        capability: "see LSP Bridge features documented in the README",
+        benefit:
+          "I can learn how to configure and use bridged LSP features in injection regions",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "README.md Features section lists LSP Bridge with brief description",
+          verification:
+            "grep 'LSP Bridge' README.md returns matches in Features section",
+        },
+        {
+          criterion:
+            "README.md has LSP Bridge section with supported features list",
+          verification:
+            "README.md contains Completion, Signature Help, Go to Definition, Hover, Find References, Rename, Code Actions, Formatting",
+        },
+        {
+          criterion:
+            "README.md has bridge configuration example with servers and languages",
+          verification:
+            "README.md contains JSON example showing bridge.servers and languages.*.bridge configuration",
+        },
+        {
+          criterion: "README.md explains bridge filter semantics",
+          verification:
+            "README.md documents bridge: [languages], bridge: [], and bridge: null/omitted behaviors",
+        },
+        {
+          criterion: "README.md has Neovim example with bridge configuration",
+          verification:
+            "README.md contains Lua example showing vim.lsp.config with bridge options",
+        },
+      ],
+      status: "done",
+    },
   ],
 
   sprint: {
-    number: 94,
-    pbi_id: "PBI-117",
-    goal: "Merge code actions from injection (child) and host (parent) languages",
+    number: 95,
+    pbi_id: "PBI-118",
+    goal: "Update README with LSP Bridge documentation",
     status: "done",
     subtasks: [
       {
-        test: "E2E test verifies merged code actions order: child before parent",
+        test: "README contains LSP Bridge in Features section",
         implementation:
-          "Update test_lsp_code_action.lua to check Inspect token appears after bridged actions",
+          "Add LSP Bridge bullet point to Features section in README.md",
         type: "behavioral",
         status: "completed",
         commits: [],
-        notes: ["Test added that validates child actions come before parent Inspect token action"],
+        notes: ["Added LSP Bridge to features list"],
       },
       {
-        test: "code_action handler concatenates bridged and treesitter-ls actions",
+        test: "README has LSP Bridge section with full documentation",
         implementation:
-          "Modify code_action in lsp_impl.rs to get both bridged and parent actions, concatenate them",
+          "Add LSP Bridge section with supported features, configuration, filter semantics, and Neovim example",
         type: "behavioral",
         status: "completed",
         commits: [],
-        notes: ["Used Obvious Implementation - merged both action lists with child first, parent second"],
+        notes: ["Added comprehensive LSP Bridge documentation including JSON and Lua config examples"],
       },
     ],
   },
@@ -300,16 +340,16 @@ const scrum: ScrumDashboard = {
   // Historical sprints (recent 2) | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   completed: [
     {
-      number: 94,
-      pbi_id: "PBI-117",
-      goal: "Merge code actions from injection (child) and host (parent) languages",
+      number: 95,
+      pbi_id: "PBI-118",
+      goal: "Update README with LSP Bridge documentation",
       status: "done",
       subtasks: [],
     },
     {
-      number: 93,
-      pbi_id: "PBI-116",
-      goal: "Bridge textDocument/formatting for injection regions",
+      number: 94,
+      pbi_id: "PBI-117",
+      goal: "Merge code actions from injection (child) and host (parent) languages",
       status: "done",
       subtasks: [],
     },
@@ -317,6 +357,19 @@ const scrum: ScrumDashboard = {
 
   // Recent 2 retrospectives | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    {
+      sprint: 95,
+      improvements: [
+        {
+          action:
+            "Documentation sprint - straightforward README update with bridge configuration examples",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "README updated with LSP Bridge section including supported features, JSON and Lua configuration examples, and filter semantics",
+        },
+      ],
+    },
     {
       sprint: 94,
       improvements: [
@@ -327,19 +380,6 @@ const scrum: ScrumDashboard = {
           status: "completed",
           outcome:
             "Code action merging completed with child actions before parent actions for consistent UX",
-        },
-      ],
-    },
-    {
-      sprint: 93,
-      improvements: [
-        {
-          action:
-            "Formatting bridging uses Obvious Implementation - formats all injection regions with TextEdit translation",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "Formatting bridging completed by iterating all injection regions and translating TextEdit ranges to host document coordinates",
         },
       ],
     },
