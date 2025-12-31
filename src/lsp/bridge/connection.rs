@@ -6,6 +6,7 @@
 use super::completion::CompletionWithNotifications;
 use super::definition::GotoDefinitionWithNotifications;
 use super::hover::HoverWithNotifications;
+use super::references::ReferencesWithNotifications;
 use super::signature_help::SignatureHelpWithNotifications;
 use super::workspace::{language_to_extension, setup_workspace_with_option};
 use crate::config::settings::BridgeServerConfig;
@@ -660,6 +661,54 @@ impl LanguageServerConnection {
             .and_then(|r| serde_json::from_value(r).ok());
 
         SignatureHelpWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request find references, capturing $/progress notifications.
+    ///
+    /// Sends a `textDocument/references` request to the language server
+    /// and returns both the response and any `$/progress` notifications
+    /// received while waiting for the response.
+    pub fn references_with_notifications(
+        &mut self,
+        _uri: &str,
+        position: Position,
+        include_declaration: bool,
+    ) -> ReferencesWithNotifications {
+        // Use the virtual file URI from the temp workspace
+        let Some(real_uri) = self.virtual_file_uri() else {
+            return ReferencesWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+            "position": { "line": position.line, "character": position.character },
+            "context": { "includeDeclaration": include_declaration },
+        });
+
+        let Some(req_id) = self.send_request("textDocument/references", params) else {
+            return ReferencesWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id);
+
+        // Extract and parse the references response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        ReferencesWithNotifications {
             response,
             notifications: result.notifications,
         }
