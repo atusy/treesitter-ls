@@ -83,13 +83,18 @@ treesitter-ls works out of the box with no configuration required:
 
 ### Default Data Directories
 
-| Platform | Path |
+treesitter-ls uses XDG Base Directory paths for cross-platform consistency:
+
+| Priority | Path |
 |----------|------|
-| Linux | `~/.local/share/treesitter-ls/` |
-| macOS | `~/Library/Application Support/treesitter-ls/` |
-| Windows | `%APPDATA%/treesitter-ls/` |
+| 1st | `$XDG_DATA_HOME/treesitter-ls/` (if `XDG_DATA_HOME` is set) |
+| 2nd | `~/.local/share/treesitter-ls/` (fallback on all platforms) |
+
+This provides consistent paths across Linux and macOS, matching tools like Neovim.
 
 Parsers are stored in `{data_dir}/parser/` and queries in `{data_dir}/queries/`.
+
+> **Migration from older versions (macOS):** If you previously used treesitter-ls on macOS, your data may be in `~/Library/Application Support/treesitter-ls/`. Move it to `~/.local/share/treesitter-ls/` or set `XDG_DATA_HOME` to point to your preferred location.
 
 ## Configuration
 
@@ -127,10 +132,9 @@ Configuration is provided via LSP `initializationOptions`. All options are optio
 
 #### `searchPaths`
 
-Array of base directories to search for parsers and queries. If not specified, uses platform-specific defaults:
-- Linux: `~/.local/share/treesitter-ls`
-- macOS: `~/Library/Application Support/treesitter-ls`
-- Windows: `%APPDATA%/treesitter-ls`
+Array of base directories to search for parsers and queries. If not specified, uses XDG-based defaults:
+- `$XDG_DATA_HOME/treesitter-ls` (if `XDG_DATA_HOME` is set)
+- `~/.local/share/treesitter-ls` (fallback on all platforms)
 
 **Important:** Specify base directories, not subdirectories. The resolver automatically appends `parser/` and `queries/` subdirectories.
 
