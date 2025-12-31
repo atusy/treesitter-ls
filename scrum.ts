@@ -31,7 +31,44 @@ const scrum: ScrumDashboard = {
   // Completed PBIs: PBI-001 through PBI-106 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects approach too slow for E2E tests
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "PBI-108",
+      story: {
+        role: "documentation author with Rust code blocks",
+        capability:
+          "configure which injection languages are bridged per host document type",
+        benefit:
+          "I can have R-only bridging in Rmd files while bridging both Python and R in Quarto files, avoiding unnecessary server spawns and tailoring LSP features to my workflow",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "languages.<filetype>.bridge accepts an array of language names to bridge only those languages",
+          verification:
+            "cargo test test_bridge_filter_allows_specified_languages",
+        },
+        {
+          criterion:
+            "languages.<filetype>.bridge: [] disables all bridging for that host filetype",
+          verification: "cargo test test_bridge_filter_empty_disables_bridging",
+        },
+        {
+          criterion:
+            "languages.<filetype>.bridge omitted or null bridges all configured languages (default behavior)",
+          verification:
+            "cargo test test_bridge_filter_null_bridges_all_languages",
+        },
+        {
+          criterion:
+            "Bridge filtering is applied at request time before routing to language servers",
+          verification:
+            "cargo test test_bridge_router_respects_host_filter",
+        },
+      ],
+      status: "ready",
+    },
+  ],
 
   sprint: null,
 
