@@ -3,6 +3,7 @@
 //! This module handles spawning and managing connections to external
 //! language servers for bridging LSP requests.
 
+use super::completion::CompletionWithNotifications;
 use super::definition::GotoDefinitionWithNotifications;
 use super::hover::HoverWithNotifications;
 use super::workspace::{language_to_extension, setup_workspace_with_option};
@@ -566,6 +567,52 @@ impl LanguageServerConnection {
             .and_then(|r| serde_json::from_value(r).ok());
 
         HoverWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request completion, capturing $/progress notifications.
+    ///
+    /// Sends a `textDocument/completion` request to the language server
+    /// and returns both the response and any `$/progress` notifications
+    /// received while waiting for the response.
+    pub fn completion_with_notifications(
+        &mut self,
+        _uri: &str,
+        position: Position,
+    ) -> CompletionWithNotifications {
+        // Use the virtual file URI from the temp workspace
+        let Some(real_uri) = self.virtual_file_uri() else {
+            return CompletionWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let Some(req_id) = self.send_request("textDocument/completion", params) else {
+            return CompletionWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id);
+
+        // Extract and parse the completion response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        CompletionWithNotifications {
             response,
             notifications: result.notifications,
         }
