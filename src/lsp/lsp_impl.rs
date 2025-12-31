@@ -812,7 +812,8 @@ impl TreeSitterLs {
     /// Called after parse_document completes so we have access to the AST.
     ///
     /// For each unique injection language that has a bridge server configured,
-    /// triggers spawn_in_background to start the connection asynchronously.
+    /// triggers spawn_in_background_with_notifications to start the connection
+    /// asynchronously and forward any $/progress notifications to the LSP client.
     fn eager_spawn_for_injections(&self, uri: &Url) {
         // Get unique injected languages from the document
         let languages = get_injected_languages(uri, &self.language, &self.documents);
@@ -821,19 +822,48 @@ impl TreeSitterLs {
             return;
         }
 
+        log::debug!(
+            target: "treesitter_ls::eager_spawn",
+            "eager_spawn_for_injections: {} - found {} languages: {:?}",
+            uri,
+            languages.len(),
+            languages
+        );
+
         // For each injection language, check if it has a bridge config and spawn
         for lang in languages {
-            if let Some(config) = self.get_bridge_config_for_language(&lang) {
-                let pool_key = config.command.clone();
-                self.language_server_pool
-                    .spawn_in_background(&pool_key, &config);
-                log::debug!(
-                    target: "treesitter_ls::eager_spawn",
-                    "Triggered background spawn for {} (language: {})",
-                    pool_key,
-                    lang
-                );
-            }
+            let Some(config) = self.get_bridge_config_for_language(&lang) else {
+                continue;
+            };
+
+            let pool_key = config.command.clone();
+
+            // Create a channel for receiving progress notifications
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<serde_json::Value>(100);
+
+            // Spawn with notification forwarding
+            self.language_server_pool
+                .spawn_in_background_with_notifications(&pool_key, &config, tx);
+
+            log::debug!(
+                target: "treesitter_ls::eager_spawn",
+                "Triggered background spawn for {} (language: {})",
+                pool_key,
+                lang
+            );
+
+            // Spawn a task to forward progress notifications to the client
+            let client = self.client.clone();
+            tokio::spawn(async move {
+                while let Some(notification) = rx.recv().await {
+                    if let Some(params) = notification.get("params")
+                        && let Ok(progress_params) =
+                            serde_json::from_value::<ProgressParams>(params.clone())
+                    {
+                        client.send_notification::<Progress>(progress_params).await;
+                    }
+                }
+            });
         }
     }
 }

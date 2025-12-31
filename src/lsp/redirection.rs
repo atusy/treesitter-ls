@@ -891,8 +891,12 @@ impl LanguageServerPool {
     /// Spawn a language server connection in the background, forwarding $/progress notifications.
     ///
     /// Like `spawn_in_background`, but sends any `$/progress` notifications captured
-    /// during spawn through the provided channel. This allows the caller to forward
-    /// progress notifications to the LSP client.
+    /// during spawn AND initial indexing through the provided channel. This allows the
+    /// caller to forward progress notifications to the LSP client.
+    ///
+    /// After spawning, this also opens an empty file to trigger workspace indexing,
+    /// which is when rust-analyzer sends most of its progress notifications (Loading
+    /// crates, Indexing, etc.).
     ///
     /// This is a no-op if a connection for this key already exists in the pool.
     ///
@@ -922,13 +926,44 @@ impl LanguageServerPool {
         tokio::spawn(async move {
             // Use spawn_blocking since LanguageServerConnection::spawn_with_notifications does blocking I/O
             let result = tokio::task::spawn_blocking(move || {
-                LanguageServerConnection::spawn_with_notifications(&config)
+                let spawn_result = LanguageServerConnection::spawn_with_notifications(&config);
+
+                // If spawn succeeded, also trigger initial indexing by opening an empty file
+                // This is where rust-analyzer sends most progress notifications
+                if let Some((mut conn, mut spawn_notifications)) = spawn_result {
+                    // Get the virtual file URI for the connection
+                    if let Some(virtual_uri) = conn.virtual_file_uri() {
+                        // Determine language_id from config
+                        let language_id = config
+                            .languages
+                            .first()
+                            .map(|s| s.as_str())
+                            .unwrap_or("rust");
+
+                        // Open an empty file to trigger indexing - this captures progress notifications
+                        if let Some(indexing_notifications) =
+                            conn.did_open_with_notifications(&virtual_uri, language_id, "")
+                        {
+                            spawn_notifications.extend(indexing_notifications);
+                        }
+                    }
+                    Some((conn, spawn_notifications))
+                } else {
+                    None
+                }
             })
             .await;
 
             match result {
                 Ok(Some((conn, notifications))) => {
                     connections.insert(key.clone(), (conn, Instant::now()));
+
+                    log::info!(
+                        target: "treesitter_ls::eager_spawn",
+                        "Background spawn completed for {} with {} notifications",
+                        key,
+                        notifications.len()
+                    );
 
                     // Send captured notifications through the channel
                     for notification in notifications {
@@ -941,12 +976,6 @@ impl LanguageServerPool {
                             break;
                         }
                     }
-
-                    log::info!(
-                        target: "treesitter_ls::eager_spawn",
-                        "Background spawn completed for {}",
-                        key
-                    );
                 }
                 Ok(None) => {
                     log::debug!(
