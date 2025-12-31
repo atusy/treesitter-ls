@@ -9,6 +9,7 @@ use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
+use std::sync::Arc;
 use std::time::Instant;
 use tower_lsp::lsp_types::*;
 
@@ -598,14 +599,14 @@ impl Drop for LanguageServerConnection {
 /// Previously named RustAnalyzerPool - now generalized for any language server configured
 /// via BridgeServerConfig.
 pub struct LanguageServerPool {
-    connections: DashMap<String, (LanguageServerConnection, Instant)>,
+    connections: Arc<DashMap<String, (LanguageServerConnection, Instant)>>,
 }
 
 impl LanguageServerPool {
     /// Create a new empty pool
     pub fn new() -> Self {
         Self {
-            connections: DashMap::new(),
+            connections: Arc::new(DashMap::new()),
         }
     }
 
@@ -642,6 +643,64 @@ impl LanguageServerPool {
     /// Check if the pool has a connection for the given key
     pub fn has_connection(&self, key: &str) -> bool {
         self.connections.contains_key(key)
+    }
+
+    /// Spawn a language server connection in the background without blocking.
+    ///
+    /// This is used for eager pre-warming of connections (e.g., when did_open
+    /// detects injection regions). The connection will be stored in the pool
+    /// once spawned, ready for subsequent requests.
+    ///
+    /// This is a no-op if a connection for this key already exists in the pool.
+    ///
+    /// # Arguments
+    /// * `key` - Unique key for this connection (typically server name)
+    /// * `config` - Configuration for spawning the connection
+    pub fn spawn_in_background(&self, key: &str, config: &BridgeServerConfig) {
+        // No-op if connection already exists
+        if self.has_connection(key) {
+            return;
+        }
+
+        // Clone data needed for the background task
+        let key = key.to_string();
+        let config = config.clone();
+
+        // We need a reference to self.connections for the background task
+        // Since DashMap is Send + Sync, we can clone the Arc reference
+        let connections = self.connections.clone();
+
+        tokio::spawn(async move {
+            // Use spawn_blocking since LanguageServerConnection::spawn does blocking I/O
+            let result =
+                tokio::task::spawn_blocking(move || LanguageServerConnection::spawn(&config)).await;
+
+            match result {
+                Ok(Some(conn)) => {
+                    connections.insert(key.clone(), (conn, Instant::now()));
+                    log::info!(
+                        target: "treesitter_ls::eager_spawn",
+                        "Background spawn completed for {}",
+                        key
+                    );
+                }
+                Ok(None) => {
+                    log::debug!(
+                        target: "treesitter_ls::eager_spawn",
+                        "Background spawn returned None for {}",
+                        key
+                    );
+                }
+                Err(e) => {
+                    log::warn!(
+                        target: "treesitter_ls::eager_spawn",
+                        "Background spawn failed for {}: {}",
+                        key,
+                        e
+                    );
+                }
+            }
+        });
     }
 }
 
@@ -1668,6 +1727,38 @@ fn main() {
             "goto_definition result: {:?}, hover result: {:?}",
             def_result.is_some(),
             hover_result.is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_in_background_method_exists_and_returns_immediately() {
+        use crate::config::settings::BridgeServerConfig;
+        use std::time::{Duration, Instant};
+
+        // Create a config that will work (if rust-analyzer is available)
+        // or use a non-existent command to test the non-blocking aspect
+        let config = BridgeServerConfig {
+            command: "nonexistent-server-for-testing-eager-spawn".to_string(),
+            args: None,
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        let pool = LanguageServerPool::new();
+
+        // spawn_in_background should return immediately (not block on spawn failure)
+        // If rust-analyzer were available, it would spawn in background
+        let start = Instant::now();
+        pool.spawn_in_background("test-key", &config);
+        let elapsed = start.elapsed();
+
+        // The call should return immediately (well under 100ms)
+        // Actual spawn happens asynchronously
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "spawn_in_background should return immediately, took {:?}",
+            elapsed
         );
     }
 }
