@@ -12,7 +12,8 @@
       "matchManagers": ["cargo"],
       "matchUpdateTypes": ["patch", "minor"],
       "groupName": "rust dependencies (non-major)",
-      "groupSlug": "rust-minor"
+      "groupSlug": "rust-minor",
+      "stabilityDays": 3
     }
   ]
 }
