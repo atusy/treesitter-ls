@@ -29,7 +29,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed: PBI-001 to PBI-122 | History: git log -- scrum.yaml, scrum.ts
+  // Completed: PBI-001 to PBI-123 | History: git log -- scrum.yaml, scrum.ts
   // Deferred: PBI-091 (idle cleanup), PBI-107 (WorkspaceType removal)
   product_backlog: [
     {
@@ -42,7 +42,7 @@ const scrum: ScrumDashboard = {
         { criterion: "Backwards compat: array format works", verification: "effective_bridge() handles both" },
         { criterion: "Documentation updated", verification: "README.md migration examples" },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-124",
@@ -66,66 +66,58 @@ const scrum: ScrumDashboard = {
   ],
 
   sprint: {
-    number: 109,
-    pbi_id: "PBI-122",
-    goal: "Add top-level languageServers field with bridge.servers deprecation",
+    number: 110,
+    pbi_id: "PBI-123",
+    goal: "Bridge per injection with '_' wildcard defaults",
     status: "done",
     subtasks: [
       {
-        test: "should_deserialize_language_servers_field: TreeSitterSettings accepts top-level languageServers HashMap",
-        implementation: "Add languageServers: Option<HashMap<String, BridgeServerConfig>> to TreeSitterSettings",
+        test: "should_deserialize_bridge_language_config: BridgeLanguageConfig with 'enabled' field deserializes",
+        implementation: "Create BridgeLanguageConfig struct with enabled: bool field",
         type: "behavioral",
         status: "completed",
-        commits: [{ hash: "6e51902", message: "feat(config): add languageServers field to TreeSitterSettings (PBI-122)", phase: "green" }],
-        notes: ["TDD Step 1: Add languageServers field to schema"],
+        commits: [{ hash: "5c1a1ea", message: "feat(config): add BridgeLanguageConfig struct", phase: "green" }],
+        notes: ["TDD Step 1: Create BridgeLanguageConfig type with 'enabled' field"],
       },
       {
-        test: "effective_language_servers_returns_language_servers_when_only_new: Returns languageServers when bridge.servers absent",
-        implementation: "Implement effective_language_servers() returning languageServers value",
+        test: "should_deserialize_bridge_map_with_underscore: bridge accepts map with '_' key",
+        implementation: "Create BridgeConfig type as HashMap<String, BridgeLanguageConfig> accepting '_' key",
         type: "behavioral",
         status: "completed",
-        commits: [{ hash: "af94da4", message: "feat(config): implement effective_language_servers() with merge logic (PBI-122)", phase: "green" }],
-        notes: ["TDD Step 2: New field only case"],
+        commits: [{ hash: "f59f67a", message: "feat(config): add BridgeConfig enum with Array|Map variants", phase: "green" }],
+        notes: ["TDD Step 2: Create new bridge map type that accepts '_' key"],
       },
       {
-        test: "effective_language_servers_returns_bridge_servers_when_only_old: Returns bridge.servers when languageServers absent",
-        implementation: "effective_language_servers() falls back to bridge.servers",
+        test: "effective_bridge_resolves_specific_over_default: rust config takes precedence over '_' default",
+        implementation: "Implement cascade resolution: specific language > '_' default",
         type: "behavioral",
         status: "completed",
-        commits: [{ hash: "af94da4", message: "feat(config): implement effective_language_servers() with merge logic (PBI-122)", phase: "green" }],
-        notes: ["TDD Step 3: Old field only case (backwards compat)"],
+        commits: [{ hash: "c92573a", message: "feat(config): implement cascade resolution for bridge config", phase: "green" }],
+        notes: ["TDD Step 3: Implement cascade resolution - specific > default ('_')"],
       },
       {
-        test: "effective_language_servers_merges_both_sources: Merges languageServers + bridge.servers, new wins on conflict",
-        implementation: "effective_language_servers() merges with languageServers taking precedence",
+        test: "effective_bridge_handles_array_format: array format ['rust', 'python'] still works",
+        implementation: "BridgeConfig enum supports both Array and Map; is_language_bridgeable() handles both",
         type: "behavioral",
         status: "completed",
-        commits: [{ hash: "af94da4", message: "feat(config): implement effective_language_servers() with merge logic (PBI-122)", phase: "green" }],
-        notes: ["TDD Step 4: Both fields present - merge with precedence"],
+        commits: [{ hash: "c92573a", message: "feat(config): implement cascade resolution for bridge config", phase: "green" }],
+        notes: ["TDD Step 4: Backwards compat already implemented via BridgeConfig enum"],
       },
       {
-        test: "uses_deprecated_bridge_servers_detects_old_field: Returns true when bridge.servers used without languageServers",
-        implementation: "Add uses_deprecated_bridge_servers() method to TreeSitterSettings",
+        test: "uses_deprecated_bridge_array_detects_old_format: Returns true when bridge is array",
+        implementation: "Add deprecation detection and log::warn for array format",
         type: "behavioral",
         status: "completed",
-        commits: [{ hash: "69a7af1", message: "feat(config): add deprecation detection for bridge.servers (PBI-122)", phase: "green" }],
-        notes: ["TDD Step 5: Deprecation detection"],
-      },
-      {
-        test: "log_deprecation_warnings_warns_bridge_servers: log::warn emitted for deprecated bridge.servers",
-        implementation: "Extend log_deprecation_warnings() to check uses_deprecated_bridge_servers()",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "69a7af1", message: "feat(config): add deprecation detection for bridge.servers (PBI-122)", phase: "green" }],
-        notes: ["TDD Step 6: Deprecation warning in logs"],
+        commits: [{ hash: "5ad8a28", message: "feat(config): add deprecation detection for bridge array format", phase: "green" }],
+        notes: ["TDD Step 5: Add deprecation warning for array format"],
       },
       {
         test: "N/A - Documentation update",
-        implementation: "Update README.md with Before/After examples showing languageServers migration",
+        implementation: "Update README.md with bridge map format and migration examples",
         type: "behavioral",
         status: "completed",
-        commits: [{ hash: "a64a354", message: "docs(config): document languageServers with migration guide (PBI-122)", phase: "green" }],
-        notes: ["Documentation: Before (bridge.servers) / After (languageServers)"],
+        commits: [{ hash: "dc02fb7", message: "docs(config): document bridge map format with migration guide", phase: "green" }],
+        notes: ["TDD Step 6: Update documentation with Before/After examples"],
       },
     ],
   },
@@ -138,9 +130,10 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // History: git log -- scrum.yaml, scrum.ts | Completed PBIs: 001-122 (PBI-122 completed Sprint 109)
-  // Sprint 109: PBI-122 (languageServers top-level config) - DONE
+  // History: git log -- scrum.yaml, scrum.ts | Completed PBIs: 001-123 (PBI-123 completed Sprint 110)
+  // Sprint 110: PBI-123 (bridge per injection with '_' wildcard defaults) - DONE
   completed: [
+    { number: 110, pbi_id: "PBI-123", goal: "Bridge per injection with '_' wildcard defaults", status: "done", subtasks: [] },
     { number: 109, pbi_id: "PBI-122", goal: "Add top-level languageServers field with bridge.servers deprecation", status: "done", subtasks: [] },
     { number: 108, pbi_id: "PBI-121", goal: "Extract selection_range/signature_help to modules (PBI-121 DONE)", status: "done", subtasks: [] },
     { number: 107, pbi_id: "PBI-121", goal: "Extract code_action to code_action.rs", status: "done", subtasks: [] },
@@ -154,6 +147,12 @@ const scrum: ScrumDashboard = {
     // Sprints 1-99: See git log -- scrum.yaml, scrum.ts
   ],
   retrospectives: [
+    {
+      sprint: 110,
+      improvements: [
+        { action: "Strict TDD (6 cycles) delivered BridgeConfig enum with backwards compat + deprecation path", timing: "immediate", status: "completed", outcome: "PBI-123 done: bridge map with '_' wildcard, cascade resolution, deprecation warning for array format" },
+      ],
+    },
     {
       sprint: 109,
       improvements: [
