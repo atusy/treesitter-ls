@@ -109,13 +109,15 @@ fn setup_generic_workspace(temp_dir: &Path, extension: &str) -> Option<PathBuf> 
 
 /// Set up workspace files with optional workspace type.
 ///
-/// If workspace_type is None, defaults to Cargo for backward compatibility.
+/// If workspace_type is None, defaults to Generic. Bridge servers should
+/// explicitly specify workspace_type in their configuration if they need
+/// a specific workspace structure (e.g., Cargo for rust-analyzer).
 pub fn setup_workspace_with_option(
     temp_dir: &Path,
     workspace_type: Option<WorkspaceType>,
     extension: &str,
 ) -> Option<PathBuf> {
-    let effective_type = workspace_type.unwrap_or(WorkspaceType::Cargo);
+    let effective_type = workspace_type.unwrap_or(WorkspaceType::Generic);
     setup_workspace(temp_dir, effective_type, extension)
 }
 
@@ -1532,28 +1534,41 @@ mod tests {
     }
 
     #[test]
-    fn setup_cargo_workspace_none_defaults_to_cargo() {
+    fn setup_workspace_with_option_none_defaults_to_generic() {
         use tempfile::tempdir;
 
         let temp = tempdir().unwrap();
         let temp_path = temp.path().to_path_buf();
 
-        // Call setup_workspace with None (should default to Cargo behavior)
+        // Call setup_workspace with None (should default to Generic behavior)
         let result = setup_workspace_with_option(&temp_path, None, "rs");
         assert!(result.is_some(), "setup_workspace should succeed");
 
-        // Verify Cargo.toml was created
-        let cargo_toml = temp_path.join("Cargo.toml");
+        let virtual_file = result.unwrap();
+
+        // Verify virtual.rs was created (Generic workspace)
+        let expected_virtual_file = temp_path.join("virtual.rs");
+        assert_eq!(
+            virtual_file, expected_virtual_file,
+            "virtual_file should be virtual.rs for None workspace_type (Generic default)"
+        );
         assert!(
-            cargo_toml.exists(),
-            "Cargo.toml should exist for None workspace_type"
+            expected_virtual_file.exists(),
+            "virtual.rs should exist for None workspace_type"
         );
 
-        // Verify src/main.rs was created
-        let main_rs = temp_path.join("src").join("main.rs");
+        // Verify NO Cargo.toml was created (no longer defaults to Cargo)
+        let cargo_toml = temp_path.join("Cargo.toml");
         assert!(
-            main_rs.exists(),
-            "src/main.rs should exist for None workspace_type"
+            !cargo_toml.exists(),
+            "Cargo.toml should NOT exist for None workspace_type (Generic default)"
+        );
+
+        // Verify NO src/ directory was created
+        let src_dir = temp_path.join("src");
+        assert!(
+            !src_dir.exists(),
+            "src/ directory should NOT exist for None workspace_type (Generic default)"
         );
     }
 
