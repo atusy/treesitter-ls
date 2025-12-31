@@ -194,13 +194,47 @@ const scrum: ScrumDashboard = {
       ],
       status: "done",
     },
-    // Draft PBIs (refine to ready before sprint): PBI-116 formatting
+    {
+      id: "PBI-116",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "format Rust code blocks via bridge",
+        benefit:
+          "I can keep my code blocks consistently formatted without leaving Markdown",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "src/lsp/bridge/formatting.rs exists with FormattingWithNotifications type",
+          verification:
+            "grep 'FormattingWithNotifications' src/lsp/bridge/formatting.rs returns matches",
+        },
+        {
+          criterion:
+            "LanguageServerConnection has formatting_with_notifications method",
+          verification:
+            "cargo test formatting --lib passes (unit test in connection.rs)",
+        },
+        {
+          criterion:
+            "textDocument/formatting requests format all injection regions",
+          verification: "make test_nvim_file FILE=tests/test_lsp_formatting.lua passes",
+        },
+        {
+          criterion:
+            "TextEdit ranges adjusted to host document positions",
+          verification:
+            "E2E test verifies formatting edit ranges are in Markdown line numbers",
+        },
+      ],
+      status: "done",
+    },
   ],
 
   sprint: {
-    number: 92,
-    pbi_id: "PBI-115",
-    goal: "Bridge textDocument/codeAction for injection regions",
+    number: 93,
+    pbi_id: "PBI-116",
+    goal: "Bridge textDocument/formatting for injection regions",
     status: "done",
     subtasks: [],
   },
@@ -216,16 +250,16 @@ const scrum: ScrumDashboard = {
   // Historical sprints (recent 2) | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   completed: [
     {
-      number: 92,
-      pbi_id: "PBI-115",
-      goal: "Bridge textDocument/codeAction for injection regions",
+      number: 93,
+      pbi_id: "PBI-116",
+      goal: "Bridge textDocument/formatting for injection regions",
       status: "done",
       subtasks: [],
     },
     {
-      number: 91,
-      pbi_id: "PBI-114",
-      goal: "Bridge textDocument/rename for injection regions",
+      number: 92,
+      pbi_id: "PBI-115",
+      goal: "Bridge textDocument/codeAction for injection regions",
       status: "done",
       subtasks: [],
     },
@@ -233,6 +267,19 @@ const scrum: ScrumDashboard = {
 
   // Recent 2 retrospectives | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    {
+      sprint: 93,
+      improvements: [
+        {
+          action:
+            "Formatting bridging uses Obvious Implementation - formats all injection regions with TextEdit translation",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "Formatting bridging completed by iterating all injection regions and translating TextEdit ranges to host document coordinates",
+        },
+      ],
+    },
     {
       sprint: 92,
       improvements: [
@@ -243,19 +290,6 @@ const scrum: ScrumDashboard = {
           status: "completed",
           outcome:
             "CodeAction bridging completed by reusing WorkspaceEdit translation pattern with additional Diagnostic range translation",
-        },
-      ],
-    },
-    {
-      sprint: 91,
-      improvements: [
-        {
-          action:
-            "Rename bridging follows same pattern with WorkspaceEdit translation - continue Obvious Implementation",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "Rename bridging completed by reusing established pattern with TextEdit range translation for both changes and document_changes",
         },
       ],
     },
