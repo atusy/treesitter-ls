@@ -1761,4 +1761,83 @@ fn main() {
             elapsed
         );
     }
+
+    #[tokio::test]
+    async fn spawn_in_background_stores_connection_in_pool_after_spawn() {
+        use crate::config::settings::BridgeServerConfig;
+
+        if !check_rust_analyzer_available() {
+            return;
+        }
+
+        let config = BridgeServerConfig {
+            command: "rust-analyzer".to_string(),
+            args: None,
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        let pool = LanguageServerPool::new();
+
+        // Initially no connection
+        assert!(
+            !pool.has_connection("rust-analyzer"),
+            "Pool should be empty initially"
+        );
+
+        // Trigger background spawn
+        pool.spawn_in_background("rust-analyzer", &config);
+
+        // Wait for background spawn to complete
+        // rust-analyzer initialization typically takes a few seconds
+        for _ in 0..50 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            if pool.has_connection("rust-analyzer") {
+                break;
+            }
+        }
+
+        // After waiting, connection should be in pool
+        assert!(
+            pool.has_connection("rust-analyzer"),
+            "Connection should be in pool after background spawn"
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_in_background_is_noop_if_connection_exists() {
+        use crate::config::settings::BridgeServerConfig;
+
+        if !check_rust_analyzer_available() {
+            return;
+        }
+
+        let config = BridgeServerConfig {
+            command: "rust-analyzer".to_string(),
+            args: None,
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        let pool = LanguageServerPool::new();
+
+        // First, get a connection via take_connection (synchronous spawn)
+        let conn = pool.take_connection("rust-analyzer", &config);
+        assert!(conn.is_some(), "Should spawn connection");
+
+        // Return it to the pool
+        pool.return_connection("rust-analyzer", conn.unwrap());
+        assert!(pool.has_connection("rust-analyzer"));
+
+        // Now call spawn_in_background - should be a no-op since connection exists
+        pool.spawn_in_background("rust-analyzer", &config);
+
+        // Connection should still be in pool (not removed or modified)
+        assert!(
+            pool.has_connection("rust-analyzer"),
+            "Connection should still be in pool after no-op spawn_in_background"
+        );
+    }
 }
