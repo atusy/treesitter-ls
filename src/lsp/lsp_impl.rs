@@ -1255,6 +1255,12 @@ impl LanguageServer for TreeSitterLs {
                 document_formatting_provider: Some(OneOf::Left(true)),
                 inlay_hint_provider: Some(OneOf::Left(true)),
                 call_hierarchy_provider: Some(CallHierarchyServerCapability::Simple(true)),
+                // type_hierarchy_provider is not in lsp-types 0.94.1 ServerCapabilities struct,
+                // but we can advertise it via experimental field. The tower-lsp LanguageServer
+                // trait does have the methods (prepare_type_hierarchy, supertypes, subtypes).
+                experimental: Some(serde_json::json!({
+                    "typeHierarchyProvider": true
+                })),
                 ..ServerCapabilities::default()
             },
         })
@@ -1635,6 +1641,27 @@ impl LanguageServer for TreeSitterLs {
         params: CallHierarchyOutgoingCallsParams,
     ) -> Result<Option<Vec<CallHierarchyOutgoingCall>>> {
         self.outgoing_calls_impl(params).await
+    }
+
+    async fn prepare_type_hierarchy(
+        &self,
+        params: TypeHierarchyPrepareParams,
+    ) -> Result<Option<Vec<TypeHierarchyItem>>> {
+        self.prepare_type_hierarchy_impl(params).await
+    }
+
+    async fn supertypes(
+        &self,
+        params: TypeHierarchySupertypesParams,
+    ) -> Result<Option<Vec<TypeHierarchyItem>>> {
+        self.supertypes_impl(params).await
+    }
+
+    async fn subtypes(
+        &self,
+        params: TypeHierarchySubtypesParams,
+    ) -> Result<Option<Vec<TypeHierarchyItem>>> {
+        self.subtypes_impl(params).await
     }
 }
 

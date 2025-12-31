@@ -21,7 +21,8 @@ pub use text_document::{
     FormattingWithNotifications, GotoDefinitionWithNotifications, HoverWithNotifications,
     ImplementationWithNotifications, IncomingCallsWithNotifications, InlayHintWithNotifications,
     OutgoingCallsWithNotifications, PrepareCallHierarchyWithNotifications,
-    ReferencesWithNotifications, RenameWithNotifications, SignatureHelpWithNotifications,
+    PrepareTypeHierarchyWithNotifications, ReferencesWithNotifications, RenameWithNotifications,
+    SignatureHelpWithNotifications, SubtypesWithNotifications, SupertypesWithNotifications,
     TypeDefinitionWithNotifications,
 };
 pub use workspace::{setup_workspace, setup_workspace_with_option};
