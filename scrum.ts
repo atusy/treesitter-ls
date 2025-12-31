@@ -29,112 +29,13 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-123 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-124 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
-  // PBI-120: Done in e600402 - bridge filter map with enabled flag (docs in docs/README.md)
-  // PBI-122/123: Done - typeDefinition (Sprint 99), implementation (Sprint 100) bridges
-  product_backlog: [
-    {
-      id: "PBI-123",
-      story: {
-        role: "Rustacean editing Markdown",
-        capability: "use textDocument/implementation in Rust code blocks to find trait implementations",
-        benefit: "I can navigate from trait methods to their concrete implementations in documentation",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "implementation request in injection region bridges to language server",
-          verification: "E2E test: cursor on trait method, implementation shows impl blocks",
-        },
-        {
-          criterion: "Response positions translated from virtual to host document coordinates",
-          verification: "E2E test: implementation locations are within the Markdown code block",
-        },
-        {
-          criterion: "ServerCapabilities advertises implementationProvider",
-          verification: "Unit test: initialize response includes implementationProvider: true",
-        },
-      ],
-      status: "done",
-    },
-    {
-      id: "PBI-124",
-      story: {
-        role: "documentation author with Rust code blocks",
-        capability: "see all occurrences of a symbol highlighted when cursor is on it",
-        benefit: "I can quickly see where a variable or function is used within the code block",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "documentHighlight request in injection region bridges to language server",
-          verification: "E2E test: cursor on identifier, all occurrences highlighted",
-        },
-        {
-          criterion: "Response positions translated from virtual to host document coordinates",
-          verification: "E2E test: highlight ranges are within the Markdown code block",
-        },
-        {
-          criterion: "ServerCapabilities advertises documentHighlightProvider",
-          verification: "Unit test: initialize response includes documentHighlightProvider: true",
-        },
-        {
-          criterion: "Highlight kinds (Read/Write/Text) preserved from language server response",
-          verification: "Unit test: DocumentHighlight kind field passed through correctly",
-        },
-      ],
-      status: "done",
-    },
-  ],
+  // PBI-120-124: Done - bridge features (typeDefinition, implementation, documentHighlight)
+  product_backlog: [],
 
-  sprint: {
-    number: 101,
-    pbi_id: "PBI-124",
-    goal: "Add textDocument/documentHighlight bridge support",
-    status: "done",
-    subtasks: [
-      {
-        test: "DocumentHighlightWithNotifications struct exists with response and notifications fields",
-        implementation: "Create src/lsp/bridge/document_highlight.rs with struct definition",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Response type is Option<Vec<DocumentHighlight>> (not GotoDefinitionResponse)", "DocumentHighlight has range and kind fields"],
-      },
-      {
-        test: "document_highlight_with_notifications method sends request and returns response",
-        implementation: "Add method to connection.rs following pattern from implementation_with_notifications",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Translate each highlight.range, preserve kind field (Read/Write/Text)"],
-      },
-      {
-        test: "document_highlight_impl bridges request to language server for injection regions",
-        implementation: "Create src/lsp/lsp_impl/text_document/document_highlight.rs",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Map each DocumentHighlight.range back to host coordinates"],
-      },
-      {
-        test: "ServerCapabilities includes documentHighlightProvider: true",
-        implementation: "Update mod.rs files and add capability",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: [],
-      },
-      {
-        test: "E2E test verifies cursor on identifier highlights all occurrences",
-        implementation: "Create tests/test_lsp_document_highlight.lua",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Test variable usage: let x = 1; let y = x + 2;"],
-      },
-    ],
-  },
+  sprint: null, // Sprint 101 (PBI-124) completed - documentHighlight bridge
 
   definition_of_done: {
     checks: [
@@ -146,8 +47,8 @@ const scrum: ScrumDashboard = {
 
   // Historical sprints (recent 2) | Sprint 1-98: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 101, pbi_id: "PBI-124", goal: "Add textDocument/documentHighlight bridge support", status: "done", subtasks: [] },
     { number: 100, pbi_id: "PBI-123", goal: "Add textDocument/implementation bridge support", status: "done", subtasks: [] },
-    { number: 99, pbi_id: "PBI-122", goal: "Add textDocument/typeDefinition bridge support", status: "done", subtasks: [] },
   ],
 
   // Recent 2 retrospectives | Sprint 1-98: modular refactoring pattern, E2E indexing waits
