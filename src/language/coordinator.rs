@@ -447,7 +447,11 @@ impl LanguageCoordinator {
     /// a tree-sitter Language in the registry. Useful for unit tests
     /// that need to test with specific language parsers.
     #[cfg(test)]
-    pub(crate) fn register_language_for_test(&self, language_id: &str, language: tree_sitter::Language) {
+    pub(crate) fn register_language_for_test(
+        &self,
+        language_id: &str,
+        language: tree_sitter::Language,
+    ) {
         self.language_registry
             .register_unchecked(language_id.to_string(), language);
     }
@@ -458,7 +462,11 @@ impl LanguageCoordinator {
     /// an injection query in the query store. Useful for unit tests
     /// that need to test nested injection scenarios.
     #[cfg(test)]
-    pub(crate) fn register_injection_query_for_test(&self, language_id: &str, query: tree_sitter::Query) {
+    pub(crate) fn register_injection_query_for_test(
+        &self,
+        language_id: &str,
+        query: tree_sitter::Query,
+    ) {
         self.query_store
             .insert_injection_query(language_id.to_string(), Arc::new(query));
     }

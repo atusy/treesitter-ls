@@ -284,7 +284,10 @@ mod tests {
 
                 // Verify cache was written (read returns Some if cache exists and is fresh)
                 let cache = MetadataCache::with_default_ttl(temp.path());
-                assert!(cache.read().is_some(), "Cache file should exist after fetch");
+                assert!(
+                    cache.read().is_some(),
+                    "Cache file should exist after fetch"
+                );
             }
             Err(MetadataError::HttpError(_)) => {
                 // Network unavailable - that's acceptable in tests

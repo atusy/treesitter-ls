@@ -9,6 +9,7 @@ mod connection;
 mod definition;
 mod hover;
 mod pool;
+mod signature_help;
 mod workspace;
 
 // Re-export public types and functions
@@ -21,4 +22,5 @@ pub use connection::{ConnectionInfo, LanguageServerConnection, ResponseWithNotif
 pub use definition::GotoDefinitionWithNotifications;
 pub use hover::HoverWithNotifications;
 pub use pool::LanguageServerPool;
+pub use signature_help::SignatureHelpWithNotifications;
 pub use workspace::{setup_workspace, setup_workspace_with_option};

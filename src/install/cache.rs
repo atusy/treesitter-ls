@@ -71,7 +71,6 @@ impl MetadataCache {
 
         Ok(())
     }
-
 }
 
 #[cfg(test)]
