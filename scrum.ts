@@ -89,11 +89,52 @@ const scrum: ScrumDashboard = {
       ],
       status: "done",
     },
-    // Draft PBIs (refine to ready before sprint): PBI-113 references,
-    // PBI-114 rename, PBI-115 codeAction, PBI-116 formatting
+    {
+      id: "PBI-113",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "find all references for symbols in Rust code blocks via bridge",
+        benefit:
+          "I can navigate and understand code usage without leaving Markdown",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "src/lsp/bridge/references.rs exists with ReferencesWithNotifications type",
+          verification:
+            "grep 'ReferencesWithNotifications' src/lsp/bridge/references.rs returns matches",
+        },
+        {
+          criterion:
+            "LanguageServerConnection has references_with_notifications method",
+          verification:
+            "cargo test references --lib passes (unit test in connection.rs)",
+        },
+        {
+          criterion:
+            "textDocument/references requests in injection regions are bridged",
+          verification: "make test_nvim_file FILE=tests/test_lsp_references.lua passes",
+        },
+        {
+          criterion:
+            "Reference locations have ranges adjusted to host document positions",
+          verification:
+            "E2E test verifies reference ranges are in Markdown line numbers",
+        },
+      ],
+      status: "done",
+    },
+    // Draft PBIs (refine to ready before sprint): PBI-114 rename,
+    // PBI-115 codeAction, PBI-116 formatting
   ],
 
-  sprint: null,
+  sprint: {
+    number: 90,
+    pbi_id: "PBI-113",
+    goal: "Bridge textDocument/references for injection regions",
+    status: "done",
+    subtasks: [],
+  },
 
   definition_of_done: {
     checks: [
@@ -106,16 +147,16 @@ const scrum: ScrumDashboard = {
   // Historical sprints (recent 2) | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   completed: [
     {
-      number: 89,
-      pbi_id: "PBI-112",
-      goal: "Bridge textDocument/signatureHelp for injection regions",
+      number: 90,
+      pbi_id: "PBI-113",
+      goal: "Bridge textDocument/references for injection regions",
       status: "done",
       subtasks: [],
     },
     {
-      number: 88,
-      pbi_id: "PBI-111",
-      goal: "Bridge textDocument/completion for injection regions",
+      number: 89,
+      pbi_id: "PBI-112",
+      goal: "Bridge textDocument/signatureHelp for injection regions",
       status: "done",
       subtasks: [],
     },
@@ -123,6 +164,19 @@ const scrum: ScrumDashboard = {
 
   // Recent 2 retrospectives | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    {
+      sprint: 90,
+      improvements: [
+        {
+          action:
+            "References bridging follows same pattern as signatureHelp/completion - continue using Obvious Implementation",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "References bridging completed efficiently by reusing established bridging pattern with Location range translation",
+        },
+      ],
+    },
     {
       sprint: 89,
       improvements: [
@@ -133,19 +187,6 @@ const scrum: ScrumDashboard = {
           status: "completed",
           outcome:
             "SignatureHelp bridging completed in single sprint by following completion bridging pattern exactly",
-        },
-      ],
-    },
-    {
-      sprint: 88,
-      improvements: [
-        {
-          action:
-            "Follow hover bridging pattern closely for new bridged features - reduces implementation time",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "Completion bridging implementation reused hover pattern for position translation and notification forwarding",
         },
       ],
     },
