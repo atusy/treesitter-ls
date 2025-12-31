@@ -7,6 +7,7 @@ mod declaration;
 mod definition;
 mod document_highlight;
 mod document_link;
+mod folding_range;
 mod formatting;
 mod hover;
 mod implementation;
