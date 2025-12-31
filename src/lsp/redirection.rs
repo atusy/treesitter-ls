@@ -1840,4 +1840,63 @@ fn main() {
             "Connection should still be in pool after no-op spawn_in_background"
         );
     }
+
+    #[tokio::test]
+    async fn take_connection_reuses_prewarmed_connection_from_pool() {
+        use crate::config::settings::BridgeServerConfig;
+        use std::time::{Duration, Instant};
+
+        if !check_rust_analyzer_available() {
+            return;
+        }
+
+        let config = BridgeServerConfig {
+            command: "rust-analyzer".to_string(),
+            args: None,
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        let pool = LanguageServerPool::new();
+
+        // Pre-warm the connection using spawn_in_background
+        pool.spawn_in_background("rust-analyzer", &config);
+
+        // Wait for background spawn to complete
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if pool.has_connection("rust-analyzer") {
+                break;
+            }
+        }
+
+        // Verify connection is pre-warmed
+        assert!(
+            pool.has_connection("rust-analyzer"),
+            "Connection should be pre-warmed in pool"
+        );
+
+        // Now take_connection should return immediately (reusing pooled connection)
+        // instead of spawning a new one (which takes seconds)
+        let start = Instant::now();
+        let conn = pool.take_connection("rust-analyzer", &config);
+        let elapsed = start.elapsed();
+
+        assert!(conn.is_some(), "Should get connection from pool");
+
+        // Taking from pool should be nearly instant (under 50ms)
+        // Spawning a new connection typically takes 1-5 seconds
+        assert!(
+            elapsed < Duration::from_millis(50),
+            "take_connection should be fast when reusing pooled connection, took {:?}",
+            elapsed
+        );
+
+        // Pool should now be empty (connection was taken)
+        assert!(
+            !pool.has_connection("rust-analyzer"),
+            "Pool should be empty after take_connection"
+        );
+    }
 }
