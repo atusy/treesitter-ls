@@ -16,7 +16,7 @@ const scrum: ScrumDashboard = {
       {
         metric: "Bridge coverage",
         target:
-          "Support completion, signatureHelp, references, rename, codeAction, formatting, typeDefinition, implementation, documentHighlight, declaration, inlayHint, callHierarchy, typeHierarchy",
+          "Support completion, signatureHelp, references, rename, codeAction, formatting, typeDefinition, implementation, documentHighlight, declaration, inlayHint, callHierarchy, typeHierarchy, documentLink, foldingRange",
       },
       {
         metric: "Modular architecture",
@@ -173,9 +173,69 @@ const scrum: ScrumDashboard = {
       ],
       status: "done",
     },
+    {
+      id: "PBI-130",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "see and follow hyperlinks in embedded Rust code blocks",
+        benefit: "I can navigate to URLs and external resources referenced in code comments or doc strings",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "textDocument/documentLink bridge implemented",
+          verification: "src/lsp/bridge/text_document/document_link.rs exists with DocumentLinkWithNotifications type",
+        },
+        {
+          criterion: "DocumentLink request forwarded to bridged language server",
+          verification: "LanguageServerConnection has document_link_with_notifications method",
+        },
+        {
+          criterion: "DocumentLink positions correctly translated between injection and host coordinates",
+          verification: "Links appear at correct positions within Markdown code blocks",
+        },
+        {
+          criterion: "E2E test verifies document links work in injection regions",
+          verification: "test_lsp_document_link.lua passes showing links in Rust code block",
+        },
+      ],
+      status: "done",
+    },
+    {
+      id: "PBI-131",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "fold code regions in embedded Rust code blocks",
+        benefit: "I can collapse function bodies and blocks to focus on code structure while documenting",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "textDocument/foldingRange bridge implemented",
+          verification: "src/lsp/bridge/text_document/folding_range.rs exists with FoldingRangeWithNotifications type",
+        },
+        {
+          criterion: "FoldingRange request forwarded to bridged language server",
+          verification: "LanguageServerConnection has folding_range_with_notifications method",
+        },
+        {
+          criterion: "FoldingRange positions correctly translated between injection and host coordinates",
+          verification: "Folding ranges have correct line numbers within Markdown code blocks",
+        },
+        {
+          criterion: "E2E test verifies folding ranges work in injection regions",
+          verification: "test_lsp_folding_range.lua passes showing foldable regions in Rust code block",
+        },
+      ],
+      status: "ready",
+    },
   ],
 
-  sprint: null, // Sprint 106 (PBI-129) completed - typeHierarchy bridge (3 methods)
+  sprint: {
+    number: 108,
+    pbi_id: "PBI-131",
+    goal: "Add textDocument/foldingRange bridge support",
+    status: "planning",
+    subtasks: [],
+  },
 
   definition_of_done: {
     checks: [
@@ -187,24 +247,24 @@ const scrum: ScrumDashboard = {
 
   // Historical sprints (recent 2) | Sprint 1-100: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 107, pbi_id: "PBI-130", goal: "Add textDocument/documentLink bridge support", status: "done", subtasks: [] },
     { number: 106, pbi_id: "PBI-129", goal: "Add typeHierarchy bridge (prepareTypeHierarchy, supertypes, subtypes)", status: "done", subtasks: [] },
-    { number: 105, pbi_id: "PBI-128", goal: "Add callHierarchy bridge (prepareCallHierarchy, incomingCalls, outgoingCalls)", status: "done", subtasks: [] },
   ],
 
   // Recent 2 retrospectives | Sprint 1-99: modular refactoring pattern, E2E indexing waits
   retrospectives: [
     {
+      sprint: 107,
+      improvements: [
+        { action: "DocumentLink follows simple Vec<DocumentLink> response pattern similar to DocumentHighlight. Range field needs virtual-to-host translation", timing: "immediate", status: "completed", outcome: "Sprint 107 completed; simple single-method bridge" },
+        { action: "rust-analyzer may not return document links for URLs in comments - E2E test verifies request completes without error", timing: "immediate", status: "completed", outcome: "E2E test handles empty results gracefully" },
+      ],
+    },
+    {
       sprint: 106,
       improvements: [
         { action: "TypeHierarchy follows same pattern as CallHierarchy: 3 methods (prepare, supertypes, subtypes). TypeHierarchyItem has same fields as CallHierarchyItem", timing: "immediate", status: "completed", outcome: "Sprint 106 completed; reused callHierarchy pattern for fast implementation" },
         { action: "TypeHierarchyItem.data field has same opaque state issue as CallHierarchyItem - supertypes/subtypes may return empty results", timing: "immediate", status: "completed", outcome: "E2E test covers prepareTypeHierarchy only; documented limitation" },
-      ],
-    },
-    {
-      sprint: 105,
-      improvements: [
-        { action: "CallHierarchy has 3 methods: prepareCallHierarchy returns CallHierarchyItem[], then incomingCalls/outgoingCalls use those items. CallHierarchyItem has uri, range, selectionRange, data fields", timing: "immediate", status: "completed", outcome: "Sprint 105 completed; all 3 methods bridged with coordinate translation" },
-        { action: "CallHierarchyItem.data field contains opaque language server state. For rust-analyzer, this internal state references original virtual URI. When URI is translated, the data still references virtual file causing incomingCalls/outgoingCalls to return empty results", timing: "immediate", status: "completed", outcome: "E2E test covers prepareCallHierarchy only; documented limitation for incomingCalls/outgoingCalls" },
       ],
     },
   ],
