@@ -95,7 +95,7 @@ const scrum: ScrumDashboard = {
         implementation:
           "Remove lines 454-463 in lsp_impl.rs that provide hardcoded rust-analyzer fallback",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
         notes: [
           "After removing fallback, bridge config is purely user-driven",
