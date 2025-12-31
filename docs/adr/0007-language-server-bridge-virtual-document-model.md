@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Proposed (separate mode implemented; merged mode deferred)
 
 ## Context
 
@@ -58,32 +58,32 @@ The appropriate mode depends on **both** the host document and the injection lan
 | Org-mode | Python | Literate programming (`:tangle`) | merged |
 | `.lhs` | Haskell | Literate Haskell | merged |
 
-The same injection language (e.g., Python) may need different modes in different host contexts. Configuration should allow specifying mode per `(host, injection)` pair:
+The same injection language (e.g., Python) may need different modes in different host contexts.
+
+**Note**: The current implementation only supports **separate mode**. Merged mode is deferred for future implementation. When merged mode is added, configuration could allow specifying mode per `(host, injection)` pair:
 
 ```json
 {
-  "treesitter-ls": {
-    "injectionMode": {
-      "_": { "_": "separate" },
-      "markdown": { "python": "separate", "rust": "separate" },
-      "org": { "python": "merged" }
-    }
+  "languages": {
+    "_": { "bridge": { "_": { "enabled": true, "mode": "separate"  } } }, // this is programmed default
+    "markdown": {...},
+    "org": {...}
   }
 }
 ```
 
-The `_` wildcard matches any host or injection language, enabling layered defaults:
+The `_` wildcard would match any host or injection language, enabling layered defaults:
 
-| Pattern | Meaning |
-|---------|---------|
-| `"_": { "_": "separate" }` | Global default for all pairs |
-| `"_": { "haskell": "merged" }` | Default for Haskell in any host |
-| `"org": { "_": "merged" }` | Default for any injection in org-mode |
-| `"org": { "python": "merged" }` | Specific (host, injection) pair |
+| Host | Bridge Config | Meaning |
+|------|---------------|---------|
+| `"_"` | `{ "_": { "mode": "separate" } }` | Global default for all pairs |
+| `"_"` | `{ "haskell": { "mode": "merged" } }` | Default for Haskell in any host |
+| `"org"` | `{ "_": { "mode": "merged" } }` | Default for any injection in org-mode |
+| `"org"` | `{ "python": { "mode": "merged" } }` | Specific (host, injection) pair |
 
 Precedence: **specific pair > host default > injection default > global default**
 
-Note: `injectionMode` is configured per **host/injection pair**, not per server. The same server handles both modes—only the virtual document structure differs.
+Note: The `mode` field would be configured per **host/injection pair** within the `bridge` map, not per server. The same server handles both modes—only the virtual document structure differs.
 
 | Mode | Use Case | Behavior |
 |------|----------|----------|
@@ -182,16 +182,17 @@ One language server process handles **all virtual documents** for that language,
 
 ## Implementation Phases
 
-### Phase 1: Separate Mode Only (Done)
-- Virtual document creation and lifecycle
-- Materialization for rust-analyzer
-- Server process sharing
+### Phase 1: Separate Mode Only (Complete)
+- [x] Virtual document creation and lifecycle
+- [x] Materialization for rust-analyzer (`workspaceType: "cargo"`)
+- [x] Server process sharing
+- [x] Per-host bridge filtering via `languages.*.bridge` map
 
 ### Phase 2: Merged Mode (Future)
-- `injectionMode: "merged"` configuration option
-- Concatenation of same-language injections into single virtual document
-- Placeholder line insertion for line number preservation
-- Conflict detection and reporting
+- [ ] `injectionMode: "merged"` configuration option
+- [ ] Concatenation of same-language injections into single virtual document
+- [ ] Placeholder line insertion for line number preservation
+- [ ] Conflict detection and reporting
 
 ## Related Decisions
 

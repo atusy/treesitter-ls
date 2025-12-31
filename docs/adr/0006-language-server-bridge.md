@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (PoC validates core concepts; architecture under refinement)
+Proposed (Phase 1 complete: infrastructure with go-to-definition working)
 
 ## Context
 
@@ -149,27 +149,26 @@ Spawning can piggyback on these existing code paths.
 
 ### Server Registry and Configuration
 
-The bridge requires knowing which server to use for each language:
+The bridge requires knowing which server to use for each language. Language servers are configured at the root level of `initializationOptions` under `languageServers`:
 
 ```json
 {
-  "bridge": {
-    "servers": {
-      "rust-analyzer": {
-        "cmd": ["rust-analyzer"],
-        "languages": ["rust"],
-        "initializationOptions": {
-          "linkedProjects": ["~/.config/treesitter-ls/rust-project.json"]
-        }
-      },
-      "pyright": {
-        "cmd": ["pyright-langserver", "--stdio"],
-        "languages": ["python"]
-      },
-      "gopls": {
-        "cmd": ["gopls"],
-        "languages": ["go"]
+  "languageServers": {
+    "rust-analyzer": {
+      "cmd": ["rust-analyzer"],
+      "languages": ["rust"],
+      "workspaceType": "cargo",
+      "initializationOptions": {
+        "linkedProjects": ["~/.config/treesitter-ls/rust-project.json"]
       }
+    },
+    "pyright": {
+      "cmd": ["pyright-langserver", "--stdio"],
+      "languages": ["python"]
+    },
+    "gopls": {
+      "cmd": ["gopls"],
+      "languages": ["go"]
     }
   }
 }
@@ -177,30 +176,41 @@ The bridge requires knowing which server to use for each language:
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `servers` | Yes | Server configurations keyed by server name |
-| `servers.*.cmd` | Yes | Command array: first element is program, rest are arguments |
-| `servers.*.languages` | Yes | Languages this server handles |
-| `servers.*.initializationOptions` | No | Passed to server's `initialize` request |
-| `servers.*.workspaceType` | No | **Deprecated**: "cargo" creates Cargo.toml scaffolding. Will be removed in future; use `initializationOptions.linkedProjects` instead |
+| `languageServers` | Yes | Server configurations keyed by server name (at root level) |
+| `languageServers.*.cmd` | Yes | Command array: first element is program, rest are arguments |
+| `languageServers.*.languages` | Yes | Languages this server handles |
+| `languageServers.*.initializationOptions` | No | Passed to server's `initialize` request |
+| `languageServers.*.workspaceType` | No | `"cargo"` creates Cargo.toml scaffolding for rust-analyzer; `"generic"` (default) creates only the source file |
 
 #### Per-Host Language Bridge Configuration
 
-The `languages` section can specify which injection languages to bridge for each host filetype:
+The `languages` section can specify which injection languages to bridge for each host filetype using a map with `enabled` flags:
 
 ```json
 {
   "languages": {
-    "quarto": { "bridge": ["python", "r"] },
-    "rmd": { "bridge": ["r"] },
-    "markdown": { "bridge": [] }
+    "quarto": {
+      "bridge": {
+        "python": { "enabled": true },
+        "r": { "enabled": true }
+      }
+    },
+    "rmd": {
+      "bridge": {
+        "r": { "enabled": true }
+      }
+    },
+    "markdown": {
+      "bridge": {}
+    }
   }
 }
 ```
 
 | Value | Meaning |
 |-------|---------|
-| `["python", "r"]` | Bridge only these languages |
-| `[]` | Bridge no languages (disable bridging for this host) |
+| `{ "python": { "enabled": true } }` | Bridge only languages with `enabled: true` |
+| `{}` (empty map) | Bridge no languages (disable bridging for this host) |
 | `null` or omitted | Bridge all configured languages (default) |
 
 This enables scenarios like:
@@ -208,7 +218,7 @@ This enables scenarios like:
 - **R Markdown files**: Bridge only R (no Python bridge needed)
 - **Plain Markdown**: Disable all bridging (use Tree-sitter only)
 
-The bridge filtering happens at request time: when a request targets an injection region, treesitter-ls checks if the injection language is in the host's `bridge` list before routing to a server.
+The bridge filtering happens at request time: when a request targets an injection region, treesitter-ls checks if the injection language has `enabled: true` in the host's `bridge` map before routing to a server.
 
 #### Multiple Servers Per Language
 
@@ -225,17 +235,18 @@ This enables complementary servers: `pyright` for type checking, `ruff` for lint
 
 #### Why Server-Centric Configuration
 
-| Concern | `languages` field | `bridge` field |
-|---------|-------------------|----------------|
-| **Purpose** | Tree-sitter parser/query config | LSP server connection |
+| Concern | `languages` field | `languageServers` field |
+|---------|-------------------|-------------------------|
+| **Purpose** | Tree-sitter parser/query config + bridge filtering | LSP server connection |
 | **Primary key** | Language name | Server name |
-| **Scope** | One language per entry | One server → multiple filetypes |
-| **Example** | Parser paths, query sources | `typos-lsp` for markdown + asciidoc |
+| **Scope** | One language per entry (with bridge filter) | One server → multiple languages |
+| **Example** | Parser paths, query sources, `bridge` filter | `typos-lsp` for markdown + asciidoc |
 
 This separation allows:
 - **Cross-cutting servers**: `typos-lsp` provides diagnostics for multiple languages
-- **Multiple servers per language**: `pyright` + `ruff` for Python (both in `bridge.servers`)
+- **Multiple servers per language**: `pyright` + `ruff` for Python (both in `languageServers`)
 - **Independent lifecycle**: Tree-sitter config doesn't affect server spawning
+- **Per-host filtering**: Each host language can selectively enable/disable bridging via `bridge` field
 
 ### Temporary File Management
 
@@ -312,14 +323,13 @@ treesitter-ls configuration points rust-analyzer to this file:
 
 ```json
 {
-  "bridge": {
-    "servers": {
-      "rust-analyzer": {
-        "cmd": ["rust-analyzer"],
-        "languages": ["rust"],
-        "initializationOptions": {
-          "linkedProjects": ["~/.config/treesitter-ls/rust-project.json"]
-        }
+  "languageServers": {
+    "rust-analyzer": {
+      "cmd": ["rust-analyzer"],
+      "languages": ["rust"],
+      "workspaceType": "cargo",
+      "initializationOptions": {
+        "linkedProjects": ["~/.config/treesitter-ls/rust-project.json"]
       }
     }
   }
@@ -460,12 +470,15 @@ Translation is straightforward for positions within a single injection. See [ADR
 
 ## Implementation Phases
 
-### Phase 1: Infrastructure (PoC Complete)
+### Phase 1: Infrastructure (Complete)
 
 - [x] Basic LSP client implementation
 - [x] Temporary source file creation
 - [x] Offset translation
 - [x] Go-to-definition working
+- [x] `languageServers` configuration at root level (PBI-119)
+- [x] Per-host `bridge` filter with map format (PBI-120)
+- [x] `workspaceType` for cargo vs generic workspaces
 
 ### Phase 2: Connection Pool
 
@@ -474,7 +487,7 @@ Translation is straightforward for positions within a single injection. See [ADR
 
 ### Phase 3: Configuration System
 
-- [ ] `initializationOptions` passthrough
+- [x] `initializationOptions` passthrough
 - [ ] Support for multiple language servers
 - [ ] Multi-server routing by capability
 

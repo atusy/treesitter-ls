@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Proposed (8 of 11 features implemented: definition, hover, signatureHelp, completion, references, rename, codeAction, formatting)
 
 ## Context
 
@@ -297,7 +297,27 @@ When multiple servers are configured for a language:
 - **Per-method configuration possible**: Future enhancement could allow users to override strategies
 - **Server capability detection**: Some servers may not support all methods; need graceful degradation
 
-## Implementation Priority
+## Implementation Status
+
+The following table shows the current implementation status of bridged LSP methods:
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| definition | ✅ Implemented | Full delegation with response filtering |
+| hover | ✅ Implemented | Pass-through with position translation |
+| signatureHelp | ✅ Implemented | Pass-through |
+| completion | ✅ Implemented | With additionalTextEdits filtering |
+| references | ✅ Implemented | With cross-file filtering |
+| rename | ✅ Implemented | With workspace edit validation |
+| codeAction | ✅ Implemented | With edit filtering |
+| formatting | ✅ Implemented | With position mapping |
+| documentHighlight | ❌ Not implemented | |
+| diagnostics | ❌ Not implemented | Requires async push model |
+| semanticTokens | ❌ Not implemented | Would enable parallel fetch strategy |
+
+### Original Implementation Priority
+
+The original priority order (for reference):
 
 | Priority | Feature | Complexity | User Value |
 |----------|---------|------------|------------|
