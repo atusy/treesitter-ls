@@ -137,89 +137,114 @@ const scrum: ScrumDashboard = {
       ],
       status: "done",
     },
+    {
+      id: "PBI-102",
+      story: {
+        role: "documentation author with Rust code blocks",
+        capability:
+          "have bridge server connections pre-warmed when I open a document",
+        benefit:
+          "my first go-to-definition request is fast instead of waiting for server startup",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "When did_open is called for an injection region, the bridge server connection is spawned in a background thread",
+          verification:
+            "Unit test: did_open triggers background spawn for configured bridge server language",
+        },
+        {
+          criterion:
+            "The eager spawn does not block did_open completion",
+          verification:
+            "Unit test: did_open returns immediately while spawn continues in background",
+        },
+        {
+          criterion:
+            "The eagerly spawned connection is stored in LanguageServerPool for reuse",
+          verification:
+            "Integration test: after did_open completes, pool contains connection for the language",
+        },
+        {
+          criterion:
+            "goto_definition uses the pre-warmed connection instead of spawning a new one",
+          verification:
+            "Integration test: first goto_definition after did_open reuses existing connection from pool",
+        },
+      ],
+      status: "done",
+    },
   ],
 
   sprint: {
-    number: 78,
-    pbi_id: "PBI-101",
+    number: 79,
+    pbi_id: "PBI-102",
     goal:
-      "Documentation authors have spawn() use workspace_type configuration so the workspace type feature works end-to-end",
-    status: "done",
+      "Documentation authors have bridge server connections pre-warmed when opening a document so their first go-to-definition request is fast",
+    status: "review",
     subtasks: [
       {
         test:
-          "Test that LanguageServerConnection stores ConnectionInfo after spawn",
+          "spawn_in_background() method exists on LanguageServerPool and spawns connection without blocking caller",
         implementation:
-          "Add connection_info: Option<ConnectionInfo> field to LanguageServerConnection struct",
+          "Add spawn_in_background() method to LanguageServerPool that uses tokio::spawn to spawn connection in background",
         type: "behavioral",
         status: "completed",
         commits: [
-          { hash: "23a892a", message: "test(spawn): add test for LanguageServerConnection stores ConnectionInfo", phase: "green" as const },
-          { hash: "128a0fe", message: "feat(spawn): add connection_info field to LanguageServerConnection", phase: "green" as const },
+          { hash: "68a83fb", message: "feat(eager-spawn): add spawn_in_background to LanguageServerPool", phase: "green" as const },
         ],
         notes: [
-          "ConnectionInfo already exists in redirection.rs with virtual_file_uri() and write_virtual_file() methods",
+          "Method signature: spawn_in_background(&self, key: &str, config: &BridgeServerConfig)",
+          "Returns immediately, spawn happens asynchronously",
+          "Must handle case where connection already exists (no-op)",
         ],
       },
       {
         test:
-          "Test that spawn() with generic workspace_type creates virtual file structure (not Cargo.toml)",
+          "Background spawned connection is stored in LanguageServerPool after spawn completes",
         implementation:
-          "Replace hardcoded Cargo workspace creation in spawn() with setup_workspace_with_option() call",
+          "In spawn_in_background, after successful spawn, call return_connection to store in pool",
         type: "behavioral",
         status: "completed",
         commits: [
-          { hash: "68f7aca", message: "test(spawn): add tests for spawn() workspace_type integration", phase: "green" as const },
-          { hash: "5a51ba1", message: "feat(spawn): use setup_workspace_with_option() in spawn()", phase: "green" as const },
+          { hash: "68a83fb", message: "feat(eager-spawn): add spawn_in_background to LanguageServerPool", phase: "green" as const },
         ],
         notes: [
-          "setup_workspace_with_option() already exists and handles None -> Cargo default",
-          "Added language_to_extension() helper for mapping language names to extensions",
+          "Use tokio::spawn with move closure to capture key and config",
+          "Log success/failure for debugging",
+          "Handle spawn failure gracefully (just log, don't panic)",
         ],
       },
       {
         test:
-          "Test that connection.virtual_file_uri() returns correct path after spawn (delegates to ConnectionInfo)",
+          "did_open detects injection regions with configured bridge servers and triggers background spawn",
         implementation:
-          "Add virtual_file_uri() method that returns connection_info.virtual_file_uri()",
+          "After check_injected_languages_auto_install, iterate injection regions and call spawn_in_background for languages with bridge config",
         type: "behavioral",
         status: "completed",
         commits: [
-          { hash: "77067c7", message: "test(spawn): add test for connection.virtual_file_uri() method", phase: "green" as const },
-          { hash: "b0c26d4", message: "feat(spawn): add virtual_file_uri() method to LanguageServerConnection", phase: "green" as const },
+          { hash: "462d8c2", message: "feat(eager-spawn): did_open triggers background spawn for injections", phase: "green" as const },
         ],
         notes: [
-          "main_rs_uri() kept with doc note to prefer virtual_file_uri()",
+          "Use get_bridge_config_for_language() to check if language has bridge server",
+          "Only spawn for languages that have bridge config",
+          "Must not block did_open completion (already async)",
         ],
       },
       {
         test:
-          "Test that did_open() writes to generic workspace virtual file correctly",
+          "goto_definition reuses pre-warmed connection from pool instead of spawning new one",
         implementation:
-          "Update did_open() to use connection_info.write_virtual_file() instead of hardcoded path",
+          "No change needed - take_connection() already checks pool first before spawning",
         type: "behavioral",
         status: "completed",
         commits: [
-          { hash: "5098689", message: "test(spawn): add test for did_open() virtual file write", phase: "green" as const },
-          { hash: "8b96737", message: "refactor(spawn): update did_open() to use ConnectionInfo methods", phase: "refactoring" as const },
+          { hash: "f4eb0ca", message: "test(eager-spawn): verify take_connection reuses pre-warmed pool connection", phase: "green" as const },
         ],
         notes: [
-          "Updated did_open() to use connection_info.write_virtual_file() and virtual_file_uri()",
-        ],
-      },
-      {
-        test:
-          "Test that goto_definition() and hover() use virtual_file_uri() for requests",
-        implementation:
-          "Update goto_definition() and hover() to use virtual_file_uri() instead of main_rs_uri()",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "46dd3b5", message: "test(spawn): add test for goto_definition and hover using virtual_file_uri", phase: "green" as const },
-          { hash: "c89d89b", message: "refactor(spawn): update goto_definition and hover to use virtual_file_uri", phase: "refactoring" as const },
-        ],
-        notes: [
-          "Replaced main_rs_uri() calls with virtual_file_uri() in both methods",
+          "Verification test: confirm has_connection() returns true after did_open",
+          "Existing take_connection() logic handles this automatically",
+          "This subtask is about verification, not new implementation",
         ],
       },
     ],
@@ -236,18 +261,18 @@ const scrum: ScrumDashboard = {
   // Historical sprints (recent 2) | Sprint 1-72: git log -- scrum.yaml, scrum.ts
   completed: [
     {
-      number: 77,
-      pbi_id: "PBI-100",
+      number: 78,
+      pbi_id: "PBI-101",
       goal:
-        "Documentation authors can configure workspace setup per bridge server type so each language server gets the project structure it needs",
+        "Documentation authors have spawn() use workspace_type configuration so the workspace type feature works end-to-end",
       status: "done",
       subtasks: [],
     },
     {
-      number: 76,
-      pbi_id: "PBI-099",
+      number: 77,
+      pbi_id: "PBI-100",
       goal:
-        "Documentation authors have stale temp files cleaned up automatically on startup, preventing temp directory pollution from crashed sessions",
+        "Documentation authors can configure workspace setup per bridge server type so each language server gets the project structure it needs",
       status: "done",
       subtasks: [],
     },
@@ -256,11 +281,18 @@ const scrum: ScrumDashboard = {
   // Recent 2 retrospectives | Sprint 1-72: git log -- scrum.yaml, scrum.ts
   retrospectives: [
     {
-      sprint: 77,
+      sprint: 78,
       improvements: [
         {
           action:
-            "Integrate ConnectionInfo and setup_workspace() into LanguageServerConnection::spawn() to complete the workspace type feature end-to-end",
+            "Add E2E test with pyright to verify Generic workspace works end-to-end with a real language server",
+          timing: "product",
+          status: "active",
+          outcome: null,
+        },
+        {
+          action:
+            "Consider consolidating spawn_rust_analyzer() into spawn() with Cargo workspace_type to reduce code duplication",
           timing: "product",
           status: "active",
           outcome: null,
@@ -268,15 +300,15 @@ const scrum: ScrumDashboard = {
       ],
     },
     {
-      sprint: 76,
+      sprint: 77,
       improvements: [
         {
           action:
-            "Consider extracting cleanup module from redirection.rs if cleanup features grow",
+            "Integrate ConnectionInfo and setup_workspace() into LanguageServerConnection::spawn() to complete the workspace type feature end-to-end",
           timing: "product",
           status: "completed",
           outcome:
-            "Analyzed: cleanup code has logical connection to redirection (creates temp dirs). Current location acceptable. No action needed unless cleanup features expand significantly.",
+            "Completed in Sprint 78 (PBI-101): spawn() now uses setup_workspace_with_option() based on config.workspace_type, stores ConnectionInfo for virtual file operations, and did_open/goto_definition/hover all use virtual_file_uri().",
         },
       ],
     },
