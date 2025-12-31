@@ -29,7 +29,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-112 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-118 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
   product_backlog: [
@@ -300,31 +300,109 @@ const scrum: ScrumDashboard = {
       ],
       status: "done",
     },
+    {
+      id: "PBI-119",
+      story: {
+        role: "developer editing Lua files",
+        capability:
+          "configure bridge language servers using 'languageServers' at the root level of init_options",
+        benefit:
+          "I can use a simpler, flatter configuration schema that aligns with common LSP patterns",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "TreeSitterSettings accepts 'languageServers' field as HashMap<String, BridgeServerConfig>",
+          verification:
+            "cargo test should_parse_language_servers_at_root passes (unit test in settings.rs)",
+        },
+        {
+          criterion:
+            "BridgeSettings struct is removed or deprecated in favor of direct languageServers field",
+          verification:
+            "grep 'pub struct BridgeSettings' src/config/settings.rs returns no matches OR struct has deprecation comment",
+        },
+        {
+          criterion:
+            "LSP implementation uses languageServers from WorkspaceSettings for bridge pool initialization",
+          verification:
+            "cargo test --lib passes with bridge pool using languageServers instead of bridge.servers",
+        },
+        {
+          criterion:
+            "README.md and docs/README.md updated to show new languageServers configuration schema",
+          verification:
+            "grep 'languageServers' README.md returns matches; grep 'bridge.servers' README.md returns no matches in config examples",
+        },
+        {
+          criterion:
+            "E2E tests pass with the new configuration schema in minimal_init.lua",
+          verification: "make test_nvim passes with languageServers configuration",
+        },
+      ],
+      status: "ready",
+    },
   ],
 
   sprint: {
-    number: 95,
-    pbi_id: "PBI-118",
-    goal: "Update README with LSP Bridge documentation",
-    status: "done",
+    number: 96,
+    pbi_id: "PBI-119",
+    goal: "Simplify bridge configuration by moving languageServers to root level of init_options",
+    status: "planning",
     subtasks: [
       {
-        test: "README contains LSP Bridge in Features section",
+        test: "TreeSitterSettings parses 'languageServers' field at root level as HashMap<String, BridgeServerConfig>",
         implementation:
-          "Add LSP Bridge bullet point to Features section in README.md",
+          "Add 'languageServers' field to TreeSitterSettings with #[serde(rename = 'languageServers')] and update tests",
         type: "behavioral",
-        status: "completed",
+        status: "pending",
         commits: [],
-        notes: ["Added LSP Bridge to features list"],
+        notes: [],
       },
       {
-        test: "README has LSP Bridge section with full documentation",
+        test: "BridgeSettings wrapper struct is removed; only BridgeServerConfig remains",
         implementation:
-          "Add LSP Bridge section with supported features, configuration, filter semantics, and Neovim example",
-        type: "behavioral",
-        status: "completed",
+          "Remove pub struct BridgeSettings from settings.rs; update all usages to use languageServers directly",
+        type: "structural",
+        status: "pending",
         commits: [],
-        notes: ["Added comprehensive LSP Bridge documentation including JSON and Lua config examples"],
+        notes: [],
+      },
+      {
+        test: "WorkspaceSettings uses languageServers: HashMap<String, BridgeServerConfig> instead of bridge: Option<BridgeSettings>",
+        implementation:
+          "Replace 'bridge' field in WorkspaceSettings with 'language_servers' field; update with_bridge constructor",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "lsp_impl.rs get_bridge_config_for_language uses settings.language_servers instead of bridge.servers",
+        implementation:
+          "Update get_bridge_config_for_language to iterate over settings.language_servers.values()",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "README.md and docs/README.md show languageServers at root level; no bridge.servers in config examples",
+        implementation:
+          "Update all bridge configuration examples to use languageServers at root level instead of bridge.servers",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "E2E tests pass with languageServers configuration in minimal_init.lua (already updated)",
+        implementation:
+          "Run make test_nvim to verify all E2E tests pass with new configuration schema",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
       },
     ],
   },
@@ -343,13 +421,6 @@ const scrum: ScrumDashboard = {
       number: 95,
       pbi_id: "PBI-118",
       goal: "Update README with LSP Bridge documentation",
-      status: "done",
-      subtasks: [],
-    },
-    {
-      number: 94,
-      pbi_id: "PBI-117",
-      goal: "Merge code actions from injection (child) and host (parent) languages",
       status: "done",
       subtasks: [],
     },
