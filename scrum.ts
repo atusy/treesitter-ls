@@ -340,65 +340,122 @@ const scrum: ScrumDashboard = {
           verification: "make test_nvim passes with languageServers configuration",
         },
       ],
+      status: "done",
+    },
+    {
+      id: "PBI-120",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability:
+          "configure per-language bridge filters using a map structure with enabled flag",
+        benefit:
+          "I can explicitly enable/disable bridging for specific injection languages with room for future per-language options",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "LanguageConfig.bridge accepts map structure: { 'python': { 'enabled': true }, 'r': { 'enabled': false } }",
+          verification:
+            "cargo test should_parse_language_config_with_bridge_map passes (unit test in settings.rs)",
+        },
+        {
+          criterion:
+            "BridgeLanguageConfig struct exists with 'enabled' field",
+          verification:
+            "grep 'pub struct BridgeLanguageConfig' src/config/settings.rs returns matches",
+        },
+        {
+          criterion:
+            "LanguageSettings.bridge uses HashMap<String, BridgeLanguageConfig> instead of Vec<String>",
+          verification:
+            "grep 'bridge: Option<HashMap<String, BridgeLanguageConfig>>' src/config/settings.rs returns matches",
+        },
+        {
+          criterion:
+            "is_language_bridgeable method checks enabled field in the map",
+          verification:
+            "cargo test test_bridge_filter_map_enabled passes with new logic",
+        },
+        {
+          criterion:
+            "README.md and docs/README.md updated to show new bridge map configuration schema",
+          verification:
+            "grep 'enabled' README.md returns matches in bridge configuration examples",
+        },
+        {
+          criterion:
+            "E2E tests pass with the new bridge map configuration in minimal_init.lua",
+          verification: "make test_nvim passes with bridge map configuration",
+        },
+      ],
       status: "ready",
     },
   ],
 
   sprint: {
-    number: 96,
-    pbi_id: "PBI-119",
-    goal: "Simplify bridge configuration by moving languageServers to root level of init_options",
+    number: 97,
+    pbi_id: "PBI-120",
+    goal: "Change per-language bridge filter from Vec<String> to HashMap<String, BridgeLanguageConfig> with enabled flag",
     status: "planning",
     subtasks: [
       {
-        test: "TreeSitterSettings parses 'languageServers' field at root level as HashMap<String, BridgeServerConfig>",
+        test: "BridgeLanguageConfig struct exists with 'enabled: bool' field and derives Deserialize/Serialize",
         implementation:
-          "Add 'languageServers' field to TreeSitterSettings with #[serde(rename = 'languageServers')] and update tests",
+          "Add pub struct BridgeLanguageConfig { pub enabled: bool } to settings.rs with serde derives",
         type: "behavioral",
         status: "pending",
         commits: [],
         notes: [],
       },
       {
-        test: "BridgeSettings wrapper struct is removed; only BridgeServerConfig remains",
+        test: "LanguageConfig.bridge parses as Option<HashMap<String, BridgeLanguageConfig>>",
         implementation:
-          "Remove pub struct BridgeSettings from settings.rs; update all usages to use languageServers directly",
-        type: "structural",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-      {
-        test: "WorkspaceSettings uses languageServers: HashMap<String, BridgeServerConfig> instead of bridge: Option<BridgeSettings>",
-        implementation:
-          "Replace 'bridge' field in WorkspaceSettings with 'language_servers' field; update with_bridge constructor",
-        type: "structural",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-      {
-        test: "lsp_impl.rs get_bridge_config_for_language uses settings.language_servers instead of bridge.servers",
-        implementation:
-          "Update get_bridge_config_for_language to iterate over settings.language_servers.values()",
+          "Change LanguageConfig.bridge type from Option<Vec<String>> to Option<HashMap<String, BridgeLanguageConfig>>",
         type: "behavioral",
         status: "pending",
         commits: [],
         notes: [],
       },
       {
-        test: "README.md and docs/README.md show languageServers at root level; no bridge.servers in config examples",
+        test: "LanguageSettings.bridge uses HashMap<String, BridgeLanguageConfig> type",
         implementation:
-          "Update all bridge configuration examples to use languageServers at root level instead of bridge.servers",
+          "Change LanguageSettings.bridge type and update with_bridge constructor signature",
         type: "behavioral",
         status: "pending",
         commits: [],
         notes: [],
       },
       {
-        test: "E2E tests pass with languageServers configuration in minimal_init.lua (already updated)",
+        test: "is_language_bridgeable method checks enabled field in the map",
         implementation:
-          "Run make test_nvim to verify all E2E tests pass with new configuration schema",
+          "Update is_language_bridgeable to lookup language in map and check enabled field; None or missing key = not bridgeable",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Existing unit tests updated to use new bridge map syntax",
+        implementation:
+          "Update test_bridge_filter_* tests to use HashMap<String, BridgeLanguageConfig> instead of Vec<String>",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "README.md and docs/README.md show new bridge map configuration with enabled flag",
+        implementation:
+          "Update bridge configuration examples to show { 'python': { 'enabled': true } } syntax",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "E2E tests pass with bridge map configuration in minimal_init.lua",
+        implementation:
+          "Verify minimal_init.lua already uses correct syntax; run make test_nvim",
         type: "behavioral",
         status: "pending",
         commits: [],
@@ -418,6 +475,13 @@ const scrum: ScrumDashboard = {
   // Historical sprints (recent 2) | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   completed: [
     {
+      number: 96,
+      pbi_id: "PBI-119",
+      goal: "Simplify bridge configuration by moving languageServers to root level of init_options",
+      status: "done",
+      subtasks: [],
+    },
+    {
       number: 95,
       pbi_id: "PBI-118",
       goal: "Update README with LSP Bridge documentation",
@@ -429,6 +493,19 @@ const scrum: ScrumDashboard = {
   // Recent 2 retrospectives | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   retrospectives: [
     {
+      sprint: 96,
+      improvements: [
+        {
+          action:
+            "Schema simplification - moved languageServers from nested bridge.servers to root level for flatter configuration",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "languageServers field now at root level of init_options; BridgeSettings wrapper removed; all E2E tests passing",
+        },
+      ],
+    },
+    {
       sprint: 95,
       improvements: [
         {
@@ -438,19 +515,6 @@ const scrum: ScrumDashboard = {
           status: "completed",
           outcome:
             "README updated with LSP Bridge section including supported features, JSON and Lua configuration examples, and filter semantics",
-        },
-      ],
-    },
-    {
-      sprint: 94,
-      improvements: [
-        {
-          action:
-            "Code action merging uses Obvious Implementation - get bridged actions first, then parent actions, concatenate",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "Code action merging completed with child actions before parent actions for consistent UX",
         },
       ],
     },
