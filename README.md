@@ -106,3 +106,60 @@ The `bridge.servers` field is deprecated. Migrate to the top-level `languageServ
 ```
 
 Both formats work during the transition period, with `languageServers` taking precedence if both are specified.
+
+### Per-Language Bridge Control
+
+Control which injection languages are bridged for each host filetype using the `bridge` field in `languages.<filetype>`.
+
+**New map format (recommended):**
+```json
+{
+  "languages": {
+    "markdown": {
+      "bridge": {
+        "_": { "enabled": true },
+        "rust": { "enabled": false }
+      }
+    }
+  }
+}
+```
+
+The `_` key sets the default for all languages. Specific language keys override the default. In this example, all languages are bridged except Rust.
+
+**Cascade resolution order:**
+1. Specific language config (e.g., `bridge.rust`)
+2. Default config (`bridge._`)
+3. If neither specified, bridging is enabled by default
+
+### Migration from bridge array (Deprecated)
+
+The array format for `bridge` is deprecated. Migrate to the map format:
+
+**Before (deprecated):**
+```json
+{
+  "languages": {
+    "markdown": {
+      "bridge": ["python", "r"]
+    }
+  }
+}
+```
+
+**After (recommended):**
+```json
+{
+  "languages": {
+    "markdown": {
+      "bridge": {
+        "_": { "enabled": false },
+        "python": { "enabled": true },
+        "r": { "enabled": true }
+      }
+    }
+  }
+}
+```
+
+The array format continues to work during the transition period.
