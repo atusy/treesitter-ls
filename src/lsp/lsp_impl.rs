@@ -1238,6 +1238,7 @@ impl LanguageServer for TreeSitterLs {
                 selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
                 type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
+                implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 completion_provider: Some(CompletionOptions {
                     trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
@@ -1561,6 +1562,13 @@ impl LanguageServer for TreeSitterLs {
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
         self.goto_type_definition_impl(params).await
+    }
+
+    async fn goto_implementation(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        self.goto_implementation_impl(params).await
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {

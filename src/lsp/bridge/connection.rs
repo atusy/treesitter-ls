@@ -8,6 +8,7 @@ use super::completion::CompletionWithNotifications;
 use super::definition::GotoDefinitionWithNotifications;
 use super::formatting::FormattingWithNotifications;
 use super::hover::HoverWithNotifications;
+use super::implementation::ImplementationWithNotifications;
 use super::references::ReferencesWithNotifications;
 use super::rename::RenameWithNotifications;
 use super::signature_help::SignatureHelpWithNotifications;
@@ -564,6 +565,50 @@ impl LanguageServerConnection {
             .and_then(|r| serde_json::from_value(r).ok());
 
         TypeDefinitionWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request go-to-implementation, capturing $/progress notifications.
+    ///
+    /// Sends the `textDocument/implementation` request which navigates to the
+    /// implementation(s) of the symbol under the cursor (e.g., impl blocks for traits).
+    pub fn implementation_with_notifications(
+        &mut self,
+        _uri: &str,
+        position: Position,
+    ) -> ImplementationWithNotifications {
+        // Use the virtual file URI from the temp workspace
+        let Some(real_uri) = self.virtual_file_uri() else {
+            return ImplementationWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let Some(req_id) = self.send_request("textDocument/implementation", params) else {
+            return ImplementationWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id);
+
+        // Extract and parse the goto implementation response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        ImplementationWithNotifications {
             response,
             notifications: result.notifications,
         }

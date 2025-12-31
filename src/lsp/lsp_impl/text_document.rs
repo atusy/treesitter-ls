@@ -5,6 +5,7 @@ mod completion;
 mod definition;
 mod formatting;
 mod hover;
+mod implementation;
 mod references;
 mod rename;
 mod selection_range;

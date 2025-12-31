@@ -10,6 +10,7 @@ mod connection;
 mod definition;
 mod formatting;
 mod hover;
+mod implementation;
 mod pool;
 mod references;
 mod rename;
@@ -28,6 +29,7 @@ pub use connection::{ConnectionInfo, LanguageServerConnection, ResponseWithNotif
 pub use definition::GotoDefinitionWithNotifications;
 pub use formatting::FormattingWithNotifications;
 pub use hover::HoverWithNotifications;
+pub use implementation::ImplementationWithNotifications;
 pub use pool::LanguageServerPool;
 pub use references::ReferencesWithNotifications;
 pub use rename::RenameWithNotifications;
