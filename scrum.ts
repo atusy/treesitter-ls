@@ -90,15 +90,23 @@ const scrum: ScrumDashboard = {
       },
       acceptance_criteria: [
         {
-          criterion: "textDocument/completion requests in injection regions are bridged",
-          verification: "E2E test sends completion request in Rust code block and receives rust-analyzer completions",
+          criterion: "src/lsp/redirection/completion.rs exists with CompletionWithNotifications type",
+          verification: "grep 'CompletionWithNotifications' src/lsp/redirection/completion.rs returns matches",
         },
         {
-          criterion: "Completion results have positions adjusted to original document",
-          verification: "E2E test verifies completion range matches position in Markdown file",
+          criterion: "LanguageServerConnection has completion_with_notifications method",
+          verification: "cargo test completion_with_notifications --lib passes (unit test in connection.rs)",
+        },
+        {
+          criterion: "textDocument/completion requests in injection regions are bridged to rust-analyzer",
+          verification: "make test_nvim_file FILE=tests/test_lsp_completion.lua passes (E2E test)",
+        },
+        {
+          criterion: "Completion results have textEdit ranges adjusted to host document positions",
+          verification: "E2E test verifies completion textEdit range is in Markdown line numbers, not virtual document line numbers",
         },
       ],
-      status: "draft",
+      status: "ready",
     },
     {
       id: "PBI-112",
