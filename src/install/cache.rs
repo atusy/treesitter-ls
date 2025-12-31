@@ -72,19 +72,6 @@ impl MetadataCache {
         Ok(())
     }
 
-    /// Invalidate (delete) the cache.
-    pub fn invalidate(&self) -> io::Result<()> {
-        let cache_path = self.cache_path();
-        if cache_path.exists() {
-            fs::remove_file(cache_path)?;
-        }
-        Ok(())
-    }
-
-    /// Check if cache exists (regardless of freshness).
-    pub fn exists(&self) -> bool {
-        self.cache_path().exists()
-    }
 }
 
 #[cfg(test)]
@@ -113,21 +100,6 @@ mod tests {
         let cache = MetadataCache::with_default_ttl(temp.path());
 
         // Should return None when cache doesn't exist
-        assert!(cache.read().is_none());
-    }
-
-    #[test]
-    fn test_cache_invalidate() {
-        let temp = tempdir().expect("Failed to create temp dir");
-        let cache = MetadataCache::with_default_ttl(temp.path());
-
-        // Write something
-        cache.write("content").expect("Failed to write");
-        assert!(cache.exists());
-
-        // Invalidate
-        cache.invalidate().expect("Failed to invalidate");
-        assert!(!cache.exists());
         assert!(cache.read().is_none());
     }
 
