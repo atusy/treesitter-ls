@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (separate mode implemented; merged mode deferred)
+Accepted (separate mode implemented; merged mode deferred)
 
 ## Context
 

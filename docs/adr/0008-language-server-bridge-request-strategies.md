@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (8 of 11 features implemented: definition, hover, signatureHelp, completion, references, rename, codeAction, formatting)
+Accepted (8 of 11 features implemented: definition, hover, signatureHelp, completion, references, rename, codeAction, formatting)
 
 ## Context
 

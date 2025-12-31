@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (Phase 1 complete: infrastructure with go-to-definition working)
+Accepted (Phase 1 complete: infrastructure with go-to-definition working)
 
 ## Context
 
