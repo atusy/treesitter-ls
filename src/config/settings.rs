@@ -49,6 +49,20 @@ pub struct BridgeLanguageConfig {
     pub enabled: Option<bool>,
 }
 
+/// Bridge configuration supporting both array (deprecated) and map (new) formats (PBI-123).
+///
+/// Serde untagged enum allows deserializing either format:
+/// - Array: `["rust", "python"]` - deprecated, bridges listed languages
+/// - Map: `{"_": {enabled: true}, "rust": {enabled: false}}` - new format with '_' wildcard
+#[derive(Debug, Clone, Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum BridgeConfig {
+    /// Deprecated array format: list of language names to bridge
+    Array(Vec<String>),
+    /// New map format: per-language config with '_' as default
+    Map(HashMap<String, BridgeLanguageConfig>),
+}
+
 /// Bridge settings containing configured language servers.
 ///
 /// JSON schema:
@@ -1858,5 +1872,73 @@ mod tests {
         let config: BridgeLanguageConfig = serde_json::from_str(config_json).unwrap();
 
         assert_eq!(config.enabled, None);
+    }
+
+    // TDD Cycle 2: BridgeConfig enum (Array | Map)
+
+    #[test]
+    fn should_deserialize_bridge_config_map_with_underscore_default() {
+        // TDD RED: BridgeConfig::Map should deserialize {"_": {enabled: true}}
+        let config_json = r#"{"_": {"enabled": true}}"#;
+
+        let config: BridgeConfig = serde_json::from_str(config_json).unwrap();
+
+        match config {
+            BridgeConfig::Map(map) => {
+                assert!(map.contains_key("_"), "Should have '_' key");
+                assert_eq!(map["_"].enabled, Some(true));
+            }
+            BridgeConfig::Array(_) => panic!("Expected Map, got Array"),
+        }
+    }
+
+    #[test]
+    fn should_deserialize_bridge_config_map_with_specific_language() {
+        // TDD RED: BridgeConfig::Map should deserialize {"rust": {enabled: false}}
+        let config_json = r#"{"rust": {"enabled": false}}"#;
+
+        let config: BridgeConfig = serde_json::from_str(config_json).unwrap();
+
+        match config {
+            BridgeConfig::Map(map) => {
+                assert!(map.contains_key("rust"), "Should have 'rust' key");
+                assert_eq!(map["rust"].enabled, Some(false));
+            }
+            BridgeConfig::Array(_) => panic!("Expected Map, got Array"),
+        }
+    }
+
+    #[test]
+    fn should_deserialize_bridge_config_map_with_both_default_and_specific() {
+        // TDD RED: BridgeConfig::Map should deserialize {"_": {...}, "rust": {...}}
+        let config_json = r#"{"_": {"enabled": true}, "rust": {"enabled": false}}"#;
+
+        let config: BridgeConfig = serde_json::from_str(config_json).unwrap();
+
+        match config {
+            BridgeConfig::Map(map) => {
+                assert_eq!(map.len(), 2);
+                assert_eq!(map["_"].enabled, Some(true));
+                assert_eq!(map["rust"].enabled, Some(false));
+            }
+            BridgeConfig::Array(_) => panic!("Expected Map, got Array"),
+        }
+    }
+
+    #[test]
+    fn should_deserialize_bridge_config_array_format() {
+        // TDD RED: BridgeConfig::Array should deserialize ["rust", "python"]
+        let config_json = r#"["rust", "python"]"#;
+
+        let config: BridgeConfig = serde_json::from_str(config_json).unwrap();
+
+        match config {
+            BridgeConfig::Array(arr) => {
+                assert_eq!(arr.len(), 2);
+                assert_eq!(arr[0], "rust");
+                assert_eq!(arr[1], "python");
+            }
+            BridgeConfig::Map(_) => panic!("Expected Array, got Map"),
+        }
     }
 }
