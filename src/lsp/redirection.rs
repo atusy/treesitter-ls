@@ -887,6 +887,85 @@ impl LanguageServerPool {
             }
         });
     }
+
+    /// Spawn a language server connection in the background, forwarding $/progress notifications.
+    ///
+    /// Like `spawn_in_background`, but sends any `$/progress` notifications captured
+    /// during spawn through the provided channel. This allows the caller to forward
+    /// progress notifications to the LSP client.
+    ///
+    /// This is a no-op if a connection for this key already exists in the pool.
+    ///
+    /// # Arguments
+    /// * `key` - Unique key for this connection (typically server name)
+    /// * `config` - Configuration for spawning the connection
+    /// * `notification_sender` - Channel sender for forwarding $/progress notifications
+    pub fn spawn_in_background_with_notifications(
+        &self,
+        key: &str,
+        config: &BridgeServerConfig,
+        notification_sender: tokio::sync::mpsc::Sender<Value>,
+    ) {
+        // No-op if connection already exists
+        if self.has_connection(key) {
+            return;
+        }
+
+        // Clone data needed for the background task
+        let key = key.to_string();
+        let config = config.clone();
+
+        // We need a reference to self.connections for the background task
+        // Since DashMap is Send + Sync, we can clone the Arc reference
+        let connections = self.connections.clone();
+
+        tokio::spawn(async move {
+            // Use spawn_blocking since LanguageServerConnection::spawn_with_notifications does blocking I/O
+            let result = tokio::task::spawn_blocking(move || {
+                LanguageServerConnection::spawn_with_notifications(&config)
+            })
+            .await;
+
+            match result {
+                Ok(Some((conn, notifications))) => {
+                    connections.insert(key.clone(), (conn, Instant::now()));
+
+                    // Send captured notifications through the channel
+                    for notification in notifications {
+                        if notification_sender.send(notification).await.is_err() {
+                            log::debug!(
+                                target: "treesitter_ls::eager_spawn",
+                                "Notification receiver dropped for {}",
+                                key
+                            );
+                            break;
+                        }
+                    }
+
+                    log::info!(
+                        target: "treesitter_ls::eager_spawn",
+                        "Background spawn completed for {}",
+                        key
+                    );
+                }
+                Ok(None) => {
+                    log::debug!(
+                        target: "treesitter_ls::eager_spawn",
+                        "Background spawn returned None for {}",
+                        key
+                    );
+                }
+                Err(e) => {
+                    log::warn!(
+                        target: "treesitter_ls::eager_spawn",
+                        "Background spawn failed for {}: {}",
+                        key,
+                        e
+                    );
+                }
+            }
+        });
+    }
 }
 
 impl Default for LanguageServerPool {
@@ -2408,6 +2487,67 @@ fn main() {
                 assert_eq!(
                     method, "$/progress",
                     "All returned notifications should be $/progress"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn spawn_in_background_with_notifications_sends_to_channel() {
+        // RED phase: Test that spawn_in_background_with_notifications accepts
+        // an mpsc::Sender<Value> and sends $/progress notifications through it
+
+        use crate::config::settings::BridgeServerConfig;
+        use tokio::sync::mpsc;
+
+        if !check_rust_analyzer_available() {
+            return;
+        }
+
+        let config = BridgeServerConfig {
+            command: "rust-analyzer".to_string(),
+            args: None,
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        let pool = LanguageServerPool::new();
+
+        // Create a channel for receiving notifications
+        let (tx, mut rx) = mpsc::channel::<Value>(100);
+
+        // Call the new method
+        pool.spawn_in_background_with_notifications("test-channel", &config, tx);
+
+        // Wait for background spawn to complete
+        for _ in 0..50 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            if pool.has_connection("test-channel") {
+                break;
+            }
+        }
+
+        // Verify connection was spawned
+        assert!(
+            pool.has_connection("test-channel"),
+            "Connection should be in pool after spawn"
+        );
+
+        // Collect any notifications that were sent through the channel
+        let mut notifications = vec![];
+        while let Ok(notification) = rx.try_recv() {
+            notifications.push(notification);
+        }
+
+        // rust-analyzer may or may not send progress during init,
+        // but the method should exist and work correctly
+        // If there are notifications, verify they are $/progress
+        for notification in &notifications {
+            if let Some(method) = notification.get("method").and_then(|m| m.as_str()) {
+                assert_eq!(
+                    method, "$/progress",
+                    "All notifications should be $/progress"
                 );
             }
         }
