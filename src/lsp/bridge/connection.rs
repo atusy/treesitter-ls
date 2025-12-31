@@ -7,8 +7,8 @@ use super::text_document::{
     CodeActionWithNotifications, CompletionWithNotifications, DeclarationWithNotifications,
     DocumentHighlightWithNotifications, FormattingWithNotifications,
     GotoDefinitionWithNotifications, HoverWithNotifications, ImplementationWithNotifications,
-    ReferencesWithNotifications, RenameWithNotifications, SignatureHelpWithNotifications,
-    TypeDefinitionWithNotifications,
+    InlayHintWithNotifications, ReferencesWithNotifications, RenameWithNotifications,
+    SignatureHelpWithNotifications, TypeDefinitionWithNotifications,
 };
 use super::workspace::{language_to_extension, setup_workspace_with_option};
 use crate::config::settings::BridgeServerConfig;
@@ -1032,6 +1032,55 @@ impl LanguageServerConnection {
             .and_then(|r| serde_json::from_value(r).ok());
 
         FormattingWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request inlay hints, capturing $/progress notifications.
+    ///
+    /// Sends a `textDocument/inlayHint` request to the language server
+    /// and returns both the response (Vec<InlayHint>) and any `$/progress`
+    /// notifications received while waiting for the response.
+    pub fn inlay_hint_with_notifications(
+        &mut self,
+        _uri: &str,
+        range: Range,
+    ) -> InlayHintWithNotifications {
+        // Use the virtual file URI from the temp workspace
+        let Some(real_uri) = self.virtual_file_uri() else {
+            return InlayHintWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+            "range": {
+                "start": { "line": range.start.line, "character": range.start.character },
+                "end": { "line": range.end.line, "character": range.end.character }
+            }
+        });
+
+        let Some(req_id) = self.send_request("textDocument/inlayHint", params) else {
+            return InlayHintWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id);
+
+        // Extract and parse the inlay hint response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        InlayHintWithNotifications {
             response,
             notifications: result.notifications,
         }
