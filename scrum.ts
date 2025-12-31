@@ -83,11 +83,58 @@ const scrum: ScrumDashboard = {
           verification: "Unit test: DocumentHighlight kind field passed through correctly",
         },
       ],
-      status: "ready",
+      status: "done",
     },
   ],
 
-  sprint: null, // Sprint 100 complete, ready for Sprint 101 planning
+  sprint: {
+    number: 101,
+    pbi_id: "PBI-124",
+    goal: "Add textDocument/documentHighlight bridge support",
+    status: "done",
+    subtasks: [
+      {
+        test: "DocumentHighlightWithNotifications struct exists with response and notifications fields",
+        implementation: "Create src/lsp/bridge/document_highlight.rs with struct definition",
+        type: "behavioral",
+        status: "completed",
+        commits: [],
+        notes: ["Response type is Option<Vec<DocumentHighlight>> (not GotoDefinitionResponse)", "DocumentHighlight has range and kind fields"],
+      },
+      {
+        test: "document_highlight_with_notifications method sends request and returns response",
+        implementation: "Add method to connection.rs following pattern from implementation_with_notifications",
+        type: "behavioral",
+        status: "completed",
+        commits: [],
+        notes: ["Translate each highlight.range, preserve kind field (Read/Write/Text)"],
+      },
+      {
+        test: "document_highlight_impl bridges request to language server for injection regions",
+        implementation: "Create src/lsp/lsp_impl/text_document/document_highlight.rs",
+        type: "behavioral",
+        status: "completed",
+        commits: [],
+        notes: ["Map each DocumentHighlight.range back to host coordinates"],
+      },
+      {
+        test: "ServerCapabilities includes documentHighlightProvider: true",
+        implementation: "Update mod.rs files and add capability",
+        type: "behavioral",
+        status: "completed",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "E2E test verifies cursor on identifier highlights all occurrences",
+        implementation: "Create tests/test_lsp_document_highlight.lua",
+        type: "behavioral",
+        status: "completed",
+        commits: [],
+        notes: ["Test variable usage: let x = 1; let y = x + 2;"],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
