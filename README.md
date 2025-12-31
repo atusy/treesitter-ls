@@ -2,14 +2,11 @@
 
 # treesitter-ls
 
-A fast and flexible Language Server Protocol (LSP) server that leverages Tree-sitter for accurate parsing and language-aware features across multiple programming languages.
+Tree-sitter-based language server for accurate parsing and language-aware features across multiple programming languages.
 
-## Features
-
-- **🎨 Semantic Highlighting** - Full, range, and delta semantic tokens with customizable mappings
-- **🌐 Language Injection** - Syntax highlighting for embedded languages (e.g., Lua in Markdown code blocks)
-- **📝 Smart Selection** - Expand selection based on AST structure with injection awareness
-- **🔧 Code Actions** - Refactoring support (e.g., parameter reordering)
+- **🚀 Multi-language Support** - Works with any language that has a Tree-sitter grammar (e.g., Python, JavaScript, Rust, Lua, etc.)
+- **🔍 Injection Regions** - Detect and handle embedded languages (e.g., Rust in Markdown code blocks)
+- **⚙️ LSP Bridge** - Redirect LSP requests (go-to-definition, hover, etc.) from injection regions to external language servers (e.g., rust-analyzer)
 
 ## Installation
 
@@ -52,3 +49,24 @@ A quick start with Neovim:
 make deps/nvim
 nvim -u scripts/minimal_init.lua
 ```
+
+## Supported LSP Features
+
+treesitter-ls supports LSP features via three mechanisms:
+
+- **Host**: Direct support for the main document language
+- **Injection**: Embedded language regions (e.g., code blocks in Markdown)
+- **Bridge**: Injection regions delegated to external language servers
+
+| Feature | Host | Injection | Bridge |
+|---------|:----:|:---------:|:------:|
+| Semantic Tokens | ✅ | ✅ | ❌ |
+| Selection Range | ✅ | ✅ | ❌ |
+| Code Actions | ✅ | ✅ | ✅ |
+| Go-to Definition | ❌ | ❌ | ✅ |
+| Hover | ❌ | ❌ | ✅ |
+| Completion | ❌ | ❌ | ✅ |
+| Signature Help | ❌ | ❌ | ✅ |
+| Find References | ❌ | ❌ | ✅ |
+| Rename | ❌ | ❌ | ✅ |
+| Formatting | ❌ | ❌ | ✅ |
