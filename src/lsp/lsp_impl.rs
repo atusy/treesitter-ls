@@ -1546,8 +1546,13 @@ mod tests {
         );
 
         // Host rmd with empty bridge filter (disable all)
-        let rmd_settings =
-            LanguageSettings::with_bridge(None, vec![], None, None, Some(BridgeConfig::Array(vec![])));
+        let rmd_settings = LanguageSettings::with_bridge(
+            None,
+            vec![],
+            None,
+            None,
+            Some(BridgeConfig::Array(vec![])),
+        );
 
         // Router should block all languages
         assert!(
