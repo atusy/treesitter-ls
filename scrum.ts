@@ -30,6 +30,7 @@ const scrum: ScrumDashboard = {
 
   // Completed PBIs: PBI-001 through PBI-106 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
+  // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects approach too slow for E2E tests
   product_backlog: [],
 
   sprint: null,
@@ -45,6 +46,14 @@ const scrum: ScrumDashboard = {
   // Historical sprints (recent 2) | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   completed: [
     {
+      number: 84,
+      pbi_id: "PBI-107",
+      goal:
+        "Remove WorkspaceType - treesitter-ls creates only virtual.<ext> file per ADR-0006 Minimal File Creation",
+      status: "cancelled",
+      subtasks: [],
+    },
+    {
       number: 83,
       pbi_id: "PBI-106",
       goal:
@@ -52,18 +61,31 @@ const scrum: ScrumDashboard = {
       status: "done",
       subtasks: [],
     },
-    {
-      number: 82,
-      pbi_id: "PBI-105",
-      goal:
-        "Make redirection.rs language-agnostic by removing hardcoded rust-analyzer and Cargo defaults",
-      status: "done",
-      subtasks: [],
-    },
   ],
 
   // Recent 2 retrospectives | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    {
+      sprint: 84,
+      improvements: [
+        {
+          action:
+            "Validate external tool initialization time before removing working scaffolding - rust-analyzer linkedProjects takes much longer than Cargo.toml approach",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "E2E tests revealed linkedProjects initialization too slow; workspaceType kept and marked deprecated in ADR-0006 for future removal",
+        },
+        {
+          action:
+            "When simplifying config, ensure the alternative approach actually works in practice - theoretical ADR alignment should not override practical functionality",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "Sprint cancelled after discovering linkedProjects approach causes test timeouts; pragmatic decision to defer removal",
+        },
+      ],
+    },
     {
       sprint: 83,
       improvements: [
@@ -82,27 +104,6 @@ const scrum: ScrumDashboard = {
           status: "completed",
           outcome:
             "Users now write cmd = { 'rust-analyzer' } instead of command = 'rust-analyzer' with optional args",
-        },
-      ],
-    },
-    {
-      sprint: 82,
-      improvements: [
-        {
-          action:
-            "Serde rename attributes need verification in integration tests - camelCase mismatch caught by E2E test, not unit test",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "E2E tests provide essential coverage for JSON serialization boundaries; unit tests don't catch schema mismatches with external clients",
-        },
-        {
-          action:
-            "Avoid unit tests with blocking BufReader::read_line() on external processes - use E2E tests for external process integration",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "Removed 8 blocking tests from redirection.rs; E2E tests in test_lsp_definition.lua and test_lsp_notification.lua provide reliable coverage",
         },
       ],
     },
