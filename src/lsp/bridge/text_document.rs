@@ -17,6 +17,7 @@ mod references;
 mod rename;
 mod signature_help;
 mod type_definition;
+mod type_hierarchy;
 
 pub use call_hierarchy::{
     IncomingCallsWithNotifications, OutgoingCallsWithNotifications,
@@ -35,3 +36,6 @@ pub use references::ReferencesWithNotifications;
 pub use rename::RenameWithNotifications;
 pub use signature_help::SignatureHelpWithNotifications;
 pub use type_definition::TypeDefinitionWithNotifications;
+pub use type_hierarchy::{
+    PrepareTypeHierarchyWithNotifications, SubtypesWithNotifications, SupertypesWithNotifications,
+};

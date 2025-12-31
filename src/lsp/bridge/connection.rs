@@ -8,8 +8,9 @@ use super::text_document::{
     DocumentHighlightWithNotifications, FormattingWithNotifications,
     GotoDefinitionWithNotifications, HoverWithNotifications, ImplementationWithNotifications,
     IncomingCallsWithNotifications, InlayHintWithNotifications, OutgoingCallsWithNotifications,
-    PrepareCallHierarchyWithNotifications, ReferencesWithNotifications, RenameWithNotifications,
-    SignatureHelpWithNotifications, TypeDefinitionWithNotifications,
+    PrepareCallHierarchyWithNotifications, PrepareTypeHierarchyWithNotifications,
+    ReferencesWithNotifications, RenameWithNotifications, SignatureHelpWithNotifications,
+    SubtypesWithNotifications, SupertypesWithNotifications, TypeDefinitionWithNotifications,
 };
 use super::workspace::{language_to_extension, setup_workspace_with_option};
 use crate::config::settings::BridgeServerConfig;
@@ -1200,6 +1201,124 @@ impl LanguageServerConnection {
             .and_then(|r| serde_json::from_value(r).ok());
 
         OutgoingCallsWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request prepare type hierarchy, capturing $/progress notifications.
+    ///
+    /// Sends a `textDocument/prepareTypeHierarchy` request to the language server
+    /// and returns both the response (Vec<TypeHierarchyItem>) and any `$/progress`
+    /// notifications received while waiting for the response.
+    pub fn prepare_type_hierarchy_with_notifications(
+        &mut self,
+        _uri: &str,
+        position: Position,
+    ) -> PrepareTypeHierarchyWithNotifications {
+        // Use the virtual file URI from the temp workspace
+        let Some(real_uri) = self.virtual_file_uri() else {
+            return PrepareTypeHierarchyWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let Some(req_id) = self.send_request("textDocument/prepareTypeHierarchy", params) else {
+            return PrepareTypeHierarchyWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id);
+
+        // Extract and parse the prepare type hierarchy response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        PrepareTypeHierarchyWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request type hierarchy supertypes, capturing $/progress notifications.
+    ///
+    /// Sends a `typeHierarchy/supertypes` request to the language server
+    /// and returns both the response (Vec<TypeHierarchyItem>) and any `$/progress`
+    /// notifications received while waiting for the response.
+    pub fn supertypes_with_notifications(
+        &mut self,
+        item: &TypeHierarchyItem,
+    ) -> SupertypesWithNotifications {
+        let params = serde_json::json!({
+            "item": item,
+        });
+
+        let Some(req_id) = self.send_request("typeHierarchy/supertypes", params) else {
+            return SupertypesWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id);
+
+        // Extract and parse the supertypes response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        SupertypesWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request type hierarchy subtypes, capturing $/progress notifications.
+    ///
+    /// Sends a `typeHierarchy/subtypes` request to the language server
+    /// and returns both the response (Vec<TypeHierarchyItem>) and any `$/progress`
+    /// notifications received while waiting for the response.
+    pub fn subtypes_with_notifications(
+        &mut self,
+        item: &TypeHierarchyItem,
+    ) -> SubtypesWithNotifications {
+        let params = serde_json::json!({
+            "item": item,
+        });
+
+        let Some(req_id) = self.send_request("typeHierarchy/subtypes", params) else {
+            return SubtypesWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id);
+
+        // Extract and parse the subtypes response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        SubtypesWithNotifications {
             response,
             notifications: result.notifications,
         }
