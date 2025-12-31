@@ -29,10 +29,11 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-123 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-122 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
-  // PBI-123: Fix CI - install tree-sitter-cli and rust-analyzer (Sprint 101)
+  // PBI-120: Done in e600402 - bridge filter map with enabled flag (docs in docs/README.md)
+  // PBI-122: Done in 26cc8b4 - removed stale deprecation comment from lsp_impl.rs
   product_backlog: [],
 
   sprint: null,
@@ -45,26 +46,26 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-99: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-97: git log -- scrum.yaml, scrum.ts
   completed: [
-    { number: 101, pbi_id: "PBI-123", goal: "Fix CI test failures with tree-sitter-cli and rust-analyzer", status: "done", subtasks: [] },
-    { number: 99, pbi_id: "PBI-122", goal: "Self-bootstrapping CI with treesitter-ls CLI for parser installation", status: "done", subtasks: [] },
+    { number: 99, pbi_id: "PBI-122", goal: "Remove stale deprecation comment from lsp_impl.rs", status: "done", subtasks: [] },
+    { number: 98, pbi_id: "PBI-121", goal: "Refactor lsp_impl.rs into modular file structure", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-99: git log -- scrum.yaml, scrum.ts
+  // Recent 2 retrospectives | Sprint 1-97: git log -- scrum.yaml, scrum.ts
   retrospectives: [
-    {
-      sprint: 101,
-      improvements: [
-        { action: "CI needs all test dependencies explicitly installed: tree-sitter-cli for parsers, rust-analyzer for bridge tests", timing: "immediate", status: "completed", outcome: "Added both to ci.yaml; all tests pass" },
-        { action: "Verify CI passes before marking PBI done - local tests don't catch missing CI dependencies", timing: "immediate", status: "completed", outcome: "Sprint 100 failed, Sprint 101 fixed by waiting for CI" },
-      ],
-    },
     {
       sprint: 99,
       improvements: [
-        { action: "Self-bootstrapping pattern: build CLI first, then use it for setup tasks", timing: "immediate", status: "completed", outcome: "CI uses treesitter-ls to install parsers" },
-        { action: "Marker file pattern (.installed) enables idempotent make targets", timing: "immediate", status: "completed", outcome: "deps/treesitter/.installed guards parser installation" },
+        { action: "Exploration agent efficiently identified single deprecated artifact in codebase", timing: "immediate", status: "completed", outcome: "Stale DEPRECATED comment removed from lsp_impl.rs" },
+        { action: "Consider periodic code hygiene checks to catch stale comments earlier", timing: "sprint", status: "active", outcome: null },
+      ],
+    },
+    {
+      sprint: 98,
+      improvements: [
+        { action: "Modular refactoring with *_impl delegation decomposed 3800+ line file into 10 focused text_document modules", timing: "immediate", status: "completed", outcome: "pub(crate) *_impl methods called from LanguageServer trait impl" },
+        { action: "File organization by LSP category (text_document/) creates natural boundaries for future workspace/ and window/", timing: "product", status: "active", outcome: null },
       ],
     },
   ],
