@@ -9,10 +9,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 /// Default cache TTL: 1 hour
-pub const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(3600);
+pub(super) const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(3600);
 
 /// Cache for parsers.lua content.
-pub struct MetadataCache {
+pub(super) struct MetadataCache {
     /// Directory where cache files are stored.
     cache_dir: PathBuf,
     /// Time-to-live for cached content.

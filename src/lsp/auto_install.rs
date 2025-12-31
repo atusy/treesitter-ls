@@ -25,7 +25,7 @@ impl InstallingLanguages {
 
     /// Check if a language is currently being installed.
     #[cfg(test)]
-    pub fn is_installing(&self, language: &str) -> bool {
+    fn is_installing(&self, language: &str) -> bool {
         self.languages
             .lock()
             .recover_poison("InstallingLanguages::is_installing")
