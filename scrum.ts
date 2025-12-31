@@ -185,19 +185,13 @@ const scrum: ScrumDashboard = {
     {
       sprint: 109,
       improvements: [
-        { action: "PBI-122 COMPLETE: Top-level languageServers field with bridge.servers deprecation", timing: "immediate", status: "completed", outcome: "Strict TDD (6 cycles) delivered clean API migration path; effective_language_servers() merges both sources" },
+        { action: "First behavioral PBI after 9 structural sprints; strict TDD (6 test cycles) delivered clean API", timing: "immediate", status: "completed", outcome: "PBI-122 done: languageServers field + deprecation path; effective_language_servers() merges both sources" },
       ],
     },
     {
       sprint: 108,
       improvements: [
         { action: "PBI-121 COMPLETE: 10 LSP method modules extracted over 9 sprints (100-108)", timing: "immediate", status: "completed", outcome: "lsp_impl.rs reduced from ~1800 to ~1500 lines; text_document/ now has 10 focused modules" },
-      ],
-    },
-    {
-      sprint: 107,
-      improvements: [
-        { action: "8th consecutive successful extraction (code_action.rs); only 1 phase remains (selection_range/signature_help)", timing: "immediate", status: "completed", outcome: "PBI-121 on track for completion in Sprint 108" },
       ],
     },
   ],
