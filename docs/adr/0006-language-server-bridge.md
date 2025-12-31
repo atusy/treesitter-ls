@@ -70,7 +70,7 @@ These constraints mean bridging is not simply "forward request, return response"
 
 **Only explicitly configured servers are spawned.** treesitter-ls does not auto-discover or execute arbitrary language servers based on injection content. A malicious code block cannot trigger execution of unregistered commands.
 
-- Servers must be listed in user configuration with explicit `command` field
+- Servers must be listed in user configuration with explicit `cmd` field
 - No shell expansion or command interpolation in server commands
 - Temp files contain only extracted source code, never executable content
 
@@ -156,20 +156,19 @@ The bridge requires knowing which server to use for each language:
   "bridge": {
     "servers": {
       "rust-analyzer": {
+        "cmd": ["rust-analyzer"],
         "languages": ["rust"],
-        "command": "rust-analyzer",
         "initializationOptions": {
           "linkedProjects": ["~/.config/treesitter-ls/rust-project.json"]
         }
       },
       "pyright": {
-        "languages": ["python"],
-        "command": "pyright-langserver",
-        "args": ["--stdio"]
+        "cmd": ["pyright-langserver", "--stdio"],
+        "languages": ["python"]
       },
       "gopls": {
-        "languages": ["go"],
-        "command": "gopls"
+        "cmd": ["gopls"],
+        "languages": ["go"]
       }
     }
   }
@@ -179,10 +178,10 @@ The bridge requires knowing which server to use for each language:
 | Field | Required | Description |
 |-------|----------|-------------|
 | `servers` | Yes | Server configurations keyed by server name |
+| `servers.*.cmd` | Yes | Command array: first element is program, rest are arguments |
 | `servers.*.languages` | Yes | Languages this server handles |
-| `servers.*.command` | Yes | Server executable |
-| `servers.*.args` | No | Command-line arguments |
 | `servers.*.initializationOptions` | No | Passed to server's `initialize` request |
+| `servers.*.workspaceType` | No | Workspace type: "cargo" or "generic" (default) |
 | `servers.*.rootUri` | No | Workspace root URI for servers that require it |
 
 #### Multiple Servers Per Language
@@ -290,8 +289,9 @@ treesitter-ls configuration points rust-analyzer to this file:
   "bridge": {
     "servers": {
       "rust-analyzer": {
+        "cmd": ["rust-analyzer"],
         "languages": ["rust"],
-        "command": "rust-analyzer",
+        "workspaceType": "cargo",
         "initializationOptions": {
           "linkedProjects": ["~/.config/treesitter-ls/rust-project.json"]
         }
