@@ -70,7 +70,106 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 85,
+    pbi_id: "PBI-108",
+    goal:
+      "Add per-host language bridge filter configuration to control which injection languages are bridged",
+    status: "planning",
+    subtasks: [
+      {
+        test: "LanguageConfig parses bridge field as Option<Vec<String>> - test with array ['python', 'r'], empty array [], and null/omitted",
+        implementation:
+          "Add 'bridge: Option<Vec<String>>' field to LanguageConfig struct in settings.rs with serde deserialization",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "AC1: languages.<filetype>.bridge accepts array of language names",
+          "AC2: empty array disables bridging",
+          "AC3: null/omitted bridges all",
+        ],
+      },
+      {
+        test: "LanguageSettings domain type includes bridge field - verify conversion from LanguageConfig preserves bridge filter",
+        implementation:
+          "Add 'bridge: Option<Vec<String>>' to LanguageSettings struct and update constructor/conversion",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Domain layer needs the bridge filter to pass to LSP layer",
+        ],
+      },
+      {
+        test: "WorkspaceSettings.languages map propagates bridge field from TreeSitterSettings parsing",
+        implementation:
+          "Update TreeSitterSettings to WorkspaceSettings conversion to include bridge field in LanguageSettings",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Conversion in lsp/lsp_impl.rs or wherever settings are parsed",
+        ],
+      },
+      {
+        test: "is_language_bridgeable(host_lang, injection_lang) returns true when bridge is None (default bridges all)",
+        implementation:
+          "Add is_language_bridgeable helper function that checks bridge filter - None means bridge all",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "AC3 verification: null/omitted bridges all configured languages",
+        ],
+      },
+      {
+        test: "is_language_bridgeable returns false when bridge is empty array []",
+        implementation:
+          "Extend is_language_bridgeable to return false for empty bridge array",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["AC2 verification: empty array disables bridging"],
+      },
+      {
+        test: "is_language_bridgeable returns true only when injection language is in bridge array",
+        implementation:
+          "Complete is_language_bridgeable to check if injection_lang is contained in bridge array",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "AC1 verification: bridge only specified languages",
+          "e.g., bridge=['r'] allows r but not python",
+        ],
+      },
+      {
+        test: "get_bridge_config_for_language respects host document's bridge filter before returning config",
+        implementation:
+          "Modify get_bridge_config_for_language in lsp_impl.rs to take host_language parameter and check is_language_bridgeable",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "AC4 verification: Bridge filtering applied at request time before routing",
+          "Returns None if injection language not allowed for host",
+        ],
+      },
+      {
+        test: "eager_spawn_for_injections respects bridge filter - only spawns servers for allowed injection languages",
+        implementation:
+          "Update eager_spawn_for_injections to filter injection languages through is_language_bridgeable before spawning",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Prevents unnecessary server spawns for disallowed bridges",
+          "Uses host document language to lookup bridge filter",
+        ],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
