@@ -807,6 +807,37 @@ impl TreeSitterLs {
             }
         }
     }
+
+    /// Eagerly spawn bridge server connections for injection regions in the background.
+    ///
+    /// This pre-warms connections so that the first goto-definition request is fast.
+    /// Called after parse_document completes so we have access to the AST.
+    ///
+    /// For each unique injection language that has a bridge server configured,
+    /// triggers spawn_in_background to start the connection asynchronously.
+    fn eager_spawn_for_injections(&self, uri: &Url) {
+        // Get unique injected languages from the document
+        let languages = get_injected_languages(uri, &self.language, &self.documents);
+
+        if languages.is_empty() {
+            return;
+        }
+
+        // For each injection language, check if it has a bridge config and spawn
+        for lang in languages {
+            if let Some(config) = self.get_bridge_config_for_language(&lang) {
+                let pool_key = config.command.clone();
+                self.language_server_pool
+                    .spawn_in_background(&pool_key, &config);
+                log::debug!(
+                    target: "treesitter_ls::eager_spawn",
+                    "Triggered background spawn for {} (language: {})",
+                    pool_key,
+                    lang
+                );
+            }
+        }
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -989,6 +1020,10 @@ impl LanguageServer for TreeSitterLs {
         // Check for injected languages and trigger auto-install for missing parsers
         // This must be called AFTER parse_document so we have access to the AST
         self.check_injected_languages_auto_install(&uri).await;
+
+        // Eagerly spawn bridge server connections for injection regions
+        // This pre-warms connections so first goto-definition is fast
+        self.eager_spawn_for_injections(&uri);
 
         // Check if queries are ready for the document
         if let Some(language_name) = self.get_language_for_document(&uri) {
