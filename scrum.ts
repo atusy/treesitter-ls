@@ -32,24 +32,8 @@ const scrum: ScrumDashboard = {
   // Completed PBIs: PBI-001 through PBI-121 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
-  product_backlog: [
-    {
-      id: "PBI-120",
-      story: {
-        role: "Rustacean editing Markdown",
-        capability: "configure per-language bridge filters using a map structure with enabled flag",
-        benefit: "I can explicitly enable/disable bridging for specific injection languages with room for future per-language options",
-      },
-      acceptance_criteria: [
-        { criterion: "LanguageConfig.bridge accepts map structure: { 'python': { 'enabled': true } }", verification: "cargo test should_parse_language_config_with_bridge_map passes" },
-        { criterion: "BridgeLanguageConfig struct exists with 'enabled' field", verification: "grep 'pub struct BridgeLanguageConfig' src/config/settings.rs returns matches" },
-        { criterion: "is_language_bridgeable method checks enabled field in the map", verification: "cargo test test_bridge_filter_map_enabled passes" },
-        { criterion: "README.md updated to show new bridge map configuration schema", verification: "grep 'enabled' README.md returns matches in bridge examples" },
-        { criterion: "E2E tests pass with bridge map configuration", verification: "make test_nvim passes" },
-      ],
-      status: "ready",
-    },
-  ],
+  // PBI-120: Done in e600402 - bridge filter map with enabled flag (docs in docs/README.md)
+  product_backlog: [],
 
   sprint: null, // Sprint 98 (PBI-121) completed - lsp_impl modular refactoring
 
