@@ -1,7 +1,7 @@
 pub mod auto_install;
 mod lsp_impl;
 mod progress;
-pub mod redirection;
+pub mod bridge;
 mod settings;
 
 pub use lsp_impl::TreeSitterLs;

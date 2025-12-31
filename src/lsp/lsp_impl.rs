@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex};
 
 use super::auto_install::{InstallingLanguages, get_injected_languages};
 use super::progress::{create_progress_begin, create_progress_end};
-use super::redirection::LanguageServerPool;
+use super::bridge::LanguageServerPool;
 
 fn lsp_legend_types() -> Vec<SemanticTokenType> {
     LEGEND_TYPES
@@ -61,7 +61,7 @@ pub struct TreeSitterLs {
     installing_languages: InstallingLanguages,
     /// Tracks parsers that have crashed
     failed_parsers: FailedParserRegistry,
-    /// Pool of language server connections for injection redirection
+    /// Pool of language server connections for injection bridging
     language_server_pool: LanguageServerPool,
 }
 
@@ -93,7 +93,7 @@ impl TreeSitterLs {
         let failed_parsers = Self::init_failed_parser_registry();
 
         // Clean up stale temp directories from previous sessions in the background
-        std::thread::spawn(super::redirection::startup_cleanup);
+        std::thread::spawn(super::bridge::startup_cleanup);
 
         Self {
             client,

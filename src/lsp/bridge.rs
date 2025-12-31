@@ -1,6 +1,6 @@
-//! LSP Redirection for injection regions
+//! LSP Bridge for injection regions
 //!
-//! This module handles redirecting LSP requests for code inside injection regions
+//! This module handles bridging LSP requests for code inside injection regions
 //! (e.g., Rust code blocks in Markdown) to appropriate language servers.
 
 mod cleanup;
