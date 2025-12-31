@@ -28,7 +28,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-106 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-108 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects approach too slow for E2E tests
   product_backlog: [
@@ -66,7 +66,7 @@ const scrum: ScrumDashboard = {
             "cargo test test_bridge_router_respects_host_filter",
         },
       ],
-      status: "ready",
+      status: "done",
     },
   ],
 
@@ -75,19 +75,27 @@ const scrum: ScrumDashboard = {
     pbi_id: "PBI-108",
     goal:
       "Add per-host language bridge filter configuration to control which injection languages are bridged",
-    status: "planning",
+    status: "done",
     subtasks: [
       {
         test: "LanguageConfig parses bridge field as Option<Vec<String>> - test with array ['python', 'r'], empty array [], and null/omitted",
         implementation:
           "Add 'bridge: Option<Vec<String>>' field to LanguageConfig struct in settings.rs with serde deserialization",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "278c076",
+            message:
+              "feat(config): add per-host language bridge filter for injection redirection",
+            phase: "green",
+          },
+        ],
         notes: [
           "AC1: languages.<filetype>.bridge accepts array of language names",
           "AC2: empty array disables bridging",
           "AC3: null/omitted bridges all",
+          "Already implemented - tests exist in settings.rs",
         ],
       },
       {
@@ -95,10 +103,18 @@ const scrum: ScrumDashboard = {
         implementation:
           "Add 'bridge: Option<Vec<String>>' to LanguageSettings struct and update constructor/conversion",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "278c076",
+            message:
+              "feat(config): add per-host language bridge filter for injection redirection",
+            phase: "green",
+          },
+        ],
         notes: [
           "Domain layer needs the bridge filter to pass to LSP layer",
+          "Already implemented - field exists and with_bridge constructor works",
         ],
       },
       {
@@ -106,10 +122,18 @@ const scrum: ScrumDashboard = {
         implementation:
           "Update TreeSitterSettings to WorkspaceSettings conversion to include bridge field in LanguageSettings",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "278c076",
+            message:
+              "feat(config): add per-host language bridge filter for injection redirection",
+            phase: "green",
+          },
+        ],
         notes: [
-          "Conversion in lsp/lsp_impl.rs or wherever settings are parsed",
+          "Conversion in config.rs From implementations",
+          "Already implemented - bridge field propagates through all conversions",
         ],
       },
       {
@@ -117,10 +141,18 @@ const scrum: ScrumDashboard = {
         implementation:
           "Add is_language_bridgeable helper function that checks bridge filter - None means bridge all",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "278c076",
+            message:
+              "feat(config): add per-host language bridge filter for injection redirection",
+            phase: "green",
+          },
+        ],
         notes: [
           "AC3 verification: null/omitted bridges all configured languages",
+          "Test: test_bridge_filter_null_bridges_all_languages",
         ],
       },
       {
@@ -128,20 +160,37 @@ const scrum: ScrumDashboard = {
         implementation:
           "Extend is_language_bridgeable to return false for empty bridge array",
         type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: ["AC2 verification: empty array disables bridging"],
+        status: "completed",
+        commits: [
+          {
+            hash: "278c076",
+            message:
+              "feat(config): add per-host language bridge filter for injection redirection",
+            phase: "green",
+          },
+        ],
+        notes: [
+          "AC2 verification: empty array disables bridging",
+          "Test: test_bridge_filter_empty_disables_bridging",
+        ],
       },
       {
         test: "is_language_bridgeable returns true only when injection language is in bridge array",
         implementation:
           "Complete is_language_bridgeable to check if injection_lang is contained in bridge array",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "278c076",
+            message:
+              "feat(config): add per-host language bridge filter for injection redirection",
+            phase: "green",
+          },
+        ],
         notes: [
           "AC1 verification: bridge only specified languages",
-          "e.g., bridge=['r'] allows r but not python",
+          "Test: test_bridge_filter_allows_specified_languages",
         ],
       },
       {
@@ -149,11 +198,19 @@ const scrum: ScrumDashboard = {
         implementation:
           "Modify get_bridge_config_for_language in lsp_impl.rs to take host_language parameter and check is_language_bridgeable",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "278c076",
+            message:
+              "feat(config): add per-host language bridge filter for injection redirection",
+            phase: "green",
+          },
+        ],
         notes: [
           "AC4 verification: Bridge filtering applied at request time before routing",
           "Returns None if injection language not allowed for host",
+          "Test: test_bridge_router_respects_host_filter",
         ],
       },
       {
@@ -161,11 +218,19 @@ const scrum: ScrumDashboard = {
         implementation:
           "Update eager_spawn_for_injections to filter injection languages through is_language_bridgeable before spawning",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "278c076",
+            message:
+              "feat(config): add per-host language bridge filter for injection redirection",
+            phase: "green",
+          },
+        ],
         notes: [
           "Prevents unnecessary server spawns for disallowed bridges",
           "Uses host document language to lookup bridge filter",
+          "Filter checked via get_bridge_config_for_language",
         ],
       },
     ],
