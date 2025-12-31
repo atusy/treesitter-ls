@@ -8,7 +8,7 @@ vim.lsp.config.treesitter_ls = {
 				["rust-analyzer"] = {
 					command = "rust-analyzer",
 					languages = { "rust" },
-					workspace_type = "cargo",
+					workspaceType = "cargo",
 				},
 			},
 		},
