@@ -230,6 +230,31 @@ pub struct TreeSitterSettings {
 }
 
 impl TreeSitterSettings {
+    /// Get the effective language servers configuration.
+    ///
+    /// Returns the merged language servers from both `language_servers` (new, canonical)
+    /// and `bridge.servers` (deprecated), with `language_servers` taking precedence.
+    ///
+    /// - If only `language_servers` is set, returns it
+    /// - If only `bridge.servers` is set, returns it
+    /// - If both are set, merges with `language_servers` taking precedence
+    /// - If neither is set, returns None
+    pub fn effective_language_servers(&self) -> Option<HashMap<String, BridgeServerConfig>> {
+        match (&self.language_servers, &self.bridge) {
+            (Some(new), Some(bridge)) if !bridge.servers.is_empty() => {
+                // Merge: start with bridge.servers (deprecated), override with language_servers (new)
+                let mut merged = bridge.servers.clone();
+                for (key, value) in new {
+                    merged.insert(key.clone(), value.clone());
+                }
+                Some(merged)
+            }
+            (Some(new), _) => Some(new.clone()),
+            (None, Some(bridge)) if !bridge.servers.is_empty() => Some(bridge.servers.clone()),
+            _ => None,
+        }
+    }
+
     /// Log deprecation warnings for any deprecated configuration fields.
     ///
     /// Call this after deserializing settings to warn users about deprecated field usage.
@@ -1583,5 +1608,109 @@ mod tests {
             servers["pyright"].cmd,
             vec!["pyright-langserver".to_string(), "--stdio".to_string()]
         );
+    }
+
+    #[test]
+    fn effective_language_servers_returns_language_servers_when_only_new() {
+        // TDD RED: effective_language_servers() should return languageServers when only new field is set
+        // PBI-122: When languageServers is set and bridge.servers is not, return languageServers
+        let config_json = r#"{
+            "languageServers": {
+                "rust-analyzer": {
+                    "cmd": ["rust-analyzer"],
+                    "languages": ["rust"]
+                }
+            }
+        }"#;
+
+        let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
+        let effective = settings.effective_language_servers();
+
+        assert!(
+            effective.is_some(),
+            "effective_language_servers should return Some when languageServers is set"
+        );
+        let servers = effective.unwrap();
+        assert_eq!(servers.len(), 1);
+        assert!(servers.contains_key("rust-analyzer"));
+    }
+
+    #[test]
+    fn effective_language_servers_returns_bridge_servers_when_only_old() {
+        // TDD RED: effective_language_servers() should return bridge.servers when only old field is set
+        // PBI-122: Backwards compatibility - bridge.servers still works
+        let config_json = r#"{
+            "bridge": {
+                "servers": {
+                    "pyright": {
+                        "cmd": ["pyright-langserver", "--stdio"],
+                        "languages": ["python"]
+                    }
+                }
+            }
+        }"#;
+
+        let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
+        let effective = settings.effective_language_servers();
+
+        assert!(
+            effective.is_some(),
+            "effective_language_servers should return Some when bridge.servers is set"
+        );
+        let servers = effective.unwrap();
+        assert_eq!(servers.len(), 1);
+        assert!(servers.contains_key("pyright"));
+    }
+
+    #[test]
+    fn effective_language_servers_merges_both_sources() {
+        // TDD RED: effective_language_servers() should merge both sources with languageServers winning
+        // PBI-122: languageServers takes precedence on conflict, non-conflicting entries are merged
+        let config_json = r#"{
+            "languageServers": {
+                "rust-analyzer": {
+                    "cmd": ["rust-analyzer", "--log-file", "/tmp/new.log"],
+                    "languages": ["rust"]
+                },
+                "lua-ls": {
+                    "cmd": ["lua-language-server"],
+                    "languages": ["lua"]
+                }
+            },
+            "bridge": {
+                "servers": {
+                    "rust-analyzer": {
+                        "cmd": ["rust-analyzer"],
+                        "languages": ["rust"]
+                    },
+                    "pyright": {
+                        "cmd": ["pyright-langserver", "--stdio"],
+                        "languages": ["python"]
+                    }
+                }
+            }
+        }"#;
+
+        let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
+        let effective = settings.effective_language_servers();
+
+        assert!(effective.is_some());
+        let servers = effective.unwrap();
+
+        // Should have 3 servers: rust-analyzer, lua-ls, pyright
+        assert_eq!(servers.len(), 3, "Should merge to 3 servers: {:?}", servers.keys().collect::<Vec<_>>());
+
+        // languageServers version of rust-analyzer should win
+        assert_eq!(
+            servers["rust-analyzer"].cmd,
+            vec!["rust-analyzer".to_string(), "--log-file".to_string(), "/tmp/new.log".to_string()],
+            "languageServers should take precedence for rust-analyzer"
+        );
+
+        // lua-ls from languageServers only
+        assert!(servers.contains_key("lua-ls"));
+
+        // pyright from bridge.servers only
+        assert!(servers.contains_key("pyright"));
     }
 }
