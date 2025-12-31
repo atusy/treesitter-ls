@@ -136,12 +136,6 @@ const scrum: ScrumDashboard = {
         { action: "E2E naming issue (treesitter_ls vs treesitter-ls) abandoned after 4 sprints - non-blocking, no impact on delivery", timing: "immediate", status: "abandoned", outcome: "Cleaned up stale improvement item" },
       ],
     },
-    {
-      sprint: 105,
-      improvements: [
-        { action: "6th consecutive successful extraction (rename.rs); pattern fully mature", timing: "immediate", status: "completed", outcome: "3 phases remained (formatting, code_action, selection_range/signature_help)" },
-      ],
-    },
   ],
 };
 
