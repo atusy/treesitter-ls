@@ -3,6 +3,7 @@
 mod code_action;
 mod completion;
 mod definition;
+mod document_highlight;
 mod formatting;
 mod hover;
 mod implementation;
