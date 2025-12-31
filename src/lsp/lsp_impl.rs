@@ -2025,21 +2025,20 @@ impl LanguageServer for TreeSitterLs {
         // Get language for the document
         let language_name = self.get_language_for_document(&uri);
 
-        // Check for injection bridging first (if cursor is in an injection region)
-        if let Some(ref lang) = language_name
-            && let Some(bridged) = self
-                .try_bridge_code_action(&uri, text, tree, lang, range)
+        // Try to get bridged actions from injection region (child language)
+        let bridged_actions = if let Some(ref lang) = language_name {
+            self.try_bridge_code_action(&uri, text, tree, lang, range)
                 .await
-        {
-            return Ok(Some(bridged));
-        }
+        } else {
+            None
+        };
 
         // Get capture mappings
         let capture_mappings = self.language.get_capture_mappings();
         let capture_context = language_name.as_deref().map(|ft| (ft, &capture_mappings));
 
-        // Get queries and delegate to handler
-        let lsp_response = if let Some(lang) = language_name.clone() {
+        // Get treesitter-ls actions (parent language)
+        let parent_actions = if let Some(lang) = language_name.clone() {
             let highlight_query = self.language.get_highlight_query(&lang);
             let locals_query = self.language.get_locals_query(&lang);
             let injection_query = self.language.get_injection_query(&lang);
@@ -2074,6 +2073,18 @@ impl LanguageServer for TreeSitterLs {
                 tree,
                 domain_range,
             ))
+        };
+
+        // Merge actions: child (bridged) first, then parent (treesitter-ls)
+        let lsp_response = match (bridged_actions, parent_actions) {
+            (Some(mut child), Some(parent)) => {
+                // Child actions first, then parent actions
+                child.extend(parent);
+                Some(child)
+            }
+            (Some(child), None) => Some(child),
+            (None, Some(parent)) => Some(parent),
+            (None, None) => None,
         };
 
         Ok(lsp_response)
