@@ -1,0 +1,19 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "labels": ["dependencies"],
+  "cargo": {
+    "enabled": true
+  },
+  "packageRules": [
+    {
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "groupName": "rust dependencies (non-major)",
+      "groupSlug": "rust-minor",
+      "stabilityDays": 3
+    }
+  ]
+}
