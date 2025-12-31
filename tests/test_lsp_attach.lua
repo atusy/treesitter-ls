@@ -13,7 +13,7 @@ T["LSP starts"] = function()
 	local clients = 0
 	helper.wait(5000, function()
 		clients =
-			child.lua_get([[#vim.lsp.get_clients({ bufnr = vim.api.nvim_get_current_buf(), name = "treesitter_ls" })]])
+			child.lua_get([[#vim.lsp.get_clients({ bufnr = vim.api.nvim_get_current_buf(), name = "treesitter-ls" })]])
 		return clients > 0
 	end, 10)
 	MiniTest.expect.equality(clients, 1)

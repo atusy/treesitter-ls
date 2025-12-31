@@ -37,26 +37,6 @@ pub struct BridgeServerConfig {
     pub workspace_type: Option<WorkspaceType>,
 }
 
-/// Bridge settings containing configured language servers.
-///
-/// JSON schema:
-/// ```json
-/// {
-///   "bridge": {
-///     "servers": {
-///       "rust-analyzer": { "cmd": ["rust-analyzer"], "languages": ["rust"], ... },
-///       "pyright": { "cmd": ["pyright-langserver", "--stdio"], "languages": ["python"] }
-///     }
-///   }
-/// }
-/// ```
-#[derive(Debug, Clone, Deserialize, serde::Serialize, Default, PartialEq, Eq)]
-pub struct BridgeSettings {
-    /// Map of server name to server configuration
-    #[serde(default)]
-    pub servers: HashMap<String, BridgeServerConfig>,
-}
-
 #[derive(Debug, Clone, Deserialize, serde::Serialize, Default, PartialEq, Eq)]
 pub struct QueryTypeMappings {
     #[serde(default)]
@@ -96,9 +76,10 @@ pub struct TreeSitterSettings {
     pub capture_mappings: CaptureMappings,
     #[serde(rename = "autoInstall")]
     pub auto_install: Option<bool>,
-    /// Optional bridge settings for configuring external language servers
-    #[serde(default)]
-    pub bridge: Option<BridgeSettings>,
+    /// Language servers for bridging LSP requests to injection regions.
+    /// Map of server name to server configuration.
+    #[serde(rename = "languageServers")]
+    pub language_servers: Option<HashMap<String, BridgeServerConfig>>,
 }
 
 // Domain types - internal representations used throughout the application
@@ -173,7 +154,7 @@ pub struct WorkspaceSettings {
     pub languages: HashMap<String, LanguageSettings>,
     pub capture_mappings: CaptureMappings,
     pub auto_install: bool,
-    pub bridge: Option<BridgeSettings>,
+    pub language_servers: Option<HashMap<String, BridgeServerConfig>>,
 }
 
 impl WorkspaceSettings {
@@ -187,7 +168,7 @@ impl WorkspaceSettings {
             languages,
             capture_mappings,
             auto_install: true, // Default to true for zero-config experience
-            bridge: None,
+            language_servers: None,
         }
     }
 
@@ -202,23 +183,23 @@ impl WorkspaceSettings {
             languages,
             capture_mappings,
             auto_install,
-            bridge: None,
+            language_servers: None,
         }
     }
 
-    pub fn with_bridge(
+    pub fn with_language_servers(
         search_paths: Vec<String>,
         languages: HashMap<String, LanguageSettings>,
         capture_mappings: CaptureMappings,
         auto_install: bool,
-        bridge: Option<BridgeSettings>,
+        language_servers: Option<HashMap<String, BridgeServerConfig>>,
     ) -> Self {
         Self {
             search_paths,
             languages,
             capture_mappings,
             auto_install,
-            bridge,
+            language_servers,
         }
     }
 }
@@ -568,7 +549,7 @@ mod tests {
             languages: HashMap::new(),
             capture_mappings: HashMap::new(),
             auto_install: None,
-            bridge: None,
+            language_servers: None,
         };
 
         // Add multiple language configurations
@@ -673,90 +654,6 @@ mod tests {
         assert_eq!(config.cmd, vec!["pyright".to_string()]);
         assert_eq!(config.languages, vec!["python".to_string()]);
         assert!(config.initialization_options.is_none());
-    }
-
-    #[test]
-    fn should_parse_bridge_settings() {
-        // Test that BridgeSettings deserializes from servers map
-        let config_json = r#"{
-            "servers": {
-                "rust-analyzer": {
-                    "cmd": ["rust-analyzer"],
-                    "languages": ["rust"],
-                    "initializationOptions": {
-                        "linkedProjects": ["/path/to/Cargo.toml"]
-                    }
-                },
-                "pyright": {
-                    "cmd": ["pyright-langserver", "--stdio"],
-                    "languages": ["python"]
-                }
-            }
-        }"#;
-
-        let settings: BridgeSettings = serde_json::from_str(config_json).unwrap();
-
-        assert_eq!(settings.servers.len(), 2);
-        assert!(settings.servers.contains_key("rust-analyzer"));
-        assert!(settings.servers.contains_key("pyright"));
-
-        let ra = &settings.servers["rust-analyzer"];
-        assert_eq!(ra.cmd, vec!["rust-analyzer".to_string()]);
-        assert_eq!(ra.languages, vec!["rust".to_string()]);
-
-        let py = &settings.servers["pyright"];
-        assert_eq!(
-            py.cmd,
-            vec!["pyright-langserver".to_string(), "--stdio".to_string()]
-        );
-    }
-
-    #[test]
-    fn should_parse_bridge_settings_empty() {
-        // Test that empty servers map is valid
-        let config_json = r#"{ "servers": {} }"#;
-
-        let settings: BridgeSettings = serde_json::from_str(config_json).unwrap();
-        assert!(settings.servers.is_empty());
-    }
-
-    #[test]
-    fn should_parse_treesitter_settings_with_bridge() {
-        // Test that TreeSitterSettings includes optional bridge field
-        let config_json = r#"{
-            "searchPaths": ["/usr/local/lib"],
-            "bridge": {
-                "servers": {
-                    "rust-analyzer": {
-                        "cmd": ["rust-analyzer"],
-                        "languages": ["rust"]
-                    }
-                }
-            }
-        }"#;
-
-        let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
-
-        assert!(settings.bridge.is_some());
-        let bridge = settings.bridge.unwrap();
-        assert!(bridge.servers.contains_key("rust-analyzer"));
-        assert_eq!(
-            bridge.servers["rust-analyzer"].cmd,
-            vec!["rust-analyzer".to_string()]
-        );
-    }
-
-    #[test]
-    fn should_parse_treesitter_settings_without_bridge() {
-        // Backward compatibility: missing bridge field should be None
-        let config_json = r#"{
-            "searchPaths": ["/usr/local/lib"],
-            "languages": {}
-        }"#;
-
-        let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
-
-        assert!(settings.bridge.is_none());
     }
 
     #[test]
@@ -980,5 +877,72 @@ mod tests {
             !settings.is_language_bridgeable("javascript"),
             "javascript should not be in bridge filter"
         );
+    }
+
+    #[test]
+    fn should_parse_language_servers_at_root() {
+        // PBI-119: languageServers field should be at root level of init_options
+        // This replaces the nested bridge.servers structure with a flatter schema
+        let config_json = r#"{
+            "searchPaths": ["/usr/local/lib"],
+            "languageServers": {
+                "rust-analyzer": {
+                    "cmd": ["rust-analyzer"],
+                    "languages": ["rust"],
+                    "workspaceType": "cargo"
+                },
+                "pyright": {
+                    "cmd": ["pyright-langserver", "--stdio"],
+                    "languages": ["python"]
+                }
+            }
+        }"#;
+
+        let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
+
+        assert!(settings.language_servers.is_some());
+        let servers = settings.language_servers.as_ref().unwrap();
+        assert_eq!(servers.len(), 2);
+
+        // Check rust-analyzer config
+        assert!(servers.contains_key("rust-analyzer"));
+        let ra = &servers["rust-analyzer"];
+        assert_eq!(ra.cmd, vec!["rust-analyzer".to_string()]);
+        assert_eq!(ra.languages, vec!["rust".to_string()]);
+        assert_eq!(ra.workspace_type, Some(WorkspaceType::Cargo));
+
+        // Check pyright config
+        assert!(servers.contains_key("pyright"));
+        let py = &servers["pyright"];
+        assert_eq!(
+            py.cmd,
+            vec!["pyright-langserver".to_string(), "--stdio".to_string()]
+        );
+        assert_eq!(py.languages, vec!["python".to_string()]);
+    }
+
+    #[test]
+    fn should_parse_language_servers_empty() {
+        // PBI-119: Empty languageServers should be valid
+        let config_json = r#"{
+            "languageServers": {}
+        }"#;
+
+        let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
+
+        assert!(settings.language_servers.is_some());
+        assert!(settings.language_servers.as_ref().unwrap().is_empty());
+    }
+
+    #[test]
+    fn should_parse_without_language_servers() {
+        // PBI-119: Missing languageServers should be None (backward compatibility)
+        let config_json = r#"{
+            "searchPaths": ["/usr/local/lib"]
+        }"#;
+
+        let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
+
+        assert!(settings.language_servers.is_none());
     }
 }

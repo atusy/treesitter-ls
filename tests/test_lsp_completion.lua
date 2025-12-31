@@ -18,12 +18,12 @@ local function create_file_test_set(ext, lines)
 				child.lua(([[vim.cmd.edit(%q)]]):format(tempname))
 				local attached = helper.wait(5000, function()
 					local clients = child.lua_get(
-						[[#vim.lsp.get_clients({ bufnr = vim.api.nvim_get_current_buf(), name = "treesitter_ls" })]]
+						[[#vim.lsp.get_clients({ bufnr = vim.api.nvim_get_current_buf(), name = "treesitter-ls" })]]
 					)
 					return clients > 0
 				end, 10)
 				if not attached then
-					error("Failed to attach treesitter_ls")
+					error("Failed to attach treesitter-ls")
 				end
 			end,
 		},
@@ -61,7 +61,7 @@ T["markdown"]["completion returns items with adjusted textEdit ranges"] = functi
 	child.lua([[
 		_G.completion_result = nil
 		local bufnr = vim.api.nvim_get_current_buf()
-		local clients = vim.lsp.get_clients({ bufnr = bufnr, name = "treesitter_ls" })
+		local clients = vim.lsp.get_clients({ bufnr = bufnr, name = "treesitter-ls" })
 		if #clients == 0 then
 			_G.completion_result = { error = "No LSP client found" }
 			return

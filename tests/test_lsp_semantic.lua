@@ -13,12 +13,12 @@ local function create_file_test_set(file_path)
 				child.lua(([[vim.cmd.edit(%q)]]):format(file_path))
 				local attached = helper.wait(5000, function()
 					local clients = child.lua_get(
-						[[#vim.lsp.get_clients({ bufnr = vim.api.nvim_get_current_buf(), name = "treesitter_ls" })]]
+						[[#vim.lsp.get_clients({ bufnr = vim.api.nvim_get_current_buf(), name = "treesitter-ls" })]]
 					)
 					return clients > 0
 				end, 10)
 				if not attached then
-					error("Failed to attach treesitter_ls")
+					error("Failed to attach treesitter-ls")
 				end
 
 				-- Force semantic token refresh and wait for the LSP to process the request
@@ -26,7 +26,7 @@ local function create_file_test_set(file_path)
 				local tokens_ready = helper.wait(3000, function()
 					-- Check if the semantic token highlighter has received a response
 					local result = child.lua_get([[(function()
-						local c = vim.lsp.get_clients({ bufnr = 0, name = "treesitter_ls" })[1]
+						local c = vim.lsp.get_clients({ bufnr = 0, name = "treesitter-ls" })[1]
 						if not c then return nil end
 						local p = { textDocument = vim.lsp.util.make_text_document_params(0) }
 						local r = c.request_sync("textDocument/semanticTokens/full", p, 2000, 0)

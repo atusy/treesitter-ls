@@ -46,7 +46,7 @@ T["progress notifications"]["infrastructure is set up for rust injection"] = fun
 	-- Wait for LSP to attach
 	local lsp_attached = wait_for(5000, function()
 		local clients = child.lua_get(
-			[[#vim.lsp.get_clients({ bufnr = vim.api.nvim_get_current_buf(), name = "treesitter_ls" })]]
+			[[#vim.lsp.get_clients({ bufnr = vim.api.nvim_get_current_buf(), name = "treesitter-ls" })]]
 		)
 		return clients > 0
 	end, 100)

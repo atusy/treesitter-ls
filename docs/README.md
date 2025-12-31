@@ -174,23 +174,21 @@ Remap Tree-sitter capture names to LSP semantic token types. Use `_` as a wildca
 }
 ```
 
-#### `bridge`
+#### `languageServers`
 
 Configure language servers for bridging LSP requests in injection regions.
 
 ```json
 {
-  "bridge": {
-    "servers": {
-      "rust-analyzer": {
-        "cmd": ["rust-analyzer"],
-        "languages": ["rust"],
-        "workspaceType": "cargo"
-      },
-      "pyright": {
-        "cmd": ["pyright-langserver", "--stdio"],
-        "languages": ["python"]
-      }
+  "languageServers": {
+    "rust-analyzer": {
+      "cmd": ["rust-analyzer"],
+      "languages": ["rust"],
+      "workspaceType": "cargo"
+    },
+    "pyright": {
+      "cmd": ["pyright-langserver", "--stdio"],
+      "languages": ["python"]
     }
   },
   "languages": {

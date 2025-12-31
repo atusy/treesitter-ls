@@ -458,10 +458,10 @@ impl TreeSitterLs {
             return None;
         }
 
-        // Check if bridge settings exist
-        if let Some(ref bridge) = settings.bridge {
+        // Check if language servers exist
+        if let Some(ref servers) = settings.language_servers {
             // Look for a server that handles this language
-            for config in bridge.servers.values() {
+            for config in servers.values() {
                 if config.languages.iter().any(|l| l == injection_language) {
                     return Some(config.clone());
                 }
@@ -712,12 +712,12 @@ impl TreeSitterLs {
         }
 
         // Create updated settings
-        let updated_settings = WorkspaceSettings::with_bridge(
+        let updated_settings = WorkspaceSettings::with_language_servers(
             new_search_paths,
             current_settings.languages.clone(),
             current_settings.capture_mappings.clone(),
             current_settings.auto_install,
-            current_settings.bridge.clone(),
+            current_settings.language_servers.clone(),
         );
 
         // Apply the updated settings
