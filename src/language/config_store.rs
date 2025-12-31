@@ -157,6 +157,7 @@ mod tests {
                 highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
                 locals: None,
                 injections: None,
+                bridge: None,
             },
         );
 
@@ -210,6 +211,7 @@ mod tests {
                         highlights: None,
                         locals: None,
                         injections: None,
+                        bridge: None,
                     },
                 );
                 langs
@@ -241,6 +243,7 @@ mod tests {
                 highlights: None,
                 locals: None,
                 injections: None,
+                bridge: None,
             },
         );
         store.set_language_configs(configs);

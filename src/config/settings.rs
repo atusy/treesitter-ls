@@ -78,6 +78,11 @@ pub struct LanguageConfig {
     pub locals: Option<Vec<String>>,
     /// Query file paths for language injections
     pub injections: Option<Vec<String>>,
+    /// Languages to bridge for this host filetype.
+    /// - None (omitted): Bridge ALL configured languages (default behavior)
+    /// - Some([]): Bridge NOTHING (disable bridging for this host)
+    /// - Some(["python", "r"]): Bridge only the specified languages
+    pub bridge: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, serde::Serialize)]
@@ -105,6 +110,11 @@ pub struct LanguageSettings {
     pub highlights: Vec<String>,
     pub locals: Option<Vec<String>>,
     pub injections: Option<Vec<String>>,
+    /// Languages to bridge for this host filetype.
+    /// - None (omitted): Bridge ALL configured languages (default behavior)
+    /// - Some([]): Bridge NOTHING (disable bridging for this host)
+    /// - Some(["python", "r"]): Bridge only the specified languages
+    pub bridge: Option<Vec<String>>,
 }
 
 impl LanguageSettings {
@@ -119,6 +129,39 @@ impl LanguageSettings {
             highlights,
             locals,
             injections,
+            bridge: None,
+        }
+    }
+
+    /// Create LanguageSettings with bridge filter configuration.
+    pub fn with_bridge(
+        library: Option<String>,
+        highlights: Vec<String>,
+        locals: Option<Vec<String>>,
+        injections: Option<Vec<String>>,
+        bridge: Option<Vec<String>>,
+    ) -> Self {
+        Self {
+            library,
+            highlights,
+            locals,
+            injections,
+            bridge,
+        }
+    }
+
+    /// Check if a language is allowed for bridging based on the bridge filter.
+    ///
+    /// Returns:
+    /// - `true` if `bridge` is `None` (default: bridge all languages)
+    /// - `false` if `bridge` is `Some([])` (empty: bridge nothing)
+    /// - `true` if `bridge` contains the injection language
+    /// - `false` otherwise
+    pub fn is_language_bridgeable(&self, injection_language: &str) -> bool {
+        match &self.bridge {
+            None => true, // Default: bridge all configured languages
+            Some(allowed) if allowed.is_empty() => false, // Empty: bridge nothing
+            Some(allowed) => allowed.iter().any(|l| l == injection_language),
         }
     }
 }
@@ -539,6 +582,7 @@ mod tests {
                     highlights: Some(vec![format!("/etc/treesitter/{}/highlights.scm", lang)]),
                     locals: None,
                     injections: None,
+                    bridge: None,
                 },
             );
         }
@@ -560,6 +604,7 @@ mod tests {
             highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
             locals: None,
             injections: None,
+            bridge: None,
         };
 
         // Serialize and verify no filetypes in output
@@ -792,6 +837,148 @@ mod tests {
         assert!(
             config.workspace_type.is_none(),
             "Missing workspace_type should be None"
+        );
+    }
+
+    #[test]
+    fn should_parse_language_config_with_bridge_array() {
+        // PBI-108: LanguageConfig should parse bridge field as Option<Vec<String>>
+        // AC1: languages.<filetype>.bridge accepts an array of language names
+        let config_json = r#"{
+            "library": "/path/to/parser.so",
+            "highlights": ["/path/to/highlights.scm"],
+            "bridge": ["python", "r"]
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        assert!(config.bridge.is_some(), "bridge field should be Some");
+        let bridge = config.bridge.unwrap();
+        assert_eq!(bridge.len(), 2);
+        assert_eq!(bridge[0], "python");
+        assert_eq!(bridge[1], "r");
+    }
+
+    #[test]
+    fn should_parse_language_config_with_empty_bridge_array() {
+        // PBI-108: Empty bridge array should disable all bridging
+        // AC2: bridge: [] disables all bridging for that host filetype
+        let config_json = r#"{
+            "library": "/path/to/parser.so",
+            "highlights": ["/path/to/highlights.scm"],
+            "bridge": []
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        assert!(config.bridge.is_some(), "bridge field should be Some([])");
+        let bridge = config.bridge.unwrap();
+        assert!(bridge.is_empty(), "bridge array should be empty");
+    }
+
+    #[test]
+    fn should_parse_language_config_without_bridge_field() {
+        // PBI-108: Omitted bridge field should be None (bridges all languages)
+        // AC3: bridge omitted or null bridges all configured languages
+        let config_json = r#"{
+            "library": "/path/to/parser.so",
+            "highlights": ["/path/to/highlights.scm"]
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        assert!(
+            config.bridge.is_none(),
+            "omitted bridge field should be None"
+        );
+    }
+
+    #[test]
+    fn test_bridge_filter_null_bridges_all_languages() {
+        // PBI-108 AC3: bridge omitted or null bridges all configured languages
+        // When bridge is None (default), all languages should be bridgeable
+        let settings = LanguageSettings::new(
+            None,
+            vec!["/path/to/highlights.scm".to_string()],
+            None,
+            None,
+        );
+
+        // Default (None) should bridge all languages
+        assert!(
+            settings.is_language_bridgeable("python"),
+            "None bridge should allow python"
+        );
+        assert!(
+            settings.is_language_bridgeable("r"),
+            "None bridge should allow r"
+        );
+        assert!(
+            settings.is_language_bridgeable("rust"),
+            "None bridge should allow rust"
+        );
+        assert!(
+            settings.is_language_bridgeable("any_language"),
+            "None bridge should allow any language"
+        );
+    }
+
+    #[test]
+    fn test_bridge_filter_empty_disables_bridging() {
+        // PBI-108 AC2: bridge: [] disables all bridging for that host filetype
+        let settings = LanguageSettings::with_bridge(
+            None,
+            vec!["/path/to/highlights.scm".to_string()],
+            None,
+            None,
+            Some(vec![]), // Empty array disables all bridging
+        );
+
+        // Empty array should disable all bridging
+        assert!(
+            !settings.is_language_bridgeable("python"),
+            "Empty bridge should not allow python"
+        );
+        assert!(
+            !settings.is_language_bridgeable("r"),
+            "Empty bridge should not allow r"
+        );
+        assert!(
+            !settings.is_language_bridgeable("rust"),
+            "Empty bridge should not allow rust"
+        );
+    }
+
+    #[test]
+    fn test_bridge_filter_allows_specified_languages() {
+        // PBI-108 AC1: languages.<filetype>.bridge accepts an array of language names
+        // Only languages in the array should be bridgeable
+        let settings = LanguageSettings::with_bridge(
+            None,
+            vec!["/path/to/highlights.scm".to_string()],
+            None,
+            None,
+            Some(vec!["python".to_string(), "r".to_string()]),
+        );
+
+        // Specified languages should be allowed
+        assert!(
+            settings.is_language_bridgeable("python"),
+            "python should be in bridge filter"
+        );
+        assert!(
+            settings.is_language_bridgeable("r"),
+            "r should be in bridge filter"
+        );
+
+        // Non-specified languages should NOT be allowed
+        assert!(
+            !settings.is_language_bridgeable("rust"),
+            "rust should not be in bridge filter"
+        );
+        assert!(
+            !settings.is_language_bridgeable("javascript"),
+            "javascript should not be in bridge filter"
         );
     }
 }

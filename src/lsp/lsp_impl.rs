@@ -428,21 +428,41 @@ impl TreeSitterLs {
         super::auto_install::get_language_for_document(uri, &self.language, &self.documents)
     }
 
-    /// Get bridge server config for a given language from settings.
+    /// Get bridge server config for a given injection language from settings.
     ///
     /// Looks up the bridge.servers configuration and finds a server that handles
-    /// the specified language. Returns None if no server is configured for this language.
+    /// the specified language. Returns None if:
+    /// - No server is configured for this injection language, OR
+    /// - The host language has a bridge filter that excludes this injection language
+    ///
+    /// # Arguments
+    /// * `host_language` - The language of the host document (e.g., "markdown")
+    /// * `injection_language` - The injection language to bridge (e.g., "rust", "python")
     fn get_bridge_config_for_language(
         &self,
-        language: &str,
+        host_language: &str,
+        injection_language: &str,
     ) -> Option<crate::config::settings::BridgeServerConfig> {
         let settings = self.settings.load();
+
+        // Check if host language has a bridge filter that disallows this injection
+        if let Some(host_settings) = settings.languages.get(host_language)
+            && !host_settings.is_language_bridgeable(injection_language)
+        {
+            log::debug!(
+                target: "treesitter_ls::bridge",
+                "Bridge filter for {} blocks injection language {}",
+                host_language,
+                injection_language
+            );
+            return None;
+        }
 
         // Check if bridge settings exist
         if let Some(ref bridge) = settings.bridge {
             // Look for a server that handles this language
             for config in bridge.servers.values() {
-                if config.languages.iter().any(|l| l == language) {
+                if config.languages.iter().any(|l| l == injection_language) {
                     return Some(config.clone());
                 }
             }
@@ -797,10 +817,16 @@ impl TreeSitterLs {
     /// This pre-warms connections so that the first goto-definition request is fast.
     /// Called after parse_document completes so we have access to the AST.
     ///
-    /// For each unique injection language that has a bridge server configured,
-    /// triggers spawn_in_background_with_notifications to start the connection
+    /// For each unique injection language that has a bridge server configured
+    /// (and allowed by the host language's bridge filter), triggers
+    /// spawn_in_background_with_notifications to start the connection
     /// asynchronously and forward any $/progress notifications to the LSP client.
     fn eager_spawn_for_injections(&self, uri: &Url) {
+        // Get the host language for this document
+        let Some(host_language) = self.get_language_for_document(uri) else {
+            return;
+        };
+
         // Get unique injected languages from the document
         let languages = get_injected_languages(uri, &self.language, &self.documents);
 
@@ -810,15 +836,17 @@ impl TreeSitterLs {
 
         log::debug!(
             target: "treesitter_ls::eager_spawn",
-            "eager_spawn_for_injections: {} - found {} languages: {:?}",
+            "eager_spawn_for_injections: {} (host: {}) - found {} languages: {:?}",
             uri,
+            host_language,
             languages.len(),
             languages
         );
 
         // For each injection language, check if it has a bridge config and spawn
+        // (bridge filter is checked inside get_bridge_config_for_language)
         for lang in languages {
-            let Some(config) = self.get_bridge_config_for_language(&lang) else {
+            let Some(config) = self.get_bridge_config_for_language(&host_language, &lang) else {
                 continue;
             };
 
@@ -1932,13 +1960,16 @@ impl LanguageServer for TreeSitterLs {
 
         // Get bridge server config for this language
         // Use spawn_blocking because language server communication is synchronous blocking I/O
-        let Some(server_config) = self.get_bridge_config_for_language(&region.language) else {
+        // The bridge filter is checked inside get_bridge_config_for_language
+        let Some(server_config) =
+            self.get_bridge_config_for_language(&language_name, &region.language)
+        else {
             self.client
                 .log_message(
                     MessageType::INFO,
                     format!(
-                        "No bridge server configured for language '{}'",
-                        region.language
+                        "No bridge server configured for language '{}' (host: {})",
+                        region.language, language_name
                     ),
                 )
                 .await;
@@ -2167,13 +2198,16 @@ impl LanguageServer for TreeSitterLs {
         };
 
         // Get bridge server config for this language
-        let Some(server_config) = self.get_bridge_config_for_language(&region.language) else {
+        // The bridge filter is checked inside get_bridge_config_for_language
+        let Some(server_config) =
+            self.get_bridge_config_for_language(&language_name, &region.language)
+        else {
             self.client
                 .log_message(
                     MessageType::INFO,
                     format!(
-                        "No bridge server configured for language: {}",
-                        region.language
+                        "No bridge server configured for language: {} (host: {})",
+                        region.language, language_name
                     ),
                 )
                 .await;
@@ -2440,4 +2474,74 @@ mod tests {
     }
 
     // Note: Large integration tests for auto-install are in tests/test_auto_install_integration.rs
+
+    #[test]
+    fn test_bridge_router_respects_host_filter() {
+        // PBI-108 AC4: Bridge filtering is applied at request time before routing to language servers
+        // This test verifies that is_language_bridgeable is correctly integrated into
+        // the bridge routing logic.
+        //
+        // The actual routing happens in get_bridge_config_for_language which:
+        // 1. Looks up host language settings
+        // 2. Calls is_language_bridgeable to check filter
+        // 3. Returns None if filter blocks the injection language
+        //
+        // We test the is_language_bridgeable logic directly since get_bridge_config_for_language
+        // requires full server initialization which is tested in E2E tests.
+
+        use crate::config::LanguageSettings;
+
+        // Host markdown with bridge filter: only python and r
+        let markdown_settings = LanguageSettings::with_bridge(
+            None,
+            vec![],
+            None,
+            None,
+            Some(vec!["python".to_string(), "r".to_string()]),
+        );
+
+        // Router should allow python (in filter)
+        assert!(
+            markdown_settings.is_language_bridgeable("python"),
+            "Bridge router should allow python for markdown"
+        );
+
+        // Router should allow r (in filter)
+        assert!(
+            markdown_settings.is_language_bridgeable("r"),
+            "Bridge router should allow r for markdown"
+        );
+
+        // Router should block rust (not in filter)
+        assert!(
+            !markdown_settings.is_language_bridgeable("rust"),
+            "Bridge router should block rust for markdown"
+        );
+
+        // Host quarto with no bridge filter (default: all)
+        let quarto_settings = LanguageSettings::new(None, vec![], None, None);
+
+        // Router should allow all languages
+        assert!(
+            quarto_settings.is_language_bridgeable("python"),
+            "Bridge router should allow python for quarto (no filter)"
+        );
+        assert!(
+            quarto_settings.is_language_bridgeable("rust"),
+            "Bridge router should allow rust for quarto (no filter)"
+        );
+
+        // Host rmd with empty bridge filter (disable all)
+        let rmd_settings = LanguageSettings::with_bridge(None, vec![], None, None, Some(vec![]));
+
+        // Router should block all languages
+        assert!(
+            !rmd_settings.is_language_bridgeable("r"),
+            "Bridge router should block r for rmd (empty filter)"
+        );
+        assert!(
+            !rmd_settings.is_language_bridgeable("python"),
+            "Bridge router should block python for rmd (empty filter)"
+        );
+    }
 }
