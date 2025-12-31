@@ -28,48 +28,9 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-104 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-106 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
-  // PBI-098: Language-based routing - already implemented as part of PBI-097 (configurable bridge servers)
-  product_backlog: [
-    {
-      id: "PBI-105",
-      story: {
-        role: "developer editing Lua files",
-        capability:
-          "have redirection.rs be language-agnostic with no hardcoded rust-analyzer or Cargo defaults",
-        benefit:
-          "bridge servers are fully configurable via initializationOptions, no special-casing for any language",
-      },
-      acceptance_criteria: [
-        {
-          criterion:
-            "spawn_rust_analyzer() method is removed from LanguageServerConnection",
-          verification:
-            "Grep for spawn_rust_analyzer shows no matches in src/",
-        },
-        {
-          criterion:
-            "get_bridge_config_for_language() has no hardcoded rust-analyzer fallback",
-          verification:
-            "Grep for 'rust-analyzer' in lsp_impl.rs shows no matches except comments/logs",
-        },
-        {
-          criterion:
-            "WorkspaceType defaults to Generic (not Cargo) when not specified",
-          verification:
-            "Unit test: None workspace_type defaults to Generic",
-        },
-        {
-          criterion:
-            "scripts/minimal_init.lua configures rust-analyzer bridge server via initializationOptions",
-          verification:
-            "E2E tests pass with explicit bridge config in minimal_init.lua",
-        },
-      ],
-      status: "done",
-    },
-  ],
+  product_backlog: [],
 
   sprint: null,
 
@@ -84,6 +45,14 @@ const scrum: ScrumDashboard = {
   // Historical sprints (recent 2) | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   completed: [
     {
+      number: 83,
+      pbi_id: "PBI-106",
+      goal:
+        "Simplify BridgeServerConfig by merging 'command' and 'args' into single 'cmd' array",
+      status: "done",
+      subtasks: [],
+    },
+    {
       number: 82,
       pbi_id: "PBI-105",
       goal:
@@ -91,18 +60,31 @@ const scrum: ScrumDashboard = {
       status: "done",
       subtasks: [],
     },
-    {
-      number: 81,
-      pbi_id: "PBI-104",
-      goal:
-        "Documentation authors see rust-analyzer progress notifications during server initialization",
-      status: "done",
-      subtasks: [],
-    },
   ],
 
   // Recent 2 retrospectives | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    {
+      sprint: 83,
+      improvements: [
+        {
+          action:
+            "Update ADRs alongside code changes - ADR-0006 was outdated with old command+args schema",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "ADR-0006 updated to reflect new cmd array format; documentation stays in sync with implementation",
+        },
+        {
+          action:
+            "Simpler config schema reduces user confusion - cmd array matches vim.lsp.config pattern",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "Users now write cmd = { 'rust-analyzer' } instead of command = 'rust-analyzer' with optional args",
+        },
+      ],
+    },
     {
       sprint: 82,
       improvements: [
@@ -121,27 +103,6 @@ const scrum: ScrumDashboard = {
           status: "completed",
           outcome:
             "Removed 8 blocking tests from redirection.rs; E2E tests in test_lsp_definition.lua and test_lsp_notification.lua provide reliable coverage",
-        },
-      ],
-    },
-    {
-      sprint: 81,
-      improvements: [
-        {
-          action:
-            "Tokio channel for notification forwarding works well - spawn_in_background_with_notifications pattern enables async notification delivery without blocking",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "Pattern implemented: spawn_in_background_with_notifications accepts Sender<Value> and forwards $/progress to LSP client during eager_spawn_for_injections",
-        },
-        {
-          action:
-            "Layered notification capture (wait_for_indexing -> did_open -> spawn -> spawn_in_background) provides clean separation - each layer captures and forwards appropriately",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "Clean API: spawn returns (conn, notifications), did_open returns Vec<Value>, background spawn uses channel",
         },
       ],
     },
