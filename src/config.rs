@@ -60,8 +60,15 @@ impl From<&LanguageConfig> for LanguageSettings {
         let highlights = config.highlights.clone().unwrap_or_default();
         let locals = config.locals.clone();
         let injections = config.injections.clone();
+        let bridge = config.bridge.clone();
 
-        LanguageSettings::new(config.library.clone(), highlights, locals, injections)
+        LanguageSettings::with_bridge(
+            config.library.clone(),
+            highlights,
+            locals,
+            injections,
+            bridge,
+        )
     }
 }
 
@@ -81,6 +88,7 @@ impl From<&LanguageSettings> for LanguageConfig {
             highlights,
             locals,
             injections,
+            bridge: settings.bridge.clone(),
         }
     }
 }
@@ -262,6 +270,7 @@ mod tests {
                 highlights: None,
                 locals: None,
                 injections: None,
+                bridge: None,
             },
         );
 
@@ -281,6 +290,7 @@ mod tests {
                 highlights: None,
                 locals: None,
                 injections: None,
+                bridge: None,
             },
         );
 
@@ -587,6 +597,7 @@ mod tests {
             highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
             locals: None,
             injections: Some(vec!["/path/to/injections.scm".to_string()]),
+            bridge: None,
         };
 
         let settings: LanguageSettings = LanguageSettings::from(&config);

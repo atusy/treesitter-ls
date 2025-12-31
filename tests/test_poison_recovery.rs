@@ -119,6 +119,7 @@ fn test_config_store_recovers_from_poisoned_lock() {
             highlights: None,
             locals: None,
             injections: None,
+            bridge: None,
         },
     );
 
