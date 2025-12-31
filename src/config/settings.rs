@@ -24,16 +24,15 @@ pub enum WorkspaceType {
 /// that treesitter-ls can redirect requests to for injection regions.
 #[derive(Debug, Clone, Deserialize, serde::Serialize, PartialEq, Eq)]
 pub struct BridgeServerConfig {
-    /// The command to spawn the language server (e.g., "rust-analyzer", "pyright")
-    pub command: String,
-    /// Optional command-line arguments to pass to the server
-    pub args: Option<Vec<String>>,
+    /// Command array: first element is the program, rest are arguments
+    /// e.g., ["rust-analyzer"] or ["pyright-langserver", "--stdio"]
+    pub cmd: Vec<String>,
     /// Languages this server handles (e.g., ["rust"], ["python"])
     pub languages: Vec<String>,
     /// Optional initialization options to pass to the server during initialize
     #[serde(rename = "initializationOptions")]
     pub initialization_options: Option<Value>,
-    /// Workspace type for this server (defaults to None, meaning Cargo for backward compat)
+    /// Workspace type for this server (defaults to None, meaning Generic)
     #[serde(rename = "workspaceType")]
     pub workspace_type: Option<WorkspaceType>,
 }
@@ -45,8 +44,8 @@ pub struct BridgeServerConfig {
 /// {
 ///   "bridge": {
 ///     "servers": {
-///       "rust-analyzer": { "command": "rust-analyzer", "languages": ["rust"], ... },
-///       "pyright": { "command": "pyright-langserver", "args": ["--stdio"], "languages": ["python"] }
+///       "rust-analyzer": { "cmd": ["rust-analyzer"], "languages": ["rust"], ... },
+///       "pyright": { "cmd": ["pyright-langserver", "--stdio"], "languages": ["python"] }
 ///     }
 ///   }
 /// }
@@ -591,10 +590,9 @@ mod tests {
     #[test]
     fn should_parse_bridge_server_config() {
         // Test that BridgeServerConfig can deserialize all fields:
-        // command (required), args (optional), languages (required), initialization_options (optional)
+        // cmd (required), languages (required), initialization_options (optional)
         let config_json = r#"{
-            "command": "rust-analyzer",
-            "args": ["--log-file", "/tmp/ra.log"],
+            "cmd": ["rust-analyzer", "--log-file", "/tmp/ra.log"],
             "languages": ["rust"],
             "initializationOptions": {
                 "linkedProjects": ["/path/to/Cargo.toml"]
@@ -603,10 +601,13 @@ mod tests {
 
         let config: BridgeServerConfig = serde_json::from_str(config_json).unwrap();
 
-        assert_eq!(config.command, "rust-analyzer");
         assert_eq!(
-            config.args,
-            Some(vec!["--log-file".to_string(), "/tmp/ra.log".to_string()])
+            config.cmd,
+            vec![
+                "rust-analyzer".to_string(),
+                "--log-file".to_string(),
+                "/tmp/ra.log".to_string()
+            ]
         );
         assert_eq!(config.languages, vec!["rust".to_string()]);
         assert!(config.initialization_options.is_some());
@@ -618,14 +619,13 @@ mod tests {
     fn should_parse_bridge_server_config_minimal() {
         // Test that only required fields need to be present
         let config_json = r#"{
-            "command": "pyright",
+            "cmd": ["pyright"],
             "languages": ["python"]
         }"#;
 
         let config: BridgeServerConfig = serde_json::from_str(config_json).unwrap();
 
-        assert_eq!(config.command, "pyright");
-        assert!(config.args.is_none());
+        assert_eq!(config.cmd, vec!["pyright".to_string()]);
         assert_eq!(config.languages, vec!["python".to_string()]);
         assert!(config.initialization_options.is_none());
     }
@@ -636,15 +636,14 @@ mod tests {
         let config_json = r#"{
             "servers": {
                 "rust-analyzer": {
-                    "command": "rust-analyzer",
+                    "cmd": ["rust-analyzer"],
                     "languages": ["rust"],
                     "initializationOptions": {
                         "linkedProjects": ["/path/to/Cargo.toml"]
                     }
                 },
                 "pyright": {
-                    "command": "pyright-langserver",
-                    "args": ["--stdio"],
+                    "cmd": ["pyright-langserver", "--stdio"],
                     "languages": ["python"]
                 }
             }
@@ -657,12 +656,14 @@ mod tests {
         assert!(settings.servers.contains_key("pyright"));
 
         let ra = &settings.servers["rust-analyzer"];
-        assert_eq!(ra.command, "rust-analyzer");
+        assert_eq!(ra.cmd, vec!["rust-analyzer".to_string()]);
         assert_eq!(ra.languages, vec!["rust".to_string()]);
 
         let py = &settings.servers["pyright"];
-        assert_eq!(py.command, "pyright-langserver");
-        assert_eq!(py.args, Some(vec!["--stdio".to_string()]));
+        assert_eq!(
+            py.cmd,
+            vec!["pyright-langserver".to_string(), "--stdio".to_string()]
+        );
     }
 
     #[test]
@@ -682,7 +683,7 @@ mod tests {
             "bridge": {
                 "servers": {
                     "rust-analyzer": {
-                        "command": "rust-analyzer",
+                        "cmd": ["rust-analyzer"],
                         "languages": ["rust"]
                     }
                 }
@@ -694,7 +695,10 @@ mod tests {
         assert!(settings.bridge.is_some());
         let bridge = settings.bridge.unwrap();
         assert!(bridge.servers.contains_key("rust-analyzer"));
-        assert_eq!(bridge.servers["rust-analyzer"].command, "rust-analyzer");
+        assert_eq!(
+            bridge.servers["rust-analyzer"].cmd,
+            vec!["rust-analyzer".to_string()]
+        );
     }
 
     #[test]
@@ -742,14 +746,14 @@ mod tests {
     fn should_parse_bridge_server_config_with_workspace_type_cargo() {
         // Test that BridgeServerConfig can deserialize workspace_type field with value 'cargo'
         let config_json = r#"{
-            "command": "rust-analyzer",
+            "cmd": ["rust-analyzer"],
             "languages": ["rust"],
             "workspaceType": "cargo"
         }"#;
 
         let config: BridgeServerConfig = serde_json::from_str(config_json).unwrap();
 
-        assert_eq!(config.command, "rust-analyzer");
+        assert_eq!(config.cmd, vec!["rust-analyzer".to_string()]);
         assert_eq!(config.languages, vec!["rust".to_string()]);
         assert_eq!(config.workspace_type, Some(WorkspaceType::Cargo));
     }
@@ -758,34 +762,36 @@ mod tests {
     fn should_parse_bridge_server_config_with_workspace_type_generic() {
         // Test that BridgeServerConfig can deserialize workspace_type field with value 'generic'
         let config_json = r#"{
-            "command": "pyright-langserver",
-            "args": ["--stdio"],
+            "cmd": ["pyright-langserver", "--stdio"],
             "languages": ["python"],
             "workspaceType": "generic"
         }"#;
 
         let config: BridgeServerConfig = serde_json::from_str(config_json).unwrap();
 
-        assert_eq!(config.command, "pyright-langserver");
+        assert_eq!(
+            config.cmd,
+            vec!["pyright-langserver".to_string(), "--stdio".to_string()]
+        );
         assert_eq!(config.languages, vec!["python".to_string()]);
         assert_eq!(config.workspace_type, Some(WorkspaceType::Generic));
     }
 
     #[test]
     fn should_parse_bridge_server_config_without_workspace_type_defaults_to_none() {
-        // Test that missing workspace_type defaults to None (backward compatibility)
-        // The caller should treat None as Cargo for backward compat
+        // Test that missing workspace_type defaults to None
+        // The caller should treat None as Generic (changed from Cargo in PBI-105)
         let config_json = r#"{
-            "command": "rust-analyzer",
+            "cmd": ["rust-analyzer"],
             "languages": ["rust"]
         }"#;
 
         let config: BridgeServerConfig = serde_json::from_str(config_json).unwrap();
 
-        assert_eq!(config.command, "rust-analyzer");
+        assert_eq!(config.cmd, vec!["rust-analyzer".to_string()]);
         assert!(
             config.workspace_type.is_none(),
-            "Missing workspace_type should be None for backward compatibility"
+            "Missing workspace_type should be None"
         );
     }
 }

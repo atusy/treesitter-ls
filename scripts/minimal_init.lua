@@ -6,13 +6,12 @@ vim.lsp.config.treesitter_ls = {
 		bridge = {
 			servers = {
 				["rust-analyzer"] = {
-					command = "rust-analyzer",
+					cmd = { "rust-analyzer" },
 					languages = { "rust" },
 					workspaceType = "cargo",
 				},
 				["pyright"] = {
-					command = "pyright-langserver",
-					args = { "--stdio" },
+					cmd = { "pyright-langserver", "--stdio" },
 					languages = { "python" },
 				},
 			},
