@@ -67,7 +67,7 @@ const scrum: ScrumDashboard = {
             "E2E tests pass with explicit bridge config in minimal_init.lua",
         },
       ],
-      status: "ready",
+      status: "done",
     },
   ],
 
@@ -76,7 +76,7 @@ const scrum: ScrumDashboard = {
     pbi_id: "PBI-105",
     goal:
       "Make redirection.rs language-agnostic by removing hardcoded rust-analyzer and Cargo defaults so bridge servers are fully configurable via initializationOptions",
-    status: "in_progress",
+    status: "done",
     subtasks: [
       {
         test: "E2E tests still pass after adding explicit rust-analyzer bridge config to minimal_init.lua",
@@ -131,7 +131,7 @@ const scrum: ScrumDashboard = {
         implementation:
           "Run make test and make check to verify all changes work together",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
         notes: ["Final verification subtask"],
       },
