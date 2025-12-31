@@ -20,6 +20,22 @@ Expand/shrink selection based on AST structure. Select increasingly larger synta
 
 - **Swap Parameters**: Reorder function parameters
 
+### LSP Bridge
+
+Full LSP features in injection regions by bridging to language-specific servers. For example, get Rust completions and hover documentation inside Markdown code blocks.
+
+**Supported Features:**
+- Completion
+- Signature Help
+- Go to Definition
+- Hover
+- Find References
+- Rename
+- Code Actions
+- Formatting
+
+See [Configuration: Bridge](#bridge) for setup instructions.
+
 ## Prerequisites
 
 treesitter-ls automatically compiles Tree-sitter parsers from source, which requires these external tools:
@@ -158,6 +174,51 @@ Remap Tree-sitter capture names to LSP semantic token types. Use `_` as a wildca
 }
 ```
 
+#### `bridge`
+
+Configure language servers for bridging LSP requests in injection regions.
+
+```json
+{
+  "bridge": {
+    "servers": {
+      "rust-analyzer": {
+        "cmd": ["rust-analyzer"],
+        "languages": ["rust"],
+        "workspaceType": "cargo"
+      },
+      "pyright": {
+        "cmd": ["pyright-langserver", "--stdio"],
+        "languages": ["python"]
+      }
+    }
+  },
+  "languages": {
+    "markdown": { "bridge": ["rust", "python"] },
+    "quarto": { "bridge": ["python", "r"] },
+    "rmd": { "bridge": ["r"] }
+  }
+}
+```
+
+**Server Configuration:**
+
+| Field | Description |
+|-------|-------------|
+| `cmd` | Command and arguments to start the language server |
+| `languages` | Languages this server handles |
+| `workspaceType` | Optional workspace type (`cargo` for Rust projects) |
+
+**Bridge Filter Semantics:**
+
+The `bridge` array in language configuration controls which injection languages are bridged:
+
+| Value | Meaning |
+|-------|---------|
+| `["rust", "python"]` | Bridge only these specific languages |
+| `[]` | Disable bridging entirely for this host language |
+| `null` or omitted | Bridge all configured languages (default) |
+
 ### Project Configuration File
 
 You can also use a `treesitter-ls.toml` file in your project root:
@@ -236,8 +297,24 @@ Using Neovim's built-in LSP client (0.11+):
 vim.lsp.config.treesitter_ls = {
   cmd = { "treesitter-ls" },
   init_options = {
-    -- Optional: customize settings
     autoInstall = true,
+    -- LSP Bridge configuration (optional)
+    bridge = {
+      servers = {
+        ["rust-analyzer"] = {
+          cmd = { "rust-analyzer" },
+          languages = { "rust" },
+          workspaceType = "cargo",
+        },
+        pyright = {
+          cmd = { "pyright-langserver", "--stdio" },
+          languages = { "python" },
+        },
+      },
+    },
+    languages = {
+      markdown = { bridge = { "rust", "python" } },
+    },
   },
 }
 vim.lsp.enable("treesitter_ls")
