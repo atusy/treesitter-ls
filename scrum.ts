@@ -107,7 +107,7 @@ const scrum: ScrumDashboard = {
         implementation:
           "Change line 118 in redirection.rs from WorkspaceType::Cargo to WorkspaceType::Generic",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
         notes: [
           "Update existing test setup_cargo_workspace_none_defaults_to_cargo to expect Generic",
