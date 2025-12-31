@@ -1,6 +1,6 @@
 local cwd = vim.uv.cwd()
 -- Get default treesitter-ls data directory
-vim.lsp.config.treesitter_ls = {
+vim.lsp.config["treesitter-ls"] = {
 	cmd = { cwd .. "/target/debug/treesitter-ls" },
 	init_options = {
 		bridge = {
@@ -22,7 +22,7 @@ vim.lsp.config.treesitter_ls = {
 		client.server_capabilities.semanticTokensProvider.range = false
 	end,
 }
-vim.lsp.enable("treesitter_ls")
+vim.lsp.enable("treesitter-ls")
 vim.lsp.log.set_level(vim.lsp.log_levels.DEBUG)
 
 vim.keymap.set("n", "gd", function()
