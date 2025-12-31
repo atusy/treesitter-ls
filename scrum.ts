@@ -29,13 +29,14 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-121 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-122 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
   // PBI-120: Done in e600402 - bridge filter map with enabled flag (docs in docs/README.md)
+  // PBI-122: Done in 26cc8b4 - removed stale deprecation comment from lsp_impl.rs
   product_backlog: [],
 
-  sprint: null, // Sprint 98 (PBI-121) completed - lsp_impl modular refactoring
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -45,25 +46,26 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-96: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-97: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 99, pbi_id: "PBI-122", goal: "Remove stale deprecation comment from lsp_impl.rs", status: "done", subtasks: [] },
     { number: 98, pbi_id: "PBI-121", goal: "Refactor lsp_impl.rs into modular file structure", status: "done", subtasks: [] },
-    { number: 97, pbi_id: "PBI-120", goal: "Bridge filter map with enabled flag", status: "cancelled", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-96: git log -- scrum.yaml, scrum.ts
+  // Recent 2 retrospectives | Sprint 1-97: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    {
+      sprint: 99,
+      improvements: [
+        { action: "Exploration agent efficiently identified single deprecated artifact in codebase", timing: "immediate", status: "completed", outcome: "Stale DEPRECATED comment removed from lsp_impl.rs" },
+        { action: "Consider periodic code hygiene checks to catch stale comments earlier", timing: "sprint", status: "active", outcome: null },
+      ],
+    },
     {
       sprint: 98,
       improvements: [
         { action: "Modular refactoring with *_impl delegation decomposed 3800+ line file into 10 focused text_document modules", timing: "immediate", status: "completed", outcome: "pub(crate) *_impl methods called from LanguageServer trait impl" },
         { action: "File organization by LSP category (text_document/) creates natural boundaries for future workspace/ and window/", timing: "product", status: "active", outcome: null },
-      ],
-    },
-    {
-      sprint: 96,
-      improvements: [
-        { action: "Schema simplification - languageServers at root level", timing: "immediate", status: "completed", outcome: "BridgeSettings wrapper removed; all E2E tests passing" },
       ],
     },
   ],
