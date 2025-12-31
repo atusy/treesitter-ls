@@ -16,7 +16,7 @@ const scrum: ScrumDashboard = {
       {
         metric: "Bridge coverage",
         target:
-          "Support completion, signatureHelp, references, rename, codeAction, formatting, typeDefinition, implementation, documentHighlight, declaration, inlayHint, callHierarchy",
+          "Support completion, signatureHelp, references, rename, codeAction, formatting, typeDefinition, implementation, documentHighlight, declaration, inlayHint, callHierarchy, typeHierarchy",
       },
       {
         metric: "Modular architecture",
@@ -142,9 +142,40 @@ const scrum: ScrumDashboard = {
       ],
       status: "done",
     },
+    {
+      id: "PBI-129",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "explore type hierarchy (supertypes and subtypes) for types in embedded Rust code blocks",
+        benefit: "I can understand trait implementations and inheritance relationships while documenting code",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "textDocument/prepareTypeHierarchy bridge implemented",
+          verification: "src/lsp/bridge/text_document/type_hierarchy.rs exists with PrepareTypeHierarchyWithNotifications type",
+        },
+        {
+          criterion: "typeHierarchy/supertypes bridge implemented",
+          verification: "SupertypesWithNotifications type handles typeHierarchy/supertypes requests",
+        },
+        {
+          criterion: "typeHierarchy/subtypes bridge implemented",
+          verification: "SubtypesWithNotifications type handles typeHierarchy/subtypes requests",
+        },
+        {
+          criterion: "Type hierarchy positions correctly translated between injection and host coordinates",
+          verification: "Type hierarchy items have correct locations within Markdown code blocks",
+        },
+        {
+          criterion: "E2E test verifies type hierarchy works in injection regions",
+          verification: "test_lsp_type_hierarchy.lua passes showing supertypes/subtypes for Rust type",
+        },
+      ],
+      status: "done",
+    },
   ],
 
-  sprint: null, // Sprint 105 (PBI-128) completed - callHierarchy bridge (3 methods)
+  sprint: null, // Sprint 106 (PBI-129) completed - typeHierarchy bridge (3 methods)
 
   definition_of_done: {
     checks: [
@@ -156,24 +187,24 @@ const scrum: ScrumDashboard = {
 
   // Historical sprints (recent 2) | Sprint 1-100: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 106, pbi_id: "PBI-129", goal: "Add typeHierarchy bridge (prepareTypeHierarchy, supertypes, subtypes)", status: "done", subtasks: [] },
     { number: 105, pbi_id: "PBI-128", goal: "Add callHierarchy bridge (prepareCallHierarchy, incomingCalls, outgoingCalls)", status: "done", subtasks: [] },
-    { number: 104, pbi_id: "PBI-127", goal: "Add textDocument/inlayHint bridge support", status: "done", subtasks: [] },
   ],
 
   // Recent 2 retrospectives | Sprint 1-99: modular refactoring pattern, E2E indexing waits
   retrospectives: [
     {
+      sprint: 106,
+      improvements: [
+        { action: "TypeHierarchy follows same pattern as CallHierarchy: 3 methods (prepare, supertypes, subtypes). TypeHierarchyItem has same fields as CallHierarchyItem", timing: "immediate", status: "completed", outcome: "Sprint 106 completed; reused callHierarchy pattern for fast implementation" },
+        { action: "TypeHierarchyItem.data field has same opaque state issue as CallHierarchyItem - supertypes/subtypes may return empty results", timing: "immediate", status: "completed", outcome: "E2E test covers prepareTypeHierarchy only; documented limitation" },
+      ],
+    },
+    {
       sprint: 105,
       improvements: [
         { action: "CallHierarchy has 3 methods: prepareCallHierarchy returns CallHierarchyItem[], then incomingCalls/outgoingCalls use those items. CallHierarchyItem has uri, range, selectionRange, data fields", timing: "immediate", status: "completed", outcome: "Sprint 105 completed; all 3 methods bridged with coordinate translation" },
         { action: "CallHierarchyItem.data field contains opaque language server state. For rust-analyzer, this internal state references original virtual URI. When URI is translated, the data still references virtual file causing incomingCalls/outgoingCalls to return empty results", timing: "immediate", status: "completed", outcome: "E2E test covers prepareCallHierarchy only; documented limitation for incomingCalls/outgoingCalls" },
-      ],
-    },
-    {
-      sprint: 104,
-      improvements: [
-        { action: "InlayHint bridge pattern differs from GotoDefinition family: response has position field (not Range) requiring translate_virtual_to_host on each hint.position", timing: "immediate", status: "completed", outcome: "Sprint 104 completed; InlayHint-family methods now have established pattern" },
-        { action: "InlayHintParams uses range field for visible area - translate both start/end for virtual range when forwarding to bridge server", timing: "immediate", status: "completed", outcome: "Request forwarded correctly with translated range bounds" },
       ],
     },
   ],
