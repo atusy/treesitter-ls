@@ -53,12 +53,12 @@ const scrum: ScrumDashboard = {
       id: "PBI-122",
       story: { role: "Rustacean editing Markdown", capability: "configure bridge servers at top-level 'languageServers'", benefit: "flatter config, clearer field name" },
       acceptance_criteria: [
-        { criterion: "languageServers field added to schema", verification: "Config works; unit tests verify" },
-        { criterion: "bridge.servers deprecated but functional", verification: "effective_language_servers() merges both" },
-        { criterion: "Deprecation warning logged", verification: "log_deprecation_warnings() warns" },
-        { criterion: "Documentation updated", verification: "README.md Before/After examples" },
+        { criterion: "languageServers field added to schema", verification: "Config works; unit tests verify; DONE Sprint 109" },
+        { criterion: "bridge.servers deprecated but functional", verification: "effective_language_servers() merges both; DONE Sprint 109" },
+        { criterion: "Deprecation warning logged", verification: "log_deprecation_warnings() warns; DONE Sprint 109" },
+        { criterion: "Documentation updated", verification: "README.md Before/After examples; DONE Sprint 109" },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-123",
@@ -93,7 +93,70 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null, // Sprint 108 completed; PBI-121 DONE; Next: Sprint 109 with PBI-122
+  sprint: {
+    number: 109,
+    pbi_id: "PBI-122",
+    goal: "Add top-level languageServers field with bridge.servers deprecation",
+    status: "done",
+    subtasks: [
+      {
+        test: "should_deserialize_language_servers_field: TreeSitterSettings accepts top-level languageServers HashMap",
+        implementation: "Add languageServers: Option<HashMap<String, BridgeServerConfig>> to TreeSitterSettings",
+        type: "behavioral",
+        status: "completed",
+        commits: [{ hash: "6e51902", message: "feat(config): add languageServers field to TreeSitterSettings (PBI-122)", phase: "green" }],
+        notes: ["TDD Step 1: Add languageServers field to schema"],
+      },
+      {
+        test: "effective_language_servers_returns_language_servers_when_only_new: Returns languageServers when bridge.servers absent",
+        implementation: "Implement effective_language_servers() returning languageServers value",
+        type: "behavioral",
+        status: "completed",
+        commits: [{ hash: "af94da4", message: "feat(config): implement effective_language_servers() with merge logic (PBI-122)", phase: "green" }],
+        notes: ["TDD Step 2: New field only case"],
+      },
+      {
+        test: "effective_language_servers_returns_bridge_servers_when_only_old: Returns bridge.servers when languageServers absent",
+        implementation: "effective_language_servers() falls back to bridge.servers",
+        type: "behavioral",
+        status: "completed",
+        commits: [{ hash: "af94da4", message: "feat(config): implement effective_language_servers() with merge logic (PBI-122)", phase: "green" }],
+        notes: ["TDD Step 3: Old field only case (backwards compat)"],
+      },
+      {
+        test: "effective_language_servers_merges_both_sources: Merges languageServers + bridge.servers, new wins on conflict",
+        implementation: "effective_language_servers() merges with languageServers taking precedence",
+        type: "behavioral",
+        status: "completed",
+        commits: [{ hash: "af94da4", message: "feat(config): implement effective_language_servers() with merge logic (PBI-122)", phase: "green" }],
+        notes: ["TDD Step 4: Both fields present - merge with precedence"],
+      },
+      {
+        test: "uses_deprecated_bridge_servers_detects_old_field: Returns true when bridge.servers used without languageServers",
+        implementation: "Add uses_deprecated_bridge_servers() method to TreeSitterSettings",
+        type: "behavioral",
+        status: "completed",
+        commits: [{ hash: "69a7af1", message: "feat(config): add deprecation detection for bridge.servers (PBI-122)", phase: "green" }],
+        notes: ["TDD Step 5: Deprecation detection"],
+      },
+      {
+        test: "log_deprecation_warnings_warns_bridge_servers: log::warn emitted for deprecated bridge.servers",
+        implementation: "Extend log_deprecation_warnings() to check uses_deprecated_bridge_servers()",
+        type: "behavioral",
+        status: "completed",
+        commits: [{ hash: "69a7af1", message: "feat(config): add deprecation detection for bridge.servers (PBI-122)", phase: "green" }],
+        notes: ["TDD Step 6: Deprecation warning in logs"],
+      },
+      {
+        test: "N/A - Documentation update",
+        implementation: "Update README.md with Before/After examples showing languageServers migration",
+        type: "behavioral",
+        status: "completed",
+        commits: [{ hash: "a64a354", message: "docs(config): document languageServers with migration guide (PBI-122)", phase: "green" }],
+        notes: ["Documentation: Before (bridge.servers) / After (languageServers)"],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
@@ -103,8 +166,10 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // History: git log -- scrum.yaml, scrum.ts | Completed PBIs: 001-121 (PBI-121 completed Sprint 108)
+  // History: git log -- scrum.yaml, scrum.ts | Completed PBIs: 001-122 (PBI-122 completed Sprint 109)
+  // Sprint 109: PBI-122 (languageServers top-level config) - DONE
   completed: [
+    { number: 109, pbi_id: "PBI-122", goal: "Add top-level languageServers field with bridge.servers deprecation", status: "done", subtasks: [] },
     { number: 108, pbi_id: "PBI-121", goal: "Extract selection_range/signature_help to modules (PBI-121 DONE)", status: "done", subtasks: [] },
     { number: 107, pbi_id: "PBI-121", goal: "Extract code_action to code_action.rs", status: "done", subtasks: [] },
     { number: 106, pbi_id: "PBI-121", goal: "Extract formatting to formatting.rs", status: "done", subtasks: [] },
@@ -116,8 +181,13 @@ const scrum: ScrumDashboard = {
     { number: 100, pbi_id: "PBI-121", goal: "Extract semantic_tokens to dedicated module", status: "done", subtasks: [] },
     // Sprints 1-99: See git log -- scrum.yaml, scrum.ts
   ],
-  // Sprint 109: Start PBI-122 (languageServers top-level config)
   retrospectives: [
+    {
+      sprint: 109,
+      improvements: [
+        { action: "PBI-122 COMPLETE: Top-level languageServers field with bridge.servers deprecation", timing: "immediate", status: "completed", outcome: "Strict TDD (6 cycles) delivered clean API migration path; effective_language_servers() merges both sources" },
+      ],
+    },
     {
       sprint: 108,
       improvements: [
