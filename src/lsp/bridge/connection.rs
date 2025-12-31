@@ -3,17 +3,12 @@
 //! This module handles spawning and managing connections to external
 //! language servers for bridging LSP requests.
 
-use super::code_action::CodeActionWithNotifications;
-use super::completion::CompletionWithNotifications;
-use super::definition::GotoDefinitionWithNotifications;
-use super::document_highlight::DocumentHighlightWithNotifications;
-use super::formatting::FormattingWithNotifications;
-use super::hover::HoverWithNotifications;
-use super::implementation::ImplementationWithNotifications;
-use super::references::ReferencesWithNotifications;
-use super::rename::RenameWithNotifications;
-use super::signature_help::SignatureHelpWithNotifications;
-use super::type_definition::TypeDefinitionWithNotifications;
+use super::text_document::{
+    CodeActionWithNotifications, CompletionWithNotifications, DocumentHighlightWithNotifications,
+    FormattingWithNotifications, GotoDefinitionWithNotifications, HoverWithNotifications,
+    ImplementationWithNotifications, ReferencesWithNotifications, RenameWithNotifications,
+    SignatureHelpWithNotifications, TypeDefinitionWithNotifications,
+};
 use super::workspace::{language_to_extension, setup_workspace_with_option};
 use crate::config::settings::BridgeServerConfig;
 use serde_json::Value;
