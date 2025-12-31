@@ -63,8 +63,8 @@ const scrum: ScrumDashboard = {
       },
       acceptance_criteria: [
         {
-          criterion: "src/lsp/redirection/ directory created with mod.rs",
-          verification: "ls src/lsp/redirection/ shows mod.rs exists",
+          criterion: "src/lsp/redirection/ directory created (modern module style with redirection.rs)",
+          verification: "ls src/lsp/redirection/ shows submodules and redirection.rs exists in parent",
         },
         {
           criterion: "definition.rs contains goto_definition related code",
@@ -79,7 +79,7 @@ const scrum: ScrumDashboard = {
           verification: "make test passes (structural change only, no behavioral change)",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-111",
@@ -198,20 +198,21 @@ const scrum: ScrumDashboard = {
   ],
 
   sprint: {
-    number: 86,
-    pbi_id: "PBI-109",
-    goal: "Update Product Goal statement to reflect expanded bridge vision",
+    number: 87,
+    pbi_id: "PBI-110",
+    goal: "Refactor redirection.rs into module structure for maintainability",
     status: "done",
     subtasks: [
       {
-        test: "Verify Product Goal statement mentions expanded bridge support",
-        implementation: "Read scrum.ts and confirm product_goal.statement reflects expanded bridge vision per ADR-0006, 0007, 0008",
-        type: "behavioral",
+        test: "Verify module structure exists with required files",
+        implementation: "Split redirection.rs into redirection/ module with cleanup.rs, connection.rs, definition.rs, hover.rs, pool.rs, workspace.rs",
+        type: "structural",
         status: "completed",
         commits: [],
         notes: [
-          "Product Goal statement verified: 'Expand LSP bridge to support most language server features indirectly through bridging (ADR-0006, 0007, 0008)'",
-          "Success metrics verified: bridge coverage, modular architecture, E2E test coverage all present",
+          "Used modern Rust module style: redirection.rs + redirection/ directory (not mod.rs)",
+          "All 308 tests pass - structural change only, no behavioral changes",
+          "definition.rs contains GotoDefinitionWithNotifications, hover.rs contains HoverWithNotifications",
         ],
       },
     ],
@@ -228,6 +229,13 @@ const scrum: ScrumDashboard = {
   // Historical sprints (recent 2) | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   completed: [
     {
+      number: 86,
+      pbi_id: "PBI-109",
+      goal: "Update Product Goal statement to reflect expanded bridge vision",
+      status: "done",
+      subtasks: [],
+    },
+    {
       number: 85,
       pbi_id: "PBI-108",
       goal:
@@ -235,57 +243,41 @@ const scrum: ScrumDashboard = {
       status: "done",
       subtasks: [],
     },
-    {
-      number: 84,
-      pbi_id: "PBI-107",
-      goal:
-        "Remove WorkspaceType - treesitter-ls creates only virtual.<ext> file per ADR-0006 Minimal File Creation",
-      status: "cancelled",
-      subtasks: [],
-    },
   ],
 
   // Recent 2 retrospectives | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   retrospectives: [
     {
-      sprint: 85,
+      sprint: 87,
       improvements: [
         {
           action:
-            "Obvious Implementation strategy is effective for well-understood patterns - 8 subtasks completed in single commit when following established codebase conventions",
+            "Use modern Rust module style (module.rs + module/ directory) instead of mod.rs for better editor navigation",
           timing: "immediate",
           status: "completed",
           outcome:
-            "Feature delivered efficiently by recognizing config field addition pattern was identical to existing fields (highlights, locals, injections)",
+            "Module files clearly named (redirection.rs, cleanup.rs, etc.) instead of multiple mod.rs tabs in editor",
         },
         {
           action:
-            "Design configuration with sensible defaults (None = bridge all) to maintain backward compatibility while adding new filtering capability",
+            "Structural refactoring with extensive test suite validates no behavioral changes - 308 tests provide confidence for safe module splitting",
           timing: "immediate",
           status: "completed",
           outcome:
-            "Existing users unaffected - new bridge filter is opt-in; only users who explicitly configure it see behavioral changes",
+            "Refactored 2000+ line file into 6 focused modules while all tests continued to pass",
         },
       ],
     },
     {
-      sprint: 84,
+      sprint: 86,
       improvements: [
         {
           action:
-            "Validate external tool initialization time before removing working scaffolding - rust-analyzer linkedProjects takes much longer than Cargo.toml approach",
+            "Verification-only sprints (checking existing state) complete quickly when criteria are already satisfied",
           timing: "immediate",
           status: "completed",
           outcome:
-            "E2E tests revealed linkedProjects initialization too slow; workspaceType kept and marked deprecated in ADR-0006 for future removal",
-        },
-        {
-          action:
-            "When simplifying config, ensure the alternative approach actually works in practice - theoretical ADR alignment should not override practical functionality",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "Sprint cancelled after discovering linkedProjects approach causes test timeouts; pragmatic decision to defer removal",
+            "Sprint 86 completed immediately by confirming Product Goal already reflected expanded bridge vision",
         },
       ],
     },
