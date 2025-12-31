@@ -29,7 +29,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-120 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-121 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
   product_backlog: [
@@ -93,62 +93,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 108,
-    pbi_id: "PBI-121",
-    goal: "Extract selection_range and signature_help to respective modules",
-    status: "done",
-    subtasks: [
-      {
-        test: "Verify baseline: make test, make check pass before changes",
-        implementation: "Run baseline verification to ensure clean starting point",
-        type: "structural",
-        status: "completed",
-        commits: [],
-        notes: ["Final phase of PBI-121 refactoring - last 2 methods to extract"],
-      },
-      {
-        test: "Verify selection_range module compiles with mod declaration in text_document.rs",
-        implementation: "Create selection_range.rs with module structure and add 'pub mod selection_range;' to text_document.rs",
-        type: "structural",
-        status: "completed",
-        commits: [],
-        notes: ["Follow same pattern as code_action.rs, formatting.rs, etc."],
-      },
-      {
-        test: "Verify selection_range tests pass after method move",
-        implementation: "Move selection_range method from lsp_impl.rs to selection_range.rs, update imports",
-        type: "structural",
-        status: "completed",
-        commits: [],
-        notes: ["Method at lines 1281-1356 in lsp_impl.rs"],
-      },
-      {
-        test: "Verify signature_help module compiles with mod declaration in text_document.rs",
-        implementation: "Create signature_help.rs with module structure and add 'pub mod signature_help;' to text_document.rs",
-        type: "structural",
-        status: "completed",
-        commits: [],
-        notes: ["Follow same pattern as selection_range.rs"],
-      },
-      {
-        test: "Verify signature_help tests pass after method move",
-        implementation: "Move signature_help method from lsp_impl.rs to signature_help.rs, update imports",
-        type: "structural",
-        status: "completed",
-        commits: [],
-        notes: ["Method at lines 1377-1541 in lsp_impl.rs"],
-      },
-      {
-        test: "All DoD checks pass: make test, make check, make test_nvim",
-        implementation: "Run full verification suite to confirm PBI-121 completion",
-        type: "structural",
-        status: "completed",
-        commits: [],
-        notes: ["PBI-121 Phase 9 complete - text_document.rs now exports all 10 LSP modules"],
-      },
-    ],
-  },
+  sprint: null, // Sprint 108 completed; PBI-121 DONE; Next: Sprint 109 with PBI-122
 
   definition_of_done: {
     checks: [
@@ -158,7 +103,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // History: git log -- scrum.yaml, scrum.ts | Completed PBIs: 001-121
+  // History: git log -- scrum.yaml, scrum.ts | Completed PBIs: 001-121 (PBI-121 completed Sprint 108)
   completed: [
     { number: 108, pbi_id: "PBI-121", goal: "Extract selection_range/signature_help to modules (PBI-121 DONE)", status: "done", subtasks: [] },
     { number: 107, pbi_id: "PBI-121", goal: "Extract code_action to code_action.rs", status: "done", subtasks: [] },
@@ -183,13 +128,6 @@ const scrum: ScrumDashboard = {
       sprint: 107,
       improvements: [
         { action: "8th consecutive successful extraction (code_action.rs); only 1 phase remains (selection_range/signature_help)", timing: "immediate", status: "completed", outcome: "PBI-121 on track for completion in Sprint 108" },
-      ],
-    },
-    {
-      sprint: 106,
-      improvements: [
-        { action: "7th consecutive successful extraction; only 2 phases remain (code_action, selection_range/signature_help)", timing: "immediate", status: "completed", outcome: "PBI-121 on track for completion in Sprint 108" },
-        { action: "E2E naming issue (treesitter_ls vs treesitter-ls) abandoned after 4 sprints - non-blocking, no impact on delivery", timing: "immediate", status: "abandoned", outcome: "Cleaned up stale improvement item" },
       ],
     },
   ],
