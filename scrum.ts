@@ -29,7 +29,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-111 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-112 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
   product_backlog: [
@@ -60,7 +60,36 @@ const scrum: ScrumDashboard = {
       ],
       status: "done",
     },
-    // Draft PBIs (refine to ready before sprint): PBI-112 signatureHelp, PBI-113 references,
+    {
+      id: "PBI-112",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "see function signature help for Rust code blocks via bridge",
+        benefit:
+          "I can see parameter hints while calling functions without leaving Markdown",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "src/lsp/bridge/signature_help.rs exists with SignatureHelpWithNotifications type",
+          verification:
+            "grep 'SignatureHelpWithNotifications' src/lsp/bridge/signature_help.rs returns matches",
+        },
+        {
+          criterion:
+            "textDocument/signatureHelp requests in injection regions are bridged",
+          verification:
+            "cargo test signature_help --lib passes (unit test in connection.rs)",
+        },
+        {
+          criterion: "E2E test tests/test_lsp_signature_help.lua passes",
+          verification:
+            "make test_nvim_file FILE=tests/test_lsp_signature_help.lua passes",
+        },
+      ],
+      status: "done",
+    },
+    // Draft PBIs (refine to ready before sprint): PBI-113 references,
     // PBI-114 rename, PBI-115 codeAction, PBI-116 formatting
   ],
 
@@ -77,16 +106,16 @@ const scrum: ScrumDashboard = {
   // Historical sprints (recent 2) | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   completed: [
     {
-      number: 88,
-      pbi_id: "PBI-111",
-      goal: "Bridge textDocument/completion for injection regions",
+      number: 89,
+      pbi_id: "PBI-112",
+      goal: "Bridge textDocument/signatureHelp for injection regions",
       status: "done",
       subtasks: [],
     },
     {
-      number: 87,
-      pbi_id: "PBI-110",
-      goal: "Refactor redirection.rs into bridge/ module structure",
+      number: 88,
+      pbi_id: "PBI-111",
+      goal: "Bridge textDocument/completion for injection regions",
       status: "done",
       subtasks: [],
     },
@@ -94,6 +123,19 @@ const scrum: ScrumDashboard = {
 
   // Recent 2 retrospectives | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    {
+      sprint: 89,
+      improvements: [
+        {
+          action:
+            "Use Obvious Implementation strategy for well-established patterns",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "SignatureHelp bridging completed in single sprint by following completion bridging pattern exactly",
+        },
+      ],
+    },
     {
       sprint: 88,
       improvements: [
@@ -104,27 +146,6 @@ const scrum: ScrumDashboard = {
           status: "completed",
           outcome:
             "Completion bridging implementation reused hover pattern for position translation and notification forwarding",
-        },
-        {
-          action:
-            "Use buf_request_sync in E2E tests for reliable async LSP testing instead of popup-based testing",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "E2E test uses vim.lsp.buf_request_sync which is more reliable than checking popup visibility",
-        },
-      ],
-    },
-    {
-      sprint: 87,
-      improvements: [
-        {
-          action:
-            "Use modern Rust module style (module.rs + module/ directory) instead of mod.rs for better editor navigation",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "Module files clearly named (bridge.rs, cleanup.rs, etc.) instead of multiple mod.rs tabs in editor",
         },
       ],
     },
