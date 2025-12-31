@@ -109,7 +109,7 @@ const scrum: ScrumDashboard = {
           verification: "test_lsp_inlay_hint.lua passes showing type hints in Rust code block",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-128",
@@ -144,7 +144,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null, // Sprint 103 (PBI-126) completed - textDocument/declaration bridge
+  sprint: null, // Sprint 104 (PBI-127) completed - textDocument/inlayHint bridge
 
   definition_of_done: {
     checks: [
@@ -156,24 +156,24 @@ const scrum: ScrumDashboard = {
 
   // Historical sprints (recent 2) | Sprint 1-100: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 104, pbi_id: "PBI-127", goal: "Add textDocument/inlayHint bridge support", status: "done", subtasks: [] },
     { number: 103, pbi_id: "PBI-126", goal: "Add textDocument/declaration bridge support", status: "done", subtasks: [] },
-    { number: 102, pbi_id: "PBI-125", goal: "Restructure bridge directory with text_document/ subdirectory", status: "done", subtasks: [] },
   ],
 
   // Recent 2 retrospectives | Sprint 1-99: modular refactoring pattern, E2E indexing waits
   retrospectives: [
     {
+      sprint: 104,
+      improvements: [
+        { action: "InlayHint bridge pattern differs from GotoDefinition family: response has position field (not Range) requiring translate_virtual_to_host on each hint.position", timing: "immediate", status: "completed", outcome: "Sprint 104 completed; InlayHint-family methods now have established pattern" },
+        { action: "InlayHintParams uses range field for visible area - translate both start/end for virtual range when forwarding to bridge server", timing: "immediate", status: "completed", outcome: "Request forwarded correctly with translated range bounds" },
+      ],
+    },
+    {
       sprint: 103,
       improvements: [
         { action: "Declaration bridge follows same pattern as definition/typeDefinition/implementation: copy-adapt in ~10 min", timing: "immediate", status: "completed", outcome: "Sprint 103 completed rapidly; GotoDefinitionResponse-based methods are now fully predictable" },
         { action: "GotoDeclarationParams/Response are type aliases in lsp_types::request, but using GotoDefinitionParams/Response works directly", timing: "immediate", status: "completed", outcome: "No import changes needed; tower-lsp accepts GotoDefinitionParams for declaration endpoint" },
-      ],
-    },
-    {
-      sprint: 100,
-      improvements: [
-        { action: "Copy-and-adapt pattern from Sprint 99 proved highly effective: implementation.rs copied from type_definition.rs with 3 string replacements", timing: "immediate", status: "completed", outcome: "Sprint 100 completed in fraction of Sprint 99 time due to established pattern" },
-        { action: "Bridge feature velocity now predictable: ~15 min per new GotoDefinitionResponse-based method (definition, typeDefinition, implementation)", timing: "immediate", status: "completed", outcome: "documentHighlight (PBI-124) should follow same pattern with DocumentHighlight response type" },
       ],
     },
   ],
