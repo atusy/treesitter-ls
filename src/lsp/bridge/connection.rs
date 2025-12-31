@@ -6,6 +6,7 @@
 use super::code_action::CodeActionWithNotifications;
 use super::completion::CompletionWithNotifications;
 use super::definition::GotoDefinitionWithNotifications;
+use super::document_highlight::DocumentHighlightWithNotifications;
 use super::formatting::FormattingWithNotifications;
 use super::hover::HoverWithNotifications;
 use super::implementation::ImplementationWithNotifications;
@@ -609,6 +610,50 @@ impl LanguageServerConnection {
             .and_then(|r| serde_json::from_value(r).ok());
 
         ImplementationWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request document highlight, capturing $/progress notifications.
+    ///
+    /// Sends the `textDocument/documentHighlight` request which returns all
+    /// occurrences of the symbol under the cursor within the document.
+    pub fn document_highlight_with_notifications(
+        &mut self,
+        _uri: &str,
+        position: Position,
+    ) -> DocumentHighlightWithNotifications {
+        // Use the virtual file URI from the temp workspace
+        let Some(real_uri) = self.virtual_file_uri() else {
+            return DocumentHighlightWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let Some(req_id) = self.send_request("textDocument/documentHighlight", params) else {
+            return DocumentHighlightWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id);
+
+        // Extract and parse the document highlight response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        DocumentHighlightWithNotifications {
             response,
             notifications: result.notifications,
         }
