@@ -29,11 +29,11 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-122 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-123 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
   // PBI-120: Done in e600402 - bridge filter map with enabled flag (docs in docs/README.md)
-  // PBI-122: Done - textDocument/typeDefinition bridge (Sprint 99)
+  // PBI-122/123: Done - typeDefinition (Sprint 99), implementation (Sprint 100) bridges
   product_backlog: [
     {
       id: "PBI-123",
@@ -56,7 +56,7 @@ const scrum: ScrumDashboard = {
           verification: "Unit test: initialize response includes implementationProvider: true",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-124",
@@ -87,7 +87,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: null, // Sprint 100 complete, ready for Sprint 101 planning
 
   definition_of_done: {
     checks: [
@@ -97,27 +97,27 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-97: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-98: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 100, pbi_id: "PBI-123", goal: "Add textDocument/implementation bridge support", status: "done", subtasks: [] },
     { number: 99, pbi_id: "PBI-122", goal: "Add textDocument/typeDefinition bridge support", status: "done", subtasks: [] },
-    { number: 98, pbi_id: "PBI-121", goal: "Refactor lsp_impl.rs into modular file structure", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-96: git log -- scrum.yaml, scrum.ts
+  // Recent 2 retrospectives | Sprint 1-98: modular refactoring pattern, E2E indexing waits
   retrospectives: [
     {
-      sprint: 99,
+      sprint: 100,
       improvements: [
-        { action: "Established reusable bridge pattern: typeDefinition implemented by copying definition.rs with minimal changes (method name, connection call)", timing: "immediate", status: "completed", outcome: "New bridge features (implementation, documentHighlight) can follow same copy-and-adapt pattern" },
-        { action: "E2E tests for language servers with indexing (rust-analyzer) require explicit wait before LSP calls; added vim.uv.sleep(2000) for indexing", timing: "immediate", status: "completed", outcome: "test_lsp_type_definition.lua passes reliably" },
-        { action: "Consider code generation or macro for bridge methods - definition/typeDefinition/implementation share 95%+ identical code", timing: "product", status: "active", outcome: null },
+        { action: "Copy-and-adapt pattern from Sprint 99 proved highly effective: implementation.rs copied from type_definition.rs with 3 string replacements", timing: "immediate", status: "completed", outcome: "Sprint 100 completed in fraction of Sprint 99 time due to established pattern" },
+        { action: "Bridge feature velocity now predictable: ~15 min per new GotoDefinitionResponse-based method (definition, typeDefinition, implementation)", timing: "immediate", status: "completed", outcome: "documentHighlight (PBI-124) should follow same pattern with DocumentHighlight response type" },
       ],
     },
     {
-      sprint: 98,
+      sprint: 99,
       improvements: [
-        { action: "Modular refactoring with *_impl delegation decomposed 3800+ line file into 10 focused text_document modules", timing: "immediate", status: "completed", outcome: "pub(crate) *_impl methods called from LanguageServer trait impl" },
-        { action: "File organization by LSP category (text_document/) creates natural boundaries for future workspace/ and window/", timing: "product", status: "active", outcome: null },
+        { action: "Established reusable bridge pattern: typeDefinition implemented by copying definition.rs with minimal changes", timing: "immediate", status: "completed", outcome: "New bridge features can follow copy-and-adapt pattern" },
+        { action: "E2E tests for language servers with indexing require explicit wait; added vim.uv.sleep(2000)", timing: "immediate", status: "completed", outcome: "test_lsp_type_definition.lua passes reliably" },
+        { action: "Consider code generation or macro for bridge methods - definition/typeDefinition/implementation share 95%+ identical code", timing: "product", status: "active", outcome: null },
       ],
     },
   ],
