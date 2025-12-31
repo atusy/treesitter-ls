@@ -432,16 +432,13 @@ impl TreeSitterLs {
     ///
     /// Looks up the bridge.servers configuration and finds a server that handles
     /// the specified language. Returns None if no server is configured for this language.
-    ///
-    /// Falls back to a default rust-analyzer config if bridge.servers is not configured
-    /// but the language is "rust".
     fn get_bridge_config_for_language(
         &self,
         language: &str,
     ) -> Option<crate::config::settings::BridgeServerConfig> {
         let settings = self.settings.load();
 
-        // First, check if bridge settings exist
+        // Check if bridge settings exist
         if let Some(ref bridge) = settings.bridge {
             // Look for a server that handles this language
             for config in bridge.servers.values() {
@@ -449,17 +446,6 @@ impl TreeSitterLs {
                     return Some(config.clone());
                 }
             }
-        }
-
-        // Fallback: if no bridge config but language is rust, use default rust-analyzer
-        if language == "rust" {
-            return Some(crate::config::settings::BridgeServerConfig {
-                command: "rust-analyzer".to_string(),
-                args: None,
-                languages: vec!["rust".to_string()],
-                initialization_options: None,
-                workspace_type: None, // Default to Cargo (backward compat)
-            });
         }
 
         None
