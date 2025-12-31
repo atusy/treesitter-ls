@@ -219,8 +219,14 @@ pub struct TreeSitterSettings {
     #[serde(rename = "autoInstall")]
     pub auto_install: Option<bool>,
     /// Optional bridge settings for configuring external language servers
+    /// Deprecated: Use `language_servers` instead.
     #[serde(default)]
     pub bridge: Option<BridgeSettings>,
+    /// Top-level language server configuration (PBI-122).
+    /// This is the new canonical field name for bridge servers.
+    /// Maps server name to server configuration.
+    #[serde(rename = "languageServers")]
+    pub language_servers: Option<HashMap<String, BridgeServerConfig>>,
 }
 
 impl TreeSitterSettings {
@@ -715,6 +721,7 @@ mod tests {
             capture_mappings: HashMap::new(),
             auto_install: None,
             bridge: None,
+            language_servers: None,
         };
 
         // Add multiple language configurations
@@ -1537,6 +1544,44 @@ mod tests {
         assert!(
             !settings.is_language_bridgeable("javascript"),
             "javascript should not be in bridge filter"
+        );
+    }
+
+    // PBI-122: Top-level languageServers field tests
+    #[test]
+    fn should_deserialize_language_servers_field() {
+        // TDD RED: TreeSitterSettings should accept top-level languageServers HashMap
+        // PBI-122: languageServers is the new canonical field name for bridge servers
+        let config_json = r#"{
+            "languageServers": {
+                "rust-analyzer": {
+                    "cmd": ["rust-analyzer"],
+                    "languages": ["rust"]
+                },
+                "pyright": {
+                    "cmd": ["pyright-langserver", "--stdio"],
+                    "languages": ["python"]
+                }
+            }
+        }"#;
+
+        let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
+
+        assert!(
+            settings.language_servers.is_some(),
+            "languageServers field should be present"
+        );
+        let servers = settings.language_servers.as_ref().unwrap();
+        assert_eq!(servers.len(), 2);
+        assert!(servers.contains_key("rust-analyzer"));
+        assert!(servers.contains_key("pyright"));
+        assert_eq!(
+            servers["rust-analyzer"].cmd,
+            vec!["rust-analyzer".to_string()]
+        );
+        assert_eq!(
+            servers["pyright"].cmd,
+            vec!["pyright-langserver".to_string(), "--stdio".to_string()]
         );
     }
 }

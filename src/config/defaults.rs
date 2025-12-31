@@ -16,6 +16,7 @@ pub fn default_settings() -> TreeSitterSettings {
         capture_mappings: default_capture_mappings(),
         auto_install: Some(true),
         bridge: None,
+        language_servers: None,
     }
 }
 

@@ -19,6 +19,7 @@ fn test_dynamic_lua_load_from_search_paths() {
         capture_mappings: HashMap::new(),
         auto_install: None,
         bridge: None,
+        language_servers: None,
     };
 
     // Load settings into coordinator
