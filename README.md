@@ -53,3 +53,56 @@ treesitter-ls supports LSP features via three mechanisms:
 | Find References | ❌ | ❌ | ✅ |
 | Rename | ❌ | ❌ | ✅ |
 | Formatting | ❌ | ❌ | ✅ |
+
+## Configuration
+
+### Language Servers (Bridge)
+
+Configure external language servers for bridging injection regions.
+
+```json
+{
+  "languageServers": {
+    "rust-analyzer": {
+      "cmd": ["rust-analyzer"],
+      "languages": ["rust"]
+    },
+    "pyright": {
+      "cmd": ["pyright-langserver", "--stdio"],
+      "languages": ["python"]
+    }
+  }
+}
+```
+
+### Migration from bridge.servers (Deprecated)
+
+The `bridge.servers` field is deprecated. Migrate to the top-level `languageServers` field:
+
+**Before (deprecated):**
+```json
+{
+  "bridge": {
+    "servers": {
+      "rust-analyzer": {
+        "cmd": ["rust-analyzer"],
+        "languages": ["rust"]
+      }
+    }
+  }
+}
+```
+
+**After (recommended):**
+```json
+{
+  "languageServers": {
+    "rust-analyzer": {
+      "cmd": ["rust-analyzer"],
+      "languages": ["rust"]
+    }
+  }
+}
+```
+
+Both formats work during the transition period, with `languageServers` taking precedence if both are specified.

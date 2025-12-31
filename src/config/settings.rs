@@ -261,9 +261,7 @@ impl TreeSitterSettings {
     /// using the deprecated configuration location. They should migrate to
     /// the top-level `languageServers` field.
     pub fn uses_deprecated_bridge_servers(&self) -> bool {
-        self.bridge
-            .as_ref()
-            .is_some_and(|b| !b.servers.is_empty())
+        self.bridge.as_ref().is_some_and(|b| !b.servers.is_empty())
     }
 
     /// Log deprecation warnings for any deprecated configuration fields.
@@ -1717,12 +1715,21 @@ mod tests {
         let servers = effective.unwrap();
 
         // Should have 3 servers: rust-analyzer, lua-ls, pyright
-        assert_eq!(servers.len(), 3, "Should merge to 3 servers: {:?}", servers.keys().collect::<Vec<_>>());
+        assert_eq!(
+            servers.len(),
+            3,
+            "Should merge to 3 servers: {:?}",
+            servers.keys().collect::<Vec<_>>()
+        );
 
         // languageServers version of rust-analyzer should win
         assert_eq!(
             servers["rust-analyzer"].cmd,
-            vec!["rust-analyzer".to_string(), "--log-file".to_string(), "/tmp/new.log".to_string()],
+            vec![
+                "rust-analyzer".to_string(),
+                "--log-file".to_string(),
+                "/tmp/new.log".to_string()
+            ],
             "languageServers should take precedence for rust-analyzer"
         );
 
