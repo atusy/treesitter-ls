@@ -3,6 +3,7 @@
 //! This module contains types for bridging textDocument/* LSP requests
 //! to external language servers for injection regions.
 
+mod call_hierarchy;
 mod code_action;
 mod completion;
 mod declaration;
@@ -17,6 +18,10 @@ mod rename;
 mod signature_help;
 mod type_definition;
 
+pub use call_hierarchy::{
+    IncomingCallsWithNotifications, OutgoingCallsWithNotifications,
+    PrepareCallHierarchyWithNotifications,
+};
 pub use code_action::CodeActionWithNotifications;
 pub use completion::CompletionWithNotifications;
 pub use declaration::DeclarationWithNotifications;

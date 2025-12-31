@@ -1255,6 +1255,7 @@ impl LanguageServer for TreeSitterLs {
                 rename_provider: Some(OneOf::Left(true)),
                 document_formatting_provider: Some(OneOf::Left(true)),
                 inlay_hint_provider: Some(OneOf::Left(true)),
+                call_hierarchy_provider: Some(CallHierarchyServerCapability::Simple(true)),
                 ..ServerCapabilities::default()
             },
         })
@@ -1614,6 +1615,27 @@ impl LanguageServer for TreeSitterLs {
 
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
         self.inlay_hint_impl(params).await
+    }
+
+    async fn prepare_call_hierarchy(
+        &self,
+        params: CallHierarchyPrepareParams,
+    ) -> Result<Option<Vec<CallHierarchyItem>>> {
+        self.prepare_call_hierarchy_impl(params).await
+    }
+
+    async fn incoming_calls(
+        &self,
+        params: CallHierarchyIncomingCallsParams,
+    ) -> Result<Option<Vec<CallHierarchyIncomingCall>>> {
+        self.incoming_calls_impl(params).await
+    }
+
+    async fn outgoing_calls(
+        &self,
+        params: CallHierarchyOutgoingCallsParams,
+    ) -> Result<Option<Vec<CallHierarchyOutgoingCall>>> {
+        self.outgoing_calls_impl(params).await
     }
 }
 
