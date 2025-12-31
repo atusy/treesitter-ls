@@ -5,9 +5,10 @@
 
 use super::text_document::{
     CodeActionWithNotifications, CompletionWithNotifications, DeclarationWithNotifications,
-    DocumentHighlightWithNotifications, DocumentLinkWithNotifications, FormattingWithNotifications,
-    GotoDefinitionWithNotifications, HoverWithNotifications, ImplementationWithNotifications,
-    IncomingCallsWithNotifications, InlayHintWithNotifications, OutgoingCallsWithNotifications,
+    DocumentHighlightWithNotifications, DocumentLinkWithNotifications,
+    FoldingRangeWithNotifications, FormattingWithNotifications, GotoDefinitionWithNotifications,
+    HoverWithNotifications, ImplementationWithNotifications, IncomingCallsWithNotifications,
+    InlayHintWithNotifications, OutgoingCallsWithNotifications,
     PrepareCallHierarchyWithNotifications, PrepareTypeHierarchyWithNotifications,
     ReferencesWithNotifications, RenameWithNotifications, SignatureHelpWithNotifications,
     SubtypesWithNotifications, SupertypesWithNotifications, TypeDefinitionWithNotifications,
@@ -740,6 +741,49 @@ impl LanguageServerConnection {
             .and_then(|r| serde_json::from_value(r).ok());
 
         DocumentLinkWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request folding ranges, capturing $/progress notifications.
+    ///
+    /// Sends the `textDocument/foldingRange` request which returns foldable
+    /// regions within the document (e.g., functions, blocks, comments).
+    pub fn folding_range_with_notifications(
+        &mut self,
+        _uri: &str,
+    ) -> FoldingRangeWithNotifications {
+        // Use the virtual file URI from the temp workspace
+        let Some(real_uri) = self.virtual_file_uri() else {
+            return FoldingRangeWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+        });
+
+        let Some(req_id) = self.send_request("textDocument/foldingRange", params) else {
+            return FoldingRangeWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id);
+
+        // Extract and parse the folding range response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        FoldingRangeWithNotifications {
             response,
             notifications: result.notifications,
         }

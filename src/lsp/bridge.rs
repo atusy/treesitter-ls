@@ -18,9 +18,9 @@ pub use connection::{ConnectionInfo, LanguageServerConnection, ResponseWithNotif
 pub use pool::LanguageServerPool;
 pub use text_document::{
     CodeActionWithNotifications, CompletionWithNotifications, DocumentHighlightWithNotifications,
-    DocumentLinkWithNotifications, FormattingWithNotifications, GotoDefinitionWithNotifications,
-    HoverWithNotifications, ImplementationWithNotifications, IncomingCallsWithNotifications,
-    InlayHintWithNotifications, OutgoingCallsWithNotifications,
+    DocumentLinkWithNotifications, FoldingRangeWithNotifications, FormattingWithNotifications,
+    GotoDefinitionWithNotifications, HoverWithNotifications, ImplementationWithNotifications,
+    IncomingCallsWithNotifications, InlayHintWithNotifications, OutgoingCallsWithNotifications,
     PrepareCallHierarchyWithNotifications, PrepareTypeHierarchyWithNotifications,
     ReferencesWithNotifications, RenameWithNotifications, SignatureHelpWithNotifications,
     SubtypesWithNotifications, SupertypesWithNotifications, TypeDefinitionWithNotifications,
