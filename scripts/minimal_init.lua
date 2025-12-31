@@ -10,6 +10,11 @@ vim.lsp.config.treesitter_ls = {
 					languages = { "rust" },
 					workspaceType = "cargo",
 				},
+				["pyright"] = {
+					command = "pyright-langserver",
+					args = { "--stdio" },
+					languages = { "python" },
+				},
 			},
 		},
 	},
