@@ -190,74 +190,6 @@ pub struct LanguageServerConnection {
 }
 
 impl LanguageServerConnection {
-    /// Spawn rust-analyzer with a temporary Cargo project workspace.
-    ///
-    /// rust-analyzer requires a Cargo project context for go-to-definition to work.
-    /// This creates a minimal temp project that gets cleaned up on drop.
-    pub fn spawn_rust_analyzer() -> Option<Self> {
-        // Create a temporary directory for the Cargo project
-        let temp_dir =
-            std::env::temp_dir().join(format!("treesitter-ls-ra-{}", std::process::id()));
-        let src_dir = temp_dir.join("src");
-        std::fs::create_dir_all(&src_dir).ok()?;
-
-        // Write minimal Cargo.toml
-        let cargo_toml = temp_dir.join("Cargo.toml");
-        std::fs::write(
-            &cargo_toml,
-            "[package]\nname = \"virtual\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-        )
-        .ok()?;
-
-        // Create empty main.rs (will be overwritten by did_open)
-        let main_rs = src_dir.join("main.rs");
-        std::fs::write(&main_rs, "").ok()?;
-
-        let root_uri = format!("file://{}", temp_dir.display());
-
-        let mut process = Command::new("rust-analyzer")
-            .current_dir(&temp_dir)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok()?;
-
-        // Take stdout and wrap in BufReader to maintain consistent buffering
-        let stdout = process.stdout.take()?;
-        let stdout_reader = BufReader::new(stdout);
-
-        // Create ConnectionInfo for the workspace
-        let connection_info = ConnectionInfo::new(temp_dir.clone(), main_rs);
-
-        let mut conn = Self {
-            process,
-            request_id: 0,
-            stdout_reader,
-            temp_dir: Some(temp_dir),
-            document_version: None,
-            connection_info: Some(connection_info),
-        };
-
-        // Send initialize request with workspace root
-        let init_params = serde_json::json!({
-            "processId": std::process::id(),
-            "capabilities": {},
-            "rootUri": root_uri,
-            "workspaceFolders": [{"uri": root_uri, "name": "virtual"}],
-        });
-
-        let init_id = conn.send_request("initialize", init_params)?;
-
-        // Wait for initialize response
-        conn.read_response_for_id(init_id)?;
-
-        // Send initialized notification
-        conn.send_notification("initialized", serde_json::json!({}));
-
-        Some(conn)
-    }
-
     /// Spawn a language server using configuration from BridgeServerConfig.
     ///
     /// This is the generic spawn method that:
@@ -1157,21 +1089,41 @@ mod tests {
 
     #[test]
     fn language_server_connection_is_alive_returns_true_for_live_process() {
+        use crate::config::settings::{BridgeServerConfig, WorkspaceType};
+
         if !check_rust_analyzer_available() {
             return;
         }
 
-        let mut conn = LanguageServerConnection::spawn_rust_analyzer().unwrap();
+        let config = BridgeServerConfig {
+            command: "rust-analyzer".to_string(),
+            args: None,
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        let mut conn = LanguageServerConnection::spawn(&config).unwrap();
         assert!(conn.is_alive());
     }
 
     #[test]
     fn language_server_connection_is_alive_returns_false_after_shutdown() {
+        use crate::config::settings::{BridgeServerConfig, WorkspaceType};
+
         if !check_rust_analyzer_available() {
             return;
         }
 
-        let mut conn = LanguageServerConnection::spawn_rust_analyzer().unwrap();
+        let config = BridgeServerConfig {
+            command: "rust-analyzer".to_string(),
+            args: None,
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        let mut conn = LanguageServerConnection::spawn(&config).unwrap();
         conn.shutdown();
         std::thread::sleep(std::time::Duration::from_millis(50));
         assert!(!conn.is_alive());
@@ -1179,7 +1131,7 @@ mod tests {
 
     #[test]
     fn language_server_pool_respawns_dead_connection() {
-        use crate::config::settings::BridgeServerConfig;
+        use crate::config::settings::{BridgeServerConfig, WorkspaceType};
 
         if !check_rust_analyzer_available() {
             return;
@@ -1191,7 +1143,7 @@ mod tests {
             args: None,
             languages: vec!["rust".to_string()],
             initialization_options: None,
-            workspace_type: None,
+            workspace_type: Some(WorkspaceType::Cargo),
         };
 
         // First take spawns a new connection
@@ -1838,9 +1790,8 @@ mod tests {
         // Check what directory was created by looking at temp dir
 
         // Since spawn creates a unique temp dir and cleans up on failure,
-        // we need a different approach. Let's check that spawn_rust_analyzer
-        // (which uses Cargo) is different from what Generic would create.
-        // The real test is in spawn_workspace_setup_uses_config_workspace_type.
+        // we can't easily inspect it. The real test is in
+        // spawn_workspace_setup_uses_config_workspace_type which uses a real server.
 
         // For now, just verify the spawn returns None for invalid command
         assert!(result.is_none(), "spawn should fail for invalid command");
