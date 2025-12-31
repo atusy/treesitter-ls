@@ -13,6 +13,16 @@ use std::sync::Arc;
 use std::time::Instant;
 use tower_lsp::lsp_types::*;
 
+/// Response from `read_response_for_id_with_notifications` containing
+/// the JSON-RPC response and any $/progress notifications captured during the wait.
+#[derive(Debug, Clone)]
+pub struct ResponseWithNotifications {
+    /// The JSON-RPC response matching the request ID (None if not found)
+    pub response: Option<Value>,
+    /// Captured $/progress notifications received while waiting for the response
+    pub notifications: Vec<Value>,
+}
+
 /// Map language name to file extension.
 ///
 /// Used when creating virtual files for Generic workspaces.
@@ -376,40 +386,95 @@ impl LanguageServerConnection {
     /// Read a JSON-RPC response matching the given request ID
     /// Skips notifications and other responses until finding the matching one
     fn read_response_for_id(&mut self, expected_id: i64) -> Option<Value> {
+        // Use the new method but discard notifications for backward compatibility
+        let result = self.read_response_for_id_with_notifications(expected_id);
+        result.response
+    }
+
+    /// Read a JSON-RPC response matching the given request ID, capturing $/progress notifications.
+    ///
+    /// Unlike `read_response_for_id`, this method returns both the response and any
+    /// `$/progress` notifications received while waiting for the response.
+    /// This allows callers to forward progress notifications to the client.
+    fn read_response_for_id_with_notifications(
+        &mut self,
+        expected_id: i64,
+    ) -> ResponseWithNotifications {
+        let mut notifications = Vec::new();
+
         loop {
             // Read headers
             let mut content_length = 0;
             loop {
                 let mut line = String::new();
-                if self.stdout_reader.read_line(&mut line).ok()? == 0 {
-                    return None; // EOF
+                match self.stdout_reader.read_line(&mut line) {
+                    Ok(0) => {
+                        // EOF
+                        return ResponseWithNotifications {
+                            response: None,
+                            notifications,
+                        };
+                    }
+                    Ok(_) => {}
+                    Err(_) => {
+                        return ResponseWithNotifications {
+                            response: None,
+                            notifications,
+                        };
+                    }
                 }
                 let line = line.trim();
                 if line.is_empty() {
                     break;
                 }
                 if let Some(len_str) = line.strip_prefix("Content-Length:") {
-                    content_length = len_str.trim().parse().ok()?;
+                    content_length = len_str.trim().parse().unwrap_or(0);
                 }
             }
 
             if content_length == 0 {
-                return None;
+                return ResponseWithNotifications {
+                    response: None,
+                    notifications,
+                };
             }
 
             // Read content
             let mut content = vec![0u8; content_length];
-            std::io::Read::read_exact(&mut self.stdout_reader, &mut content).ok()?;
+            if std::io::Read::read_exact(&mut self.stdout_reader, &mut content).is_err() {
+                return ResponseWithNotifications {
+                    response: None,
+                    notifications,
+                };
+            }
 
-            let message: Value = serde_json::from_slice(&content).ok()?;
+            let message: Value = match serde_json::from_slice(&content) {
+                Ok(m) => m,
+                Err(_) => {
+                    return ResponseWithNotifications {
+                        response: None,
+                        notifications,
+                    };
+                }
+            };
 
             // Check if this is the response we're looking for
             if let Some(id) = message.get("id")
                 && id.as_i64() == Some(expected_id)
             {
-                return Some(message);
+                return ResponseWithNotifications {
+                    response: Some(message),
+                    notifications,
+                };
             }
-            // Otherwise it's a notification or different response - skip it
+
+            // Check if this is a $/progress notification to capture
+            if let Some(method) = message.get("method").and_then(|m| m.as_str())
+                && method == "$/progress"
+            {
+                notifications.push(message);
+            }
+            // Otherwise it's a different notification or response - skip it
         }
     }
 
@@ -1898,5 +1963,87 @@ fn main() {
             !pool.has_connection("rust-analyzer"),
             "Pool should be empty after take_connection"
         );
+    }
+
+    #[test]
+    fn response_with_notifications_struct_exists() {
+        // RED phase test: ResponseWithNotifications struct should exist
+        // and have response and notifications fields
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": null
+        });
+
+        let result = ResponseWithNotifications {
+            response: Some(response.clone()),
+            notifications: vec![],
+        };
+
+        assert!(result.response.is_some());
+        assert!(result.notifications.is_empty());
+
+        // With notifications
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "$/progress",
+            "params": {"token": "test", "value": {}}
+        });
+
+        let result_with_notifs = ResponseWithNotifications {
+            response: Some(response),
+            notifications: vec![notification.clone()],
+        };
+
+        assert_eq!(result_with_notifs.notifications.len(), 1);
+        assert_eq!(result_with_notifs.notifications[0], notification);
+    }
+
+    #[test]
+    fn read_response_for_id_with_notifications_method_exists() {
+        // Test that the method exists and returns ResponseWithNotifications
+        // We can't easily test with a real connection here, but we verify
+        // the method signature and return type
+
+        use crate::config::settings::BridgeServerConfig;
+
+        if !check_rust_analyzer_available() {
+            return;
+        }
+
+        let config = BridgeServerConfig {
+            command: "rust-analyzer".to_string(),
+            args: None,
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        let mut conn = LanguageServerConnection::spawn(&config).unwrap();
+
+        // Open a document to get rust-analyzer to respond to a request
+        conn.did_open("file:///test.rs", "rust", "fn main() {}");
+
+        // The method should exist and return ResponseWithNotifications
+        // Send a request and use the new method
+        let params = serde_json::json!({
+            "textDocument": { "uri": conn.virtual_file_uri().unwrap() },
+            "position": { "line": 0, "character": 3 },
+        });
+
+        let req_id = conn.send_request("textDocument/hover", params).unwrap();
+
+        // This should call the new method that returns ResponseWithNotifications
+        let result = conn.read_response_for_id_with_notifications(req_id);
+
+        // The method should return ResponseWithNotifications with a response
+        assert!(
+            result.response.is_some(),
+            "Should have a response from hover request"
+        );
+
+        // The notifications vec should exist (may be empty or have progress notifications)
+        // We're just verifying the method exists and returns the right type
+        let _ = result.notifications;
     }
 }
