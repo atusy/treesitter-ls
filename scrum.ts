@@ -39,7 +39,7 @@ const scrum: ScrumDashboard = {
       acceptance_criteria: [
         { criterion: "Phase 1: semantic_tokens → semantic_tokens.rs", verification: "Tests pass; DONE in Sprint 100" },
         { criterion: "Phase 2: completion → completion.rs", verification: "Tests pass; DONE in Sprint 101" },
-        { criterion: "Phase 3: hover → hover.rs", verification: "Tests pass" },
+        { criterion: "Phase 3: hover → hover.rs", verification: "Tests pass; DONE in Sprint 102" },
         { criterion: "Phase 4: goto_definition → definition.rs", verification: "Tests pass" },
         { criterion: "Phase 5: references → references.rs", verification: "Tests pass" },
         { criterion: "Phase 6: rename → rename.rs", verification: "Tests pass" },
@@ -93,7 +93,46 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 102,
+    pbi_id: "PBI-121",
+    goal: "Extract hover method to lsp_impl/text_document/hover.rs",
+    status: "done",
+    subtasks: [
+      {
+        test: "Run 'make test && make check' to establish baseline",
+        implementation: "Verify all tests pass before refactoring",
+        type: "structural",
+        status: "completed",
+        commits: [],
+        notes: ["Baseline verification ensures clean starting point"],
+      },
+      {
+        test: "Verify hover.rs module compiles with empty impl",
+        implementation: "Create hover.rs with module declaration in mod.rs",
+        type: "structural",
+        status: "completed",
+        commits: [],
+        notes: ["Following pattern from semantic_tokens.rs and completion.rs"],
+      },
+      {
+        test: "Verify hover functionality unchanged after move",
+        implementation: "Move hover method from lsp_impl.rs to hover.rs with pub(crate) visibility",
+        type: "structural",
+        status: "completed",
+        commits: [],
+        notes: ["Use pub(crate) for internal visibility; update mod.rs re-exports"],
+      },
+      {
+        test: "Run 'make test && make check && make test_nvim'",
+        implementation: "Final verification that all tests pass",
+        type: "structural",
+        status: "completed",
+        commits: [],
+        notes: ["Full DoD verification before sprint completion"],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
@@ -105,6 +144,7 @@ const scrum: ScrumDashboard = {
 
   // History: git log -- scrum.yaml, scrum.ts | Completed PBIs: 001-120
   completed: [
+    { number: 102, pbi_id: "PBI-121", goal: "Extract hover to hover.rs", status: "done", subtasks: [] },
     { number: 101, pbi_id: "PBI-121", goal: "Extract completion to completion.rs", status: "done", subtasks: [] },
     { number: 100, pbi_id: "PBI-121", goal: "Extract semantic_tokens to dedicated module", status: "done", subtasks: [] },
   ],
