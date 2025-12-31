@@ -28,153 +28,10 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-098 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-102 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
   // PBI-098: Language-based routing - already implemented as part of PBI-097 (configurable bridge servers)
-  product_backlog: [
-    {
-      id: "PBI-099",
-      story: {
-        role: "documentation author with Rust code blocks",
-        capability:
-          "have stale temp files cleaned up on treesitter-ls startup",
-        benefit:
-          "my temp directory does not fill up with orphaned files from crashed sessions",
-      },
-      acceptance_criteria: [
-        {
-          criterion:
-            "On startup, treesitter-ls scans for stale temp directories",
-          verification:
-            "Test that startup calls cleanup function for treesitter-ls temp dirs",
-        },
-        {
-          criterion:
-            "Temp directories older than 24 hours are removed",
-          verification:
-            "Test that old directories are removed, recent ones are kept",
-        },
-        {
-          criterion:
-            "Cleanup handles permission errors gracefully",
-          verification:
-            "Test that cleanup continues even if some files cannot be removed",
-        },
-      ],
-      status: "done",
-    },
-    {
-      id: "PBI-100",
-      story: {
-        role: "documentation author with Rust code blocks",
-        capability:
-          "configure workspace setup per bridge server type (e.g., Cargo.toml for rust-analyzer, plain file for pyright)",
-        benefit:
-          "each language server gets the project structure it needs without hard-coded assumptions",
-      },
-      acceptance_criteria: [
-        {
-          criterion:
-            "BridgeServerConfig accepts optional workspace_type field with values 'cargo' or 'generic'",
-          verification:
-            "Unit test: BridgeServerConfig deserializes workspace_type field; None defaults to 'cargo' for backward compatibility",
-        },
-        {
-          criterion:
-            "spawn() creates Cargo.toml and src/main.rs when workspace_type is 'cargo' (or None for backward compat)",
-          verification:
-            "Unit test: spawn with cargo workspace_type creates Cargo.toml and src/main.rs in temp directory",
-        },
-        {
-          criterion:
-            "spawn() creates only temp directory with single virtual file when workspace_type is 'generic'",
-          verification:
-            "Unit test: spawn with generic workspace_type creates temp dir with virtual.<ext> file, no Cargo.toml",
-        },
-        {
-          criterion:
-            "main_rs_uri() replaced with virtual_file_uri() that returns appropriate path per workspace_type",
-          verification:
-            "Unit test: virtual_file_uri returns src/main.rs for cargo, virtual.py for generic python",
-        },
-        {
-          criterion:
-            "did_open() writes content to correct virtual file path based on workspace_type",
-          verification:
-            "Unit test: did_open with generic workspace writes to virtual.<ext> not src/main.rs",
-        },
-      ],
-      status: "done",
-    },
-    {
-      id: "PBI-101",
-      story: {
-        role: "documentation author with Rust code blocks",
-        capability:
-          "have spawn() use the workspace_type configuration to create appropriate workspace structure",
-        benefit:
-          "the workspace type feature works end-to-end, not just as infrastructure",
-      },
-      acceptance_criteria: [
-        {
-          criterion:
-            "LanguageServerConnection::spawn() uses setup_workspace() based on config.workspace_type",
-          verification:
-            "Integration test: spawn with generic workspace_type creates virtual file structure",
-        },
-        {
-          criterion:
-            "LanguageServerConnection stores ConnectionInfo for virtual file operations",
-          verification:
-            "Unit test: connection.virtual_file_uri() returns correct path after spawn",
-        },
-        {
-          criterion:
-            "did_open() uses ConnectionInfo.write_virtual_file() instead of hardcoded path",
-          verification:
-            "Integration test: did_open writes to generic workspace virtual file correctly",
-        },
-      ],
-      status: "done",
-    },
-    {
-      id: "PBI-102",
-      story: {
-        role: "documentation author with Rust code blocks",
-        capability:
-          "have bridge server connections pre-warmed when I open a document",
-        benefit:
-          "my first go-to-definition request is fast instead of waiting for server startup",
-      },
-      acceptance_criteria: [
-        {
-          criterion:
-            "When did_open is called for an injection region, the bridge server connection is spawned in a background thread",
-          verification:
-            "Unit test: did_open triggers background spawn for configured bridge server language",
-        },
-        {
-          criterion:
-            "The eager spawn does not block did_open completion",
-          verification:
-            "Unit test: did_open returns immediately while spawn continues in background",
-        },
-        {
-          criterion:
-            "The eagerly spawned connection is stored in LanguageServerPool for reuse",
-          verification:
-            "Integration test: after did_open completes, pool contains connection for the language",
-        },
-        {
-          criterion:
-            "goto_definition uses the pre-warmed connection instead of spawning a new one",
-          verification:
-            "Integration test: first goto_definition after did_open reuses existing connection from pool",
-        },
-      ],
-      status: "done",
-    },
-  ],
+  product_backlog: [],
 
   sprint: null,
 
@@ -186,7 +43,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-72: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   completed: [
     {
       number: 79,
@@ -206,8 +63,28 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-72: git log -- scrum.yaml, scrum.ts
+  // Recent 2 retrospectives | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    {
+      sprint: 79,
+      improvements: [
+        {
+          action:
+            "Arc<DashMap> pattern enables clean async sharing - consider documenting this pattern for future concurrent features",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "Pattern documented in CLAUDE.md DashMap Lock Pattern section (Sprint 71). Pattern reused successfully here.",
+        },
+        {
+          action:
+            "Add E2E test verifying eager spawn reduces first goto-definition latency in real Markdown file",
+          timing: "product",
+          status: "active",
+          outcome: null,
+        },
+      ],
+    },
     {
       sprint: 78,
       improvements: [
@@ -224,19 +101,6 @@ const scrum: ScrumDashboard = {
           timing: "product",
           status: "active",
           outcome: null,
-        },
-      ],
-    },
-    {
-      sprint: 77,
-      improvements: [
-        {
-          action:
-            "Integrate ConnectionInfo and setup_workspace() into LanguageServerConnection::spawn() to complete the workspace type feature end-to-end",
-          timing: "product",
-          status: "completed",
-          outcome:
-            "Completed in Sprint 78 (PBI-101): spawn() now uses setup_workspace_with_option() based on config.workspace_type, stores ConnectionInfo for virtual file operations, and did_open/goto_definition/hover all use virtual_file_uri().",
         },
       ],
     },
