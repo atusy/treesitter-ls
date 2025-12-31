@@ -45,9 +45,9 @@ const scrum: ScrumDashboard = {
         { criterion: "Phase 6: rename → rename.rs", verification: "Tests pass; DONE in Sprint 105" },
         { criterion: "Phase 7: formatting → formatting.rs", verification: "Tests pass; DONE in Sprint 106" },
         { criterion: "Phase 8: code_action → code_action.rs", verification: "Tests pass; DONE in Sprint 107" },
-        { criterion: "Phase 9: selection_range, signature_help → respective modules", verification: "Tests pass; mod.rs re-exports complete" },
+        { criterion: "Phase 9: selection_range, signature_help → respective modules", verification: "Tests pass; DONE in Sprint 108" },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-122",
@@ -97,8 +97,57 @@ const scrum: ScrumDashboard = {
     number: 108,
     pbi_id: "PBI-121",
     goal: "Extract selection_range and signature_help to respective modules",
-    status: "planning",
-    subtasks: [],
+    status: "done",
+    subtasks: [
+      {
+        test: "Verify baseline: make test, make check pass before changes",
+        implementation: "Run baseline verification to ensure clean starting point",
+        type: "structural",
+        status: "completed",
+        commits: [],
+        notes: ["Final phase of PBI-121 refactoring - last 2 methods to extract"],
+      },
+      {
+        test: "Verify selection_range module compiles with mod declaration in text_document.rs",
+        implementation: "Create selection_range.rs with module structure and add 'pub mod selection_range;' to text_document.rs",
+        type: "structural",
+        status: "completed",
+        commits: [],
+        notes: ["Follow same pattern as code_action.rs, formatting.rs, etc."],
+      },
+      {
+        test: "Verify selection_range tests pass after method move",
+        implementation: "Move selection_range method from lsp_impl.rs to selection_range.rs, update imports",
+        type: "structural",
+        status: "completed",
+        commits: [],
+        notes: ["Method at lines 1281-1356 in lsp_impl.rs"],
+      },
+      {
+        test: "Verify signature_help module compiles with mod declaration in text_document.rs",
+        implementation: "Create signature_help.rs with module structure and add 'pub mod signature_help;' to text_document.rs",
+        type: "structural",
+        status: "completed",
+        commits: [],
+        notes: ["Follow same pattern as selection_range.rs"],
+      },
+      {
+        test: "Verify signature_help tests pass after method move",
+        implementation: "Move signature_help method from lsp_impl.rs to signature_help.rs, update imports",
+        type: "structural",
+        status: "completed",
+        commits: [],
+        notes: ["Method at lines 1377-1541 in lsp_impl.rs"],
+      },
+      {
+        test: "All DoD checks pass: make test, make check, make test_nvim",
+        implementation: "Run full verification suite to confirm PBI-121 completion",
+        type: "structural",
+        status: "completed",
+        commits: [],
+        notes: ["PBI-121 Phase 9 complete - text_document.rs now exports all 10 LSP modules"],
+      },
+    ],
   },
 
   definition_of_done: {
@@ -109,8 +158,9 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // History: git log -- scrum.yaml, scrum.ts | Completed PBIs: 001-120
+  // History: git log -- scrum.yaml, scrum.ts | Completed PBIs: 001-121
   completed: [
+    { number: 108, pbi_id: "PBI-121", goal: "Extract selection_range/signature_help to modules (PBI-121 DONE)", status: "done", subtasks: [] },
     { number: 107, pbi_id: "PBI-121", goal: "Extract code_action to code_action.rs", status: "done", subtasks: [] },
     { number: 106, pbi_id: "PBI-121", goal: "Extract formatting to formatting.rs", status: "done", subtasks: [] },
     { number: 105, pbi_id: "PBI-121", goal: "Extract rename to rename.rs", status: "done", subtasks: [] },
@@ -121,8 +171,14 @@ const scrum: ScrumDashboard = {
     { number: 100, pbi_id: "PBI-121", goal: "Extract semantic_tokens to dedicated module", status: "done", subtasks: [] },
     // Sprints 1-99: See git log -- scrum.yaml, scrum.ts
   ],
-  // Sprint 108: Final extraction in PBI-121 series (selection_range.rs, signature_help.rs)
+  // Sprint 109: Start PBI-122 (languageServers top-level config)
   retrospectives: [
+    {
+      sprint: 108,
+      improvements: [
+        { action: "PBI-121 COMPLETE: 10 LSP method modules extracted over 9 sprints (100-108)", timing: "immediate", status: "completed", outcome: "lsp_impl.rs reduced from ~1800 to ~1500 lines; text_document/ now has 10 focused modules" },
+      ],
+    },
     {
       sprint: 107,
       improvements: [
