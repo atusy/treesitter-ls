@@ -40,7 +40,7 @@ const scrum: ScrumDashboard = {
         { criterion: "Phase 1: semantic_tokens → semantic_tokens.rs", verification: "Tests pass; DONE in Sprint 100" },
         { criterion: "Phase 2: completion → completion.rs", verification: "Tests pass; DONE in Sprint 101" },
         { criterion: "Phase 3: hover → hover.rs", verification: "Tests pass; DONE in Sprint 102" },
-        { criterion: "Phase 4: goto_definition → definition.rs", verification: "Tests pass" },
+        { criterion: "Phase 4: goto_definition → definition.rs", verification: "Tests pass; DONE in Sprint 103" },
         { criterion: "Phase 5: references → references.rs", verification: "Tests pass" },
         { criterion: "Phase 6: rename → rename.rs", verification: "Tests pass" },
         { criterion: "Phase 7: formatting → formatting.rs", verification: "Tests pass" },
@@ -93,7 +93,46 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null, // Sprint 102 completed - ready for Sprint 103
+  sprint: {
+    number: 103,
+    pbi_id: "PBI-121",
+    goal: "Extract goto_definition to definition.rs",
+    status: "done",
+    subtasks: [
+      {
+        test: "Verify baseline: make test && make check && make test_nvim pass",
+        implementation: "Run all tests to ensure clean starting state",
+        type: "behavioral",
+        status: "completed",
+        commits: [],
+        notes: ["Baseline verification before any changes"],
+      },
+      {
+        test: "Verify definition.rs module compiles and is declared in mod.rs",
+        implementation: "Create src/lsp/lsp_impl/text_document/definition.rs with module declaration in text_document.rs",
+        type: "structural",
+        status: "completed",
+        commits: [],
+        notes: ["Add 'pub mod definition;' to text_document.rs"],
+      },
+      {
+        test: "Verify goto_definition method works from new module",
+        implementation: "Move goto_definition impl block from lsp_impl.rs to definition.rs; update lsp_impl.rs to delegate: TreeSitterLs::goto_definition(self, params).await",
+        type: "structural",
+        status: "completed",
+        commits: [],
+        notes: ["Use pub(crate) visibility; add required imports from hover.rs pattern"],
+      },
+      {
+        test: "Final verification: make test && make check && make test_nvim pass",
+        implementation: "Run full test suite to confirm extraction complete",
+        type: "behavioral",
+        status: "completed",
+        commits: [],
+        notes: ["All tests must pass before marking sprint complete"],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
@@ -105,6 +144,7 @@ const scrum: ScrumDashboard = {
 
   // History: git log -- scrum.yaml, scrum.ts | Completed PBIs: 001-120
   completed: [
+    { number: 103, pbi_id: "PBI-121", goal: "Extract goto_definition to definition.rs", status: "done", subtasks: [] },
     { number: 102, pbi_id: "PBI-121", goal: "Extract hover to hover.rs", status: "done", subtasks: [] },
     { number: 101, pbi_id: "PBI-121", goal: "Extract completion to completion.rs", status: "done", subtasks: [] },
     { number: 100, pbi_id: "PBI-121", goal: "Extract semantic_tokens to dedicated module", status: "done", subtasks: [] },
