@@ -44,7 +44,7 @@ const scrum: ScrumDashboard = {
         { criterion: "Phase 5: references → references.rs", verification: "Tests pass; DONE in Sprint 104" },
         { criterion: "Phase 6: rename → rename.rs", verification: "Tests pass; DONE in Sprint 105" },
         { criterion: "Phase 7: formatting → formatting.rs", verification: "Tests pass; DONE in Sprint 106" },
-        { criterion: "Phase 8: code_action → code_action.rs", verification: "Tests pass" },
+        { criterion: "Phase 8: code_action → code_action.rs", verification: "Tests pass; DONE in Sprint 107" },
         { criterion: "Phase 9: selection_range, signature_help → respective modules", verification: "Tests pass; mod.rs re-exports complete" },
       ],
       status: "ready",
@@ -94,44 +94,11 @@ const scrum: ScrumDashboard = {
   ],
 
   sprint: {
-    number: 106,
+    number: 108,
     pbi_id: "PBI-121",
-    goal: "Extract formatting to formatting.rs",
-    status: "done",
-    subtasks: [
-      {
-        test: "Verify baseline: make test && make check && make test_nvim pass",
-        implementation: "Run all tests to ensure clean starting state",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Baseline verification before any changes"],
-      },
-      {
-        test: "Verify formatting.rs module compiles and is declared in mod.rs",
-        implementation: "Create src/lsp/lsp_impl/text_document/formatting.rs with module declaration in text_document.rs",
-        type: "structural",
-        status: "completed",
-        commits: [],
-        notes: ["Add 'pub mod formatting;' to text_document.rs"],
-      },
-      {
-        test: "Verify formatting method works from new module",
-        implementation: "Move formatting impl block (lines 1889-2030) from lsp_impl.rs to formatting.rs; update lsp_impl.rs to delegate: TreeSitterLs::formatting(self, params).await",
-        type: "structural",
-        status: "completed",
-        commits: [],
-        notes: ["Use pub(crate) visibility; add required imports following rename.rs pattern"],
-      },
-      {
-        test: "Final verification: make test && make check && make test_nvim pass",
-        implementation: "Run full test suite to confirm extraction complete",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["All tests must pass before marking sprint complete"],
-      },
-    ],
+    goal: "Extract selection_range and signature_help to respective modules",
+    status: "planning",
+    subtasks: [],
   },
 
   definition_of_done: {
@@ -144,6 +111,7 @@ const scrum: ScrumDashboard = {
 
   // History: git log -- scrum.yaml, scrum.ts | Completed PBIs: 001-120
   completed: [
+    { number: 107, pbi_id: "PBI-121", goal: "Extract code_action to code_action.rs", status: "done", subtasks: [] },
     { number: 106, pbi_id: "PBI-121", goal: "Extract formatting to formatting.rs", status: "done", subtasks: [] },
     { number: 105, pbi_id: "PBI-121", goal: "Extract rename to rename.rs", status: "done", subtasks: [] },
     { number: 104, pbi_id: "PBI-121", goal: "Extract references to references.rs", status: "done", subtasks: [] },
@@ -153,7 +121,14 @@ const scrum: ScrumDashboard = {
     { number: 100, pbi_id: "PBI-121", goal: "Extract semantic_tokens to dedicated module", status: "done", subtasks: [] },
     // Sprints 1-99: See git log -- scrum.yaml, scrum.ts
   ],
+  // Sprint 108: Final extraction in PBI-121 series (selection_range.rs, signature_help.rs)
   retrospectives: [
+    {
+      sprint: 107,
+      improvements: [
+        { action: "8th consecutive successful extraction (code_action.rs); only 1 phase remains (selection_range/signature_help)", timing: "immediate", status: "completed", outcome: "PBI-121 on track for completion in Sprint 108" },
+      ],
+    },
     {
       sprint: 106,
       improvements: [
