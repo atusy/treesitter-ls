@@ -5,7 +5,7 @@
 
 use super::text_document::{
     CodeActionWithNotifications, CompletionWithNotifications, DeclarationWithNotifications,
-    DocumentHighlightWithNotifications, FormattingWithNotifications,
+    DocumentHighlightWithNotifications, DocumentLinkWithNotifications, FormattingWithNotifications,
     GotoDefinitionWithNotifications, HoverWithNotifications, ImplementationWithNotifications,
     IncomingCallsWithNotifications, InlayHintWithNotifications, OutgoingCallsWithNotifications,
     PrepareCallHierarchyWithNotifications, PrepareTypeHierarchyWithNotifications,
@@ -697,6 +697,49 @@ impl LanguageServerConnection {
             .and_then(|r| serde_json::from_value(r).ok());
 
         DocumentHighlightWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request document links, capturing $/progress notifications.
+    ///
+    /// Sends the `textDocument/documentLink` request which returns clickable
+    /// links within the document (e.g., URLs in comments).
+    pub fn document_link_with_notifications(
+        &mut self,
+        _uri: &str,
+    ) -> DocumentLinkWithNotifications {
+        // Use the virtual file URI from the temp workspace
+        let Some(real_uri) = self.virtual_file_uri() else {
+            return DocumentLinkWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+        });
+
+        let Some(req_id) = self.send_request("textDocument/documentLink", params) else {
+            return DocumentLinkWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id);
+
+        // Extract and parse the document link response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        DocumentLinkWithNotifications {
             response,
             notifications: result.notifications,
         }

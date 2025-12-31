@@ -18,11 +18,11 @@ pub use connection::{ConnectionInfo, LanguageServerConnection, ResponseWithNotif
 pub use pool::LanguageServerPool;
 pub use text_document::{
     CodeActionWithNotifications, CompletionWithNotifications, DocumentHighlightWithNotifications,
-    FormattingWithNotifications, GotoDefinitionWithNotifications, HoverWithNotifications,
-    ImplementationWithNotifications, IncomingCallsWithNotifications, InlayHintWithNotifications,
-    OutgoingCallsWithNotifications, PrepareCallHierarchyWithNotifications,
-    PrepareTypeHierarchyWithNotifications, ReferencesWithNotifications, RenameWithNotifications,
-    SignatureHelpWithNotifications, SubtypesWithNotifications, SupertypesWithNotifications,
-    TypeDefinitionWithNotifications,
+    DocumentLinkWithNotifications, FormattingWithNotifications, GotoDefinitionWithNotifications,
+    HoverWithNotifications, ImplementationWithNotifications, IncomingCallsWithNotifications,
+    InlayHintWithNotifications, OutgoingCallsWithNotifications,
+    PrepareCallHierarchyWithNotifications, PrepareTypeHierarchyWithNotifications,
+    ReferencesWithNotifications, RenameWithNotifications, SignatureHelpWithNotifications,
+    SubtypesWithNotifications, SupertypesWithNotifications, TypeDefinitionWithNotifications,
 };
 pub use workspace::{setup_workspace, setup_workspace_with_option};
