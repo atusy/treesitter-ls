@@ -225,17 +225,11 @@ const scrum: ScrumDashboard = {
           verification: "test_lsp_folding_range.lua passes showing foldable regions in Rust code block",
         },
       ],
-      status: "ready",
+      status: "done",
     },
   ],
 
-  sprint: {
-    number: 108,
-    pbi_id: "PBI-131",
-    goal: "Add textDocument/foldingRange bridge support",
-    status: "planning",
-    subtasks: [],
-  },
+  sprint: null, // Sprint 108 (PBI-131) completed - foldingRange bridge
 
   definition_of_done: {
     checks: [
@@ -247,24 +241,24 @@ const scrum: ScrumDashboard = {
 
   // Historical sprints (recent 2) | Sprint 1-100: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 108, pbi_id: "PBI-131", goal: "Add textDocument/foldingRange bridge support", status: "done", subtasks: [] },
     { number: 107, pbi_id: "PBI-130", goal: "Add textDocument/documentLink bridge support", status: "done", subtasks: [] },
-    { number: 106, pbi_id: "PBI-129", goal: "Add typeHierarchy bridge (prepareTypeHierarchy, supertypes, subtypes)", status: "done", subtasks: [] },
   ],
 
   // Recent 2 retrospectives | Sprint 1-99: modular refactoring pattern, E2E indexing waits
   retrospectives: [
     {
+      sprint: 108,
+      improvements: [
+        { action: "FoldingRange uses startLine/endLine integers rather than Position objects - translate line numbers directly", timing: "immediate", status: "completed", outcome: "Sprint 108 completed; line number translation for folding ranges" },
+        { action: "FoldingRange optional fields (startCharacter, endCharacter, kind, collapsedText) are preserved unchanged", timing: "immediate", status: "completed", outcome: "Full FoldingRange response preserved" },
+      ],
+    },
+    {
       sprint: 107,
       improvements: [
         { action: "DocumentLink follows simple Vec<DocumentLink> response pattern similar to DocumentHighlight. Range field needs virtual-to-host translation", timing: "immediate", status: "completed", outcome: "Sprint 107 completed; simple single-method bridge" },
         { action: "rust-analyzer may not return document links for URLs in comments - E2E test verifies request completes without error", timing: "immediate", status: "completed", outcome: "E2E test handles empty results gracefully" },
-      ],
-    },
-    {
-      sprint: 106,
-      improvements: [
-        { action: "TypeHierarchy follows same pattern as CallHierarchy: 3 methods (prepare, supertypes, subtypes). TypeHierarchyItem has same fields as CallHierarchyItem", timing: "immediate", status: "completed", outcome: "Sprint 106 completed; reused callHierarchy pattern for fast implementation" },
-        { action: "TypeHierarchyItem.data field has same opaque state issue as CallHierarchyItem - supertypes/subtypes may return empty results", timing: "immediate", status: "completed", outcome: "E2E test covers prepareTypeHierarchy only; documented limitation" },
       ],
     },
   ],
