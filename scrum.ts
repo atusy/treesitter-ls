@@ -119,7 +119,7 @@ const scrum: ScrumDashboard = {
         implementation:
           "Delete spawn_rust_analyzer() method (lines 191-257) and update all tests using it to use spawn() with explicit BridgeServerConfig",
         type: "structural",
-        status: "pending",
+        status: "completed",
         commits: [],
         notes: [
           "Tests to update: language_server_connection_is_alive_*, language_server_pool_respawns_dead_connection",
