@@ -93,46 +93,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 102,
-    pbi_id: "PBI-121",
-    goal: "Extract hover method to lsp_impl/text_document/hover.rs",
-    status: "done",
-    subtasks: [
-      {
-        test: "Run 'make test && make check' to establish baseline",
-        implementation: "Verify all tests pass before refactoring",
-        type: "structural",
-        status: "completed",
-        commits: [],
-        notes: ["Baseline verification ensures clean starting point"],
-      },
-      {
-        test: "Verify hover.rs module compiles with empty impl",
-        implementation: "Create hover.rs with module declaration in mod.rs",
-        type: "structural",
-        status: "completed",
-        commits: [],
-        notes: ["Following pattern from semantic_tokens.rs and completion.rs"],
-      },
-      {
-        test: "Verify hover functionality unchanged after move",
-        implementation: "Move hover method from lsp_impl.rs to hover.rs with pub(crate) visibility",
-        type: "structural",
-        status: "completed",
-        commits: [],
-        notes: ["Use pub(crate) for internal visibility; update mod.rs re-exports"],
-      },
-      {
-        test: "Run 'make test && make check && make test_nvim'",
-        implementation: "Final verification that all tests pass",
-        type: "structural",
-        status: "completed",
-        commits: [],
-        notes: ["Full DoD verification before sprint completion"],
-      },
-    ],
-  },
+  sprint: null, // Sprint 102 completed - ready for Sprint 103
 
   definition_of_done: {
     checks: [
@@ -150,16 +111,17 @@ const scrum: ScrumDashboard = {
   ],
   retrospectives: [
     {
+      sprint: 102,
+      improvements: [
+        { action: "Module extraction pattern mature after 3 consecutive sprints", timing: "immediate", status: "completed", outcome: "Pattern is stable: remaining 6 phases can proceed with high confidence" },
+        { action: "E2E test naming issue (treesitter_ls vs treesitter-ls) unresolved for 3 sprints", timing: "sprint", status: "active", outcome: null },
+      ],
+    },
+    {
       sprint: 101,
       improvements: [
         { action: "Module extraction pattern proven repeatable across 2 sprints", timing: "immediate", status: "completed", outcome: "4-step pattern: create file, move impl, pub(crate) visibility, update mod.rs" },
         { action: "E2E test naming issue (treesitter_ls vs treesitter-ls) unresolved", timing: "sprint", status: "active", outcome: null },
-      ],
-    },
-    {
-      sprint: 100,
-      improvements: [
-        { action: "lsp_impl/text_document/ structure established for PBI-121 phases", timing: "immediate", status: "completed", outcome: "semantic_tokens.rs created; pattern documented" },
       ],
     },
   ],
