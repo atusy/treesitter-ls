@@ -32,7 +32,62 @@ const scrum: ScrumDashboard = {
   // Completed PBIs: PBI-001 through PBI-119 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "PBI-120",
+      story: {
+        role: "developer editing Lua files",
+        capability:
+          "configure language parser and queries using a unified schema with 'parser' field and 'queries' array",
+        benefit:
+          "I have a cleaner, more flexible configuration that supports custom query kinds and explicit ordering",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "New schema accepts 'parser' field as alias for 'library' (both work during deprecation period)",
+          verification:
+            "Unit test: LanguageConfig deserializes both {parser: '/path'} and {library: '/path'} to same internal representation",
+        },
+        {
+          criterion:
+            "New schema accepts 'queries' array with {path, kind?} objects",
+          verification:
+            "Unit test: LanguageConfig deserializes queries: [{path: '/p.scm'}] and infers kind from filename",
+        },
+        {
+          criterion:
+            "Query kind is inferred from filename when not specified (e.g., 'highlights.scm' -> 'highlights')",
+          verification:
+            "Unit test: infer_query_kind('highlights.scm') returns 'highlights', 'injections.scm' returns 'injections'",
+        },
+        {
+          criterion:
+            "Explicit 'kind' field in query object overrides filename inference",
+          verification:
+            "Unit test: {path: '/custom.scm', kind: 'injections'} is treated as injections query",
+        },
+        {
+          criterion:
+            "Old schema fields (library, highlights, locals, injections) still work but emit deprecation warning to LSP log",
+          verification:
+            "Unit test: Deserializing old schema succeeds; integration test: deprecation warning appears in LSP log",
+        },
+        {
+          criterion:
+            "Internal LanguageSettings uses unified queries representation regardless of input schema format",
+          verification:
+            "Unit test: Both old and new schema formats convert to identical LanguageSettings with queries Vec<QueryConfig>",
+        },
+        {
+          criterion: "Documentation updated with new schema and migration guide",
+          verification:
+            "README shows new schema as primary, old schema as deprecated with migration examples",
+        },
+      ],
+      status: "ready",
+    },
+  ],
 
   sprint: null,
 
@@ -47,16 +102,16 @@ const scrum: ScrumDashboard = {
   // Historical sprints (recent 2) | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   completed: [
     {
-      number: 96,
-      pbi_id: "PBI-119",
-      goal: "Use XDG Base Directory paths on macOS for cross-platform consistency",
+      number: 97,
+      pbi_id: "PBI-120",
+      goal: "Add parser field as alias for library with deprecation warning",
       status: "done",
       subtasks: [],
     },
     {
-      number: 95,
-      pbi_id: "PBI-118",
-      goal: "Update README with LSP Bridge documentation",
+      number: 96,
+      pbi_id: "PBI-119",
+      goal: "Use XDG Base Directory paths on macOS for cross-platform consistency",
       status: "done",
       subtasks: [],
     },
@@ -64,6 +119,41 @@ const scrum: ScrumDashboard = {
 
   // Recent 2 retrospectives | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    {
+      sprint: 97,
+      improvements: [
+        {
+          action:
+            "Clean TDD implementation - 7 new tests covering all edge cases for parser field alias with effective_parser() pattern cleanly abstracting field preference logic",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "Backwards compatible parser/library dual-field approach allows detecting which field was used for deprecation warnings; log_deprecation_warnings() placed at settings loading integration point",
+        },
+        {
+          action:
+            "Deprecation warning pattern (uses_deprecated_*, log_deprecation_warnings) is reusable for future deprecations",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "Pattern established: separate fields rather than serde alias enables detection of deprecated usage while maintaining full backwards compatibility",
+        },
+        {
+          action:
+            "Consider splitting multi-phase PBIs (like PBI-120) into separate PBIs for clearer sprint scope",
+          timing: "sprint",
+          status: "active",
+          outcome: null,
+        },
+        {
+          action:
+            "E2E test naming issue (treesitter_ls vs treesitter-ls) still needs fixing - carried forward from Sprint 96",
+          timing: "sprint",
+          status: "active",
+          outcome: null,
+        },
+      ],
+    },
     {
       sprint: 96,
       improvements: [
@@ -74,26 +164,6 @@ const scrum: ScrumDashboard = {
           status: "completed",
           outcome:
             "XDG_DATA_HOME support implemented with 309 unit tests passing; macOS now uses ~/.local/share/treesitter-ls matching Linux for cross-platform consistency",
-        },
-        {
-          action:
-            "Note: E2E tests have pre-existing naming issue (treesitter_ls vs treesitter-ls) unrelated to this sprint - defer to future maintenance",
-          timing: "sprint",
-          status: "active",
-          outcome: null,
-        },
-      ],
-    },
-    {
-      sprint: 95,
-      improvements: [
-        {
-          action:
-            "Documentation sprint - straightforward README update with bridge configuration examples",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "README updated with LSP Bridge section including supported features, JSON and Lua configuration examples, and filter semantics",
         },
       ],
     },
