@@ -183,6 +183,33 @@ The bridge requires knowing which server to use for each language:
 | `servers.*.initializationOptions` | No | Passed to server's `initialize` request |
 | `servers.*.workspaceType` | No | **Deprecated**: "cargo" creates Cargo.toml scaffolding. Will be removed in future; use `initializationOptions.linkedProjects` instead |
 
+#### Per-Host Language Bridge Configuration
+
+The `languages` section can specify which injection languages to bridge for each host filetype:
+
+```json
+{
+  "languages": {
+    "quarto": { "bridge": ["python", "r"] },
+    "rmd": { "bridge": ["r"] },
+    "markdown": { "bridge": [] }
+  }
+}
+```
+
+| Value | Meaning |
+|-------|---------|
+| `["python", "r"]` | Bridge only these languages |
+| `[]` | Bridge no languages (disable bridging for this host) |
+| `null` or omitted | Bridge all configured languages (default) |
+
+This enables scenarios like:
+- **Quarto files**: Bridge both Python and R to their respective servers
+- **R Markdown files**: Bridge only R (no Python bridge needed)
+- **Plain Markdown**: Disable all bridging (use Tree-sitter only)
+
+The bridge filtering happens at request time: when a request targets an injection region, treesitter-ls checks if the injection language is in the host's `bridge` list before routing to a server.
+
 #### Multiple Servers Per Language
 
 When multiple servers are configured for the same language (e.g., `pyright` + `ruff` for Python), requests are only routed to servers with the required capability. The routing strategy among capable servers is **implementation-defined**:
