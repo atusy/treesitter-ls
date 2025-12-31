@@ -6,6 +6,7 @@
 use super::code_action::CodeActionWithNotifications;
 use super::completion::CompletionWithNotifications;
 use super::definition::GotoDefinitionWithNotifications;
+use super::formatting::FormattingWithNotifications;
 use super::hover::HoverWithNotifications;
 use super::references::ReferencesWithNotifications;
 use super::rename::RenameWithNotifications;
@@ -809,6 +810,51 @@ impl LanguageServerConnection {
             .and_then(|r| serde_json::from_value(r).ok());
 
         CodeActionWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request formatting, capturing $/progress notifications.
+    ///
+    /// Sends a `textDocument/formatting` request to the language server
+    /// and returns both the response (Vec<TextEdit>) and any `$/progress`
+    /// notifications received while waiting for the response.
+    pub fn formatting_with_notifications(&mut self, _uri: &str) -> FormattingWithNotifications {
+        // Use the virtual file URI from the temp workspace
+        let Some(real_uri) = self.virtual_file_uri() else {
+            return FormattingWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+            "options": {
+                "tabSize": 4,
+                "insertSpaces": true,
+            }
+        });
+
+        let Some(req_id) = self.send_request("textDocument/formatting", params) else {
+            return FormattingWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id);
+
+        // Extract and parse the formatting response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        FormattingWithNotifications {
             response,
             notifications: result.notifications,
         }
