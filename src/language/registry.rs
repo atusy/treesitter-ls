@@ -45,14 +45,6 @@ impl LanguageRegistry {
         self.languages.contains_key(language_id)
     }
 
-    /// Get all registered language IDs
-    pub fn language_ids(&self) -> Vec<String> {
-        self.languages
-            .iter()
-            .map(|entry| entry.key().clone())
-            .collect()
-    }
-
     /// Check if a parser is available for a given language name.
     /// Used by the detection fallback chain to determine whether to accept
     /// a detection result or continue to the next method.

@@ -176,11 +176,6 @@ impl LanguageCoordinator {
         self.config_store.get_search_paths()
     }
 
-    /// Check if a language is already loaded in the registry
-    pub fn is_language_loaded(&self, language_id: &str) -> bool {
-        self.language_registry.contains(language_id)
-    }
-
     /// Check if a parser is available for a given language name.
     /// Used by the detection fallback chain (ADR-0005) to determine whether
     /// to accept a detection result or continue to the next method.

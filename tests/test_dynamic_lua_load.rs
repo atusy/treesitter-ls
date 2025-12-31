@@ -48,7 +48,7 @@ fn test_dynamic_lua_load_from_search_paths() {
 
     // Verify lua is now available
     assert!(
-        coordinator.is_language_loaded("lua"),
+        coordinator.has_parser_available("lua"),
         "Lua should be registered in language registry"
     );
     assert!(

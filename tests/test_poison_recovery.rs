@@ -24,11 +24,9 @@ fn test_registry_recovers_from_poisoned_lock() {
     let _ = handle.join();
 
     // Now try to use the registry - it should recover from the poisoned lock
-    let languages = registry.language_ids();
-    assert!(
-        languages.is_empty() || !languages.is_empty(),
-        "Should recover from poisoned lock and return language list"
-    );
+    // Verify that contains() works (would panic if lock is permanently poisoned)
+    let _ = registry.contains("test");
+    // If we get here, the lock recovered successfully
 
     // Try to get a language - should also recover
     let result = registry.get("rust");
@@ -198,9 +196,11 @@ fn test_concurrent_access_after_poison_recovery() {
     }
 
     // Verify all languages were registered despite initial poison
-    let all_langs = registry.language_ids();
-    assert!(
-        all_langs.len() >= 10,
-        "Should have registered languages from all threads"
-    );
+    for i in 0..10 {
+        assert!(
+            registry.contains(&format!("lang_{}", i)),
+            "lang_{} should have been registered by thread",
+            i
+        );
+    }
 }
