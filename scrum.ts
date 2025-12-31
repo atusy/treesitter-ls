@@ -157,16 +157,51 @@ const scrum: ScrumDashboard = {
             "E2E test verifies rename edit ranges are in Markdown line numbers",
         },
       ],
-      status: "ready",
+      status: "done",
     },
-    // Draft PBIs (refine to ready before sprint): PBI-115 codeAction, PBI-116 formatting
+    {
+      id: "PBI-115",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "get code actions for Rust code blocks via bridge",
+        benefit:
+          "I can use quick fixes and refactorings without leaving Markdown",
+      },
+      acceptance_criteria: [
+        {
+          criterion:
+            "src/lsp/bridge/code_action.rs exists with CodeActionWithNotifications type",
+          verification:
+            "grep 'CodeActionWithNotifications' src/lsp/bridge/code_action.rs returns matches",
+        },
+        {
+          criterion:
+            "LanguageServerConnection has code_action_with_notifications method",
+          verification:
+            "cargo test code_action --lib passes (unit test in connection.rs)",
+        },
+        {
+          criterion:
+            "textDocument/codeAction requests in injection regions are bridged",
+          verification: "make test_nvim_file FILE=tests/test_lsp_code_action.lua passes",
+        },
+        {
+          criterion:
+            "CodeAction edit ranges and diagnostic ranges adjusted to host document positions",
+          verification:
+            "E2E test verifies code action edit ranges are in Markdown line numbers",
+        },
+      ],
+      status: "done",
+    },
+    // Draft PBIs (refine to ready before sprint): PBI-116 formatting
   ],
 
   sprint: {
-    number: 91,
-    pbi_id: "PBI-114",
-    goal: "Bridge textDocument/rename for injection regions",
-    status: "in_progress",
+    number: 92,
+    pbi_id: "PBI-115",
+    goal: "Bridge textDocument/codeAction for injection regions",
+    status: "done",
     subtasks: [],
   },
 
@@ -181,16 +216,16 @@ const scrum: ScrumDashboard = {
   // Historical sprints (recent 2) | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   completed: [
     {
-      number: 91,
-      pbi_id: "PBI-114",
-      goal: "Bridge textDocument/rename for injection regions",
+      number: 92,
+      pbi_id: "PBI-115",
+      goal: "Bridge textDocument/codeAction for injection regions",
       status: "done",
       subtasks: [],
     },
     {
-      number: 90,
-      pbi_id: "PBI-113",
-      goal: "Bridge textDocument/references for injection regions",
+      number: 91,
+      pbi_id: "PBI-114",
+      goal: "Bridge textDocument/rename for injection regions",
       status: "done",
       subtasks: [],
     },
@@ -198,6 +233,19 @@ const scrum: ScrumDashboard = {
 
   // Recent 2 retrospectives | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    {
+      sprint: 92,
+      improvements: [
+        {
+          action:
+            "CodeAction bridging follows rename pattern with WorkspaceEdit translation - Obvious Implementation",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "CodeAction bridging completed by reusing WorkspaceEdit translation pattern with additional Diagnostic range translation",
+        },
+      ],
+    },
     {
       sprint: 91,
       improvements: [
@@ -208,19 +256,6 @@ const scrum: ScrumDashboard = {
           status: "completed",
           outcome:
             "Rename bridging completed by reusing established pattern with TextEdit range translation for both changes and document_changes",
-        },
-      ],
-    },
-    {
-      sprint: 90,
-      improvements: [
-        {
-          action:
-            "References bridging follows same pattern as signatureHelp/completion - continue using Obvious Implementation",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "References bridging completed efficiently by reusing established bridging pattern with Location range translation",
         },
       ],
     },
