@@ -69,6 +69,35 @@ pub struct QueryTypeMappings {
 
 pub type CaptureMappings = HashMap<String, QueryTypeMappings>;
 
+/// Configuration for a single query file (PBI-120 Phase 2).
+///
+/// Supports both explicit kind specification and inference from filename.
+/// Examples:
+/// - `{"path": "/path/to/highlights.scm"}` - kind inferred as "highlights"
+/// - `{"path": "/path/to/custom.scm", "kind": "injections"}` - explicit kind
+#[derive(Debug, Clone, Deserialize, serde::Serialize, PartialEq, Eq)]
+pub struct QueryConfig {
+    /// Path to the query file (.scm)
+    pub path: String,
+    /// Query kind (e.g., "highlights", "injections", "locals").
+    /// If not specified, will be inferred from the filename.
+    pub kind: Option<String>,
+}
+
+/// Infer the query kind from a filename or path.
+///
+/// Extracts the file stem (filename without extension) and returns it as the kind.
+/// Examples:
+/// - "highlights.scm" -> "highlights"
+/// - "/path/to/injections.scm" -> "injections"
+/// - "locals.scm" -> "locals"
+pub fn infer_query_kind(path: &str) -> &str {
+    std::path::Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown")
+}
+
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct LanguageConfig {
     /// Path to the tree-sitter parser shared library.
@@ -83,6 +112,10 @@ pub struct LanguageConfig {
     pub locals: Option<Vec<String>>,
     /// Query file paths for language injections
     pub injections: Option<Vec<String>>,
+    /// Unified query configuration (PBI-120 Phase 2).
+    /// Each entry specifies a query file path and optional kind.
+    /// If kind is not specified, it will be inferred from the filename.
+    pub queries: Option<Vec<QueryConfig>>,
     /// Languages to bridge for this host filetype.
     /// - None (omitted): Bridge ALL configured languages (default behavior)
     /// - Some([]): Bridge NOTHING (disable bridging for this host)
@@ -99,12 +132,78 @@ impl LanguageConfig {
         self.library.is_some() && self.parser.is_none()
     }
 
+    /// Check if this config uses deprecated query fields (highlights, injections, locals).
+    ///
+    /// Returns true if any of the old query fields are set but `queries` is not,
+    /// indicating the user is using the deprecated field names.
+    pub fn uses_deprecated_query_fields(&self) -> bool {
+        self.queries.is_none()
+            && (self.highlights.is_some() || self.injections.is_some() || self.locals.is_some())
+    }
+
     /// Get the effective parser path, preferring `parser` over `library`.
     ///
     /// This method returns the parser path, using the new `parser` field
     /// if available, otherwise falling back to the deprecated `library` field.
     pub fn effective_parser(&self) -> Option<&String> {
         self.parser.as_ref().or(self.library.as_ref())
+    }
+
+    /// Get the unified queries list, combining `queries` field with old format fields.
+    ///
+    /// Returns a vector of QueryConfig with `kind` resolved:
+    /// - If `queries` field is present, returns it with inferred kinds filled in
+    /// - Otherwise, converts old `highlights`, `injections`, `locals` fields to QueryConfig
+    ///
+    /// Each QueryConfig will have its `kind` set:
+    /// - Explicit `kind` from the config is preserved
+    /// - Otherwise, inferred from the filename using `infer_query_kind`
+    pub fn effective_queries(&self) -> Vec<QueryConfig> {
+        if let Some(queries) = &self.queries {
+            // New format: resolve kinds for each query
+            queries
+                .iter()
+                .map(|q| QueryConfig {
+                    path: q.path.clone(),
+                    kind: q
+                        .kind
+                        .clone()
+                        .or_else(|| Some(infer_query_kind(&q.path).to_string())),
+                })
+                .collect()
+        } else {
+            // Old format: convert highlights, injections, locals to QueryConfig
+            let mut result = Vec::new();
+
+            if let Some(highlights) = &self.highlights {
+                for path in highlights {
+                    result.push(QueryConfig {
+                        path: path.clone(),
+                        kind: Some("highlights".to_string()),
+                    });
+                }
+            }
+
+            if let Some(injections) = &self.injections {
+                for path in injections {
+                    result.push(QueryConfig {
+                        path: path.clone(),
+                        kind: Some("injections".to_string()),
+                    });
+                }
+            }
+
+            if let Some(locals) = &self.locals {
+                for path in locals {
+                    result.push(QueryConfig {
+                        path: path.clone(),
+                        kind: Some("locals".to_string()),
+                    });
+                }
+            }
+
+            result
+        }
     }
 }
 
@@ -134,6 +233,13 @@ impl TreeSitterSettings {
                 log::warn!(
                     "[{}] Configuration uses deprecated 'library' field. Please use 'parser' instead. \
                      The 'library' field will be removed in a future version.",
+                    lang_name
+                );
+            }
+            if config.uses_deprecated_query_fields() {
+                log::warn!(
+                    "[{}] Configuration uses deprecated 'highlights', 'injections', or 'locals' fields. \
+                     Please use 'queries' array instead. These fields will be removed in a future version.",
                     lang_name
                 );
             }
@@ -623,6 +729,7 @@ mod tests {
                     highlights: Some(vec![format!("/etc/treesitter/{}/highlights.scm", lang)]),
                     locals: None,
                     injections: None,
+                    queries: None,
                     bridge: None,
                 },
             );
@@ -646,6 +753,7 @@ mod tests {
             highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
             locals: None,
             injections: None,
+            queries: None,
             bridge: None,
         };
 
@@ -1108,6 +1216,294 @@ mod tests {
             config.effective_parser(),
             None,
             "should return None when neither parser nor library is set"
+        );
+    }
+
+    // PBI-120 Phase 2: QueryConfig type tests
+    #[test]
+    fn should_deserialize_query_config_with_path_only() {
+        // TDD RED: QueryConfig should deserialize {path: "/p.scm"} with kind as None
+        let config_json = r#"{"path": "/path/to/highlights.scm"}"#;
+
+        let config: QueryConfig = serde_json::from_str(config_json).unwrap();
+
+        assert_eq!(config.path, "/path/to/highlights.scm");
+        assert!(
+            config.kind.is_none(),
+            "kind should be None when not specified"
+        );
+    }
+
+    #[test]
+    fn should_deserialize_query_config_with_path_and_kind() {
+        // TDD RED: QueryConfig should deserialize {path: "/p.scm", kind: "highlights"}
+        let config_json = r#"{"path": "/path/to/custom.scm", "kind": "injections"}"#;
+
+        let config: QueryConfig = serde_json::from_str(config_json).unwrap();
+
+        assert_eq!(config.path, "/path/to/custom.scm");
+        assert_eq!(config.kind, Some("injections".to_string()));
+    }
+
+    // PBI-120 Phase 2: infer_query_kind tests
+    #[test]
+    fn infer_query_kind_extracts_highlights_from_filename() {
+        // TDD RED: infer_query_kind("highlights.scm") should return "highlights"
+        assert_eq!(infer_query_kind("highlights.scm"), "highlights");
+    }
+
+    #[test]
+    fn infer_query_kind_extracts_injections_from_filename() {
+        // TDD RED: infer_query_kind("injections.scm") should return "injections"
+        assert_eq!(infer_query_kind("injections.scm"), "injections");
+    }
+
+    #[test]
+    fn infer_query_kind_extracts_locals_from_path() {
+        // TDD RED: infer_query_kind("/path/to/locals.scm") should return "locals"
+        assert_eq!(infer_query_kind("/path/to/locals.scm"), "locals");
+    }
+
+    #[test]
+    fn infer_query_kind_extracts_custom_from_filename() {
+        // TDD RED: infer_query_kind("custom.scm") should return "custom"
+        assert_eq!(infer_query_kind("custom.scm"), "custom");
+    }
+
+    // PBI-120 Phase 2: queries field in LanguageConfig tests
+    #[test]
+    fn should_deserialize_language_config_with_queries_array() {
+        // TDD RED: LanguageConfig should deserialize queries: [{path: '/p.scm'}]
+        let config_json = r#"{
+            "parser": "/path/to/lua.so",
+            "queries": [
+                {"path": "/path/to/highlights.scm"},
+                {"path": "/path/to/injections.scm"}
+            ]
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        assert!(config.queries.is_some(), "queries field should be present");
+        let queries = config.queries.unwrap();
+        assert_eq!(queries.len(), 2);
+        assert_eq!(queries[0].path, "/path/to/highlights.scm");
+        assert_eq!(queries[1].path, "/path/to/injections.scm");
+    }
+
+    #[test]
+    fn should_deserialize_language_config_with_queries_and_explicit_kind() {
+        // TDD RED: queries with explicit kind should preserve kind
+        let config_json = r#"{
+            "parser": "/path/to/lua.so",
+            "queries": [
+                {"path": "/path/to/custom.scm", "kind": "injections"}
+            ]
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        let queries = config.queries.unwrap();
+        assert_eq!(queries[0].kind, Some("injections".to_string()));
+    }
+
+    #[test]
+    fn should_deserialize_language_config_without_queries() {
+        // TDD RED: LanguageConfig without queries field should have None
+        let config_json = r#"{
+            "parser": "/path/to/lua.so"
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        assert!(
+            config.queries.is_none(),
+            "queries should be None when not specified"
+        );
+    }
+
+    // PBI-120 Phase 2: effective_queries method tests
+    #[test]
+    fn effective_queries_returns_queries_field_when_present() {
+        // TDD RED: When queries field is set, effective_queries returns it with kind resolved
+        let config_json = r#"{
+            "parser": "/path/to/lua.so",
+            "queries": [
+                {"path": "/path/to/highlights.scm"},
+                {"path": "/path/to/custom.scm", "kind": "injections"}
+            ]
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+        let effective = config.effective_queries();
+
+        assert_eq!(effective.len(), 2);
+        // First query: kind inferred from filename
+        assert_eq!(effective[0].path, "/path/to/highlights.scm");
+        assert_eq!(effective[0].kind, Some("highlights".to_string()));
+        // Second query: explicit kind preserved
+        assert_eq!(effective[1].path, "/path/to/custom.scm");
+        assert_eq!(effective[1].kind, Some("injections".to_string()));
+    }
+
+    #[test]
+    fn effective_queries_converts_old_highlights_field() {
+        // TDD RED: When only old highlights field is set, effective_queries converts it
+        let config_json = r#"{
+            "parser": "/path/to/lua.so",
+            "highlights": ["/path/to/highlights.scm"]
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+        let effective = config.effective_queries();
+
+        assert_eq!(effective.len(), 1);
+        assert_eq!(effective[0].path, "/path/to/highlights.scm");
+        assert_eq!(effective[0].kind, Some("highlights".to_string()));
+    }
+
+    #[test]
+    fn effective_queries_converts_old_injections_field() {
+        // TDD RED: When old injections field is set, effective_queries converts it
+        let config_json = r#"{
+            "parser": "/path/to/lua.so",
+            "injections": ["/path/to/injections.scm"]
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+        let effective = config.effective_queries();
+
+        assert_eq!(effective.len(), 1);
+        assert_eq!(effective[0].path, "/path/to/injections.scm");
+        assert_eq!(effective[0].kind, Some("injections".to_string()));
+    }
+
+    #[test]
+    fn effective_queries_converts_old_locals_field() {
+        // TDD RED: When old locals field is set, effective_queries converts it
+        let config_json = r#"{
+            "parser": "/path/to/lua.so",
+            "locals": ["/path/to/locals.scm"]
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+        let effective = config.effective_queries();
+
+        assert_eq!(effective.len(), 1);
+        assert_eq!(effective[0].path, "/path/to/locals.scm");
+        assert_eq!(effective[0].kind, Some("locals".to_string()));
+    }
+
+    #[test]
+    fn effective_queries_combines_all_old_fields() {
+        // TDD RED: When all old fields are set, effective_queries combines them
+        let config_json = r#"{
+            "parser": "/path/to/lua.so",
+            "highlights": ["/path/to/highlights.scm"],
+            "injections": ["/path/to/injections.scm"],
+            "locals": ["/path/to/locals.scm"]
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+        let effective = config.effective_queries();
+
+        assert_eq!(effective.len(), 3);
+        // Order: highlights, injections, locals (by old field order)
+        assert_eq!(effective[0].kind, Some("highlights".to_string()));
+        assert_eq!(effective[1].kind, Some("injections".to_string()));
+        assert_eq!(effective[2].kind, Some("locals".to_string()));
+    }
+
+    #[test]
+    fn effective_queries_returns_empty_when_no_queries() {
+        // TDD RED: When no query fields are set, effective_queries returns empty
+        let config_json = r#"{
+            "parser": "/path/to/lua.so"
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+        let effective = config.effective_queries();
+
+        assert!(effective.is_empty());
+    }
+
+    // PBI-120 Phase 2: deprecation warning tests
+    #[test]
+    fn uses_deprecated_query_fields_detects_highlights() {
+        // TDD RED: Should detect deprecated highlights field usage
+        let config_json = r#"{
+            "parser": "/path/to/lua.so",
+            "highlights": ["/path/to/highlights.scm"]
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        assert!(
+            config.uses_deprecated_query_fields(),
+            "should detect deprecated highlights field"
+        );
+    }
+
+    #[test]
+    fn uses_deprecated_query_fields_detects_injections() {
+        // TDD RED: Should detect deprecated injections field usage
+        let config_json = r#"{
+            "parser": "/path/to/lua.so",
+            "injections": ["/path/to/injections.scm"]
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        assert!(
+            config.uses_deprecated_query_fields(),
+            "should detect deprecated injections field"
+        );
+    }
+
+    #[test]
+    fn uses_deprecated_query_fields_detects_locals() {
+        // TDD RED: Should detect deprecated locals field usage
+        let config_json = r#"{
+            "parser": "/path/to/lua.so",
+            "locals": ["/path/to/locals.scm"]
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        assert!(
+            config.uses_deprecated_query_fields(),
+            "should detect deprecated locals field"
+        );
+    }
+
+    #[test]
+    fn uses_deprecated_query_fields_returns_false_for_queries() {
+        // TDD RED: Should NOT detect deprecation when using queries field
+        let config_json = r#"{
+            "parser": "/path/to/lua.so",
+            "queries": [{"path": "/path/to/highlights.scm"}]
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        assert!(
+            !config.uses_deprecated_query_fields(),
+            "should not flag deprecation when using queries field"
+        );
+    }
+
+    #[test]
+    fn uses_deprecated_query_fields_returns_false_when_no_queries() {
+        // TDD RED: Should NOT flag deprecation when no query fields are set
+        let config_json = r#"{
+            "parser": "/path/to/lua.so"
+        }"#;
+
+        let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
+
+        assert!(
+            !config.uses_deprecated_query_fields(),
+            "should not flag deprecation when no query fields are set"
         );
     }
 

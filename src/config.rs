@@ -90,6 +90,7 @@ impl From<&LanguageSettings> for LanguageConfig {
             highlights,
             locals,
             injections,
+            queries: None, // PBI-120 Phase 2: derived from old format, not queries array
             bridge: settings.bridge.clone(),
         }
     }
@@ -273,6 +274,7 @@ mod tests {
                 highlights: None,
                 locals: None,
                 injections: None,
+                queries: None,
                 bridge: None,
             },
         );
@@ -294,6 +296,7 @@ mod tests {
                 highlights: None,
                 locals: None,
                 injections: None,
+                queries: None,
                 bridge: None,
             },
         );
@@ -602,6 +605,7 @@ mod tests {
             highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
             locals: None,
             injections: Some(vec!["/path/to/injections.scm".to_string()]),
+            queries: None,
             bridge: None,
         };
 

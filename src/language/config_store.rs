@@ -158,6 +158,7 @@ mod tests {
                 highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
                 locals: None,
                 injections: None,
+                queries: None,
                 bridge: None,
             },
         );
@@ -213,6 +214,7 @@ mod tests {
                         highlights: None,
                         locals: None,
                         injections: None,
+                        queries: None,
                         bridge: None,
                     },
                 );
@@ -246,6 +248,7 @@ mod tests {
                 highlights: None,
                 locals: None,
                 injections: None,
+                queries: None,
                 bridge: None,
             },
         );
