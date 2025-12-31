@@ -29,37 +29,9 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-121 | History: git log -- scrum.yaml, scrum.ts
-  // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
-  // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
+  // Completed: PBI-001 to PBI-122 | History: git log -- scrum.yaml, scrum.ts
+  // Deferred: PBI-091 (idle cleanup), PBI-107 (WorkspaceType removal)
   product_backlog: [
-    {
-      id: "PBI-121",
-      story: { role: "Rustacean editing Markdown", capability: "maintain lsp_impl.rs through modular file structure", benefit: "easier to navigate and modify without merge conflicts" },
-      acceptance_criteria: [
-        { criterion: "Phase 1: semantic_tokens → semantic_tokens.rs", verification: "Tests pass; DONE in Sprint 100" },
-        { criterion: "Phase 2: completion → completion.rs", verification: "Tests pass; DONE in Sprint 101" },
-        { criterion: "Phase 3: hover → hover.rs", verification: "Tests pass; DONE in Sprint 102" },
-        { criterion: "Phase 4: goto_definition → definition.rs", verification: "Tests pass; DONE in Sprint 103" },
-        { criterion: "Phase 5: references → references.rs", verification: "Tests pass; DONE in Sprint 104" },
-        { criterion: "Phase 6: rename → rename.rs", verification: "Tests pass; DONE in Sprint 105" },
-        { criterion: "Phase 7: formatting → formatting.rs", verification: "Tests pass; DONE in Sprint 106" },
-        { criterion: "Phase 8: code_action → code_action.rs", verification: "Tests pass; DONE in Sprint 107" },
-        { criterion: "Phase 9: selection_range, signature_help → respective modules", verification: "Tests pass; DONE in Sprint 108" },
-      ],
-      status: "done",
-    },
-    {
-      id: "PBI-122",
-      story: { role: "Rustacean editing Markdown", capability: "configure bridge servers at top-level 'languageServers'", benefit: "flatter config, clearer field name" },
-      acceptance_criteria: [
-        { criterion: "languageServers field added to schema", verification: "Config works; unit tests verify; DONE Sprint 109" },
-        { criterion: "bridge.servers deprecated but functional", verification: "effective_language_servers() merges both; DONE Sprint 109" },
-        { criterion: "Deprecation warning logged", verification: "log_deprecation_warnings() warns; DONE Sprint 109" },
-        { criterion: "Documentation updated", verification: "README.md Before/After examples; DONE Sprint 109" },
-      ],
-      status: "done",
-    },
     {
       id: "PBI-123",
       story: { role: "Rustacean editing Markdown", capability: "configure bridge per injection with '_' wildcard defaults", benefit: "set defaults once, override when needed" },
