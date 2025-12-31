@@ -3590,7 +3590,8 @@ impl LanguageServer for TreeSitterLs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
+    use crate::config::settings::BridgeLanguageConfig;
+    use std::collections::{HashMap, HashSet};
 
     #[test]
     fn should_create_valid_url_from_file_path() {
@@ -3768,22 +3769,20 @@ mod tests {
 
         use crate::config::LanguageSettings;
 
-        // Host markdown with bridge filter: only python and r
-        let markdown_settings = LanguageSettings::with_bridge(
-            None,
-            vec![],
-            None,
-            None,
-            Some(vec!["python".to_string(), "r".to_string()]),
-        );
+        // Host markdown with bridge filter: only python and r enabled
+        let mut bridge_filter = HashMap::new();
+        bridge_filter.insert("python".to_string(), BridgeLanguageConfig { enabled: true });
+        bridge_filter.insert("r".to_string(), BridgeLanguageConfig { enabled: true });
+        let markdown_settings =
+            LanguageSettings::with_bridge(None, vec![], None, None, Some(bridge_filter));
 
-        // Router should allow python (in filter)
+        // Router should allow python (enabled in filter)
         assert!(
             markdown_settings.is_language_bridgeable("python"),
             "Bridge router should allow python for markdown"
         );
 
-        // Router should allow r (in filter)
+        // Router should allow r (enabled in filter)
         assert!(
             markdown_settings.is_language_bridgeable("r"),
             "Bridge router should allow r for markdown"
@@ -3809,7 +3808,8 @@ mod tests {
         );
 
         // Host rmd with empty bridge filter (disable all)
-        let rmd_settings = LanguageSettings::with_bridge(None, vec![], None, None, Some(vec![]));
+        let rmd_settings =
+            LanguageSettings::with_bridge(None, vec![], None, None, Some(HashMap::new()));
 
         // Router should block all languages
         assert!(

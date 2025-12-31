@@ -3,6 +3,14 @@ local cwd = vim.uv.cwd()
 vim.lsp.config["treesitter-ls"] = {
 	cmd = { cwd .. "/target/debug/treesitter-ls" },
 	init_options = {
+		languages = {
+			markdown = {
+				bridge = {
+					python = { enabled = true },
+					rust = { enabled = true },
+				},
+			},
+		},
 		languageServers = {
 			["rust-analyzer"] = {
 				cmd = { "rust-analyzer" },

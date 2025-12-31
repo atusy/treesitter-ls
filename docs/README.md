@@ -192,9 +192,18 @@ Configure language servers for bridging LSP requests in injection regions.
     }
   },
   "languages": {
-    "markdown": { "bridge": ["rust", "python"] },
-    "quarto": { "bridge": ["python", "r"] },
-    "rmd": { "bridge": ["r"] }
+    "markdown": {
+      "bridge": {
+        "rust": { "enabled": true },
+        "python": { "enabled": true }
+      }
+    },
+    "quarto": {
+      "bridge": {
+        "python": { "enabled": true },
+        "r": { "enabled": true }
+      }
+    }
   }
 }
 ```
@@ -209,12 +218,12 @@ Configure language servers for bridging LSP requests in injection regions.
 
 **Bridge Filter Semantics:**
 
-The `bridge` array in language configuration controls which injection languages are bridged:
+The `bridge` map in language configuration controls which injection languages are bridged:
 
 | Value | Meaning |
 |-------|---------|
-| `["rust", "python"]` | Bridge only these specific languages |
-| `[]` | Disable bridging entirely for this host language |
+| `{ "rust": { "enabled": true } }` | Bridge only enabled languages |
+| `{}` | Disable bridging entirely for this host language |
 | `null` or omitted | Bridge all configured languages (default) |
 
 ### Project Configuration File
