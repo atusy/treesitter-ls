@@ -155,17 +155,16 @@ const scrum: ScrumDashboard = {
   ],
   retrospectives: [
     {
-      sprint: 104,
+      sprint: 106,
       improvements: [
-        { action: "Module extraction pattern proven (5 consecutive sprints)", timing: "immediate", status: "completed", outcome: "Remaining 4 phases (rename, formatting, code_action, selection_range/signature_help) can proceed with established pattern" },
-        { action: "E2E test naming issue (treesitter_ls vs treesitter-ls) unresolved for 5 sprints - consider deprioritizing or tracking separately", timing: "sprint", status: "active", outcome: null },
+        { action: "7th consecutive successful extraction; only 2 phases remain (code_action, selection_range/signature_help)", timing: "immediate", status: "completed", outcome: "PBI-121 on track for completion in Sprint 108" },
+        { action: "E2E naming issue (treesitter_ls vs treesitter-ls) abandoned after 4 sprints - non-blocking, no impact on delivery", timing: "immediate", status: "abandoned", outcome: "Cleaned up stale improvement item" },
       ],
     },
     {
-      sprint: 103,
+      sprint: 105,
       improvements: [
-        { action: "Module extraction pattern fully validated (4 consecutive sprints)", timing: "immediate", status: "completed", outcome: "Remaining 5 phases (references, rename, formatting, code_action, selection_range/signature_help) can proceed confidently" },
-        { action: "E2E test naming issue (treesitter_ls vs treesitter-ls) unresolved for 4 sprints", timing: "sprint", status: "active", outcome: null },
+        { action: "6th consecutive successful extraction (rename.rs); pattern fully mature", timing: "immediate", status: "completed", outcome: "3 phases remained (formatting, code_action, selection_range/signature_help)" },
       ],
     },
   ],
