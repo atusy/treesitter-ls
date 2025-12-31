@@ -151,17 +151,17 @@ const scrum: ScrumDashboard = {
   ],
   retrospectives: [
     {
+      sprint: 103,
+      improvements: [
+        { action: "Module extraction pattern fully validated (4 consecutive sprints)", timing: "immediate", status: "completed", outcome: "Remaining 5 phases (references, rename, formatting, code_action, selection_range/signature_help) can proceed confidently" },
+        { action: "E2E test naming issue (treesitter_ls vs treesitter-ls) unresolved for 4 sprints", timing: "sprint", status: "active", outcome: null },
+      ],
+    },
+    {
       sprint: 102,
       improvements: [
         { action: "Module extraction pattern mature after 3 consecutive sprints", timing: "immediate", status: "completed", outcome: "Pattern is stable: remaining 6 phases can proceed with high confidence" },
         { action: "E2E test naming issue (treesitter_ls vs treesitter-ls) unresolved for 3 sprints", timing: "sprint", status: "active", outcome: null },
-      ],
-    },
-    {
-      sprint: 101,
-      improvements: [
-        { action: "Module extraction pattern proven repeatable across 2 sprints", timing: "immediate", status: "completed", outcome: "4-step pattern: create file, move impl, pub(crate) visibility, update mod.rs" },
-        { action: "E2E test naming issue (treesitter_ls vs treesitter-ls) unresolved", timing: "sprint", status: "active", outcome: null },
       ],
     },
   ],
