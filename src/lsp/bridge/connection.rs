@@ -4,10 +4,11 @@
 //! language servers for bridging LSP requests.
 
 use super::text_document::{
-    CodeActionWithNotifications, CompletionWithNotifications, DocumentHighlightWithNotifications,
-    FormattingWithNotifications, GotoDefinitionWithNotifications, HoverWithNotifications,
-    ImplementationWithNotifications, ReferencesWithNotifications, RenameWithNotifications,
-    SignatureHelpWithNotifications, TypeDefinitionWithNotifications,
+    CodeActionWithNotifications, CompletionWithNotifications, DeclarationWithNotifications,
+    DocumentHighlightWithNotifications, FormattingWithNotifications,
+    GotoDefinitionWithNotifications, HoverWithNotifications, ImplementationWithNotifications,
+    ReferencesWithNotifications, RenameWithNotifications, SignatureHelpWithNotifications,
+    TypeDefinitionWithNotifications,
 };
 use super::workspace::{language_to_extension, setup_workspace_with_option};
 use crate::config::settings::BridgeServerConfig;
@@ -605,6 +606,51 @@ impl LanguageServerConnection {
             .and_then(|r| serde_json::from_value(r).ok());
 
         ImplementationWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request go-to-declaration, capturing $/progress notifications.
+    ///
+    /// Sends the `textDocument/declaration` request which navigates to the
+    /// declaration of the symbol under the cursor (e.g., forward declarations,
+    /// interface definitions).
+    pub fn declaration_with_notifications(
+        &mut self,
+        _uri: &str,
+        position: Position,
+    ) -> DeclarationWithNotifications {
+        // Use the virtual file URI from the temp workspace
+        let Some(real_uri) = self.virtual_file_uri() else {
+            return DeclarationWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let Some(req_id) = self.send_request("textDocument/declaration", params) else {
+            return DeclarationWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id);
+
+        // Extract and parse the goto declaration response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        DeclarationWithNotifications {
             response,
             notifications: result.notifications,
         }

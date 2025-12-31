@@ -5,6 +5,7 @@
 
 mod code_action;
 mod completion;
+mod declaration;
 mod definition;
 mod document_highlight;
 mod formatting;
@@ -17,6 +18,7 @@ mod type_definition;
 
 pub use code_action::CodeActionWithNotifications;
 pub use completion::CompletionWithNotifications;
+pub use declaration::DeclarationWithNotifications;
 pub use definition::GotoDefinitionWithNotifications;
 pub use document_highlight::DocumentHighlightWithNotifications;
 pub use formatting::FormattingWithNotifications;

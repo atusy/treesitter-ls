@@ -2,6 +2,7 @@
 
 mod code_action;
 mod completion;
+mod declaration;
 mod definition;
 mod document_highlight;
 mod formatting;
