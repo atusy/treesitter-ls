@@ -182,7 +182,6 @@ The bridge requires knowing which server to use for each language:
 | `servers.*.languages` | Yes | Languages this server handles |
 | `servers.*.initializationOptions` | No | Passed to server's `initialize` request |
 | `servers.*.workspaceType` | No | **Deprecated**: "cargo" creates Cargo.toml scaffolding. Will be removed in future; use `initializationOptions.linkedProjects` instead |
-| `servers.*.rootUri` | No | Workspace root URI for servers that require it |
 
 #### Multiple Servers Per Language
 
