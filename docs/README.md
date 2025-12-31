@@ -108,13 +108,11 @@ Configuration is provided via LSP `initializationOptions`. All options are optio
   "autoInstall": true,
   "languages": {
     "lua": {
-      "library": "/path/to/lua.so",
-      "highlights": [
-        "/path/to/highlights.scm",
-        "/path/to/custom.scm"
-      ],
-      "injections": [
-        "/path/to/injections.scm"
+      "parser": "/path/to/lua.so",
+      "queries": [
+        {"path": "/path/to/highlights.scm"},
+        {"path": "/path/to/injections.scm"},
+        {"path": "/path/to/custom.scm", "kind": "highlights"}
       ]
     }
   },
@@ -152,9 +150,47 @@ Per-language configuration. Usually not needed as treesitter-ls auto-detects lan
 
 | Field | Description |
 |-------|-------------|
-| `library` | Explicit path to the parser library (`.so`, `.dylib`, `.dll`) |
-| `highlights` | Array of paths to highlight query files (`.scm`) |
-| `injections` | Array of paths to injection query files (for embedded languages) |
+| `parser` | Explicit path to the parser library (`.so`, `.dylib`, `.dll`) |
+| `queries` | Array of query configurations (see below) |
+
+##### `queries` Array
+
+Each query configuration is an object with:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `path` | Yes | Path to the query file (`.scm`) |
+| `kind` | No | Query type: `highlights`, `injections`, `locals`, etc. If omitted, inferred from filename |
+
+**Kind inference:** When `kind` is not specified, it's automatically inferred from the filename:
+- `highlights.scm` → `highlights`
+- `injections.scm` → `injections`
+- `locals.scm` → `locals`
+
+```json
+{
+  "languages": {
+    "lua": {
+      "parser": "/path/to/lua.so",
+      "queries": [
+        {"path": "/path/to/highlights.scm"},
+        {"path": "/path/to/custom.scm", "kind": "highlights"}
+      ]
+    }
+  }
+}
+```
+
+##### Deprecated Fields
+
+The following fields still work but emit deprecation warnings:
+
+| Deprecated | Use Instead |
+|------------|-------------|
+| `library` | `parser` |
+| `highlights` | `queries` with `kind: "highlights"` |
+| `injections` | `queries` with `kind: "injections"` |
+| `locals` | `queries` with `kind: "locals"` |
 
 #### `captureMappings`
 
@@ -236,6 +272,57 @@ highlights = ["./queries/highlights.scm"]
 ```
 
 Project configuration is merged with LSP initialization options.
+
+## Migration Guide
+
+### Migrating to New Configuration Schema
+
+The configuration schema has been updated for clarity and flexibility. The old schema still works but emits deprecation warnings.
+
+#### Before (Old Schema)
+
+```json
+{
+  "languages": {
+    "lua": {
+      "library": "/path/to/lua.so",
+      "highlights": ["/path/to/highlights.scm", "/path/to/extra.scm"],
+      "injections": ["/path/to/injections.scm"],
+      "locals": ["/path/to/locals.scm"]
+    }
+  }
+}
+```
+
+#### After (New Schema)
+
+```json
+{
+  "languages": {
+    "lua": {
+      "parser": "/path/to/lua.so",
+      "queries": [
+        {"path": "/path/to/highlights.scm"},
+        {"path": "/path/to/extra.scm", "kind": "highlights"},
+        {"path": "/path/to/injections.scm"},
+        {"path": "/path/to/locals.scm"}
+      ]
+    }
+  }
+}
+```
+
+#### Migration Steps
+
+1. **Rename `library` to `parser`** - Simple field rename
+2. **Convert query arrays to `queries`** - Combine all query paths into a single `queries` array
+3. **Add `kind` when needed** - If the filename doesn't match the query type (e.g., `extra.scm` for highlights), specify `kind` explicitly
+
+#### Benefits of New Schema
+
+- **Unified queries**: All query files in one array with explicit ordering
+- **Flexible kind assignment**: Use any filename and specify `kind` explicitly
+- **Automatic inference**: Standard filenames like `highlights.scm` don't need `kind`
 
 ## CLI Commands
 
