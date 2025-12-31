@@ -176,79 +176,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 79,
-    pbi_id: "PBI-102",
-    goal:
-      "Documentation authors have bridge server connections pre-warmed when opening a document so their first go-to-definition request is fast",
-    status: "review",
-    subtasks: [
-      {
-        test:
-          "spawn_in_background() method exists on LanguageServerPool and spawns connection without blocking caller",
-        implementation:
-          "Add spawn_in_background() method to LanguageServerPool that uses tokio::spawn to spawn connection in background",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "68a83fb", message: "feat(eager-spawn): add spawn_in_background to LanguageServerPool", phase: "green" as const },
-        ],
-        notes: [
-          "Method signature: spawn_in_background(&self, key: &str, config: &BridgeServerConfig)",
-          "Returns immediately, spawn happens asynchronously",
-          "Must handle case where connection already exists (no-op)",
-        ],
-      },
-      {
-        test:
-          "Background spawned connection is stored in LanguageServerPool after spawn completes",
-        implementation:
-          "In spawn_in_background, after successful spawn, call return_connection to store in pool",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "68a83fb", message: "feat(eager-spawn): add spawn_in_background to LanguageServerPool", phase: "green" as const },
-        ],
-        notes: [
-          "Use tokio::spawn with move closure to capture key and config",
-          "Log success/failure for debugging",
-          "Handle spawn failure gracefully (just log, don't panic)",
-        ],
-      },
-      {
-        test:
-          "did_open detects injection regions with configured bridge servers and triggers background spawn",
-        implementation:
-          "After check_injected_languages_auto_install, iterate injection regions and call spawn_in_background for languages with bridge config",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "462d8c2", message: "feat(eager-spawn): did_open triggers background spawn for injections", phase: "green" as const },
-        ],
-        notes: [
-          "Use get_bridge_config_for_language() to check if language has bridge server",
-          "Only spawn for languages that have bridge config",
-          "Must not block did_open completion (already async)",
-        ],
-      },
-      {
-        test:
-          "goto_definition reuses pre-warmed connection from pool instead of spawning new one",
-        implementation:
-          "No change needed - take_connection() already checks pool first before spawning",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "f4eb0ca", message: "test(eager-spawn): verify take_connection reuses pre-warmed pool connection", phase: "green" as const },
-        ],
-        notes: [
-          "Verification test: confirm has_connection() returns true after did_open",
-          "Existing take_connection() logic handles this automatically",
-          "This subtask is about verification, not new implementation",
-        ],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -261,18 +189,18 @@ const scrum: ScrumDashboard = {
   // Historical sprints (recent 2) | Sprint 1-72: git log -- scrum.yaml, scrum.ts
   completed: [
     {
-      number: 78,
-      pbi_id: "PBI-101",
+      number: 79,
+      pbi_id: "PBI-102",
       goal:
-        "Documentation authors have spawn() use workspace_type configuration so the workspace type feature works end-to-end",
+        "Documentation authors have bridge server connections pre-warmed when opening a document so their first go-to-definition request is fast",
       status: "done",
       subtasks: [],
     },
     {
-      number: 77,
-      pbi_id: "PBI-100",
+      number: 78,
+      pbi_id: "PBI-101",
       goal:
-        "Documentation authors can configure workspace setup per bridge server type so each language server gets the project structure it needs",
+        "Documentation authors have spawn() use workspace_type configuration so the workspace type feature works end-to-end",
       status: "done",
       subtasks: [],
     },
