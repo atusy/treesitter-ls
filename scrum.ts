@@ -85,7 +85,7 @@ const scrum: ScrumDashboard = {
             "README shows new schema as primary, old schema as deprecated with migration examples",
         },
       ],
-      status: "ready",
+      status: "done",
     },
   ],
 
@@ -102,16 +102,16 @@ const scrum: ScrumDashboard = {
   // Historical sprints (recent 2) | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   completed: [
     {
-      number: 98,
+      number: 99,
       pbi_id: "PBI-120",
-      goal: "Add queries array with kind inference from filename",
+      goal: "Document new config schema with migration guide",
       status: "done",
       subtasks: [],
     },
     {
-      number: 97,
+      number: 98,
       pbi_id: "PBI-120",
-      goal: "Add parser field as alias for library with deprecation warning",
+      goal: "Add queries array with kind inference from filename",
       status: "done",
       subtasks: [],
     },
@@ -119,6 +119,41 @@ const scrum: ScrumDashboard = {
 
   // Recent 2 retrospectives | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    {
+      sprint: 99,
+      improvements: [
+        {
+          action:
+            "Documentation sprint was straightforward - clear scope with migration guide Before/After examples made the change easy to understand",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "PBI-120 completed successfully across 3 sprints (97-99); consistent deprecation pattern documented clearly in README",
+        },
+        {
+          action:
+            "effective_parser() and effective_queries() pattern established good precedent for handling backwards-compatible schema changes",
+          timing: "immediate",
+          status: "completed",
+          outcome:
+            "Pattern documented: Phase 1 (parser alias) used serde-based implementation, Phase 2 (queries array) used effective_* pattern - both approaches work well for different deprecation scenarios",
+        },
+        {
+          action:
+            "Consider splitting multi-phase PBIs at refinement - PBI-120 spanned 3 sprints; defining Phase 1/2/3 as separate PBIs would improve tracking and estimation",
+          timing: "sprint",
+          status: "active",
+          outcome: null,
+        },
+        {
+          action:
+            "E2E test naming issue (treesitter_ls vs treesitter-ls) still unresolved - carried forward from Sprint 96/97/98",
+          timing: "sprint",
+          status: "active",
+          outcome: null,
+        },
+      ],
+    },
     {
       sprint: 98,
       improvements: [
@@ -137,41 +172,6 @@ const scrum: ScrumDashboard = {
           status: "completed",
           outcome:
             "Deprecation detection for highlights/injections/locals fields integrated without any architectural changes; pattern proves reusable across deprecation scenarios",
-        },
-        {
-          action:
-            "Consider splitting multi-phase PBIs upfront - PBI-120 spans 3 sprints (97-99); in future, might define Phase 1/2/3 as separate PBIs at refinement time",
-          timing: "sprint",
-          status: "active",
-          outcome: null,
-        },
-        {
-          action:
-            "E2E test naming issue (treesitter_ls vs treesitter-ls) still needs fixing - carried forward from Sprint 96/97",
-          timing: "sprint",
-          status: "active",
-          outcome: null,
-        },
-      ],
-    },
-    {
-      sprint: 97,
-      improvements: [
-        {
-          action:
-            "Clean TDD implementation - 7 new tests covering all edge cases for parser field alias with effective_parser() pattern cleanly abstracting field preference logic",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "Backwards compatible parser/library dual-field approach allows detecting which field was used for deprecation warnings; log_deprecation_warnings() placed at settings loading integration point",
-        },
-        {
-          action:
-            "Deprecation warning pattern (uses_deprecated_*, log_deprecation_warnings) is reusable for future deprecations",
-          timing: "immediate",
-          status: "completed",
-          outcome:
-            "Pattern established: separate fields rather than serde alias enables detection of deprecated usage while maintaining full backwards compatibility",
         },
       ],
     },
