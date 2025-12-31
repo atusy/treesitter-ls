@@ -3,6 +3,7 @@
 //! This module handles spawning and managing connections to external
 //! language servers for bridging LSP requests.
 
+use super::code_action::CodeActionWithNotifications;
 use super::completion::CompletionWithNotifications;
 use super::definition::GotoDefinitionWithNotifications;
 use super::hover::HoverWithNotifications;
@@ -758,6 +759,56 @@ impl LanguageServerConnection {
             .and_then(|r| serde_json::from_value(r).ok());
 
         RenameWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request code actions, capturing $/progress notifications.
+    ///
+    /// Sends a `textDocument/codeAction` request to the language server
+    /// and returns both the response (CodeActionResponse) and any `$/progress`
+    /// notifications received while waiting for the response.
+    pub fn code_action_with_notifications(
+        &mut self,
+        _uri: &str,
+        range: Range,
+    ) -> CodeActionWithNotifications {
+        // Use the virtual file URI from the temp workspace
+        let Some(real_uri) = self.virtual_file_uri() else {
+            return CodeActionWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+            "range": {
+                "start": { "line": range.start.line, "character": range.start.character },
+                "end": { "line": range.end.line, "character": range.end.character }
+            },
+            "context": { "diagnostics": [] }
+        });
+
+        let Some(req_id) = self.send_request("textDocument/codeAction", params) else {
+            return CodeActionWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id);
+
+        // Extract and parse the code action response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        CodeActionWithNotifications {
             response,
             notifications: result.notifications,
         }
