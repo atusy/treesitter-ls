@@ -255,10 +255,29 @@ impl TreeSitterSettings {
         }
     }
 
+    /// Check if this settings uses the deprecated `bridge.servers` field.
+    ///
+    /// Returns true if `bridge.servers` has entries, indicating the user is
+    /// using the deprecated configuration location. They should migrate to
+    /// the top-level `languageServers` field.
+    pub fn uses_deprecated_bridge_servers(&self) -> bool {
+        self.bridge
+            .as_ref()
+            .is_some_and(|b| !b.servers.is_empty())
+    }
+
     /// Log deprecation warnings for any deprecated configuration fields.
     ///
     /// Call this after deserializing settings to warn users about deprecated field usage.
     pub fn log_deprecation_warnings(&self) {
+        // PBI-122: Warn about deprecated bridge.servers field
+        if self.uses_deprecated_bridge_servers() {
+            log::warn!(
+                "Configuration uses deprecated 'bridge.servers' field. Please migrate to top-level \
+                 'languageServers' instead. The 'bridge.servers' field will be removed in a future version."
+            );
+        }
+
         for (lang_name, config) in &self.languages {
             if config.uses_deprecated_library() {
                 log::warn!(
@@ -1712,5 +1731,80 @@ mod tests {
 
         // pyright from bridge.servers only
         assert!(servers.contains_key("pyright"));
+    }
+
+    #[test]
+    fn uses_deprecated_bridge_servers_detects_old_field() {
+        // TDD RED: uses_deprecated_bridge_servers() should return true when bridge.servers is used
+        // PBI-122: Detect deprecated field usage for warning
+
+        // Case 1: Only bridge.servers set (deprecated usage)
+        let config_json = r#"{
+            "bridge": {
+                "servers": {
+                    "pyright": {
+                        "cmd": ["pyright-langserver", "--stdio"],
+                        "languages": ["python"]
+                    }
+                }
+            }
+        }"#;
+        let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
+        assert!(
+            settings.uses_deprecated_bridge_servers(),
+            "Should detect deprecated bridge.servers usage"
+        );
+
+        // Case 2: Only languageServers set (not deprecated)
+        let config_json = r#"{
+            "languageServers": {
+                "pyright": {
+                    "cmd": ["pyright-langserver", "--stdio"],
+                    "languages": ["python"]
+                }
+            }
+        }"#;
+        let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
+        assert!(
+            !settings.uses_deprecated_bridge_servers(),
+            "Should not flag deprecation when only languageServers is used"
+        );
+
+        // Case 3: Neither set (not deprecated)
+        let config_json = r#"{}"#;
+        let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
+        assert!(
+            !settings.uses_deprecated_bridge_servers(),
+            "Should not flag deprecation when neither is set"
+        );
+    }
+
+    #[test]
+    fn log_deprecation_warnings_warns_bridge_servers() {
+        // TDD: log_deprecation_warnings() should call uses_deprecated_bridge_servers() and warn
+        // PBI-122: Extend existing deprecation warning system to include bridge.servers
+        //
+        // This test verifies the integration exists - the actual log output
+        // verification is done by manual inspection or log capture in integration tests
+
+        let config_json = r#"{
+            "bridge": {
+                "servers": {
+                    "pyright": {
+                        "cmd": ["pyright-langserver", "--stdio"],
+                        "languages": ["python"]
+                    }
+                }
+            }
+        }"#;
+
+        let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
+
+        // Verify precondition: settings uses deprecated field
+        assert!(settings.uses_deprecated_bridge_servers());
+
+        // Call log_deprecation_warnings - this should not panic and should log a warning
+        // (We can't easily verify the log output in unit tests, but we verify it runs)
+        settings.log_deprecation_warnings();
     }
 }
