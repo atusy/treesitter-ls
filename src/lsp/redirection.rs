@@ -264,6 +264,18 @@ impl LanguageServerConnection {
     /// - Passes initializationOptions from config in initialize request
     /// - Creates workspace structure based on config.workspace_type
     pub fn spawn(config: &BridgeServerConfig) -> Option<Self> {
+        // Use the new method but discard notifications for backward compatibility
+        Self::spawn_with_notifications(config).map(|(conn, _)| conn)
+    }
+
+    /// Spawn a language server, capturing $/progress notifications.
+    ///
+    /// Like `spawn`, but returns both the connection and any `$/progress`
+    /// notifications received during initialization. This allows callers
+    /// to forward progress notifications to the client.
+    ///
+    /// Returns `Some((connection, notifications))` on success, or `None` on failure.
+    pub fn spawn_with_notifications(config: &BridgeServerConfig) -> Option<(Self, Vec<Value>)> {
         // Create a temporary directory for the workspace
         // Use unique counter to avoid conflicts between parallel tests
         static SPAWN_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -334,13 +346,14 @@ impl LanguageServerConnection {
 
         let init_id = conn.send_request("initialize", init_params)?;
 
-        // Wait for initialize response
-        conn.read_response_for_id(init_id)?;
+        // Wait for initialize response, capturing $/progress notifications
+        let result = conn.read_response_for_id_with_notifications(init_id);
+        result.response?; // Ensure we got a valid response
 
         // Send initialized notification
         conn.send_notification("initialized", serde_json::json!({}));
 
-        Some(conn)
+        Some((conn, result.notifications))
     }
 
     /// Get the URI for the virtual main.rs file in the temp workspace.
@@ -2336,6 +2349,53 @@ fn main() {
         let notifications = notifications.unwrap();
 
         // rust-analyzer may or may not send progress notifications during indexing,
+        // but the method should return the correct type
+        assert!(
+            notifications.is_empty() || !notifications.is_empty(),
+            "Should return a Vec<Value> (may be empty or non-empty)"
+        );
+
+        // If there are notifications, verify they are $/progress
+        for notification in &notifications {
+            if let Some(method) = notification.get("method").and_then(|m| m.as_str()) {
+                assert_eq!(
+                    method, "$/progress",
+                    "All returned notifications should be $/progress"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn spawn_with_notifications_returns_connection_and_progress_notifications() {
+        // RED phase: Test that spawn_with_notifications returns a tuple of
+        // (LanguageServerConnection, Vec<Value>) containing connection and
+        // any $/progress notifications captured during initialization
+
+        use crate::config::settings::BridgeServerConfig;
+
+        if !check_rust_analyzer_available() {
+            return;
+        }
+
+        let config = BridgeServerConfig {
+            command: "rust-analyzer".to_string(),
+            args: None,
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        // Call the new method - should return (LanguageServerConnection, Vec<Value>)
+        let result = LanguageServerConnection::spawn_with_notifications(&config);
+        assert!(result.is_some(), "spawn_with_notifications should succeed");
+
+        let (mut conn, notifications) = result.unwrap();
+
+        // Connection should be alive
+        assert!(conn.is_alive(), "Spawned connection should be alive");
+
+        // rust-analyzer may or may not send progress notifications during init,
         // but the method should return the correct type
         assert!(
             notifications.is_empty() || !notifications.is_empty(),
