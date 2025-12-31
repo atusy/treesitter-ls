@@ -20,7 +20,7 @@ const scrum: ScrumDashboard = {
       },
       {
         metric: "Modular architecture",
-        target: "Redirection module split into per-feature files for maintainability",
+        target: "Bridge module split into per-feature files for maintainability",
       },
       {
         metric: "E2E test coverage",
@@ -29,58 +29,10 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-109 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-110 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
-  // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects approach too slow for E2E tests
+  // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
   product_backlog: [
-    {
-      id: "PBI-109",
-      story: {
-        role: "Rustacean editing Markdown",
-        capability: "see the Product Goal updated to reflect expanded bridge vision",
-        benefit:
-          "the team has clear direction on expanding bridge support beyond go-to-definition",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "Product Goal statement changed from go-to-definition focus to broader bridge expansion",
-          verification: "Read scrum.ts and verify product_goal.statement mentions expanded bridge support",
-        },
-        {
-          criterion: "Success metrics updated to cover new bridged features",
-          verification: "Verify success_metrics list includes bridge coverage, modular architecture, and E2E tests",
-        },
-      ],
-      status: "done",
-    },
-    {
-      id: "PBI-110",
-      story: {
-        role: "developer editing Lua files",
-        capability: "have redirection.rs refactored into a module structure",
-        benefit:
-          "each bridged LSP feature is in its own file making maintenance and extension easier",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "src/lsp/redirection/ directory created (modern module style with redirection.rs)",
-          verification: "ls src/lsp/redirection/ shows submodules and redirection.rs exists in parent",
-        },
-        {
-          criterion: "definition.rs contains goto_definition related code",
-          verification: "grep GotoDefinitionWithNotifications src/lsp/redirection/definition.rs returns matches",
-        },
-        {
-          criterion: "hover.rs contains hover related code",
-          verification: "grep HoverWithNotifications src/lsp/redirection/hover.rs returns matches",
-        },
-        {
-          criterion: "Existing tests pass without modification",
-          verification: "make test passes (structural change only, no behavioral change)",
-        },
-      ],
-      status: "done",
-    },
     {
       id: "PBI-111",
       story: {
@@ -90,8 +42,8 @@ const scrum: ScrumDashboard = {
       },
       acceptance_criteria: [
         {
-          criterion: "src/lsp/redirection/completion.rs exists with CompletionWithNotifications type",
-          verification: "grep 'CompletionWithNotifications' src/lsp/redirection/completion.rs returns matches",
+          criterion: "src/lsp/bridge/completion.rs exists with CompletionWithNotifications type",
+          verification: "grep 'CompletionWithNotifications' src/lsp/bridge/completion.rs returns matches",
         },
         {
           criterion: "LanguageServerConnection has completion_with_notifications method",
@@ -108,123 +60,11 @@ const scrum: ScrumDashboard = {
       ],
       status: "ready",
     },
-    {
-      id: "PBI-112",
-      story: {
-        role: "Rustacean editing Markdown",
-        capability: "see function signature help for Rust code blocks via bridge",
-        benefit: "I can see parameter hints while calling functions in code blocks",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "textDocument/signatureHelp requests in injection regions are bridged",
-          verification: "E2E test sends signatureHelp request in Rust code block and receives signature info",
-        },
-        {
-          criterion: "Signature help shows correct parameter documentation",
-          verification: "E2E test verifies signature contains expected parameter names",
-        },
-      ],
-      status: "draft",
-    },
-    {
-      id: "PBI-113",
-      story: {
-        role: "Rustacean editing Markdown",
-        capability: "find all references in Rust code blocks via bridge",
-        benefit: "I can see where symbols are used within the code block",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "textDocument/references requests in injection regions are bridged",
-          verification: "E2E test sends references request in Rust code block and receives location list",
-        },
-        {
-          criterion: "Reference locations are adjusted to original document positions",
-          verification: "E2E test verifies reference locations point to correct lines in Markdown",
-        },
-      ],
-      status: "draft",
-    },
-    {
-      id: "PBI-114",
-      story: {
-        role: "Rustacean editing Markdown",
-        capability: "rename symbols in Rust code blocks via bridge",
-        benefit: "I can refactor variable names within code blocks safely",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "textDocument/rename requests in injection regions are bridged",
-          verification: "E2E test sends rename request in Rust code block and receives workspace edit",
-        },
-        {
-          criterion: "Rename edits have positions adjusted to original document",
-          verification: "E2E test verifies edit ranges point to correct positions in Markdown",
-        },
-      ],
-      status: "draft",
-    },
-    {
-      id: "PBI-115",
-      story: {
-        role: "Rustacean editing Markdown",
-        capability: "access code actions in Rust code blocks via bridge",
-        benefit: "I can use quick fixes and refactorings in code blocks",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "textDocument/codeAction requests in injection regions are bridged",
-          verification: "E2E test sends codeAction request in Rust code block and receives action list",
-        },
-        {
-          criterion: "Code action edits have positions adjusted to original document",
-          verification: "E2E test verifies any workspace edits point to correct Markdown positions",
-        },
-      ],
-      status: "draft",
-    },
-    {
-      id: "PBI-116",
-      story: {
-        role: "Rustacean editing Markdown",
-        capability: "format Rust code blocks via bridge",
-        benefit: "I can keep code blocks properly formatted using rustfmt",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "textDocument/formatting requests for injection regions are bridged",
-          verification: "E2E test sends formatting request targeting Rust code block and receives edits",
-        },
-        {
-          criterion: "Formatted code replaces only the code block content",
-          verification: "E2E test verifies formatting edits are scoped to code block range",
-        },
-      ],
-      status: "draft",
-    },
+    // Draft PBIs (refine to ready before sprint): PBI-112 signatureHelp, PBI-113 references,
+    // PBI-114 rename, PBI-115 codeAction, PBI-116 formatting
   ],
 
-  sprint: {
-    number: 87,
-    pbi_id: "PBI-110",
-    goal: "Refactor redirection.rs into module structure for maintainability",
-    status: "done",
-    subtasks: [
-      {
-        test: "Verify module structure exists with required files",
-        implementation: "Split redirection.rs into redirection/ module with cleanup.rs, connection.rs, definition.rs, hover.rs, pool.rs, workspace.rs",
-        type: "structural",
-        status: "completed",
-        commits: [],
-        notes: [
-          "Used modern Rust module style: redirection.rs + redirection/ directory (not mod.rs)",
-          "All 308 tests pass - structural change only, no behavioral changes",
-          "definition.rs contains GotoDefinitionWithNotifications, hover.rs contains HoverWithNotifications",
-        ],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -237,17 +77,16 @@ const scrum: ScrumDashboard = {
   // Historical sprints (recent 2) | Sprint 1-77: git log -- scrum.yaml, scrum.ts
   completed: [
     {
-      number: 86,
-      pbi_id: "PBI-109",
-      goal: "Update Product Goal statement to reflect expanded bridge vision",
+      number: 87,
+      pbi_id: "PBI-110",
+      goal: "Refactor redirection.rs into bridge/ module structure",
       status: "done",
       subtasks: [],
     },
     {
-      number: 85,
-      pbi_id: "PBI-108",
-      goal:
-        "Add per-host language bridge filter configuration to control which injection languages are bridged",
+      number: 86,
+      pbi_id: "PBI-109",
+      goal: "Update Product Goal statement to reflect expanded bridge vision",
       status: "done",
       subtasks: [],
     },
@@ -264,15 +103,15 @@ const scrum: ScrumDashboard = {
           timing: "immediate",
           status: "completed",
           outcome:
-            "Module files clearly named (redirection.rs, cleanup.rs, etc.) instead of multiple mod.rs tabs in editor",
+            "Module files clearly named (bridge.rs, cleanup.rs, etc.) instead of multiple mod.rs tabs in editor",
         },
         {
           action:
-            "Structural refactoring with extensive test suite validates no behavioral changes - 308 tests provide confidence for safe module splitting",
+            "Renamed 'redirection' to 'bridge' for clearer domain language matching ADR terminology",
           timing: "immediate",
           status: "completed",
           outcome:
-            "Refactored 2000+ line file into 6 focused modules while all tests continued to pass",
+            "Module and file naming now aligns with 'LSP Bridge' concept from ADR-0006",
         },
       ],
     },
