@@ -23,6 +23,16 @@ pub struct ResponseWithNotifications {
     pub notifications: Vec<Value>,
 }
 
+/// Result of `goto_definition_with_notifications` containing
+/// the goto definition response and any $/progress notifications captured.
+#[derive(Debug, Clone)]
+pub struct GotoDefinitionWithNotifications {
+    /// The goto definition response (None if no result or error)
+    pub response: Option<GotoDefinitionResponse>,
+    /// Captured $/progress notifications received while waiting for the response
+    pub notifications: Vec<Value>,
+}
+
 /// Map language name to file extension.
 ///
 /// Used when creating virtual files for Generic workspaces.
@@ -584,24 +594,54 @@ impl LanguageServerConnection {
         _uri: &str,
         position: Position,
     ) -> Option<GotoDefinitionResponse> {
+        // Use the new method but discard notifications for backward compatibility
+        self.goto_definition_with_notifications(_uri, position)
+            .response
+    }
+
+    /// Request go-to-definition, capturing $/progress notifications.
+    ///
+    /// Unlike `goto_definition`, this method returns both the response and any
+    /// `$/progress` notifications received while waiting for the response.
+    /// This allows callers to forward progress notifications to the client.
+    pub fn goto_definition_with_notifications(
+        &mut self,
+        _uri: &str,
+        position: Position,
+    ) -> GotoDefinitionWithNotifications {
         // Use the virtual file URI from the temp workspace
-        let real_uri = self.virtual_file_uri()?;
+        let Some(real_uri) = self.virtual_file_uri() else {
+            return GotoDefinitionWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
 
         let params = serde_json::json!({
             "textDocument": { "uri": real_uri },
             "position": { "line": position.line, "character": position.character },
         });
 
-        let req_id = self.send_request("textDocument/definition", params)?;
+        let Some(req_id) = self.send_request("textDocument/definition", params) else {
+            return GotoDefinitionWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
 
-        // Read response (skipping notifications until we get the matching response)
-        let response = self.read_response_for_id(req_id)?;
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id);
 
-        // Extract result
-        let result = response.get("result")?;
+        // Extract and parse the goto definition response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .and_then(|r| serde_json::from_value(r).ok());
 
-        // Parse as GotoDefinitionResponse
-        serde_json::from_value(result.clone()).ok()
+        GotoDefinitionWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
     }
 
     /// Request hover information
@@ -2044,6 +2084,49 @@ fn main() {
 
         // The notifications vec should exist (may be empty or have progress notifications)
         // We're just verifying the method exists and returns the right type
+        let _ = result.notifications;
+    }
+
+    #[test]
+    fn goto_definition_with_notifications_returns_result_and_notifications() {
+        // RED phase: Test that goto_definition_with_notifications exists and returns
+        // a struct containing both the result and captured notifications
+
+        use crate::config::settings::BridgeServerConfig;
+
+        if !check_rust_analyzer_available() {
+            return;
+        }
+
+        let config = BridgeServerConfig {
+            command: "rust-analyzer".to_string(),
+            args: None,
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        let mut conn = LanguageServerConnection::spawn(&config).unwrap();
+
+        // Open a document with some code that has a symbol to go to definition on
+        conn.did_open(
+            "file:///test.rs",
+            "rust",
+            "fn foo() {}\nfn main() { foo(); }",
+        );
+
+        // Request goto_definition using the new method
+        let position = Position {
+            line: 1,
+            character: 14, // Position on 'foo' call
+        };
+
+        let result = conn.goto_definition_with_notifications("file:///test.rs", position);
+
+        // The result should be a GotoDefinitionWithNotifications struct
+        // with response field and notifications field
+        // Result may be None if rust-analyzer hasn't fully indexed yet, but the type should work
+        let _ = result.response;
         let _ = result.notifications;
     }
 }
