@@ -155,7 +155,7 @@ const scrum: ScrumDashboard = {
     number: 119,
     pbi_id: "PBI-150",
     goal: "Enable users to inherit settings from user config to project config without duplication via merge_all()",
-    status: "in_progress",
+    status: "review",
     subtasks: [
       {
         test: "merge_all() with scalar values: later config overrides earlier (e.g., autoInstall: false in project overrides autoInstall: true in user)",
@@ -186,7 +186,7 @@ const scrum: ScrumDashboard = {
         implementation: "Extend merge_all() to deep merge captureMappings nested HashMap - merge per language, per query-type, per capture key",
         type: "behavioral",
         status: "completed",
-        commits: [],
+        commits: [{ hash: "1acf169", message: "test(config): verify captureMappings deep merge through merge_all()", phase: "green" }],
         notes: ["Tests: test_merge_all_capture_mappings_deep_merge, test_merge_all_capture_mappings_adds_new_language, test_merge_all_capture_mappings_locals_and_folds - merge_capture_mappings already does deep merge, tests verify through merge_all"],
       },
     ],
