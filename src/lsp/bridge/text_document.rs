@@ -44,3 +44,6 @@ pub use type_definition::TypeDefinitionWithNotifications;
 pub use type_hierarchy::{
     PrepareTypeHierarchyWithNotifications, SubtypesWithNotifications, SupertypesWithNotifications,
 };
+
+// Re-export diagnostic types for bridged diagnostics
+pub(crate) use diagnostic::VirtualToHostRegistry;

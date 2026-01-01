@@ -18,7 +18,7 @@ pub use cleanup::{
     CleanupStats, DEFAULT_CLEANUP_MAX_AGE, TEMP_DIR_PREFIX, cleanup_stale_temp_dirs,
     startup_cleanup,
 };
-pub use connection::{ConnectionInfo, LanguageServerConnection, ResponseWithNotifications};
+pub use connection::{ConnectionInfo, DidOpenResult, LanguageServerConnection, ResponseWithNotifications};
 pub use pool::LanguageServerPool;
 pub use text_document::{
     CodeActionWithNotifications, CompletionWithNotifications, DocumentHighlightWithNotifications,
@@ -29,4 +29,7 @@ pub use text_document::{
     ReferencesWithNotifications, RenameWithNotifications, SignatureHelpWithNotifications,
     SubtypesWithNotifications, SupertypesWithNotifications, TypeDefinitionWithNotifications,
 };
+// VirtualToHostRegistry is used for diagnostic forwarding (PBI-135)
+#[allow(unused_imports)]
+pub(crate) use text_document::VirtualToHostRegistry;
 pub use workspace::{setup_workspace, setup_workspace_with_option};

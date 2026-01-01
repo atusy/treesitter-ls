@@ -60,6 +60,8 @@ pub struct TreeSitterLs {
     failed_parsers: FailedParserRegistry,
     /// Pool of language server connections for injection bridging
     language_server_pool: LanguageServerPool,
+    /// Registry mapping virtual URIs to host URIs for diagnostic translation
+    virtual_to_host: super::bridge::VirtualToHostRegistry,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -77,6 +79,7 @@ impl std::fmt::Debug for TreeSitterLs {
             .field("installing_languages", &"InstallingLanguages")
             .field("failed_parsers", &"FailedParserRegistry")
             .field("language_server_pool", &"LanguageServerPool")
+            .field("virtual_to_host", &"VirtualToHostRegistry")
             .finish_non_exhaustive()
     }
 }
@@ -105,6 +108,7 @@ impl TreeSitterLs {
             installing_languages: InstallingLanguages::new(),
             failed_parsers,
             language_server_pool: LanguageServerPool::new(),
+            virtual_to_host: super::bridge::VirtualToHostRegistry::new(),
         }
     }
 
@@ -878,6 +882,131 @@ impl TreeSitterLs {
         }
     }
 
+    /// Collect diagnostics from bridged language servers for injection regions and forward to editor.
+    ///
+    /// For each injection region, sends the content to the appropriate bridged language server
+    /// via `did_open_with_diagnostics`, registers the virtual-to-host URI mapping, translates
+    /// any returned diagnostics to host document coordinates, and forwards them to the editor.
+    ///
+    /// This is called after `eager_spawn_for_injections` to capture initial diagnostics.
+    async fn collect_and_forward_injection_diagnostics(&self, uri: &Url) {
+        // Get the host language for this document
+        let Some(host_language) = self.get_language_for_document(uri) else {
+            return;
+        };
+
+        // Get document text and tree
+        let Some(doc) = self.documents.get(uri) else {
+            return;
+        };
+        let text = doc.text().to_string();
+        let Some(tree) = doc.tree().cloned() else {
+            return;
+        };
+        // Drop the document reference before async operations
+        drop(doc);
+
+        // Get injection query for this language
+        let Some(injection_query) = self.language.get_injection_query(&host_language) else {
+            return;
+        };
+
+        // Collect all injection regions
+        let Some(injections) = collect_all_injections(
+            &tree.root_node(),
+            &text,
+            Some(injection_query.as_ref()),
+        ) else {
+            return;
+        };
+
+        if injections.is_empty() {
+            return;
+        }
+
+        log::debug!(
+            target: "treesitter_ls::diagnostic",
+            "collect_and_forward_injection_diagnostics: {} - found {} injection regions",
+            uri,
+            injections.len()
+        );
+
+        // Process each injection region
+        for info in &injections {
+            // Check if this injection language has a bridge config
+            let Some(config) = self.get_bridge_config_for_language(&host_language, &info.language)
+            else {
+                continue;
+            };
+
+            let pool_key = config.cmd.first().cloned().unwrap_or_default();
+
+            // Get or create connection from pool
+            let mut conn = match self.language_server_pool.take_connection(&pool_key, &config) {
+                Some(c) => c,
+                None => continue,
+            };
+
+            // Get the virtual file URI for this connection
+            let Some(virtual_uri_str) = conn.virtual_file_uri() else {
+                self.language_server_pool.return_connection(&pool_key, conn);
+                continue;
+            };
+            let Ok(virtual_uri) = tower_lsp::lsp_types::Url::parse(&virtual_uri_str) else {
+                self.language_server_pool.return_connection(&pool_key, conn);
+                continue;
+            };
+
+            // Extract injection content
+            let content = info.content_node.utf8_text(text.as_bytes()).unwrap_or("");
+
+            // Create CacheableInjectionRegion for translation
+            let result_id = crate::analysis::next_result_id();
+            let region =
+                CacheableInjectionRegion::from_region_info(info, &result_id, &text);
+
+            // Register virtual-to-host mapping for this injection
+            self.virtual_to_host.register(
+                virtual_uri.clone(),
+                uri.clone(),
+                region,
+            );
+
+            // Send content to bridge server and capture diagnostics
+            let result = conn.did_open_with_diagnostics(&virtual_uri_str, &info.language, content);
+
+            // Return connection to pool
+            self.language_server_pool.return_connection(&pool_key, conn);
+
+            // Process any returned diagnostics
+            if let Some(open_result) = result {
+                for diag_params in open_result.diagnostics {
+                    // Translate diagnostics from virtual to host coordinates
+                    if let Some(translated) = self.virtual_to_host.translate_diagnostics(
+                        &diag_params.uri,
+                        diag_params.diagnostics,
+                    ) {
+                        // Forward to editor
+                        self.client
+                            .publish_diagnostics(
+                                translated.uri,
+                                translated.diagnostics,
+                                translated.version,
+                            )
+                            .await;
+
+                        log::debug!(
+                            target: "treesitter_ls::diagnostic",
+                            "Forwarded diagnostics for injection {} in {}",
+                            info.language,
+                            uri
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// Try to bridge code action request to an external language server.
     ///
     /// Returns Some(CodeActionResponse) if the request was successfully bridged,
@@ -1351,6 +1480,10 @@ impl LanguageServer for TreeSitterLs {
         // Eagerly spawn bridge server connections for injection regions
         // This pre-warms connections so first goto-definition is fast
         self.eager_spawn_for_injections(&uri);
+
+        // Collect and forward diagnostics from bridged language servers
+        // This sends injection content to bridge servers and forwards any diagnostics
+        self.collect_and_forward_injection_diagnostics(&uri).await;
 
         // Check if queries are ready for the document
         if let Some(language_name) = self.get_language_for_document(&uri) {
