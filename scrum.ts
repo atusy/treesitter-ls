@@ -79,10 +79,11 @@ const scrum: ScrumDashboard = {
     {
       sprint: 115,
       improvements: [
-        { action: "Vertical slice pattern continues to work well - PBI-142 (completion) followed same pattern as hover/goto_definition, confirming the template approach", timing: "immediate", status: "completed", outcome: "completion() implemented by following goto_definition() as template" },
-        { action: "E2E test for completion needed retry loop for rust-analyzer indexing - same pattern as hover test; added 20-iteration retry with 1s sleep", timing: "immediate", status: "completed", outcome: "E2E test passes consistently with retry loop" },
-        { action: "Observed flaky test in sync bridge connection (did_open_uses_connection_info_write_virtual_file) - passes with --test-threads=1, fails intermittently with parallel execution; unrelated to async completion changes", timing: "sprint", status: "active", outcome: null },
-        { action: "Continue pattern for PBI-143 (signatureHelp) - next vertical slice", timing: "sprint", status: "active", outcome: null },
+        { action: "Template pattern (hover -> goto_definition -> completion) working smoothly - each new feature follows established pattern with minimal friction", timing: "immediate", status: "completed", outcome: "completion() implemented by following goto_definition() as template; pattern now proven across 3 features" },
+        { action: "E2E test already existed for completion, just needed retry loop for rust-analyzer indexing - consistent pattern emerging across E2E tests", timing: "immediate", status: "completed", outcome: "E2E test passes with 20-iteration retry loop; same pattern as hover test" },
+        { action: "Flaky test in sync bridge (did_open_uses_connection_info_write_virtual_file) still present - passes with --test-threads=1, fails intermittently with parallel execution", timing: "sprint", status: "active", outcome: null },
+        { action: "Continue pattern for PBI-143 (signatureHelp) - last remaining async bridge PBI; follow established template", timing: "sprint", status: "active", outcome: null },
+        { action: "Consider adding shared E2E test helper for retry pattern - duplicate retry logic across hover/completion tests could be extracted", timing: "product", status: "active", outcome: null },
       ],
     },
     {
