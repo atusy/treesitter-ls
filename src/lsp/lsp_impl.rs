@@ -1410,6 +1410,13 @@ impl LanguageServer for TreeSitterLs {
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri;
 
+        self.client
+            .log_message(
+                MessageType::LOG,
+                format!("[DID_CHANGE] START uri={}", uri),
+            )
+            .await;
+
         // Retrieve the stored document info
         let (language_id, old_text) = {
             let doc = self.documents.get(&uri);

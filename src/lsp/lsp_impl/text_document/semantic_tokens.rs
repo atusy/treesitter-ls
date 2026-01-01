@@ -19,6 +19,13 @@ impl TreeSitterLs {
     ) -> Result<Option<SemanticTokensResult>> {
         let uri = params.text_document.uri;
 
+        self.client
+            .log_message(
+                MessageType::LOG,
+                format!("[SEMANTIC_TOKENS] START uri={}", uri),
+            )
+            .await;
+
         let Some(language_name) = self.get_language_for_document(&uri) else {
             return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                 result_id: None,
@@ -137,6 +144,18 @@ impl TreeSitterLs {
         let lsp_tokens = tokens_with_id;
         // Store in dedicated cache for delta requests with result_id validation
         self.semantic_cache.store(uri.clone(), stored_tokens);
+
+        self.client
+            .log_message(
+                MessageType::LOG,
+                format!(
+                    "[SEMANTIC_TOKENS] DONE uri={} tokens={}",
+                    uri,
+                    lsp_tokens.data.len()
+                ),
+            )
+            .await;
+
         Ok(Some(SemanticTokensResult::Tokens(lsp_tokens)))
     }
 

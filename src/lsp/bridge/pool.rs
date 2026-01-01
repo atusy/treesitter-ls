@@ -39,20 +39,52 @@ impl LanguageServerPool {
         key: &str,
         config: &BridgeServerConfig,
     ) -> Option<LanguageServerConnection> {
+        log::debug!(
+            target: "treesitter_ls::bridge::pool",
+            "[POOL] take_connection START key={}",
+            key
+        );
         // Try to take existing connection
         if let Some((_, (mut conn, _))) = self.connections.remove(key) {
             // Check if connection is still alive; if dead, spawn a new one
             if conn.is_alive() {
+                log::debug!(
+                    target: "treesitter_ls::bridge::pool",
+                    "[POOL] take_connection REUSED key={}",
+                    key
+                );
                 return Some(conn);
             }
+            log::debug!(
+                target: "treesitter_ls::bridge::pool",
+                "[POOL] take_connection DEAD, respawning key={}",
+                key
+            );
             // Connection is dead, drop it and spawn a new one
         }
         // Spawn new one using config
-        LanguageServerConnection::spawn(config)
+        log::debug!(
+            target: "treesitter_ls::bridge::pool",
+            "[POOL] take_connection SPAWNING key={}",
+            key
+        );
+        let result = LanguageServerConnection::spawn(config);
+        log::debug!(
+            target: "treesitter_ls::bridge::pool",
+            "[POOL] take_connection DONE key={} success={}",
+            key,
+            result.is_some()
+        );
+        result
     }
 
     /// Return a connection to the pool for reuse
     pub fn return_connection(&self, key: &str, conn: LanguageServerConnection) {
+        log::debug!(
+            target: "treesitter_ls::bridge::pool",
+            "[POOL] return_connection key={}",
+            key
+        );
         self.connections
             .insert(key.to_string(), (conn, Instant::now()));
     }

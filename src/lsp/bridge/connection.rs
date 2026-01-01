@@ -275,6 +275,12 @@ impl LanguageServerConnection {
         expected_id: i64,
         timeout: Duration,
     ) -> ResponseWithNotifications {
+        log::debug!(
+            target: "treesitter_ls::bridge::conn",
+            "[CONN] read_response START id={} timeout={:?}",
+            expected_id,
+            timeout
+        );
         let mut notifications = Vec::new();
         let start = Instant::now();
 
@@ -366,6 +372,12 @@ impl LanguageServerConnection {
             if let Some(id) = message.get("id")
                 && id.as_i64() == Some(expected_id)
             {
+                log::debug!(
+                    target: "treesitter_ls::bridge::conn",
+                    "[CONN] read_response DONE id={} elapsed={:?}",
+                    expected_id,
+                    start.elapsed()
+                );
                 return ResponseWithNotifications {
                     response: Some(message),
                     notifications,
@@ -411,6 +423,12 @@ impl LanguageServerConnection {
         language_id: &str,
         content: &str,
     ) -> Option<Vec<Value>> {
+        log::debug!(
+            target: "treesitter_ls::bridge::conn",
+            "[CONN] did_open_with_notifications START lang={} content_len={}",
+            language_id,
+            content.len()
+        );
         // Write content to the actual file on disk using ConnectionInfo
         self.connection_info
             .as_ref()?
@@ -423,6 +441,11 @@ impl LanguageServerConnection {
         if let Some(version) = self.document_version {
             // Document already open - send didChange instead
             let new_version = version + 1;
+            log::debug!(
+                target: "treesitter_ls::bridge::conn",
+                "[CONN] sending didChange version={}",
+                new_version
+            );
             let params = serde_json::json!({
                 "textDocument": {
                     "uri": real_uri,
@@ -432,10 +455,19 @@ impl LanguageServerConnection {
             });
             self.send_notification("textDocument/didChange", params)?;
             self.document_version = Some(new_version);
+            log::debug!(
+                target: "treesitter_ls::bridge::conn",
+                "[CONN] didChange DONE version={}",
+                new_version
+            );
             // No indexing wait for didChange, return empty notifications
             Some(vec![])
         } else {
             // First time - send didOpen and wait for indexing
+            log::debug!(
+                target: "treesitter_ls::bridge::conn",
+                "[CONN] sending didOpen (first time)"
+            );
             let params = serde_json::json!({
                 "textDocument": {
                     "uri": real_uri,
@@ -450,7 +482,17 @@ impl LanguageServerConnection {
             // Wait for rust-analyzer to index the project, capturing progress notifications.
             // rust-analyzer needs time to parse the file and build its index.
             // We wait for diagnostic notifications which indicate indexing is complete.
-            Some(self.wait_for_indexing_with_notifications())
+            log::debug!(
+                target: "treesitter_ls::bridge::conn",
+                "[CONN] waiting for indexing..."
+            );
+            let result = self.wait_for_indexing_with_notifications();
+            log::debug!(
+                target: "treesitter_ls::bridge::conn",
+                "[CONN] indexing DONE notifications={}",
+                result.len()
+            );
+            Some(result)
         }
     }
 
