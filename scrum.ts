@@ -223,9 +223,9 @@ const scrum: ScrumDashboard = {
         test: "Specific capture name in language key overrides same capture name in wildcard - test '@function' in rust overrides '@function' in '_'",
         implementation: "Ensure merge logic uses entry().or_insert() pattern so specific values take precedence over wildcard values",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
-        notes: [],
+        notes: ["Override behavior already implemented in merge logic"],
       },
       {
         test: "E2E: semantic tokens use mappings from '_' when language-specific captureMappings not defined",
