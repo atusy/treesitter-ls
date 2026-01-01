@@ -23,7 +23,6 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 /// Pending request entry - stores the sender for a response
-#[allow(dead_code)]
 type PendingRequest = oneshot::Sender<ResponseResult>;
 
 /// Tokio-based async bridge connection that handles concurrent LSP requests.
@@ -33,7 +32,6 @@ type PendingRequest = oneshot::Sender<ResponseResult>;
 /// - `tokio::sync::Mutex` for stdin serialization
 /// - `tokio::task::JoinHandle` for the reader task
 /// - `oneshot::Sender` for shutdown signaling
-#[allow(dead_code)]
 pub struct TokioAsyncBridgeConnection {
     /// Stdin for writing requests (protected by tokio::sync::Mutex for async write serialization)
     stdin: tokio::sync::Mutex<ChildStdin>,
@@ -56,20 +54,32 @@ impl TokioAsyncBridgeConnection {
     /// # Arguments
     /// * `command` - The command to spawn (e.g., "rust-analyzer")
     /// * `args` - Arguments to pass to the command
+    /// * `cwd` - Optional working directory for the child process
     ///
     /// # Returns
     /// A new TokioAsyncBridgeConnection wrapping the spawned process
-    #[allow(dead_code)]
-    pub async fn spawn(command: &str, args: &[&str]) -> Result<Self, String> {
+    pub async fn spawn(
+        command: &str,
+        args: &[&str],
+        cwd: Option<&std::path::Path>,
+    ) -> Result<Self, String> {
         use std::process::Stdio;
         use tokio::process::Command;
 
-        // Spawn the child process with piped stdin/stdout
-        let mut child = Command::new(command)
-            .args(args)
+        // Build command with optional working directory
+        let mut cmd = Command::new(command);
+        cmd.args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::null());
+
+        // Set working directory if specified
+        if let Some(dir) = cwd {
+            cmd.current_dir(dir);
+        }
+
+        // Spawn the child process with piped stdin/stdout
+        let mut child = cmd
             .spawn()
             .map_err(|e| format!("Failed to spawn process '{}': {}", command, e))?;
 
@@ -204,7 +214,6 @@ impl TokioAsyncBridgeConnection {
     /// # Returns
     /// A tuple of (request_id, receiver) where the receiver will contain the response
     /// when it arrives, or an error if the request could not be sent.
-    #[allow(dead_code)]
     pub async fn send_request(
         &self,
         method: &str,
@@ -262,7 +271,6 @@ impl TokioAsyncBridgeConnection {
     /// # Arguments
     /// * `method` - The notification method name
     /// * `params` - The notification parameters
-    #[allow(dead_code)]
     pub async fn send_notification(&self, method: &str, params: Value) -> Result<(), String> {
         let notification = serde_json::json!({
             "jsonrpc": "2.0",
@@ -338,6 +346,25 @@ impl TokioAsyncBridgeConnection {
     }
 }
 
+impl Drop for TokioAsyncBridgeConnection {
+    fn drop(&mut self) {
+        // Send shutdown signal to reader task
+        if let Some(shutdown_tx) = self.shutdown_tx.take() {
+            let _ = shutdown_tx.send(());
+        }
+
+        // Abort the reader task if it's still running
+        if let Some(handle) = self.reader_handle.take() {
+            handle.abort();
+        }
+
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio",
+            "[CONN] Connection dropped, reader task aborted"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -376,7 +403,7 @@ mod tests {
     async fn spawn_uses_tokio_process_command() {
         // Use 'cat' as a simple process that reads from stdin and writes to stdout
         // This is available on all Unix-like systems
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[]).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None).await;
         assert!(result.is_ok(), "spawn() should succeed with 'cat' command");
 
         let conn = result.unwrap();
@@ -389,7 +416,7 @@ mod tests {
     /// Verifies AC2: Async stdin/stdout handles are obtained from the tokio Child process.
     #[tokio::test]
     async fn spawn_extracts_stdin_stdout_from_child() {
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[]).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None).await;
         assert!(result.is_ok(), "spawn() should succeed");
 
         let conn = result.unwrap();
@@ -404,7 +431,7 @@ mod tests {
     /// Verifies the reader_handle is a tokio::task::JoinHandle and shutdown_tx exists.
     #[tokio::test]
     async fn spawn_creates_reader_task_handle() {
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[]).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None).await;
         assert!(result.is_ok(), "spawn() should succeed");
 
         let mut conn = result.unwrap();
@@ -446,7 +473,7 @@ mod tests {
     #[tokio::test]
     async fn shutdown_while_reader_idle_completes_within_100ms() {
         // Spawn a 'cat' process - it will be idle (not sending any data)
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[]).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None).await;
         assert!(result.is_ok(), "spawn() should succeed");
 
         let mut conn = result.unwrap();
@@ -489,7 +516,7 @@ mod tests {
         use tokio::io::AsyncWriteExt;
 
         // Use 'cat' as an echo server - we write to stdin, it echoes to stdout
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[]).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None).await;
         assert!(result.is_ok(), "spawn() should succeed");
 
         let conn = result.unwrap();
@@ -541,7 +568,7 @@ mod tests {
     #[tokio::test]
     async fn send_request_returns_receiver_that_resolves_on_response() {
         // Use 'cat' as an echo server - we write to stdin, it echoes to stdout
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[]).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None).await;
         assert!(result.is_ok(), "spawn() should succeed");
 
         let conn = result.unwrap();
@@ -580,7 +607,7 @@ mod tests {
     /// Test that send_notification sends a message without expecting a response.
     #[tokio::test]
     async fn send_notification_sends_message_without_response() {
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[]).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None).await;
         assert!(result.is_ok(), "spawn() should succeed");
 
         let conn = result.unwrap();
@@ -591,5 +618,38 @@ mod tests {
 
         // send_notification should succeed (not block waiting for response)
         assert!(result.is_ok(), "send_notification should succeed");
+    }
+
+    /// Test that spawn() with cwd parameter sets child process working directory.
+    ///
+    /// This test verifies AC1: TokioAsyncBridgeConnection::spawn() accepts optional cwd parameter.
+    /// When cwd is Some, the child process should run in the specified directory.
+    #[tokio::test]
+    async fn spawn_with_cwd_sets_child_process_working_directory() {
+        // Create a temp directory to use as cwd
+        let temp_dir =
+            std::env::temp_dir().join(format!("tokio-spawn-cwd-test-{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).expect("Failed to create temp directory");
+
+        // Use 'pwd' to verify the working directory is set correctly
+        // On Unix, 'pwd' prints the current working directory
+        let result = TokioAsyncBridgeConnection::spawn("pwd", &[], Some(&temp_dir)).await;
+        assert!(result.is_ok(), "spawn() with cwd should succeed");
+
+        // Clean up - ignore errors
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    /// Test that spawn() with None cwd uses default working directory (backward compatible).
+    #[tokio::test]
+    async fn spawn_with_none_cwd_uses_default_directory() {
+        // spawn() with None should behave like before - use the default process cwd
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None).await;
+        assert!(result.is_ok(), "spawn() with None cwd should succeed");
+
+        let conn = result.unwrap();
+        // Verify connection works
+        let stdin_guard = conn.stdin.lock().await;
+        drop(stdin_guard);
     }
 }

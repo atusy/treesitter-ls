@@ -22,7 +22,6 @@ use tokio::sync::mpsc;
 /// Unlike `AsyncLanguageServerPool` which uses `spawn_blocking` for initialization,
 /// this pool uses fully async I/O throughout. Each connection is a
 /// `TokioAsyncBridgeConnection` that uses tokio::process for spawning.
-#[allow(dead_code)]
 pub struct TokioAsyncLanguageServerPool {
     /// Active connections by key (server name)
     connections: DashMap<String, Arc<TokioAsyncBridgeConnection>>,
@@ -37,7 +36,6 @@ impl TokioAsyncLanguageServerPool {
     ///
     /// # Arguments
     /// * `notification_sender` - Channel for forwarding $/progress notifications
-    #[allow(dead_code)]
     pub fn new(notification_sender: mpsc::Sender<Value>) -> Self {
         Self {
             connections: DashMap::new(),
@@ -54,7 +52,6 @@ impl TokioAsyncLanguageServerPool {
     /// # Arguments
     /// * `key` - Unique key for this connection (typically server name)
     /// * `config` - Configuration for spawning a new connection if needed
-    #[allow(dead_code)]
     pub async fn get_connection(
         &self,
         key: &str,
@@ -100,7 +97,7 @@ impl TokioAsyncLanguageServerPool {
             std::process::id(),
             counter
         ));
-        std::fs::create_dir_all(&temp_dir).ok()?;
+        tokio::fs::create_dir_all(&temp_dir).await.ok()?;
 
         // Determine extension and setup workspace
         let extension = config
@@ -109,16 +106,23 @@ impl TokioAsyncLanguageServerPool {
             .map(|lang| language_to_extension(lang))
             .unwrap_or("rs");
 
-        let virtual_file_path =
-            setup_workspace_with_option(&temp_dir, config.workspace_type, extension)?;
+        // Use spawn_blocking to avoid blocking tokio runtime on sync file I/O
+        let virtual_file_path = {
+            let temp_dir = temp_dir.clone();
+            let workspace_type = config.workspace_type;
+            let extension = extension.to_string();
+            tokio::task::spawn_blocking(move || {
+                setup_workspace_with_option(&temp_dir, workspace_type, &extension)
+            })
+            .await
+            .ok()? // JoinError -> None
+            ? // Option<PathBuf> -> PathBuf or None
+        };
 
         let root_uri = format!("file://{}", temp_dir.display());
 
-        // Spawn connection using TokioAsyncBridgeConnection
-        // Note: spawn() takes command and args, but we need to set the working directory.
-        // For now, we'll spawn without changing directory and rely on the process default.
-        // TODO: Add cwd support to TokioAsyncBridgeConnection::spawn()
-        let conn = TokioAsyncBridgeConnection::spawn(program, &args)
+        // Spawn connection using TokioAsyncBridgeConnection with temp_dir as cwd
+        let conn = TokioAsyncBridgeConnection::spawn(program, &args, Some(&temp_dir))
             .await
             .ok()?;
 
@@ -158,7 +162,6 @@ impl TokioAsyncLanguageServerPool {
     }
 
     /// Check if the pool has a connection for the given key.
-    #[allow(dead_code)]
     pub fn has_connection(&self, key: &str) -> bool {
         self.connections.contains_key(key)
     }
@@ -167,13 +170,11 @@ impl TokioAsyncLanguageServerPool {
     ///
     /// Returns the stored virtual file URI that was created when the connection
     /// was spawned. This URI is used for textDocument/* requests.
-    #[allow(dead_code)]
     pub fn get_virtual_uri(&self, key: &str) -> Option<String> {
         self.virtual_uris.get(key).map(|r| r.clone())
     }
 
     /// Get the notification sender for forwarding $/progress notifications.
-    #[allow(dead_code)]
     pub fn notification_sender(&self) -> &mpsc::Sender<Value> {
         &self.notification_sender
     }
@@ -193,7 +194,6 @@ impl TokioAsyncLanguageServerPool {
     /// * `language_id` - Language ID for the document
     /// * `content` - Document content
     /// * `position` - Hover position
-    #[allow(dead_code)]
     pub async fn hover(
         &self,
         key: &str,
@@ -380,6 +380,59 @@ mod tests {
         assert!(
             std::sync::Arc::ptr_eq(&conn1.unwrap(), &conn2.unwrap()),
             "Concurrent gets should return the same connection"
+        );
+    }
+
+    /// Test that spawn_and_initialize uses async pattern for workspace setup.
+    ///
+    /// This verifies AC3: setup_workspace calls use spawn_blocking wrapper to avoid
+    /// blocking the tokio runtime on synchronous file I/O operations.
+    ///
+    /// The test reads the source file and verifies the pattern:
+    /// - setup_workspace_with_option call must be inside spawn_blocking
+    #[test]
+    fn spawn_and_initialize_workspace_setup_uses_async_pattern() {
+        let source = include_str!("tokio_async_pool.rs");
+
+        // Find the spawn_and_initialize function
+        let spawn_and_initialize_start = source
+            .find("async fn spawn_and_initialize")
+            .expect("spawn_and_initialize function should exist");
+
+        // Extract just the function body (up to the next pub async fn or end of impl)
+        let function_start = &source[spawn_and_initialize_start..];
+        // Find end of function - look for next function definition or end marker
+        let function_end = function_start
+            .find("\n    /// ") // Next doc comment at impl level
+            .or_else(|| function_start.find("\n    pub async fn")) // Next pub async method
+            .or_else(|| function_start.find("\n    #[allow(dead_code)]\n    pub")) // Next method with allow
+            .unwrap_or(function_start.len());
+
+        let function_body = &function_start[..function_end];
+
+        // Verify the function body contains spawn_blocking with setup_workspace_with_option
+        // The pattern should be tokio::task::spawn_blocking wrapping the setup call
+        assert!(
+            function_body.contains("spawn_blocking"),
+            "spawn_and_initialize should use spawn_blocking for setup_workspace_with_option.\n\
+             Function body:\n{}",
+            function_body
+        );
+
+        // Also verify setup_workspace_with_option is inside the spawn_blocking closure
+        let spawn_blocking_pos = function_body.find("spawn_blocking");
+        let setup_pos = function_body.find("setup_workspace_with_option");
+
+        assert!(
+            spawn_blocking_pos.is_some() && setup_pos.is_some(),
+            "Both spawn_blocking and setup_workspace_with_option should exist in spawn_and_initialize"
+        );
+
+        // spawn_blocking should appear before setup_workspace_with_option in the code
+        // (the setup call is inside the spawn_blocking closure)
+        assert!(
+            spawn_blocking_pos.unwrap() < setup_pos.unwrap(),
+            "spawn_blocking should wrap setup_workspace_with_option call"
         );
     }
 
