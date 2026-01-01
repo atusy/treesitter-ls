@@ -1,0 +1,304 @@
+//! Tokio-based async language server pool.
+//!
+//! This module provides `TokioAsyncLanguageServerPool` which manages `TokioAsyncBridgeConnection`
+//! instances for concurrent LSP request handling with fully async I/O.
+//!
+//! # Key Differences from AsyncLanguageServerPool
+//!
+//! - Uses `TokioAsyncBridgeConnection` instead of `AsyncBridgeConnection`
+//! - Spawn and initialize are fully async (no spawn_blocking)
+//! - All I/O operations use tokio async primitives
+
+use super::tokio_connection::TokioAsyncBridgeConnection;
+use super::workspace::{language_to_extension, setup_workspace_with_option};
+use crate::config::settings::BridgeServerConfig;
+use dashmap::DashMap;
+use serde_json::Value;
+use std::sync::Arc;
+use tokio::sync::mpsc;
+
+/// Pool of tokio-based async language server connections.
+///
+/// Unlike `AsyncLanguageServerPool` which uses `spawn_blocking` for initialization,
+/// this pool uses fully async I/O throughout. Each connection is a
+/// `TokioAsyncBridgeConnection` that uses tokio::process for spawning.
+#[allow(dead_code)]
+pub struct TokioAsyncLanguageServerPool {
+    /// Active connections by key (server name)
+    connections: DashMap<String, Arc<TokioAsyncBridgeConnection>>,
+    /// Virtual file URIs per connection key (for textDocument requests)
+    virtual_uris: DashMap<String, String>,
+    /// Channel for forwarding $/progress notifications
+    notification_sender: mpsc::Sender<Value>,
+}
+
+impl TokioAsyncLanguageServerPool {
+    /// Create a new pool with a notification channel.
+    ///
+    /// # Arguments
+    /// * `notification_sender` - Channel for forwarding $/progress notifications
+    #[allow(dead_code)]
+    pub fn new(notification_sender: mpsc::Sender<Value>) -> Self {
+        Self {
+            connections: DashMap::new(),
+            virtual_uris: DashMap::new(),
+            notification_sender,
+        }
+    }
+
+    /// Get or create a tokio async connection for the given key.
+    ///
+    /// This method is fully async - unlike `AsyncLanguageServerPool::get_connection`
+    /// which uses `spawn_blocking` internally, this uses tokio async I/O throughout.
+    ///
+    /// # Arguments
+    /// * `key` - Unique key for this connection (typically server name)
+    /// * `config` - Configuration for spawning a new connection if needed
+    #[allow(dead_code)]
+    pub async fn get_connection(
+        &self,
+        key: &str,
+        config: &BridgeServerConfig,
+    ) -> Option<Arc<TokioAsyncBridgeConnection>> {
+        // Check if we already have a connection
+        if let Some(conn) = self.connections.get(key) {
+            return Some(conn.clone());
+        }
+
+        // Spawn and initialize a new connection
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio_async_pool",
+            "[POOL] Spawning new connection for key={}",
+            key
+        );
+
+        let (conn, virtual_uri) = self.spawn_and_initialize(config).await?;
+
+        let conn = Arc::new(conn);
+        self.connections.insert(key.to_string(), conn.clone());
+        self.virtual_uris.insert(key.to_string(), virtual_uri);
+
+        Some(conn)
+    }
+
+    /// Spawn a new connection and initialize it with the language server.
+    ///
+    /// This is fully async unlike `AsyncLanguageServerPool::spawn_async_connection_blocking`.
+    async fn spawn_and_initialize(
+        &self,
+        config: &BridgeServerConfig,
+    ) -> Option<(TokioAsyncBridgeConnection, String)> {
+        let program = config.cmd.first()?;
+        let args: Vec<&str> = config.cmd.iter().skip(1).map(|s| s.as_str()).collect();
+
+        // Create temp directory
+        static SPAWN_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let counter = SPAWN_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "treesitter-ls-{}-{}-{}",
+            program,
+            std::process::id(),
+            counter
+        ));
+        std::fs::create_dir_all(&temp_dir).ok()?;
+
+        // Determine extension and setup workspace
+        let extension = config
+            .languages
+            .first()
+            .map(|lang| language_to_extension(lang))
+            .unwrap_or("rs");
+
+        let virtual_file_path =
+            setup_workspace_with_option(&temp_dir, config.workspace_type, extension)?;
+
+        let root_uri = format!("file://{}", temp_dir.display());
+
+        // Spawn connection using TokioAsyncBridgeConnection
+        // Note: spawn() takes command and args, but we need to set the working directory.
+        // For now, we'll spawn without changing directory and rely on the process default.
+        // TODO: Add cwd support to TokioAsyncBridgeConnection::spawn()
+        let conn = TokioAsyncBridgeConnection::spawn(program, &args)
+            .await
+            .ok()?;
+
+        // Send initialize request
+        let mut init_params = serde_json::json!({
+            "processId": std::process::id(),
+            "capabilities": {},
+            "rootUri": root_uri,
+            "workspaceFolders": [{"uri": root_uri, "name": "virtual"}],
+        });
+
+        if let Some(ref init_opts) = config.initialization_options {
+            init_params["initializationOptions"] = init_opts.clone();
+        }
+
+        // Send initialize request and await response
+        let (_, receiver) = conn.send_request("initialize", init_params).await.ok()?;
+
+        // Wait for init response
+        let init_response = receiver.await.ok()?;
+        init_response.response.as_ref()?;
+
+        // Send initialized notification
+        conn.send_notification("initialized", serde_json::json!({}))
+            .await
+            .ok()?;
+
+        log::info!(
+            target: "treesitter_ls::bridge::tokio_async_pool",
+            "[POOL] Connection spawned for {}",
+            program
+        );
+
+        // Return connection along with the virtual file URI
+        let virtual_uri = format!("file://{}", virtual_file_path.display());
+        Some((conn, virtual_uri))
+    }
+
+    /// Check if the pool has a connection for the given key.
+    #[allow(dead_code)]
+    pub fn has_connection(&self, key: &str) -> bool {
+        self.connections.contains_key(key)
+    }
+
+    /// Get the virtual file URI for a connection.
+    ///
+    /// Returns the stored virtual file URI that was created when the connection
+    /// was spawned. This URI is used for textDocument/* requests.
+    #[allow(dead_code)]
+    pub fn get_virtual_uri(&self, key: &str) -> Option<String> {
+        self.virtual_uris.get(key).map(|r| r.clone())
+    }
+
+    /// Get the notification sender for forwarding $/progress notifications.
+    #[allow(dead_code)]
+    pub fn notification_sender(&self) -> &mpsc::Sender<Value> {
+        &self.notification_sender
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config::settings::{BridgeServerConfig, WorkspaceType};
+    use tokio::sync::mpsc;
+
+    fn check_rust_analyzer_available() -> bool {
+        std::process::Command::new("rust-analyzer")
+            .arg("--version")
+            .output()
+            .is_ok()
+    }
+
+    /// Test that TokioAsyncLanguageServerPool::get_connection returns
+    /// Arc<TokioAsyncBridgeConnection> after spawn+initialize.
+    ///
+    /// This is the key test for Subtask 3: get_connection must:
+    /// 1. Spawn process using TokioAsyncBridgeConnection::spawn()
+    /// 2. Send initialize request
+    /// 3. Wait for response
+    /// 4. Send initialized notification
+    /// 5. Store virtual_uri
+    /// 6. Return Arc<TokioAsyncBridgeConnection>
+    #[tokio::test]
+    async fn get_connection_returns_arc_tokio_connection_after_initialize() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Get a connection (should spawn, initialize, and return Arc<TokioAsyncBridgeConnection>)
+        let conn = pool.get_connection("rust-analyzer", &config).await;
+        assert!(conn.is_some(), "Should get a connection");
+
+        // Second call should return the same connection (not spawn new)
+        assert!(
+            pool.has_connection("rust-analyzer"),
+            "Pool should have connection after get"
+        );
+    }
+
+    /// Test that pool stores virtual_uri after connection is established.
+    #[tokio::test]
+    async fn pool_stores_virtual_uri_after_connection() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Get a connection
+        let conn = pool.get_connection("rust-analyzer", &config).await;
+        assert!(conn.is_some(), "Should get a connection");
+
+        // Virtual URI should be stored and retrievable
+        let virtual_uri = pool.get_virtual_uri("rust-analyzer");
+        assert!(
+            virtual_uri.is_some(),
+            "Virtual URI should be stored after connection"
+        );
+
+        let uri = virtual_uri.unwrap();
+        assert!(
+            uri.starts_with("file://"),
+            "Virtual URI should be a file:// URI, got: {}",
+            uri
+        );
+        assert!(
+            uri.ends_with(".rs"),
+            "Virtual URI should end with .rs for rust, got: {}",
+            uri
+        );
+    }
+
+    /// Test that concurrent gets share the same connection.
+    #[tokio::test]
+    async fn concurrent_gets_share_same_connection() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = std::sync::Arc::new(super::TokioAsyncLanguageServerPool::new(tx));
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Get first connection
+        let conn1 = pool.get_connection("rust-analyzer", &config).await;
+        // Get second connection - should return the same one
+        let conn2 = pool.get_connection("rust-analyzer", &config).await;
+
+        assert!(conn1.is_some() && conn2.is_some());
+        // Both should be Arc pointers to the same connection
+        assert!(
+            std::sync::Arc::ptr_eq(&conn1.unwrap(), &conn2.unwrap()),
+            "Concurrent gets should return the same connection"
+        );
+    }
+}

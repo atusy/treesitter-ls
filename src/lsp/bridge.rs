@@ -9,6 +9,7 @@ mod cleanup;
 mod connection;
 mod pool;
 mod text_document;
+mod tokio_async_pool;
 mod tokio_connection;
 mod workspace;
 
