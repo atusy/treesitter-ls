@@ -3,8 +3,9 @@ pub mod settings;
 pub mod user;
 
 pub use settings::{
-    CaptureMapping, CaptureMappings, LanguageConfig, LanguageSettings, QueryItem, QueryKind,
-    QueryTypeMappings, TreeSitterSettings, WorkspaceSettings, infer_query_kind,
+    BridgeServerConfig, CaptureMapping, CaptureMappings, LanguageConfig, LanguageSettings,
+    QueryItem, QueryKind, QueryTypeMappings, TreeSitterSettings, WorkspaceSettings,
+    infer_query_kind,
 };
 use std::collections::HashMap;
 pub use user::{UserConfigError, UserConfigResult, load_user_config, user_config_path};
@@ -2056,7 +2057,10 @@ mod tests {
         // Resolve for "rust-analyzer" - should return it directly
         let result = resolve_language_server_with_wildcard(&servers, "rust-analyzer");
 
-        assert!(result.is_some(), "Should return Some when specific key exists");
+        assert!(
+            result.is_some(),
+            "Should return Some when specific key exists"
+        );
         let resolved = result.unwrap();
         assert_eq!(
             resolved.cmd,
