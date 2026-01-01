@@ -147,46 +147,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 120,
-    pbi_id: "PBI-149",
-    goal: "Enable users to set editor-wide defaults in a user config file at XDG standard location",
-    status: "done",
-    subtasks: [
-      {
-        test: "Test user_config_path() returns $XDG_CONFIG_HOME/treesitter-ls/treesitter-ls.toml when XDG_CONFIG_HOME is set",
-        implementation: "Implement user_config_path() function that reads XDG_CONFIG_HOME env var and appends treesitter-ls/treesitter-ls.toml",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "40820bf", message: "feat(config): add user_config_path() with XDG_CONFIG_HOME support", phase: "green" }],
-        notes: [],
-      },
-      {
-        test: "Test user_config_path() returns ~/.config/treesitter-ls/treesitter-ls.toml when XDG_CONFIG_HOME is unset",
-        implementation: "Add fallback logic to user_config_path() using dirs::config_dir() or home_dir() with .config appended",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "45c2174", message: "feat(config): add fallback to ~/.config when XDG_CONFIG_HOME unset", phase: "green" }],
-        notes: [],
-      },
-      {
-        test: "Test load_user_config() returns None (or default Config) when user config file does not exist",
-        implementation: "Implement load_user_config() that returns Ok(None) for missing file - zero-config experience preserved",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "001c566", message: "feat(config): implement load_user_config() with missing file handling", phase: "green" }],
-        notes: [],
-      },
-      {
-        test: "Test load_user_config() returns descriptive ConfigError when user config file exists but contains invalid TOML or schema",
-        implementation: "Add error handling that wraps TOML parse errors with context including file path and error location",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "90caed0", message: "test(config): add test for invalid TOML error handling", phase: "green" }],
-        notes: ["Error handling was implemented in TDD Cycle 3 as part of load_user_config()"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -196,24 +157,24 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-117: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-118: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 120, pbi_id: "PBI-149", goal: "Enable users to set editor-wide defaults in a user config file at XDG standard location", status: "done", subtasks: [] },
     { number: 119, pbi_id: "PBI-150", goal: "Enable users to inherit settings from user config to project config without duplication via merge_all()", status: "done", subtasks: [] },
-    { number: 118, pbi_id: "PBI-151", goal: "Enable unified query configuration with queries array and type inference from filename patterns", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-118: TDD patterns, backward compatibility decisions, transient test failures
+  // Recent 2 retrospectives | Sprint 1-119: TDD patterns, backward compatibility decisions, transient test failures
   retrospectives: [
+    { sprint: 120, improvements: [
+      { action: "XDG path resolution pattern (XDG_CONFIG_HOME → fallback) is reusable - extract generic xdg_path() helper when 2nd usage appears (e.g., cache/data dirs)", timing: "sprint", status: "active", outcome: null },
+      { action: "Multi-sprint ADR implementation strategy worked well - ADR-0010 across 3 sprints (118: schema, 119: merge, 120: user config) - document as planning pattern", timing: "sprint", status: "active", outcome: null },
+      { action: "Integrate load_user_config() into merge_all() pipeline - PBI-149 implements loading but not wiring into config merge", timing: "product", status: "active", outcome: null },
+      { action: "Implement CLI --config option for project config path override (ADR-0010 Phase 4)", timing: "product", status: "active", outcome: null },
+    ] },
     { sprint: 119, improvements: [
       { action: "Deep merge HashMap pattern (entry().and_modify().or_insert()) is reusable - extract to generic helper when 3rd usage appears", timing: "sprint", status: "active", outcome: null },
       { action: "Empty Vec fields should inherit from fallback layer - Vec merge uses .is_empty() check, not Option semantics", timing: "immediate", status: "completed", outcome: "merge_language_servers: if !primary.cmd.is_empty() condition (lines 249, 252)" },
       { action: "E2E test failures unrelated to PBI indicate technical debt - add test_lsp_document_highlight to product backlog", timing: "product", status: "active", outcome: null },
-    ] },
-    { sprint: 118, improvements: [
-      { action: "Combined subtasks indicate shared implementation - consider merging during planning when default behavior is intrinsic to core function", timing: "immediate", status: "completed", outcome: "Subtasks 2 and 3 merged: infer_query_kind() includes default in a275d04" },
-      { action: "New public types exported via config.rs need explicit pub - apply YAGNI-pub: verify each pub is needed", timing: "immediate", status: "completed", outcome: "QueryKind, QueryItem, infer_query_kind exported in config.rs for external use" },
-      { action: "Document backward compatibility decisions during planning - not mid-sprint", timing: "sprint", status: "active", outcome: null },
-      { action: "Investigate transient E2E markdown loading failures - may indicate timing issues in test setup", timing: "product", status: "active", outcome: null },
     ] },
   ],
 };
