@@ -141,13 +141,13 @@ const scrum: ScrumDashboard = {
     number: 118,
     pbi_id: "PBI-149",
     goal: "Show informative 'indexing' message during hover when rust-analyzer is still initializing, with state tracking to transition to normal responses once ready",
-    status: "planning",
+    status: "in_progress",
     subtasks: [
       {
         test: "Unit test: new connection starts with state Indexing",
         implementation: "Add ServerState enum (Indexing/Ready) and server_states: DashMap<String, ServerState> to TokioAsyncLanguageServerPool, initialize to Indexing after spawn",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: ["AC1: TokioAsyncLanguageServerPool tracks ServerState enum per connection"],
       },
