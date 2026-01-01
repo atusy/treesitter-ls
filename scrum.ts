@@ -110,8 +110,8 @@ const scrum: ScrumDashboard = {
         test: "Compile test: TreeSitterLs has tokio_async_pool field of type TokioAsyncLanguageServerPool",
         implementation: "Add tokio_async_pool: TokioAsyncLanguageServerPool field to TreeSitterLs, initialize in new(), add getter method",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "c22bd85", message: "feat(lsp): wire TokioAsyncLanguageServerPool into TreeSitterLs", phase: "green" }],
         notes: ["Keep existing language_server_pool for other handlers during migration", "TokioAsyncLanguageServerPool needs notification_sender channel similar to AsyncLanguageServerPool"],
       },
       // Subtask 6: Replace spawn_blocking in hover_impl with async pool.hover()
