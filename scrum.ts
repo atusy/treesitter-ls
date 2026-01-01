@@ -43,16 +43,20 @@ const scrum: ScrumDashboard = {
       },
       acceptance_criteria: [
         {
-          criterion: "spawn_and_initialize waits for rust-analyzer to complete initial indexing",
-          verification: "Unit test verifies hover is not called until indexing is complete",
+          criterion: "spawn_and_initialize monitors $/progress notifications with token 'rustAnalyzer/indexing' via notification_sender channel",
+          verification: "Unit test: spawn connection, send mock $/progress begin/end, verify wait_for_indexing completes",
         },
         {
-          criterion: "Wait uses $/progress notifications to detect indexing completion",
-          verification: "Unit test verifies $/progress notifications are monitored and indexing end is detected",
+          criterion: "wait_for_indexing blocks until $/progress notification with kind='end' for rustAnalyzer/indexing token (or 60s timeout)",
+          verification: "Unit test: verify wait_for_indexing returns only after receiving {token: 'rustAnalyzer/indexing', value: {kind: 'end'}}",
         },
         {
-          criterion: "Single hover request returns result without retry loop",
-          verification: "E2E test verifies single hover request returns result (no retry loop needed)",
+          criterion: "spawn_and_initialize calls wait_for_indexing after initialized notification before returning connection",
+          verification: "Integration test: spawn rust-analyzer, verify get_connection blocks during indexing phase",
+        },
+        {
+          criterion: "Single hover request returns result without retry loop in tests",
+          verification: "E2E test test_lsp_hover.lua uses single vim.lsp.buf.hover() call without retry loop",
         },
       ],
       status: "ready",
