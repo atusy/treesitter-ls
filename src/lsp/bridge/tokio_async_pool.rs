@@ -506,6 +506,59 @@ impl TokioAsyncLanguageServerPool {
             .and_then(|r| serde_json::from_value(r).ok())
     }
 
+    /// Send a signatureHelp request asynchronously.
+    ///
+    /// # Arguments
+    /// * `key` - Connection pool key
+    /// * `config` - Server configuration
+    /// * `_uri` - Document URI (unused, we use virtual URI)
+    /// * `language_id` - Language ID for the document
+    /// * `content` - Document content
+    /// * `position` - SignatureHelp position (inside function call)
+    pub async fn signature_help(
+        &self,
+        key: &str,
+        config: &BridgeServerConfig,
+        _uri: &str,
+        language_id: &str,
+        content: &str,
+        position: tower_lsp::lsp_types::Position,
+    ) -> Option<tower_lsp::lsp_types::SignatureHelp> {
+        let conn = self.get_connection(key, config).await?;
+
+        // Get virtual file URI
+        let virtual_uri = self.get_virtual_uri(key)?;
+
+        // Sync document (didOpen on first access, didChange on subsequent)
+        self.sync_document(&conn, &virtual_uri, language_id, content)
+            .await?;
+
+        // Send signatureHelp request
+        let params = serde_json::json!({
+            "textDocument": { "uri": virtual_uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let (_, receiver) = conn
+            .send_request("textDocument/signatureHelp", params)
+            .await
+            .ok()?;
+
+        // Await response asynchronously with 30s timeout (matching hover/completion)
+        let result = tokio::time::timeout(std::time::Duration::from_secs(30), receiver)
+            .await
+            .ok()?
+            .ok()?;
+
+        // Parse response
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
     /// Sync document content with the language server.
     ///
     /// On first access for a URI: sends didOpen with version 1.
@@ -1316,6 +1369,79 @@ mod tests {
         assert!(
             hover_result.is_some(),
             "Hover should succeed on first try after get_connection returns"
+        );
+    }
+
+    /// PBI-143 Subtask 1: Test that signature_help() returns SignatureHelp from rust-analyzer.
+    ///
+    /// signature_help() must:
+    /// 1. Get or create connection
+    /// 2. Sync document (didOpen/didChange)
+    /// 3. Send textDocument/signatureHelp request
+    /// 4. Await response with 30s timeout
+    /// 5. Parse and return Option<SignatureHelp>
+    #[tokio::test]
+    async fn signature_help_returns_signature_from_rust_analyzer() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Rust code with a function call where we trigger signatureHelp
+        let content = r#"fn add(a: i32, b: i32) -> i32 { a + b }
+
+fn main() {
+    let result = add(
+}"#;
+
+        // Position inside add( - line 3 (0-indexed), after the opening paren
+        let position = tower_lsp::lsp_types::Position {
+            line: 3,
+            character: 22, // after "add("
+        };
+
+        // Call signature_help() method
+        let signature_result = pool
+            .signature_help(
+                "rust-analyzer",
+                &config,
+                "file:///test.rs",
+                "rust",
+                content,
+                position,
+            )
+            .await;
+
+        // Should return Some(SignatureHelp) with function signature
+        assert!(
+            signature_result.is_some(),
+            "signature_help() should return Some(SignatureHelp) for function call"
+        );
+
+        let signature = signature_result.unwrap();
+
+        // Verify we got at least one signature
+        assert!(
+            !signature.signatures.is_empty(),
+            "Should have at least one signature"
+        );
+
+        // Verify the signature contains the function info
+        let first_sig = &signature.signatures[0];
+        assert!(
+            first_sig.label.contains("add") || first_sig.label.contains("i32"),
+            "Signature should contain 'add' or 'i32', got: {}",
+            first_sig.label
         );
     }
 
