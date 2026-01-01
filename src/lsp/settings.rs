@@ -1,4 +1,4 @@
-use crate::config::{TreeSitterSettings, WorkspaceSettings, merge_settings};
+use crate::config::{TreeSitterSettings, WorkspaceSettings, load_user_config, merge_all};
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -58,14 +58,42 @@ pub fn load_settings(
 ) -> SettingsLoadOutcome {
     let mut events = Vec::new();
 
-    let file_settings = load_toml_settings(root_path, &mut events);
+    // Layer 1: User config from XDG_CONFIG_HOME (~/.config/treesitter-ls/treesitter-ls.toml)
+    let user_config = load_user_config_with_events(&mut events);
+
+    // Layer 2: Project config from root_path/treesitter-ls.toml
+    let project_settings = load_toml_settings(root_path, &mut events);
+
+    // Layer 3: Override settings from initialization options or client configuration
     let override_settings = override_settings
         .and_then(|(source, value)| parse_override_settings(source, value, &mut events));
 
-    let merged = merge_settings(file_settings, override_settings);
+    // Merge all layers: user < project < override (later layers override earlier)
+    let merged = merge_all(&[user_config, project_settings, override_settings]);
     let settings = merged.map(WorkspaceSettings::from);
 
     SettingsLoadOutcome { settings, events }
+}
+
+/// Load user config and add appropriate events to the events vector.
+fn load_user_config_with_events(events: &mut Vec<SettingsEvent>) -> Option<TreeSitterSettings> {
+    match load_user_config() {
+        Ok(Some(settings)) => {
+            events.push(SettingsEvent::info("Loaded user config from XDG_CONFIG_HOME"));
+            Some(settings)
+        }
+        Ok(None) => {
+            // No user config file exists - this is fine (zero-config experience)
+            None
+        }
+        Err(err) => {
+            events.push(SettingsEvent::warning(format!(
+                "Failed to load user config: {}",
+                err
+            )));
+            None
+        }
+    }
 }
 
 fn load_toml_settings(
@@ -130,5 +158,215 @@ fn parse_override_settings(
             )));
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// PBI-155 Subtask 1: Verify load_settings() uses 4-layer merge
+    ///
+    /// This test verifies that load_settings():
+    /// 1. Loads user config from XDG_CONFIG_HOME
+    /// 2. Uses merge_all() with 4 layers: defaults < user < project < init_options
+    #[test]
+    fn test_load_settings_merges_user_config_with_project_and_override() {
+        use std::env;
+        use std::fs;
+
+        // Save original XDG_CONFIG_HOME
+        let original_xdg = env::var("XDG_CONFIG_HOME").ok();
+
+        // Create temp directories for user config and project
+        let user_config_dir = TempDir::new().expect("failed to create user config temp dir");
+        let project_dir = TempDir::new().expect("failed to create project temp dir");
+
+        // Set up user config with unique searchPath
+        let treesitter_config_dir = user_config_dir.path().join("treesitter-ls");
+        fs::create_dir_all(&treesitter_config_dir).expect("failed to create config dir");
+        let user_config_content = r#"
+            searchPaths = ["/user/search/path"]
+            autoInstall = false
+        "#;
+        fs::write(
+            treesitter_config_dir.join("treesitter-ls.toml"),
+            user_config_content,
+        )
+        .expect("failed to write user config");
+
+        // Set up project config with different setting
+        let project_config_content = r#"
+            autoInstall = true
+        "#;
+        fs::write(
+            project_dir.path().join("treesitter-ls.toml"),
+            project_config_content,
+        )
+        .expect("failed to write project config");
+
+        // Point XDG_CONFIG_HOME to our temp directory
+        // SAFETY: Tests run single-threaded
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", user_config_dir.path());
+        }
+
+        // Load settings with project path
+        let outcome = load_settings(Some(project_dir.path()), None);
+
+        // Restore original XDG_CONFIG_HOME
+        unsafe {
+            match original_xdg {
+                Some(val) => env::set_var("XDG_CONFIG_HOME", val),
+                None => env::remove_var("XDG_CONFIG_HOME"),
+            }
+        }
+
+        // Verify: settings should exist
+        assert!(
+            outcome.settings.is_some(),
+            "load_settings should return settings when configs exist"
+        );
+        let settings = outcome.settings.unwrap();
+
+        // Verify: user config's searchPath should be present (inherited from user layer)
+        assert!(
+            settings.search_paths.iter().any(|p| p == "/user/search/path"),
+            "User config searchPath should be inherited. Got: {:?}",
+            settings.search_paths
+        );
+
+        // Verify: project config's autoInstall should override user config
+        assert!(
+            settings.auto_install,
+            "Project config autoInstall=true should override user config autoInstall=false"
+        );
+    }
+
+    /// PBI-155: Verify override_settings (init_options) has highest precedence
+    #[test]
+    fn test_load_settings_override_has_highest_precedence() {
+        use std::env;
+        use std::fs;
+
+        // Save original XDG_CONFIG_HOME
+        let original_xdg = env::var("XDG_CONFIG_HOME").ok();
+
+        // Create temp directories
+        let user_config_dir = TempDir::new().expect("failed to create user config temp dir");
+        let project_dir = TempDir::new().expect("failed to create project temp dir");
+
+        // Set up user config
+        let treesitter_config_dir = user_config_dir.path().join("treesitter-ls");
+        fs::create_dir_all(&treesitter_config_dir).expect("failed to create config dir");
+        let user_config_content = r#"
+            autoInstall = false
+        "#;
+        fs::write(
+            treesitter_config_dir.join("treesitter-ls.toml"),
+            user_config_content,
+        )
+        .expect("failed to write user config");
+
+        // Set up project config
+        let project_config_content = r#"
+            autoInstall = false
+        "#;
+        fs::write(
+            project_dir.path().join("treesitter-ls.toml"),
+            project_config_content,
+        )
+        .expect("failed to write project config");
+
+        // Point XDG_CONFIG_HOME to our temp directory
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", user_config_dir.path());
+        }
+
+        // Create override settings via init_options with autoInstall = true
+        let override_json = serde_json::json!({
+            "autoInstall": true
+        });
+
+        // Load settings with override
+        let outcome = load_settings(
+            Some(project_dir.path()),
+            Some((SettingsSource::InitializationOptions, override_json)),
+        );
+
+        // Restore original XDG_CONFIG_HOME
+        unsafe {
+            match original_xdg {
+                Some(val) => env::set_var("XDG_CONFIG_HOME", val),
+                None => env::remove_var("XDG_CONFIG_HOME"),
+            }
+        }
+
+        // Verify: settings should exist
+        assert!(
+            outcome.settings.is_some(),
+            "load_settings should return settings"
+        );
+        let settings = outcome.settings.unwrap();
+
+        // Verify: override's autoInstall=true should win over user and project's autoInstall=false
+        assert!(
+            settings.auto_install,
+            "Override (init_options) autoInstall=true should have highest precedence"
+        );
+    }
+
+    /// PBI-155: Verify user config loading logs appropriate events
+    #[test]
+    fn test_load_settings_logs_user_config_events() {
+        use std::env;
+        use std::fs;
+
+        // Save original XDG_CONFIG_HOME
+        let original_xdg = env::var("XDG_CONFIG_HOME").ok();
+
+        // Create temp directory for user config
+        let user_config_dir = TempDir::new().expect("failed to create user config temp dir");
+
+        // Set up user config
+        let treesitter_config_dir = user_config_dir.path().join("treesitter-ls");
+        fs::create_dir_all(&treesitter_config_dir).expect("failed to create config dir");
+        let user_config_content = r#"
+            autoInstall = false
+        "#;
+        fs::write(
+            treesitter_config_dir.join("treesitter-ls.toml"),
+            user_config_content,
+        )
+        .expect("failed to write user config");
+
+        // Point XDG_CONFIG_HOME to our temp directory
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", user_config_dir.path());
+        }
+
+        // Load settings (no project path, just user config)
+        let outcome = load_settings(None, None);
+
+        // Restore original XDG_CONFIG_HOME
+        unsafe {
+            match original_xdg {
+                Some(val) => env::set_var("XDG_CONFIG_HOME", val),
+                None => env::remove_var("XDG_CONFIG_HOME"),
+            }
+        }
+
+        // Verify: should have logged info event about loading user config
+        let has_user_config_event = outcome
+            .events
+            .iter()
+            .any(|e| e.kind == SettingsEventKind::Info && e.message.contains("user config"));
+
+        assert!(
+            has_user_config_event,
+            "Should log info event about loading user config. Events: {:?}",
+            outcome.events.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
     }
 }
