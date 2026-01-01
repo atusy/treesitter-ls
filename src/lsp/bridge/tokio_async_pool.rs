@@ -1391,14 +1391,19 @@ mod tests {
         };
 
         let hover_task = tokio::spawn(async move {
-            pool_clone.hover(
-                "test-server",
-                &config,
-                "file:///test.rs",
-                "rust",
-                "fn main() {}",
-                tower_lsp::lsp_types::Position { line: 0, character: 0 },
-            ).await
+            pool_clone
+                .hover(
+                    "test-server",
+                    &config,
+                    "file:///test.rs",
+                    "rust",
+                    "fn main() {}",
+                    tower_lsp::lsp_types::Position {
+                        line: 0,
+                        character: 0,
+                    },
+                )
+                .await
         });
 
         // Give the hover task a moment to try acquiring the lock
@@ -1415,10 +1420,7 @@ mod tests {
 
         // Now the hover task should be able to proceed (it will fail because
         // there's no real connection, but the point is it's no longer blocked on the lock)
-        let result = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            hover_task
-        ).await;
+        let result = tokio::time::timeout(std::time::Duration::from_millis(100), hover_task).await;
 
         assert!(
             result.is_ok(),
@@ -1454,28 +1456,56 @@ mod tests {
         // Two different content variants
         let content_i32 = "fn get_value() -> i32 { 42 }";
         let content_string = "fn get_value() -> String { String::new() }";
-        let position = tower_lsp::lsp_types::Position { line: 0, character: 3 };
+        let position = tower_lsp::lsp_types::Position {
+            line: 0,
+            character: 3,
+        };
 
         // Spawn both hover tasks concurrently
         let pool1 = pool.clone();
         let config1 = config.clone();
         let task_i32 = tokio::spawn(async move {
-            pool1.hover("rust-analyzer", &config1, "file:///test.rs", "rust", content_i32, position).await
+            pool1
+                .hover(
+                    "rust-analyzer",
+                    &config1,
+                    "file:///test.rs",
+                    "rust",
+                    content_i32,
+                    position,
+                )
+                .await
         });
 
         let pool2 = pool.clone();
         let config2 = config.clone();
         let task_string = tokio::spawn(async move {
-            pool2.hover("rust-analyzer", &config2, "file:///test.rs", "rust", content_string, position).await
+            pool2
+                .hover(
+                    "rust-analyzer",
+                    &config2,
+                    "file:///test.rs",
+                    "rust",
+                    content_string,
+                    position,
+                )
+                .await
         });
 
         // Wait for both with timeout
         let result_i32 = tokio::time::timeout(std::time::Duration::from_secs(60), task_i32).await;
-        let result_string = tokio::time::timeout(std::time::Duration::from_secs(60), task_string).await;
+        let result_string =
+            tokio::time::timeout(std::time::Duration::from_secs(60), task_string).await;
 
         // Both should complete (serialization doesn't cause deadlock)
-        assert!(result_i32.is_ok(), "i32 hover should complete within timeout");
-        assert!(result_string.is_ok(), "String hover should complete within timeout");
+        assert!(
+            result_i32.is_ok(),
+            "i32 hover should complete within timeout"
+        );
+        assert!(
+            result_string.is_ok(),
+            "String hover should complete within timeout"
+        );
 
         // Extract hover results
         let hover_i32 = result_i32.unwrap().unwrap();
