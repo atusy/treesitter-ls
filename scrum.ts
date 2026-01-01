@@ -155,7 +155,7 @@ const scrum: ScrumDashboard = {
     number: 117,
     pbi_id: "PBI-146",
     goal: "Track document versions per virtual URI, send didOpen on first access and didChange with incremented version on subsequent accesses, ensuring hover responses reflect the latest code",
-    status: "in_progress",
+    status: "review",
     subtasks: [
       {
         test: "pool_tracks_document_versions_per_uri",
