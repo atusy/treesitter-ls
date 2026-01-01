@@ -2,13 +2,13 @@
 
 ## Status
 
-Proposed (separate mode implemented; merged mode deferred)
+Proposed (isolation=true implemented; isolation=false deferred)
 
 ## Context
 
 When bridging LSP requests for injection regions (see [ADR-0006](0006-language-server-bridge.md)), we need to represent injection content to language servers. A host document may contain multiple injection regions of the same language (e.g., multiple Rust code blocks in Markdown).
 
-The key question: **Should multiple injections of the same language be merged into a single virtual document, or kept separate?**
+The key question: **Should multiple injections of the same language be isolated (each in its own virtual document), or combined into a single virtual document?**
 
 This decision affects:
 - Symbol conflict handling (multiple `fn main()` definitions)
@@ -18,9 +18,9 @@ This decision affects:
 
 ## Decision
 
-**Use separate virtual documents by default, with configurable merged mode for literate programming.**
+**Isolate injections by default (`isolation: true`), with configurable non-isolated mode (`isolation: false`) for literate programming.**
 
-### Separate Mode (Default)
+### Isolated Mode (Default: `isolation: true`)
 
 Each injection region becomes its own virtual document:
 
@@ -32,72 +32,76 @@ Host: file:///docs/tutorial.md
   └─▶ treesitter-ls:///docs/tutorial.md#injection-2.rs  (lines 40-50)
 ```
 
-#### Why Separate by Default
+#### Why Isolation by Default
 
-| Consideration | Separate | Merged |
-|---------------|----------|--------|
+| Consideration | Isolated (`true`) | Non-Isolated (`false`) |
+|---------------|-------------------|------------------------|
 | **Conflicts** | ✅ No conflicts—each block can have `fn main()` | ❌ Duplicate symbols cause errors |
 | **Documentation patterns** | ✅ Matches reality—examples are standalone | ❌ Assumes literate programming |
 | **Offset mapping** | ✅ Simple—contiguous region → contiguous virtual | ❌ Complex—non-contiguous gaps |
-| **Cross-block refs** | ❌ Cannot resolve `foo()` from another block | ✅ Would work if merged |
+| **Cross-block refs** | ❌ Cannot resolve `foo()` from another block | ✅ Would work if combined |
 
-Real-world documentation code blocks are typically **independent examples** that would conflict if merged.
+Real-world documentation code blocks are typically **independent examples** that would conflict if combined.
 
-### Merged Mode (Configurable)
+### Non-Isolated Mode (Configurable: `isolation: false`)
 
-For literate programming workflows, merged mode concatenates all injections of the same language.
+For literate programming workflows, non-isolated mode concatenates all injections of the same language into a single virtual document.
 
 #### Fine-Grained Control: (Host, Injection) Pairs
 
-The appropriate mode depends on **both** the host document and the injection language:
+The appropriate isolation behavior depends on **both** the host document and the injection language:
 
-| Host | Injection | Use Case | Mode |
-|------|-----------|----------|------|
-| Markdown | Python | Documentation examples | separate |
-| Markdown | Rust | Documentation examples | separate |
-| Org-mode | Python | Literate programming (`:tangle`) | merged |
-| `.lhs` | Haskell | Literate Haskell | merged |
+| Host | Injection | Use Case | Isolation |
+|------|-----------|----------|-----------|
+| Markdown | Python | Documentation examples | `true` |
+| Markdown | Rust | Documentation examples | `true` |
+| Org-mode | Python | Literate programming (`:tangle`) | `false` |
+| `.lhs` | Haskell | Literate Haskell | `false` |
 
-The same injection language (e.g., Python) may need different modes in different host contexts.
+The same injection language (e.g., Python) may need different isolation behavior in different host contexts.
 
-**Note**: The current implementation only supports **separate mode**. Merged mode is deferred for future implementation. When merged mode is added, configuration could allow specifying mode per `(host, injection)` pair:
+**Note**: The current implementation only supports **isolated mode** (`isolation: true`). Non-isolated mode is deferred for future implementation. When non-isolated mode is added, configuration allows specifying isolation per `(host, injection)` pair:
 
-```json
-{
-  "languages": {
-    "_": { "bridge": { "_": { "enabled": true, "mode": "separate"  } } }, // this is programmed default
-    "markdown": {...},
-    "org": {...}
-  }
-}
+```toml
+# Global default: isolate all injections
+[languages._.bridge._]
+enabled = true
+isolation = true
+
+[languages.markdown]
+# ...
+
+[languages.org.bridge._]
+# Org-mode: disable isolation for literate programming
+isolation = false
 ```
 
-The `_` wildcard would match any host or injection language, enabling layered defaults:
+The `_` wildcard matches any host or injection language, enabling layered defaults (see [ADR-0011](0011-wildcard-config-inheritance.md)):
 
 | Host | Bridge Config | Meaning |
 |------|---------------|---------|
-| `"_"` | `{ "_": { "mode": "separate" } }` | Global default for all pairs |
-| `"_"` | `{ "haskell": { "mode": "merged" } }` | Default for Haskell in any host |
-| `"org"` | `{ "_": { "mode": "merged" } }` | Default for any injection in org-mode |
-| `"org"` | `{ "python": { "mode": "merged" } }` | Specific (host, injection) pair |
+| `languages._.bridge._` | `isolation = true` | Global default for all pairs |
+| `languages._.bridge.haskell` | `isolation = false` | Default for Haskell in any host |
+| `languages.org.bridge._` | `isolation = false` | Default for any injection in org-mode |
+| `languages.org.bridge.python` | `isolation = false` | Specific (host, injection) pair |
 
 Precedence: **specific pair > host default > injection default > global default**
 
-Note: The `mode` field would be configured per **host/injection pair** within the `bridge` map, not per server. The same server handles both modes—only the virtual document structure differs.
+Note: The `isolation` field is configured per **host/injection pair** within the `bridge` map, not per server. The same server handles both modes—only the virtual document structure differs.
 
-| Mode | Use Case | Behavior |
-|------|----------|----------|
-| `separate` (default) | Documentation, tutorials | Each injection → independent virtual document |
-| `merged` | Literate programming (`.lhs`, org-mode tangling) | All injections of same language → single virtual document |
+| Isolation | Use Case | Behavior |
+|-----------|----------|----------|
+| `true` (default) | Documentation, tutorials | Each injection → independent virtual document |
+| `false` | Literate programming (`.lhs`, org-mode tangling) | All injections of same language → single virtual document |
 
-Merged mode considerations for future implementation:
+Non-isolated mode considerations for future implementation:
 - Insert placeholder lines (comments/whitespace) to preserve line numbers for diagnostics
 - Handle conflicting symbols gracefully (report as diagnostics from treesitter-ls, not language server)
 - Consider block ordering annotations for explicit concatenation order
 
-#### Feature-Specific Mode Overrides
+#### Feature-Specific Isolation Overrides
 
-Even when merged mode is requested, some features may internally use separated virtual documents for performance or error isolation (e.g., `semanticTokens` benefits from smaller documents and tolerates syntax errors in individual blocks). Features requiring cross-block context (e.g., `diagnostics`, `goToDefinition`) should respect the user's mode selection.
+Even when non-isolated mode is requested (`isolation: false`), some features may internally use isolated virtual documents for performance or error isolation (e.g., `semanticTokens` benefits from smaller documents and tolerates syntax errors in individual blocks). Features requiring cross-block context (e.g., `diagnostics`, `goToDefinition`) should respect the user's isolation setting.
 
 ### Virtual Document Identity
 
@@ -170,27 +174,27 @@ One language server process handles **all virtual documents** for that language,
 
 ### Negative
 
-- **No cross-block navigation**: Cannot go-to-definition across blocks in separate mode
+- **No cross-block navigation**: Cannot go-to-definition across blocks when isolated
 - **Many virtual URIs**: Large documents with many injections create many virtual documents
 - **Disk overhead**: Materialized documents use temp disk space
-- **Merged mode complexity**: Future implementation requires line number preservation logic
+- **Non-isolated mode complexity**: Future implementation requires line number preservation logic
 
 ### Neutral
 
-- **Configuration required for literate programming**: Users must opt-in to merged mode
-- **Different behavior per language**: Some languages may use separate, others merged
+- **Configuration required for literate programming**: Users must opt-in to non-isolated mode (`isolation: false`)
+- **Different behavior per language**: Some languages may use isolated mode, others non-isolated
 
 ## Implementation Phases
 
-### Phase 1: Separate Mode Only (Complete)
+### Phase 1: Isolated Mode Only (Complete)
 - [x] Virtual document creation and lifecycle
 - [x] Materialization for rust-analyzer (`workspaceType: "cargo"`)
 - [x] Server process sharing
 - [x] Per-host bridge filtering via `languages.*.bridge` map
 
-### Phase 2: Merged Mode (Future)
-- [ ] `injectionMode: "merged"` configuration option
-- [ ] Concatenation of same-language injections into single virtual document
+### Phase 2: Non-Isolated Mode (Future)
+- [ ] Configuration of `isolation` field in `languages.*.bridge.*`
+- [ ] Concatenation of same-language injections into single virtual document when `isolation: false`
 - [ ] Placeholder line insertion for line number preservation
 - [ ] Conflict detection and reporting
 
