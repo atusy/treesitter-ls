@@ -341,13 +341,16 @@ impl TokioAsyncBridgeConnection {
     /// If not called, Drop will just kill the process.
     pub async fn shutdown(&mut self) -> Result<(), String> {
         // Send shutdown request
-        let (_, receiver) = self.send_request("shutdown", serde_json::json!(null)).await?;
+        let (_, receiver) = self
+            .send_request("shutdown", serde_json::json!(null))
+            .await?;
 
         // Wait for response with timeout
         let _ = tokio::time::timeout(std::time::Duration::from_secs(5), receiver).await;
 
         // Send exit notification
-        self.send_notification("exit", serde_json::json!(null)).await?;
+        self.send_notification("exit", serde_json::json!(null))
+            .await?;
 
         // Wait for child to exit
         if let Some(ref mut child) = self.child {
@@ -842,7 +845,8 @@ mod tests {
 
         // Use 'pwd' to verify the working directory is set correctly
         // On Unix, 'pwd' prints the current working directory
-        let result = TokioAsyncBridgeConnection::spawn("pwd", &[], Some(&temp_dir), None, None).await;
+        let result =
+            TokioAsyncBridgeConnection::spawn("pwd", &[], Some(&temp_dir), None, None).await;
         assert!(result.is_ok(), "spawn() with cwd should succeed");
 
         // Clean up - ignore errors
@@ -900,10 +904,8 @@ mod tests {
     #[tokio::test]
     async fn connection_tracks_temp_dir_for_cleanup() {
         // Create a temp directory to pass to spawn
-        let temp_dir = std::env::temp_dir().join(format!(
-            "tokio-temp-dir-test-{}",
-            std::process::id()
-        ));
+        let temp_dir =
+            std::env::temp_dir().join(format!("tokio-temp-dir-test-{}", std::process::id()));
         std::fs::create_dir_all(&temp_dir).expect("Failed to create temp directory");
 
         let result = TokioAsyncBridgeConnection::spawn(
