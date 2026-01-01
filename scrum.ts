@@ -33,36 +33,8 @@ const scrum: ScrumDashboard = {
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   product_backlog: [
     // ADR-0009 Implementation: Vertical slices with user-facing value
-    // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117), PBI-149 (Sprint 118)
+    // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117), PBI-149 (Sprint 118), PBI-141 (Sprint 119)
     // Rejected: PBI-147 (wait for indexing) - replaced by PBI-149
-    // In Progress: PBI-141 (Sprint 119 - blocked by test regression)
-    {
-      id: "PBI-141",
-      story: {
-        role: "developer editing Lua files",
-        capability: "have go-to-definition requests in Markdown code blocks use fully async I/O",
-        benefit: "definition responses are faster and don't block other LSP requests while waiting for lua-language-server",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "TokioAsyncLanguageServerPool.goto_definition() method implemented with async request/response pattern",
-          verification: "Unit test verifies goto_definition returns valid Location response",
-        },
-        {
-          criterion: "definition_impl uses async pool.goto_definition() instead of spawn_blocking",
-          verification: "grep confirms no spawn_blocking in definition.rs for bridged requests",
-        },
-        {
-          criterion: "Go-to-definition requests to lua-language-server return valid responses through async path",
-          verification: "E2E test opens Markdown with Lua code block, requests definition, receives location",
-        },
-        {
-          criterion: "Go-to-definition requests to rust-analyzer return valid responses through async path (no regression)",
-          verification: "E2E test test_lsp_definition.lua passes - Rust code block definition works",
-        },
-      ],
-      status: "refining",
-    },
     {
       id: "PBI-142",
       story: {
@@ -111,13 +83,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 119,
-    pbi_id: "PBI-141",
-    goal: "Implement fully async go-to-definition for Lua code blocks in Markdown, eliminating spawn_blocking and enabling concurrent LSP requests",
-    status: "review",
-    subtasks: [],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -127,14 +93,19 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-118: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-117: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 119, pbi_id: "PBI-141", goal: "Implement fully async go-to-definition for Lua/Rust code blocks, eliminating spawn_blocking with ServerState tracking for indexing", status: "done", subtasks: [] },
     { number: 118, pbi_id: "PBI-149", goal: "Show informative 'indexing' message during hover when rust-analyzer is still initializing, with state tracking to transition to normal responses once ready", status: "done", subtasks: [] },
-    { number: 117, pbi_id: "PBI-146", goal: "Implement fully async references for Rust code blocks in Markdown, eliminating spawn_blocking and enabling concurrent LSP requests", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-117: git log -- scrum.yaml, scrum.ts
+  // Recent 2 retrospectives | Sprint 1-118: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    { sprint: 119, improvements: [
+      { action: "Pattern reuse from hover() to goto_definition() accelerated development but missed ServerState tracking", timing: "immediate", status: "completed", outcome: "Added ServerState check/transition to goto_definition() matching hover() pattern" },
+      { action: "Sprint Review caught regression before merge - DoD checks are essential gate", timing: "sprint", status: "active", outcome: null },
+      { action: "All async LSP methods need ServerState tracking for indexing - extract common pattern", timing: "sprint", status: "active", outcome: null },
+    ] },
     { sprint: 118, improvements: [
       { action: "ADR-driven development accelerates implementation - ADR-0010 pre-defined architecture, state machine, and detection heuristic", timing: "sprint", status: "active", outcome: null },
       { action: "Reusable patterns across sprints reduce cognitive load - DashMap from Sprint 117 enabled consistent state tracking", timing: "immediate", status: "completed", outcome: "server_states: DashMap<String, ServerState> mirrors document_versions pattern" },
