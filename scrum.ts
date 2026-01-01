@@ -25,37 +25,28 @@ const scrum: ScrumDashboard = {
   product_backlog: [
     // ADR-0009 Implementation: Vertical slices with user-facing value
     // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117)
-    // Rejected: PBI-147 (wait for indexing) - replaced by PBI-149 (informative message approach)
     {
-      id: "PBI-149",
+      id: "PBI-147",
       story: {
         role: "Rustacean editing Markdown",
-        capability: "see informative message when hover fails due to server indexing",
-        benefit: "I understand why hover isn't working and know I can retry later",
+        capability: "get hover results on first request without needing to retry",
+        benefit: "hover works reliably the first time I trigger it on a new code block",
       },
       acceptance_criteria: [
         {
-          criterion: "TokioAsyncLanguageServerPool tracks ServerState enum (Indexing/Ready) per connection, starting in Indexing state after spawn",
-          verification: "Unit test: new connection starts with state Indexing",
+          criterion: "spawn_and_initialize waits for rust-analyzer to complete initial indexing",
+          verification: "Unit test verifies hover is not called until indexing is complete",
         },
         {
-          criterion: "hover_impl returns '{ contents: \"⏳ indexing (rust-analyzer)\" }' when ServerState is Indexing",
-          verification: "Unit test: hover request with Indexing state returns informative message",
+          criterion: "Wait uses $/progress notifications to detect indexing completion",
+          verification: "Unit test verifies $/progress notifications are monitored and indexing end is detected",
         },
         {
-          criterion: "ServerState transitions from Indexing to Ready after first non-empty hover or completion response",
-          verification: "Unit test: verify state transition on non-empty response; empty responses keep Indexing state",
-        },
-        {
-          criterion: "Other LSP features (completion, signatureHelp, definition, references) return empty/null during Indexing without special message",
-          verification: "Unit test: completion returns [], definition returns null during Indexing state",
-        },
-        {
-          criterion: "End-to-end flow works: hover during indexing shows message, hover after Ready shows normal content",
-          verification: "E2E test: trigger hover immediately after server spawn (verify message), wait and retry (verify normal hover)",
+          criterion: "Single hover request returns result without retry loop",
+          verification: "E2E test verifies single hover request returns result (no retry loop needed)",
         },
       ],
-      status: "done",
+      status: "ready",
     },
     {
       id: "PBI-141",
@@ -127,63 +118,10 @@ const scrum: ScrumDashboard = {
       status: "ready",
     },
     // ADR-0010 Implementation: Configuration Merging Strategy
-    {
-      id: "PBI-151",
-      story: {
-        role: "treesitter-ls user managing configurations",
-        capability: "configure query files using a unified queries field with automatic type inference",
-        benefit: "I write less configuration and filenames like highlights.scm are self-documenting",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "QueryItem struct with path (required) and kind (optional) fields parses correctly",
-          verification: "Unit test verifies TOML parsing of queries array with and without kind field",
-        },
-        {
-          criterion: "Type inference: *highlights*.scm -> highlights, *locals*.scm -> locals, *injections*.scm -> injections",
-          verification: "Unit test verifies type inference for various filename patterns",
-        },
-        {
-          criterion: "Default kind is highlights when filename has no recognizable pattern",
-          verification: "Unit test verifies custom.scm and python.scm default to highlights",
-        },
-      ],
-      status: "ready",
-    },
+    // Completed: PBI-151 (Sprint 118)
   ],
 
-  sprint: {
-    number: 118,
-    pbi_id: "PBI-151",
-    goal: "Enable unified query configuration with a queries array that infers type from filename patterns (*highlights*.scm, *locals*.scm, *injections*.scm), reducing configuration verbosity",
-    status: "done",
-    subtasks: [
-      {
-        test: "Verify QueryItem struct with path (required) and kind (optional) fields parses from TOML correctly",
-        implementation: "Define QueryItem struct with serde derives for path: String and kind: Option<QueryKind>",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "d7c430f", message: "feat(config): add QueryItem struct and QueryKind enum for unified query configuration", phase: "green" }],
-        notes: [],
-      },
-      {
-        test: "Verify type inference: *highlights*.scm -> highlights, *locals*.scm -> locals, *injections*.scm -> injections",
-        implementation: "Implement infer_query_kind() function that matches filename patterns to QueryKind enum",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "a275d04", message: "feat(config): add infer_query_kind function for filename-based type inference", phase: "green" }],
-        notes: [],
-      },
-      {
-        test: "Verify custom.scm and python.scm (no recognizable pattern) default to highlights kind",
-        implementation: "Return QueryKind::Highlights as default when no pattern matches in infer_query_kind()",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "a275d04", message: "feat(config): add infer_query_kind function for filename-based type inference", phase: "green" }],
-        notes: ["Combined with subtask 2 since both were implemented in same function"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -201,11 +139,19 @@ const scrum: ScrumDashboard = {
     { number: 143, pbi_id: "PBI-170", goal: "Investigate $/cancelRequest - deferred (tower-lsp limitation, YAGNI)", status: "cancelled", subtasks: [] },
     { number: 142, pbi_id: "PBI-169", goal: "Fix bridge bookkeeping memory leak after crashes/restarts", status: "done", subtasks: [] },
     { number: 141, pbi_id: "PBI-168", goal: "Fix concurrent parse crash recovery to correctly identify failing parsers", status: "done", subtasks: [] },
+    { number: 118, pbi_id: "PBI-151", goal: "Enable unified query configuration with queries array and type inference from filename patterns", status: "done", subtasks: [] },
+    { number: 117, pbi_id: "PBI-146", goal: "Track document versions per virtual URI, send didOpen on first access and didChange with incremented version", status: "done", subtasks: [] },
   ],
 
   retrospectives: [
     { sprint: 147, improvements: [
       { action: "Test review findings (review-tests.md) addressed: smoke tests relocated, tests parameterized, API visibility audited", timing: "immediate", status: "completed", outcome: "3 PBIs completed (172-174), test pyramid improved, rstest adopted for parameterization" },
+    ] },
+    { sprint: 118, improvements: [
+      { action: "Combined subtasks indicate shared implementation - consider merging during planning when default behavior is intrinsic to core function", timing: "immediate", status: "completed", outcome: "Subtasks 2 and 3 merged: infer_query_kind() includes default in a275d04" },
+      { action: "New public types exported via config.rs need explicit pub - apply YAGNI-pub: verify each pub is needed", timing: "immediate", status: "completed", outcome: "QueryKind, QueryItem, infer_query_kind exported in config.rs for external use" },
+      { action: "Document backward compatibility decisions during planning - not mid-sprint", timing: "sprint", status: "active", outcome: null },
+      { action: "Investigate transient E2E markdown loading failures - may indicate timing issues in test setup", timing: "product", status: "active", outcome: null },
     ] },
     { sprint: 144, improvements: [
       { action: "Investigation: LspServiceBuilder.custom_method cannot intercept $/cancelRequest because tower-lsp registers it first in generated code before custom methods", timing: "product", status: "completed", outcome: "PBI-171 deferred - tower-lsp's Router uses HashMap with first-registration-wins, blocking custom interception" },
