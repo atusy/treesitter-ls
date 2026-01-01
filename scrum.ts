@@ -171,7 +171,7 @@ const scrum: ScrumDashboard = {
         test: "Unit test: completion returns [], definition returns null during Indexing state",
         implementation: "Other LSP features check state and return empty/null during Indexing without special message (only hover shows message)",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: ["AC4: Other LSP features return empty/null during Indexing without special message"],
       },
