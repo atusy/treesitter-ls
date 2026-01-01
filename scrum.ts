@@ -201,7 +201,7 @@ const scrum: ScrumDashboard = {
     number: 121,
     pbi_id: "PBI-152",
     goal: "Enable users to define common capture mappings once using _ wildcard and have them apply to all languages",
-    status: "in_progress",
+    status: "review",
     subtasks: [
       {
         test: "resolve_with_wildcard() returns wildcard value when specific key absent - test with captureMappings['python'] where only '_' exists",
