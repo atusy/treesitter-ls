@@ -74,8 +74,8 @@ const scrum: ScrumDashboard = {
         test: "Unit test: TokioAsyncBridgeConnection shutdown while reader idle completes within 100ms",
         implementation: "Implement reader task loop with tokio::select! for read_line/shutdown_rx/timeout branches, parse LSP messages, route responses by id to pending_requests DashMap",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "7a10bcd", message: "feat(bridge): add async request/response queue pattern for concurrent requests", phase: "green" }],
         notes: ["Reader uses tokio::io::BufReader on ChildStdout", "select! enables non-blocking shutdown unlike sync read_line", "Reuse ResponseResult from async_connection.rs"],
       },
       // Subtask 2: Implement send_request and send_notification async methods
@@ -83,8 +83,8 @@ const scrum: ScrumDashboard = {
         test: "Unit test: send_request returns receiver that resolves when reader routes matching response",
         implementation: "Add send_request(method, params) -> Result<oneshot::Receiver<ResponseResult>> and send_notification(method, params) -> Result<()> using tokio::sync::Mutex<ChildStdin>",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "5e35b0b", message: "feat(bridge): add send_request and send_notification async methods", phase: "green" }],
         notes: ["Increment next_request_id atomically", "Insert oneshot::Sender into pending_requests before writing", "Write LSP message format (Content-Length header + JSON body)"],
       },
       // Subtask 3: Implement TokioAsyncLanguageServerPool with spawn_and_initialize
