@@ -29,111 +29,82 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-135 (Sprint 1-112) | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113) | History: git log -- scrum.yaml, scrum.ts
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
-  // Replaced: PBI-136 through PBI-139 (infrastructure-only, never wired) -> PBI-140 through PBI-142 (vertical slices)
   product_backlog: [
     // ADR-0009 Implementation: Vertical slices with user-facing value
     {
-      id: "PBI-140",
+      id: "PBI-141",
       story: {
-        role: "Rustacean editing Markdown",
-        capability: "have hover requests in Markdown code blocks use fully async I/O",
-        benefit: "hover responses are faster and don't block other LSP requests while waiting for rust-analyzer",
+        role: "developer editing Lua files",
+        capability: "have go-to-definition requests in Markdown code blocks use fully async I/O",
+        benefit: "definition responses are faster and don't block other LSP requests while waiting for lua-language-server",
       },
       acceptance_criteria: [
         {
-          criterion: "TokioAsyncBridgeConnection implements full async reader task with select! for read/shutdown/timeout",
-          verification: "Unit test verifies shutdown while reader is idle completes within 100ms (no blocked read_line)",
+          criterion: "TokioAsyncLanguageServerPool.goto_definition() method implemented with async request/response pattern",
+          verification: "Unit test verifies goto_definition returns valid Location response",
         },
         {
-          criterion: "TokioAsyncLanguageServerPool wraps TokioAsyncBridgeConnection and is wired into TreeSitterLs struct",
-          verification: "lsp_impl.rs uses TokioAsyncLanguageServerPool for hover requests instead of LanguageServerPool",
+          criterion: "definition_impl uses async pool.goto_definition() instead of spawn_blocking",
+          verification: "grep confirms no spawn_blocking in definition.rs for bridged requests",
         },
         {
-          criterion: "hover_impl uses async pool.hover() instead of spawn_blocking with sync connection",
-          verification: "grep confirms no spawn_blocking in hover.rs, uses .await on async hover call",
-        },
-        {
-          criterion: "Hover requests to rust-analyzer return valid responses through async path",
-          verification: "Integration test opens Markdown with Rust code block, requests hover, receives type info",
+          criterion: "Go-to-definition requests to lua-language-server return valid responses through async path",
+          verification: "E2E test opens Markdown with Lua code block, requests definition, receives location",
         },
       ],
-      status: "done",
+      status: "ready",
+    },
+    {
+      id: "PBI-142",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "have completion requests in Markdown code blocks use fully async I/O",
+        benefit: "completion responses are faster and don't block other LSP requests while waiting for rust-analyzer",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "TokioAsyncLanguageServerPool.completion() method implemented with async request/response pattern",
+          verification: "Unit test verifies completion returns valid CompletionList response",
+        },
+        {
+          criterion: "completion handler uses async pool.completion() for bridged requests",
+          verification: "grep confirms async completion path in lsp_impl.rs",
+        },
+        {
+          criterion: "Completion requests to rust-analyzer return valid responses through async path",
+          verification: "E2E test opens Markdown with Rust code block, requests completion, receives items",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-143",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "have signatureHelp requests in Markdown code blocks use fully async I/O",
+        benefit: "signature help responses are faster and show parameter hints without blocking",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "TokioAsyncLanguageServerPool.signature_help() method implemented with async request/response pattern",
+          verification: "Unit test verifies signature_help returns valid SignatureHelp response",
+        },
+        {
+          criterion: "signatureHelp handler uses async pool.signature_help() for bridged requests",
+          verification: "grep confirms async signature_help path in lsp_impl.rs",
+        },
+        {
+          criterion: "SignatureHelp requests to rust-analyzer return valid responses through async path",
+          verification: "E2E test opens Markdown with Rust code block, requests signatureHelp, receives signatures",
+        },
+      ],
+      status: "ready",
     },
   ],
 
-  sprint: {
-    number: 113,
-    pbi_id: "PBI-140",
-    goal: "Implement fully async hover bridging with TokioAsyncBridgeConnection reader task, TokioAsyncLanguageServerPool, and wire into hover_impl to replace spawn_blocking pattern",
-    status: "done",
-    subtasks: [
-      // Subtask 1: Implement reader task with select! for clean shutdown (AC1)
-      {
-        test: "Unit test: TokioAsyncBridgeConnection shutdown while reader idle completes within 100ms",
-        implementation: "Implement reader task loop with tokio::select! for read_line/shutdown_rx/timeout branches, parse LSP messages, route responses by id to pending_requests DashMap",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "7a10bcd", message: "feat(bridge): add async request/response queue pattern for concurrent requests", phase: "green" }],
-        notes: ["Reader uses tokio::io::BufReader on ChildStdout", "select! enables non-blocking shutdown unlike sync read_line", "Reuse ResponseResult from async_connection.rs"],
-      },
-      // Subtask 2: Implement send_request and send_notification async methods
-      {
-        test: "Unit test: send_request returns receiver that resolves when reader routes matching response",
-        implementation: "Add send_request(method, params) -> Result<oneshot::Receiver<ResponseResult>> and send_notification(method, params) -> Result<()> using tokio::sync::Mutex<ChildStdin>",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "5e35b0b", message: "feat(bridge): add send_request and send_notification async methods", phase: "green" }],
-        notes: ["Increment next_request_id atomically", "Insert oneshot::Sender into pending_requests before writing", "Write LSP message format (Content-Length header + JSON body)"],
-      },
-      // Subtask 3: Implement TokioAsyncLanguageServerPool with spawn_and_initialize
-      {
-        test: "Unit test: TokioAsyncLanguageServerPool::get_connection returns Arc<TokioAsyncBridgeConnection> after spawn+initialize",
-        implementation: "Create tokio_async_pool.rs with spawn_and_initialize that spawns process, sends initialize request, waits for response, sends initialized notification, stores virtual_uri",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "d385de3", message: "feat(bridge): add TokioAsyncLanguageServerPool with spawn_and_initialize", phase: "green" }],
-        notes: ["Similar to AsyncLanguageServerPool but uses TokioAsyncBridgeConnection", "Store connections in DashMap<String, Arc<TokioAsyncBridgeConnection>>", "Store virtual_uris in DashMap<String, String>"],
-      },
-      // Subtask 4: Implement hover() async method on TokioAsyncLanguageServerPool
-      {
-        test: "Integration test: TokioAsyncLanguageServerPool.hover() returns Hover from rust-analyzer",
-        implementation: "Add pub async fn hover() that calls ensure_document_open (didOpen/didChange), sends textDocument/hover request, awaits response, parses Hover",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "b7a005a", message: "feat(bridge): add hover() async method to TokioAsyncLanguageServerPool", phase: "green" }],
-        notes: ["Follows same pattern as AsyncLanguageServerPool.hover()", "Use connection.send_request + await receiver", "translate virtual URI for textDocument params"],
-      },
-      // Subtask 5: Wire TokioAsyncLanguageServerPool into TreeSitterLs struct
-      {
-        test: "Compile test: TreeSitterLs has tokio_async_pool field of type TokioAsyncLanguageServerPool",
-        implementation: "Add tokio_async_pool: TokioAsyncLanguageServerPool field to TreeSitterLs, initialize in new(), add getter method",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "c22bd85", message: "feat(lsp): wire TokioAsyncLanguageServerPool into TreeSitterLs", phase: "green" }],
-        notes: ["Keep existing language_server_pool for other handlers during migration", "TokioAsyncLanguageServerPool needs notification_sender channel similar to AsyncLanguageServerPool"],
-      },
-      // Subtask 6: Replace spawn_blocking in hover_impl with async pool.hover()
-      {
-        test: "Integration test: hover_impl returns valid Hover through async path (no spawn_blocking)",
-        implementation: "Modify hover_impl to call self.tokio_async_pool.hover() instead of spawn_blocking with sync connection, remove spawn_blocking call, use .await",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "b4c5c52", message: "feat(hover): replace spawn_blocking with async pool.hover()", phase: "green" }],
-        notes: ["AC3: grep confirms no spawn_blocking in hover.rs", "Translate position host->virtual before call, virtual->host after response", "Forward progress notifications to client"],
-      },
-      // Subtask 7: End-to-end integration test with rust-analyzer
-      {
-        test: "Integration test: Open Markdown with Rust code block, request hover in code block, receive type info",
-        implementation: "Create test in tests/ that spawns treesitter-ls, opens Markdown file with ```rust block, sends textDocument/hover, verifies Hover response contains Rust type information",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "0de999b", message: "test(e2e): add hover E2E test for Markdown code blocks", phase: "green" }],
-        notes: ["AC4 verification", "Can use existing test pattern from test_auto_install_integration.rs", "Verify hover content contains fn signature or type info"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -143,28 +114,30 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-111: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-112: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 113, pbi_id: "PBI-140", goal: "Implement fully async hover bridging with TokioAsyncBridgeConnection reader task, TokioAsyncLanguageServerPool, and wire into hover_impl to replace spawn_blocking pattern", status: "done", subtasks: [] },
     { number: 112, pbi_id: "PBI-135", goal: "Implement TokioAsyncBridgeConnection struct using tokio::process::Command for spawning language servers, establishing the foundation for fully async I/O", status: "done", subtasks: [] },
-    { number: 111, pbi_id: "PBI-134", goal: "Store virtual_file_path in AsyncLanguageServerPool so get_virtual_uri returns valid URIs", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-110: modular refactoring pattern, E2E indexing waits
+  // Recent 2 retrospectives | Sprint 1-111: modular refactoring pattern, E2E indexing waits
   retrospectives: [
+    {
+      sprint: 113,
+      improvements: [
+        { action: "INVEST-compliant vertical slice pattern validated - PBI-140 delivered user value (faster hover responses) by combining infrastructure (TokioAsyncBridgeConnection), wiring (TokioAsyncLanguageServerPool into TreeSitterLs), and E2E test in single PBI", timing: "immediate", status: "completed", outcome: "Avoided PBI-091 anti-pattern where infrastructure was never wired; async pool is now used in production hover path" },
+        { action: "Apply vertical slice pattern to PBI-142 (completion + signatureHelp) - each PBI should deliver observable user value, not just infrastructure changes", timing: "sprint", status: "active", outcome: null },
+        { action: "Sync bridge module has potential flaky test (read_response_for_id_with_notifications_returns_none_on_timeout uses 100ms timeout with 5s assertion slack) - monitor for CI failures, consider increasing timeout margin if flaky", timing: "sprint", status: "active", outcome: null },
+        { action: "tokio::select! pattern enables clean async shutdown - reader task completes within 100ms when idle (AC1 verified), unlike sync read_line which blocks until data arrives", timing: "immediate", status: "completed", outcome: "Test shutdown_while_reader_idle_completes_within_100ms passes consistently" },
+        { action: "Remove #[allow(dead_code)] from TokioAsyncBridgeConnection and TokioAsyncLanguageServerPool now that they are wired into production code (hover path uses them)", timing: "sprint", status: "active", outcome: null },
+      ],
+    },
     {
       sprint: 112,
       improvements: [
         { action: "Obvious Implementation pattern validated for tightly-coupled acceptance criteria - when ACs naturally require each other (spawn -> extract handles -> wrap in Mutex), single GREEN commit is correct TDD", timing: "immediate", status: "completed", outcome: "3 ACs implemented in one commit following ADR-0009 struct specification exactly" },
-        { action: "Track #[allow(dead_code)] annotations added during incremental feature implementation - remove as API surface is consumed by subsequent PBIs (PBI-140 through PBI-143)", timing: "sprint", status: "active", outcome: null },
+        { action: "Track #[allow(dead_code)] annotations added during incremental feature implementation - remove as API surface is consumed by subsequent PBIs (PBI-140 through PBI-143)", timing: "sprint", status: "completed", outcome: "Tracked in Sprint 113 retrospective action to remove dead_code annotations" },
         { action: "Continue using parallel module pattern (tokio_connection.rs alongside async_connection.rs) until full migration, then delete old implementation per ADR-0009 Phase 5", timing: "product", status: "active", outcome: null },
-      ],
-    },
-    {
-      sprint: 111,
-      improvements: [
-        { action: "PR review from external tools (gemini-code-assist) caught real bug - continue using automated PR review for async bridge features", timing: "immediate", status: "completed", outcome: "gemini-code-assist identified get_virtual_uri always returning None; bug fixed in Sprint 111" },
-        { action: "When implementing new async connection features, always verify the full request flow including stored state (virtual URIs, document versions) before marking complete", timing: "immediate", status: "completed", outcome: "Added test async_pool_stores_virtual_uri_after_connection to verify URI storage" },
-        { action: "Add E2E test for async bridge hover feature to verify end-to-end flow works (unit test exists but no E2E coverage)", timing: "product", status: "active", outcome: null },
       ],
     },
   ],
