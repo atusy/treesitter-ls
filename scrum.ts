@@ -175,7 +175,63 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 120,
+    pbi_id: "PBI-150",
+    goal: "Make document version increments atomic to prevent duplicate versions under concurrent access",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "Unit test: concurrent sync_document calls with shared counter produce duplicate versions (demonstrates bug)",
+        implementation: "No implementation yet - this test exposes the race condition in the current read-then-write pattern",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Test spawns multiple async tasks calling sync_document simultaneously",
+          "Collects all version numbers sent to LSP server",
+          "Asserts duplicates exist (current buggy behavior) - test should PASS initially, showing the bug",
+        ],
+      },
+      {
+        test: "Unit test: AtomicU32 with fetch_add produces strictly monotonic versions under concurrent access",
+        implementation: "Change document_versions from DashMap<String, u32> to DashMap<String, AtomicU32>, use fetch_add(1, SeqCst) in sync_document",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "AtomicU32::fetch_add atomically increments and returns previous value",
+          "No separate read-then-write, so no race window",
+          "Test spawns multiple async tasks, verifies all versions are unique",
+        ],
+      },
+      {
+        test: "Integration test: parallel sync_document calls produce sequential version numbers with no duplicates",
+        implementation: "Refactor sync_document to use atomic version increment pattern",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Uses real TokioAsyncLanguageServerPool with mock or real connection",
+          "Spawns N concurrent sync_document calls",
+          "Collects versions via trace log or return value",
+          "Asserts: count(unique_versions) == N and max - min + 1 == N",
+        ],
+      },
+      {
+        test: "Trace log confirms monotonically increasing versions in didChange notifications",
+        implementation: "Add trace logging to sync_document showing version numbers sent",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Add log::trace! in sync_document showing uri and version",
+          "E2E or integration test captures logs",
+          "Parse logs to verify strictly increasing sequence",
+        ],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
