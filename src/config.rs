@@ -1097,4 +1097,224 @@ mod tests {
             vec!["pyright-langserver".to_string(), "--stdio".to_string()]
         );
     }
+
+    // PBI-150 Subtask 4: Deep merge for captureMappings (already implemented, verify via merge_all)
+
+    #[test]
+    fn test_merge_all_capture_mappings_deep_merge() {
+        // Project overrides variable.builtin, inherits function.builtin from user config
+        let mut user_mappings = HashMap::new();
+        let mut user_highlights = HashMap::new();
+        user_highlights.insert(
+            "variable.builtin".to_string(),
+            "variable.defaultLibrary".to_string(),
+        );
+        user_highlights.insert(
+            "function.builtin".to_string(),
+            "function.defaultLibrary".to_string(),
+        );
+
+        user_mappings.insert(
+            "_".to_string(),
+            QueryTypeMappings {
+                highlights: user_highlights,
+                locals: HashMap::new(),
+                folds: HashMap::new(),
+            },
+        );
+
+        let user_config = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: user_mappings,
+            auto_install: None,
+            language_servers: None,
+        };
+
+        // Project only overrides variable.builtin
+        let mut project_mappings = HashMap::new();
+        let mut project_highlights = HashMap::new();
+        project_highlights.insert(
+            "variable.builtin".to_string(),
+            "project.variable".to_string(),
+        );
+
+        project_mappings.insert(
+            "_".to_string(),
+            QueryTypeMappings {
+                highlights: project_highlights,
+                locals: HashMap::new(),
+                folds: HashMap::new(),
+            },
+        );
+
+        let project_config = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: project_mappings,
+            auto_install: None,
+            language_servers: None,
+        };
+
+        let result = merge_all(&[Some(user_config), Some(project_config)]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        // variable.builtin: overridden by project
+        assert_eq!(
+            result.capture_mappings["_"].highlights["variable.builtin"],
+            "project.variable"
+        );
+
+        // function.builtin: inherited from user
+        assert_eq!(
+            result.capture_mappings["_"].highlights["function.builtin"],
+            "function.defaultLibrary"
+        );
+    }
+
+    #[test]
+    fn test_merge_all_capture_mappings_adds_new_language() {
+        // User has wildcard "_", project adds "rust" - both should exist
+        let mut user_mappings = HashMap::new();
+        let mut user_highlights = HashMap::new();
+        user_highlights.insert("variable.builtin".to_string(), "user.variable".to_string());
+
+        user_mappings.insert(
+            "_".to_string(),
+            QueryTypeMappings {
+                highlights: user_highlights,
+                locals: HashMap::new(),
+                folds: HashMap::new(),
+            },
+        );
+
+        let user_config = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: user_mappings,
+            auto_install: None,
+            language_servers: None,
+        };
+
+        let mut project_mappings = HashMap::new();
+        let mut rust_highlights = HashMap::new();
+        rust_highlights.insert("type.builtin".to_string(), "rust.type".to_string());
+
+        project_mappings.insert(
+            "rust".to_string(),
+            QueryTypeMappings {
+                highlights: rust_highlights,
+                locals: HashMap::new(),
+                folds: HashMap::new(),
+            },
+        );
+
+        let project_config = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: project_mappings,
+            auto_install: None,
+            language_servers: None,
+        };
+
+        let result = merge_all(&[Some(user_config), Some(project_config)]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        // Both language keys should exist
+        assert!(result.capture_mappings.contains_key("_"));
+        assert!(result.capture_mappings.contains_key("rust"));
+
+        // Wildcard from user
+        assert_eq!(
+            result.capture_mappings["_"].highlights["variable.builtin"],
+            "user.variable"
+        );
+
+        // Rust from project
+        assert_eq!(
+            result.capture_mappings["rust"].highlights["type.builtin"],
+            "rust.type"
+        );
+    }
+
+    #[test]
+    fn test_merge_all_capture_mappings_locals_and_folds() {
+        // Verify deep merge works for locals and folds, not just highlights
+        let mut user_mappings = HashMap::new();
+        let mut user_locals = HashMap::new();
+        user_locals.insert(
+            "definition.var".to_string(),
+            "definition.variable".to_string(),
+        );
+        let mut user_folds = HashMap::new();
+        user_folds.insert("fold.comment".to_string(), "comment".to_string());
+
+        user_mappings.insert(
+            "_".to_string(),
+            QueryTypeMappings {
+                highlights: HashMap::new(),
+                locals: user_locals,
+                folds: user_folds,
+            },
+        );
+
+        let user_config = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: user_mappings,
+            auto_install: None,
+            language_servers: None,
+        };
+
+        // Project overrides one locals, adds one folds
+        let mut project_mappings = HashMap::new();
+        let mut project_locals = HashMap::new();
+        project_locals.insert(
+            "definition.var".to_string(),
+            "project.definition".to_string(),
+        );
+        let mut project_folds = HashMap::new();
+        project_folds.insert("fold.function".to_string(), "function".to_string());
+
+        project_mappings.insert(
+            "_".to_string(),
+            QueryTypeMappings {
+                highlights: HashMap::new(),
+                locals: project_locals,
+                folds: project_folds,
+            },
+        );
+
+        let project_config = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: project_mappings,
+            auto_install: None,
+            language_servers: None,
+        };
+
+        let result = merge_all(&[Some(user_config), Some(project_config)]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        // locals.definition.var: overridden by project
+        assert_eq!(
+            result.capture_mappings["_"].locals["definition.var"],
+            "project.definition"
+        );
+
+        // folds.fold.comment: inherited from user
+        assert_eq!(
+            result.capture_mappings["_"].folds["fold.comment"],
+            "comment"
+        );
+
+        // folds.fold.function: added by project
+        assert_eq!(
+            result.capture_mappings["_"].folds["fold.function"],
+            "function"
+        );
+    }
 }
