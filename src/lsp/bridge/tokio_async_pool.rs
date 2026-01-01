@@ -272,6 +272,13 @@ mod tests {
             .is_ok()
     }
 
+    fn check_lua_language_server_available() -> bool {
+        std::process::Command::new("lua-language-server")
+            .arg("--version")
+            .output()
+            .is_ok()
+    }
+
     /// Test that TokioAsyncLanguageServerPool::get_connection returns
     /// Arc<TokioAsyncBridgeConnection> after spawn+initialize.
     ///
@@ -460,6 +467,91 @@ mod tests {
             }
             tower_lsp::lsp_types::HoverContents::Array(arr) => {
                 assert!(!arr.is_empty(), "Hover array should not be empty");
+            }
+        }
+    }
+
+    /// Test that goto_definition() returns Location from lua-language-server.
+    ///
+    /// Uses lua-language-server for faster test execution (faster startup than rust-analyzer).
+    /// Pattern follows hover() test but for textDocument/definition request.
+    #[tokio::test]
+    async fn goto_definition_returns_location_from_lua_language_server() {
+        if !check_lua_language_server_available() {
+            eprintln!("Skipping: lua-language-server not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["lua-language-server".to_string()],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        // Lua code with a local variable definition and reference
+        // Line 0: local x = 42
+        // Line 1: print(x)  -- request definition on 'x' should go to line 0
+        let content = "local x = 42\nprint(x)";
+
+        // Request definition at position of 'x' reference on line 1, character 6
+        let position = tower_lsp::lsp_types::Position {
+            line: 1,
+            character: 6,
+        };
+
+        // Call goto_definition() method with retry for indexing
+        let mut definition_result = None;
+        for _attempt in 0..10 {
+            definition_result = pool
+                .goto_definition(
+                    "lua-language-server",
+                    &config,
+                    "file:///test.lua", // host URI (not used by tokio pool)
+                    "lua",
+                    content,
+                    position,
+                )
+                .await;
+
+            if definition_result.is_some() {
+                break;
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+
+        // Should return Some(GotoDefinitionResponse) with location pointing to line 0
+        assert!(
+            definition_result.is_some(),
+            "goto_definition() should return Some(GotoDefinitionResponse) for 'x' reference"
+        );
+
+        let def_response = definition_result.unwrap();
+        // Extract the location from the response (could be Scalar, Array, or Link)
+        match def_response {
+            tower_lsp::lsp_types::GotoDefinitionResponse::Scalar(loc) => {
+                assert_eq!(
+                    loc.range.start.line, 0,
+                    "Definition should be on line 0 where x is defined"
+                );
+            }
+            tower_lsp::lsp_types::GotoDefinitionResponse::Array(locs) => {
+                assert!(!locs.is_empty(), "Should have at least one location");
+                assert_eq!(
+                    locs[0].range.start.line, 0,
+                    "Definition should be on line 0 where x is defined"
+                );
+            }
+            tower_lsp::lsp_types::GotoDefinitionResponse::Link(links) => {
+                assert!(!links.is_empty(), "Should have at least one link");
+                assert_eq!(
+                    links[0].target_range.start.line, 0,
+                    "Definition should be on line 0 where x is defined"
+                );
             }
         }
     }
