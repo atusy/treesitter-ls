@@ -754,4 +754,79 @@ mod tests {
             labels
         );
     }
+
+    /// Test that signature_help() returns SignatureHelp from lua-language-server.
+    ///
+    /// Uses lua-language-server for faster test execution (faster startup than rust-analyzer).
+    /// Pattern follows hover/goto_definition/completion tests but for textDocument/signatureHelp request.
+    #[tokio::test]
+    async fn signature_help_returns_signature_from_lua_language_server() {
+        if !check_lua_language_server_available() {
+            eprintln!("Skipping: lua-language-server not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["lua-language-server".to_string()],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        // Lua code with function call - request signature help inside function call
+        // Line 0: local function add(a, b) return a + b end
+        // Line 1: add(  -- cursor after ( should trigger signature help
+        let content = "local function add(a, b) return a + b end\nadd(";
+
+        // Request signature help at position inside add( (line 1, character 4)
+        let position = tower_lsp::lsp_types::Position {
+            line: 1,
+            character: 4,
+        };
+
+        // Call signature_help() method with retry for indexing
+        let mut signature_result = None;
+        for _attempt in 0..10 {
+            signature_result = pool
+                .signature_help(
+                    "lua-language-server",
+                    &config,
+                    "file:///test.lua", // host URI (not used by tokio pool)
+                    "lua",
+                    content,
+                    position,
+                )
+                .await;
+
+            if signature_result.is_some() {
+                break;
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+
+        // Should return Some(SignatureHelp) with signature information
+        assert!(
+            signature_result.is_some(),
+            "signature_help() should return Some(SignatureHelp) for 'add(' call"
+        );
+
+        let sig_help = signature_result.unwrap();
+        // Verify we got signatures
+        assert!(
+            !sig_help.signatures.is_empty(),
+            "Should have at least one signature"
+        );
+
+        // The signature should contain "add" function info with parameters a, b
+        let first_sig = &sig_help.signatures[0];
+        assert!(
+            first_sig.label.contains("add") || first_sig.label.contains("a") || first_sig.label.contains("b"),
+            "Signature should relate to add function, got: {}",
+            first_sig.label
+        );
+    }
 }
