@@ -1411,10 +1411,7 @@ impl LanguageServer for TreeSitterLs {
         let uri = params.text_document.uri;
 
         self.client
-            .log_message(
-                MessageType::LOG,
-                format!("[DID_CHANGE] START uri={}", uri),
-            )
+            .log_message(MessageType::LOG, format!("[DID_CHANGE] START uri={}", uri))
             .await;
 
         // Retrieve the stored document info
