@@ -8,6 +8,7 @@ vim.lsp.config["treesitter-ls"] = {
 				bridge = {
 					python = { enabled = true },
 					rust = { enabled = true },
+					lua = { enabled = true },
 				},
 			},
 		},
@@ -20,6 +21,10 @@ vim.lsp.config["treesitter-ls"] = {
 			["pyright"] = {
 				cmd = { "pyright-langserver", "--stdio" },
 				languages = { "python" },
+			},
+			["lua-language-server"] = {
+				cmd = { "lua-language-server" },
+				languages = { "lua" },
 			},
 		},
 	},
