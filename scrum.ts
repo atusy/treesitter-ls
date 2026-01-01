@@ -128,63 +128,10 @@ const scrum: ScrumDashboard = {
       status: "ready",
     },
     // ADR-0010 Implementation: Configuration Merging Strategy
-    {
-      id: "PBI-151",
-      story: {
-        role: "treesitter-ls user managing configurations",
-        capability: "configure query files using a unified queries field with automatic type inference",
-        benefit: "I write less configuration and filenames like highlights.scm are self-documenting",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "QueryItem struct with path (required) and kind (optional) fields parses correctly",
-          verification: "Unit test verifies TOML parsing of queries array with and without kind field",
-        },
-        {
-          criterion: "Type inference: *highlights*.scm -> highlights, *locals*.scm -> locals, *injections*.scm -> injections",
-          verification: "Unit test verifies type inference for various filename patterns",
-        },
-        {
-          criterion: "Default kind is highlights when filename has no recognizable pattern",
-          verification: "Unit test verifies custom.scm and python.scm default to highlights",
-        },
-      ],
-      status: "ready",
-    },
+    // Completed: PBI-151 (Sprint 118)
   ],
 
-  sprint: {
-    number: 118,
-    pbi_id: "PBI-151",
-    goal: "Enable unified query configuration with a queries array that infers type from filename patterns (*highlights*.scm, *locals*.scm, *injections*.scm), reducing configuration verbosity",
-    status: "done",
-    subtasks: [
-      {
-        test: "Verify QueryItem struct with path (required) and kind (optional) fields parses from TOML correctly",
-        implementation: "Define QueryItem struct with serde derives for path: String and kind: Option<QueryKind>",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "d7c430f", message: "feat(config): add QueryItem struct and QueryKind enum for unified query configuration", phase: "green" }],
-        notes: [],
-      },
-      {
-        test: "Verify type inference: *highlights*.scm -> highlights, *locals*.scm -> locals, *injections*.scm -> injections",
-        implementation: "Implement infer_query_kind() function that matches filename patterns to QueryKind enum",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "a275d04", message: "feat(config): add infer_query_kind function for filename-based type inference", phase: "green" }],
-        notes: [],
-      },
-      {
-        test: "Verify custom.scm and python.scm (no recognizable pattern) default to highlights kind",
-        implementation: "Return QueryKind::Highlights as default when no pattern matches in infer_query_kind()",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "a275d04", message: "feat(config): add infer_query_kind function for filename-based type inference", phase: "green" }],
-        notes: ["Combined with subtask 2 since both were implemented in same function"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -194,25 +141,25 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-116: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-117: git log -- scrum.yaml, scrum.ts
   completed: [
-    { number: 117, pbi_id: "PBI-146", goal: "Track document versions per virtual URI, send didOpen on first access and didChange with incremented version on subsequent accesses, ensuring hover responses reflect the latest code", status: "done", subtasks: [] },
-    { number: 116, pbi_id: "PBI-148", goal: "Prevent resource leaks by storing Child handle and temp_dir, sending proper LSP shutdown sequence on drop, and cleaning up temporary workspace", status: "done", subtasks: [] },
+    { number: 118, pbi_id: "PBI-151", goal: "Enable unified query configuration with queries array and type inference from filename patterns", status: "done", subtasks: [] },
+    { number: 117, pbi_id: "PBI-146", goal: "Track document versions per virtual URI, send didOpen on first access and didChange with incremented version", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-115: modular refactoring pattern, E2E indexing waits, vertical slice validation
+  // Recent 2 retrospectives | Sprint 1-117: TDD patterns, backward compatibility decisions, transient test failures
   retrospectives: [
+    { sprint: 118, improvements: [
+      { action: "Combined subtasks indicate shared implementation - consider merging during planning when default behavior is intrinsic to core function", timing: "immediate", status: "completed", outcome: "Subtasks 2 and 3 merged: infer_query_kind() includes default in a275d04" },
+      { action: "New public types exported via config.rs need explicit pub - apply YAGNI-pub: verify each pub is needed", timing: "immediate", status: "completed", outcome: "QueryKind, QueryItem, infer_query_kind exported in config.rs for external use" },
+      { action: "Document backward compatibility decisions during planning - not mid-sprint", timing: "sprint", status: "active", outcome: null },
+      { action: "Investigate transient E2E markdown loading failures - may indicate timing issues in test setup", timing: "product", status: "active", outcome: null },
+    ] },
     { sprint: 117, improvements: [
       { action: "Study reference implementation patterns before new features - sync bridge had versioning model", timing: "sprint", status: "active", outcome: null },
       { action: "DashMap provides thread-safe state without explicit locking - prefer for concurrent access patterns", timing: "immediate", status: "completed", outcome: "document_versions: DashMap<String, u32> in TokioAsyncLanguageServerPool" },
       { action: "LSP spec: didOpen once per URI, didChange for updates with incrementing version", timing: "immediate", status: "completed", outcome: "sync_document checks version map, sends didOpen v1 or didChange v+1" },
       { action: "Tightly coupled changes belong in single commit - all 4 subtasks shared c2a78c0", timing: "immediate", status: "completed", outcome: "fix(bridge): track document versions per URI, send didOpen/didChange correctly" },
-    ] },
-    { sprint: 116, improvements: [
-      { action: "review.md caught resource leaks before production; continue for complex PRs", timing: "sprint", status: "completed", outcome: "PBI-148 fixed process/temp_dir leaks with proper RAII" },
-      { action: "Store resource handles in struct from spawn - essential for RAII cleanup", timing: "immediate", status: "completed", outcome: "child: Option<Child>, temp_dir: Option<PathBuf>" },
-      { action: "Async shutdown() alongside sync Drop for graceful cleanup when needed", timing: "immediate", status: "completed", outcome: "shutdown() sends LSP exit; Drop kills+removes sync" },
-      { action: "E2E test /tmp cleanup as standard for resource cleanup PBIs", timing: "product", status: "active", outcome: null },
     ] },
   ],
 };
