@@ -1,7 +1,6 @@
 //! Hover method for TreeSitterLs.
 
 use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::notification::Progress;
 use tower_lsp::lsp_types::*;
 
 use crate::language::injection::CacheableInjectionRegion;
@@ -110,108 +109,35 @@ impl TreeSitterLs {
             std::process::id()
         );
 
-        // Get language server connection from pool
+        // Get pool key from config
         let pool_key = server_config.cmd.first().cloned().unwrap_or_default();
 
         self.client
             .log_message(
                 MessageType::LOG,
-                format!("[HOVER] bridge START pool_key={}", pool_key),
+                format!("[HOVER] async bridge START pool_key={}", pool_key),
             )
             .await;
 
-        // Take connection from pool (will spawn if none exists)
-        let conn = match self
-            .language_server_pool
-            .take_connection(&pool_key, &server_config)
-        {
-            Some(c) => c,
-            None => {
-                self.client
-                    .log_message(
-                        MessageType::ERROR,
-                        format!("Failed to spawn language server: {}", pool_key),
-                    )
-                    .await;
-                return Ok(None);
-            }
-        };
+        // Use fully async hover via TokioAsyncLanguageServerPool
+        let hover = self
+            .tokio_async_pool
+            .hover(
+                &pool_key,
+                &server_config,
+                &virtual_uri,
+                &region.language,
+                &virtual_content,
+                virtual_position,
+            )
+            .await;
 
         self.client
             .log_message(
                 MessageType::LOG,
-                "[HOVER] got connection, calling spawn_blocking".to_string(),
+                format!("[HOVER] async bridge DONE has_hover={}", hover.is_some()),
             )
             .await;
-
-        let virtual_uri_clone = virtual_uri.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            // Note: Can't use log_message inside spawn_blocking (not async)
-            // Using timestamps to measure timing
-            let start = std::time::Instant::now();
-            let mut conn = conn;
-
-            // Open the virtual document
-            conn.did_open(&virtual_uri_clone, "rust", &virtual_content);
-            let did_open_elapsed = start.elapsed();
-
-            // Request hover with notifications capture
-            let result = conn.hover_with_notifications(&virtual_uri_clone, virtual_position);
-            let total_elapsed = start.elapsed();
-
-            // Return timing info along with result
-            (result, conn, did_open_elapsed, total_elapsed)
-        })
-        .await;
-
-        self.client
-            .log_message(
-                MessageType::LOG,
-                "[HOVER] spawn_blocking returned".to_string(),
-            )
-            .await;
-
-        // Handle spawn_blocking result and return connection to pool
-        let (hover, notifications) = match result {
-            Ok((result, conn, did_open_elapsed, total_elapsed)) => {
-                self.language_server_pool.return_connection(&pool_key, conn);
-                self.client
-                    .log_message(
-                        MessageType::LOG,
-                        format!(
-                            "[HOVER] timing: did_open={:?}, total={:?}",
-                            did_open_elapsed, total_elapsed
-                        ),
-                    )
-                    .await;
-                (result.response, result.notifications)
-            }
-            Err(e) => {
-                self.client
-                    .log_message(MessageType::ERROR, format!("spawn_blocking failed: {}", e))
-                    .await;
-                (None, vec![])
-            }
-        };
-
-        self.client
-            .log_message(
-                MessageType::LOG,
-                format!("[HOVER] bridge DONE has_hover={}", hover.is_some()),
-            )
-            .await;
-
-        // Forward captured progress notifications to the client
-        for notification in notifications {
-            if let Some(params) = notification.get("params")
-                && let Ok(progress_params) =
-                    serde_json::from_value::<ProgressParams>(params.clone())
-            {
-                self.client
-                    .send_notification::<Progress>(progress_params)
-                    .await;
-            }
-        }
 
         // Translate hover response range back to host document (if present)
         let Some(mut hover_response) = hover else {

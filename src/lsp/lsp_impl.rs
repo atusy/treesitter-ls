@@ -23,8 +23,25 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use super::auto_install::{InstallingLanguages, get_injected_languages};
-use super::bridge::LanguageServerPool;
+use super::bridge::{LanguageServerPool, TokioAsyncLanguageServerPool};
 use super::progress::{create_progress_begin, create_progress_end};
+
+/// Parse a JSON notification and extract ProgressParams if it's a $/progress notification.
+///
+/// Returns None if:
+/// - The notification is not a $/progress notification
+/// - The params field cannot be parsed as ProgressParams
+fn parse_progress_notification(notification: &serde_json::Value) -> Option<ProgressParams> {
+    // Check if this is a $/progress notification
+    let method = notification.get("method")?.as_str()?;
+    if method != "$/progress" {
+        return None;
+    }
+
+    // Extract and parse the params field
+    let params = notification.get("params")?;
+    serde_json::from_value::<ProgressParams>(params.clone()).ok()
+}
 
 fn lsp_legend_types() -> Vec<SemanticTokenType> {
     LEGEND_TYPES
@@ -58,8 +75,14 @@ pub struct TreeSitterLs {
     installing_languages: InstallingLanguages,
     /// Tracks parsers that have crashed
     failed_parsers: FailedParserRegistry,
-    /// Pool of language server connections for injection bridging
+    /// Pool of language server connections for injection bridging (sync)
     language_server_pool: LanguageServerPool,
+    /// Tokio-based async language server pool for fully async bridging
+    tokio_async_pool: TokioAsyncLanguageServerPool,
+    /// Receiver for progress notifications from tokio async pool.
+    /// Wrapped in Option so it can be taken once when starting the forwarder task.
+    tokio_notification_rx:
+        tokio::sync::Mutex<Option<tokio::sync::mpsc::Receiver<serde_json::Value>>>,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -77,6 +100,7 @@ impl std::fmt::Debug for TreeSitterLs {
             .field("installing_languages", &"InstallingLanguages")
             .field("failed_parsers", &"FailedParserRegistry")
             .field("language_server_pool", &"LanguageServerPool")
+            .field("tokio_async_pool", &"TokioAsyncLanguageServerPool")
             .finish_non_exhaustive()
     }
 }
@@ -92,6 +116,9 @@ impl TreeSitterLs {
         // Clean up stale temp directories from previous sessions in the background
         std::thread::spawn(super::bridge::startup_cleanup);
 
+        // Create notification channel for tokio async pool
+        let (tokio_notification_tx, tokio_notification_rx) = tokio::sync::mpsc::channel(64);
+
         Self {
             client,
             language,
@@ -105,6 +132,8 @@ impl TreeSitterLs {
             installing_languages: InstallingLanguages::new(),
             failed_parsers,
             language_server_pool: LanguageServerPool::new(),
+            tokio_async_pool: TokioAsyncLanguageServerPool::new(tokio_notification_tx),
+            tokio_notification_rx: tokio::sync::Mutex::new(Some(tokio_notification_rx)),
         }
     }
 
@@ -473,6 +502,53 @@ impl TreeSitterLs {
         self.settings.store(Arc::new(settings.clone()));
         let summary = self.language.load_settings(settings);
         self.handle_language_events(&summary.events).await;
+    }
+
+    /// Start the background task that forwards $/progress notifications to the LSP client.
+    ///
+    /// This takes ownership of the notification receiver and spawns a task that:
+    /// 1. Polls the receiver for notifications from the tokio async pool
+    /// 2. Parses each notification to extract ProgressParams
+    /// 3. Forwards valid progress notifications to the client
+    ///
+    /// This method is called once from `initialized()` after the LSP handshake completes.
+    async fn start_notification_forwarder(&self) {
+        // Take the receiver from the Option (can only be done once)
+        let mut rx_guard = self.tokio_notification_rx.lock().await;
+        let Some(mut rx) = rx_guard.take() else {
+            // Receiver already taken (shouldn't happen, but defensive)
+            log::warn!(
+                target: "treesitter_ls::notification_forwarder",
+                "Notification receiver already taken, forwarder not started"
+            );
+            return;
+        };
+        drop(rx_guard); // Release the lock before spawning
+
+        let client = self.client.clone();
+
+        // Spawn the forwarder task
+        tokio::spawn(async move {
+            log::debug!(
+                target: "treesitter_ls::notification_forwarder",
+                "Notification forwarder started"
+            );
+
+            while let Some(notification) = rx.recv().await {
+                if let Some(progress_params) = parse_progress_notification(&notification) {
+                    log::debug!(
+                        target: "treesitter_ls::notification_forwarder",
+                        "Forwarding $/progress notification"
+                    );
+                    client.send_notification::<Progress>(progress_params).await;
+                }
+            }
+
+            log::debug!(
+                target: "treesitter_ls::notification_forwarder",
+                "Notification forwarder stopped (channel closed)"
+            );
+        });
     }
 
     async fn report_settings_events(&self, events: &[SettingsEvent]) {
@@ -1272,6 +1348,9 @@ impl LanguageServer for TreeSitterLs {
     }
 
     async fn initialized(&self, _: InitializedParams) {
+        // Start the background task that forwards $/progress notifications to the client
+        self.start_notification_forwarder().await;
+
         self.client
             .log_message(MessageType::INFO, "server is ready")
             .await;
@@ -1847,6 +1926,88 @@ mod tests {
     }
 
     // Note: Large integration tests for auto-install are in tests/test_auto_install_integration.rs
+
+    /// Test that parse_progress_notification correctly extracts ProgressParams from JSON.
+    ///
+    /// This is the core logic used by the notification forwarder to parse
+    /// $/progress notifications before forwarding to the client.
+    #[test]
+    fn test_parse_progress_notification_extracts_params() {
+        // Create a mock $/progress notification as the reader task would receive
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "$/progress",
+            "params": {
+                "token": "rust-analyzer/indexing",
+                "value": {
+                    "kind": "begin",
+                    "title": "Indexing",
+                    "message": "0/100 crates"
+                }
+            }
+        });
+
+        // Parse using the same logic as the forwarder
+        let progress_params = parse_progress_notification(&notification);
+
+        // Verify the params were extracted correctly
+        assert!(
+            progress_params.is_some(),
+            "Should successfully parse $/progress notification"
+        );
+
+        let params = progress_params.unwrap();
+        match params.token {
+            NumberOrString::String(s) => {
+                assert_eq!(s, "rust-analyzer/indexing");
+            }
+            NumberOrString::Number(_) => {
+                panic!("Expected string token");
+            }
+        }
+    }
+
+    /// Test that parse_progress_notification returns None for non-progress notifications.
+    #[test]
+    fn test_parse_progress_notification_returns_none_for_other_methods() {
+        // Create a different notification (not $/progress)
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/publishDiagnostics",
+            "params": {
+                "uri": "file:///test.rs",
+                "diagnostics": []
+            }
+        });
+
+        let progress_params = parse_progress_notification(&notification);
+
+        assert!(
+            progress_params.is_none(),
+            "Should return None for non-progress notifications"
+        );
+    }
+
+    /// Test that parse_progress_notification returns None for malformed params.
+    #[test]
+    fn test_parse_progress_notification_returns_none_for_malformed_params() {
+        // Create a $/progress notification with invalid params structure
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "$/progress",
+            "params": {
+                "invalid_field": "this is not a valid ProgressParams"
+            }
+        });
+
+        let progress_params = parse_progress_notification(&notification);
+
+        // ProgressParams requires 'token' and 'value' fields
+        assert!(
+            progress_params.is_none(),
+            "Should return None for malformed $/progress params"
+        );
+    }
 
     #[test]
     fn test_bridge_router_respects_host_filter() {

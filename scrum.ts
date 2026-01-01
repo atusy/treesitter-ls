@@ -29,10 +29,104 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-134 | History: git log -- scrum.yaml, scrum.ts
-  // PBI-091 (idle cleanup): Deferred - infrastructure already implemented, needs wiring (low priority)
-  // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
-  product_backlog: [],
+  // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113) | History: git log -- scrum.yaml, scrum.ts
+  // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
+  product_backlog: [
+    // ADR-0009 Implementation: Vertical slices with user-facing value
+    // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117)
+    {
+      id: "PBI-147",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "get hover results on first request without needing to retry",
+        benefit: "hover works reliably the first time I trigger it on a new code block",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "spawn_and_initialize waits for rust-analyzer to complete initial indexing",
+          verification: "Unit test verifies hover is not called until indexing is complete",
+        },
+        {
+          criterion: "Wait uses $/progress notifications to detect indexing completion",
+          verification: "Unit test verifies $/progress notifications are monitored and indexing end is detected",
+        },
+        {
+          criterion: "Single hover request returns result without retry loop",
+          verification: "E2E test verifies single hover request returns result (no retry loop needed)",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-141",
+      story: {
+        role: "developer editing Lua files",
+        capability: "have go-to-definition requests in Markdown code blocks use fully async I/O",
+        benefit: "definition responses are faster and don't block other LSP requests while waiting for lua-language-server",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "TokioAsyncLanguageServerPool.goto_definition() method implemented with async request/response pattern",
+          verification: "Unit test verifies goto_definition returns valid Location response",
+        },
+        {
+          criterion: "definition_impl uses async pool.goto_definition() instead of spawn_blocking",
+          verification: "grep confirms no spawn_blocking in definition.rs for bridged requests",
+        },
+        {
+          criterion: "Go-to-definition requests to lua-language-server return valid responses through async path",
+          verification: "E2E test opens Markdown with Lua code block, requests definition, receives location",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-142",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "have completion requests in Markdown code blocks use fully async I/O",
+        benefit: "completion responses are faster and don't block other LSP requests while waiting for rust-analyzer",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "TokioAsyncLanguageServerPool.completion() method implemented with async request/response pattern",
+          verification: "Unit test verifies completion returns valid CompletionList response",
+        },
+        {
+          criterion: "completion handler uses async pool.completion() for bridged requests",
+          verification: "grep confirms async completion path in lsp_impl.rs",
+        },
+        {
+          criterion: "Completion requests to rust-analyzer return valid responses through async path",
+          verification: "E2E test opens Markdown with Rust code block, requests completion, receives items",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-143",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "have signatureHelp requests in Markdown code blocks use fully async I/O",
+        benefit: "signature help responses are faster and show parameter hints without blocking",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "TokioAsyncLanguageServerPool.signature_help() method implemented with async request/response pattern",
+          verification: "Unit test verifies signature_help returns valid SignatureHelp response",
+        },
+        {
+          criterion: "signatureHelp handler uses async pool.signature_help() for bridged requests",
+          verification: "grep confirms async signature_help path in lsp_impl.rs",
+        },
+        {
+          criterion: "SignatureHelp requests to rust-analyzer return valid responses through async path",
+          verification: "E2E test opens Markdown with Rust code block, requests signatureHelp, receives signatures",
+        },
+      ],
+      status: "ready",
+    },
+  ],
 
   sprint: null,
 
@@ -44,30 +138,26 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-110: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-116: git log -- scrum.yaml, scrum.ts
   completed: [
-    { number: 111, pbi_id: "PBI-134", goal: "Store virtual_file_path in AsyncLanguageServerPool so get_virtual_uri returns valid URIs", status: "done", subtasks: [] },
-    { number: 110, pbi_id: "PBI-133", goal: "Verify DashMap lock safety with concurrent test and add safety documentation", status: "done", subtasks: [] },
+    { number: 117, pbi_id: "PBI-146", goal: "Track document versions per virtual URI, send didOpen on first access and didChange with incremented version on subsequent accesses, ensuring hover responses reflect the latest code", status: "done", subtasks: [] },
+    { number: 116, pbi_id: "PBI-148", goal: "Prevent resource leaks by storing Child handle and temp_dir, sending proper LSP shutdown sequence on drop, and cleaning up temporary workspace", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-109: modular refactoring pattern, E2E indexing waits
+  // Recent 2 retrospectives | Sprint 1-115: modular refactoring pattern, E2E indexing waits, vertical slice validation
   retrospectives: [
-    {
-      sprint: 111,
-      improvements: [
-        { action: "PR review from external tools (gemini-code-assist) caught real bug - continue using automated PR review for async bridge features", timing: "immediate", status: "completed", outcome: "gemini-code-assist identified get_virtual_uri always returning None; bug fixed in Sprint 111" },
-        { action: "When implementing new async connection features, always verify the full request flow including stored state (virtual URIs, document versions) before marking complete", timing: "immediate", status: "completed", outcome: "Added test async_pool_stores_virtual_uri_after_connection to verify URI storage" },
-        { action: "Add E2E test for async bridge hover feature to verify end-to-end flow works (unit test exists but no E2E coverage)", timing: "product", status: "active", outcome: null },
-      ],
-    },
-    {
-      sprint: 110,
-      improvements: [
-        { action: "Investigate root cause earlier when PBI assumes a bug exists - validate assumption before detailed implementation planning", timing: "immediate", status: "completed", outcome: "Sprint 110 refinement correctly pivoted from 'fix deadlock' to 'verify and document safety' when code was found already safe" },
-        { action: "Document Rust's .and_then() pattern as key to DashMap safety - it consumes Ref guard before subsequent operations", timing: "immediate", status: "completed", outcome: "Lock safety comments added to DocumentStore methods explaining .and_then() pattern" },
-        { action: "User hang issue investigation: bridge I/O timeout (Sprint 109) and DashMap (Sprint 110) ruled out - investigate tokio::spawn panics or other mutex contention as next step", timing: "product", status: "active", outcome: null },
-      ],
-    },
+    { sprint: 117, improvements: [
+      { action: "Study reference implementation patterns before new features - sync bridge had versioning model", timing: "sprint", status: "active", outcome: null },
+      { action: "DashMap provides thread-safe state without explicit locking - prefer for concurrent access patterns", timing: "immediate", status: "completed", outcome: "document_versions: DashMap<String, u32> in TokioAsyncLanguageServerPool" },
+      { action: "LSP spec: didOpen once per URI, didChange for updates with incrementing version", timing: "immediate", status: "completed", outcome: "sync_document checks version map, sends didOpen v1 or didChange v+1" },
+      { action: "Tightly coupled changes belong in single commit - all 4 subtasks shared c2a78c0", timing: "immediate", status: "completed", outcome: "fix(bridge): track document versions per URI, send didOpen/didChange correctly" },
+    ] },
+    { sprint: 116, improvements: [
+      { action: "review.md caught resource leaks before production; continue for complex PRs", timing: "sprint", status: "completed", outcome: "PBI-148 fixed process/temp_dir leaks with proper RAII" },
+      { action: "Store resource handles in struct from spawn - essential for RAII cleanup", timing: "immediate", status: "completed", outcome: "child: Option<Child>, temp_dir: Option<PathBuf>" },
+      { action: "Async shutdown() alongside sync Drop for graceful cleanup when needed", timing: "immediate", status: "completed", outcome: "shutdown() sends LSP exit; Drop kills+removes sync" },
+      { action: "E2E test /tmp cleanup as standard for resource cleanup PBIs", timing: "product", status: "active", outcome: null },
+    ] },
   ],
 };
 
