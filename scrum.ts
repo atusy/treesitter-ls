@@ -33,34 +33,7 @@ const scrum: ScrumDashboard = {
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   product_backlog: [
     // ADR-0009 Implementation: Vertical slices with user-facing value
-    // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117)
-    {
-      id: "PBI-147",
-      story: {
-        role: "Rustacean editing Markdown",
-        capability: "get hover results on first request without needing to retry",
-        benefit: "hover works reliably the first time I trigger it on a new code block",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "spawn_and_initialize monitors $/progress notifications with token 'rustAnalyzer/indexing' via notification_sender channel",
-          verification: "Unit test: spawn connection, send mock $/progress begin/end, verify wait_for_indexing completes",
-        },
-        {
-          criterion: "wait_for_indexing blocks until $/progress notification with kind='end' for rustAnalyzer/indexing token (or 60s timeout)",
-          verification: "Unit test: verify wait_for_indexing returns only after receiving {token: 'rustAnalyzer/indexing', value: {kind: 'end'}}",
-        },
-        {
-          criterion: "spawn_and_initialize calls wait_for_indexing after initialized notification before returning connection",
-          verification: "Integration test: spawn rust-analyzer, verify get_connection blocks during indexing phase",
-        },
-        {
-          criterion: "Single hover request returns result without retry loop in tests",
-          verification: "E2E test test_lsp_hover.lua uses single vim.lsp.buf.hover() call without retry loop",
-        },
-      ],
-      status: "ready",
-    },
+    // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117), PBI-147 (Sprint 118)
     {
       id: "PBI-141",
       story: {
@@ -132,46 +105,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 118,
-    pbi_id: "PBI-147",
-    goal: "Wait for rust-analyzer indexing completion before returning connection, enabling single hover requests without retry loops",
-    status: "review",
-    subtasks: [
-      {
-        test: "Unit test: spawn connection, send mock $/progress notifications with token='rustAnalyzer/indexing', verify notification channel receives indexing events for filtering",
-        implementation: "In spawn_and_initialize, create mpsc::Receiver to capture $/progress notifications from notification_sender channel for indexing monitoring",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["AC1: spawn_and_initialize monitors $/progress notifications with token 'rustAnalyzer/indexing' via notification_sender channel"],
-      },
-      {
-        test: "Unit test: verify wait_for_indexing blocks until receiving {token: 'rustAnalyzer/indexing', value: {kind: 'end'}} or returns false after 60s timeout",
-        implementation: "Add wait_for_indexing(receiver: &mut mpsc::Receiver<Value>) -> bool that loops on receiver filtering for rustAnalyzer/indexing token with kind='end', with 60s timeout",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["AC2: wait_for_indexing blocks until $/progress notification with kind='end' for rustAnalyzer/indexing token (or 60s timeout)"],
-      },
-      {
-        test: "Integration test: spawn rust-analyzer via get_connection, verify it blocks during indexing phase and returns only after indexing completes",
-        implementation: "In spawn_and_initialize, after sending 'initialized' notification, call wait_for_indexing before returning the connection tuple",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["AC3: spawn_and_initialize calls wait_for_indexing after initialized notification before returning connection"],
-      },
-      {
-        test: "E2E test: update test_lsp_hover.lua to use single vim.lsp.buf.hover() call without retry loop, verify hover shows floating window with type info",
-        implementation: "Remove retry loop (lines 58-81) from test_lsp_hover.lua, replace with single hover call and wait for floating window",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["AC4: Single hover request returns result without retry loop in tests"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -181,10 +115,10 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-116: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-117: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 118, pbi_id: "PBI-147", goal: "Wait for rust-analyzer indexing completion before returning connection, enabling single hover requests without retry loops", status: "done", subtasks: [] },
     { number: 117, pbi_id: "PBI-146", goal: "Track document versions per virtual URI, send didOpen on first access and didChange with incremented version on subsequent accesses, ensuring hover responses reflect the latest code", status: "done", subtasks: [] },
-    { number: 116, pbi_id: "PBI-148", goal: "Prevent resource leaks by storing Child handle and temp_dir, sending proper LSP shutdown sequence on drop, and cleaning up temporary workspace", status: "done", subtasks: [] },
   ],
 
   // Recent 2 retrospectives | Sprint 1-115: modular refactoring pattern, E2E indexing waits, vertical slice validation
