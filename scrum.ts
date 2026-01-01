@@ -29,34 +29,10 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-134 | History: git log -- scrum.yaml, scrum.ts
-  // PBI-091 (idle cleanup): Deferred - infrastructure already implemented, needs wiring (low priority)
-  // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
+  // Completed PBIs: PBI-001 through PBI-135 (Sprint 1-112) | History: git log -- scrum.yaml, scrum.ts
+  // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   product_backlog: [
-    // ADR-0009 Phase 1: TokioAsyncBridgeConnection foundation
-    {
-      id: "PBI-135",
-      story: {
-        role: "Rustacean editing Markdown",
-        capability: "have bridge connections spawn language servers using tokio::process::Command",
-        benefit: "the foundation for fully async I/O is established without blocking OS threads",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "TokioAsyncBridgeConnection::spawn() uses tokio::process::Command instead of std::process::Command",
-          verification: "Unit test spawns rust-analyzer with tokio::process and verifies child process is running",
-        },
-        {
-          criterion: "Async stdin/stdout handles are obtained from the tokio Child process",
-          verification: "Unit test verifies ChildStdin and ChildStdout are extracted and stored",
-        },
-        {
-          criterion: "The struct stores tokio::sync::Mutex<ChildStdin> for async write serialization",
-          verification: "Type signature compiles with tokio::sync::Mutex wrapping ChildStdin",
-        },
-      ],
-      status: "ready",
-    },
+    // ADR-0009 Phase 2-4: Async reader, request handling, initialization
     {
       id: "PBI-136",
       story: {
@@ -151,46 +127,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 112,
-    pbi_id: "PBI-135",
-    goal: "Implement TokioAsyncBridgeConnection struct using tokio::process::Command for spawning language servers, establishing the foundation for fully async I/O",
-    status: "review",
-    subtasks: [
-      {
-        test: "tokio_async_bridge_connection_struct_exists - verify the struct has required fields: stdin (tokio::sync::Mutex<ChildStdin>), pending_requests (Arc<DashMap>), next_request_id (AtomicI64), shutdown_tx, reader_handle",
-        implementation: "Define TokioAsyncBridgeConnection struct in new file src/lsp/bridge/tokio_connection.rs with all required fields",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "853902a", message: "feat(bridge): add TokioAsyncBridgeConnection struct skeleton", phase: "green" }],
-        notes: ["AC3: The struct stores tokio::sync::Mutex<ChildStdin> for async write serialization"],
-      },
-      {
-        test: "spawn_uses_tokio_process_command - unit test spawns a simple process with tokio::process::Command and verifies child is created",
-        implementation: "Implement spawn() async fn using tokio::process::Command with stdin/stdout piped",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "5569fa9", message: "test(bridge): add failing test for spawn() with tokio::process::Command", phase: "green" }, { hash: "36e3df1", message: "feat(bridge): implement spawn() with tokio::process::Command", phase: "green" }],
-        notes: ["AC1: TokioAsyncBridgeConnection::spawn() uses tokio::process::Command instead of std::process::Command", "Obvious Implementation pattern - all spawn subtasks implemented together"],
-      },
-      {
-        test: "spawn_extracts_stdin_stdout_from_child - verify ChildStdin and ChildStdout are obtained from tokio Child process and stdin is wrapped in tokio::sync::Mutex",
-        implementation: "Take stdin/stdout from Child, wrap stdin in tokio::sync::Mutex, store stdout for reader task",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "36e3df1", message: "feat(bridge): implement spawn() with tokio::process::Command", phase: "green" }],
-        notes: ["AC2: Async stdin/stdout handles are obtained from the tokio Child process", "Implemented as part of spawn() in subtask 2"],
-      },
-      {
-        test: "spawn_creates_reader_task_handle - verify spawn returns struct with reader_handle (tokio::task::JoinHandle) and shutdown_tx (oneshot::Sender)",
-        implementation: "Create placeholder reader task with tokio::spawn, store shutdown oneshot sender",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "36e3df1", message: "feat(bridge): implement spawn() with tokio::process::Command", phase: "green" }],
-        notes: ["Prepare for PBI-136 reader task with select!", "Implemented as part of spawn() in subtask 2"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -200,28 +137,28 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-110: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-111: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 112, pbi_id: "PBI-135", goal: "Implement TokioAsyncBridgeConnection struct using tokio::process::Command for spawning language servers, establishing the foundation for fully async I/O", status: "done", subtasks: [] },
     { number: 111, pbi_id: "PBI-134", goal: "Store virtual_file_path in AsyncLanguageServerPool so get_virtual_uri returns valid URIs", status: "done", subtasks: [] },
-    { number: 110, pbi_id: "PBI-133", goal: "Verify DashMap lock safety with concurrent test and add safety documentation", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-109: modular refactoring pattern, E2E indexing waits
+  // Recent 2 retrospectives | Sprint 1-110: modular refactoring pattern, E2E indexing waits
   retrospectives: [
+    {
+      sprint: 112,
+      improvements: [
+        { action: "Obvious Implementation pattern validated for tightly-coupled acceptance criteria - when ACs naturally require each other (spawn -> extract handles -> wrap in Mutex), single GREEN commit is correct TDD", timing: "immediate", status: "completed", outcome: "3 ACs implemented in one commit following ADR-0009 struct specification exactly" },
+        { action: "Track #[allow(dead_code)] annotations added during incremental feature implementation - remove as API surface is consumed by subsequent PBIs (PBI-136 through PBI-139)", timing: "sprint", status: "active", outcome: null },
+        { action: "Continue using parallel module pattern (tokio_connection.rs alongside async_connection.rs) until full migration, then delete old implementation per ADR-0009 Phase 5", timing: "product", status: "active", outcome: null },
+      ],
+    },
     {
       sprint: 111,
       improvements: [
         { action: "PR review from external tools (gemini-code-assist) caught real bug - continue using automated PR review for async bridge features", timing: "immediate", status: "completed", outcome: "gemini-code-assist identified get_virtual_uri always returning None; bug fixed in Sprint 111" },
         { action: "When implementing new async connection features, always verify the full request flow including stored state (virtual URIs, document versions) before marking complete", timing: "immediate", status: "completed", outcome: "Added test async_pool_stores_virtual_uri_after_connection to verify URI storage" },
         { action: "Add E2E test for async bridge hover feature to verify end-to-end flow works (unit test exists but no E2E coverage)", timing: "product", status: "active", outcome: null },
-      ],
-    },
-    {
-      sprint: 110,
-      improvements: [
-        { action: "Investigate root cause earlier when PBI assumes a bug exists - validate assumption before detailed implementation planning", timing: "immediate", status: "completed", outcome: "Sprint 110 refinement correctly pivoted from 'fix deadlock' to 'verify and document safety' when code was found already safe" },
-        { action: "Document Rust's .and_then() pattern as key to DashMap safety - it consumes Ref guard before subsequent operations", timing: "immediate", status: "completed", outcome: "Lock safety comments added to DocumentStore methods explaining .and_then() pattern" },
-        { action: "User hang issue investigation: bridge I/O timeout (Sprint 109) and DashMap (Sprint 110) ruled out - investigate tokio::spawn panics or other mutex contention as next step", timing: "product", status: "active", outcome: null },
       ],
     },
   ],
