@@ -248,6 +248,10 @@ impl TokioAsyncLanguageServerPool {
 impl TokioAsyncLanguageServerPool {
     /// Send a hover request asynchronously.
     ///
+    /// If the server is in Indexing state and returns an empty response, returns
+    /// an informative message instead of None. This helps users understand why
+    /// hover isn't working during rust-analyzer's indexing phase.
+    ///
     /// # Arguments
     /// * `key` - Connection pool key
     /// * `config` - Server configuration
@@ -269,6 +273,9 @@ impl TokioAsyncLanguageServerPool {
         // Get virtual file URI
         let virtual_uri = self.get_virtual_uri(key)?;
 
+        // Check server state before making the request
+        let server_state = self.get_server_state(key);
+
         // Sync document (didOpen on first access, didChange on subsequent)
         self.sync_document(&conn, &virtual_uri, language_id, content)
             .await?;
@@ -288,12 +295,28 @@ impl TokioAsyncLanguageServerPool {
             .ok()?;
 
         // Parse response
-        result
+        let hover_result: Option<tower_lsp::lsp_types::Hover> = result
             .response?
             .get("result")
             .cloned()
             .filter(|r| !r.is_null())
-            .and_then(|r| serde_json::from_value(r).ok())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        // ADR-0010: Return informative message during Indexing state
+        if hover_result.is_none() && server_state == Some(ServerState::Indexing) {
+            // Return informative hover message with hourglass emoji and server name
+            return Some(tower_lsp::lsp_types::Hover {
+                contents: tower_lsp::lsp_types::HoverContents::Markup(
+                    tower_lsp::lsp_types::MarkupContent {
+                        kind: tower_lsp::lsp_types::MarkupKind::Markdown,
+                        value: format!("\u{23f3} indexing ({})", key),
+                    },
+                ),
+                range: None,
+            });
+        }
+
+        hover_result
     }
 
     /// Sync document content with the language server.
@@ -971,6 +994,77 @@ mod tests {
             state.unwrap(),
             super::ServerState::Indexing,
             "New connection should start with Indexing state"
+        );
+    }
+
+    /// Test that hover returns informative message when server state is Indexing.
+    ///
+    /// AC2: hover_impl returns informative message during Indexing state.
+    /// Message format: "hourglass indexing (server-name)"
+    #[tokio::test]
+    async fn hover_returns_indexing_message_when_state_is_indexing() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        let content = "fn main() {}";
+        let position = tower_lsp::lsp_types::Position {
+            line: 0,
+            character: 3,
+        };
+
+        // First hover - should return indexing message because state is Indexing
+        // (not retrying, just single immediate call)
+        let hover_result = pool
+            .hover(
+                "rust-analyzer",
+                &config,
+                "file:///test.rs",
+                "rust",
+                content,
+                position,
+            )
+            .await;
+
+        // Should return Some(Hover) with indexing message
+        assert!(
+            hover_result.is_some(),
+            "hover() should return Some during Indexing state"
+        );
+
+        let hover = hover_result.unwrap();
+        let contents = match hover.contents {
+            tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
+            tower_lsp::lsp_types::HoverContents::Scalar(s) => match s {
+                tower_lsp::lsp_types::MarkedString::String(s) => s,
+                tower_lsp::lsp_types::MarkedString::LanguageString(ls) => ls.value,
+            },
+            tower_lsp::lsp_types::HoverContents::Array(_) => {
+                panic!("Expected Markup or Scalar, got Array")
+            }
+        };
+
+        // Should contain hourglass emoji and server name
+        assert!(
+            contents.contains("indexing"),
+            "Hover during Indexing should mention 'indexing', got: {}",
+            contents
+        );
+        assert!(
+            contents.contains("rust-analyzer"),
+            "Hover during Indexing should mention server name, got: {}",
+            contents
         );
     }
 }
