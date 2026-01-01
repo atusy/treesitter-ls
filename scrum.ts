@@ -54,7 +54,7 @@ const scrum: ScrumDashboard = {
           verification: "E2E test opens Markdown with Lua code block, requests definition, receives location",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-142",
@@ -104,7 +104,55 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 114,
+    pbi_id: "PBI-141",
+    goal: "Implement TokioAsyncLanguageServerPool.goto_definition() with async I/O and wire into definition_impl to replace spawn_blocking pattern for faster go-to-definition in Markdown code blocks",
+    status: "done",
+    subtasks: [
+      {
+        test: "Unit test: goto_definition_returns_location_from_lua_language_server - verify goto_definition() returns valid GotoDefinitionResponse from lua-language-server",
+        implementation: "Add goto_definition() method to TokioAsyncLanguageServerPool following hover() pattern: get_connection, ensure_document_open, send textDocument/definition request, await response with timeout, parse to GotoDefinitionResponse",
+        type: "behavioral",
+        status: "completed",
+        commits: [
+          { hash: "946d590", message: "test(bridge): add failing test for TokioAsyncLanguageServerPool.goto_definition()", phase: "green" as CommitPhase },
+          { hash: "2f20be9", message: "feat(bridge): add goto_definition() to TokioAsyncLanguageServerPool", phase: "green" as CommitPhase }
+        ],
+        notes: ["Uses Lua instead of Rust for faster test execution (lua-language-server starts faster than rust-analyzer)", "Pattern established by hover() in Sprint 113"],
+      },
+      {
+        test: "Integration: definition_impl uses async pool.goto_definition() instead of spawn_blocking",
+        implementation: "Replace spawn_blocking in definition.rs with self.tokio_async_pool.goto_definition() call, similar to hover_impl pattern",
+        type: "behavioral",
+        status: "completed",
+        commits: [
+          { hash: "2d3555a", message: "feat(bridge): wire TokioAsyncLanguageServerPool.goto_definition() into definition_impl", phase: "green" as CommitPhase }
+        ],
+        notes: ["Verify with grep that no spawn_blocking remains in definition.rs for bridged requests"],
+      },
+      {
+        test: "E2E test: test_lsp_definition.lua verifies go-to-definition in Markdown Rust code block",
+        implementation: "Run existing E2E test - no new test needed as test_lsp_definition.lua already tests this flow",
+        type: "behavioral",
+        status: "completed",
+        commits: [
+          { hash: "9512d07", message: "fix(bridge): add cwd support to TokioAsyncBridgeConnection for rust-analyzer", phase: "green" as CommitPhase }
+        ],
+        notes: ["Existing test covers the user-facing behavior", "Verifies end-to-end async path works", "Required adding spawn_with_cwd() and test retry logic for rust-analyzer indexing"],
+      },
+      {
+        test: "Cleanup: Remove #[allow(dead_code)] annotations from TokioAsyncLanguageServerPool",
+        implementation: "Remove dead_code annotations now that methods are wired into production code (hover + goto_definition)",
+        type: "structural",
+        status: "completed",
+        commits: [
+          { hash: "58390b3", message: "refactor(bridge): remove #[allow(dead_code)] from TokioAsyncLanguageServerPool", phase: "refactoring" as CommitPhase }
+        ],
+        notes: ["Retrospective action from Sprint 113", "Kept dead_code on has_connection() and notification_sender() (test-only or not yet used)"],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
