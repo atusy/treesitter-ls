@@ -76,9 +76,9 @@ const scrum: ScrumDashboard = {
         test: "Integration test: did_open triggers diagnostic collection and forwarding for injection regions",
         implementation: "Wire DiagnosticCollector and DiagnosticForwarder into did_open flow after eager_spawn_for_injections",
         type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: ["Call client.publish_diagnostics with forwarded diagnostics", "Handle multiple injection regions in same document"],
+        status: "green",
+        commits: [{ hash: "d15704b", message: "feat(bridge): wire diagnostic collection into did_open flow", phase: "green" }],
+        notes: ["Added did_open_with_diagnostics method to LanguageServerConnection", "Added collect_and_forward_injection_diagnostics to TreeSitterLs", "VirtualToHostRegistry added for diagnostic translation"],
       },
       {
         test: "Integration test: did_change clears old diagnostics and re-collects for affected injection regions",
