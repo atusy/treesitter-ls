@@ -37,19 +37,24 @@ pub async fn wait_for_indexing(receiver: &mut mpsc::Receiver<Value>) -> bool {
     wait_for_indexing_with_timeout(receiver, INDEXING_TIMEOUT).await
 }
 
-/// Wait for rust-analyzer indexing to complete with custom timeout.
+/// Core implementation for waiting for rust-analyzer indexing.
+///
+/// This function loops on the notification receiver, filtering for $/progress
+/// notifications with token 'rustAnalyzer/indexing' and kind='end'.
+/// It optionally forwards notifications to another channel.
 ///
 /// # Arguments
 /// * `receiver` - Channel receiving $/progress notifications
 /// * `timeout` - Maximum time to wait for indexing
+/// * `forward_to` - Optional channel to forward all notifications to
 ///
 /// # Returns
 /// * `true` if indexing completed successfully (received end notification)
-/// * `false` if timeout was reached
-#[cfg(test)]
-pub async fn wait_for_indexing_with_timeout(
+/// * `false` if timeout was reached or channel closed
+async fn wait_for_indexing_impl(
     receiver: &mut mpsc::Receiver<Value>,
     timeout: Duration,
+    forward_to: Option<&mpsc::Sender<Value>>,
 ) -> bool {
     let deadline = tokio::time::Instant::now() + timeout;
 
@@ -65,7 +70,12 @@ pub async fn wait_for_indexing_with_timeout(
             notification = receiver.recv() => {
                 match notification {
                     Some(value) => {
-                        // Check if this is a $/progress notification with rustAnalyzer/indexing token
+                        // Forward notification if sender provided
+                        if let Some(sender) = forward_to {
+                            let _ = sender.try_send(value.clone());
+                        }
+
+                        // Check if this is the indexing end notification
                         if is_indexing_end(&value) {
                             log::info!(
                                 target: "treesitter_ls::bridge::tokio_async_pool",
@@ -88,6 +98,23 @@ pub async fn wait_for_indexing_with_timeout(
     }
 }
 
+/// Wait for rust-analyzer indexing to complete with custom timeout.
+///
+/// # Arguments
+/// * `receiver` - Channel receiving $/progress notifications
+/// * `timeout` - Maximum time to wait for indexing
+///
+/// # Returns
+/// * `true` if indexing completed successfully (received end notification)
+/// * `false` if timeout was reached
+#[cfg(test)]
+pub async fn wait_for_indexing_with_timeout(
+    receiver: &mut mpsc::Receiver<Value>,
+    timeout: Duration,
+) -> bool {
+    wait_for_indexing_impl(receiver, timeout, None).await
+}
+
 /// Wait for rust-analyzer indexing while forwarding notifications to another channel.
 ///
 /// This function is used during initialization to:
@@ -105,40 +132,7 @@ async fn wait_for_indexing_with_forward(
     receiver: &mut mpsc::Receiver<Value>,
     forward_to: &mpsc::Sender<Value>,
 ) -> bool {
-    let deadline = tokio::time::Instant::now() + INDEXING_TIMEOUT;
-
-    loop {
-        tokio::select! {
-            _ = tokio::time::sleep_until(deadline) => {
-                log::warn!(
-                    target: "treesitter_ls::bridge::tokio_async_pool",
-                    "[POOL] Timeout waiting for rust-analyzer indexing"
-                );
-                return false;
-            }
-            notification = receiver.recv() => {
-                match notification {
-                    Some(value) => {
-                        // Forward all notifications to the pool's sender
-                        let _ = forward_to.try_send(value.clone());
-
-                        // Check if this is the indexing end notification
-                        if is_indexing_end(&value) {
-                            return true;
-                        }
-                    }
-                    None => {
-                        // Channel closed - sender dropped
-                        log::warn!(
-                            target: "treesitter_ls::bridge::tokio_async_pool",
-                            "[POOL] Notification channel closed while waiting for indexing"
-                        );
-                        return false;
-                    }
-                }
-            }
-        }
-    }
+    wait_for_indexing_impl(receiver, INDEXING_TIMEOUT, Some(forward_to)).await
 }
 
 /// Check if a notification is the indexing end notification.
@@ -234,6 +228,17 @@ impl TokioAsyncLanguageServerPool {
     /// Spawn a new connection and initialize it with the language server.
     ///
     /// This is fully async unlike `AsyncLanguageServerPool::spawn_async_connection_blocking`.
+    ///
+    /// # Notification Forwarding Lifecycle
+    ///
+    /// This function creates a local notification channel for monitoring indexing completion,
+    /// then spawns a background forwarder task after indexing completes. The forwarder runs
+    /// until one of these conditions:
+    /// - The connection's notification channel closes (connection dropped)
+    /// - The pool's notification_sender channel is full or closed
+    ///
+    /// The background task is detached and will clean up automatically when channels close.
+    /// No explicit shutdown is required.
     async fn spawn_and_initialize(
         &self,
         config: &BridgeServerConfig,
