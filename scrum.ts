@@ -105,7 +105,38 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 120,
+    pbi_id: "PBI-142",
+    goal: "Implement fully async completion with TokioAsyncLanguageServerPool",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "Unit test - TokioAsyncLanguageServerPool.completion() returns CompletionResponse",
+        implementation: "Add completion() method following hover() pattern",
+        type: "behavioral",
+        status: "green",
+        commits: [],
+        notes: ["File: src/lsp/bridge/tokio_async_pool.rs"],
+      },
+      {
+        test: "Grep verification - no spawn_blocking in completion handler for bridged requests",
+        implementation: "Replace spawn_blocking with async pool.completion()",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["File: src/lsp/lsp_impl/text_document/completion.rs", "Keep range translation logic for CompletionTextEdit"],
+      },
+      {
+        test: "E2E test - existing test_lsp_completion.lua passes",
+        implementation: "Verify existing test passes with async implementation",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Reference: tests/test_lsp_completion.lua"],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
