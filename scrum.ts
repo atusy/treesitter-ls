@@ -179,15 +179,15 @@ const scrum: ScrumDashboard = {
         implementation: "Apply resolve_with_wildcard() to languages.{lang}.bridge HashMap resolution",
         type: "behavioral",
         status: "green",
-        commits: [{ hash: "", message: "feat(config): add resolve_bridge_with_wildcard for bridge wildcard inheritance", phase: "green" }],
+        commits: [{ hash: "79e3047", message: "feat(config): add resolve_bridge_with_wildcard for bridge wildcard inheritance", phase: "green" }],
         notes: ["Inner wildcard resolution for bridge settings"],
       },
       {
         test: "Unit test: resolve languages._ -> languages.python, then bridge._ -> bridge.rust",
         implementation: "Implement nested wildcard resolution (outer then inner)",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "green",
+        commits: [{ hash: "", message: "test(config): add test for nested wildcard resolution", phase: "green" }],
         notes: ["Order: resolve languages wildcard first, then bridge wildcard within resolved language"],
       },
       {
