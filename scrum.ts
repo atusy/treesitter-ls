@@ -128,7 +128,56 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 118,
+    pbi_id: "PBI-147",
+    goal: "Wait for rust-analyzer to complete initial indexing before serving first hover request, using $/progress notifications to detect completion, ensuring single hover request returns result",
+    status: "review",
+    subtasks: [
+      {
+        test: "pool_tracks_indexing_complete_per_connection",
+        implementation: "Implicit: wait_for_indexing happens on first document access per key (via is_first_access check)",
+        type: "behavioral",
+        status: "completed",
+        commits: [],
+        notes: ["Implemented implicitly: wait happens on first didOpen per connection key"],
+      },
+      {
+        test: "spawn_and_initialize_waits_for_indexing",
+        implementation: "wait_for_indexing() polls notification receiver after first didOpen, waits for 2+ publishDiagnostics + 500ms quiet period",
+        type: "behavioral",
+        status: "completed",
+        commits: [],
+        notes: [
+          "Wait happens after didOpen in hover(), not in spawn_and_initialize",
+          "Uses publishDiagnostics as signal (not $/progress) for empty Cargo projects",
+          "Requires 2+ diagnostics + 500ms quiet period to ensure new content is processed",
+        ],
+      },
+      {
+        test: "detects_indexing_completion_from_progress_notification",
+        implementation: "is_indexing_complete() returns true for publishDiagnostics or $/progress kind:end with Indexing",
+        type: "behavioral",
+        status: "completed",
+        commits: [],
+        notes: [
+          "rust-analyzer with empty projects skips $/progress, sends publishDiagnostics instead",
+          "Function checks both notification types for compatibility",
+        ],
+      },
+      {
+        test: "single_hover_request_returns_result_without_retry",
+        implementation: "E2E test: single vim.lsp.buf.hover() call returns result (removed retry loop from test_lsp_hover.lua)",
+        type: "behavioral",
+        status: "completed",
+        commits: [],
+        notes: [
+          "Retry loop removed, single hover call with 10s timeout",
+          "Verifies AC3: Single hover request returns result",
+        ],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
