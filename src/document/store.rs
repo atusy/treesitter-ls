@@ -41,6 +41,7 @@ impl DocumentStore {
         Self::default()
     }
 
+    // Lock safety: Single insert() call - no read lock held before or during write
     pub fn insert(&self, uri: Url, text: String, language_id: Option<String>, tree: Option<Tree>) {
         let document = match (language_id, tree) {
             (Some(lang), Some(t)) => Document::with_tree(text, lang, t),
@@ -51,14 +52,18 @@ impl DocumentStore {
         self.documents.insert(uri, document);
     }
 
+    // Lock safety: Returns DocumentHandle wrapping Ref - caller holds read lock until drop
+    // Callers must not call write methods while holding the returned handle
     pub fn get(&self, uri: &Url) -> Option<DocumentHandle<'_>> {
         self.documents.get(uri).map(DocumentHandle::new)
     }
 
+    // Lock safety: Uses get_mut() for in-place updates (single write lock, no prior read lock).
+    // For fallback path, and_then() consumes Ref before insert - no read lock held during write.
     pub fn update_document(&self, uri: Url, text: String, new_tree: Option<Tree>) {
         // Try to update in place to preserve previous_tree and previous_text
         if let Some(tree) = new_tree {
-            // Check if document exists - update in place to preserve previous state
+            // Lock safety: get_mut() acquires write lock directly - safe for in-place update
             if let Some(mut doc) = self.documents.get_mut(&uri) {
                 doc.update_tree_and_text(tree, text);
                 return;
@@ -72,14 +77,15 @@ impl DocumentStore {
         }
 
         // No new tree provided - use fallback logic
+        // Lock safety: and_then() consumes Ref, extracting owned String before insert
         let language_id = self
             .documents
             .get(&uri)
             .and_then(|doc| doc.language_id().map(String::from));
 
         match language_id {
+            // Lock safety: and_then() consumes Ref, extracting owned Tree clone before insert
             Some(lang) => {
-                // Preserve existing tree if no new tree provided
                 let existing_tree = self.documents.get(&uri).and_then(|doc| doc.tree().cloned());
                 if let Some(tree) = existing_tree {
                     self.documents
@@ -96,6 +102,7 @@ impl DocumentStore {
 
     /// Get the existing tree and apply edits for incremental parsing
     /// Returns the edited tree without updating the document store
+    // Lock safety: and_then() consumes Ref, returning owned Tree clone - no read lock held after return
     pub fn get_edited_tree(&self, uri: &Url, edits: &[InputEdit]) -> Option<Tree> {
         self.documents.get(uri).and_then(|doc| {
             doc.tree().map(|tree| {
@@ -108,10 +115,12 @@ impl DocumentStore {
         })
     }
 
+    // Lock safety: map() consumes Ref, returning owned String clone - no read lock held after return
     pub fn get_document_text(&self, uri: &Url) -> Option<String> {
         self.documents.get(uri).map(|doc| doc.text().to_string())
     }
 
+    // Lock safety: Single remove() call - no read lock held before or during write
     pub fn remove(&self, uri: &Url) -> Option<Document> {
         self.documents.remove(uri).map(|(_, doc)| doc)
     }
