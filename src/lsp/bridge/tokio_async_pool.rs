@@ -683,9 +683,10 @@ mod tests {
         };
 
         // First hover request (with initial content)
-        let mut hover1 = None;
-        for _attempt in 0..10 {
-            hover1 = pool
+        // Keep retrying until we get real content (not indexing message)
+        let mut hover1_content = String::new();
+        for _attempt in 0..20 {
+            let hover1 = pool
                 .hover(
                     "rust-analyzer",
                     &config,
@@ -696,28 +697,31 @@ mod tests {
                 )
                 .await;
 
-            if hover1.is_some() {
-                break;
+            if let Some(hover) = hover1 {
+                let content = match hover.contents {
+                    tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
+                    tower_lsp::lsp_types::HoverContents::Scalar(s) => match s {
+                        tower_lsp::lsp_types::MarkedString::String(s) => s,
+                        tower_lsp::lsp_types::MarkedString::LanguageString(ls) => ls.value,
+                    },
+                    tower_lsp::lsp_types::HoverContents::Array(arr) => arr
+                        .into_iter()
+                        .map(|s| match s {
+                            tower_lsp::lsp_types::MarkedString::String(s) => s,
+                            tower_lsp::lsp_types::MarkedString::LanguageString(ls) => ls.value,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                };
+                // Skip indexing message and wait for real content
+                if !content.contains("indexing") && content.contains("i32") {
+                    hover1_content = content;
+                    break;
+                }
             }
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
 
-        assert!(hover1.is_some(), "First hover should return result");
-        let hover1_content = match hover1.unwrap().contents {
-            tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
-            tower_lsp::lsp_types::HoverContents::Scalar(s) => match s {
-                tower_lsp::lsp_types::MarkedString::String(s) => s,
-                tower_lsp::lsp_types::MarkedString::LanguageString(ls) => ls.value,
-            },
-            tower_lsp::lsp_types::HoverContents::Array(arr) => arr
-                .into_iter()
-                .map(|s| match s {
-                    tower_lsp::lsp_types::MarkedString::String(s) => s,
-                    tower_lsp::lsp_types::MarkedString::LanguageString(ls) => ls.value,
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
-        };
         assert!(
             hover1_content.contains("i32"),
             "First hover should show i32 return type, got: {}",
@@ -728,9 +732,10 @@ mod tests {
         let content2 = "fn get_value() -> String { String::new() }";
 
         // Second hover request (with updated content)
-        let mut hover2 = None;
-        for _attempt in 0..10 {
-            hover2 = pool
+        // Keep retrying until we get real content with String type
+        let mut hover2_content = String::new();
+        for _attempt in 0..20 {
+            let hover2 = pool
                 .hover(
                     "rust-analyzer",
                     &config,
@@ -741,28 +746,31 @@ mod tests {
                 )
                 .await;
 
-            if hover2.is_some() {
-                break;
+            if let Some(hover) = hover2 {
+                let content = match hover.contents {
+                    tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
+                    tower_lsp::lsp_types::HoverContents::Scalar(s) => match s {
+                        tower_lsp::lsp_types::MarkedString::String(s) => s,
+                        tower_lsp::lsp_types::MarkedString::LanguageString(ls) => ls.value,
+                    },
+                    tower_lsp::lsp_types::HoverContents::Array(arr) => arr
+                        .into_iter()
+                        .map(|s| match s {
+                            tower_lsp::lsp_types::MarkedString::String(s) => s,
+                            tower_lsp::lsp_types::MarkedString::LanguageString(ls) => ls.value,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                };
+                // Skip indexing message and wait for real content with String
+                if !content.contains("indexing") && content.contains("String") {
+                    hover2_content = content;
+                    break;
+                }
             }
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
 
-        assert!(hover2.is_some(), "Second hover should return result");
-        let hover2_content = match hover2.unwrap().contents {
-            tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
-            tower_lsp::lsp_types::HoverContents::Scalar(s) => match s {
-                tower_lsp::lsp_types::MarkedString::String(s) => s,
-                tower_lsp::lsp_types::MarkedString::LanguageString(ls) => ls.value,
-            },
-            tower_lsp::lsp_types::HoverContents::Array(arr) => arr
-                .into_iter()
-                .map(|s| match s {
-                    tower_lsp::lsp_types::MarkedString::String(s) => s,
-                    tower_lsp::lsp_types::MarkedString::LanguageString(ls) => ls.value,
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
-        };
         assert!(
             hover2_content.contains("String"),
             "Second hover should show String return type (not i32), got: {}",
