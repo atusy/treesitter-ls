@@ -19,8 +19,9 @@ pub fn user_config_path() -> Option<PathBuf> {
         return Some(PathBuf::from(xdg_config).join("treesitter-ls").join("treesitter-ls.toml"));
     }
 
-    // TODO: Fallback to ~/.config
-    None
+    // Fallback to ~/.config/treesitter-ls/treesitter-ls.toml
+    // dirs::home_dir() returns the user's home directory
+    dirs::home_dir().map(|home| home.join(".config").join("treesitter-ls").join("treesitter-ls.toml"))
 }
 
 #[cfg(test)]
@@ -57,6 +58,47 @@ mod tests {
             path,
             PathBuf::from("/custom/config/treesitter-ls/treesitter-ls.toml"),
             "should use XDG_CONFIG_HOME/treesitter-ls/treesitter-ls.toml"
+        );
+    }
+
+    #[test]
+    fn user_config_path_falls_back_to_home_config_when_xdg_unset() {
+        // Save original value
+        let original = env::var("XDG_CONFIG_HOME").ok();
+
+        // Remove XDG_CONFIG_HOME to test fallback
+        // SAFETY: Tests run single-threaded by default with --test-threads=1
+        unsafe {
+            env::remove_var("XDG_CONFIG_HOME");
+        }
+
+        let path = user_config_path();
+
+        // Restore original value
+        // SAFETY: Same as above - restoring original env state
+        unsafe {
+            if let Some(val) = original {
+                env::set_var("XDG_CONFIG_HOME", val);
+            }
+        }
+
+        // On a normal system, we should get a path even without XDG_CONFIG_HOME
+        // It should fall back to $HOME/.config/treesitter-ls/treesitter-ls.toml
+        assert!(path.is_some(), "user_config_path should return Some even when XDG_CONFIG_HOME is unset");
+        let path = path.unwrap();
+
+        // Verify the path structure - should end with treesitter-ls/treesitter-ls.toml
+        // and contain ".config" in the path (the fallback behavior)
+        let path_str = path.to_string_lossy();
+        assert!(
+            path_str.ends_with("treesitter-ls/treesitter-ls.toml"),
+            "path should end with treesitter-ls/treesitter-ls.toml, got: {}",
+            path_str
+        );
+        assert!(
+            path_str.contains(".config"),
+            "fallback path should contain .config, got: {}",
+            path_str
         );
     }
 }
