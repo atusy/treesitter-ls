@@ -151,6 +151,11 @@ enabled = false
 
 ## Implementation Notes
 
+### Two Wildcard Resolution Strategies
+
+During PBI-152 (Sprint 121), we discovered two valid approaches to wildcard inheritance:
+
+**1. Eager Merge (resolve_with_wildcard)**
 ```rust
 fn resolve_with_wildcard<V: Merge>(
     map: &HashMap<String, V>,
@@ -168,12 +173,50 @@ fn resolve_with_wildcard<V: Merge>(
 }
 ```
 
+**2. Lazy Fallback (apply_capture_mapping pattern)**
+```rust
+fn apply_capture_mapping(
+    capture_name: &str,
+    filetype: Option<&str>,
+    capture_mappings: Option<&CaptureMappings>,
+) -> String {
+    if let Some(mappings) = capture_mappings {
+        // Try filetype-specific mapping first
+        if let Some(ft) = filetype
+            && let Some(lang_mappings) = mappings.get(ft)
+            && let Some(mapped) = lang_mappings.highlights.get(capture_name)
+        {
+            return mapped.clone();
+        }
+
+        // Try wildcard mapping
+        if let Some(wildcard_mappings) = mappings.get("_")
+            && let Some(mapped) = wildcard_mappings.highlights.get(capture_name)
+        {
+            return mapped.clone();
+        }
+    }
+    capture_name.to_string()
+}
+```
+
+Both approaches produce identical user-facing behavior:
+- Specific values override wildcard values
+- Missing specific key falls back to wildcard
+- Each capture name resolved independently
+
+**Trade-offs:**
+- **Eager merge**: Creates merged config upfront, single HashMap lookup per capture
+- **Lazy fallback**: Two HashMap lookups per capture (specific then wildcard), but avoids creating intermediate merged structure
+
+The existing `apply_capture_mapping()` in `semantic.rs` already implements lazy fallback for runtime semantic token resolution. The new `resolve_with_wildcard()` provides eager merge for configuration preprocessing when needed.
+
 ## Implementation Phases
 
-### Phase 1: captureMappings Wildcard (Not started)
-- [ ] Implement `resolve_with_wildcard()` function
-- [ ] Apply wildcard resolution to `captureMappings` lookup
-- [ ] Unit tests for wildcard resolution with various combinations
+### Phase 1: captureMappings Wildcard (Completed - Sprint 121, PBI-152)
+- [x] Implement `resolve_with_wildcard()` function (commit 2c62805)
+- [x] Apply wildcard resolution to `captureMappings` lookup (existing `apply_capture_mapping()` already implements lazy fallback)
+- [x] Unit tests for wildcard resolution with various combinations (3 tests: wildcard-only, merge, override)
 
 ### Phase 2: languages Wildcard (Future)
 - [ ] Apply wildcard resolution to `languages._` for default language settings
