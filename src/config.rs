@@ -1580,6 +1580,58 @@ mod tests {
     }
 
     #[test]
+    fn test_nested_wildcard_resolution_outer_then_inner() {
+        // ADR-0011: Nested wildcard resolution applies outer then inner
+        // Resolution order:
+        // 1. Resolve outer: languages._ -> languages.python
+        // 2. Resolve inner: bridge._ -> bridge.rust
+        //
+        // Setup:
+        // languages._ has bridge._ with enabled = true
+        // languages.python is NOT defined (should inherit from _)
+        // We ask for bridge setting for "rust" in "python" -> should get enabled = true
+        let mut languages: HashMap<String, LanguageConfig> = HashMap::new();
+
+        // Wildcard language with wildcard bridge
+        let mut wildcard_bridge = HashMap::new();
+        wildcard_bridge.insert(
+            "_".to_string(),
+            settings::BridgeLanguageConfig { enabled: true },
+        );
+
+        languages.insert(
+            "_".to_string(),
+            LanguageConfig {
+                library: Some("/default/path.so".to_string()),
+                queries: None,
+                highlights: None,
+                locals: None,
+                injections: None,
+                bridge: Some(wildcard_bridge),
+            },
+        );
+
+        // Resolve for "python" which doesn't exist - should get wildcard language
+        let resolved_lang = resolve_language_with_wildcard(&languages, "python");
+        assert!(
+            resolved_lang.is_some(),
+            "Should resolve to wildcard language"
+        );
+
+        // Then resolve bridge for "rust" within the resolved language
+        let lang_config = resolved_lang.unwrap();
+        assert!(lang_config.bridge.is_some(), "Resolved language should have bridge");
+        let bridge = lang_config.bridge.as_ref().unwrap();
+
+        let resolved_bridge = resolve_bridge_with_wildcard(bridge, "rust");
+        assert!(resolved_bridge.is_some(), "Should resolve to wildcard bridge");
+        assert!(
+            resolved_bridge.unwrap().enabled,
+            "Nested wildcard resolution: languages._.bridge._ should apply to python.bridge.rust"
+        );
+    }
+
+    #[test]
     fn test_resolve_bridge_with_wildcard_returns_wildcard_when_specific_absent() {
         // ADR-0011: bridge['javascript'] inherits from bridge['_']
         // When bridge only has "_" and we ask for "javascript",
