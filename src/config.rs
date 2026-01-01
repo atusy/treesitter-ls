@@ -1,5 +1,6 @@
 pub mod defaults;
 pub mod settings;
+pub mod user;
 
 pub use settings::{
     CaptureMapping, CaptureMappings, LanguageConfig, LanguageSettings, QueryItem, QueryKind,
