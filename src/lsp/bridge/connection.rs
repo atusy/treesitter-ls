@@ -20,19 +20,23 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
+use tower_lsp::lsp_types::PublishDiagnosticsParams;
 use tower_lsp::lsp_types::*;
 
 /// Default timeout for bridge I/O operations (30 seconds).
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Response from `read_response_for_id_with_notifications` containing
-/// the JSON-RPC response and any $/progress notifications captured during the wait.
+/// the JSON-RPC response, $/progress notifications, and publishDiagnostics
+/// captured during the wait.
 #[derive(Debug, Clone)]
 pub struct ResponseWithNotifications {
     /// The JSON-RPC response matching the request ID (None if not found)
     pub response: Option<Value>,
     /// Captured $/progress notifications received while waiting for the response
     pub notifications: Vec<Value>,
+    /// Captured textDocument/publishDiagnostics notifications
+    pub diagnostics: Vec<PublishDiagnosticsParams>,
 }
 
 /// Information about the workspace for a language server connection.
@@ -270,6 +274,7 @@ impl LanguageServerConnection {
     /// - `response: Some(...)` if the expected response arrives before timeout
     /// - `response: None` if timeout expires, EOF reached, or error occurs
     /// - `notifications`: Any $/progress notifications captured while waiting
+    /// - `diagnostics`: Any textDocument/publishDiagnostics captured while waiting
     pub(crate) fn read_response_for_id_with_notifications(
         &mut self,
         expected_id: i64,
@@ -282,6 +287,7 @@ impl LanguageServerConnection {
             timeout
         );
         let mut notifications = Vec::new();
+        let mut diagnostics = Vec::new();
         let start = Instant::now();
 
         loop {
@@ -296,6 +302,7 @@ impl LanguageServerConnection {
                 return ResponseWithNotifications {
                     response: None,
                     notifications,
+                    diagnostics,
                 };
             }
 
@@ -313,6 +320,7 @@ impl LanguageServerConnection {
                     return ResponseWithNotifications {
                         response: None,
                         notifications,
+                        diagnostics,
                     };
                 }
 
@@ -323,6 +331,7 @@ impl LanguageServerConnection {
                         return ResponseWithNotifications {
                             response: None,
                             notifications,
+                            diagnostics,
                         };
                     }
                     Ok(_) => {}
@@ -330,6 +339,7 @@ impl LanguageServerConnection {
                         return ResponseWithNotifications {
                             response: None,
                             notifications,
+                            diagnostics,
                         };
                     }
                 }
@@ -346,6 +356,7 @@ impl LanguageServerConnection {
                 return ResponseWithNotifications {
                     response: None,
                     notifications,
+                    diagnostics,
                 };
             }
 
@@ -355,6 +366,7 @@ impl LanguageServerConnection {
                 return ResponseWithNotifications {
                     response: None,
                     notifications,
+                    diagnostics,
                 };
             }
 
@@ -364,6 +376,7 @@ impl LanguageServerConnection {
                     return ResponseWithNotifications {
                         response: None,
                         notifications,
+                        diagnostics,
                     };
                 }
             };
@@ -381,14 +394,23 @@ impl LanguageServerConnection {
                 return ResponseWithNotifications {
                     response: Some(message),
                     notifications,
+                    diagnostics,
                 };
             }
 
-            // Check if this is a $/progress notification to capture
-            if let Some(method) = message.get("method").and_then(|m| m.as_str())
-                && method == "$/progress"
-            {
-                notifications.push(message);
+            // Check if this is a notification to capture
+            if let Some(method) = message.get("method").and_then(|m| m.as_str()) {
+                if method == "$/progress" {
+                    notifications.push(message);
+                } else if method == "textDocument/publishDiagnostics" {
+                    // Try to parse as PublishDiagnosticsParams
+                    if let Some(params) = message.get("params")
+                        && let Ok(diag_params) =
+                            serde_json::from_value::<PublishDiagnosticsParams>(params.clone())
+                    {
+                        diagnostics.push(diag_params);
+                    }
+                }
             }
             // Otherwise it's a different notification or response - skip it
         }
@@ -2096,8 +2118,7 @@ fn main() {
 
     #[test]
     fn response_with_notifications_struct_exists() {
-        // RED phase test: ResponseWithNotifications struct should exist
-        // and have response and notifications fields
+        // Test that ResponseWithNotifications struct has all expected fields
         let response = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -2107,10 +2128,12 @@ fn main() {
         let result = ResponseWithNotifications {
             response: Some(response.clone()),
             notifications: vec![],
+            diagnostics: vec![],
         };
 
         assert!(result.response.is_some());
         assert!(result.notifications.is_empty());
+        assert!(result.diagnostics.is_empty());
 
         // With notifications
         let notification = serde_json::json!({
@@ -2122,6 +2145,7 @@ fn main() {
         let result_with_notifs = ResponseWithNotifications {
             response: Some(response),
             notifications: vec![notification.clone()],
+            diagnostics: vec![],
         };
 
         assert_eq!(result_with_notifs.notifications.len(), 1);
@@ -2170,5 +2194,34 @@ fn main() {
                 );
             }
         }
+    }
+
+    #[test]
+    fn response_with_notifications_captures_diagnostics() {
+        // Test that ResponseWithNotifications has a diagnostics field
+        // that can store publishDiagnostics notifications
+
+        use tower_lsp::lsp_types::PublishDiagnosticsParams;
+
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": null
+        });
+
+        let diagnostic_params = PublishDiagnosticsParams {
+            uri: tower_lsp::lsp_types::Url::parse("file:///tmp/test.rs").unwrap(),
+            diagnostics: vec![],
+            version: None,
+        };
+
+        let result = ResponseWithNotifications {
+            response: Some(response),
+            notifications: vec![],
+            diagnostics: vec![diagnostic_params.clone()],
+        };
+
+        assert_eq!(result.diagnostics.len(), 1);
+        assert_eq!(result.diagnostics[0].uri.path(), "/tmp/test.rs");
     }
 }
