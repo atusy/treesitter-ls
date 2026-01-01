@@ -140,12 +140,9 @@ fn is_indexing_end(value: &Value) -> bool {
     let Some(params) = value.get("params") else {
         return false;
     };
-    let Some(token) = params.get("token").and_then(|t| t.as_str()) else {
+    let Some("rustAnalyzer/indexing") = params.get("token").and_then(Value::as_str) else {
         return false;
     };
-    if token != "rustAnalyzer/indexing" {
-        return false;
-    }
     let Some(progress_value) = params.get("value") else {
         return false;
     };
