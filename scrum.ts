@@ -92,9 +92,9 @@ const scrum: ScrumDashboard = {
         test: "E2E test: nvim_diagnostic_test.lua verifies Rust code block in Markdown shows rust-analyzer diagnostics",
         implementation: "Create E2E test that opens Markdown with Rust code block containing error, verifies nvim.diagnostic.get returns expected diagnostic",
         type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: ["Use pattern from existing E2E tests in tests/nvim/", "Verify diagnostic line matches host document position"],
+        status: "green",
+        commits: [{ hash: "61dbadb", message: "test(e2e): add diagnostic test for Rust code blocks in Markdown", phase: "green" }],
+        notes: ["Test file: tests/test_lsp_diagnostic.lua", "Waits for vim.diagnostic.get to return diagnostics", "Verifies diagnostic appears on correct line"],
       },
       {
         test: "E2E test: fixing error in code block removes corresponding diagnostic",
