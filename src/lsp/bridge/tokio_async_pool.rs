@@ -552,6 +552,9 @@ impl TokioAsyncLanguageServerPool {
     /// On first access for a URI: sends didOpen with version 1.
     /// On subsequent access: sends didChange with incremented version.
     ///
+    /// Returns the version number that was sent to the language server,
+    /// or None if the notification failed to send.
+    ///
     /// This replaces `ensure_document_open` to properly handle the LSP protocol
     /// requirement that didOpen is only sent once per document, and subsequent
     /// content updates use didChange with incrementing versions.
@@ -561,7 +564,7 @@ impl TokioAsyncLanguageServerPool {
         uri: &str,
         language_id: &str,
         content: &str,
-    ) -> Option<()> {
+    ) -> Option<u32> {
         // Atomically increment the version. First call for a URI returns 1.
         let new_version = self.increment_document_version(uri);
 
@@ -578,6 +581,7 @@ impl TokioAsyncLanguageServerPool {
             conn.send_notification("textDocument/didOpen", params)
                 .await
                 .ok()
+                .map(|()| new_version)
         } else {
             // Document already open - send didChange with incremented version
             let params = serde_json::json!({
@@ -590,6 +594,7 @@ impl TokioAsyncLanguageServerPool {
             conn.send_notification("textDocument/didChange", params)
                 .await
                 .ok()
+                .map(|()| new_version)
         }
     }
 }
@@ -1625,5 +1630,106 @@ mod tests {
             }
         }
         duplicates.into_iter().collect()
+    }
+
+    /// PBI-150 Subtask 2: Integration test for parallel sync_document calls.
+    ///
+    /// This test verifies that concurrent sync_document calls produce unique,
+    /// sequential version numbers when using a real language server connection.
+    /// Unlike the unit test (concurrent_version_increments_produce_monotonic_versions),
+    /// this test exercises the full sync_document flow including sending notifications
+    /// to the language server.
+    ///
+    /// The test spawns N concurrent tasks that each call sync_document() with different
+    /// content. All returned versions should be unique (no duplicates), proving the
+    /// atomic increment pattern works correctly in the full integration context.
+    #[tokio::test]
+    async fn parallel_sync_document_produces_unique_sequential_versions() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = std::sync::Arc::new(super::TokioAsyncLanguageServerPool::new(tx));
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Get a connection first
+        let conn = pool.get_connection("rust-analyzer", &config).await;
+        assert!(conn.is_some(), "Should get a connection");
+        let conn = conn.unwrap();
+
+        let virtual_uri = pool.get_virtual_uri("rust-analyzer").unwrap();
+        let num_tasks = 20; // Fewer tasks for integration test (faster)
+
+        // Use a barrier to force all tasks to start at the same time
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(num_tasks));
+
+        // Spawn concurrent sync_document calls
+        let mut handles = Vec::new();
+        for i in 0..num_tasks {
+            let pool_clone = pool.clone();
+            let conn_clone = conn.clone();
+            let uri_clone = virtual_uri.clone();
+            let barrier_clone = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                // Wait for all tasks to be ready before syncing
+                barrier_clone.wait().await;
+                // Each task sends slightly different content
+                let content = format!("fn task_{i}() {{}}\n");
+                // sync_document should return the version number
+                pool_clone
+                    .sync_document(&conn_clone, &uri_clone, "rust", &content)
+                    .await
+            }));
+        }
+
+        // Collect all returned versions
+        let mut versions = Vec::new();
+        for handle in handles {
+            if let Some(version) = handle.await.unwrap() {
+                versions.push(version);
+            }
+        }
+
+        // All tasks should have succeeded
+        assert_eq!(
+            versions.len(),
+            num_tasks,
+            "All {} sync_document calls should return a version",
+            num_tasks
+        );
+
+        // Check for duplicates - with atomic increments, all versions should be unique
+        let mut sorted = versions.clone();
+        sorted.sort();
+        sorted.dedup();
+
+        assert_eq!(
+            sorted.len(),
+            num_tasks,
+            "All {} sync_document calls should produce unique versions, but got {} unique (duplicates: {:?})",
+            num_tasks,
+            sorted.len(),
+            find_duplicates(&versions)
+        );
+
+        // Versions should be consecutive (no gaps)
+        let min_version = *sorted.first().unwrap();
+        let max_version = *sorted.last().unwrap();
+        assert_eq!(
+            max_version - min_version + 1,
+            num_tasks as u32,
+            "Versions should be consecutive: min={}, max={}, count={}",
+            min_version,
+            max_version,
+            num_tasks
+        );
     }
 }
