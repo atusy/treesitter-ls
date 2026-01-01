@@ -137,7 +137,54 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 118,
+    pbi_id: "PBI-149",
+    goal: "Show informative 'indexing' message during hover when rust-analyzer is still initializing, with state tracking to transition to normal responses once ready",
+    status: "planning",
+    subtasks: [
+      {
+        test: "Unit test: new connection starts with state Indexing",
+        implementation: "Add ServerState enum (Indexing/Ready) and server_states: DashMap<String, ServerState> to TokioAsyncLanguageServerPool, initialize to Indexing after spawn",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["AC1: TokioAsyncLanguageServerPool tracks ServerState enum per connection"],
+      },
+      {
+        test: "Unit test: hover request with Indexing state returns informative message with hourglass emoji and server name",
+        implementation: "Modify hover_impl to check pool.get_server_state(key) and return Hover with indexing message when state is Indexing",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["AC2: hover_impl returns informative message during Indexing state"],
+      },
+      {
+        test: "Unit test: verify state transition on non-empty response; empty responses keep Indexing state",
+        implementation: "After hover() returns Some(Hover) with non-empty contents, call pool.set_server_state(key, Ready); do not transition on None or empty",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["AC3: ServerState transitions from Indexing to Ready on first non-empty hover/completion response"],
+      },
+      {
+        test: "Unit test: completion returns [], definition returns null during Indexing state",
+        implementation: "Other LSP features check state and return empty/null during Indexing without special message (only hover shows message)",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["AC4: Other LSP features return empty/null during Indexing without special message"],
+      },
+      {
+        test: "E2E test: trigger hover immediately after server spawn (verify message), wait and retry (verify normal hover)",
+        implementation: "Add test_lsp_hover_indexing.lua that verifies end-to-end flow: indexing message shown initially, normal hover after Ready",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["AC5: End-to-end flow works: hover during indexing shows message, hover after Ready shows normal content"],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
