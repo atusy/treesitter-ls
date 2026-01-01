@@ -2469,12 +2469,10 @@ fn main() {
             conn.did_open_with_diagnostics(&virtual_uri.unwrap(), "rust", content_with_error);
         assert!(result.is_some(), "did_open_with_diagnostics should succeed");
 
-        let open_result = result.unwrap();
-        // rust-analyzer should have returned progress notifications
-        assert!(open_result.notifications.is_empty() || !open_result.notifications.is_empty());
-
-        // Diagnostics may or may not be present depending on rust-analyzer timing
-        // The key is that the method returns the DidOpenResult type correctly
-        assert!(open_result.diagnostics.is_empty() || !open_result.diagnostics.is_empty());
+        // Unwrap the result to verify it contains a valid DidOpenResult.
+        // Diagnostics and notifications may or may not be present depending on
+        // rust-analyzer timing. Reaching this point without panic verifies that
+        // did_open_with_diagnostics correctly returns the DidOpenResult type.
+        let _open_result = result.unwrap();
     }
 }
