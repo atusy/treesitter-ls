@@ -216,9 +216,9 @@ const scrum: ScrumDashboard = {
         test: "Unit test verifies second concurrent hover() call blocks until first completes (using tokio::time::timeout to detect blocking)",
         implementation: "Ensure lock is held for entire sync_document+send_request+await_response sequence in hover()",
         type: "behavioral",
-        status: "green",
+        status: "completed",
         commits: [{ hash: "cd94f1e", message: "fix(bridge): serialize concurrent hover requests with connection lock", phase: "green" }],
-        notes: ["Two hover tasks started simultaneously - second should wait for first to release lock", "Test: hover_acquires_connection_lock_for_serialization"],
+        notes: ["Two hover tasks started simultaneously - second should wait for first to release lock", "Test: hover_acquires_connection_lock_for_serialization", "No refactoring needed - code follows Rust idioms"],
       },
       {
         test: "Integration test sends two concurrent hovers with different content, verifies each receives correct response matching its content",
