@@ -290,6 +290,68 @@ impl TokioAsyncLanguageServerPool {
         serde_json::from_value(result_value).ok()
     }
 
+    /// Send a completion request asynchronously.
+    ///
+    /// # Arguments
+    /// * `key` - Connection pool key
+    /// * `config` - Server configuration
+    /// * `_uri` - Document URI (unused, we use virtual URI)
+    /// * `language_id` - Language ID for the document
+    /// * `content` - Document content
+    /// * `position` - Completion position
+    pub async fn completion(
+        &self,
+        key: &str,
+        config: &BridgeServerConfig,
+        _uri: &str,
+        language_id: &str,
+        content: &str,
+        position: tower_lsp::lsp_types::Position,
+    ) -> Option<tower_lsp::lsp_types::CompletionResponse> {
+        let conn = self.get_connection(key, config).await?;
+
+        // Get virtual file URI
+        let virtual_uri = self.get_virtual_uri(key)?;
+
+        // Send didOpen
+        self.ensure_document_open(&conn, &virtual_uri, language_id, content)
+            .await?;
+
+        // Send completion request
+        let params = serde_json::json!({
+            "textDocument": { "uri": virtual_uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let (_, receiver) = conn
+            .send_request("textDocument/completion", params)
+            .await
+            .ok()?;
+
+        // Await response asynchronously with timeout
+        let result = tokio::time::timeout(std::time::Duration::from_secs(30), receiver)
+            .await
+            .ok()?
+            .ok()?;
+
+        // Parse response
+        let response = result.response?;
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio_async_pool",
+            "[COMPLETION] Response: {:?}",
+            response
+        );
+
+        let result_value = response.get("result").cloned().filter(|r| !r.is_null())?;
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio_async_pool",
+            "[COMPLETION] Result value: {:?}",
+            result_value
+        );
+
+        serde_json::from_value(result_value).ok()
+    }
+
     /// Ensure a document is open in the language server.
     async fn ensure_document_open(
         &self,
