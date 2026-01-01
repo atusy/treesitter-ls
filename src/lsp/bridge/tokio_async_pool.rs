@@ -329,6 +329,65 @@ impl TokioAsyncLanguageServerPool {
         hover_result
     }
 
+    /// Send a goto definition request asynchronously.
+    ///
+    /// Unlike hover, this method does NOT return an informative message during
+    /// Indexing state - it returns None. Per ADR-0010, only hover shows the
+    /// indexing message, other features return empty/null.
+    ///
+    /// # Arguments
+    /// * `key` - Connection pool key
+    /// * `config` - Server configuration
+    /// * `_uri` - Document URI (unused, we use virtual URI)
+    /// * `language_id` - Language ID for the document
+    /// * `content` - Document content
+    /// * `position` - Definition position
+    pub async fn goto_definition(
+        &self,
+        key: &str,
+        config: &BridgeServerConfig,
+        _uri: &str,
+        language_id: &str,
+        content: &str,
+        position: tower_lsp::lsp_types::Position,
+    ) -> Option<tower_lsp::lsp_types::GotoDefinitionResponse> {
+        let conn = self.get_connection(key, config).await?;
+
+        // Get virtual file URI
+        let virtual_uri = self.get_virtual_uri(key)?;
+
+        // Sync document (didOpen on first access, didChange on subsequent)
+        self.sync_document(&conn, &virtual_uri, language_id, content)
+            .await?;
+
+        // Send definition request
+        let params = serde_json::json!({
+            "textDocument": { "uri": virtual_uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let (_, receiver) = conn
+            .send_request("textDocument/definition", params)
+            .await
+            .ok()?;
+
+        // Await response asynchronously with timeout
+        let result = tokio::time::timeout(std::time::Duration::from_secs(30), receiver)
+            .await
+            .ok()?
+            .ok()?;
+
+        // Parse response - GotoDefinitionResponse can be Location, Location[], or LocationLink[]
+        let definition_result: Option<tower_lsp::lsp_types::GotoDefinitionResponse> = result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        definition_result
+    }
+
     /// Sync document content with the language server.
     ///
     /// On first access for a URI: sends didOpen with version 1.
@@ -1203,6 +1262,108 @@ mod tests {
             pool.get_server_state("rust-analyzer"),
             Some(super::ServerState::Ready),
             "State should transition to Ready after non-empty hover response"
+        );
+    }
+
+    /// Test that goto_definition() returns GotoDefinitionResponse from rust-analyzer.
+    ///
+    /// PBI-141 Subtask 1: goto_definition() must:
+    /// 1. Get or create connection
+    /// 2. Call sync_document (didOpen/didChange)
+    /// 3. Send textDocument/definition request
+    /// 4. Await response
+    /// 5. Parse and return GotoDefinitionResponse
+    #[tokio::test]
+    async fn goto_definition_returns_location_from_rust_analyzer() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Rust code with function definition and call
+        let content = r#"fn example() {}
+
+fn main() {
+    example();
+}"#;
+
+        // Position on "example" call in main (line 3, character 4 - on the 'e')
+        let position = tower_lsp::lsp_types::Position {
+            line: 3,
+            character: 4,
+        };
+
+        // Call goto_definition() with retry for rust-analyzer indexing
+        // Empty array responses during indexing need to be retried
+        let mut definition_result = None;
+        for _attempt in 0..20 {
+            let result = pool
+                .goto_definition(
+                    "rust-analyzer",
+                    &config,
+                    "file:///test.rs",
+                    "rust",
+                    content,
+                    position,
+                )
+                .await;
+
+            // Check if we got a non-empty result
+            let has_locations = match &result {
+                Some(tower_lsp::lsp_types::GotoDefinitionResponse::Scalar(_)) => true,
+                Some(tower_lsp::lsp_types::GotoDefinitionResponse::Array(locs)) => !locs.is_empty(),
+                Some(tower_lsp::lsp_types::GotoDefinitionResponse::Link(links)) => {
+                    !links.is_empty()
+                }
+                None => false,
+            };
+
+            if has_locations {
+                definition_result = result;
+                break;
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+
+        // Should return Some(GotoDefinitionResponse) pointing to the function definition
+        assert!(
+            definition_result.is_some(),
+            "goto_definition() should return Some for 'example' call"
+        );
+
+        let def_response = definition_result.unwrap();
+
+        // Verify the response points to line 0 (where fn example() is defined)
+        let line = match &def_response {
+            tower_lsp::lsp_types::GotoDefinitionResponse::Scalar(loc) => Some(loc.range.start.line),
+            tower_lsp::lsp_types::GotoDefinitionResponse::Array(locs) => {
+                locs.first().map(|l| l.range.start.line)
+            }
+            tower_lsp::lsp_types::GotoDefinitionResponse::Link(links) => {
+                links.first().map(|l| l.target_range.start.line)
+            }
+        };
+
+        assert!(
+            line.is_some(),
+            "Should have at least one location in response: {:?}",
+            def_response
+        );
+        assert_eq!(
+            line.unwrap(),
+            0,
+            "Definition should be on line 0 (fn example)"
         );
     }
 }
