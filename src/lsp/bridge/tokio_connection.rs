@@ -75,4 +75,20 @@ mod tests {
         let _ = assert_reader_handle_type;
         let _ = assert_shutdown_tx_type;
     }
+
+    /// Test that spawn() uses tokio::process::Command to create a child process.
+    /// This test spawns a simple process (cat) with tokio::process and verifies
+    /// that the connection is created successfully.
+    #[tokio::test]
+    async fn spawn_uses_tokio_process_command() {
+        // Use 'cat' as a simple process that reads from stdin and writes to stdout
+        // This is available on all Unix-like systems
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[]).await;
+        assert!(result.is_ok(), "spawn() should succeed with 'cat' command");
+
+        let conn = result.unwrap();
+        // Verify the connection has all required fields populated
+        // (the struct fields are private, so we rely on the constructor succeeding)
+        drop(conn);
+    }
 }
