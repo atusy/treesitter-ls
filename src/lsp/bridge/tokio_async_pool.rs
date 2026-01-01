@@ -302,6 +302,16 @@ impl TokioAsyncLanguageServerPool {
             .filter(|r| !r.is_null())
             .and_then(|r| serde_json::from_value(r).ok());
 
+        // ADR-0010: Transition to Ready state on non-empty hover response
+        if hover_result.is_some() && server_state == Some(ServerState::Indexing) {
+            self.set_server_state(key, ServerState::Ready);
+            log::debug!(
+                target: "treesitter_ls::bridge::tokio_async_pool",
+                "[POOL] Server {} transitioned to Ready state (got hover response)",
+                key
+            );
+        }
+
         // ADR-0010: Return informative message during Indexing state
         if hover_result.is_none() && server_state == Some(ServerState::Indexing) {
             // Return informative hover message with hourglass emoji and server name
@@ -1065,6 +1075,86 @@ mod tests {
             contents.contains("rust-analyzer"),
             "Hover during Indexing should mention server name, got: {}",
             contents
+        );
+    }
+
+    /// Test that state transitions from Indexing to Ready on first non-empty hover response.
+    ///
+    /// AC3: ServerState transitions from Indexing to Ready on first non-empty hover response.
+    /// Empty responses keep the state as Indexing.
+    #[tokio::test]
+    async fn state_transitions_to_ready_on_non_empty_hover_response() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        let content = "fn main() { let x = 42; }";
+        let position = tower_lsp::lsp_types::Position {
+            line: 0,
+            character: 3, // on "main"
+        };
+
+        // First check: state should start as Indexing after connection
+        let _ = pool.get_connection("rust-analyzer", &config).await;
+        assert_eq!(
+            pool.get_server_state("rust-analyzer"),
+            Some(super::ServerState::Indexing),
+            "Should start in Indexing state"
+        );
+
+        // Keep trying hover until we get a non-indexing response
+        // (rust-analyzer needs time to index)
+        let mut got_real_hover = false;
+        for _attempt in 0..20 {
+            let hover_result = pool
+                .hover(
+                    "rust-analyzer",
+                    &config,
+                    "file:///test.rs",
+                    "rust",
+                    content,
+                    position,
+                )
+                .await;
+
+            if let Some(hover) = hover_result {
+                let contents = match &hover.contents {
+                    tower_lsp::lsp_types::HoverContents::Markup(m) => &m.value,
+                    tower_lsp::lsp_types::HoverContents::Scalar(s) => match s {
+                        tower_lsp::lsp_types::MarkedString::String(s) => s,
+                        tower_lsp::lsp_types::MarkedString::LanguageString(ls) => &ls.value,
+                    },
+                    tower_lsp::lsp_types::HoverContents::Array(_) => continue,
+                };
+
+                // Check if this is a real hover response (not indexing message)
+                if !contents.contains("indexing") && contents.contains("main") {
+                    got_real_hover = true;
+                    break;
+                }
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+
+        assert!(got_real_hover, "Should eventually get real hover response");
+
+        // After getting real hover response, state should be Ready
+        assert_eq!(
+            pool.get_server_state("rust-analyzer"),
+            Some(super::ServerState::Ready),
+            "State should transition to Ready after non-empty hover response"
         );
     }
 }
