@@ -56,17 +56,17 @@ The following methods call `read_response_for_id_with_notifications` and need ti
 ## Subtasks (TDD Order)
 
 ### Subtask 1: Add timeout parameter to read_response_for_id_with_notifications
-- [ ] **RED**: Write test that `read_response_for_id_with_notifications` accepts a `Duration` timeout parameter
-- [ ] **GREEN**: Add timeout parameter to method signature; existing callers compile with the new signature
-- [ ] **REFACTOR**: None needed
+- [x] **RED**: Write test that `read_response_for_id_with_notifications` accepts a `Duration` timeout parameter
+- [x] **GREEN**: Add timeout parameter to method signature; existing callers compile with the new signature
+- [x] **REFACTOR**: None needed
 
 **File**: `src/lsp/bridge/connection.rs`
 **Test location**: `src/lsp/bridge/connection.rs` (tests module)
 
 ### Subtask 2: Implement timeout check in read loop
-- [ ] **RED**: Write test that verifies timeout returns None response when no data arrives within timeout period
-- [ ] **GREEN**: Add `Instant::now()` at start, check `elapsed() > timeout` in loop, return `ResponseWithNotifications { response: None, notifications }` on timeout
-- [ ] **REFACTOR**: Extract timeout check into helper if needed
+- [x] **RED**: Write test that verifies timeout returns None response when no data arrives within timeout period
+- [x] **GREEN**: Add `Instant::now()` at start, check `elapsed() > timeout` in loop, return `ResponseWithNotifications { response: None, notifications }` on timeout
+- [x] **REFACTOR**: Extract timeout check into helper if needed
 
 **File**: `src/lsp/bridge/connection.rs`
 **Implementation notes**:
@@ -75,30 +75,30 @@ The following methods call `read_response_for_id_with_notifications` and need ti
 - Log timeout occurrence for debugging
 
 ### Subtask 3: Add DEFAULT_TIMEOUT constant
-- [ ] **RED**: Write test that DEFAULT_TIMEOUT constant equals 30 seconds
-- [ ] **GREEN**: Add `const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);`
-- [ ] **REFACTOR**: None needed
+- [x] **RED**: Write test that DEFAULT_TIMEOUT constant equals 30 seconds
+- [x] **GREEN**: Add `const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);`
+- [x] **REFACTOR**: None needed
 
 **File**: `src/lsp/bridge/connection.rs`
 
 ### Subtask 4: Update read_response_for_id to use timeout
-- [ ] **RED**: Write test verifying read_response_for_id uses DEFAULT_TIMEOUT
-- [ ] **GREEN**: Update `read_response_for_id` to pass `DEFAULT_TIMEOUT` to `read_response_for_id_with_notifications`
-- [ ] **REFACTOR**: None needed
+- [x] **RED**: Write test verifying read_response_for_id uses DEFAULT_TIMEOUT
+- [x] **GREEN**: Update `read_response_for_id` to pass `DEFAULT_TIMEOUT` to `read_response_for_id_with_notifications`
+- [x] **REFACTOR**: None needed
 
 **File**: `src/lsp/bridge/connection.rs`
 
 ### Subtask 5: Update spawn_with_notifications to use timeout
-- [ ] **RED**: Verify spawn uses timeout (compile check)
-- [ ] **GREEN**: Update spawn to pass `DEFAULT_TIMEOUT` when calling `read_response_for_id_with_notifications`
-- [ ] **REFACTOR**: None needed
+- [x] **RED**: Verify spawn uses timeout (compile check)
+- [x] **GREEN**: Update spawn to pass `DEFAULT_TIMEOUT` when calling `read_response_for_id_with_notifications`
+- [x] **REFACTOR**: None needed
 
 **File**: `src/lsp/bridge/connection.rs`
 
 ### Subtask 6: Update all bridge request methods to use timeout
-- [ ] **RED**: Compile check - all methods must pass timeout
-- [ ] **GREEN**: Update all 22 `*_with_notifications` bridge methods to pass `DEFAULT_TIMEOUT`
-- [ ] **REFACTOR**: Consider extracting common timeout handling pattern if repetitive
+- [x] **RED**: Compile check - all methods must pass timeout
+- [x] **GREEN**: Update all 22 `*_with_notifications` bridge methods to pass `DEFAULT_TIMEOUT`
+- [x] **REFACTOR**: Consider extracting common timeout handling pattern if repetitive
 
 **File**: `src/lsp/bridge/connection.rs`
 **Methods to update**:
@@ -125,17 +125,17 @@ The following methods call `read_response_for_id_with_notifications` and need ti
 - `subtypes_with_notifications`
 
 ### Subtask 7: Update wait_for_indexing_with_notifications to use timeout
-- [ ] **RED**: Verify method has timeout protection
-- [ ] **GREEN**: Add timeout check to the indexing wait loop (uses similar pattern)
-- [ ] **REFACTOR**: None needed
+- [x] **RED**: Verify method has timeout protection
+- [x] **GREEN**: Add timeout check to the indexing wait loop (uses similar pattern)
+- [x] **REFACTOR**: None needed
 
 **File**: `src/lsp/bridge/connection.rs`
 **Notes**: This method has its own read loop (lines 418-468) that also needs timeout protection
 
 ### Subtask 8: Unit test for timeout behavior
-- [ ] **RED**: Write comprehensive test that simulates slow/unresponsive server
-- [ ] **GREEN**: Test passes with timeout implementation
-- [ ] **REFACTOR**: None needed
+- [x] **RED**: Write comprehensive test that simulates slow/unresponsive server
+- [x] **GREEN**: Test passes with timeout implementation
+- [x] **REFACTOR**: None needed
 
 **File**: `src/lsp/bridge/connection.rs` (tests module)
 **Test approach**:
@@ -144,16 +144,16 @@ The following methods call `read_response_for_id_with_notifications` and need ti
 - Verify response is None and notifications are preserved
 
 ## Definition of Done
-- [ ] All subtasks completed
-- [ ] All tests pass (`cargo test`)
-- [ ] No clippy warnings (`cargo clippy -- -D warnings`)
-- [ ] Code formatted (`cargo fmt`)
-- [ ] Each TDD phase committed separately
-- [ ] Acceptance criteria verified:
-  - [ ] AC1: read_response_for_id_with_notifications accepts timeout parameter; defaults to 30 seconds
-  - [ ] AC2: Timeout returns None response with empty notifications; no infinite loop
-  - [ ] AC3: All bridge request methods pass timeout
-  - [ ] AC4: Unit test verifies timeout behavior
+- [x] All subtasks completed
+- [x] All tests pass (`cargo test`)
+- [x] No clippy warnings (`cargo clippy -- -D warnings`)
+- [x] Code formatted (`cargo fmt`)
+- [x] Each TDD phase committed separately
+- [x] Acceptance criteria verified:
+  - [x] AC1: read_response_for_id_with_notifications accepts timeout parameter; defaults to 30 seconds
+  - [x] AC2: Timeout returns None response with empty notifications; no infinite loop
+  - [x] AC3: All bridge request methods pass timeout
+  - [x] AC4: Unit test verifies timeout behavior
 
 ## Notes
 - The blocking I/O nature of `BufReader::read_line()` means we cannot interrupt mid-read
