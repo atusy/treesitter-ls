@@ -85,6 +85,7 @@ impl From<&LanguageSettings> for LanguageConfig {
         LanguageConfig {
             library: settings.library.clone(),
             // filetypes removed from LanguageConfig (PBI-061)
+            queries: None, // Conversion from LanguageSettings uses legacy fields
             highlights,
             locals,
             injections,
@@ -267,6 +268,7 @@ mod tests {
             "rust".to_string(),
             LanguageConfig {
                 library: Some("/fallback/rust.so".to_string()),
+                queries: None,
                 highlights: None,
                 locals: None,
                 injections: None,
@@ -287,6 +289,7 @@ mod tests {
             "rust".to_string(),
             LanguageConfig {
                 library: Some("/primary/rust.so".to_string()),
+                queries: None,
                 highlights: None,
                 locals: None,
                 injections: None,
@@ -594,6 +597,7 @@ mod tests {
     fn test_language_settings_from_config_preserves_injections() {
         let config = LanguageConfig {
             library: Some("/path/to/parser.so".to_string()),
+            queries: None,
             highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
             locals: None,
             injections: Some(vec!["/path/to/injections.scm".to_string()]),
