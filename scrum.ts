@@ -101,8 +101,8 @@ const scrum: ScrumDashboard = {
         test: "Integration test: TokioAsyncLanguageServerPool.hover() returns Hover from rust-analyzer",
         implementation: "Add pub async fn hover() that calls ensure_document_open (didOpen/didChange), sends textDocument/hover request, awaits response, parses Hover",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "b7a005a", message: "feat(bridge): add hover() async method to TokioAsyncLanguageServerPool", phase: "green" }],
         notes: ["Follows same pattern as AsyncLanguageServerPool.hover()", "Use connection.send_request + await receiver", "translate virtual URI for textDocument params"],
       },
       // Subtask 5: Wire TokioAsyncLanguageServerPool into TreeSitterLs struct
