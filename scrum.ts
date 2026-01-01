@@ -33,31 +33,8 @@ const scrum: ScrumDashboard = {
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   product_backlog: [
     // ADR-0009 Implementation: Vertical slices with user-facing value
-    // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117), PBI-147 (Sprint 118)
+    // Completed: PBI-144 to PBI-149 (Sprint 114-119) | History: git log -- scrum.yaml, scrum.ts
     // Critical concurrency fixes from review.md (new issues after Sprint 118)
-    {
-      id: "PBI-149",
-      story: {
-        role: "Rustacean editing Markdown",
-        capability: "get correct hover results even when moving cursor quickly between code blocks",
-        benefit: "hover information always matches the code under the cursor, not stale or wrong content",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "Concurrent hover requests are serialized per connection using tokio::Mutex or semaphore",
-          verification: "Unit test verifies sequential execution when two hovers race",
-        },
-        {
-          criterion: "Each hover request has exclusive access to connection during didChange+hover sequence",
-          verification: "Integration test sends concurrent hovers and verifies correct responses",
-        },
-        {
-          criterion: "Rapid cursor movement produces correct hover results",
-          verification: "E2E test moves cursor quickly between code blocks, all hover results match expected content",
-        },
-      ],
-      status: "done",
-    },
     {
       id: "PBI-150",
       story: {
@@ -198,13 +175,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 119,
-    pbi_id: "PBI-149",
-    goal: "Serialize concurrent hover requests per connection using tokio::Mutex to prevent race conditions where didChange and hover RPCs interleave, ensuring each hover request has exclusive access during the didChange+hover sequence",
-    status: "done",
-    subtasks: [],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -216,18 +187,20 @@ const scrum: ScrumDashboard = {
 
   // Historical sprints (recent 2) | Sprint 1-118: git log -- scrum.yaml, scrum.ts
   completed: [
-    { number: 119, pbi_id: "PBI-149", goal: "Serialize concurrent hover requests per connection using tokio::Mutex to prevent race conditions where didChange and hover RPCs interleave, ensuring each hover request has exclusive access during the didChange+hover sequence", status: "done", subtasks: [] },
-    { number: 118, pbi_id: "PBI-147", goal: "Wait for rust-analyzer to complete initial indexing before serving first hover request, using $/progress notifications to detect completion, ensuring single hover request returns result", status: "done", subtasks: [] },
+    { number: 119, pbi_id: "PBI-149", goal: "Serialize concurrent hover requests per connection using tokio::Mutex", status: "done", subtasks: [] },
+    { number: 118, pbi_id: "PBI-147", goal: "Wait for rust-analyzer indexing before first hover request", status: "done", subtasks: [] },
   ],
 
   // Recent 2 retrospectives | Sprint 1-116: modular refactoring pattern, E2E indexing waits, vertical slice validation
   retrospectives: [
+    { sprint: 119, improvements: [
+      { action: "Merge lock infrastructure and lock usage into single subtask when implementation is simple (avoid over-decomposition)", timing: "sprint", status: "active", outcome: null },
+      { action: "Investigate test parallelization issues causing flaky failures and establish parallel test stability baseline", timing: "product", status: "active", outcome: null },
+      { action: "Consider test optimization strategies for slow rust-analyzer dependent tests (mocking, selective execution)", timing: "sprint", status: "active", outcome: null },
+    ] },
     { sprint: 118, improvements: [
       { action: "Language server behavior varies by context - design fallback signals when primary indicators are unreliable", timing: "sprint", status: "active", outcome: null },
       { action: "Indexing wait should be part of connection initialization architecture from the start", timing: "sprint", status: "active", outcome: null },
-    ] },
-    { sprint: 117, improvements: [
-      { action: "Study reference implementation patterns before new features - sync bridge had versioning model", timing: "sprint", status: "active", outcome: null },
     ] },
   ],
 };
