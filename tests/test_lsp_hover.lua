@@ -53,32 +53,22 @@ T["markdown_rust_hover"]["hover_on_fn_shows_type_info"] = function()
 	local before = child.api.nvim_win_get_cursor(0)
 	MiniTest.expect.equality(before[1], 4, "Cursor should be on line 4")
 
-	-- Call hover and wait for floating window
-	-- We need to retry since rust-analyzer may need time to index
-	local got_hover = false
-	for _ = 1, 20 do
-		child.lua([[vim.lsp.buf.hover()]])
+	-- PBI-147: Single hover request should work without retry loop
+	-- The bridge now waits for indexing to complete before responding
+	child.lua([[vim.lsp.buf.hover()]])
 
-		-- Wait for floating window to appear
-		local has_float = helper.wait(3000, function()
-			local wins = child.api.nvim_list_wins()
-			for _, win in ipairs(wins) do
-				local config = child.api.nvim_win_get_config(win)
-				if config.relative ~= "" then
-					return true
-				end
+	-- Wait for floating window to appear
+	-- Timeout accounts for: indexing wait (2+ diagnostics + 500ms quiet) + hover response
+	local got_hover = helper.wait(10000, function()
+		local wins = child.api.nvim_list_wins()
+		for _, win in ipairs(wins) do
+			local config = child.api.nvim_win_get_config(win)
+			if config.relative ~= "" then
+				return true
 			end
-			return false
-		end, 100)
-
-		if has_float then
-			got_hover = true
-			break
 		end
-
-		-- Wait before retry (rust-analyzer may still be indexing)
-		vim.wait(500)
-	end
+		return false
+	end, 100)
 
 	MiniTest.expect.equality(got_hover, true, "Hover should show floating window with type info")
 

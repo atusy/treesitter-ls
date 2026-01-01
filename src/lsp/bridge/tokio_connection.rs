@@ -192,13 +192,14 @@ impl TokioAsyncBridgeConnection {
                                 }
                             } else if let Some(method) = message.get("method").and_then(|m| m.as_str()) {
                                 // This is a notification (method without id)
-                                // Check for $/progress notification and forward it
-                                if method == "$/progress"
+                                // Forward $/progress and publishDiagnostics for indexing detection
+                                if (method == "$/progress" || method == "textDocument/publishDiagnostics")
                                     && let Some(ref sender) = notification_sender
                                 {
                                     log::debug!(
                                         target: "treesitter_ls::bridge::tokio",
-                                        "[READER] Forwarding $/progress notification"
+                                        "[READER] Forwarding {} notification",
+                                        method
                                     );
                                     let _ = sender.try_send(message);
                                 }
