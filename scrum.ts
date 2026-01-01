@@ -54,7 +54,7 @@ const scrum: ScrumDashboard = {
           verification: "E2E test opens Markdown with Rust code block, requests signatureHelp, receives signatures",
         },
       ],
-      status: "ready",
+      status: "done",
     },
   ],
 
@@ -62,7 +62,7 @@ const scrum: ScrumDashboard = {
     number: 116,
     pbi_id: "PBI-143",
     goal: "Implement TokioAsyncLanguageServerPool.signature_help() with async I/O and wire into signature_help_impl to replace spawn_blocking pattern for faster signatureHelp in Markdown code blocks",
-    status: "in_progress",
+    status: "done",
     subtasks: [
       {
         test: "Unit test verifies signature_help() returns SignatureHelp from lua-language-server",
@@ -79,16 +79,20 @@ const scrum: ScrumDashboard = {
         test: "Grep confirms async signature_help path in signature_help_impl.rs",
         implementation: "Replace spawn_blocking with tokio_async_pool.signature_help() call in signature_help_impl",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          { hash: "24931ff", message: "feat(lsp): wire signature_help_impl to use async TokioAsyncLanguageServerPool", phase: "green" },
+        ],
         notes: ["Template: hover_impl.rs pattern", "Remove language_server_pool.take_connection call", "Use self.tokio_async_pool.signature_help()"],
       },
       {
         test: "E2E test opens Markdown with Rust code block, requests signatureHelp, receives signatures",
         implementation: "Update test_lsp_signature_help.lua with retry loop for rust-analyzer indexing",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          { hash: "5dbec03", message: "test(e2e): update signature_help E2E test with retry loop", phase: "green" },
+        ],
         notes: ["Existing test has 3s sleep - add retry loop like hover/completion tests", "Pattern: 20 iterations with 500ms sleep"],
       },
     ],
