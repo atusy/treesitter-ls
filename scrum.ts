@@ -38,7 +38,7 @@ const scrum: ScrumDashboard = {
     number: 112,
     pbi_id: "PBI-135",
     goal: "Capture publishDiagnostics from bridged language servers, translate ranges using CacheableInjectionRegion, and forward to editor with host document URI",
-    status: "in_progress",
+    status: "review",
     subtasks: [
       {
         test: "Unit test: DiagnosticCollector stores publishDiagnostics notification by virtual URI key",
