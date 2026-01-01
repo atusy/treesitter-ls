@@ -912,11 +912,9 @@ impl TreeSitterLs {
         };
 
         // Collect all injection regions
-        let Some(injections) = collect_all_injections(
-            &tree.root_node(),
-            &text,
-            Some(injection_query.as_ref()),
-        ) else {
+        let Some(injections) =
+            collect_all_injections(&tree.root_node(), &text, Some(injection_query.as_ref()))
+        else {
             return;
         };
 
@@ -942,7 +940,10 @@ impl TreeSitterLs {
             let pool_key = config.cmd.first().cloned().unwrap_or_default();
 
             // Get or create connection from pool
-            let mut conn = match self.language_server_pool.take_connection(&pool_key, &config) {
+            let mut conn = match self
+                .language_server_pool
+                .take_connection(&pool_key, &config)
+            {
                 Some(c) => c,
                 None => continue,
             };
@@ -962,15 +963,11 @@ impl TreeSitterLs {
 
             // Create CacheableInjectionRegion for translation
             let result_id = crate::analysis::next_result_id();
-            let region =
-                CacheableInjectionRegion::from_region_info(info, &result_id, &text);
+            let region = CacheableInjectionRegion::from_region_info(info, &result_id, &text);
 
             // Register virtual-to-host mapping for this injection
-            self.virtual_to_host.register(
-                virtual_uri.clone(),
-                uri.clone(),
-                region,
-            );
+            self.virtual_to_host
+                .register(virtual_uri.clone(), uri.clone(), region);
 
             // Send content to bridge server and capture diagnostics
             let result = conn.did_open_with_diagnostics(&virtual_uri_str, &info.language, content);
@@ -982,10 +979,10 @@ impl TreeSitterLs {
             if let Some(open_result) = result {
                 for diag_params in open_result.diagnostics {
                     // Translate diagnostics from virtual to host coordinates
-                    if let Some(translated) = self.virtual_to_host.translate_diagnostics(
-                        &diag_params.uri,
-                        diag_params.diagnostics,
-                    ) {
+                    if let Some(translated) = self
+                        .virtual_to_host
+                        .translate_diagnostics(&diag_params.uri, diag_params.diagnostics)
+                    {
                         // Forward to editor
                         self.client
                             .publish_diagnostics(
@@ -1650,9 +1647,12 @@ impl LanguageServer for TreeSitterLs {
         // This must be called AFTER parse_document so we have access to the updated AST
         self.check_injected_languages_auto_install(&uri).await;
 
-        // Re-collect and forward diagnostics from bridged language servers
-        // This updates the VirtualToHostRegistry with new mappings and sends fresh diagnostics
-        self.collect_and_forward_injection_diagnostics(&uri).await;
+        // Note: We don't re-collect diagnostics here.
+        // The empty diagnostics publish above clears existing diagnostics.
+        // Fresh diagnostics will be collected when rust-analyzer sends them asynchronously
+        // (via publishDiagnostics notification) or on next interaction (hover, completion, etc.).
+        // Synchronous re-collection can return stale diagnostics before the language server
+        // has finished reanalyzing the changed content.
 
         // Request the client to refresh semantic tokens
         // This will trigger the client to request new semantic tokens

@@ -2465,7 +2465,8 @@ fn main() {
         let content_with_error = "fn main() { let x = 1 }";
 
         // Call the new method that returns diagnostics
-        let result = conn.did_open_with_diagnostics(&virtual_uri.unwrap(), "rust", content_with_error);
+        let result =
+            conn.did_open_with_diagnostics(&virtual_uri.unwrap(), "rust", content_with_error);
         assert!(result.is_some(), "did_open_with_diagnostics should succeed");
 
         let open_result = result.unwrap();

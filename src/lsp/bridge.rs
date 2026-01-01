@@ -18,7 +18,9 @@ pub use cleanup::{
     CleanupStats, DEFAULT_CLEANUP_MAX_AGE, TEMP_DIR_PREFIX, cleanup_stale_temp_dirs,
     startup_cleanup,
 };
-pub use connection::{ConnectionInfo, DidOpenResult, LanguageServerConnection, ResponseWithNotifications};
+pub use connection::{
+    ConnectionInfo, DidOpenResult, LanguageServerConnection, ResponseWithNotifications,
+};
 pub use pool::LanguageServerPool;
 pub use text_document::{
     CodeActionWithNotifications, CompletionWithNotifications, DocumentHighlightWithNotifications,

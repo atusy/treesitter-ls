@@ -77,4 +77,50 @@ T["markdown_diagnostic"]["diagnostics appear for invalid rust code"] = function(
 	)
 end
 
+T["markdown_diagnostic"]["fixing error clears diagnostic"] = function()
+	-- First, wait for initial diagnostics to appear (error state)
+	local got_initial_diagnostics = helper.wait(30000, function()
+		local diags = child.lua_get([[vim.diagnostic.get(0)]])
+		return #diags > 0
+	end, 100)
+
+	if not got_initial_diagnostics then
+		MiniTest.expect.equality(true, false, "Initial diagnostics not received - cannot test clearing")
+	end
+
+	-- Store initial diagnostic count for verification
+	local initial_count = child.lua_get([[#vim.diagnostic.get(0)]])
+
+	-- Now fix the error by adding a semicolon
+	-- Line 5 (1-indexed) is "    let x = 1" - we need to change it to "    let x = 1;"
+	-- In Neovim: line 5 (1-indexed) means row 4 in 0-indexed nvim_buf_set_lines
+	-- The LSP client's on_lines callback should automatically detect this change
+	child.api.nvim_buf_set_lines(0, 4, 5, false, { "    let x = 1;" })
+
+	-- Give time for the change to propagate through the LSP pipeline:
+	-- 1. Neovim's LSP client sends didChange
+	-- 2. treesitter-ls parses and forwards to bridge
+	-- 3. rust-analyzer processes the change
+	-- 4. rust-analyzer sends new diagnostics
+	-- 5. treesitter-ls translates and forwards
+
+	-- Wait for diagnostics to be cleared (empty diagnostics sent for valid code)
+	local cleared = helper.wait(60000, function()
+		local diags = child.lua_get([[vim.diagnostic.get(0)]])
+		return #diags == 0
+	end, 500)
+
+	-- Get final diagnostic count for error message
+	local final_diags = child.lua_get([[vim.diagnostic.get(0)]])
+
+	-- We expect diagnostics to be cleared (0 remaining)
+	-- Even if rust-analyzer is slow, the clearing logic in did_change
+	-- sends empty diagnostics first, so we should see 0 eventually
+	MiniTest.expect.equality(
+		#final_diags,
+		0,
+		("Expected 0 diagnostics after fix (had %d initially), got %d"):format(initial_count, #final_diags)
+	)
+end
+
 return T
