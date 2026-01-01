@@ -33,7 +33,7 @@ const scrum: ScrumDashboard = {
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   product_backlog: [
     // ADR-0009 Implementation: Vertical slices with user-facing value
-    // Completed: PBI-144 (Sprint 114) - async bridge foundation fixes
+    // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115) - async bridge + progress notifications
     {
       id: "PBI-141",
       story: {
@@ -105,7 +105,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null, // Sprint 114 completed - see completed array
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -115,32 +115,32 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-113: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-114: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 115, pbi_id: "PBI-145", goal: "Restore progress indicator visibility during language server indexing by wiring $/progress notification forwarding through the async bridge", status: "done", subtasks: [] },
     { number: 114, pbi_id: "PBI-144", goal: "Fix async bridge foundation by adding cwd parameter to spawn, converting sync I/O to async (tokio::fs), and removing dead_code annotations now that the async bridge is wired into production", status: "done", subtasks: [] },
-    { number: 113, pbi_id: "PBI-140", goal: "Implement fully async hover bridging with TokioAsyncBridgeConnection reader task, TokioAsyncLanguageServerPool, and wire into hover_impl to replace spawn_blocking pattern", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-112: modular refactoring pattern, E2E indexing waits
+  // Recent 2 retrospectives | Sprint 1-113: modular refactoring pattern, E2E indexing waits, vertical slice validation
   retrospectives: [
     {
-      sprint: 114,
+      sprint: 115,
       improvements: [
-        { action: "External code reviews (Gemini Code Assist, Copilot) identify real issues before merge - integrate AI review tools as part of Definition of Done for complex PRs", timing: "sprint", status: "active", outcome: null },
-        { action: "Removing #[allow(dead_code)] reveals unused fields and forces proper resource management - Drop implementation added for TokioAsyncBridgeConnection to use reader_handle/shutdown_tx", timing: "immediate", status: "completed", outcome: "Proper Drop impl joins reader task and sends shutdown signal; no resource leaks" },
-        { action: "User story benefit should be user-centric not technical - refined mid-sprint from 'async pool sends proper shutdown' to 'diagnostics, hover, and other LSP features stay responsive during language server initialization'", timing: "immediate", status: "completed", outcome: "PBI-144 benefit now describes user value, not implementation detail" },
-        { action: "Two flaky tests related to rust-analyzer contention still exist - investigate and fix: tests may need better isolation or longer timeouts for CI environment", timing: "sprint", status: "active", outcome: null },
-        { action: "Copilot review Issue #4 (missing error logging when hover=None) - add tracing::debug! or tracing::warn! when bridged hover returns None for observability", timing: "sprint", status: "active", outcome: null },
+        { action: "External code reviews (Gemini Code Assist) catch real regressions - continue using AI review tools for complex PRs; PBI-145 was discovered this way", timing: "sprint", status: "completed", outcome: "$/progress notification regression identified and fixed within one sprint" },
+        { action: "User challenge on priority was correct - when regression affects UX (progress indicators missing), prioritize immediately rather than deferring to future sprint", timing: "immediate", status: "completed", outcome: "PBI-145 prioritized as HIGH PRIORITY and completed same sprint it was identified" },
+        { action: "Option<Receiver> pattern for one-time ownership transfer (take()) is clean and testable - apply this pattern when resources need single-use consumption", timing: "immediate", status: "completed", outcome: "notification_rx.take() in initialized() ensures forwarder starts exactly once" },
+        { action: "Flaky tests need dedicated investigation time - did_open_uses_connection_info_write_virtual_file in sync bridge and E2E tests with rust-analyzer contention remain problematic", timing: "sprint", status: "active", outcome: null },
+        { action: "AC3 (E2E verification of progress notifications) was not explicitly tested - relied on integration completeness; consider adding explicit E2E test for progress notification forwarding", timing: "product", status: "active", outcome: null },
       ],
     },
     {
-      sprint: 113,
+      sprint: 114,
       improvements: [
-        { action: "INVEST-compliant vertical slice pattern validated - PBI-140 delivered user value (faster hover responses) by combining infrastructure (TokioAsyncBridgeConnection), wiring (TokioAsyncLanguageServerPool into TreeSitterLs), and E2E test in single PBI", timing: "immediate", status: "completed", outcome: "Avoided PBI-091 anti-pattern where infrastructure was never wired; async pool is now used in production hover path" },
-        { action: "Apply vertical slice pattern to PBI-142 (completion + signatureHelp) - each PBI should deliver observable user value, not just infrastructure changes", timing: "sprint", status: "active", outcome: null },
-        { action: "Sync bridge module has potential flaky test (read_response_for_id_with_notifications_returns_none_on_timeout uses 100ms timeout with 5s assertion slack) - monitor for CI failures, consider increasing timeout margin if flaky", timing: "sprint", status: "active", outcome: null },
-        { action: "tokio::select! pattern enables clean async shutdown - reader task completes within 100ms when idle (AC1 verified), unlike sync read_line which blocks until data arrives", timing: "immediate", status: "completed", outcome: "Test shutdown_while_reader_idle_completes_within_100ms passes consistently" },
-        { action: "Remove #[allow(dead_code)] from TokioAsyncBridgeConnection and TokioAsyncLanguageServerPool now that they are wired into production code (hover path uses them)", timing: "sprint", status: "completed", outcome: "Tracked as AC4 in PBI-144" },
+        { action: "External code reviews (Gemini Code Assist, Copilot) identify real issues before merge - integrate AI review tools as part of Definition of Done for complex PRs", timing: "sprint", status: "completed", outcome: "Gemini Code Assist identified $/progress notification regression (PBI-145) - prioritized as high priority fix and completed in Sprint 115" },
+        { action: "Removing #[allow(dead_code)] reveals unused fields and forces proper resource management - Drop implementation added for TokioAsyncBridgeConnection to use reader_handle/shutdown_tx", timing: "immediate", status: "completed", outcome: "Proper Drop impl joins reader task and sends shutdown signal; no resource leaks" },
+        { action: "User story benefit should be user-centric not technical - refined mid-sprint from 'async pool sends proper shutdown' to 'diagnostics, hover, and other LSP features stay responsive during language server initialization'", timing: "immediate", status: "completed", outcome: "PBI-144 benefit now describes user value, not implementation detail" },
+        { action: "Two flaky tests related to rust-analyzer contention still exist - investigate and fix: tests may need better isolation or longer timeouts for CI environment", timing: "sprint", status: "active", outcome: "Carried forward to Sprint 115 - still needs investigation" },
+        { action: "Copilot review Issue #4 (missing error logging when hover=None) - add tracing::debug! or tracing::warn! when bridged hover returns None for observability", timing: "sprint", status: "active", outcome: null },
       ],
     },
   ],
