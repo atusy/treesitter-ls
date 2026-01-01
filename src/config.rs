@@ -18,10 +18,7 @@ pub use user::{UserConfigError, UserConfigResult, load_user_config, user_config_
 /// - If neither exists: return None
 ///
 /// The merge creates a new QueryTypeMappings where specific values override wildcard values.
-pub fn resolve_with_wildcard(
-    map: &CaptureMappings,
-    key: &str,
-) -> Option<QueryTypeMappings> {
+pub fn resolve_with_wildcard(map: &CaptureMappings, key: &str) -> Option<QueryTypeMappings> {
     let wildcard = map.get("_");
     let specific = map.get(key);
 
