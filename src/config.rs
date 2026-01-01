@@ -111,6 +111,51 @@ pub fn resolve_bridge_with_wildcard(
     }
 }
 
+/// Resolve a language server key from a map with wildcard fallback and merging.
+///
+/// Implements ADR-0011 wildcard config inheritance for languageServers HashMap:
+/// - If both wildcard ("_") and specific key exist: merge them (specific overrides wildcard)
+/// - If only wildcard exists: return wildcard
+/// - If only specific key exists: return specific key
+/// - If neither exists: return None
+///
+/// The merge creates a new BridgeServerConfig where specific values override wildcard values.
+pub fn resolve_language_server_with_wildcard(
+    map: &HashMap<String, settings::BridgeServerConfig>,
+    key: &str,
+) -> Option<settings::BridgeServerConfig> {
+    let wildcard = map.get("_");
+    let specific = map.get(key);
+
+    match (wildcard, specific) {
+        (Some(w), Some(s)) => {
+            // Merge: start with wildcard, override with specific
+            Some(settings::BridgeServerConfig {
+                // For Vec fields: use specific if non-empty, else wildcard
+                cmd: if s.cmd.is_empty() {
+                    w.cmd.clone()
+                } else {
+                    s.cmd.clone()
+                },
+                languages: if s.languages.is_empty() {
+                    w.languages.clone()
+                } else {
+                    s.languages.clone()
+                },
+                // For Option fields: specific.or(wildcard)
+                initialization_options: s
+                    .initialization_options
+                    .clone()
+                    .or_else(|| w.initialization_options.clone()),
+                workspace_type: s.workspace_type.or(w.workspace_type),
+            })
+        }
+        (Some(w), None) => Some(w.clone()),
+        (None, Some(s)) => Some(s.clone()),
+        (None, None) => None,
+    }
+}
+
 /// Returns the default search paths for parsers and queries.
 /// Uses the platform-specific data directory (via `dirs` crate):
 /// - Linux: ~/.local/share/treesitter-ls
@@ -1846,6 +1891,50 @@ mod tests {
             resolved.highlights.get("variable"),
             Some(&"variable".to_string()),
             "Should still inherit 'variable' from wildcard"
+        );
+    }
+
+    // PBI-154: languageServers Wildcard Inheritance (ADR-0011)
+
+    #[test]
+    fn test_resolve_language_server_with_wildcard_returns_wildcard_when_specific_absent() {
+        // ADR-0011: languageServers['rust-analyzer'] inherits from languageServers['_']
+        // When languageServers only has "_" and we ask for "rust-analyzer",
+        // we should get the wildcard's settings
+        use settings::BridgeServerConfig;
+
+        let mut servers: HashMap<String, BridgeServerConfig> = HashMap::new();
+
+        // Wildcard has default settings
+        servers.insert(
+            "_".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["default-lsp".to_string()],
+                languages: vec!["any".to_string()],
+                initialization_options: None,
+                workspace_type: Some(settings::WorkspaceType::Generic),
+            },
+        );
+
+        // Resolve for "rust-analyzer" which doesn't exist - should return wildcard
+        let result = resolve_language_server_with_wildcard(&servers, "rust-analyzer");
+
+        assert!(result.is_some(), "Should return Some when wildcard exists");
+        let resolved = result.unwrap();
+        assert_eq!(
+            resolved.cmd,
+            vec!["default-lsp".to_string()],
+            "Should inherit cmd from wildcard"
+        );
+        assert_eq!(
+            resolved.languages,
+            vec!["any".to_string()],
+            "Should inherit languages from wildcard"
+        );
+        assert_eq!(
+            resolved.workspace_type,
+            Some(settings::WorkspaceType::Generic),
+            "Should inherit workspace_type from wildcard"
         );
     }
 }
