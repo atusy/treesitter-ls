@@ -34,32 +34,25 @@ const scrum: ScrumDashboard = {
   product_backlog: [
     // ADR-0009 Implementation: Vertical slices with user-facing value
     // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117)
+    // Rejected: PBI-147 (wait for indexing) - replaced by PBI-149 (informative message approach)
     {
-      id: "PBI-147",
+      id: "PBI-149",
       story: {
         role: "Rustacean editing Markdown",
-        capability: "get hover results on first request without needing to retry",
-        benefit: "hover works reliably the first time I trigger it on a new code block",
+        capability: "see informative message when hover fails due to server indexing",
+        benefit: "I understand why hover isn't working and know I can retry later",
       },
       acceptance_criteria: [
         {
-          criterion: "spawn_and_initialize monitors $/progress notifications with token 'rustAnalyzer/indexing' via notification_sender channel",
-          verification: "Unit test: spawn connection, send mock $/progress begin/end, verify wait_for_indexing completes",
+          criterion: "hover returns 'indexing (rust-analyzer)' message when server is still indexing",
+          verification: "E2E test: trigger hover immediately after server spawn, verify informative message returned",
         },
         {
-          criterion: "wait_for_indexing blocks until $/progress notification with kind='end' for rustAnalyzer/indexing token (or 60s timeout)",
-          verification: "Unit test: verify wait_for_indexing returns only after receiving {token: 'rustAnalyzer/indexing', value: {kind: 'end'}}",
-        },
-        {
-          criterion: "spawn_and_initialize calls wait_for_indexing after initialized notification before returning connection",
-          verification: "Integration test: spawn rust-analyzer, verify get_connection blocks during indexing phase",
-        },
-        {
-          criterion: "Single hover request returns result without retry loop in tests",
-          verification: "E2E test test_lsp_hover.lua uses single vim.lsp.buf.hover() call without retry loop",
+          criterion: "hover returns normal result after indexing completes",
+          verification: "E2E test: wait for indexing, trigger hover, verify normal hover content returned",
         },
       ],
-      status: "ready",
+      status: "draft",
     },
     {
       id: "PBI-141",
