@@ -34,6 +34,8 @@ pub struct AsyncConnectionWithInfo {
     pub virtual_file_path: PathBuf,
     /// Current document version for tracking didOpen/didChange
     document_version: std::sync::atomic::AtomicI32,
+    /// Hash of last opened content (for detecting content changes and needing index wait)
+    last_content_hash: std::sync::atomic::AtomicU64,
 }
 
 impl AsyncConnectionWithInfo {
@@ -43,6 +45,7 @@ impl AsyncConnectionWithInfo {
             connection,
             virtual_file_path,
             document_version: std::sync::atomic::AtomicI32::new(0),
+            last_content_hash: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -53,9 +56,28 @@ impl AsyncConnectionWithInfo {
 
     /// Send didOpen notification with content.
     ///
-    /// If the document was already opened, sends didChange instead.
-    pub fn did_open(&self, language_id: &str, content: &str) -> Result<(), String> {
+    /// This method writes the content to the virtual file on disk first,
+    /// then sends the didOpen notification. Writing to disk is required
+    /// because rust-analyzer reads files directly in Cargo workspaces.
+    ///
+    /// Returns `Ok(true)` if the content is new/changed and the server needs indexing time,
+    /// `Ok(false)` if the content is the same as before (no indexing needed).
+    pub fn did_open(&self, language_id: &str, content: &str) -> Result<bool, String> {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
         use std::sync::atomic::Ordering;
+
+        // Compute content hash to detect changes
+        let mut hasher = DefaultHasher::new();
+        content.hash(&mut hasher);
+        let new_hash = hasher.finish();
+
+        let old_hash = self.last_content_hash.swap(new_hash, Ordering::SeqCst);
+        let content_changed = old_hash != new_hash;
+
+        // Write content to the virtual file on disk (required for rust-analyzer)
+        std::fs::write(&self.virtual_file_path, content)
+            .map_err(|e| format!("Failed to write virtual file: {}", e))?;
 
         let uri = self.virtual_file_uri();
         let version = self
@@ -74,7 +96,49 @@ impl AsyncConnectionWithInfo {
             }
         });
         self.connection
-            .send_notification("textDocument/didOpen", params)
+            .send_notification("textDocument/didOpen", params)?;
+
+        Ok(content_changed)
+    }
+
+    /// Send didOpen and wait for server indexing if content changed.
+    ///
+    /// This is the preferred method for handlers that need the server to be ready
+    /// before sending requests (e.g., definition, references, type_definition).
+    /// Waits for the server to signal readiness via `publishDiagnostics` notification.
+    pub async fn did_open_and_wait(&self, language_id: &str, content: &str) -> Result<(), String> {
+        let content_changed = self.did_open(language_id, content)?;
+
+        if content_changed {
+            // Reset indexing state and wait for publishDiagnostics
+            self.connection.reset_indexing_state();
+
+            // Poll for indexing completion with timeout
+            // rust-analyzer sends publishDiagnostics after it finishes indexing
+            let start = std::time::Instant::now();
+            let timeout = std::time::Duration::from_secs(10);
+            let poll_interval = std::time::Duration::from_millis(50);
+
+            while !self.connection.is_ready() {
+                if start.elapsed() > timeout {
+                    log::warn!(
+                        target: "treesitter_ls::bridge::async_pool",
+                        "[POOL] Timeout waiting for indexing after {:?}",
+                        timeout
+                    );
+                    break;
+                }
+                tokio::time::sleep(poll_interval).await;
+            }
+
+            log::debug!(
+                target: "treesitter_ls::bridge::async_pool",
+                "[POOL] Indexing complete after {:?}",
+                start.elapsed()
+            );
+        }
+
+        Ok(())
     }
 
     /// Send a textDocument/documentHighlight request and await the response.
@@ -563,6 +627,7 @@ impl AsyncConnectionWithInfo {
 /// Unlike `LanguageServerPool`, this pool allows multiple concurrent requests
 /// to share the same connection. Each connection has a background reader that
 /// routes responses by request ID.
+#[derive(Clone)]
 pub struct AsyncLanguageServerPool {
     /// Active connections by key (server name) - includes connection + workspace info
     connections: DashMap<String, Arc<AsyncConnectionWithInfo>>,

@@ -60,6 +60,8 @@ pub struct TreeSitterLs {
     /// Tracks parsers that have crashed
     failed_parsers: FailedParserRegistry,
     /// Pool of language server connections for injection bridging (legacy synchronous)
+    /// TODO(PBI-136): Remove this field after confirming async pool works in production
+    #[allow(dead_code)]
     language_server_pool: LanguageServerPool,
     /// Async pool for concurrent bridge requests (new pattern)
     async_language_server_pool: AsyncLanguageServerPool,
@@ -827,9 +829,8 @@ impl TreeSitterLs {
     /// Called after parse_document completes so we have access to the AST.
     ///
     /// For each unique injection language that has a bridge server configured
-    /// (and allowed by the host language's bridge filter), triggers
-    /// spawn_in_background_with_notifications to start the connection
-    /// asynchronously and forward any $/progress notifications to the LSP client.
+    /// (and allowed by the host language's bridge filter), triggers async pool
+    /// connection spawn in the background.
     fn eager_spawn_for_injections(&self, uri: &Url) {
         // Get the host language for this document
         let Some(host_language) = self.get_language_for_document(uri) else {
@@ -861,12 +862,13 @@ impl TreeSitterLs {
 
             let pool_key = config.cmd.first().cloned().unwrap_or_default();
 
-            // Create a channel for receiving progress notifications
-            let (tx, mut rx) = tokio::sync::mpsc::channel::<serde_json::Value>(100);
-
-            // Spawn with notification forwarding
-            self.language_server_pool
-                .spawn_in_background_with_notifications(&pool_key, &config, tx);
+            // Spawn connection in background via async pool
+            let pool = self.async_language_server_pool.clone();
+            let config_clone = config.clone();
+            let pool_key_clone = pool_key.clone();
+            tokio::spawn(async move {
+                let _ = pool.get_connection(&pool_key_clone, &config_clone).await;
+            });
 
             log::debug!(
                 target: "treesitter_ls::eager_spawn",
@@ -874,19 +876,6 @@ impl TreeSitterLs {
                 pool_key,
                 lang
             );
-
-            // Spawn a task to forward progress notifications to the client
-            let client = self.client.clone();
-            tokio::spawn(async move {
-                while let Some(notification) = rx.recv().await {
-                    if let Some(params) = notification.get("params")
-                        && let Ok(progress_params) =
-                            serde_json::from_value::<ProgressParams>(params.clone())
-                    {
-                        client.send_notification::<Progress>(progress_params).await;
-                    }
-                }
-            });
         }
     }
 
@@ -943,72 +932,31 @@ impl TreeSitterLs {
             end: cacheable.translate_host_to_virtual(range.end),
         };
 
-        // Create a virtual URI for the injection
-        let virtual_uri = format!(
-            "file:///tmp/treesitter-ls-virtual-{}.rs",
-            std::process::id()
-        );
-
-        // Get language server connection from pool
+        // Get shared connection from async pool
         let pool_key = server_config.cmd.first().cloned().unwrap_or_default();
-
-        // Take connection from pool (will spawn if none exists)
         let conn = self
-            .language_server_pool
-            .take_connection(&pool_key, &server_config)?;
+            .async_language_server_pool
+            .get_connection(&pool_key, &server_config)
+            .await?;
 
-        let virtual_uri_clone = virtual_uri.clone();
-        let uri_clone = uri.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let mut conn = conn;
-            // Open the virtual document
-            conn.did_open(&virtual_uri_clone, "rust", &virtual_content);
-
-            // Request code action with notifications capture
-            let result = conn.code_action_with_notifications(&virtual_uri_clone, virtual_range);
-
-            // Return both result and connection for pool return
-            (result, conn, uri_clone, cacheable)
-        })
-        .await;
-
-        // Handle spawn_blocking result and return connection to pool
-        let (code_action_result, notifications, uri_for_translate, cacheable_for_translate) =
-            match result {
-                Ok((result, conn, uri, cacheable)) => {
-                    self.language_server_pool.return_connection(&pool_key, conn);
-                    (result.response, result.notifications, uri, cacheable)
-                }
-                Err(e) => {
-                    self.client
-                        .log_message(MessageType::ERROR, format!("spawn_blocking failed: {}", e))
-                        .await;
-                    return None;
-                }
-            };
-
-        // Forward captured progress notifications to the client
-        for notification in notifications {
-            if let Some(params) = notification.get("params")
-                && let Ok(progress_params) =
-                    serde_json::from_value::<ProgressParams>(params.clone())
-            {
-                self.client
-                    .send_notification::<Progress>(progress_params)
-                    .await;
-            }
+        // Send didOpen and wait for indexing
+        if conn
+            .did_open_and_wait("rust", &virtual_content)
+            .await
+            .is_err()
+        {
+            return None;
         }
+
+        // Send code action request and await response asynchronously
+        let code_action_result = conn.code_action(virtual_range).await;
 
         // Translate CodeActionResponse ranges back to host document coordinates
         code_action_result.map(|actions| {
             actions
                 .into_iter()
                 .map(|action_or_cmd| {
-                    self.translate_code_action_or_command(
-                        action_or_cmd,
-                        &uri_for_translate,
-                        &cacheable_for_translate,
-                    )
+                    self.translate_code_action_or_command(action_or_cmd, uri, &cacheable)
                 })
                 .collect()
         })

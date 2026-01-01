@@ -1,7 +1,6 @@
 //! Formatting method for TreeSitterLs.
 
 use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::notification::Progress;
 use tower_lsp::lsp_types::*;
 
 use crate::language::injection::CacheableInjectionRegion;
@@ -75,62 +74,30 @@ impl TreeSitterLs {
             // Extract virtual document content
             let virtual_content = cacheable.extract_content(text).to_owned();
 
-            // Create a virtual URI for the injection
-            let virtual_uri = format!(
-                "file:///tmp/treesitter-ls-virtual-{}.rs",
-                std::process::id()
-            );
-
-            // Get language server connection from pool
+            // Get shared connection from async pool
             let pool_key = server_config.cmd.first().cloned().unwrap_or_default();
-
-            // Take connection from pool (will spawn if none exists)
-            let Some(conn) = self
-                .language_server_pool
-                .take_connection(&pool_key, &server_config)
-            else {
-                continue;
-            };
-
-            let virtual_uri_clone = virtual_uri.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                let mut conn = conn;
-                // Open the virtual document
-                conn.did_open(&virtual_uri_clone, "rust", &virtual_content);
-
-                // Request formatting with notifications capture
-                let result = conn.formatting_with_notifications(&virtual_uri_clone);
-
-                // Return both result and connection for pool return
-                (result, conn)
-            })
-            .await;
-
-            // Handle spawn_blocking result and return connection to pool
-            let (formatting_result, notifications) = match result {
-                Ok((result, conn)) => {
-                    self.language_server_pool.return_connection(&pool_key, conn);
-                    (result.response, result.notifications)
-                }
-                Err(e) => {
-                    self.client
-                        .log_message(MessageType::ERROR, format!("spawn_blocking failed: {}", e))
-                        .await;
+            let conn = match self
+                .async_language_server_pool
+                .get_connection(&pool_key, &server_config)
+                .await
+            {
+                Some(c) => c,
+                None => {
                     continue;
                 }
             };
 
-            // Forward captured progress notifications to the client
-            for notification in notifications {
-                if let Some(params) = notification.get("params")
-                    && let Ok(progress_params) =
-                        serde_json::from_value::<ProgressParams>(params.clone())
-                {
-                    self.client
-                        .send_notification::<Progress>(progress_params)
-                        .await;
-                }
+            // Send didOpen and wait for indexing
+            if conn
+                .did_open_and_wait("rust", &virtual_content)
+                .await
+                .is_err()
+            {
+                continue;
             }
+
+            // Send formatting request and await response asynchronously
+            let formatting_result = conn.formatting().await;
 
             // Translate TextEdit ranges back to host document coordinates
             if let Some(edits) = formatting_result {

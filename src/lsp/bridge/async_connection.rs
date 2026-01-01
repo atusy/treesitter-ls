@@ -38,6 +38,16 @@ pub struct ResponseResult {
     pub notifications: Vec<Value>,
 }
 
+/// Shared state for tracking server readiness (e.g., indexing complete).
+///
+/// This is shared between the reader loop and the connection wrapper
+/// so the reader can signal when `publishDiagnostics` is received.
+#[derive(Default)]
+pub struct IndexingState {
+    /// Set to true when publishDiagnostics is first received (indicates server is ready)
+    pub diagnostics_received: AtomicBool,
+}
+
 /// Async bridge connection that handles concurrent LSP requests.
 ///
 /// This wraps a language server's stdin/stdout and provides async request handling.
@@ -54,6 +64,8 @@ pub struct AsyncBridgeConnection {
     reader_handle: Option<JoinHandle<()>>,
     /// Signal to stop the reader thread
     shutdown: Arc<AtomicBool>,
+    /// Shared state for tracking indexing completion
+    indexing_state: Arc<IndexingState>,
     /// Channel for notifications ($/progress, etc.)
     /// Note: Currently unused but will be used when integrating with lsp_impl
     #[allow(dead_code)]
@@ -77,15 +89,23 @@ impl AsyncBridgeConnection {
     ) -> Self {
         let pending_requests: Arc<DashMap<i64, PendingRequest>> = Arc::new(DashMap::new());
         let shutdown = Arc::new(AtomicBool::new(false));
+        let indexing_state = Arc::new(IndexingState::default());
 
         // Clone for the background thread
         let pending_clone = pending_requests.clone();
         let shutdown_clone = shutdown.clone();
         let notif_sender_clone = notification_sender.clone();
+        let indexing_state_clone = indexing_state.clone();
 
         // Spawn background reader thread
         let reader_handle = std::thread::spawn(move || {
-            Self::reader_loop(stdout, pending_clone, shutdown_clone, notif_sender_clone);
+            Self::reader_loop(
+                stdout,
+                pending_clone,
+                shutdown_clone,
+                notif_sender_clone,
+                indexing_state_clone,
+            );
         });
 
         Self {
@@ -94,6 +114,7 @@ impl AsyncBridgeConnection {
             stdin: std::sync::Mutex::new(stdin),
             reader_handle: Some(reader_handle),
             shutdown,
+            indexing_state,
             notification_sender,
         }
     }
@@ -104,6 +125,7 @@ impl AsyncBridgeConnection {
         pending: Arc<DashMap<i64, PendingRequest>>,
         shutdown: Arc<AtomicBool>,
         notification_sender: tokio::sync::mpsc::Sender<Value>,
+        indexing_state: Arc<IndexingState>,
     ) {
         let mut reader = BufReader::new(stdout);
 
@@ -163,11 +185,26 @@ impl AsyncBridgeConnection {
                 }
             } else if let Some(method) = message.get("method").and_then(|m| m.as_str()) {
                 // This is a notification
-                if method == "$/progress" {
-                    // Send progress notifications via channel
-                    let _ = notification_sender.blocking_send(message);
+                match method {
+                    "$/progress" => {
+                        // Send progress notifications via channel
+                        let _ = notification_sender.blocking_send(message);
+                    }
+                    "textDocument/publishDiagnostics" => {
+                        // Signal that server has finished initial indexing
+                        // rust-analyzer sends diagnostics after it's ready to handle requests
+                        log::debug!(
+                            target: "treesitter_ls::bridge::async",
+                            "[READER] publishDiagnostics received - server is ready"
+                        );
+                        indexing_state
+                            .diagnostics_received
+                            .store(true, Ordering::SeqCst);
+                    }
+                    _ => {
+                        // Other notifications are ignored
+                    }
                 }
-                // Other notifications are ignored
             }
         }
 
@@ -312,6 +349,29 @@ impl AsyncBridgeConnection {
         );
 
         Ok(())
+    }
+
+    /// Get the indexing state for checking if the server is ready.
+    ///
+    /// Callers can use this to check if `publishDiagnostics` has been received,
+    /// which indicates the server has finished initial indexing and is ready
+    /// to handle semantic requests.
+    pub fn indexing_state(&self) -> Arc<IndexingState> {
+        self.indexing_state.clone()
+    }
+
+    /// Check if the server has finished indexing (received publishDiagnostics).
+    pub fn is_ready(&self) -> bool {
+        self.indexing_state
+            .diagnostics_received
+            .load(Ordering::SeqCst)
+    }
+
+    /// Reset the indexing state (useful when content changes).
+    pub fn reset_indexing_state(&self) {
+        self.indexing_state
+            .diagnostics_received
+            .store(false, Ordering::SeqCst);
     }
 
     /// Shutdown the connection and reader thread.

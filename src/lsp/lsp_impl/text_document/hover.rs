@@ -131,8 +131,8 @@ impl TreeSitterLs {
             }
         };
 
-        // Send didOpen with virtual content (non-blocking)
-        if let Err(e) = conn.did_open("rust", &virtual_content) {
+        // Send didOpen and wait for indexing
+        if let Err(e) = conn.did_open_and_wait("rust", &virtual_content).await {
             self.client
                 .log_message(MessageType::ERROR, format!("didOpen failed: {}", e))
                 .await;

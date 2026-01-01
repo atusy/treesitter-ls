@@ -1,7 +1,6 @@
 //! Goto declaration method for TreeSitterLs.
 
 use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::notification::Progress;
 use tower_lsp::lsp_types::*;
 
 use crate::language::injection::CacheableInjectionRegion;
@@ -158,17 +157,7 @@ impl TreeSitterLs {
             )
             .await;
 
-        // Create a virtual URI for the injection
-        let virtual_uri = format!(
-            "file:///tmp/treesitter-ls-virtual-{}.rs",
-            std::process::id()
-        );
-        self.client
-            .log_message(MessageType::INFO, format!("Virtual URI: {}", virtual_uri))
-            .await;
-
         // Get bridge server config for this language
-        // Use spawn_blocking because language server communication is synchronous blocking I/O
         // The bridge filter is checked inside get_bridge_config_for_language
         let Some(server_config) =
             self.get_bridge_config_for_language(&language_name, &region.language)
@@ -185,22 +174,12 @@ impl TreeSitterLs {
             return Ok(None);
         };
 
+        // Get shared connection from async pool
         let pool_key = server_config.cmd.first().cloned().unwrap_or_default();
-        let has_existing = self.language_server_pool.has_connection(&pool_key);
-        self.client
-            .log_message(
-                MessageType::INFO,
-                format!(
-                    "Getting {} from pool (existing: {})...",
-                    pool_key, has_existing
-                ),
-            )
-            .await;
-
-        // Take connection from pool (will spawn if none exists)
         let conn = match self
-            .language_server_pool
-            .take_connection(&pool_key, &server_config)
+            .async_language_server_pool
+            .get_connection(&pool_key, &server_config)
+            .await
         {
             Some(c) => c,
             None => {
@@ -211,45 +190,16 @@ impl TreeSitterLs {
             }
         };
 
-        let virtual_uri_clone = virtual_uri.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let mut conn = conn;
-            // Open the virtual document
-            conn.did_open(&virtual_uri_clone, "rust", &virtual_content);
-
-            // Request declaration with notifications capture
-            let result = conn.declaration_with_notifications(&virtual_uri_clone, virtual_position);
-
-            // Return both result and connection for pool return
-            (result, conn)
-        })
-        .await;
-
-        // Handle spawn_blocking result and return connection to pool
-        let (declaration, notifications) = match result {
-            Ok((result, conn)) => {
-                self.language_server_pool.return_connection(&pool_key, conn);
-                (result.response, result.notifications)
-            }
-            Err(e) => {
-                self.client
-                    .log_message(MessageType::ERROR, format!("spawn_blocking failed: {}", e))
-                    .await;
-                (None, vec![])
-            }
-        };
-
-        // Forward captured progress notifications to the client
-        for notification in notifications {
-            if let Some(params) = notification.get("params")
-                && let Ok(progress_params) =
-                    serde_json::from_value::<ProgressParams>(params.clone())
-            {
-                self.client
-                    .send_notification::<Progress>(progress_params)
-                    .await;
-            }
+        // Send didOpen and wait for indexing
+        if let Err(e) = conn.did_open_and_wait("rust", &virtual_content).await {
+            self.client
+                .log_message(MessageType::ERROR, format!("didOpen failed: {}", e))
+                .await;
+            return Ok(None);
         }
+
+        // Send declaration request and await response asynchronously
+        let declaration = conn.declaration(virtual_position).await;
 
         self.client
             .log_message(
