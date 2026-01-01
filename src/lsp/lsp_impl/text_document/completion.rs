@@ -1,7 +1,6 @@
 //! Completion method for TreeSitterLs.
 
 use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::notification::Progress;
 use tower_lsp::lsp_types::*;
 
 use crate::language::injection::CacheableInjectionRegion;
@@ -113,65 +112,38 @@ impl TreeSitterLs {
             std::process::id()
         );
 
-        // Get language server connection from pool
+        // Get pool key from config
         let pool_key = server_config.cmd.first().cloned().unwrap_or_default();
 
-        // Take connection from pool (will spawn if none exists)
-        let conn = match self
-            .language_server_pool
-            .take_connection(&pool_key, &server_config)
-        {
-            Some(c) => c,
-            None => {
-                self.client
-                    .log_message(
-                        MessageType::ERROR,
-                        format!("Failed to spawn language server: {}", pool_key),
-                    )
-                    .await;
-                return Ok(None);
-            }
-        };
+        self.client
+            .log_message(
+                MessageType::LOG,
+                format!("[COMPLETION] async bridge START pool_key={}", pool_key),
+            )
+            .await;
 
-        let virtual_uri_clone = virtual_uri.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let mut conn = conn;
-            // Open the virtual document
-            conn.did_open(&virtual_uri_clone, "rust", &virtual_content);
+        // Use fully async completion via TokioAsyncLanguageServerPool
+        let completion = self
+            .tokio_async_pool
+            .completion(
+                &pool_key,
+                &server_config,
+                &virtual_uri,
+                &region.language,
+                &virtual_content,
+                virtual_position,
+            )
+            .await;
 
-            // Request completion with notifications capture
-            let result = conn.completion_with_notifications(&virtual_uri_clone, virtual_position);
-
-            // Return both result and connection for pool return
-            (result, conn)
-        })
-        .await;
-
-        // Handle spawn_blocking result and return connection to pool
-        let (completion, notifications) = match result {
-            Ok((result, conn)) => {
-                self.language_server_pool.return_connection(&pool_key, conn);
-                (result.response, result.notifications)
-            }
-            Err(e) => {
-                self.client
-                    .log_message(MessageType::ERROR, format!("spawn_blocking failed: {}", e))
-                    .await;
-                (None, vec![])
-            }
-        };
-
-        // Forward captured progress notifications to the client
-        for notification in notifications {
-            if let Some(params) = notification.get("params")
-                && let Ok(progress_params) =
-                    serde_json::from_value::<ProgressParams>(params.clone())
-            {
-                self.client
-                    .send_notification::<Progress>(progress_params)
-                    .await;
-            }
-        }
+        self.client
+            .log_message(
+                MessageType::LOG,
+                format!(
+                    "[COMPLETION] async bridge DONE has_completion={}",
+                    completion.is_some()
+                ),
+            )
+            .await;
 
         // Translate completion response ranges back to host document
         let Some(completion_response) = completion else {
