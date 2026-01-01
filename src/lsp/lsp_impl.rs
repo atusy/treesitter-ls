@@ -61,7 +61,6 @@ pub struct TreeSitterLs {
     /// Pool of language server connections for injection bridging (sync)
     language_server_pool: LanguageServerPool,
     /// Tokio-based async language server pool for fully async bridging
-    #[allow(dead_code)]
     tokio_async_pool: TokioAsyncLanguageServerPool,
     /// Receiver for progress notifications from tokio async pool (needs to be polled)
     #[allow(dead_code)]
