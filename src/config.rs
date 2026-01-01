@@ -1571,11 +1571,148 @@ mod tests {
             Some("/default/path.so".to_string()),
             "Should inherit library from wildcard"
         );
-        assert!(resolved.bridge.is_some(), "Should inherit bridge from wildcard");
+        assert!(
+            resolved.bridge.is_some(),
+            "Should inherit bridge from wildcard"
+        );
         let bridge = resolved.bridge.as_ref().unwrap();
         assert!(
             bridge.get("rust").is_some_and(|c| c.enabled),
             "Should inherit bridge settings from wildcard"
+        );
+    }
+
+    #[test]
+    fn test_specific_values_override_wildcards_at_both_levels() {
+        // ADR-0011: python.bridge.javascript overrides _.bridge._ settings
+        // Setup:
+        // - languages._ has bridge._ with enabled = true (default)
+        // - languages.python has bridge.javascript with enabled = false (override)
+        // - We ask for bridge setting for "javascript" in "python" -> should get enabled = false
+        // - We ask for bridge setting for "rust" in "python" -> should get enabled = true (from _)
+        let mut languages: HashMap<String, LanguageConfig> = HashMap::new();
+
+        // Wildcard language with wildcard bridge (default enabled = true)
+        let mut wildcard_bridge = HashMap::new();
+        wildcard_bridge.insert(
+            "_".to_string(),
+            settings::BridgeLanguageConfig { enabled: true },
+        );
+
+        languages.insert(
+            "_".to_string(),
+            LanguageConfig {
+                library: Some("/default/path.so".to_string()),
+                queries: None,
+                highlights: Some(vec!["/default/highlights.scm".to_string()]),
+                locals: None,
+                injections: None,
+                bridge: Some(wildcard_bridge),
+            },
+        );
+
+        // Python-specific: disable bridging to JavaScript, but inherit _ for library
+        let mut python_bridge = HashMap::new();
+        python_bridge.insert(
+            "javascript".to_string(),
+            settings::BridgeLanguageConfig { enabled: false },
+        );
+
+        languages.insert(
+            "python".to_string(),
+            LanguageConfig {
+                library: None, // Should inherit from _
+                queries: None,
+                highlights: None, // Should inherit from _
+                locals: None,
+                injections: None,
+                bridge: Some(python_bridge),
+            },
+        );
+
+        // Resolve for "python" - should merge with wildcard
+        let resolved_lang = resolve_language_with_wildcard(&languages, "python");
+        assert!(resolved_lang.is_some(), "Should resolve python language");
+        let lang_config = resolved_lang.unwrap();
+
+        // Library should be inherited from wildcard
+        assert_eq!(
+            lang_config.library,
+            Some("/default/path.so".to_string()),
+            "Python should inherit library from wildcard"
+        );
+
+        // Bridge should be from python-specific (not merged with wildcard bridge)
+        assert!(lang_config.bridge.is_some(), "Python should have bridge");
+        let bridge = lang_config.bridge.as_ref().unwrap();
+
+        // JavaScript: python-specific override (enabled = false)
+        let js_resolved = resolve_bridge_with_wildcard(bridge, "javascript");
+        assert!(js_resolved.is_some(), "Should resolve javascript bridge");
+        assert!(
+            !js_resolved.unwrap().enabled,
+            "Python's javascript bridge should be disabled (override)"
+        );
+
+        // Rust: not in python bridge, should NOT inherit from _.bridge._
+        // because python has its own bridge map that doesn't include _
+        let rust_resolved = resolve_bridge_with_wildcard(bridge, "rust");
+        assert!(
+            rust_resolved.is_none(),
+            "Python's rust bridge should not resolve (no wildcard in python's bridge)"
+        );
+    }
+
+    #[test]
+    fn test_specific_bridge_with_nested_wildcard() {
+        // ADR-0011: Test case where python.bridge includes _ wildcard
+        // - languages.python.bridge._ = enabled: true (python-specific default)
+        // - languages.python.bridge.javascript = enabled: false (override)
+        // - rust should inherit from python.bridge._ (enabled = true)
+        let mut languages: HashMap<String, LanguageConfig> = HashMap::new();
+
+        // Python with its own wildcard bridge
+        let mut python_bridge = HashMap::new();
+        python_bridge.insert(
+            "_".to_string(),
+            settings::BridgeLanguageConfig { enabled: true }, // Python's own default
+        );
+        python_bridge.insert(
+            "javascript".to_string(),
+            settings::BridgeLanguageConfig { enabled: false }, // Override for JS
+        );
+
+        languages.insert(
+            "python".to_string(),
+            LanguageConfig {
+                library: Some("/python/path.so".to_string()),
+                queries: None,
+                highlights: None,
+                locals: None,
+                injections: None,
+                bridge: Some(python_bridge),
+            },
+        );
+
+        let resolved_lang = resolve_language_with_wildcard(&languages, "python");
+        assert!(resolved_lang.is_some());
+        let lang_config = resolved_lang.unwrap();
+        let bridge = lang_config.bridge.as_ref().unwrap();
+
+        // JavaScript: specific override
+        let js_resolved = resolve_bridge_with_wildcard(bridge, "javascript");
+        assert!(js_resolved.is_some());
+        assert!(
+            !js_resolved.unwrap().enabled,
+            "JavaScript should be disabled"
+        );
+
+        // Rust: inherits from python's bridge._
+        let rust_resolved = resolve_bridge_with_wildcard(bridge, "rust");
+        assert!(rust_resolved.is_some());
+        assert!(
+            rust_resolved.unwrap().enabled,
+            "Rust should inherit from python.bridge._"
         );
     }
 
@@ -1620,11 +1757,17 @@ mod tests {
 
         // Then resolve bridge for "rust" within the resolved language
         let lang_config = resolved_lang.unwrap();
-        assert!(lang_config.bridge.is_some(), "Resolved language should have bridge");
+        assert!(
+            lang_config.bridge.is_some(),
+            "Resolved language should have bridge"
+        );
         let bridge = lang_config.bridge.as_ref().unwrap();
 
         let resolved_bridge = resolve_bridge_with_wildcard(bridge, "rust");
-        assert!(resolved_bridge.is_some(), "Should resolve to wildcard bridge");
+        assert!(
+            resolved_bridge.is_some(),
+            "Should resolve to wildcard bridge"
+        );
         assert!(
             resolved_bridge.unwrap().enabled,
             "Nested wildcard resolution: languages._.bridge._ should apply to python.bridge.rust"
