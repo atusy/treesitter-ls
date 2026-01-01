@@ -23,7 +23,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use super::auto_install::{InstallingLanguages, get_injected_languages};
-use super::bridge::LanguageServerPool;
+use super::bridge::{LanguageServerPool, TokioAsyncLanguageServerPool};
 use super::progress::{create_progress_begin, create_progress_end};
 
 fn lsp_legend_types() -> Vec<SemanticTokenType> {
@@ -58,8 +58,14 @@ pub struct TreeSitterLs {
     installing_languages: InstallingLanguages,
     /// Tracks parsers that have crashed
     failed_parsers: FailedParserRegistry,
-    /// Pool of language server connections for injection bridging
+    /// Pool of language server connections for injection bridging (sync)
     language_server_pool: LanguageServerPool,
+    /// Tokio-based async language server pool for fully async bridging
+    #[allow(dead_code)]
+    tokio_async_pool: TokioAsyncLanguageServerPool,
+    /// Receiver for progress notifications from tokio async pool (needs to be polled)
+    #[allow(dead_code)]
+    tokio_notification_rx: tokio::sync::Mutex<tokio::sync::mpsc::Receiver<serde_json::Value>>,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -77,6 +83,7 @@ impl std::fmt::Debug for TreeSitterLs {
             .field("installing_languages", &"InstallingLanguages")
             .field("failed_parsers", &"FailedParserRegistry")
             .field("language_server_pool", &"LanguageServerPool")
+            .field("tokio_async_pool", &"TokioAsyncLanguageServerPool")
             .finish_non_exhaustive()
     }
 }
@@ -92,6 +99,9 @@ impl TreeSitterLs {
         // Clean up stale temp directories from previous sessions in the background
         std::thread::spawn(super::bridge::startup_cleanup);
 
+        // Create notification channel for tokio async pool
+        let (tokio_notification_tx, tokio_notification_rx) = tokio::sync::mpsc::channel(64);
+
         Self {
             client,
             language,
@@ -105,6 +115,8 @@ impl TreeSitterLs {
             installing_languages: InstallingLanguages::new(),
             failed_parsers,
             language_server_pool: LanguageServerPool::new(),
+            tokio_async_pool: TokioAsyncLanguageServerPool::new(tokio_notification_tx),
+            tokio_notification_rx: tokio::sync::Mutex::new(tokio_notification_rx),
         }
     }
 

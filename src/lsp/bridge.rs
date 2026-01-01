@@ -31,4 +31,5 @@ pub use text_document::{
     ReferencesWithNotifications, RenameWithNotifications, SignatureHelpWithNotifications,
     SubtypesWithNotifications, SupertypesWithNotifications, TypeDefinitionWithNotifications,
 };
+pub use tokio_async_pool::TokioAsyncLanguageServerPool;
 pub use workspace::{setup_workspace, setup_workspace_with_option};
