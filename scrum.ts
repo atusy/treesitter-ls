@@ -121,19 +121,19 @@ const scrum: ScrumDashboard = {
     { number: 117, pbi_id: "PBI-146", goal: "Track document versions per virtual URI, send didOpen on first access and didChange with incremented version on subsequent accesses, ensuring hover responses reflect the latest code", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-115: modular refactoring pattern, E2E indexing waits, vertical slice validation
+  // Recent 2 retrospectives | Sprint 1-116: modular refactoring pattern, E2E indexing waits, vertical slice validation, RAII cleanup
   retrospectives: [
+    { sprint: 118, improvements: [
+      { action: "Extract common wait_for_indexing loop logic - avoid duplication between with_timeout and with_forward variants", timing: "immediate", status: "completed", outcome: "wait_for_indexing_impl(receiver, timeout, forward_to: Option<&Sender>) consolidates loop logic" },
+      { action: "Document background task lifetimes in async initialization - clarify forwarder task lifecycle in spawn_and_initialize docstring", timing: "immediate", status: "completed", outcome: "Added 'Notification Forwarding Lifecycle' section documenting channel closure conditions" },
+      { action: "Pattern: Local channel + forwarder for async initialization with notification filtering", timing: "sprint", status: "active", outcome: null },
+      { action: "Consider indexing timeout configurability PBI - allow users to trade accuracy vs responsiveness", timing: "product", status: "active", outcome: null },
+    ] },
     { sprint: 117, improvements: [
       { action: "Study reference implementation patterns before new features - sync bridge had versioning model", timing: "sprint", status: "active", outcome: null },
       { action: "DashMap provides thread-safe state without explicit locking - prefer for concurrent access patterns", timing: "immediate", status: "completed", outcome: "document_versions: DashMap<String, u32> in TokioAsyncLanguageServerPool" },
       { action: "LSP spec: didOpen once per URI, didChange for updates with incrementing version", timing: "immediate", status: "completed", outcome: "sync_document checks version map, sends didOpen v1 or didChange v+1" },
       { action: "Tightly coupled changes belong in single commit - all 4 subtasks shared c2a78c0", timing: "immediate", status: "completed", outcome: "fix(bridge): track document versions per URI, send didOpen/didChange correctly" },
-    ] },
-    { sprint: 116, improvements: [
-      { action: "review.md caught resource leaks before production; continue for complex PRs", timing: "sprint", status: "completed", outcome: "PBI-148 fixed process/temp_dir leaks with proper RAII" },
-      { action: "Store resource handles in struct from spawn - essential for RAII cleanup", timing: "immediate", status: "completed", outcome: "child: Option<Child>, temp_dir: Option<PathBuf>" },
-      { action: "Async shutdown() alongside sync Drop for graceful cleanup when needed", timing: "immediate", status: "completed", outcome: "shutdown() sends LSP exit; Drop kills+removes sync" },
-      { action: "E2E test /tmp cleanup as standard for resource cleanup PBIs", timing: "product", status: "active", outcome: null },
     ] },
   ],
 };
