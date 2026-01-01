@@ -51,73 +51,77 @@ T["markdown"]["signature_help returns function signature in injection region"] =
 	-- Line 10 is "    let result = add(" inside the code block
 	child.cmd([[normal! 10G$]])
 
-	-- Wait for rust-analyzer to index (this can take a while)
-	vim.uv.sleep(3000)
+	-- Retry loop for rust-analyzer indexing (following hover/completion test pattern)
+	-- rust-analyzer may need time to index and return valid signature help
+	local got_signature = false
+	local last_result = nil
 
-	-- Use vim.lsp.buf_request_sync to directly test the LSP signatureHelp handler
-	child.lua([[
-		_G.signature_help_result = nil
-		local bufnr = vim.api.nvim_get_current_buf()
-		local clients = vim.lsp.get_clients({ bufnr = bufnr, name = "treesitter-ls" })
-		if #clients == 0 then
-			_G.signature_help_result = { error = "No LSP client found" }
-			return
-		end
-
-		local client = clients[1]
-		local params = vim.lsp.util.make_position_params(0, client.offset_encoding or "utf-16")
-		local results = vim.lsp.buf_request_sync(bufnr, "textDocument/signatureHelp", params, 15000)
-
-		if not results then
-			_G.signature_help_result = { error = "No signatureHelp response" }
-			return
-		end
-
-		for client_id, response in pairs(results) do
-			if response.result then
-				local signatures = response.result.signatures
-				if signatures and #signatures > 0 then
-					_G.signature_help_result = {
-						signature_count = #signatures,
-						first_label = signatures[1].label,
-						active_parameter = response.result.activeParameter,
-					}
-					return
-				end
-			elseif response.err then
-				_G.signature_help_result = { error = vim.inspect(response.err) }
+	for _ = 1, 20 do
+		-- Use vim.lsp.buf_request_sync to directly test the LSP signatureHelp handler
+		child.lua([[
+			_G.signature_help_result = nil
+			local bufnr = vim.api.nvim_get_current_buf()
+			local clients = vim.lsp.get_clients({ bufnr = bufnr, name = "treesitter-ls" })
+			if #clients == 0 then
+				_G.signature_help_result = { error = "No LSP client found" }
 				return
 			end
+
+			local client = clients[1]
+			local params = vim.lsp.util.make_position_params(0, client.offset_encoding or "utf-16")
+			local results = vim.lsp.buf_request_sync(bufnr, "textDocument/signatureHelp", params, 5000)
+
+			if not results then
+				_G.signature_help_result = { error = "No signatureHelp response" }
+				return
+			end
+
+			for client_id, response in pairs(results) do
+				if response.result then
+					local signatures = response.result.signatures
+					if signatures and #signatures > 0 then
+						_G.signature_help_result = {
+							signature_count = #signatures,
+							first_label = signatures[1].label,
+							active_parameter = response.result.activeParameter,
+						}
+						return
+					end
+				elseif response.err then
+					_G.signature_help_result = { error = vim.inspect(response.err) }
+					return
+				end
+			end
+
+			_G.signature_help_result = { error = "No valid signature help found" }
+		]])
+
+		last_result = child.lua_get([[_G.signature_help_result]])
+
+		-- Check if we got a valid signature
+		if last_result and not last_result.error and last_result.signature_count and last_result.signature_count > 0 then
+			got_signature = true
+			break
 		end
 
-		_G.signature_help_result = { error = "No valid signature help found" }
-	]])
+		-- Wait before retry (rust-analyzer may still be indexing)
+		vim.wait(500)
+	end
 
-	local result = child.lua_get([[_G.signature_help_result]])
+	-- Verify we got signature help (retry loop should have succeeded)
+	MiniTest.expect.equality(got_signature, true, "Should get signature help after retries")
 
-	-- Verify we got a response (may be nil if rust-analyzer not ready, which is acceptable)
-	-- The important thing is that the request was handled and bridged correctly
-	if result.error then
-		-- If we got an error, it should not be "No LSP client found" which would indicate
-		-- the handler is missing. "No valid signature help found" is acceptable if
-		-- rust-analyzer hasn't indexed yet.
+	-- Verify signature information
+	MiniTest.expect.equality(type(last_result.signature_count), "number", "Should have signature count")
+	MiniTest.expect.equality(last_result.signature_count > 0, true, "Should have at least one signature")
+
+	-- The signature should contain "add" function info
+	if last_result.first_label then
 		MiniTest.expect.equality(
-			result.error ~= "No LSP client found",
+			last_result.first_label:find("add") ~= nil or last_result.first_label:find("i32") ~= nil,
 			true,
-			"Should have LSP client: " .. tostring(result.error)
+			("Signature should relate to add function, got: %s"):format(last_result.first_label)
 		)
-	else
-		-- Verify we got signature information
-		MiniTest.expect.equality(type(result.signature_count), "number", "Should have signature count")
-		MiniTest.expect.equality(result.signature_count > 0, true, "Should have at least one signature")
-		-- The signature should contain "add" function info
-		if result.first_label then
-			MiniTest.expect.equality(
-				result.first_label:find("add") ~= nil or result.first_label:find("i32") ~= nil,
-				true,
-				("Signature should relate to add function, got: %s"):format(result.first_label)
-			)
-		end
 	end
 end
 
