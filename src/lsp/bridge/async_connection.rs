@@ -54,10 +54,6 @@ pub struct AsyncBridgeConnection {
     reader_handle: Option<JoinHandle<()>>,
     /// Signal to stop the reader thread
     shutdown: Arc<AtomicBool>,
-    /// Channel for notifications ($/progress, etc.)
-    /// Note: Currently unused but will be used when integrating with lsp_impl
-    #[allow(dead_code)]
-    notification_sender: tokio::sync::mpsc::Sender<Value>,
 }
 
 impl AsyncBridgeConnection {
@@ -94,7 +90,6 @@ impl AsyncBridgeConnection {
             stdin: std::sync::Mutex::new(stdin),
             reader_handle: Some(reader_handle),
             shutdown,
-            notification_sender,
         }
     }
 
