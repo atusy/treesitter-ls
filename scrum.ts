@@ -33,53 +33,8 @@ const scrum: ScrumDashboard = {
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   product_backlog: [
     // ADR-0009 Implementation: Vertical slices with user-facing value
-    // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117), PBI-147 (Sprint 118)
-    {
-      id: "PBI-141",
-      story: {
-        role: "developer editing Lua files",
-        capability: "have go-to-definition requests in Markdown code blocks use fully async I/O",
-        benefit: "definition responses are faster and don't block other LSP requests while waiting for lua-language-server",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "TokioAsyncLanguageServerPool.goto_definition() method implemented with async request/response pattern",
-          verification: "Unit test verifies goto_definition returns valid Location response",
-        },
-        {
-          criterion: "definition_impl uses async pool.goto_definition() instead of spawn_blocking",
-          verification: "grep confirms no spawn_blocking in definition.rs for bridged requests",
-        },
-        {
-          criterion: "Go-to-definition requests to lua-language-server return valid responses through async path",
-          verification: "E2E test opens Markdown with Lua code block, requests definition, receives location",
-        },
-      ],
-      status: "ready",
-    },
-    {
-      id: "PBI-142",
-      story: {
-        role: "Rustacean editing Markdown",
-        capability: "have completion requests in Markdown code blocks use fully async I/O",
-        benefit: "completion responses are faster and don't block other LSP requests while waiting for rust-analyzer",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "TokioAsyncLanguageServerPool.completion() method implemented with async request/response pattern",
-          verification: "Unit test verifies completion returns valid CompletionList response",
-        },
-        {
-          criterion: "completion handler uses async pool.completion() for bridged requests",
-          verification: "grep confirms async completion path in lsp_impl.rs",
-        },
-        {
-          criterion: "Completion requests to rust-analyzer return valid responses through async path",
-          verification: "E2E test opens Markdown with Rust code block, requests completion, receives items",
-        },
-      ],
-      status: "done",
-    },
+    // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117), PBI-149 (Sprint 118), PBI-141 (Sprint 119), PBI-142 (Sprint 120)
+    // Rejected: PBI-147 (wait for indexing) - replaced by PBI-149
     {
       id: "PBI-143",
       story: {
