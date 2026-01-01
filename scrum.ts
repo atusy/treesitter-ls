@@ -68,12 +68,12 @@ const scrum: ScrumDashboard = {
     number: 113,
     pbi_id: "PBI-135",
     goal: "Migrate all remaining bridge handlers to async pool pattern",
-    status: "in_progress",
+    status: "review",
     subtasks: [
-      { test: "Navigation handlers use async pool", implementation: "Update definition, declaration, implementation, typeDefinition, references to use async_language_server_pool", type: "behavioral", status: "pending", commits: [], notes: [] },
-      { test: "Edit handlers use async pool", implementation: "Update rename, codeAction, formatting to use async_language_server_pool", type: "behavioral", status: "pending", commits: [], notes: [] },
-      { test: "Document handlers use async pool", implementation: "Update inlayHint, foldingRange, documentLink to use async_language_server_pool", type: "behavioral", status: "pending", commits: [], notes: [] },
-      { test: "Hierarchy handlers use async pool", implementation: "Update callHierarchy and typeHierarchy handlers to use async_language_server_pool", type: "behavioral", status: "pending", commits: [], notes: [] },
+      { test: "Navigation handlers use async pool", implementation: "Update definition, declaration, implementation, typeDefinition, references to use async_language_server_pool", type: "behavioral", status: "completed", commits: [], notes: ["All 5 navigation handlers migrated"] },
+      { test: "Edit handlers use async pool", implementation: "Update rename, codeAction, formatting to use async_language_server_pool", type: "behavioral", status: "completed", commits: [], notes: ["All 3 edit handlers migrated including codeAction in lsp_impl.rs"] },
+      { test: "Document handlers use async pool", implementation: "Update inlayHint, foldingRange, documentLink to use async_language_server_pool", type: "behavioral", status: "completed", commits: [], notes: ["All 3 document handlers migrated"] },
+      { test: "Hierarchy handlers use async pool", implementation: "Update callHierarchy and typeHierarchy handlers to use async_language_server_pool", type: "behavioral", status: "completed", commits: [], notes: ["All 6 hierarchy methods migrated (prepare/incoming/outgoing for call, prepare/supertypes/subtypes for type)"] },
     ],
   },
 
