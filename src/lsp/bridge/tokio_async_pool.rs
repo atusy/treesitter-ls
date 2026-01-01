@@ -123,11 +123,13 @@ impl TokioAsyncLanguageServerPool {
 
         // Spawn connection using TokioAsyncBridgeConnection with temp_dir as cwd
         // Pass notification_sender to forward $/progress notifications
+        // Pass temp_dir for cleanup on drop
         let conn = TokioAsyncBridgeConnection::spawn(
             program,
             &args,
             Some(&temp_dir),
             Some(self.notification_sender.clone()),
+            Some(temp_dir.clone()),
         )
         .await
         .ok()?;

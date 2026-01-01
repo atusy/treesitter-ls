@@ -15,6 +15,7 @@
 use crate::lsp::bridge::async_connection::ResponseResult;
 use dashmap::DashMap;
 use serde_json::Value;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -45,6 +46,8 @@ pub struct TokioAsyncBridgeConnection {
     shutdown_tx: Option<oneshot::Sender<()>>,
     /// Child process handle (for cleanup on drop)
     child: Option<Child>,
+    /// Temporary directory path (for cleanup on drop)
+    temp_dir: Option<PathBuf>,
 }
 
 impl TokioAsyncBridgeConnection {
@@ -58,6 +61,7 @@ impl TokioAsyncBridgeConnection {
     /// * `args` - Arguments to pass to the command
     /// * `cwd` - Optional working directory for the child process
     /// * `notification_sender` - Optional channel for forwarding $/progress notifications
+    /// * `temp_dir` - Optional temporary directory path (for cleanup on drop)
     ///
     /// # Returns
     /// A new TokioAsyncBridgeConnection wrapping the spawned process
@@ -66,6 +70,7 @@ impl TokioAsyncBridgeConnection {
         args: &[&str],
         cwd: Option<&std::path::Path>,
         notification_sender: Option<mpsc::Sender<Value>>,
+        temp_dir: Option<PathBuf>,
     ) -> Result<Self, String> {
         use std::process::Stdio;
         use tokio::process::Command;
@@ -120,6 +125,7 @@ impl TokioAsyncBridgeConnection {
             reader_handle: Some(reader_handle),
             shutdown_tx: Some(shutdown_tx),
             child: Some(child),
+            temp_dir,
         })
     }
 
@@ -426,7 +432,7 @@ mod tests {
     async fn spawn_uses_tokio_process_command() {
         // Use 'cat' as a simple process that reads from stdin and writes to stdout
         // This is available on all Unix-like systems
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None, None).await;
         assert!(result.is_ok(), "spawn() should succeed with 'cat' command");
 
         let conn = result.unwrap();
@@ -439,7 +445,7 @@ mod tests {
     /// Verifies AC2: Async stdin/stdout handles are obtained from the tokio Child process.
     #[tokio::test]
     async fn spawn_extracts_stdin_stdout_from_child() {
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None, None).await;
         assert!(result.is_ok(), "spawn() should succeed");
 
         let conn = result.unwrap();
@@ -454,7 +460,7 @@ mod tests {
     /// Verifies the reader_handle is a tokio::task::JoinHandle and shutdown_tx exists.
     #[tokio::test]
     async fn spawn_creates_reader_task_handle() {
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None, None).await;
         assert!(result.is_ok(), "spawn() should succeed");
 
         let mut conn = result.unwrap();
@@ -496,7 +502,7 @@ mod tests {
     #[tokio::test]
     async fn shutdown_while_reader_idle_completes_within_100ms() {
         // Spawn a 'cat' process - it will be idle (not sending any data)
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None, None).await;
         assert!(result.is_ok(), "spawn() should succeed");
 
         let mut conn = result.unwrap();
@@ -539,7 +545,7 @@ mod tests {
         use tokio::io::AsyncWriteExt;
 
         // Use 'cat' as an echo server - we write to stdin, it echoes to stdout
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None, None).await;
         assert!(result.is_ok(), "spawn() should succeed");
 
         let conn = result.unwrap();
@@ -591,7 +597,7 @@ mod tests {
     #[tokio::test]
     async fn send_request_returns_receiver_that_resolves_on_response() {
         // Use 'cat' as an echo server - we write to stdin, it echoes to stdout
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None, None).await;
         assert!(result.is_ok(), "spawn() should succeed");
 
         let conn = result.unwrap();
@@ -639,7 +645,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel::<serde_json::Value>(16);
 
         // spawn() should accept the notification sender parameter
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, Some(tx)).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, Some(tx), None).await;
 
         assert!(
             result.is_ok(),
@@ -651,7 +657,7 @@ mod tests {
     #[tokio::test]
     async fn spawn_without_notification_sender_works() {
         // spawn() with None notification_sender should still work
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None, None).await;
 
         assert!(
             result.is_ok(),
@@ -673,7 +679,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel::<serde_json::Value>(16);
 
         // Spawn with notification sender
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, Some(tx)).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, Some(tx), None).await;
         assert!(result.is_ok(), "spawn() should succeed");
 
         let conn = result.unwrap();
@@ -721,7 +727,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel::<serde_json::Value>(16);
 
         // Spawn with notification sender
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, Some(tx)).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, Some(tx), None).await;
         assert!(result.is_ok(), "spawn() should succeed");
 
         let conn = result.unwrap();
@@ -753,7 +759,7 @@ mod tests {
     /// Test that send_notification sends a message without expecting a response.
     #[tokio::test]
     async fn send_notification_sends_message_without_response() {
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None, None).await;
         assert!(result.is_ok(), "spawn() should succeed");
 
         let conn = result.unwrap();
@@ -779,7 +785,7 @@ mod tests {
 
         // Use 'pwd' to verify the working directory is set correctly
         // On Unix, 'pwd' prints the current working directory
-        let result = TokioAsyncBridgeConnection::spawn("pwd", &[], Some(&temp_dir), None).await;
+        let result = TokioAsyncBridgeConnection::spawn("pwd", &[], Some(&temp_dir), None, None).await;
         assert!(result.is_ok(), "spawn() with cwd should succeed");
 
         // Clean up - ignore errors
@@ -790,7 +796,7 @@ mod tests {
     #[tokio::test]
     async fn spawn_with_none_cwd_uses_default_directory() {
         // spawn() with None should behave like before - use the default process cwd
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None, None).await;
         assert!(result.is_ok(), "spawn() with None cwd should succeed");
 
         let conn = result.unwrap();
@@ -807,7 +813,7 @@ mod tests {
     /// is dropped.
     #[tokio::test]
     async fn spawn_stores_child_handle_for_cleanup() {
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None, None).await;
         assert!(result.is_ok(), "spawn() should succeed");
 
         let mut conn = result.unwrap();
@@ -827,5 +833,47 @@ mod tests {
                 "child process should be running after spawn"
             );
         }
+    }
+
+    /// PBI-148 Subtask 2: Test that spawn() stores temp_dir path for cleanup.
+    ///
+    /// The temp_dir must be stored in the connection struct so that Drop
+    /// can remove it after shutting down the language server.
+    /// Without storing temp_dir, the temporary workspace directories accumulate.
+    #[tokio::test]
+    async fn connection_tracks_temp_dir_for_cleanup() {
+        // Create a temp directory to pass to spawn
+        let temp_dir = std::env::temp_dir().join(format!(
+            "tokio-temp-dir-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&temp_dir).expect("Failed to create temp directory");
+
+        let result = TokioAsyncBridgeConnection::spawn(
+            "cat",
+            &[],
+            Some(&temp_dir),
+            None,
+            Some(temp_dir.clone()),
+        )
+        .await;
+        assert!(result.is_ok(), "spawn() should succeed");
+
+        let conn = result.unwrap();
+
+        // Verify the temp_dir field exists and matches what we passed
+        assert!(
+            conn.temp_dir.is_some(),
+            "temp_dir should be stored after spawn"
+        );
+        assert_eq!(
+            conn.temp_dir.as_ref().unwrap(),
+            &temp_dir,
+            "stored temp_dir should match the one passed to spawn"
+        );
+
+        // Clean up
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
