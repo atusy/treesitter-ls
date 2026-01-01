@@ -8,6 +8,7 @@ mod code_action;
 mod completion;
 mod declaration;
 mod definition;
+mod diagnostic;
 mod document_highlight;
 mod document_link;
 mod folding_range;
