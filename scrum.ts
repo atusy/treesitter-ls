@@ -33,31 +33,7 @@ const scrum: ScrumDashboard = {
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   product_backlog: [
     // ADR-0009 Implementation: Vertical slices with user-facing value
-    // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115) - async bridge + progress notifications
-    // HIGH PRIORITY: Blocking issues from review.md - must fix before continuing with async migration
-    {
-      id: "PBI-148",
-      story: {
-        role: "Rustacean editing Markdown",
-        capability: "have language server processes properly cleaned up",
-        benefit: "my system doesn't slow down or run out of disk space after using hover",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "TokioAsyncBridgeConnection stores Child handle",
-          verification: "Unit test verifies Child handle is accessible and not dropped after spawn",
-        },
-        {
-          criterion: "Drop sends shutdown request, waits for exit, removes temp_dir",
-          verification: "Unit test verifies cleanup on connection drop: shutdown sent, process exited, temp_dir removed",
-        },
-        {
-          criterion: "No zombie processes or orphaned temp directories after connection lifecycle",
-          verification: "E2E test creates and drops connections, verifies no treesitter-ls-* dirs remain in /tmp",
-        },
-      ],
-      status: "ready",
-    },
+    // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116) - async bridge + progress notifications + resource cleanup
     {
       id: "PBI-146",
       story: {
@@ -175,46 +151,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 116,
-    pbi_id: "PBI-148",
-    goal: "Prevent resource leaks by storing Child handle and temp_dir, sending proper LSP shutdown sequence on drop, and cleaning up temporary workspace",
-    status: "review",
-    subtasks: [
-      {
-        test: "spawn_stores_child_handle_for_cleanup",
-        implementation: "Add `child: Option<tokio::process::Child>` field to TokioAsyncBridgeConnection, store after spawn",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "f5df105", message: "feat(bridge): store Child handle in TokioAsyncBridgeConnection", phase: "green" }],
-        notes: ["tokio_connection.rs:86-88 - Child spawned but handle not stored"],
-      },
-      {
-        test: "connection_tracks_temp_dir_for_cleanup",
-        implementation: "Store temp_dir path in connection or pass to pool; need path available at drop time",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "6c32d9f", message: "feat(bridge): store temp_dir path in TokioAsyncBridgeConnection", phase: "green" }],
-        notes: ["tokio_async_pool.rs:97-103 - temp_dir created but not tracked for cleanup"],
-      },
-      {
-        test: "drop_sends_shutdown_and_exit_to_language_server",
-        implementation: "Drop kills child process; explicit shutdown() method sends shutdown/exit before drop",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "1a9744b", message: "feat(bridge): implement proper cleanup in Drop for TokioAsyncBridgeConnection", phase: "green" }],
-        notes: ["Drop is sync, so we kill process directly; added shutdown() async method for graceful shutdown"],
-      },
-      {
-        test: "drop_removes_temp_directory",
-        implementation: "Drop removes temp_dir using std::fs::remove_dir_all",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "1a9744b", message: "feat(bridge): implement proper cleanup in Drop for TokioAsyncBridgeConnection", phase: "green" }],
-        notes: ["Sync fs::remove_dir_all is safe in Drop"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -224,34 +161,25 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-114: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-115: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 116, pbi_id: "PBI-148", goal: "Prevent resource leaks by storing Child handle and temp_dir, sending proper LSP shutdown sequence on drop, and cleaning up temporary workspace", status: "done", subtasks: [] },
     { number: 115, pbi_id: "PBI-145", goal: "Restore progress indicator visibility during language server indexing by wiring $/progress notification forwarding through the async bridge", status: "done", subtasks: [] },
-    { number: 114, pbi_id: "PBI-144", goal: "Fix async bridge foundation by adding cwd parameter to spawn, converting sync I/O to async (tokio::fs), and removing dead_code annotations now that the async bridge is wired into production", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-113: modular refactoring pattern, E2E indexing waits, vertical slice validation
+  // Recent 2 retrospectives | Sprint 1-114: modular refactoring pattern, E2E indexing waits, vertical slice validation
   retrospectives: [
-    {
-      sprint: 115,
-      improvements: [
-        { action: "External code reviews (Gemini Code Assist) catch real regressions - continue using AI review tools for complex PRs; PBI-145 was discovered this way", timing: "sprint", status: "completed", outcome: "$/progress notification regression identified and fixed within one sprint" },
-        { action: "User challenge on priority was correct - when regression affects UX (progress indicators missing), prioritize immediately rather than deferring to future sprint", timing: "immediate", status: "completed", outcome: "PBI-145 prioritized as HIGH PRIORITY and completed same sprint it was identified" },
-        { action: "Option<Receiver> pattern for one-time ownership transfer (take()) is clean and testable - apply this pattern when resources need single-use consumption", timing: "immediate", status: "completed", outcome: "notification_rx.take() in initialized() ensures forwarder starts exactly once" },
-        { action: "Flaky tests need dedicated investigation time - did_open_uses_connection_info_write_virtual_file in sync bridge and E2E tests with rust-analyzer contention remain problematic", timing: "sprint", status: "active", outcome: null },
-        { action: "AC3 (E2E verification of progress notifications) was not explicitly tested - relied on integration completeness; consider adding explicit E2E test for progress notification forwarding", timing: "product", status: "active", outcome: null },
-      ],
-    },
-    {
-      sprint: 114,
-      improvements: [
-        { action: "External code reviews (Gemini Code Assist, Copilot) identify real issues before merge - integrate AI review tools as part of Definition of Done for complex PRs", timing: "sprint", status: "completed", outcome: "Gemini Code Assist identified $/progress notification regression (PBI-145) - prioritized as high priority fix and completed in Sprint 115" },
-        { action: "Removing #[allow(dead_code)] reveals unused fields and forces proper resource management - Drop implementation added for TokioAsyncBridgeConnection to use reader_handle/shutdown_tx", timing: "immediate", status: "completed", outcome: "Proper Drop impl joins reader task and sends shutdown signal; no resource leaks" },
-        { action: "User story benefit should be user-centric not technical - refined mid-sprint from 'async pool sends proper shutdown' to 'diagnostics, hover, and other LSP features stay responsive during language server initialization'", timing: "immediate", status: "completed", outcome: "PBI-144 benefit now describes user value, not implementation detail" },
-        { action: "Two flaky tests related to rust-analyzer contention still exist - investigate and fix: tests may need better isolation or longer timeouts for CI environment", timing: "sprint", status: "active", outcome: "Carried forward to Sprint 115 - still needs investigation" },
-        { action: "Copilot review Issue #4 (missing error logging when hover=None) - add tracing::debug! or tracing::warn! when bridged hover returns None for observability", timing: "sprint", status: "active", outcome: null },
-      ],
-    },
+    { sprint: 116, improvements: [
+      { action: "review.md caught resource leaks before production; continue for complex PRs", timing: "sprint", status: "completed", outcome: "PBI-148 fixed process/temp_dir leaks with proper RAII" },
+      { action: "Store resource handles in struct from spawn - essential for RAII cleanup", timing: "immediate", status: "completed", outcome: "child: Option<Child>, temp_dir: Option<PathBuf>" },
+      { action: "Async shutdown() alongside sync Drop for graceful cleanup when needed", timing: "immediate", status: "completed", outcome: "shutdown() sends LSP exit; Drop kills+removes sync" },
+      { action: "E2E test /tmp cleanup as standard for resource cleanup PBIs", timing: "product", status: "active", outcome: null },
+    ] },
+    { sprint: 115, improvements: [
+      { action: "AI code reviews catch regressions; continue for complex PRs", timing: "sprint", status: "completed", outcome: "$/progress regression fixed in Sprint 115" },
+      { action: "Option<Receiver>.take() pattern for one-time ownership transfer", timing: "immediate", status: "completed", outcome: "notification_rx.take() ensures forwarder starts once" },
+      { action: "Flaky tests need investigation: did_open sync bridge, E2E rust-analyzer", timing: "sprint", status: "active", outcome: null },
+    ] },
   ],
 };
 
