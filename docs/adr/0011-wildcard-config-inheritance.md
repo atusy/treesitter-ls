@@ -218,10 +218,11 @@ The existing `apply_capture_mapping()` in `semantic.rs` already implements lazy 
 - [x] Apply wildcard resolution to `captureMappings` lookup (existing `apply_capture_mapping()` already implements lazy fallback)
 - [x] Unit tests for wildcard resolution with various combinations (3 tests: wildcard-only, merge, override)
 
-### Phase 2: languages Wildcard (Future)
-- [ ] Apply wildcard resolution to `languages._` for default language settings
-- [ ] Apply nested wildcard resolution to `languages.{lang}.bridge._` for default bridge settings
-- [ ] Integration test: Define `_` in user config, override in project
+### Phase 2: languages Wildcard (Completed - Sprint 122, PBI-153)
+- [x] Apply wildcard resolution to `languages._` for default language settings (commit 5e4796b)
+- [x] Apply wildcard resolution to `languages.{lang}.bridge._` for default bridge settings (commit 79e3047)
+- [x] Unit tests for nested wildcard resolution (outer then inner) (commit 15604de)
+- [x] Unit tests for specific values overriding wildcards at both levels (commit 8a501cc)
 
 ### Phase 3: languageServers Wildcard (Future)
 - [ ] Apply wildcard resolution to `languageServers._` for default server settings
