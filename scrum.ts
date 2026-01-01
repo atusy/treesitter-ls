@@ -62,9 +62,63 @@ const scrum: ScrumDashboard = {
       ],
       status: "done",
     },
+    {
+      id: "PBI-134",
+      story: {
+        role: "developer editing Lua files",
+        capability: "have bridge connection use async request/response queue pattern",
+        benefit: "concurrent LSP requests share one connection without blocking each other",
+      },
+      acceptance_criteria: [
+        { criterion: "Single connection handles multiple concurrent requests", verification: "Background reader dispatches responses by request ID; no duplicate connections spawned" },
+        { criterion: "Requests get responses via channel", verification: "send_request returns oneshot::Receiver<Response>; caller awaits response asynchronously" },
+        { criterion: "Response routing uses request ID", verification: "pending_requests map stores Sender by ID; reader routes responses to correct caller" },
+        { criterion: "Existing unit tests still pass", verification: "make test passes; no regression in bridge functionality" },
+      ],
+      status: "ready",
+    },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 112,
+    pbi_id: "PBI-134",
+    goal: "Implement async request/response queue pattern for bridge connections",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "Unit test for pending_requests map routing",
+        implementation: "Add pending_requests: Arc<DashMap<i64, oneshot::Sender<Response>>> to AsyncBridgeConnection",
+        type: "behavioral",
+        status: "completed",
+        commits: [],
+        notes: ["Created async_connection.rs with pending_requests map and routing test"],
+      },
+      {
+        test: "Test send_request returns receiver that gets response",
+        implementation: "send_request writes JSON-RPC, stores sender in map, returns receiver",
+        type: "behavioral",
+        status: "completed",
+        commits: [],
+        notes: ["AsyncBridgeConnection.send_request returns (id, oneshot::Receiver<ResponseResult>)"],
+      },
+      {
+        test: "Test background reader dispatches responses correctly",
+        implementation: "Background thread reads responses, looks up sender by ID, sends response",
+        type: "behavioral",
+        status: "completed",
+        commits: [],
+        notes: ["reader_loop spawned in AsyncBridgeConnection::new routes by request ID"],
+      },
+      {
+        test: "Existing bridge tests still pass",
+        implementation: "AsyncLanguageServerPool wraps AsyncBridgeConnection; old pool unchanged",
+        type: "behavioral",
+        status: "completed",
+        commits: [],
+        notes: ["make test passes; async pool tests verify concurrent request sharing"],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
@@ -76,8 +130,8 @@ const scrum: ScrumDashboard = {
 
   // Historical sprints (recent 2) | Sprint 1-109: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 111, pbi_id: "PBI-134", goal: "Add per-key mutex to LanguageServerPool (cancelled - approach insufficient)", status: "cancelled", subtasks: [] },
     { number: 110, pbi_id: "PBI-133", goal: "Verify DashMap lock safety with concurrent test and add safety documentation", status: "done", subtasks: [] },
-    { number: 109, pbi_id: "PBI-132", goal: "Add timeout mechanism to bridge I/O operations", status: "done", subtasks: [] },
   ],
 
   // Recent 2 retrospectives | Sprint 1-108: modular refactoring pattern, E2E indexing waits
