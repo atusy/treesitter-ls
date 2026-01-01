@@ -155,7 +155,7 @@ const scrum: ScrumDashboard = {
         test: "Unit test: hover request with Indexing state returns informative message with hourglass emoji and server name",
         implementation: "Modify hover_impl to check pool.get_server_state(key) and return Hover with indexing message when state is Indexing",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: ["AC2: hover_impl returns informative message during Indexing state"],
       },
