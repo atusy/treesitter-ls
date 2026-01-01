@@ -15,6 +15,7 @@ use crate::config::settings::BridgeServerConfig;
 use dashmap::DashMap;
 use serde_json::Value;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::sync::mpsc;
 
 /// Check if a notification indicates the language server is ready.
@@ -91,7 +92,8 @@ pub struct TokioAsyncLanguageServerPool {
     /// Channel for forwarding $/progress notifications
     notification_sender: mpsc::Sender<Value>,
     /// Document versions per virtual URI (for didOpen/didChange tracking)
-    document_versions: DashMap<String, u32>,
+    /// Uses AtomicU32 for lock-free concurrent increments.
+    document_versions: DashMap<String, AtomicU32>,
     /// Notification receivers per connection key (for indexing wait)
     /// Wrapped in tokio::sync::Mutex for interior mutability
     notification_receivers: DashMap<String, Arc<tokio::sync::Mutex<mpsc::Receiver<Value>>>>,
@@ -305,14 +307,41 @@ impl TokioAsyncLanguageServerPool {
     /// Returns the current version number if the URI has been opened,
     /// or None if the URI has not been opened yet.
     pub fn get_document_version(&self, uri: &str) -> Option<u32> {
-        self.document_versions.get(uri).map(|v| *v)
+        self.document_versions
+            .get(uri)
+            .map(|v| v.load(Ordering::SeqCst))
     }
 
     /// Set the document version for a URI.
     ///
     /// Used internally to track document versions for didOpen/didChange.
     pub fn set_document_version(&self, uri: &str, version: u32) {
-        self.document_versions.insert(uri.to_string(), version);
+        self.document_versions
+            .entry(uri.to_string())
+            .or_insert_with(|| AtomicU32::new(0))
+            .store(version, Ordering::SeqCst);
+    }
+
+    /// Atomically increment the document version for a URI and return the new value.
+    ///
+    /// This is the core method for concurrent-safe version tracking. It uses
+    /// atomic fetch_add to guarantee that concurrent calls produce unique,
+    /// strictly monotonic version numbers.
+    ///
+    /// If the URI doesn't exist yet, it's initialized to 0 before incrementing,
+    /// so the first call returns 1.
+    ///
+    /// # Arguments
+    /// * `uri` - The document URI
+    ///
+    /// # Returns
+    /// The new version number after incrementing
+    pub fn increment_document_version(&self, uri: &str) -> u32 {
+        self.document_versions
+            .entry(uri.to_string())
+            .or_insert_with(|| AtomicU32::new(0))
+            .fetch_add(1, Ordering::SeqCst)
+            + 1
     }
 
     /// Get the connection lock for serializing requests.
@@ -533,21 +562,10 @@ impl TokioAsyncLanguageServerPool {
         language_id: &str,
         content: &str,
     ) -> Option<()> {
-        if let Some(current_version) = self.get_document_version(uri) {
-            // Document already open - send didChange with incremented version
-            let new_version = current_version + 1;
-            let params = serde_json::json!({
-                "textDocument": {
-                    "uri": uri,
-                    "version": new_version,
-                },
-                "contentChanges": [{ "text": content }]
-            });
-            self.set_document_version(uri, new_version);
-            conn.send_notification("textDocument/didChange", params)
-                .await
-                .ok()
-        } else {
+        // Atomically increment the version. First call for a URI returns 1.
+        let new_version = self.increment_document_version(uri);
+
+        if new_version == 1 {
             // First time - send didOpen with version 1
             let params = serde_json::json!({
                 "textDocument": {
@@ -557,8 +575,19 @@ impl TokioAsyncLanguageServerPool {
                     "text": content,
                 }
             });
-            self.set_document_version(uri, 1);
             conn.send_notification("textDocument/didOpen", params)
+                .await
+                .ok()
+        } else {
+            // Document already open - send didChange with incremented version
+            let params = serde_json::json!({
+                "textDocument": {
+                    "uri": uri,
+                    "version": new_version,
+                },
+                "contentChanges": [{ "text": content }]
+            });
+            conn.send_notification("textDocument/didChange", params)
                 .await
                 .ok()
         }
@@ -1519,5 +1548,82 @@ mod tests {
             hover_i32.is_some() || hover_string.is_some(),
             "At least one concurrent hover should return a result"
         );
+    }
+
+    /// PBI-150 Subtask 1: Test that increment_document_version produces monotonic versions.
+    ///
+    /// This test verifies that the atomic increment method returns strictly increasing
+    /// version numbers even under concurrent access. We use a barrier to force all tasks
+    /// to start simultaneously, maximizing the chance of exposing race conditions.
+    ///
+    /// The test spawns N concurrent tasks that each call increment_document_version().
+    /// All returned versions should be unique (no duplicates).
+    #[tokio::test]
+    async fn concurrent_version_increments_produce_monotonic_versions() {
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = std::sync::Arc::new(super::TokioAsyncLanguageServerPool::new(tx));
+
+        let uri = "file:///concurrent_test.rs";
+        let num_tasks = 100;
+
+        // Use a barrier to force all tasks to start at the same time
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(num_tasks));
+
+        // Spawn many concurrent tasks that increment the version atomically
+        let mut handles = Vec::new();
+        for _ in 0..num_tasks {
+            let pool_clone = pool.clone();
+            let uri_clone = uri.to_string();
+            let barrier_clone = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                // Wait for all tasks to be ready before incrementing
+                barrier_clone.wait().await;
+                // Use atomic increment method
+                pool_clone.increment_document_version(&uri_clone)
+            }));
+        }
+
+        // Collect all returned versions
+        let mut versions = Vec::new();
+        for handle in handles {
+            let version = handle.await.unwrap();
+            versions.push(version);
+        }
+
+        // Check for duplicates - with atomic increments, all versions should be unique
+        let mut sorted = versions.clone();
+        sorted.sort();
+        sorted.dedup();
+
+        // All versions should be unique (1 through num_tasks)
+        assert_eq!(
+            sorted.len(),
+            num_tasks,
+            "All {} version increments should produce unique values, but got {} unique (duplicates: {:?})",
+            num_tasks,
+            sorted.len(),
+            find_duplicates(&versions)
+        );
+
+        // Versions should range from 1 to num_tasks (initial version is 0, first increment gives 1)
+        assert_eq!(sorted[0], 1, "First version should be 1");
+        assert_eq!(
+            sorted[sorted.len() - 1],
+            num_tasks as u32,
+            "Last version should be {}",
+            num_tasks
+        );
+    }
+
+    /// Helper function to find duplicate values in a vector
+    fn find_duplicates(values: &[u32]) -> Vec<u32> {
+        let mut seen = std::collections::HashSet::new();
+        let mut duplicates = std::collections::HashSet::new();
+        for &v in values {
+            if !seen.insert(v) {
+                duplicates.insert(v);
+            }
+        }
+        duplicates.into_iter().collect()
     }
 }
