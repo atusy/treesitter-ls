@@ -151,7 +151,7 @@ const scrum: ScrumDashboard = {
     number: 120,
     pbi_id: "PBI-149",
     goal: "Enable users to set editor-wide defaults in a user config file at XDG standard location",
-    status: "in_progress",
+    status: "review",
     subtasks: [
       {
         test: "Test user_config_path() returns $XDG_CONFIG_HOME/treesitter-ls/treesitter-ls.toml when XDG_CONFIG_HOME is set",
@@ -181,8 +181,8 @@ const scrum: ScrumDashboard = {
         test: "Test load_user_config() returns descriptive ConfigError when user config file exists but contains invalid TOML or schema",
         implementation: "Add error handling that wraps TOML parse errors with context including file path and error location",
         type: "behavioral",
-        status: "green",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "90caed0", message: "test(config): add test for invalid TOML error handling", phase: "green" }],
         notes: ["Error handling was implemented in TDD Cycle 3 as part of load_user_config()"],
       },
     ],
