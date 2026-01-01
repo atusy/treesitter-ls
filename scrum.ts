@@ -29,40 +29,10 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-133 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-134 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Deferred - infrastructure already implemented, needs wiring (low priority)
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
-  product_backlog: [
-    {
-      id: "PBI-132",
-      story: {
-        role: "developer editing Lua files",
-        capability: "have treesitter-ls remain responsive when bridged language servers are slow or unresponsive",
-        benefit: "the LSP does not hang indefinitely when rust-analyzer or other bridged servers fail to respond",
-      },
-      acceptance_criteria: [
-        { criterion: "Bridge I/O operations have configurable timeout", verification: "read_response_for_id_with_notifications accepts timeout parameter; defaults to 30 seconds" },
-        { criterion: "Timeout triggers graceful error handling", verification: "When timeout expires, function returns None response with empty notifications; no infinite loop" },
-        { criterion: "All bridge request methods use timeout", verification: "22+ *_with_notifications methods pass DEFAULT_TIMEOUT to read function" },
-        { criterion: "Unit test verifies timeout behavior", verification: "Test read_response_for_id_with_notifications returns None after timeout" },
-      ],
-      status: "done",
-    },
-    {
-      id: "PBI-133",
-      story: {
-        role: "developer editing Lua files",
-        capability: "have DashMap operations in DocumentStore verified safe and documented",
-        benefit: "the LSP does not freeze when concurrent document updates occur and future changes maintain safety",
-      },
-      acceptance_criteria: [
-        { criterion: "DashMap lock safety verified with concurrent test", verification: "Unit test spawns multiple threads calling update_document and get concurrently; no deadlock within 5 seconds" },
-        { criterion: "DocumentStore methods have lock safety comments", verification: "Each method using DashMap has comment explaining why lock pattern is safe (e.g., 'Ref consumed by and_then before insert')" },
-        { criterion: "CLAUDE.md DashMap pattern documented", verification: "CLAUDE.md 'DashMap Lock Pattern' section exists with safe/unsafe examples (already present)" },
-      ],
-      status: "done",
-    },
-  ],
+  product_backlog: [],
 
   sprint: null,
 
@@ -74,27 +44,28 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-109: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-110: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 111, pbi_id: "PBI-134", goal: "Store virtual_file_path in AsyncLanguageServerPool so get_virtual_uri returns valid URIs", status: "done", subtasks: [] },
     { number: 110, pbi_id: "PBI-133", goal: "Verify DashMap lock safety with concurrent test and add safety documentation", status: "done", subtasks: [] },
-    { number: 109, pbi_id: "PBI-132", goal: "Add timeout mechanism to bridge I/O operations", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-108: modular refactoring pattern, E2E indexing waits
+  // Recent 2 retrospectives | Sprint 1-109: modular refactoring pattern, E2E indexing waits
   retrospectives: [
+    {
+      sprint: 111,
+      improvements: [
+        { action: "PR review from external tools (gemini-code-assist) caught real bug - continue using automated PR review for async bridge features", timing: "immediate", status: "completed", outcome: "gemini-code-assist identified get_virtual_uri always returning None; bug fixed in Sprint 111" },
+        { action: "When implementing new async connection features, always verify the full request flow including stored state (virtual URIs, document versions) before marking complete", timing: "immediate", status: "completed", outcome: "Added test async_pool_stores_virtual_uri_after_connection to verify URI storage" },
+        { action: "Add E2E test for async bridge hover feature to verify end-to-end flow works (unit test exists but no E2E coverage)", timing: "product", status: "active", outcome: null },
+      ],
+    },
     {
       sprint: 110,
       improvements: [
         { action: "Investigate root cause earlier when PBI assumes a bug exists - validate assumption before detailed implementation planning", timing: "immediate", status: "completed", outcome: "Sprint 110 refinement correctly pivoted from 'fix deadlock' to 'verify and document safety' when code was found already safe" },
         { action: "Document Rust's .and_then() pattern as key to DashMap safety - it consumes Ref guard before subsequent operations", timing: "immediate", status: "completed", outcome: "Lock safety comments added to DocumentStore methods explaining .and_then() pattern" },
         { action: "User hang issue investigation: bridge I/O timeout (Sprint 109) and DashMap (Sprint 110) ruled out - investigate tokio::spawn panics or other mutex contention as next step", timing: "product", status: "active", outcome: null },
-      ],
-    },
-    {
-      sprint: 109,
-      improvements: [
-        { action: "Blocking I/O timeout checks happen between read operations, not during - for truly responsive timeout would need async I/O", timing: "product", status: "completed", outcome: "30s timeout prevents indefinite hangs; async migration deferred" },
-        { action: "PBIs should have ≤4 acceptance criteria to fit in one sprint; large PBIs should be split", timing: "immediate", status: "completed", outcome: "PBI-132 split from original 6 ACs to 4 ACs; DashMap fix moved to PBI-133" },
       ],
     },
   ],
