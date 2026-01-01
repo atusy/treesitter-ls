@@ -224,9 +224,9 @@ const scrum: ScrumDashboard = {
         test: "Integration test sends two concurrent hovers with different content, verifies each receives correct response matching its content",
         implementation: "Lock scope must include response await to prevent interleaving of request A content with request B response",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
-        notes: ["Key test: content A='fn foo() -> i32', content B='fn foo() -> String', verify hover A shows i32, hover B shows String"],
+        notes: ["Test: concurrent_hovers_receive_correct_responses_for_their_content", "Test passed immediately - Subtask 2 implementation already covers this", "Validates fix with real rust-analyzer, not just mock"],
       },
       {
         test: "E2E test rapidly moves cursor between two code blocks, verifies all hover results match expected content for each block",
