@@ -356,6 +356,9 @@ impl TokioAsyncLanguageServerPool {
         // Get virtual file URI
         let virtual_uri = self.get_virtual_uri(key)?;
 
+        // Check server state before making the request
+        let server_state = self.get_server_state(key);
+
         // Sync document (didOpen on first access, didChange on subsequent)
         self.sync_document(&conn, &virtual_uri, language_id, content)
             .await?;
@@ -384,6 +387,16 @@ impl TokioAsyncLanguageServerPool {
             .cloned()
             .filter(|r| !r.is_null())
             .and_then(|r| serde_json::from_value(r).ok());
+
+        // Transition to Ready state on non-empty definition response
+        if definition_result.is_some() && server_state == Some(ServerState::Indexing) {
+            self.set_server_state(key, ServerState::Ready);
+            log::debug!(
+                target: "treesitter_ls::bridge::tokio_async_pool",
+                "[POOL] Server {} transitioned to Ready state (got definition response)",
+                key
+            );
+        }
 
         definition_result
     }

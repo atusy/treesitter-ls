@@ -50,21 +50,35 @@ T["markdown"]["definition"] = function()
 	local before = child.api.nvim_win_get_cursor(0)
 	MiniTest.expect.equality(before[1], 9, "Cursor should start on line 9")
 
-	-- Call definition in child vim
-	child.lua([[vim.lsp.buf.definition()]])
+	-- Retry definition call until cursor jumps (rust-analyzer may need time to index)
+	-- During indexing, goto_definition returns empty result and cursor stays put
+	local jumped = false
+	for _ = 1, 20 do
+		-- Reset cursor to starting position before each attempt
+		child.cmd([[normal! 9G5|]])
 
-	-- Poll child's cursor position until it moves to line 4 or timeout
-	-- This properly waits for the async LSP response in the child
-	local jumped = helper.wait(10000, function()
-		local line = child.api.nvim_win_get_cursor(0)[1]
-		return line == 4
-	end, 100)
+		-- Call definition in child vim
+		child.lua([[vim.lsp.buf.definition()]])
+
+		-- Wait for cursor to move to line 4
+		local moved = helper.wait(1000, function()
+			local line = child.api.nvim_win_get_cursor(0)[1]
+			return line == 4
+		end, 100)
+
+		if moved then
+			jumped = true
+			break
+		end
+
+		-- Wait before retry (rust-analyzer may still be indexing)
+		vim.wait(500)
+	end
 
 	-- Get final cursor position for error message
 	local after = child.api.nvim_win_get_cursor(0)
 
 	-- Assert the jump occurred
-
 	MiniTest.expect.equality(
 		after[1],
 		4,
