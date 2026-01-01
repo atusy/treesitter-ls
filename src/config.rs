@@ -1937,4 +1937,74 @@ mod tests {
             "Should inherit workspace_type from wildcard"
         );
     }
+
+    #[test]
+    fn test_resolve_language_server_with_wildcard_specific_overrides_wildcard() {
+        // ADR-0011: Server-specific values override wildcard values
+        // When both wildcard and specific server exist, specific values take precedence
+        use serde_json::json;
+        use settings::{BridgeServerConfig, WorkspaceType};
+
+        let mut servers: HashMap<String, BridgeServerConfig> = HashMap::new();
+
+        // Wildcard has default settings
+        servers.insert(
+            "_".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["default-lsp".to_string()],
+                languages: vec!["any".to_string()],
+                initialization_options: Some(json!({ "defaultOption": true })),
+                workspace_type: Some(WorkspaceType::Generic),
+            },
+        );
+
+        // rust-analyzer overrides cmd and workspace_type, but not languages
+        servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["rust-analyzer".to_string()],
+                languages: vec![], // Empty means inherit from wildcard
+                initialization_options: Some(json!({ "linkedProjects": ["./Cargo.toml"] })),
+                workspace_type: Some(WorkspaceType::Cargo),
+            },
+        );
+
+        // Resolve for "rust-analyzer" - should merge with wildcard
+        let result = resolve_language_server_with_wildcard(&servers, "rust-analyzer");
+
+        assert!(result.is_some(), "Should return merged config");
+        let resolved = result.unwrap();
+
+        // cmd: overridden by specific
+        assert_eq!(
+            resolved.cmd,
+            vec!["rust-analyzer".to_string()],
+            "Should use rust-analyzer's cmd"
+        );
+
+        // languages: inherited from wildcard (specific was empty)
+        assert_eq!(
+            resolved.languages,
+            vec!["any".to_string()],
+            "Should inherit languages from wildcard since specific is empty"
+        );
+
+        // workspace_type: overridden by specific
+        assert_eq!(
+            resolved.workspace_type,
+            Some(WorkspaceType::Cargo),
+            "Should use rust-analyzer's workspace_type"
+        );
+
+        // initialization_options: overridden by specific
+        let init_opts = resolved.initialization_options.unwrap();
+        assert!(
+            init_opts.get("linkedProjects").is_some(),
+            "Should use rust-analyzer's initialization_options"
+        );
+        assert!(
+            init_opts.get("defaultOption").is_none(),
+            "Should NOT inherit wildcard's initialization_options"
+        );
+    }
 }
