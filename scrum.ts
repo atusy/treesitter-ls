@@ -33,30 +33,7 @@ const scrum: ScrumDashboard = {
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   product_backlog: [
     // ADR-0009 Implementation: Vertical slices with user-facing value
-    // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116) - async bridge + progress notifications + resource cleanup
-    {
-      id: "PBI-146",
-      story: {
-        role: "Rustacean editing Markdown",
-        capability: "see updated hover results when I edit code in Markdown blocks",
-        benefit: "hover information reflects my latest code changes, not stale cached content",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "TokioAsyncLanguageServerPool tracks document versions per virtual URI",
-          verification: "Unit test verifies version counter increments per URI and persists across requests",
-        },
-        {
-          criterion: "First open sends didOpen, subsequent requests send didChange with incremented version",
-          verification: "Unit test verifies didOpen on first request, didChange on subsequent requests with version > 1",
-        },
-        {
-          criterion: "Content updates are reflected in hover responses",
-          verification: "E2E test edits code block, requests hover, verifies response matches updated content",
-        },
-      ],
-      status: "ready",
-    },
+    // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117)
     {
       id: "PBI-147",
       story: {
@@ -151,46 +128,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 117,
-    pbi_id: "PBI-146",
-    goal: "Track document versions per virtual URI, send didOpen on first access and didChange with incremented version on subsequent accesses, ensuring hover responses reflect the latest code",
-    status: "done",
-    subtasks: [
-      {
-        test: "pool_tracks_document_versions_per_uri",
-        implementation: "Add document_versions: DashMap<String, u32> to TokioAsyncLanguageServerPool",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "c2a78c0", message: "fix(bridge): track document versions per URI, send didOpen/didChange correctly", phase: "green" }],
-        notes: [],
-      },
-      {
-        test: "first_access_sends_did_open_with_version_1",
-        implementation: "Check if URI exists in document_versions, if not send didOpen and insert version 1",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "c2a78c0", message: "fix(bridge): track document versions per URI, send didOpen/didChange correctly", phase: "green" }],
-        notes: [],
-      },
-      {
-        test: "subsequent_access_sends_did_change_with_incremented_version",
-        implementation: "If URI exists, increment version, send didChange with new content",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "c2a78c0", message: "fix(bridge): track document versions per URI, send didOpen/didChange correctly", phase: "green" }],
-        notes: [],
-      },
-      {
-        test: "hover_returns_updated_content_after_edit (E2E)",
-        implementation: "Verify the full flow works end-to-end",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "c2a78c0", message: "fix(bridge): track document versions per URI, send didOpen/didChange correctly", phase: "green" }],
-        notes: [],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -200,24 +138,25 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-115: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-116: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 117, pbi_id: "PBI-146", goal: "Track document versions per virtual URI, send didOpen on first access and didChange with incremented version on subsequent accesses, ensuring hover responses reflect the latest code", status: "done", subtasks: [] },
     { number: 116, pbi_id: "PBI-148", goal: "Prevent resource leaks by storing Child handle and temp_dir, sending proper LSP shutdown sequence on drop, and cleaning up temporary workspace", status: "done", subtasks: [] },
-    { number: 115, pbi_id: "PBI-145", goal: "Restore progress indicator visibility during language server indexing by wiring $/progress notification forwarding through the async bridge", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-114: modular refactoring pattern, E2E indexing waits, vertical slice validation
+  // Recent 2 retrospectives | Sprint 1-115: modular refactoring pattern, E2E indexing waits, vertical slice validation
   retrospectives: [
+    { sprint: 117, improvements: [
+      { action: "Study reference implementation patterns before new features - sync bridge had versioning model", timing: "sprint", status: "active", outcome: null },
+      { action: "DashMap provides thread-safe state without explicit locking - prefer for concurrent access patterns", timing: "immediate", status: "completed", outcome: "document_versions: DashMap<String, u32> in TokioAsyncLanguageServerPool" },
+      { action: "LSP spec: didOpen once per URI, didChange for updates with incrementing version", timing: "immediate", status: "completed", outcome: "sync_document checks version map, sends didOpen v1 or didChange v+1" },
+      { action: "Tightly coupled changes belong in single commit - all 4 subtasks shared c2a78c0", timing: "immediate", status: "completed", outcome: "fix(bridge): track document versions per URI, send didOpen/didChange correctly" },
+    ] },
     { sprint: 116, improvements: [
       { action: "review.md caught resource leaks before production; continue for complex PRs", timing: "sprint", status: "completed", outcome: "PBI-148 fixed process/temp_dir leaks with proper RAII" },
       { action: "Store resource handles in struct from spawn - essential for RAII cleanup", timing: "immediate", status: "completed", outcome: "child: Option<Child>, temp_dir: Option<PathBuf>" },
       { action: "Async shutdown() alongside sync Drop for graceful cleanup when needed", timing: "immediate", status: "completed", outcome: "shutdown() sends LSP exit; Drop kills+removes sync" },
       { action: "E2E test /tmp cleanup as standard for resource cleanup PBIs", timing: "product", status: "active", outcome: null },
-    ] },
-    { sprint: 115, improvements: [
-      { action: "AI code reviews catch regressions; continue for complex PRs", timing: "sprint", status: "completed", outcome: "$/progress regression fixed in Sprint 115" },
-      { action: "Option<Receiver>.take() pattern for one-time ownership transfer", timing: "immediate", status: "completed", outcome: "notification_rx.take() ensures forwarder starts once" },
-      { action: "Flaky tests need investigation: did_open sync bridge, E2E rust-analyzer", timing: "sprint", status: "active", outcome: null },
     ] },
   ],
 };
