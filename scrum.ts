@@ -92,8 +92,8 @@ const scrum: ScrumDashboard = {
         test: "Unit test: TokioAsyncLanguageServerPool::get_connection returns Arc<TokioAsyncBridgeConnection> after spawn+initialize",
         implementation: "Create tokio_async_pool.rs with spawn_and_initialize that spawns process, sends initialize request, waits for response, sends initialized notification, stores virtual_uri",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "d385de3", message: "feat(bridge): add TokioAsyncLanguageServerPool with spawn_and_initialize", phase: "green" }],
         notes: ["Similar to AsyncLanguageServerPool but uses TokioAsyncBridgeConnection", "Store connections in DashMap<String, Arc<TokioAsyncBridgeConnection>>", "Store virtual_uris in DashMap<String, String>"],
       },
       // Subtask 4: Implement hover() async method on TokioAsyncLanguageServerPool
