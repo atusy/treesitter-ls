@@ -179,7 +179,7 @@ const scrum: ScrumDashboard = {
         test: "E2E test: trigger hover immediately after server spawn (verify message), wait and retry (verify normal hover)",
         implementation: "Add test_lsp_hover_indexing.lua that verifies end-to-end flow: indexing message shown initially, normal hover after Ready",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: ["AC5: End-to-end flow works: hover during indexing shows message, hover after Ready shows normal content"],
       },
