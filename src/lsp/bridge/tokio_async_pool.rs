@@ -610,4 +610,86 @@ mod tests {
             }
         }
     }
+
+    /// Test that completion() returns CompletionResponse from lua-language-server.
+    ///
+    /// Uses lua-language-server for faster test execution (faster startup than rust-analyzer).
+    /// Pattern follows hover/goto_definition tests but for textDocument/completion request.
+    #[tokio::test]
+    async fn completion_returns_completion_list_from_lua_language_server() {
+        if !check_lua_language_server_available() {
+            eprintln!("Skipping: lua-language-server not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["lua-language-server".to_string()],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        // Lua code with string module - request completion after "string."
+        // Line 0: local s = string.
+        // Cursor after the dot should trigger completion for string methods
+        let content = "local s = string.";
+
+        // Request completion at position after "string." (line 0, character 17)
+        let position = tower_lsp::lsp_types::Position {
+            line: 0,
+            character: 17,
+        };
+
+        // Call completion() method with retry for indexing
+        let mut completion_result = None;
+        for _attempt in 0..10 {
+            completion_result = pool
+                .completion(
+                    "lua-language-server",
+                    &config,
+                    "file:///test.lua", // host URI (not used by tokio pool)
+                    "lua",
+                    content,
+                    position,
+                )
+                .await;
+
+            if completion_result.is_some() {
+                break;
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+
+        // Should return Some(CompletionResponse) with completion items
+        assert!(
+            completion_result.is_some(),
+            "completion() should return Some(CompletionResponse) for 'string.' trigger"
+        );
+
+        let response = completion_result.unwrap();
+        // Extract items from the response
+        let items = match response {
+            tower_lsp::lsp_types::CompletionResponse::Array(items) => items,
+            tower_lsp::lsp_types::CompletionResponse::List(list) => list.items,
+        };
+
+        assert!(
+            !items.is_empty(),
+            "Should have at least one completion item"
+        );
+
+        // Verify we got string methods (e.g., "format", "len", "sub")
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            labels
+                .iter()
+                .any(|l| l.contains("format") || l.contains("len") || l.contains("sub")),
+            "Should contain common string methods, got: {:?}",
+            labels
+        );
+    }
 }
