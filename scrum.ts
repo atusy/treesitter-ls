@@ -84,9 +84,9 @@ const scrum: ScrumDashboard = {
         test: "Integration test: did_change clears old diagnostics and re-collects for affected injection regions",
         implementation: "Clear DiagnosticCollector entries for document URI on did_change, re-send didChange to bridged servers, collect new diagnostics",
         type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: ["Pattern: similar to invalidate_overlapping_injection_caches", "Must clear before new diagnostics arrive to avoid stale data"],
+        status: "green",
+        commits: [{ hash: "10acbd5", message: "feat(bridge): wire diagnostic clearing and re-collection into did_change flow", phase: "green" }],
+        notes: ["Clears virtual_to_host registry on change", "Sends empty diagnostics to clear editor", "Re-collects after parse_document"],
       },
       {
         test: "E2E test: nvim_diagnostic_test.lua verifies Rust code block in Markdown shows rust-analyzer diagnostics",
