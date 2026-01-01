@@ -86,6 +86,31 @@ pub fn resolve_language_with_wildcard(
     }
 }
 
+/// Resolve a bridge language key from a map with wildcard fallback.
+///
+/// Implements ADR-0011 wildcard config inheritance for bridge HashMap:
+/// - If both wildcard ("_") and specific key exist: return specific (no merge needed for single-field struct)
+/// - If only wildcard exists: return wildcard
+/// - If only specific key exists: return specific key
+/// - If neither exists: return None
+///
+/// Note: BridgeLanguageConfig only has `enabled` field, so no merging is needed.
+pub fn resolve_bridge_with_wildcard(
+    map: &HashMap<String, settings::BridgeLanguageConfig>,
+    key: &str,
+) -> Option<settings::BridgeLanguageConfig> {
+    let wildcard = map.get("_");
+    let specific = map.get(key);
+
+    match (wildcard, specific) {
+        // Specific overrides wildcard entirely (no merge for single-field struct)
+        (Some(_), Some(s)) => Some(s.clone()),
+        (Some(w), None) => Some(w.clone()),
+        (None, Some(s)) => Some(s.clone()),
+        (None, None) => None,
+    }
+}
+
 /// Returns the default search paths for parsers and queries.
 /// Uses the platform-specific data directory (via `dirs` crate):
 /// - Linux: ~/.local/share/treesitter-ls
@@ -1552,6 +1577,27 @@ mod tests {
             bridge.get("rust").is_some_and(|c| c.enabled),
             "Should inherit bridge settings from wildcard"
         );
+    }
+
+    #[test]
+    fn test_resolve_bridge_with_wildcard_returns_wildcard_when_specific_absent() {
+        // ADR-0011: bridge['javascript'] inherits from bridge['_']
+        // When bridge only has "_" and we ask for "javascript",
+        // we should get the wildcard's enabled setting
+        let mut bridge: HashMap<String, settings::BridgeLanguageConfig> = HashMap::new();
+
+        // Wildcard has enabled = true
+        bridge.insert(
+            "_".to_string(),
+            settings::BridgeLanguageConfig { enabled: true },
+        );
+
+        // Resolve for "javascript" which doesn't exist - should return wildcard
+        let result = resolve_bridge_with_wildcard(&bridge, "javascript");
+
+        assert!(result.is_some(), "Should return Some when wildcard exists");
+        let resolved = result.unwrap();
+        assert!(resolved.enabled, "Should inherit enabled from wildcard");
     }
 
     #[test]
