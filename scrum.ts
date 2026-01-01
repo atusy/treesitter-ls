@@ -198,7 +198,46 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 119,
+    pbi_id: "PBI-149",
+    goal: "Serialize concurrent hover requests per connection using tokio::Mutex to prevent race conditions where didChange and hover RPCs interleave, ensuring each hover request has exclusive access during the didChange+hover sequence",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "Unit test verifies that TokioAsyncLanguageServerPool wraps connection in tokio::Mutex and hover() acquires lock before sync_document+request sequence",
+        implementation: "Add connection_locks: DashMap<String, Arc<tokio::sync::Mutex<()>>> to TokioAsyncLanguageServerPool and acquire lock at start of hover()",
+        type: "behavioral",
+        status: "green",
+        commits: [{ hash: "fb72afb", message: "test(bridge): add connection lock infrastructure for hover serialization", phase: "green" }],
+        notes: ["The Mutex guards the sync_document+hover atomic sequence, not the connection itself", "Test: pool_provides_connection_lock_for_serialization"],
+      },
+      {
+        test: "Unit test verifies second concurrent hover() call blocks until first completes (using tokio::time::timeout to detect blocking)",
+        implementation: "Ensure lock is held for entire sync_document+send_request+await_response sequence in hover()",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Two hover tasks started simultaneously - second should wait for first to release lock"],
+      },
+      {
+        test: "Integration test sends two concurrent hovers with different content, verifies each receives correct response matching its content",
+        implementation: "Lock scope must include response await to prevent interleaving of request A content with request B response",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Key test: content A='fn foo() -> i32', content B='fn foo() -> String', verify hover A shows i32, hover B shows String"],
+      },
+      {
+        test: "E2E test rapidly moves cursor between two code blocks, verifies all hover results match expected content for each block",
+        implementation: "Verify serialization works end-to-end through the full hover_impl path",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Simulates real-world rapid cursor movement that triggers the race condition"],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
