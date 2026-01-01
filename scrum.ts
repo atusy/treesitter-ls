@@ -182,40 +182,32 @@ const scrum: ScrumDashboard = {
     status: "in_progress",
     subtasks: [
       {
-        test: "Unit test: concurrent sync_document calls with shared counter produce duplicate versions (demonstrates bug)",
-        implementation: "No implementation yet - this test exposes the race condition in the current read-then-write pattern",
+        test: "Unit test: concurrent increment_document_version calls produce strictly monotonic versions (verifies AtomicU32)",
+        implementation: "Changed document_versions from DashMap<String, u32> to DashMap<String, AtomicU32>, use fetch_add(1, SeqCst)",
         type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [
-          "Test spawns multiple async tasks calling sync_document simultaneously",
-          "Collects all version numbers sent to LSP server",
-          "Asserts duplicates exist (current buggy behavior) - test should PASS initially, showing the bug",
+        status: "completed",
+        commits: [
+          { hash: "9cb0159", message: "fix(bridge): use AtomicU32 for document version tracking", phase: "green" },
         ],
-      },
-      {
-        test: "Unit test: AtomicU32 with fetch_add produces strictly monotonic versions under concurrent access",
-        implementation: "Change document_versions from DashMap<String, u32> to DashMap<String, AtomicU32>, use fetch_add(1, SeqCst) in sync_document",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
         notes: [
+          "Test: concurrent_version_increments_produce_monotonic_versions spawns 100 tasks with barrier",
           "AtomicU32::fetch_add atomically increments and returns previous value",
           "No separate read-then-write, so no race window",
-          "Test spawns multiple async tasks, verifies all versions are unique",
         ],
       },
       {
         test: "Integration test: parallel sync_document calls produce sequential version numbers with no duplicates",
-        implementation: "Refactor sync_document to use atomic version increment pattern",
+        implementation: "Modify sync_document to return Option<u32> (version sent), verify concurrent calls produce unique versions",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          { hash: "9e35779", message: "test(bridge): add integration test for parallel sync_document version tracking", phase: "green" },
+        ],
         notes: [
-          "Uses real TokioAsyncLanguageServerPool with mock or real connection",
-          "Spawns N concurrent sync_document calls",
-          "Collects versions via trace log or return value",
-          "Asserts: count(unique_versions) == N and max - min + 1 == N",
+          "Uses real TokioAsyncLanguageServerPool with rust-analyzer connection",
+          "Spawns N concurrent sync_document calls with barrier for simultaneous start",
+          "Collects versions via return value (sync_document returns Option<u32>)",
+          "Asserts: count(unique_versions) == N and versions are consecutive",
         ],
       },
       {
