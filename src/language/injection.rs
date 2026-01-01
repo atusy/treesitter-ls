@@ -320,6 +320,19 @@ impl CacheableInjectionRegion {
             character: virtual_pos.character,
         }
     }
+
+    /// Translate a diagnostic from virtual document coordinates to host document coordinates.
+    ///
+    /// Translates both start and end positions of the diagnostic range using
+    /// `translate_virtual_to_host`. All other diagnostic fields are preserved.
+    pub fn translate_diagnostic(
+        &self,
+        mut diagnostic: tower_lsp::lsp_types::Diagnostic,
+    ) -> tower_lsp::lsp_types::Diagnostic {
+        diagnostic.range.start = self.translate_virtual_to_host(diagnostic.range.start);
+        diagnostic.range.end = self.translate_virtual_to_host(diagnostic.range.end);
+        diagnostic
+    }
 }
 
 /// Collects all injection regions in the document
@@ -1021,5 +1034,97 @@ mod tests {
             "Line should be virtual_line + region_start_line"
         );
         assert_eq!(host_pos.character, 3, "Character should remain unchanged");
+    }
+
+    #[test]
+    fn test_cacheable_injection_region_translate_diagnostic() {
+        use tower_lsp::lsp_types::{Diagnostic, Position, Range};
+
+        // Injection region starts at line 3 in host document
+        let region = CacheableInjectionRegion {
+            language: "rust".to_string(),
+            byte_range: 17..100,
+            line_range: 3..10,
+            result_id: "test-region".to_string(),
+            content_hash: 12345,
+        };
+
+        // Virtual diagnostic at lines 0-0 (e.g., error on first line of virtual doc)
+        // This corresponds to host lines 3-3
+        let virtual_diagnostic = Diagnostic {
+            range: Range {
+                start: Position {
+                    line: 0,
+                    character: 4,
+                },
+                end: Position {
+                    line: 0,
+                    character: 10,
+                },
+            },
+            message: "undefined variable".to_string(),
+            ..Default::default()
+        };
+
+        let host_diagnostic = region.translate_diagnostic(virtual_diagnostic.clone());
+
+        assert_eq!(
+            host_diagnostic.range.start.line, 3,
+            "Start line should be virtual_line + region_start_line"
+        );
+        assert_eq!(
+            host_diagnostic.range.start.character, 4,
+            "Start character should remain unchanged"
+        );
+        assert_eq!(
+            host_diagnostic.range.end.line, 3,
+            "End line should be virtual_line + region_start_line"
+        );
+        assert_eq!(
+            host_diagnostic.range.end.character, 10,
+            "End character should remain unchanged"
+        );
+        assert_eq!(
+            host_diagnostic.message, "undefined variable",
+            "Message should be preserved"
+        );
+    }
+
+    #[test]
+    fn test_translate_diagnostic_multiline() {
+        use tower_lsp::lsp_types::{Diagnostic, Position, Range};
+
+        // Injection region starts at line 5 in host document
+        let region = CacheableInjectionRegion {
+            language: "rust".to_string(),
+            byte_range: 50..200,
+            line_range: 5..15,
+            result_id: "test-region".to_string(),
+            content_hash: 12345,
+        };
+
+        // Multiline diagnostic spanning virtual lines 2-4
+        // This corresponds to host lines 7-9
+        let virtual_diagnostic = Diagnostic {
+            range: Range {
+                start: Position {
+                    line: 2,
+                    character: 0,
+                },
+                end: Position {
+                    line: 4,
+                    character: 5,
+                },
+            },
+            message: "multiline error".to_string(),
+            ..Default::default()
+        };
+
+        let host_diagnostic = region.translate_diagnostic(virtual_diagnostic);
+
+        assert_eq!(host_diagnostic.range.start.line, 7);
+        assert_eq!(host_diagnostic.range.end.line, 9);
+        assert_eq!(host_diagnostic.range.start.character, 0);
+        assert_eq!(host_diagnostic.range.end.character, 5);
     }
 }
