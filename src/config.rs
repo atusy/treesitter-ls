@@ -2,8 +2,8 @@ pub mod defaults;
 pub mod settings;
 
 pub use settings::{
-    CaptureMapping, CaptureMappings, LanguageConfig, LanguageSettings, QueryTypeMappings,
-    TreeSitterSettings, WorkspaceSettings,
+    CaptureMapping, CaptureMappings, LanguageConfig, LanguageSettings, QueryItem, QueryKind,
+    QueryTypeMappings, TreeSitterSettings, WorkspaceSettings, infer_query_kind,
 };
 use std::collections::HashMap;
 
