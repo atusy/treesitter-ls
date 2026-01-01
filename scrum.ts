@@ -29,33 +29,10 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-141 (Sprint 1-114) | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-142 (Sprint 1-115) | History: git log -- scrum.yaml, scrum.ts
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   product_backlog: [
     // ADR-0009 Implementation: Vertical slices with user-facing value
-    {
-      id: "PBI-142",
-      story: {
-        role: "Rustacean editing Markdown",
-        capability: "have completion requests in Markdown code blocks use fully async I/O",
-        benefit: "completion responses are faster and don't block other LSP requests while waiting for rust-analyzer",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "TokioAsyncLanguageServerPool.completion() method implemented with async request/response pattern",
-          verification: "Unit test verifies completion returns valid CompletionList response",
-        },
-        {
-          criterion: "completion handler uses async pool.completion() for bridged requests",
-          verification: "grep confirms async completion path in lsp_impl.rs",
-        },
-        {
-          criterion: "Completion requests to rust-analyzer return valid responses through async path",
-          verification: "E2E test opens Markdown with Rust code block, requests completion, receives items",
-        },
-      ],
-      status: "ready",
-    },
     {
       id: "PBI-143",
       story: {
@@ -91,14 +68,23 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-113: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-114: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 115, pbi_id: "PBI-142", goal: "Implement TokioAsyncLanguageServerPool.completion() with async I/O and wire into completion_impl to replace spawn_blocking pattern for faster completion in Markdown code blocks", status: "done", subtasks: [] },
     { number: 114, pbi_id: "PBI-141", goal: "Implement TokioAsyncLanguageServerPool.goto_definition() with async I/O and wire into definition_impl to replace spawn_blocking pattern for faster go-to-definition in Markdown code blocks", status: "done", subtasks: [] },
-    { number: 113, pbi_id: "PBI-140", goal: "Implement fully async hover bridging with TokioAsyncBridgeConnection reader task, TokioAsyncLanguageServerPool, and wire into hover_impl to replace spawn_blocking pattern", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-112: modular refactoring pattern, E2E indexing waits
+  // Recent 2 retrospectives | Sprint 1-113: modular refactoring pattern, E2E indexing waits
   retrospectives: [
+    {
+      sprint: 115,
+      improvements: [
+        { action: "Vertical slice pattern continues to work well - PBI-142 (completion) followed same pattern as hover/goto_definition, confirming the template approach", timing: "immediate", status: "completed", outcome: "completion() implemented by following goto_definition() as template" },
+        { action: "E2E test for completion needed retry loop for rust-analyzer indexing - same pattern as hover test; added 20-iteration retry with 1s sleep", timing: "immediate", status: "completed", outcome: "E2E test passes consistently with retry loop" },
+        { action: "Observed flaky test in sync bridge connection (did_open_uses_connection_info_write_virtual_file) - passes with --test-threads=1, fails intermittently with parallel execution; unrelated to async completion changes", timing: "sprint", status: "active", outcome: null },
+        { action: "Continue pattern for PBI-143 (signatureHelp) - next vertical slice", timing: "sprint", status: "active", outcome: null },
+      ],
+    },
     {
       sprint: 114,
       improvements: [
@@ -106,17 +92,7 @@ const scrum: ScrumDashboard = {
         { action: "Addressed Sprint 113 action: removed #[allow(dead_code)] annotations from TokioAsyncLanguageServerPool now that hover() and goto_definition() are wired into production", timing: "immediate", status: "completed", outcome: "Commit 58390b3 - kept dead_code only on has_connection() and notification_sender() (test-only or not yet used)" },
         { action: "Discovered cwd issue for rust-analyzer - language servers may need cwd set to workspace root; added spawn_with_cwd() to TokioAsyncBridgeConnection", timing: "immediate", status: "completed", outcome: "E2E test now passes with proper cwd handling for rust-analyzer" },
         { action: "Fix outdated comment in definition.rs (line 170) - says 'spawn_blocking' but code now uses async pool.goto_definition(); similar comments in inlay_hint.rs, implementation.rs also need update when those migrate to async", timing: "sprint", status: "active", outcome: null },
-        { action: "Continue pattern for PBI-142 (completion) and PBI-143 (signatureHelp) - follow hover/goto_definition template for consistent implementation", timing: "sprint", status: "active", outcome: null },
-      ],
-    },
-    {
-      sprint: 113,
-      improvements: [
-        { action: "INVEST-compliant vertical slice pattern validated - PBI-140 delivered user value (faster hover responses) by combining infrastructure (TokioAsyncBridgeConnection), wiring (TokioAsyncLanguageServerPool into TreeSitterLs), and E2E test in single PBI", timing: "immediate", status: "completed", outcome: "Avoided PBI-091 anti-pattern where infrastructure was never wired; async pool is now used in production hover path" },
-        { action: "Apply vertical slice pattern to PBI-142 (completion + signatureHelp) - each PBI should deliver observable user value, not just infrastructure changes", timing: "sprint", status: "completed", outcome: "Applied in Sprint 114 with PBI-141 goto_definition" },
-        { action: "Sync bridge module has potential flaky test (read_response_for_id_with_notifications_returns_none_on_timeout uses 100ms timeout with 5s assertion slack) - monitor for CI failures, consider increasing timeout margin if flaky", timing: "sprint", status: "active", outcome: null },
-        { action: "tokio::select! pattern enables clean async shutdown - reader task completes within 100ms when idle (AC1 verified), unlike sync read_line which blocks until data arrives", timing: "immediate", status: "completed", outcome: "Test shutdown_while_reader_idle_completes_within_100ms passes consistently" },
-        { action: "Remove #[allow(dead_code)] from TokioAsyncBridgeConnection and TokioAsyncLanguageServerPool now that they are wired into production code (hover path uses them)", timing: "sprint", status: "completed", outcome: "Completed in Sprint 114 - commit 58390b3" },
+        { action: "Continue pattern for PBI-142 (completion) and PBI-143 (signatureHelp) - follow hover/goto_definition template for consistent implementation", timing: "sprint", status: "completed", outcome: "Completed PBI-142 (completion) in Sprint 115 following same pattern" },
       ],
     },
   ],
