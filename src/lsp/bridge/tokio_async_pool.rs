@@ -122,9 +122,15 @@ impl TokioAsyncLanguageServerPool {
         let root_uri = format!("file://{}", temp_dir.display());
 
         // Spawn connection using TokioAsyncBridgeConnection with temp_dir as cwd
-        let conn = TokioAsyncBridgeConnection::spawn(program, &args, Some(&temp_dir))
-            .await
-            .ok()?;
+        // Pass notification_sender to forward $/progress notifications
+        let conn = TokioAsyncBridgeConnection::spawn(
+            program,
+            &args,
+            Some(&temp_dir),
+            Some(self.notification_sender.clone()),
+        )
+        .await
+        .ok()?;
 
         // Send initialize request
         let mut init_params = serde_json::json!({

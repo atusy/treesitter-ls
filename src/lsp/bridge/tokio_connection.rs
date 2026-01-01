@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout};
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 /// Pending request entry - stores the sender for a response
@@ -55,6 +55,7 @@ impl TokioAsyncBridgeConnection {
     /// * `command` - The command to spawn (e.g., "rust-analyzer")
     /// * `args` - Arguments to pass to the command
     /// * `cwd` - Optional working directory for the child process
+    /// * `notification_sender` - Optional channel for forwarding $/progress notifications
     ///
     /// # Returns
     /// A new TokioAsyncBridgeConnection wrapping the spawned process
@@ -62,6 +63,7 @@ impl TokioAsyncBridgeConnection {
         command: &str,
         args: &[&str],
         cwd: Option<&std::path::Path>,
+        notification_sender: Option<mpsc::Sender<Value>>,
     ) -> Result<Self, String> {
         use std::process::Stdio;
         use tokio::process::Command;
@@ -105,7 +107,7 @@ impl TokioAsyncBridgeConnection {
 
         // Spawn the reader task with tokio::select! for clean shutdown
         let reader_handle = tokio::spawn(async move {
-            Self::reader_loop(stdout, pending_clone, shutdown_rx).await;
+            Self::reader_loop(stdout, pending_clone, shutdown_rx, notification_sender).await;
         });
 
         Ok(Self {
@@ -125,10 +127,17 @@ impl TokioAsyncBridgeConnection {
     ///
     /// This is the key difference from sync AsyncBridgeConnection - shutdown can
     /// be processed immediately without waiting for a blocking read to complete.
+    ///
+    /// # Arguments
+    /// * `stdout` - The child process stdout to read from
+    /// * `pending` - Map of pending requests awaiting responses
+    /// * `shutdown_rx` - Receiver for shutdown signal
+    /// * `notification_sender` - Optional channel for forwarding $/progress notifications
     async fn reader_loop(
         stdout: ChildStdout,
         pending: Arc<DashMap<i64, PendingRequest>>,
         mut shutdown_rx: oneshot::Receiver<()>,
+        notification_sender: Option<mpsc::Sender<Value>>,
     ) {
         let mut reader = BufReader::new(stdout);
 
@@ -171,9 +180,19 @@ impl TokioAsyncBridgeConnection {
                                         id
                                     );
                                 }
+                            } else if let Some(method) = message.get("method").and_then(|m| m.as_str()) {
+                                // This is a notification (method without id)
+                                // Check for $/progress notification and forward it
+                                if method == "$/progress"
+                                    && let Some(ref sender) = notification_sender
+                                {
+                                    log::debug!(
+                                        target: "treesitter_ls::bridge::tokio",
+                                        "[READER] Forwarding $/progress notification"
+                                    );
+                                    let _ = sender.try_send(message);
+                                }
                             }
-                            // Notifications (method without id) are ignored for now
-                            // Future: could forward $/progress notifications
                         }
                         Ok(None) => {
                             // EOF or empty read
@@ -403,7 +422,7 @@ mod tests {
     async fn spawn_uses_tokio_process_command() {
         // Use 'cat' as a simple process that reads from stdin and writes to stdout
         // This is available on all Unix-like systems
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None).await;
         assert!(result.is_ok(), "spawn() should succeed with 'cat' command");
 
         let conn = result.unwrap();
@@ -416,7 +435,7 @@ mod tests {
     /// Verifies AC2: Async stdin/stdout handles are obtained from the tokio Child process.
     #[tokio::test]
     async fn spawn_extracts_stdin_stdout_from_child() {
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None).await;
         assert!(result.is_ok(), "spawn() should succeed");
 
         let conn = result.unwrap();
@@ -431,7 +450,7 @@ mod tests {
     /// Verifies the reader_handle is a tokio::task::JoinHandle and shutdown_tx exists.
     #[tokio::test]
     async fn spawn_creates_reader_task_handle() {
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None).await;
         assert!(result.is_ok(), "spawn() should succeed");
 
         let mut conn = result.unwrap();
@@ -473,7 +492,7 @@ mod tests {
     #[tokio::test]
     async fn shutdown_while_reader_idle_completes_within_100ms() {
         // Spawn a 'cat' process - it will be idle (not sending any data)
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None).await;
         assert!(result.is_ok(), "spawn() should succeed");
 
         let mut conn = result.unwrap();
@@ -516,7 +535,7 @@ mod tests {
         use tokio::io::AsyncWriteExt;
 
         // Use 'cat' as an echo server - we write to stdin, it echoes to stdout
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None).await;
         assert!(result.is_ok(), "spawn() should succeed");
 
         let conn = result.unwrap();
@@ -568,7 +587,7 @@ mod tests {
     #[tokio::test]
     async fn send_request_returns_receiver_that_resolves_on_response() {
         // Use 'cat' as an echo server - we write to stdin, it echoes to stdout
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None).await;
         assert!(result.is_ok(), "spawn() should succeed");
 
         let conn = result.unwrap();
@@ -604,10 +623,133 @@ mod tests {
         );
     }
 
+    /// Test that spawn() accepts an optional notification_sender parameter.
+    ///
+    /// This verifies Subtask 2: spawn() must accept Option<mpsc::Sender<Value>>
+    /// parameter and store it for forwarding $/progress notifications.
+    #[tokio::test]
+    async fn spawn_accepts_notification_sender_parameter() {
+        use tokio::sync::mpsc;
+
+        // Create a notification channel
+        let (tx, _rx) = mpsc::channel::<serde_json::Value>(16);
+
+        // spawn() should accept the notification sender parameter
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, Some(tx)).await;
+
+        assert!(
+            result.is_ok(),
+            "spawn() with notification_sender should succeed"
+        );
+    }
+
+    /// Test that spawn() without notification_sender still works (backward compatible).
+    #[tokio::test]
+    async fn spawn_without_notification_sender_works() {
+        // spawn() with None notification_sender should still work
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None).await;
+
+        assert!(
+            result.is_ok(),
+            "spawn() with None notification_sender should succeed"
+        );
+    }
+
+    /// Test that reader forwards $/progress notifications to the notification channel.
+    ///
+    /// This verifies Subtask 1: when reader receives a message with 'method' field
+    /// but no 'id' field (a notification), and method is '$/progress', it should
+    /// send the message to the notification channel.
+    #[tokio::test]
+    async fn reader_forwards_progress_notifications_to_channel() {
+        use tokio::io::AsyncWriteExt;
+        use tokio::sync::mpsc;
+
+        // Create a notification channel
+        let (tx, mut rx) = mpsc::channel::<serde_json::Value>(16);
+
+        // Spawn with notification sender
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, Some(tx)).await;
+        assert!(result.is_ok(), "spawn() should succeed");
+
+        let conn = result.unwrap();
+
+        // Write a $/progress notification to stdin (cat will echo to stdout)
+        let notification = r#"{"jsonrpc":"2.0","method":"$/progress","params":{"token":"token1","value":{"kind":"begin","title":"Indexing"}}}"#;
+        let message = format!(
+            "Content-Length: {}\r\n\r\n{}",
+            notification.len(),
+            notification
+        );
+
+        {
+            let mut stdin = conn.stdin.lock().await;
+            stdin.write_all(message.as_bytes()).await.unwrap();
+            stdin.flush().await.unwrap();
+        }
+
+        // Wait for the notification to be forwarded
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv()).await;
+
+        assert!(result.is_ok(), "Should receive notification within timeout");
+
+        let notification_value = result.unwrap();
+        assert!(
+            notification_value.is_some(),
+            "Notification channel should receive message"
+        );
+
+        let notification_value = notification_value.unwrap();
+        assert_eq!(
+            notification_value.get("method").and_then(|m| m.as_str()),
+            Some("$/progress"),
+            "Forwarded notification should have method='$/progress'"
+        );
+    }
+
+    /// Test that non-progress notifications are not forwarded.
+    #[tokio::test]
+    async fn reader_does_not_forward_non_progress_notifications() {
+        use tokio::io::AsyncWriteExt;
+        use tokio::sync::mpsc;
+
+        // Create a notification channel
+        let (tx, mut rx) = mpsc::channel::<serde_json::Value>(16);
+
+        // Spawn with notification sender
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, Some(tx)).await;
+        assert!(result.is_ok(), "spawn() should succeed");
+
+        let conn = result.unwrap();
+
+        // Write a non-progress notification (window/logMessage)
+        let notification = r#"{"jsonrpc":"2.0","method":"window/logMessage","params":{"type":3,"message":"Info"}}"#;
+        let message = format!(
+            "Content-Length: {}\r\n\r\n{}",
+            notification.len(),
+            notification
+        );
+
+        {
+            let mut stdin = conn.stdin.lock().await;
+            stdin.write_all(message.as_bytes()).await.unwrap();
+            stdin.flush().await.unwrap();
+        }
+
+        // Wait briefly - notification should NOT be forwarded
+        let result = tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await;
+
+        // Should timeout since non-progress notifications are not forwarded
+        assert!(
+            result.is_err(),
+            "Non-progress notifications should not be forwarded"
+        );
+    }
+
     /// Test that send_notification sends a message without expecting a response.
     #[tokio::test]
     async fn send_notification_sends_message_without_response() {
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None).await;
         assert!(result.is_ok(), "spawn() should succeed");
 
         let conn = result.unwrap();
@@ -633,7 +775,7 @@ mod tests {
 
         // Use 'pwd' to verify the working directory is set correctly
         // On Unix, 'pwd' prints the current working directory
-        let result = TokioAsyncBridgeConnection::spawn("pwd", &[], Some(&temp_dir)).await;
+        let result = TokioAsyncBridgeConnection::spawn("pwd", &[], Some(&temp_dir), None).await;
         assert!(result.is_ok(), "spawn() with cwd should succeed");
 
         // Clean up - ignore errors
@@ -644,7 +786,7 @@ mod tests {
     #[tokio::test]
     async fn spawn_with_none_cwd_uses_default_directory() {
         // spawn() with None should behave like before - use the default process cwd
-        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None).await;
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None).await;
         assert!(result.is_ok(), "spawn() with None cwd should succeed");
 
         let conn = result.unwrap();
