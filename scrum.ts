@@ -68,8 +68,11 @@ const scrum: ScrumDashboard = {
         test: "Unit test verifies signature_help() returns SignatureHelp from lua-language-server",
         implementation: "Add signature_help() method to TokioAsyncLanguageServerPool following hover/goto_definition/completion pattern",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          { hash: "5699f03", message: "test(bridge): add signature_help test for TokioAsyncLanguageServerPool", phase: "green" },
+          { hash: "c1fca04", message: "feat(bridge): add signature_help() to TokioAsyncLanguageServerPool", phase: "green" },
+        ],
         notes: ["Template: completion() method in tokio_async_pool.rs", "Use lua-language-server for faster test (like goto_definition test)"],
       },
       {
