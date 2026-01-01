@@ -68,8 +68,8 @@ const scrum: ScrumDashboard = {
         test: "Unit test: LanguageServerConnection captures publishDiagnostics notifications during response wait",
         implementation: "Add diagnostics field to ResponseWithNotifications, capture textDocument/publishDiagnostics in read_response_for_id_with_notifications",
         type: "behavioral",
-        status: "green",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "8fc3315", message: "feat(bridge): capture publishDiagnostics in ResponseWithNotifications", phase: "green" }],
         notes: ["Simpler design: return diagnostics with response rather than separate DiagnosticCollector", "Parses to PublishDiagnosticsParams directly"],
       },
       {
