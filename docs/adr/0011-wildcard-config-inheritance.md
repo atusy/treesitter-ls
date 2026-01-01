@@ -224,9 +224,10 @@ The existing `apply_capture_mapping()` in `semantic.rs` already implements lazy 
 - [x] Unit tests for nested wildcard resolution (outer then inner) (commit 15604de)
 - [x] Unit tests for specific values overriding wildcards at both levels (commit 8a501cc)
 
-### Phase 3: languageServers Wildcard (Future)
-- [ ] Apply wildcard resolution to `languageServers._` for default server settings
-- [ ] E2E test: Verify semantic tokens use wildcard mappings correctly
+### Phase 3: languageServers Wildcard (Completed - Sprint 123, PBI-154)
+- [x] Apply wildcard resolution to `languageServers._` for default server settings (commit 4a410a8)
+- [x] Unit tests for wildcard resolution with various combinations (commits 215ce9e, c5fd55b)
+- [x] Integration tests verifying wildcard inheritance (commit 677465b)
 
 ## Related Decisions
 
