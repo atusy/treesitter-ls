@@ -31,8 +31,11 @@ pub const DEFAULT_CLEANUP_MAX_AGE: std::time::Duration =
 /// The cleanup is non-blocking and logs any errors rather than failing.
 pub fn startup_cleanup() {
     let temp_dir = std::env::temp_dir();
+    run_startup_cleanup(&temp_dir);
+}
 
-    match cleanup_stale_temp_dirs(&temp_dir, DEFAULT_CLEANUP_MAX_AGE) {
+fn run_startup_cleanup(temp_dir: &Path) {
+    match cleanup_stale_temp_dirs(temp_dir, DEFAULT_CLEANUP_MAX_AGE) {
         Ok(stats) => {
             if stats.dirs_removed > 0 || stats.dirs_failed > 0 {
                 log::info!(
@@ -314,15 +317,25 @@ mod tests {
     }
 
     #[test]
-    fn startup_cleanup_can_be_called_without_panic() {
-        // Test that startup_cleanup() can be called without panicking.
-        // It uses the real system temp dir, so we just verify it doesn't crash.
-        // Any stale directories it finds will be cleaned up.
-        startup_cleanup();
+    fn startup_cleanup_cleans_stale_dirs_in_custom_temp_dir() {
+        use filetime::{FileTime, set_file_mtime};
+        use std::time::SystemTime;
 
-        // If we get here, the function completed without panicking
-        // We can't easily verify the exact behavior since it uses the real temp dir,
-        // but we can verify the function signature and error handling work correctly.
+        let temp = tempdir().unwrap();
+        let stale_dir = temp.path().join("treesitter-ls-old-override");
+        std::fs::create_dir(&stale_dir).unwrap();
+
+        // Make the directory appear stale (older than 24 hours)
+        let old_time = SystemTime::now() - Duration::from_secs(2 * 24 * 60 * 60);
+        let file_time = FileTime::from_system_time(old_time);
+        set_file_mtime(&stale_dir, file_time).unwrap();
+
+        super::run_startup_cleanup(temp.path());
+
+        assert!(
+            !stale_dir.exists(),
+            "run_startup_cleanup should remove stale dirs inside custom temp dir"
+        );
     }
 
     #[test]

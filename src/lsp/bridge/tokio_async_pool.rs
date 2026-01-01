@@ -95,7 +95,7 @@ impl TokioAsyncLanguageServerPool {
         static SPAWN_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let counter = SPAWN_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let temp_dir = std::env::temp_dir().join(format!(
-            "treesitter-ls-{}-{}-{}",
+            "treesitter-ls-tokio-{}-{}-{}",
             program,
             std::process::id(),
             counter
