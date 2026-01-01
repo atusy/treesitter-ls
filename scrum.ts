@@ -163,6 +163,11 @@ const scrum: ScrumDashboard = {
     { sprint: 147, improvements: [
       { action: "Test review findings (review-tests.md) addressed: smoke tests relocated, tests parameterized, API visibility audited", timing: "immediate", status: "completed", outcome: "3 PBIs completed (172-174), test pyramid improved, rstest adopted for parameterization" },
     ] },
+    { sprint: 119, improvements: [
+      { action: "Deep merge HashMap pattern (entry().and_modify().or_insert()) is reusable - extract to generic helper when 3rd usage appears", timing: "sprint", status: "active", outcome: null },
+      { action: "Empty Vec fields should inherit from fallback layer - Vec merge uses .is_empty() check, not Option semantics", timing: "immediate", status: "completed", outcome: "merge_language_servers: if !primary.cmd.is_empty() condition (lines 249, 252)" },
+      { action: "E2E test failures unrelated to PBI indicate technical debt - add test_lsp_document_highlight to product backlog", timing: "product", status: "active", outcome: null },
+    ] },
     { sprint: 118, improvements: [
       { action: "Combined subtasks indicate shared implementation - consider merging during planning when default behavior is intrinsic to core function", timing: "immediate", status: "completed", outcome: "Subtasks 2 and 3 merged: infer_query_kind() includes default in a275d04" },
       { action: "New public types exported via config.rs need explicit pub - apply YAGNI-pub: verify each pub is needed", timing: "immediate", status: "completed", outcome: "QueryKind, QueryItem, infer_query_kind exported in config.rs for external use" },
