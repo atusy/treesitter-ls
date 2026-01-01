@@ -164,7 +164,7 @@ const scrum: ScrumDashboard = {
     number: 122,
     pbi_id: "PBI-153",
     goal: "Enable wildcard keys in languages and bridge configurations for default settings",
-    status: "in_progress",
+    status: "review",
     subtasks: [
       {
         test: "Unit test: languages['rust'] inherits enabled/bridge from languages['_']",
@@ -195,7 +195,7 @@ const scrum: ScrumDashboard = {
         implementation: "Ensure specific values override wildcards at both levels",
         type: "behavioral",
         status: "completed",
-        commits: [{ hash: "", message: "test(config): add tests for specific values overriding wildcards", phase: "green" }],
+        commits: [{ hash: "8a501cc", message: "test(config): add tests for specific values overriding wildcards", phase: "green" }],
         notes: ["Verify merge order: wildcard base -> specific override"],
       },
     ],
