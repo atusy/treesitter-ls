@@ -193,9 +193,38 @@ fn merge_languages(
     mut fallback: HashMap<String, LanguageConfig>,
     primary: HashMap<String, LanguageConfig>,
 ) -> HashMap<String, LanguageConfig> {
-    // Override fallback entries with primary entries
-    for (key, value) in primary {
-        fallback.insert(key, value);
+    // Deep merge: for each language key, merge individual LanguageConfig fields
+    for (key, primary_config) in primary {
+        fallback
+            .entry(key)
+            .and_modify(|fallback_config| {
+                // primary.or(fallback) for each Option field
+                fallback_config.library = primary_config
+                    .library
+                    .clone()
+                    .or(fallback_config.library.take());
+                fallback_config.queries = primary_config
+                    .queries
+                    .clone()
+                    .or(fallback_config.queries.take());
+                fallback_config.highlights = primary_config
+                    .highlights
+                    .clone()
+                    .or(fallback_config.highlights.take());
+                fallback_config.locals = primary_config
+                    .locals
+                    .clone()
+                    .or(fallback_config.locals.take());
+                fallback_config.injections = primary_config
+                    .injections
+                    .clone()
+                    .or(fallback_config.injections.take());
+                fallback_config.bridge = primary_config
+                    .bridge
+                    .clone()
+                    .or(fallback_config.bridge.take());
+            })
+            .or_insert(primary_config);
     }
     fallback
 }
@@ -740,5 +769,154 @@ mod tests {
         let injections = settings.injections.as_ref().unwrap();
         assert_eq!(injections.len(), 1);
         assert_eq!(injections[0], "/path/to/injections.scm");
+    }
+
+    // PBI-150 Subtask 2: Deep merge for languages HashMap
+
+    #[test]
+    fn test_merge_all_languages_deep_merge() {
+        // Project sets queries field, inherits parser and bridge from user config
+        // This is the key behavior change from shallow to deep merge
+        use settings::BridgeLanguageConfig;
+
+        let mut user_languages = HashMap::new();
+        let mut user_bridge = HashMap::new();
+        user_bridge.insert("rust".to_string(), BridgeLanguageConfig { enabled: true });
+
+        user_languages.insert(
+            "python".to_string(),
+            LanguageConfig {
+                library: Some("/usr/lib/python.so".to_string()),
+                queries: None,
+                highlights: Some(vec!["/usr/share/python/highlights.scm".to_string()]),
+                locals: Some(vec!["/usr/share/python/locals.scm".to_string()]),
+                injections: None,
+                bridge: Some(user_bridge),
+            },
+        );
+
+        let user_config = TreeSitterSettings {
+            search_paths: None,
+            languages: user_languages,
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: None,
+        };
+
+        // Project only overrides highlights for python
+        let mut project_languages = HashMap::new();
+        project_languages.insert(
+            "python".to_string(),
+            LanguageConfig {
+                library: None, // Not specified - should inherit from user
+                queries: None,
+                highlights: Some(vec!["./queries/python-highlights.scm".to_string()]),
+                locals: None, // Not specified - should inherit from user
+                injections: None,
+                bridge: None, // Not specified - should inherit from user
+            },
+        );
+
+        let project_config = TreeSitterSettings {
+            search_paths: None,
+            languages: project_languages,
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: None,
+        };
+
+        let result = merge_all(&[Some(user_config), Some(project_config)]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        // Python should exist
+        assert!(result.languages.contains_key("python"));
+        let python = &result.languages["python"];
+
+        // Library: inherited from user (project was None)
+        assert_eq!(python.library, Some("/usr/lib/python.so".to_string()));
+
+        // Highlights: overridden by project
+        assert_eq!(
+            python.highlights,
+            Some(vec!["./queries/python-highlights.scm".to_string()])
+        );
+
+        // Locals: inherited from user (project was None)
+        assert_eq!(
+            python.locals,
+            Some(vec!["/usr/share/python/locals.scm".to_string()])
+        );
+
+        // Bridge: inherited from user (project was None)
+        assert!(python.bridge.is_some());
+        let bridge = python.bridge.as_ref().unwrap();
+        assert!(bridge.get("rust").unwrap().enabled);
+    }
+
+    #[test]
+    fn test_merge_all_languages_adds_new_keys() {
+        // User has python, project adds rust - both should exist
+        let mut user_languages = HashMap::new();
+        user_languages.insert(
+            "python".to_string(),
+            LanguageConfig {
+                library: Some("/usr/lib/python.so".to_string()),
+                queries: None,
+                highlights: None,
+                locals: None,
+                injections: None,
+                bridge: None,
+            },
+        );
+
+        let user_config = TreeSitterSettings {
+            search_paths: None,
+            languages: user_languages,
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: None,
+        };
+
+        let mut project_languages = HashMap::new();
+        project_languages.insert(
+            "rust".to_string(),
+            LanguageConfig {
+                library: Some("/project/rust.so".to_string()),
+                queries: None,
+                highlights: None,
+                locals: None,
+                injections: None,
+                bridge: None,
+            },
+        );
+
+        let project_config = TreeSitterSettings {
+            search_paths: None,
+            languages: project_languages,
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: None,
+        };
+
+        let result = merge_all(&[Some(user_config), Some(project_config)]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        // Both languages should exist
+        assert!(result.languages.contains_key("python"));
+        assert!(result.languages.contains_key("rust"));
+
+        // Python from user
+        assert_eq!(
+            result.languages["python"].library,
+            Some("/usr/lib/python.so".to_string())
+        );
+
+        // Rust from project
+        assert_eq!(
+            result.languages["rust"].library,
+            Some("/project/rust.so".to_string())
+        );
     }
 }
