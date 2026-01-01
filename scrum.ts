@@ -44,15 +44,27 @@ const scrum: ScrumDashboard = {
       },
       acceptance_criteria: [
         {
-          criterion: "hover returns 'indexing (rust-analyzer)' message when server is still indexing",
-          verification: "E2E test: trigger hover immediately after server spawn, verify informative message returned",
+          criterion: "TokioAsyncLanguageServerPool tracks ServerState enum (Indexing/Ready) per connection, starting in Indexing state after spawn",
+          verification: "Unit test: new connection starts with state Indexing",
         },
         {
-          criterion: "hover returns normal result after indexing completes",
-          verification: "E2E test: wait for indexing, trigger hover, verify normal hover content returned",
+          criterion: "hover_impl returns '{ contents: \"⏳ indexing (rust-analyzer)\" }' when ServerState is Indexing",
+          verification: "Unit test: hover request with Indexing state returns informative message",
+        },
+        {
+          criterion: "ServerState transitions from Indexing to Ready after first non-empty hover or completion response",
+          verification: "Unit test: verify state transition on non-empty response; empty responses keep Indexing state",
+        },
+        {
+          criterion: "Other LSP features (completion, signatureHelp, definition, references) return empty/null during Indexing without special message",
+          verification: "Unit test: completion returns [], definition returns null during Indexing state",
+        },
+        {
+          criterion: "End-to-end flow works: hover during indexing shows message, hover after Ready shows normal content",
+          verification: "E2E test: trigger hover immediately after server spawn (verify message), wait and retry (verify normal hover)",
         },
       ],
-      status: "draft",
+      status: "ready",
     },
     {
       id: "PBI-141",
