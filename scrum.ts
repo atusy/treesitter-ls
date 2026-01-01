@@ -29,25 +29,10 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-134 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-135 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Deferred - infrastructure already implemented, needs wiring (low priority)
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
   product_backlog: [
-    {
-      id: "PBI-135",
-      story: {
-        role: "developer editing Lua files",
-        capability: "have all bridge handlers use the async pool pattern",
-        benefit: "no bridge request can cause hangs regardless of which LSP feature is invoked",
-      },
-      acceptance_criteria: [
-        { criterion: "Navigation handlers use async pool", verification: "definition, declaration, implementation, typeDefinition, references handlers use async_language_server_pool" },
-        { criterion: "Edit handlers use async pool", verification: "rename, codeAction, formatting handlers use async_language_server_pool" },
-        { criterion: "Document handlers use async pool", verification: "inlayHint, foldingRange, documentLink handlers use async_language_server_pool" },
-        { criterion: "Hierarchy handlers use async pool", verification: "callHierarchy (prepare/incoming/outgoing), typeHierarchy (prepare/supertypes/subtypes) use async_language_server_pool" },
-      ],
-      status: "ready",
-    },
     {
       id: "PBI-136",
       story: {
@@ -64,18 +49,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 113,
-    pbi_id: "PBI-135",
-    goal: "Migrate all remaining bridge handlers to async pool pattern",
-    status: "review",
-    subtasks: [
-      { test: "Navigation handlers use async pool", implementation: "Update definition, declaration, implementation, typeDefinition, references to use async_language_server_pool", type: "behavioral", status: "completed", commits: [], notes: ["All 5 navigation handlers migrated"] },
-      { test: "Edit handlers use async pool", implementation: "Update rename, codeAction, formatting to use async_language_server_pool", type: "behavioral", status: "completed", commits: [], notes: ["All 3 edit handlers migrated including codeAction in lsp_impl.rs"] },
-      { test: "Document handlers use async pool", implementation: "Update inlayHint, foldingRange, documentLink to use async_language_server_pool", type: "behavioral", status: "completed", commits: [], notes: ["All 3 document handlers migrated"] },
-      { test: "Hierarchy handlers use async pool", implementation: "Update callHierarchy and typeHierarchy handlers to use async_language_server_pool", type: "behavioral", status: "completed", commits: [], notes: ["All 6 hierarchy methods migrated (prepare/incoming/outgoing for call, prepare/supertypes/subtypes for type)"] },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -85,26 +59,27 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-110: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-111: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 113, pbi_id: "PBI-135", goal: "Migrate all remaining bridge handlers to async pool pattern", status: "done", subtasks: [] },
     { number: 112, pbi_id: "PBI-134", goal: "Implement async request/response queue pattern for bridge connections", status: "done", subtasks: [] },
-    { number: 111, pbi_id: "PBI-134", goal: "Add per-key mutex to LanguageServerPool (cancelled - approach insufficient)", status: "cancelled", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-109: modular refactoring pattern, E2E indexing waits
+  // Recent 2 retrospectives | Sprint 1-110: modular refactoring pattern, E2E indexing waits, root cause investigation
   retrospectives: [
+    {
+      sprint: 113,
+      improvements: [
+        { action: "publishDiagnostics-based indexing detection is robust - polling for the notification with timeout is more reliable than fixed 500ms sleep", timing: "immediate", status: "completed", outcome: "did_open_and_wait() polls is_ready() with 50ms interval and 10s timeout; works reliably across handler types" },
+        { action: "Consider extracting common bridge handler boilerplate into shared helper - 17 handlers repeat same pattern (get doc, check language, get injections, translate positions, get connection, etc.)", timing: "sprint", status: "active", outcome: null },
+        { action: "User suggests exploring wrapper pattern alternatives on separate branch for potentially cleaner/more performant design", timing: "product", status: "active", outcome: null },
+      ],
+    },
     {
       sprint: 112,
       improvements: [
         { action: "AsyncConnectionWithInfo wrapper pattern works well - stores per-connection state (virtual_file_path, version) alongside the connection", timing: "immediate", status: "completed", outcome: "Cleaner than modifying AsyncBridgeConnection directly; separation of concerns" },
-        { action: "Incremental migration is valid - migrating high-frequency handlers first provides immediate value while deferring rest to next sprint", timing: "immediate", status: "completed", outcome: "4 handlers migrated in PBI-134; remaining 12+ handlers deferred to PBI-135" },
-      ],
-    },
-    {
-      sprint: 110,
-      improvements: [
-        { action: "Investigate root cause earlier when PBI assumes a bug exists - validate assumption before detailed implementation planning", timing: "immediate", status: "completed", outcome: "Sprint 110 refinement correctly pivoted from 'fix deadlock' to 'verify and document safety' when code was found already safe" },
-        { action: "User hang issue investigation: bridge I/O timeout (Sprint 109) and DashMap (Sprint 110) ruled out - investigate tokio::spawn panics or other mutex contention as next step", timing: "product", status: "completed", outcome: "Root cause identified: concurrent LSP requests (hover, completion, etc.) spawning duplicate connections fighting over stdout. Fixed via async pool pattern in Sprint 112 (PBI-134)" },
+        { action: "Incremental migration is valid - migrating high-frequency handlers first provides immediate value while deferring rest to next sprint", timing: "immediate", status: "completed", outcome: "4 handlers migrated in PBI-134; remaining 17 handlers completed in PBI-135" },
       ],
     },
   ],
