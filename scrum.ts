@@ -75,7 +75,36 @@ const scrum: ScrumDashboard = {
         { criterion: "Response routing uses request ID", verification: "pending_requests map stores Sender by ID; reader routes responses to correct caller" },
         { criterion: "Existing unit tests still pass", verification: "make test passes; no regression in bridge functionality" },
       ],
+      status: "done",
+    },
+    {
+      id: "PBI-135",
+      story: {
+        role: "developer editing Lua files",
+        capability: "have all bridge handlers use the async pool pattern",
+        benefit: "no bridge request can cause hangs regardless of which LSP feature is invoked",
+      },
+      acceptance_criteria: [
+        { criterion: "Navigation handlers use async pool", verification: "definition, declaration, implementation, typeDefinition, references handlers use async_language_server_pool" },
+        { criterion: "Edit handlers use async pool", verification: "rename, codeAction, formatting handlers use async_language_server_pool" },
+        { criterion: "Document handlers use async pool", verification: "inlayHint, foldingRange, documentLink handlers use async_language_server_pool" },
+        { criterion: "Hierarchy handlers use async pool", verification: "callHierarchy (prepare/incoming/outgoing), typeHierarchy (prepare/supertypes/subtypes) use async_language_server_pool" },
+      ],
       status: "ready",
+    },
+    {
+      id: "PBI-136",
+      story: {
+        role: "developer editing Lua files",
+        capability: "have the legacy synchronous bridge pool removed",
+        benefit: "codebase is simpler with only one connection management pattern",
+      },
+      acceptance_criteria: [
+        { criterion: "LanguageServerPool removed from TreeSitterLs", verification: "language_server_pool field removed; only async_language_server_pool remains" },
+        { criterion: "Legacy pool module can be removed", verification: "pool.rs, connection.rs only used for async pool initialization; sync methods removed or deprecated" },
+        { criterion: "All tests pass without legacy pool", verification: "make test && make check && make test_nvim all pass" },
+      ],
+      status: "draft",
     },
   ],
 
@@ -83,7 +112,7 @@ const scrum: ScrumDashboard = {
     number: 112,
     pbi_id: "PBI-134",
     goal: "Implement async request/response queue pattern for bridge connections",
-    status: "in_progress",
+    status: "done",
     subtasks: [
       {
         test: "Unit test for pending_requests map routing",
@@ -117,6 +146,14 @@ const scrum: ScrumDashboard = {
         commits: [],
         notes: ["make test passes; async pool tests verify concurrent request sharing"],
       },
+      {
+        test: "High-frequency handlers use async pool",
+        implementation: "Wire hover, completion, signatureHelp, documentHighlight to async_language_server_pool",
+        type: "behavioral",
+        status: "completed",
+        commits: [{ hash: "a6beafa", message: "feat(bridge): wire async pool to high-frequency LSP handlers", phase: "green" }],
+        notes: ["4 most frequently called handlers now use shared connection pattern; remaining handlers in PBI-135"],
+      },
     ],
   },
 
@@ -141,7 +178,7 @@ const scrum: ScrumDashboard = {
       improvements: [
         { action: "Investigate root cause earlier when PBI assumes a bug exists - validate assumption before detailed implementation planning", timing: "immediate", status: "completed", outcome: "Sprint 110 refinement correctly pivoted from 'fix deadlock' to 'verify and document safety' when code was found already safe" },
         { action: "Document Rust's .and_then() pattern as key to DashMap safety - it consumes Ref guard before subsequent operations", timing: "immediate", status: "completed", outcome: "Lock safety comments added to DocumentStore methods explaining .and_then() pattern" },
-        { action: "User hang issue investigation: bridge I/O timeout (Sprint 109) and DashMap (Sprint 110) ruled out - investigate tokio::spawn panics or other mutex contention as next step", timing: "product", status: "active", outcome: null },
+        { action: "User hang issue investigation: bridge I/O timeout (Sprint 109) and DashMap (Sprint 110) ruled out - investigate tokio::spawn panics or other mutex contention as next step", timing: "product", status: "completed", outcome: "Root cause identified: concurrent LSP requests (hover, completion, etc.) spawning duplicate connections fighting over stdout. Fixed via async pool pattern in Sprint 112 (PBI-134)" },
       ],
     },
     {
