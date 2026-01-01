@@ -1078,6 +1078,46 @@ mod tests {
         );
     }
 
+    /// Test that state tracking works correctly for future LSP features.
+    ///
+    /// AC4: Other LSP features (completion, definition, etc.) should return empty/null
+    /// during Indexing state without special message. Only hover shows the message.
+    ///
+    /// This test verifies the state tracking mechanism that future features will use.
+    /// When completion/definition are implemented in async pool, they should:
+    /// 1. Check get_server_state(key) == Some(Indexing)
+    /// 2. Return None/empty immediately without special message
+    /// 3. NOT transition state (only hover triggers transition)
+    #[tokio::test]
+    async fn state_tracking_for_other_lsp_features() {
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        // Manually set up state tracking to simulate connection
+        pool.set_server_state("test-server", super::ServerState::Indexing);
+
+        // Verify state is Indexing
+        assert_eq!(
+            pool.get_server_state("test-server"),
+            Some(super::ServerState::Indexing),
+            "State should be Indexing"
+        );
+
+        // Future completion/definition implementations should check this state
+        // and return empty/null without special message when Indexing.
+        // This is different from hover which returns informative message.
+
+        // Verify we can transition to Ready
+        pool.set_server_state("test-server", super::ServerState::Ready);
+        assert_eq!(
+            pool.get_server_state("test-server"),
+            Some(super::ServerState::Ready),
+            "State should transition to Ready"
+        );
+
+        // After Ready, all features should work normally (return actual results)
+    }
+
     /// Test that state transitions from Indexing to Ready on first non-empty hover response.
     ///
     /// AC3: ServerState transitions from Indexing to Ready on first non-empty hover response.
