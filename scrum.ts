@@ -29,7 +29,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-132 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-133 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Deferred - infrastructure already implemented, needs wiring (low priority)
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
   product_backlog: [
@@ -52,18 +52,19 @@ const scrum: ScrumDashboard = {
       id: "PBI-133",
       story: {
         role: "developer editing Lua files",
-        capability: "have DashMap operations in DocumentStore avoid deadlocks",
-        benefit: "the LSP does not freeze when concurrent document updates occur",
+        capability: "have DashMap operations in DocumentStore verified safe and documented",
+        benefit: "the LSP does not freeze when concurrent document updates occur and future changes maintain safety",
       },
       acceptance_criteria: [
-        { criterion: "DashMap read locks released before write operations", verification: "update_document extracts data from read lock, drops lock, then performs insert" },
-        { criterion: "All DashMap usages follow safe pattern", verification: "Code review confirms no read lock held while calling methods needing write access" },
+        { criterion: "DashMap lock safety verified with concurrent test", verification: "Unit test spawns multiple threads calling update_document and get concurrently; no deadlock within 5 seconds" },
+        { criterion: "DocumentStore methods have lock safety comments", verification: "Each method using DashMap has comment explaining why lock pattern is safe (e.g., 'Ref consumed by and_then before insert')" },
+        { criterion: "CLAUDE.md DashMap pattern documented", verification: "CLAUDE.md 'DashMap Lock Pattern' section exists with safe/unsafe examples (already present)" },
       ],
-      status: "draft",
+      status: "done",
     },
   ],
 
-  sprint: null, // Sprint 109 (PBI-132) completed - bridge I/O timeout
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -73,25 +74,27 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-108: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-109: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 110, pbi_id: "PBI-133", goal: "Verify DashMap lock safety with concurrent test and add safety documentation", status: "done", subtasks: [] },
     { number: 109, pbi_id: "PBI-132", goal: "Add timeout mechanism to bridge I/O operations", status: "done", subtasks: [] },
-    { number: 108, pbi_id: "PBI-131", goal: "Add textDocument/foldingRange bridge support", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-107: modular refactoring pattern, E2E indexing waits
+  // Recent 2 retrospectives | Sprint 1-108: modular refactoring pattern, E2E indexing waits
   retrospectives: [
+    {
+      sprint: 110,
+      improvements: [
+        { action: "Investigate root cause earlier when PBI assumes a bug exists - validate assumption before detailed implementation planning", timing: "immediate", status: "completed", outcome: "Sprint 110 refinement correctly pivoted from 'fix deadlock' to 'verify and document safety' when code was found already safe" },
+        { action: "Document Rust's .and_then() pattern as key to DashMap safety - it consumes Ref guard before subsequent operations", timing: "immediate", status: "completed", outcome: "Lock safety comments added to DocumentStore methods explaining .and_then() pattern" },
+        { action: "User hang issue investigation: bridge I/O timeout (Sprint 109) and DashMap (Sprint 110) ruled out - investigate tokio::spawn panics or other mutex contention as next step", timing: "product", status: "active", outcome: null },
+      ],
+    },
     {
       sprint: 109,
       improvements: [
         { action: "Blocking I/O timeout checks happen between read operations, not during - for truly responsive timeout would need async I/O", timing: "product", status: "completed", outcome: "30s timeout prevents indefinite hangs; async migration deferred" },
         { action: "PBIs should have ≤4 acceptance criteria to fit in one sprint; large PBIs should be split", timing: "immediate", status: "completed", outcome: "PBI-132 split from original 6 ACs to 4 ACs; DashMap fix moved to PBI-133" },
-      ],
-    },
-    {
-      sprint: 108,
-      improvements: [
-        { action: "FoldingRange uses startLine/endLine integers - translate line numbers directly", timing: "immediate", status: "completed", outcome: "Line number translation for folding ranges" },
       ],
     },
   ],
