@@ -120,6 +120,106 @@ impl DocumentStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn test_concurrent_update_and_get_no_deadlock() {
+        // This test verifies that concurrent update_document and get operations
+        // do not cause deadlock. The test uses a timeout to detect deadlock.
+        let store = Arc::new(DocumentStore::new());
+        let uri = Url::parse("file:///test.rs").unwrap();
+
+        // Insert initial document
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
+        let initial_text = "fn main() {}".to_string();
+        let tree = parser.parse(&initial_text, None).unwrap();
+        store.insert(
+            uri.clone(),
+            initial_text,
+            Some("rust".to_string()),
+            Some(tree),
+        );
+
+        let num_threads = 10;
+        let iterations_per_thread = 100;
+        let mut handles = vec![];
+
+        // Spawn writer threads
+        for i in 0..num_threads {
+            let store_clone = store.clone();
+            let uri_clone = uri.clone();
+            let mut parser = tree_sitter::Parser::new();
+            parser
+                .set_language(&tree_sitter_rust::LANGUAGE.into())
+                .unwrap();
+
+            let handle = thread::spawn(move || {
+                for j in 0..iterations_per_thread {
+                    let text =
+                        format!("fn main() {{ let x = {}; }}", i * iterations_per_thread + j);
+                    let tree = parser.parse(&text, None).unwrap();
+                    store_clone.update_document(uri_clone.clone(), text, Some(tree));
+                }
+            });
+            handles.push(handle);
+        }
+
+        // Spawn reader threads
+        for _ in 0..num_threads {
+            let store_clone = store.clone();
+            let uri_clone = uri.clone();
+
+            let handle = thread::spawn(move || {
+                for _ in 0..iterations_per_thread {
+                    // get() returns a Ref which holds a read lock
+                    if let Some(doc) = store_clone.get(&uri_clone) {
+                        // Access the document while holding the lock
+                        let _ = doc.text();
+                        let _ = doc.tree();
+                    }
+                }
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all threads with timeout (5 seconds)
+        // If deadlock occurs, this will hang and the test will fail
+        let timeout = Duration::from_secs(5);
+        let start = std::time::Instant::now();
+
+        for handle in handles {
+            let remaining = timeout.saturating_sub(start.elapsed());
+            if remaining.is_zero() {
+                panic!("Test timed out - possible deadlock detected");
+            }
+
+            // Use a channel to implement join with timeout
+            let (tx, rx) = std::sync::mpsc::channel();
+            let join_handle = thread::spawn(move || {
+                let result = handle.join();
+                let _ = tx.send(result);
+            });
+
+            match rx.recv_timeout(remaining) {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => panic!("Thread panicked"),
+                Err(_) => panic!("Test timed out - possible deadlock detected"),
+            }
+
+            // Clean up the join wrapper thread
+            let _ = join_handle.join();
+        }
+
+        // If we get here, no deadlock occurred
+        // Verify final state is consistent
+        let doc = store.get(&uri).expect("Document should exist");
+        assert!(!doc.text().is_empty());
+    }
 
     #[test]
     fn test_add_and_get_document() {
