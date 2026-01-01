@@ -32,9 +32,165 @@ const scrum: ScrumDashboard = {
   // Completed PBIs: PBI-001 through PBI-134 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Deferred - infrastructure already implemented, needs wiring (low priority)
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
-  product_backlog: [],
+  product_backlog: [
+    // ADR-0009 Phase 1: TokioAsyncBridgeConnection foundation
+    {
+      id: "PBI-135",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "have bridge connections spawn language servers using tokio::process::Command",
+        benefit: "the foundation for fully async I/O is established without blocking OS threads",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "TokioAsyncBridgeConnection::spawn() uses tokio::process::Command instead of std::process::Command",
+          verification: "Unit test spawns rust-analyzer with tokio::process and verifies child process is running",
+        },
+        {
+          criterion: "Async stdin/stdout handles are obtained from the tokio Child process",
+          verification: "Unit test verifies ChildStdin and ChildStdout are extracted and stored",
+        },
+        {
+          criterion: "The struct stores tokio::sync::Mutex<ChildStdin> for async write serialization",
+          verification: "Type signature compiles with tokio::sync::Mutex wrapping ChildStdin",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-136",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "have the async connection reader task use select! for read and shutdown",
+        benefit: "shutdown signals are handled cleanly without blocking on read_line forever (fixes the shutdown bug)",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Reader task uses tokio::select! to multiplex between reading lines and receiving shutdown signal",
+          verification: "Unit test sends shutdown while reader is idle and verifies task exits within 100ms",
+        },
+        {
+          criterion: "Shutdown uses oneshot channel instead of AtomicBool polling",
+          verification: "Struct has shutdown_tx: Option<oneshot::Sender<()>> field",
+        },
+        {
+          criterion: "Reader task is spawned with tokio::spawn, not std::thread::spawn",
+          verification: "JoinHandle type is tokio::task::JoinHandle, not std::thread::JoinHandle",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-137",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "have the async reader parse LSP JSON-RPC messages using async I/O",
+        benefit: "messages are read without blocking OS threads, enabling efficient concurrent request handling",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Reader uses tokio::io::BufReader with AsyncBufReadExt for header reading",
+          verification: "Unit test sends a valid LSP message and verifies it is parsed correctly",
+        },
+        {
+          criterion: "Content-Length header is parsed and correct number of bytes are read",
+          verification: "Unit test with multi-byte UTF-8 content verifies exact byte count is read",
+        },
+        {
+          criterion: "Responses are routed to pending_requests DashMap by request ID",
+          verification: "Integration test sends request, receives response, verifies oneshot channel receives it",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-138",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "send requests through the tokio async connection and await responses",
+        benefit: "multiple concurrent requests can share one connection without blocking each other",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "send_request() is async and uses tokio::sync::Mutex for stdin access",
+          verification: "Function signature is pub async fn send_request(...) -> Result<...>",
+        },
+        {
+          criterion: "send_request() returns immediately with a oneshot::Receiver for the response",
+          verification: "Unit test verifies receiver is returned before response arrives",
+        },
+        {
+          criterion: "Request ID is atomically incremented and used for response routing",
+          verification: "Integration test sends two concurrent requests, verifies each gets correct response",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-139",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "have the async connection handle initialization handshake with language servers",
+        benefit: "language servers are properly initialized before accepting requests",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "spawn() sends initialize request and awaits response before returning",
+          verification: "Integration test with rust-analyzer verifies initialize response is received",
+        },
+        {
+          criterion: "spawn() sends initialized notification after initialize response",
+          verification: "Integration test verifies connection is ready for textDocument/* requests",
+        },
+        {
+          criterion: "spawn() stores virtual_file_path and returns it via get_virtual_uri()",
+          verification: "Integration test verifies virtual URI ends with correct extension",
+        },
+      ],
+      status: "ready",
+    },
+  ],
 
-  sprint: null,
+  sprint: {
+    number: 112,
+    pbi_id: "PBI-135",
+    goal: "Implement TokioAsyncBridgeConnection struct using tokio::process::Command for spawning language servers, establishing the foundation for fully async I/O",
+    status: "review",
+    subtasks: [
+      {
+        test: "tokio_async_bridge_connection_struct_exists - verify the struct has required fields: stdin (tokio::sync::Mutex<ChildStdin>), pending_requests (Arc<DashMap>), next_request_id (AtomicI64), shutdown_tx, reader_handle",
+        implementation: "Define TokioAsyncBridgeConnection struct in new file src/lsp/bridge/tokio_connection.rs with all required fields",
+        type: "behavioral",
+        status: "completed",
+        commits: [{ hash: "853902a", message: "feat(bridge): add TokioAsyncBridgeConnection struct skeleton", phase: "green" }],
+        notes: ["AC3: The struct stores tokio::sync::Mutex<ChildStdin> for async write serialization"],
+      },
+      {
+        test: "spawn_uses_tokio_process_command - unit test spawns a simple process with tokio::process::Command and verifies child is created",
+        implementation: "Implement spawn() async fn using tokio::process::Command with stdin/stdout piped",
+        type: "behavioral",
+        status: "completed",
+        commits: [{ hash: "5569fa9", message: "test(bridge): add failing test for spawn() with tokio::process::Command", phase: "green" }, { hash: "36e3df1", message: "feat(bridge): implement spawn() with tokio::process::Command", phase: "green" }],
+        notes: ["AC1: TokioAsyncBridgeConnection::spawn() uses tokio::process::Command instead of std::process::Command", "Obvious Implementation pattern - all spawn subtasks implemented together"],
+      },
+      {
+        test: "spawn_extracts_stdin_stdout_from_child - verify ChildStdin and ChildStdout are obtained from tokio Child process and stdin is wrapped in tokio::sync::Mutex",
+        implementation: "Take stdin/stdout from Child, wrap stdin in tokio::sync::Mutex, store stdout for reader task",
+        type: "behavioral",
+        status: "completed",
+        commits: [{ hash: "36e3df1", message: "feat(bridge): implement spawn() with tokio::process::Command", phase: "green" }],
+        notes: ["AC2: Async stdin/stdout handles are obtained from the tokio Child process", "Implemented as part of spawn() in subtask 2"],
+      },
+      {
+        test: "spawn_creates_reader_task_handle - verify spawn returns struct with reader_handle (tokio::task::JoinHandle) and shutdown_tx (oneshot::Sender)",
+        implementation: "Create placeholder reader task with tokio::spawn, store shutdown oneshot sender",
+        type: "behavioral",
+        status: "completed",
+        commits: [{ hash: "36e3df1", message: "feat(bridge): implement spawn() with tokio::process::Command", phase: "green" }],
+        notes: ["Prepare for PBI-136 reader task with select!", "Implemented as part of spawn() in subtask 2"],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
