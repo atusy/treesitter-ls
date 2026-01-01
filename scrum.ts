@@ -137,54 +137,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 118,
-    pbi_id: "PBI-149",
-    goal: "Show informative 'indexing' message during hover when rust-analyzer is still initializing, with state tracking to transition to normal responses once ready",
-    status: "done",
-    subtasks: [
-      {
-        test: "Unit test: new connection starts with state Indexing",
-        implementation: "Add ServerState enum (Indexing/Ready) and server_states: DashMap<String, ServerState> to TokioAsyncLanguageServerPool, initialize to Indexing after spawn",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "3d6d0e9", message: "feat(bridge): add ServerState enum for tracking indexing state", phase: "green" }],
-        notes: ["AC1: TokioAsyncLanguageServerPool tracks ServerState enum per connection"],
-      },
-      {
-        test: "Unit test: hover request with Indexing state returns informative message with hourglass emoji and server name",
-        implementation: "Modify hover_impl to check pool.get_server_state(key) and return Hover with indexing message when state is Indexing",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "c22d896", message: "feat(bridge): return informative hover message during indexing", phase: "green" }],
-        notes: ["AC2: hover_impl returns informative message during Indexing state"],
-      },
-      {
-        test: "Unit test: verify state transition on non-empty response; empty responses keep Indexing state",
-        implementation: "After hover() returns Some(Hover) with non-empty contents, call pool.set_server_state(key, Ready); do not transition on None or empty",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "b5585f2", message: "feat(bridge): transition to Ready state on non-empty hover response", phase: "green" }],
-        notes: ["AC3: ServerState transitions from Indexing to Ready on first non-empty hover/completion response"],
-      },
-      {
-        test: "Unit test: completion returns [], definition returns null during Indexing state",
-        implementation: "Other LSP features check state and return empty/null during Indexing without special message (only hover shows message)",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "a6f18bc", message: "docs(bridge): add test documenting state tracking for future LSP features", phase: "green" }],
-        notes: ["AC4: Other LSP features return empty/null during Indexing without special message"],
-      },
-      {
-        test: "E2E test: trigger hover immediately after server spawn (verify message), wait and retry (verify normal hover)",
-        implementation: "Add test_lsp_hover_indexing.lua that verifies end-to-end flow: indexing message shown initially, normal hover after Ready",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "b8b18dd", message: "test(e2e): add hover indexing E2E test and fix existing tests", phase: "green" }],
-        notes: ["AC5: End-to-end flow works: hover during indexing shows message, hover after Ready shows normal content"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -194,25 +147,26 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-116: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-117: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 118, pbi_id: "PBI-149", goal: "Show informative 'indexing' message during hover when rust-analyzer is still initializing, with state tracking to transition to normal responses once ready", status: "done", subtasks: [] },
     { number: 117, pbi_id: "PBI-146", goal: "Track document versions per virtual URI, send didOpen on first access and didChange with incremented version on subsequent accesses, ensuring hover responses reflect the latest code", status: "done", subtasks: [] },
-    { number: 116, pbi_id: "PBI-148", goal: "Prevent resource leaks by storing Child handle and temp_dir, sending proper LSP shutdown sequence on drop, and cleaning up temporary workspace", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-115: modular refactoring pattern, E2E indexing waits, vertical slice validation
+  // Recent 2 retrospectives | Sprint 1-116: modular refactoring pattern, E2E indexing waits, vertical slice validation
   retrospectives: [
+    { sprint: 118, improvements: [
+      { action: "ADR-driven development accelerates implementation - ADR-0010 pre-defined architecture, state machine, and detection heuristic", timing: "sprint", status: "active", outcome: null },
+      { action: "Reusable patterns across sprints reduce cognitive load - DashMap from Sprint 117 enabled consistent state tracking", timing: "immediate", status: "completed", outcome: "server_states: DashMap<String, ServerState> mirrors document_versions pattern" },
+      { action: "E2E test retries indicate timing assumptions - 20-attempt loop with 500ms wait works but shows brittleness", timing: "sprint", status: "active", outcome: null },
+      { action: "Non-deterministic test assertions reduce reliability - comment 'may or may not see indexing message' shows test unpredictability", timing: "product", status: "active", outcome: null },
+      { action: "Feature changes ripple to existing tests - hover test updated for indexing state shows broader impact than anticipated", timing: "sprint", status: "active", outcome: null },
+    ] },
     { sprint: 117, improvements: [
       { action: "Study reference implementation patterns before new features - sync bridge had versioning model", timing: "sprint", status: "active", outcome: null },
       { action: "DashMap provides thread-safe state without explicit locking - prefer for concurrent access patterns", timing: "immediate", status: "completed", outcome: "document_versions: DashMap<String, u32> in TokioAsyncLanguageServerPool" },
       { action: "LSP spec: didOpen once per URI, didChange for updates with incrementing version", timing: "immediate", status: "completed", outcome: "sync_document checks version map, sends didOpen v1 or didChange v+1" },
       { action: "Tightly coupled changes belong in single commit - all 4 subtasks shared c2a78c0", timing: "immediate", status: "completed", outcome: "fix(bridge): track document versions per URI, send didOpen/didChange correctly" },
-    ] },
-    { sprint: 116, improvements: [
-      { action: "review.md caught resource leaks before production; continue for complex PRs", timing: "sprint", status: "completed", outcome: "PBI-148 fixed process/temp_dir leaks with proper RAII" },
-      { action: "Store resource handles in struct from spawn - essential for RAII cleanup", timing: "immediate", status: "completed", outcome: "child: Option<Child>, temp_dir: Option<PathBuf>" },
-      { action: "Async shutdown() alongside sync Drop for graceful cleanup when needed", timing: "immediate", status: "completed", outcome: "shutdown() sends LSP exit; Drop kills+removes sync" },
-      { action: "E2E test /tmp cleanup as standard for resource cleanup PBIs", timing: "product", status: "active", outcome: null },
     ] },
   ],
 };
