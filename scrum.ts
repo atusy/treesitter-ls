@@ -34,7 +34,78 @@ const scrum: ScrumDashboard = {
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
   product_backlog: [],
 
-  sprint: null,
+  sprint: {
+    number: 112,
+    pbi_id: "PBI-135",
+    goal: "Capture publishDiagnostics from bridged language servers, translate ranges using CacheableInjectionRegion, and forward to editor with host document URI",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "Unit test: DiagnosticCollector stores publishDiagnostics notification by virtual URI key",
+        implementation: "Create DiagnosticCollector struct in src/lsp/bridge/text_document/diagnostic.rs with insert/get methods keyed by virtual URI",
+        type: "behavioral",
+        status: "green",
+        commits: [],
+        notes: ["Pattern: DashMap<Url, Vec<Diagnostic>> like DocumentStore", "Store raw diagnostics before translation"],
+      },
+      {
+        test: "Unit test: translate_diagnostic_range converts virtual line 0 to host line matching injection start_row",
+        implementation: "Add translate_diagnostic method to CacheableInjectionRegion that translates Diagnostic range using translate_virtual_to_host",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Reuse existing translate_virtual_to_host from injection.rs", "Handle both start and end positions of diagnostic range"],
+      },
+      {
+        test: "Unit test: DiagnosticForwarder transforms diagnostics from virtual URI to host URI with translated ranges",
+        implementation: "Create DiagnosticForwarder that takes DiagnosticCollector output, finds matching CacheableInjectionRegion, translates ranges, and remaps URI",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Uses InjectionMap to find region by virtual URI", "Output: PublishDiagnosticsParams with host URI"],
+      },
+      {
+        test: "Unit test: LanguageServerConnection captures publishDiagnostics notifications during response wait",
+        implementation: "Extend read_response_for_id_with_notifications to capture and store publishDiagnostics in DiagnosticCollector",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Pattern: similar to $/progress capture in wait_for_indexing_with_notifications", "Store in connection-level DiagnosticCollector or return with response"],
+      },
+      {
+        test: "Integration test: did_open triggers diagnostic collection and forwarding for injection regions",
+        implementation: "Wire DiagnosticCollector and DiagnosticForwarder into did_open flow after eager_spawn_for_injections",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Call client.publish_diagnostics with forwarded diagnostics", "Handle multiple injection regions in same document"],
+      },
+      {
+        test: "Integration test: did_change clears old diagnostics and re-collects for affected injection regions",
+        implementation: "Clear DiagnosticCollector entries for document URI on did_change, re-send didChange to bridged servers, collect new diagnostics",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Pattern: similar to invalidate_overlapping_injection_caches", "Must clear before new diagnostics arrive to avoid stale data"],
+      },
+      {
+        test: "E2E test: nvim_diagnostic_test.lua verifies Rust code block in Markdown shows rust-analyzer diagnostics",
+        implementation: "Create E2E test that opens Markdown with Rust code block containing error, verifies nvim.diagnostic.get returns expected diagnostic",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Use pattern from existing E2E tests in tests/nvim/", "Verify diagnostic line matches host document position"],
+      },
+      {
+        test: "E2E test: fixing error in code block removes corresponding diagnostic",
+        implementation: "Extend E2E test to modify buffer to fix error, verify diagnostic is cleared after change",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Tests AC4: diagnostics cleared and re-collected on didChange", "Verify empty diagnostic list after fix"],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
