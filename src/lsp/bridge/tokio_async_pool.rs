@@ -95,6 +95,9 @@ pub struct TokioAsyncLanguageServerPool {
     /// Notification receivers per connection key (for indexing wait)
     /// Wrapped in tokio::sync::Mutex for interior mutability
     notification_receivers: DashMap<String, Arc<tokio::sync::Mutex<mpsc::Receiver<Value>>>>,
+    /// Per-connection locks for serializing hover requests.
+    /// Prevents race conditions where concurrent didChange+hover sequences interleave.
+    connection_locks: DashMap<String, Arc<tokio::sync::Mutex<()>>>,
 }
 
 impl TokioAsyncLanguageServerPool {
@@ -109,6 +112,7 @@ impl TokioAsyncLanguageServerPool {
             notification_sender,
             document_versions: DashMap::new(),
             notification_receivers: DashMap::new(),
+            connection_locks: DashMap::new(),
         }
     }
 
@@ -309,6 +313,21 @@ impl TokioAsyncLanguageServerPool {
     /// Used internally to track document versions for didOpen/didChange.
     pub fn set_document_version(&self, uri: &str, version: u32) {
         self.document_versions.insert(uri.to_string(), version);
+    }
+
+    /// Get the connection lock for serializing requests.
+    ///
+    /// Returns an `Arc<tokio::sync::Mutex<()>>` that can be used to serialize
+    /// concurrent hover requests on the same connection. The lock is created
+    /// on first access for each connection key.
+    ///
+    /// # Arguments
+    /// * `key` - Connection key (e.g., "rust-analyzer")
+    pub fn get_connection_lock(&self, key: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.connection_locks
+            .entry(key.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
     }
 
     /// Wait for indexing to complete by polling the notification receiver.
@@ -1305,5 +1324,34 @@ mod tests {
                 assert!(!arr.is_empty(), "Hover array should not be empty");
             }
         }
+    }
+
+    /// PBI-149 Subtask 1: Test that pool has connection_locks field and provides lock access.
+    ///
+    /// The connection lock prevents race conditions when multiple hover requests
+    /// try to use the same connection concurrently. Each hover must:
+    /// 1. Acquire the lock for its connection key
+    /// 2. Perform sync_document + hover request + await response
+    /// 3. Release the lock
+    ///
+    /// This test verifies the lock infrastructure exists and works.
+    #[tokio::test]
+    async fn pool_provides_connection_lock_for_serialization() {
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        // Pool should provide a method to get a connection lock
+        // The lock is keyed by connection key (e.g., "rust-analyzer")
+        let lock = pool.get_connection_lock("rust-analyzer");
+
+        // Lock should be acquirable
+        let guard = lock.lock().await;
+
+        // While holding the lock, we can verify it's exclusive
+        // (In real usage, this prevents concurrent hover requests)
+        drop(guard);
+
+        // Lock should be reusable
+        let _guard2 = lock.lock().await;
     }
 }
