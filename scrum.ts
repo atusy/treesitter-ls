@@ -34,78 +34,7 @@ const scrum: ScrumDashboard = {
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
   product_backlog: [],
 
-  sprint: {
-    number: 112,
-    pbi_id: "PBI-135",
-    goal: "Capture publishDiagnostics from bridged language servers, translate ranges using CacheableInjectionRegion, and forward to editor with host document URI",
-    status: "review",
-    subtasks: [
-      {
-        test: "Unit test: DiagnosticCollector stores publishDiagnostics notification by virtual URI key",
-        implementation: "Create DiagnosticCollector struct in src/lsp/bridge/text_document/diagnostic.rs with insert/get methods keyed by virtual URI",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "783e65e", message: "feat(bridge): add DiagnosticCollector for storing diagnostics by virtual URI", phase: "green" }],
-        notes: ["Pattern: DashMap<Url, Vec<Diagnostic>> like DocumentStore", "Store raw diagnostics before translation"],
-      },
-      {
-        test: "Unit test: translate_diagnostic_range converts virtual line 0 to host line matching injection start_row",
-        implementation: "Add translate_diagnostic method to CacheableInjectionRegion that translates Diagnostic range using translate_virtual_to_host",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "7050353", message: "feat(injection): add translate_diagnostic method to CacheableInjectionRegion", phase: "green" }],
-        notes: ["Reuse existing translate_virtual_to_host from injection.rs", "Handle both start and end positions of diagnostic range"],
-      },
-      {
-        test: "Unit test: DiagnosticForwarder transforms diagnostics from virtual URI to host URI with translated ranges",
-        implementation: "Create VirtualToHostRegistry that maps virtual URIs to host URIs and injection regions, with translate_diagnostics method",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "6c48e7d", message: "feat(bridge): add VirtualToHostRegistry for diagnostic translation", phase: "green" }],
-        notes: ["Renamed to VirtualToHostRegistry for clarity", "translate_diagnostics returns PublishDiagnosticsParams with host URI and translated ranges"],
-      },
-      {
-        test: "Unit test: LanguageServerConnection captures publishDiagnostics notifications during response wait",
-        implementation: "Add diagnostics field to ResponseWithNotifications, capture textDocument/publishDiagnostics in read_response_for_id_with_notifications",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "8fc3315", message: "feat(bridge): capture publishDiagnostics in ResponseWithNotifications", phase: "green" }],
-        notes: ["Simpler design: return diagnostics with response rather than separate DiagnosticCollector", "Parses to PublishDiagnosticsParams directly"],
-      },
-      {
-        test: "Integration test: did_open triggers diagnostic collection and forwarding for injection regions",
-        implementation: "Wire DiagnosticCollector and DiagnosticForwarder into did_open flow after eager_spawn_for_injections",
-        type: "behavioral",
-        status: "green",
-        commits: [{ hash: "d15704b", message: "feat(bridge): wire diagnostic collection into did_open flow", phase: "green" }],
-        notes: ["Added did_open_with_diagnostics method to LanguageServerConnection", "Added collect_and_forward_injection_diagnostics to TreeSitterLs", "VirtualToHostRegistry added for diagnostic translation"],
-      },
-      {
-        test: "Integration test: did_change clears old diagnostics and re-collects for affected injection regions",
-        implementation: "Clear DiagnosticCollector entries for document URI on did_change, re-send didChange to bridged servers, collect new diagnostics",
-        type: "behavioral",
-        status: "green",
-        commits: [{ hash: "10acbd5", message: "feat(bridge): wire diagnostic clearing and re-collection into did_change flow", phase: "green" }],
-        notes: ["Clears virtual_to_host registry on change", "Sends empty diagnostics to clear editor", "Re-collects after parse_document"],
-      },
-      {
-        test: "E2E test: nvim_diagnostic_test.lua verifies Rust code block in Markdown shows rust-analyzer diagnostics",
-        implementation: "Create E2E test that opens Markdown with Rust code block containing error, verifies nvim.diagnostic.get returns expected diagnostic",
-        type: "behavioral",
-        status: "green",
-        commits: [{ hash: "61dbadb", message: "test(e2e): add diagnostic test for Rust code blocks in Markdown", phase: "green" }],
-        notes: ["Test file: tests/test_lsp_diagnostic.lua", "Waits for vim.diagnostic.get to return diagnostics", "Verifies diagnostic appears on correct line"],
-      },
-      {
-        test: "E2E test: fixing error in code block removes corresponding diagnostic",
-        implementation: "Extend E2E test to modify buffer to fix error, verify diagnostic is cleared after change",
-        type: "behavioral",
-        status: "green",
-        commits: [{ hash: "757786e", message: "test(e2e): add diagnostic clearing test for fixed Rust code blocks", phase: "green" }],
-        notes: ["Tests AC4: diagnostics cleared and re-collected on didChange", "Verify empty diagnostic list after fix", "Fix: removed synchronous re-collection from did_change to avoid stale diagnostics"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -115,28 +44,28 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-110: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-111: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 112, pbi_id: "PBI-135", goal: "Capture publishDiagnostics from bridged language servers, translate ranges using CacheableInjectionRegion, and forward to editor with host document URI", status: "done", subtasks: [] },
     { number: 111, pbi_id: "PBI-134", goal: "Store virtual_file_path in AsyncLanguageServerPool so get_virtual_uri returns valid URIs", status: "done", subtasks: [] },
-    { number: 110, pbi_id: "PBI-133", goal: "Verify DashMap lock safety with concurrent test and add safety documentation", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-109: modular refactoring pattern, E2E indexing waits
+  // Recent 2 retrospectives | Sprint 1-110: DashMap safety patterns, assumption validation
   retrospectives: [
+    {
+      sprint: 112,
+      improvements: [
+        { action: "Push-model diagnostic capture (during didOpen wait) is pragmatic but limits refresh to document open events - document this trade-off in bridge module comments", timing: "immediate", status: "active", outcome: null },
+        { action: "VirtualToHostRegistry pattern for reverse URI mapping is reusable - apply same pattern when implementing other server-initiated notifications (e.g., workspace/applyEdit)", timing: "sprint", status: "active", outcome: null },
+        { action: "Consider hybrid push/pull diagnostic model for cases where external file changes affect diagnostics (e.g., dependency updates) - evaluate user impact before prioritizing", timing: "product", status: "active", outcome: null },
+      ],
+    },
     {
       sprint: 111,
       improvements: [
         { action: "PR review from external tools (gemini-code-assist) caught real bug - continue using automated PR review for async bridge features", timing: "immediate", status: "completed", outcome: "gemini-code-assist identified get_virtual_uri always returning None; bug fixed in Sprint 111" },
         { action: "When implementing new async connection features, always verify the full request flow including stored state (virtual URIs, document versions) before marking complete", timing: "immediate", status: "completed", outcome: "Added test async_pool_stores_virtual_uri_after_connection to verify URI storage" },
         { action: "Add E2E test for async bridge hover feature to verify end-to-end flow works (unit test exists but no E2E coverage)", timing: "product", status: "active", outcome: null },
-      ],
-    },
-    {
-      sprint: 110,
-      improvements: [
-        { action: "Investigate root cause earlier when PBI assumes a bug exists - validate assumption before detailed implementation planning", timing: "immediate", status: "completed", outcome: "Sprint 110 refinement correctly pivoted from 'fix deadlock' to 'verify and document safety' when code was found already safe" },
-        { action: "Document Rust's .and_then() pattern as key to DashMap safety - it consumes Ref guard before subsequent operations", timing: "immediate", status: "completed", outcome: "Lock safety comments added to DocumentStore methods explaining .and_then() pattern" },
-        { action: "User hang issue investigation: bridge I/O timeout (Sprint 109) and DashMap (Sprint 110) ruled out - investigate tokio::spawn panics or other mutex contention as next step", timing: "product", status: "active", outcome: null },
       ],
     },
   ],
