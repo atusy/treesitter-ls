@@ -31,67 +31,11 @@ const scrum: ScrumDashboard = {
 
   // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113) | History: git log -- scrum.yaml, scrum.ts
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
-  product_backlog: [
-    // ADR-0009 Implementation: Vertical slices with user-facing value
-    // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117), PBI-149 (Sprint 118), PBI-141 (Sprint 119), PBI-142 (Sprint 120)
-    // Rejected: PBI-147 (wait for indexing) - replaced by PBI-149
-    {
-      id: "PBI-143",
-      story: {
-        role: "Rustacean editing Markdown",
-        capability: "have signatureHelp requests in Markdown code blocks use fully async I/O",
-        benefit: "signature help responses are faster and show parameter hints without blocking",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "TokioAsyncLanguageServerPool.signature_help() method implemented with async request/response pattern",
-          verification: "Unit test verifies signature_help returns valid SignatureHelp response",
-        },
-        {
-          criterion: "signatureHelp handler uses async pool.signature_help() for bridged requests",
-          verification: "grep confirms async signature_help path in lsp_impl.rs",
-        },
-        {
-          criterion: "SignatureHelp requests to rust-analyzer return valid responses through async path",
-          verification: "E2E test opens Markdown with Rust code block, requests signatureHelp, receives signatures",
-        },
-      ],
-      status: "done",
-    },
-  ],
+  // ADR-0009 Implementation: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117), PBI-149 (Sprint 118), PBI-142 (Sprint 120), PBI-143 (Sprint 121)
+  // Rejected: PBI-147 (wait for indexing) - replaced by PBI-149
+  product_backlog: [],
 
-  sprint: {
-    number: 121,
-    pbi_id: "PBI-143",
-    goal: "Implement fully async signatureHelp for Rust code blocks in Markdown, completing ADR-0009 async migration for high-frequency LSP methods",
-    status: "done",
-    subtasks: [
-      {
-        test: "Unit test verifies TokioAsyncLanguageServerPool.signature_help() returns Option<SignatureHelp>",
-        implementation: "Add signature_help() method to TokioAsyncLanguageServerPool following hover/completion pattern with ServerState tracking",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "e2fb23d", message: "feat(bridge): add signature_help() method to TokioAsyncLanguageServerPool", phase: "green" }],
-        notes: ["Follow existing hover()/completion() pattern", "Reuse sync_document for didOpen/didChange", "30s timeout matching other methods"],
-      },
-      {
-        test: "grep confirms signatureHelp handler uses async pool.signature_help() path instead of spawn_blocking",
-        implementation: "Modify signature_help.rs to use tokio_async_pool.signature_help() for bridged requests",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "c7d4e8d", message: "refactor(lsp): replace spawn_blocking with async pool in signatureHelp", phase: "green" }],
-        notes: ["Replace spawn_blocking with async pool call", "Remove sync connection take/return pattern", "Forward notifications via pool channel"],
-      },
-      {
-        test: "E2E test test_lsp_signature_help.lua passes with async implementation",
-        implementation: "Verify existing E2E test works with new async path - no changes expected if implementation correct",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Existing test passed unchanged - no timeout adjustment needed"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -101,25 +45,26 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-119: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-120: git log -- scrum.yaml, scrum.ts
   completed: [
-    { number: 121, pbi_id: "PBI-143", goal: "Implement fully async signatureHelp, completing ADR-0009 async migration", status: "done", subtasks: [] },
+    { number: 121, pbi_id: "PBI-143", goal: "Implement fully async signatureHelp for Rust code blocks in Markdown, completing ADR-0009 async migration for high-frequency LSP methods", status: "done", subtasks: [] },
     { number: 120, pbi_id: "PBI-142", goal: "Implement fully async completion with TokioAsyncLanguageServerPool", status: "done", subtasks: [] },
   ],
 
   // Recent 2 retrospectives | Sprint 1-116: modular refactoring pattern, E2E indexing waits, vertical slice validation, RAII cleanup
   retrospectives: [
+    { sprint: 121, improvements: [
+      { action: "ADR-0009 Phase 3 COMPLETE: Three high-frequency LSP methods (hover, completion, signatureHelp) now fully async - MAJOR MILESTONE achieved across 3 sprints (118, 120-121)", timing: "sprint", status: "active", outcome: null },
+      { action: "Pattern emerged: All 3 async methods share identical structure (get_connection -> sync_document -> send_request -> parse_response) - Lines 415-560 in tokio_async_pool.rs show duplication", timing: "product", status: "active", outcome: null },
+      { action: "Future refactoring opportunity: Extract generic async_request<Req, Res>(method, params_builder) to eliminate 150+ lines of duplication while preserving type safety", timing: "product", status: "active", outcome: null },
+      { action: "Multi-sprint pattern reuse successful: ServerState tracking lesson from Sprint 118 prevented regression in Sprints 120-121 - evidence that retrospective improvements carry forward effectively", timing: "sprint", status: "active", outcome: null },
+      { action: "Sprint velocity consistent: Each async method completed in single sprint (PBI-149/118 hover, PBI-142/120 completion, PBI-143/121 signatureHelp) - 30s timeout standard, no E2E changes needed", timing: "sprint", status: "active", outcome: null },
+    ] },
     { sprint: 120, improvements: [
-      { action: "Pattern established: hover/goto_definition/completion share identical structure - consider extracting common async request handler", timing: "sprint", status: "active", outcome: null },
+      { action: "Pattern established: hover/completion share identical structure - consider extracting common async request handler", timing: "sprint", status: "active", outcome: null },
       { action: "E2E timeout pattern emerging (15s -> 90s for async indexing) - document timeout rationale in test files", timing: "immediate", status: "active", outcome: null },
       { action: "Sprint 117 lesson (document version tracking) successfully prevented regression - continue applying lessons from previous retrospectives", timing: "sprint", status: "active", outcome: null },
-      { action: "Three async methods (hover, goto_definition, completion) follow same pattern - opportunity for DRY refactoring with generic request handler", timing: "product", status: "active", outcome: null },
-    ] },
-    { sprint: 118, improvements: [
-      { action: "Extract common wait_for_indexing loop logic - avoid duplication between with_timeout and with_forward variants", timing: "immediate", status: "completed", outcome: "wait_for_indexing_impl(receiver, timeout, forward_to: Option<&Sender>) consolidates loop logic" },
-      { action: "Document background task lifetimes in async initialization - clarify forwarder task lifecycle in spawn_and_initialize docstring", timing: "immediate", status: "completed", outcome: "Added 'Notification Forwarding Lifecycle' section documenting channel closure conditions" },
-      { action: "Pattern: Local channel + forwarder for async initialization with notification filtering", timing: "sprint", status: "active", outcome: null },
-      { action: "Consider indexing timeout configurability PBI - allow users to trade accuracy vs responsiveness", timing: "product", status: "active", outcome: null },
+      { action: "Two async methods (hover, completion) follow same pattern - opportunity for DRY refactoring with generic request handler", timing: "product", status: "active", outcome: null },
     ] },
   ],
 };
