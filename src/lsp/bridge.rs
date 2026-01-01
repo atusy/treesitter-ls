@@ -13,7 +13,7 @@ mod workspace;
 
 // Re-export public types and functions
 pub use async_connection::{AsyncBridgeConnection, ResponseResult};
-pub use async_pool::AsyncLanguageServerPool;
+pub use async_pool::{AsyncConnectionWithInfo, AsyncLanguageServerPool};
 pub use cleanup::{
     CleanupStats, DEFAULT_CLEANUP_MAX_AGE, TEMP_DIR_PREFIX, cleanup_stale_temp_dirs,
     startup_cleanup,

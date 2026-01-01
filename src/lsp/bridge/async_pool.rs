@@ -17,10 +17,546 @@ use super::workspace::{language_to_extension, setup_workspace_with_option};
 use crate::config::settings::BridgeServerConfig;
 use dashmap::DashMap;
 use serde_json::Value;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tower_lsp::lsp_types::*;
+
+/// Wrapper that holds an async connection along with its workspace info.
+///
+/// This is needed because the connection needs to know the virtual file path
+/// for sending didOpen/didChange notifications.
+pub struct AsyncConnectionWithInfo {
+    /// The async connection for sending requests
+    pub connection: AsyncBridgeConnection,
+    /// Path to the virtual file in the temp workspace (e.g., src/main.rs)
+    pub virtual_file_path: PathBuf,
+    /// Current document version for tracking didOpen/didChange
+    document_version: std::sync::atomic::AtomicI32,
+}
+
+impl AsyncConnectionWithInfo {
+    /// Create a new connection wrapper.
+    pub fn new(connection: AsyncBridgeConnection, virtual_file_path: PathBuf) -> Self {
+        Self {
+            connection,
+            virtual_file_path,
+            document_version: std::sync::atomic::AtomicI32::new(0),
+        }
+    }
+
+    /// Get the URI for the virtual file.
+    pub fn virtual_file_uri(&self) -> String {
+        format!("file://{}", self.virtual_file_path.display())
+    }
+
+    /// Send didOpen notification with content.
+    ///
+    /// If the document was already opened, sends didChange instead.
+    pub fn did_open(&self, language_id: &str, content: &str) -> Result<(), String> {
+        use std::sync::atomic::Ordering;
+
+        let uri = self.virtual_file_uri();
+        let version = self
+            .document_version
+            .fetch_add(1, Ordering::SeqCst)
+            .wrapping_add(1);
+
+        // Always send didOpen for now (language server handles duplicate opens)
+        // A more sophisticated approach would track open state per connection
+        let params = serde_json::json!({
+            "textDocument": {
+                "uri": uri,
+                "languageId": language_id,
+                "version": version,
+                "text": content,
+            }
+        });
+        self.connection
+            .send_notification("textDocument/didOpen", params)
+    }
+
+    /// Send a textDocument/documentHighlight request and await the response.
+    pub async fn document_highlight(&self, position: Position) -> Option<Vec<DocumentHighlight>> {
+        let uri = self.virtual_file_uri();
+        let params = serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let (_, receiver) = self
+            .connection
+            .send_request("textDocument/documentHighlight", params)
+            .ok()?;
+
+        let result = receiver.await.ok()?;
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
+    /// Send a textDocument/hover request and await the response.
+    pub async fn hover(&self, position: Position) -> Option<Hover> {
+        let uri = self.virtual_file_uri();
+        let params = serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let (_, receiver) = self
+            .connection
+            .send_request("textDocument/hover", params)
+            .ok()?;
+
+        let result = receiver.await.ok()?;
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
+    /// Send a textDocument/signatureHelp request and await the response.
+    pub async fn signature_help(&self, position: Position) -> Option<SignatureHelp> {
+        let uri = self.virtual_file_uri();
+        let params = serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let (_, receiver) = self
+            .connection
+            .send_request("textDocument/signatureHelp", params)
+            .ok()?;
+
+        let result = receiver.await.ok()?;
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
+    /// Send a textDocument/completion request and await the response.
+    pub async fn completion(&self, position: Position) -> Option<CompletionResponse> {
+        let uri = self.virtual_file_uri();
+        let params = serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let (_, receiver) = self
+            .connection
+            .send_request("textDocument/completion", params)
+            .ok()?;
+
+        let result = receiver.await.ok()?;
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
+    /// Send a textDocument/definition request and await the response.
+    pub async fn goto_definition(&self, position: Position) -> Option<GotoDefinitionResponse> {
+        let uri = self.virtual_file_uri();
+        let params = serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let (_, receiver) = self
+            .connection
+            .send_request("textDocument/definition", params)
+            .ok()?;
+
+        let result = receiver.await.ok()?;
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
+    /// Send a textDocument/references request and await the response.
+    pub async fn references(
+        &self,
+        position: Position,
+        include_declaration: bool,
+    ) -> Option<Vec<Location>> {
+        let uri = self.virtual_file_uri();
+        let params = serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": position.line, "character": position.character },
+            "context": { "includeDeclaration": include_declaration },
+        });
+
+        let (_, receiver) = self
+            .connection
+            .send_request("textDocument/references", params)
+            .ok()?;
+
+        let result = receiver.await.ok()?;
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
+    /// Send a textDocument/implementation request and await the response.
+    pub async fn implementation(&self, position: Position) -> Option<GotoDefinitionResponse> {
+        let uri = self.virtual_file_uri();
+        let params = serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let (_, receiver) = self
+            .connection
+            .send_request("textDocument/implementation", params)
+            .ok()?;
+
+        let result = receiver.await.ok()?;
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
+    /// Send a textDocument/typeDefinition request and await the response.
+    pub async fn type_definition(&self, position: Position) -> Option<GotoDefinitionResponse> {
+        let uri = self.virtual_file_uri();
+        let params = serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let (_, receiver) = self
+            .connection
+            .send_request("textDocument/typeDefinition", params)
+            .ok()?;
+
+        let result = receiver.await.ok()?;
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
+    /// Send a textDocument/rename request and await the response.
+    pub async fn rename(&self, position: Position, new_name: &str) -> Option<WorkspaceEdit> {
+        let uri = self.virtual_file_uri();
+        let params = serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": position.line, "character": position.character },
+            "newName": new_name,
+        });
+
+        let (_, receiver) = self
+            .connection
+            .send_request("textDocument/rename", params)
+            .ok()?;
+
+        let result = receiver.await.ok()?;
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
+    /// Send a textDocument/codeAction request and await the response.
+    pub async fn code_action(&self, range: Range) -> Option<CodeActionResponse> {
+        let uri = self.virtual_file_uri();
+        let params = serde_json::json!({
+            "textDocument": { "uri": uri },
+            "range": {
+                "start": { "line": range.start.line, "character": range.start.character },
+                "end": { "line": range.end.line, "character": range.end.character },
+            },
+            "context": { "diagnostics": [] },
+        });
+
+        let (_, receiver) = self
+            .connection
+            .send_request("textDocument/codeAction", params)
+            .ok()?;
+
+        let result = receiver.await.ok()?;
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
+    /// Send a textDocument/formatting request and await the response.
+    pub async fn formatting(&self) -> Option<Vec<TextEdit>> {
+        let uri = self.virtual_file_uri();
+        let params = serde_json::json!({
+            "textDocument": { "uri": uri },
+            "options": {
+                "tabSize": 4,
+                "insertSpaces": true,
+            },
+        });
+
+        let (_, receiver) = self
+            .connection
+            .send_request("textDocument/formatting", params)
+            .ok()?;
+
+        let result = receiver.await.ok()?;
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
+    /// Send a textDocument/inlayHint request and await the response.
+    pub async fn inlay_hint(&self, range: Range) -> Option<Vec<InlayHint>> {
+        let uri = self.virtual_file_uri();
+        let params = serde_json::json!({
+            "textDocument": { "uri": uri },
+            "range": {
+                "start": { "line": range.start.line, "character": range.start.character },
+                "end": { "line": range.end.line, "character": range.end.character },
+            },
+        });
+
+        let (_, receiver) = self
+            .connection
+            .send_request("textDocument/inlayHint", params)
+            .ok()?;
+
+        let result = receiver.await.ok()?;
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
+    /// Send a textDocument/foldingRange request and await the response.
+    pub async fn folding_range(&self) -> Option<Vec<FoldingRange>> {
+        let uri = self.virtual_file_uri();
+        let params = serde_json::json!({
+            "textDocument": { "uri": uri },
+        });
+
+        let (_, receiver) = self
+            .connection
+            .send_request("textDocument/foldingRange", params)
+            .ok()?;
+
+        let result = receiver.await.ok()?;
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
+    /// Send a textDocument/documentLink request and await the response.
+    pub async fn document_link(&self) -> Option<Vec<DocumentLink>> {
+        let uri = self.virtual_file_uri();
+        let params = serde_json::json!({
+            "textDocument": { "uri": uri },
+        });
+
+        let (_, receiver) = self
+            .connection
+            .send_request("textDocument/documentLink", params)
+            .ok()?;
+
+        let result = receiver.await.ok()?;
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
+    /// Send a textDocument/declaration request and await the response.
+    pub async fn declaration(&self, position: Position) -> Option<GotoDefinitionResponse> {
+        let uri = self.virtual_file_uri();
+        let params = serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let (_, receiver) = self
+            .connection
+            .send_request("textDocument/declaration", params)
+            .ok()?;
+
+        let result = receiver.await.ok()?;
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
+    /// Send a textDocument/prepareCallHierarchy request and await the response.
+    pub async fn prepare_call_hierarchy(
+        &self,
+        position: Position,
+    ) -> Option<Vec<CallHierarchyItem>> {
+        let uri = self.virtual_file_uri();
+        let params = serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let (_, receiver) = self
+            .connection
+            .send_request("textDocument/prepareCallHierarchy", params)
+            .ok()?;
+
+        let result = receiver.await.ok()?;
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
+    /// Send a callHierarchy/incomingCalls request and await the response.
+    pub async fn incoming_calls(
+        &self,
+        item: &CallHierarchyItem,
+    ) -> Option<Vec<CallHierarchyIncomingCall>> {
+        let params = serde_json::json!({
+            "item": item,
+        });
+
+        let (_, receiver) = self
+            .connection
+            .send_request("callHierarchy/incomingCalls", params)
+            .ok()?;
+
+        let result = receiver.await.ok()?;
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
+    /// Send a callHierarchy/outgoingCalls request and await the response.
+    pub async fn outgoing_calls(
+        &self,
+        item: &CallHierarchyItem,
+    ) -> Option<Vec<CallHierarchyOutgoingCall>> {
+        let params = serde_json::json!({
+            "item": item,
+        });
+
+        let (_, receiver) = self
+            .connection
+            .send_request("callHierarchy/outgoingCalls", params)
+            .ok()?;
+
+        let result = receiver.await.ok()?;
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
+    /// Send a textDocument/prepareTypeHierarchy request and await the response.
+    pub async fn prepare_type_hierarchy(
+        &self,
+        position: Position,
+    ) -> Option<Vec<TypeHierarchyItem>> {
+        let uri = self.virtual_file_uri();
+        let params = serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let (_, receiver) = self
+            .connection
+            .send_request("textDocument/prepareTypeHierarchy", params)
+            .ok()?;
+
+        let result = receiver.await.ok()?;
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
+    /// Send a typeHierarchy/supertypes request and await the response.
+    pub async fn supertypes(&self, item: &TypeHierarchyItem) -> Option<Vec<TypeHierarchyItem>> {
+        let params = serde_json::json!({
+            "item": item,
+        });
+
+        let (_, receiver) = self
+            .connection
+            .send_request("typeHierarchy/supertypes", params)
+            .ok()?;
+
+        let result = receiver.await.ok()?;
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
+    /// Send a typeHierarchy/subtypes request and await the response.
+    pub async fn subtypes(&self, item: &TypeHierarchyItem) -> Option<Vec<TypeHierarchyItem>> {
+        let params = serde_json::json!({
+            "item": item,
+        });
+
+        let (_, receiver) = self
+            .connection
+            .send_request("typeHierarchy/subtypes", params)
+            .ok()?;
+
+        let result = receiver.await.ok()?;
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+}
 
 /// Pool of async language server connections for concurrent request handling.
 ///
@@ -28,8 +564,8 @@ use tower_lsp::lsp_types::*;
 /// to share the same connection. Each connection has a background reader that
 /// routes responses by request ID.
 pub struct AsyncLanguageServerPool {
-    /// Active connections by key (server name)
-    connections: DashMap<String, Arc<AsyncBridgeConnection>>,
+    /// Active connections by key (server name) - includes connection + workspace info
+    connections: DashMap<String, Arc<AsyncConnectionWithInfo>>,
     /// Channel for forwarding $/progress notifications
     notification_sender: mpsc::Sender<Value>,
 }
@@ -59,14 +595,19 @@ impl AsyncLanguageServerPool {
         &self,
         key: &str,
         config: &BridgeServerConfig,
-    ) -> Option<Arc<AsyncBridgeConnection>> {
+    ) -> Option<Arc<AsyncConnectionWithInfo>> {
         // Check if we already have a connection
         if let Some(conn) = self.connections.get(key) {
+            log::debug!(
+                target: "treesitter_ls::bridge::async_pool",
+                "[POOL] Reusing existing connection for key={}",
+                key
+            );
             return Some(conn.clone());
         }
 
         // Spawn a new connection in a blocking task (since it does blocking I/O)
-        log::debug!(
+        log::info!(
             target: "treesitter_ls::bridge::async_pool",
             "[POOL] Spawning new connection for key={}",
             key
@@ -91,7 +632,7 @@ impl AsyncLanguageServerPool {
     fn spawn_async_connection_blocking(
         config: &BridgeServerConfig,
         notification_sender: mpsc::Sender<Value>,
-    ) -> Option<AsyncBridgeConnection> {
+    ) -> Option<AsyncConnectionWithInfo> {
         let program = config.cmd.first()?;
 
         // Create temp directory
@@ -112,7 +653,7 @@ impl AsyncLanguageServerPool {
             .map(|lang| language_to_extension(lang))
             .unwrap_or("rs");
 
-        let _virtual_file_path =
+        let virtual_file_path =
             setup_workspace_with_option(&temp_dir, config.workspace_type, extension)?;
 
         let root_uri = format!("file://{}", temp_dir.display());
@@ -161,99 +702,17 @@ impl AsyncLanguageServerPool {
 
         log::info!(
             target: "treesitter_ls::bridge::async_pool",
-            "[POOL] Connection spawned for {}",
-            program
+            "[POOL] Connection spawned for {} with virtual file {}",
+            program,
+            virtual_file_path.display()
         );
 
-        Some(conn)
+        Some(AsyncConnectionWithInfo::new(conn, virtual_file_path))
     }
 
     /// Check if the pool has a connection for the given key.
     pub fn has_connection(&self, key: &str) -> bool {
         self.connections.contains_key(key)
-    }
-}
-
-/// High-level async bridge request methods.
-///
-/// These methods handle the full flow: get/create connection, send didOpen if needed,
-/// send the request, and return the response.
-impl AsyncLanguageServerPool {
-    /// Send a hover request asynchronously.
-    ///
-    /// # Arguments
-    /// * `key` - Connection pool key
-    /// * `config` - Server configuration
-    /// * `uri` - Document URI
-    /// * `language_id` - Language ID for the document
-    /// * `content` - Document content
-    /// * `position` - Hover position
-    pub async fn hover(
-        &self,
-        key: &str,
-        config: &BridgeServerConfig,
-        _uri: &str,
-        language_id: &str,
-        content: &str,
-        position: Position,
-    ) -> Option<Hover> {
-        let conn = self.get_connection(key, config).await?;
-
-        // Get virtual file URI from config
-        let virtual_uri = self.get_virtual_uri(key)?;
-
-        // Send didOpen/didChange
-        self.ensure_document_open(&conn, &virtual_uri, language_id, content)
-            .await?;
-
-        // Send hover request
-        let params = serde_json::json!({
-            "textDocument": { "uri": virtual_uri },
-            "position": { "line": position.line, "character": position.character },
-        });
-
-        let (_, receiver) = conn.send_request("textDocument/hover", params).ok()?;
-
-        // Await response asynchronously
-        let result = receiver.await.ok()?;
-
-        // Parse response
-        result
-            .response?
-            .get("result")
-            .cloned()
-            .filter(|r| !r.is_null())
-            .and_then(|r| serde_json::from_value(r).ok())
-    }
-
-    /// Get the virtual file URI for a connection.
-    fn get_virtual_uri(&self, _key: &str) -> Option<String> {
-        // For now, construct from temp dir pattern
-        // In a full implementation, we'd store this in the connection
-        // TODO: Store virtual_file_path in AsyncBridgeConnection
-        None // Placeholder - need to refactor connection to store this
-    }
-
-    /// Ensure a document is open in the language server.
-    async fn ensure_document_open(
-        &self,
-        conn: &AsyncBridgeConnection,
-        uri: &str,
-        language_id: &str,
-        content: &str,
-    ) -> Option<()> {
-        // TODO: Track document versions per connection
-        // For now, always send didOpen
-        let params = serde_json::json!({
-            "textDocument": {
-                "uri": uri,
-                "languageId": language_id,
-                "version": 1,
-                "text": content,
-            }
-        });
-
-        conn.send_notification("textDocument/didOpen", params).ok()
     }
 }
 

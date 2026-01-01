@@ -23,8 +23,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use super::auto_install::{InstallingLanguages, get_injected_languages};
-use super::bridge::LanguageServerPool;
+use super::bridge::{AsyncLanguageServerPool, LanguageServerPool};
 use super::progress::{create_progress_begin, create_progress_end};
+use serde_json::Value;
 
 fn lsp_legend_types() -> Vec<SemanticTokenType> {
     LEGEND_TYPES
@@ -58,8 +59,13 @@ pub struct TreeSitterLs {
     installing_languages: InstallingLanguages,
     /// Tracks parsers that have crashed
     failed_parsers: FailedParserRegistry,
-    /// Pool of language server connections for injection bridging
+    /// Pool of language server connections for injection bridging (legacy synchronous)
     language_server_pool: LanguageServerPool,
+    /// Async pool for concurrent bridge requests (new pattern)
+    async_language_server_pool: AsyncLanguageServerPool,
+    /// Channel receiver for bridge notifications ($/progress)
+    #[allow(dead_code)]
+    bridge_notification_receiver: tokio::sync::mpsc::Receiver<Value>,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -77,6 +83,7 @@ impl std::fmt::Debug for TreeSitterLs {
             .field("installing_languages", &"InstallingLanguages")
             .field("failed_parsers", &"FailedParserRegistry")
             .field("language_server_pool", &"LanguageServerPool")
+            .field("async_language_server_pool", &"AsyncLanguageServerPool")
             .finish_non_exhaustive()
     }
 }
@@ -92,6 +99,9 @@ impl TreeSitterLs {
         // Clean up stale temp directories from previous sessions in the background
         std::thread::spawn(super::bridge::startup_cleanup);
 
+        // Create channel for async pool notifications
+        let (notification_sender, notification_receiver) = tokio::sync::mpsc::channel(64);
+
         Self {
             client,
             language,
@@ -105,6 +115,8 @@ impl TreeSitterLs {
             installing_languages: InstallingLanguages::new(),
             failed_parsers,
             language_server_pool: LanguageServerPool::new(),
+            async_language_server_pool: AsyncLanguageServerPool::new(notification_sender),
+            bridge_notification_receiver: notification_receiver,
         }
     }
 
