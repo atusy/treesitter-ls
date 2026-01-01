@@ -1405,4 +1405,75 @@ mod tests {
             Some(&"variable.defaultLibrary".to_string())
         );
     }
+
+    #[test]
+    fn test_resolve_with_wildcard_merges_wildcard_with_specific_key() {
+        // ADR-0011: When both wildcard and specific key exist, merge them
+        // Rust-specific adds type.builtin, inherits variable.* from wildcard
+        let mut mappings = CaptureMappings::new();
+
+        // Wildcard has variable mappings
+        let mut wildcard_highlights = HashMap::new();
+        wildcard_highlights.insert("variable".to_string(), "variable".to_string());
+        wildcard_highlights.insert(
+            "variable.builtin".to_string(),
+            "variable.defaultLibrary".to_string(),
+        );
+        wildcard_highlights.insert("function".to_string(), "function".to_string());
+
+        mappings.insert(
+            "_".to_string(),
+            QueryTypeMappings {
+                highlights: wildcard_highlights,
+                locals: HashMap::new(),
+                folds: HashMap::new(),
+            },
+        );
+
+        // Rust-specific adds type.builtin
+        let mut rust_highlights = HashMap::new();
+        rust_highlights.insert(
+            "type.builtin".to_string(),
+            "type.defaultLibrary".to_string(),
+        );
+
+        mappings.insert(
+            "rust".to_string(),
+            QueryTypeMappings {
+                highlights: rust_highlights,
+                locals: HashMap::new(),
+                folds: HashMap::new(),
+            },
+        );
+
+        // Resolve for "rust" - should merge wildcard + rust-specific
+        let result = resolve_with_wildcard(&mappings, "rust");
+
+        assert!(result.is_some(), "Should return merged mappings");
+        let resolved = result.unwrap();
+
+        // Inherited from wildcard
+        assert_eq!(
+            resolved.highlights.get("variable"),
+            Some(&"variable".to_string()),
+            "Should inherit 'variable' from wildcard"
+        );
+        assert_eq!(
+            resolved.highlights.get("variable.builtin"),
+            Some(&"variable.defaultLibrary".to_string()),
+            "Should inherit 'variable.builtin' from wildcard"
+        );
+        assert_eq!(
+            resolved.highlights.get("function"),
+            Some(&"function".to_string()),
+            "Should inherit 'function' from wildcard"
+        );
+
+        // Added by rust-specific
+        assert_eq!(
+            resolved.highlights.get("type.builtin"),
+            Some(&"type.defaultLibrary".to_string()),
+            "Should include rust-specific 'type.builtin'"
+        );
+    }
 }
