@@ -105,38 +105,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 120,
-    pbi_id: "PBI-142",
-    goal: "Implement fully async completion with TokioAsyncLanguageServerPool",
-    status: "done",
-    subtasks: [
-      {
-        test: "Unit test - TokioAsyncLanguageServerPool.completion() returns CompletionResponse",
-        implementation: "Add completion() method following hover() pattern",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "f6fdc3c", message: "feat(bridge): add async completion() method to TokioAsyncLanguageServerPool", phase: "green" }],
-        notes: ["File: src/lsp/bridge/tokio_async_pool.rs"],
-      },
-      {
-        test: "Grep verification - no spawn_blocking in completion handler for bridged requests",
-        implementation: "Replace spawn_blocking with async pool.completion()",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "ad5795c", message: "refactor(completion): use async pool instead of spawn_blocking", phase: "green" }],
-        notes: ["File: src/lsp/lsp_impl/text_document/completion.rs", "Keep range translation logic for CompletionTextEdit"],
-      },
-      {
-        test: "E2E test - existing test_lsp_completion.lua passes",
-        implementation: "Verify existing test passes with async implementation",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "e69f766", message: "test(completion): increase E2E timeout for async indexing wait", phase: "green" }],
-        notes: ["Reference: tests/test_lsp_completion.lua", "Increased timeout to 90s for indexing wait"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -146,25 +115,25 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-117: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-118: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 120, pbi_id: "PBI-142", goal: "Implement fully async completion with TokioAsyncLanguageServerPool", status: "done", subtasks: [] },
     { number: 118, pbi_id: "PBI-147", goal: "Wait for rust-analyzer indexing completion before returning connection, enabling single hover requests without retry loops", status: "done", subtasks: [] },
-    { number: 117, pbi_id: "PBI-146", goal: "Track document versions per virtual URI, send didOpen on first access and didChange with incremented version on subsequent accesses, ensuring hover responses reflect the latest code", status: "done", subtasks: [] },
   ],
 
   // Recent 2 retrospectives | Sprint 1-116: modular refactoring pattern, E2E indexing waits, vertical slice validation, RAII cleanup
   retrospectives: [
+    { sprint: 120, improvements: [
+      { action: "Pattern established: hover/goto_definition/completion share identical structure - consider extracting common async request handler", timing: "sprint", status: "active", outcome: null },
+      { action: "E2E timeout pattern emerging (15s -> 90s for async indexing) - document timeout rationale in test files", timing: "immediate", status: "active", outcome: null },
+      { action: "Sprint 117 lesson (document version tracking) successfully prevented regression - continue applying lessons from previous retrospectives", timing: "sprint", status: "active", outcome: null },
+      { action: "Three async methods (hover, goto_definition, completion) follow same pattern - opportunity for DRY refactoring with generic request handler", timing: "product", status: "active", outcome: null },
+    ] },
     { sprint: 118, improvements: [
       { action: "Extract common wait_for_indexing loop logic - avoid duplication between with_timeout and with_forward variants", timing: "immediate", status: "completed", outcome: "wait_for_indexing_impl(receiver, timeout, forward_to: Option<&Sender>) consolidates loop logic" },
       { action: "Document background task lifetimes in async initialization - clarify forwarder task lifecycle in spawn_and_initialize docstring", timing: "immediate", status: "completed", outcome: "Added 'Notification Forwarding Lifecycle' section documenting channel closure conditions" },
       { action: "Pattern: Local channel + forwarder for async initialization with notification filtering", timing: "sprint", status: "active", outcome: null },
       { action: "Consider indexing timeout configurability PBI - allow users to trade accuracy vs responsiveness", timing: "product", status: "active", outcome: null },
-    ] },
-    { sprint: 117, improvements: [
-      { action: "Study reference implementation patterns before new features - sync bridge had versioning model", timing: "sprint", status: "active", outcome: null },
-      { action: "DashMap provides thread-safe state without explicit locking - prefer for concurrent access patterns", timing: "immediate", status: "completed", outcome: "document_versions: DashMap<String, u32> in TokioAsyncLanguageServerPool" },
-      { action: "LSP spec: didOpen once per URI, didChange for updates with incrementing version", timing: "immediate", status: "completed", outcome: "sync_document checks version map, sends didOpen v1 or didChange v+1" },
-      { action: "Tightly coupled changes belong in single commit - all 4 subtasks shared c2a78c0", timing: "immediate", status: "completed", outcome: "fix(bridge): track document versions per URI, send didOpen/didChange correctly" },
     ] },
   ],
 };
