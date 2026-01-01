@@ -27,12 +27,18 @@ Full LSP features in injection regions by bridging to language-specific servers.
 **Supported Features:**
 - Completion
 - Signature Help
-- Go to Definition
+- Go to Definition / Type Definition / Implementation / Declaration
 - Hover
 - Find References
+- Document Highlight
 - Rename
 - Code Actions
 - Formatting
+- Inlay Hints
+- Call Hierarchy
+- Type Hierarchy
+- Document Link
+- Folding Range
 
 See [Configuration: Bridge](#bridge) for setup instructions.
 

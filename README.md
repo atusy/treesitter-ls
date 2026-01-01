@@ -47,9 +47,18 @@ treesitter-ls supports LSP features via three mechanisms:
 | Selection Range | ✅ | ✅ | ❌ |
 | Code Actions | ✅ | ✅ | ✅ |
 | Go-to Definition | ❌ | ❌ | ✅ |
+| Go-to Type Definition | ❌ | ❌ | ✅ |
+| Go-to Implementation | ❌ | ❌ | ✅ |
+| Go-to Declaration | ❌ | ❌ | ✅ |
 | Hover | ❌ | ❌ | ✅ |
 | Completion | ❌ | ❌ | ✅ |
 | Signature Help | ❌ | ❌ | ✅ |
 | Find References | ❌ | ❌ | ✅ |
+| Document Highlight | ❌ | ❌ | ✅ |
 | Rename | ❌ | ❌ | ✅ |
 | Formatting | ❌ | ❌ | ✅ |
+| Inlay Hints | ❌ | ❌ | ✅ |
+| Call Hierarchy | ❌ | ❌ | ✅ |
+| Type Hierarchy | ❌ | ❌ | ✅ |
+| Document Link | ❌ | ❌ | ✅ |
+| Folding Range | ❌ | ❌ | ✅ |
