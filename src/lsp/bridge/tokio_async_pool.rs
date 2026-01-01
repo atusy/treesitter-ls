@@ -22,7 +22,6 @@ use tokio::sync::mpsc;
 /// Unlike `AsyncLanguageServerPool` which uses `spawn_blocking` for initialization,
 /// this pool uses fully async I/O throughout. Each connection is a
 /// `TokioAsyncBridgeConnection` that uses tokio::process for spawning.
-#[allow(dead_code)]
 pub struct TokioAsyncLanguageServerPool {
     /// Active connections by key (server name)
     connections: DashMap<String, Arc<TokioAsyncBridgeConnection>>,
@@ -37,7 +36,6 @@ impl TokioAsyncLanguageServerPool {
     ///
     /// # Arguments
     /// * `notification_sender` - Channel for forwarding $/progress notifications
-    #[allow(dead_code)]
     pub fn new(notification_sender: mpsc::Sender<Value>) -> Self {
         Self {
             connections: DashMap::new(),
@@ -54,7 +52,6 @@ impl TokioAsyncLanguageServerPool {
     /// # Arguments
     /// * `key` - Unique key for this connection (typically server name)
     /// * `config` - Configuration for spawning a new connection if needed
-    #[allow(dead_code)]
     pub async fn get_connection(
         &self,
         key: &str,
@@ -165,7 +162,6 @@ impl TokioAsyncLanguageServerPool {
     ///
     /// Returns the stored virtual file URI that was created when the connection
     /// was spawned. This URI is used for textDocument/* requests.
-    #[allow(dead_code)]
     pub fn get_virtual_uri(&self, key: &str) -> Option<String> {
         self.virtual_uris.get(key).map(|r| r.clone())
     }
@@ -191,7 +187,6 @@ impl TokioAsyncLanguageServerPool {
     /// * `language_id` - Language ID for the document
     /// * `content` - Document content
     /// * `position` - Hover position
-    #[allow(dead_code)]
     pub async fn hover(
         &self,
         key: &str,
