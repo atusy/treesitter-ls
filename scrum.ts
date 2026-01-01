@@ -133,7 +133,7 @@ const scrum: ScrumDashboard = {
         { criterion: "Missing user config silently ignored (zero-config works)", verification: "Unit test: no error when file missing" },
         { criterion: "Invalid user config causes startup failure with clear error", verification: "Unit test: parse error produces descriptive message" },
       ],
-      status: "ready",
+      status: "done",
     },
   ],
 
@@ -141,7 +141,7 @@ const scrum: ScrumDashboard = {
     number: 120,
     pbi_id: "PBI-149",
     goal: "Enable users to set editor-wide defaults in a user config file at XDG standard location",
-    status: "review",
+    status: "done",
     subtasks: [
       {
         test: "Test user_config_path() returns $XDG_CONFIG_HOME/treesitter-ls/treesitter-ls.toml when XDG_CONFIG_HOME is set",
