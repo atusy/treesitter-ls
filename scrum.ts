@@ -78,7 +78,7 @@ const scrum: ScrumDashboard = {
           verification: "E2E test opens Markdown with Rust code block, requests completion, receives items",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-143",
@@ -109,7 +109,7 @@ const scrum: ScrumDashboard = {
     number: 120,
     pbi_id: "PBI-142",
     goal: "Implement fully async completion with TokioAsyncLanguageServerPool",
-    status: "in_progress",
+    status: "done",
     subtasks: [
       {
         test: "Unit test - TokioAsyncLanguageServerPool.completion() returns CompletionResponse",
@@ -131,9 +131,9 @@ const scrum: ScrumDashboard = {
         test: "E2E test - existing test_lsp_completion.lua passes",
         implementation: "Verify existing test passes with async implementation",
         type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: ["Reference: tests/test_lsp_completion.lua"],
+        status: "completed",
+        commits: [{ hash: "e69f766", message: "test(completion): increase E2E timeout for async indexing wait", phase: "green" }],
+        notes: ["Reference: tests/test_lsp_completion.lua", "Increased timeout to 90s for indexing wait"],
       },
     ],
   },
