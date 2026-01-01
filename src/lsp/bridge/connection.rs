@@ -410,19 +410,21 @@ impl LanguageServerConnection {
 
             // Check if this is a notification to capture
             if let Some(method) = message.get("method").and_then(|m| m.as_str()) {
-                if method == "$/progress" {
-                    notifications.push(message);
-                } else if method == "textDocument/publishDiagnostics" {
-                    // Try to parse as PublishDiagnosticsParams
-                    if let Some(params) = message.get("params")
-                        && let Ok(diag_params) =
-                            serde_json::from_value::<PublishDiagnosticsParams>(params.clone())
-                    {
-                        diagnostics.push(diag_params);
+                match method {
+                    "$/progress" => notifications.push(message),
+                    "textDocument/publishDiagnostics" => {
+                        // Try to parse as PublishDiagnosticsParams
+                        if let Some(params) = message.get("params") {
+                            if let Ok(diag_params) =
+                                serde_json::from_value::<PublishDiagnosticsParams>(params.clone())
+                            {
+                                diagnostics.push(diag_params);
+                            }
+                        }
                     }
+                    _ => {} // Other notifications or responses - skip
                 }
             }
-            // Otherwise it's a different notification or response - skip it
         }
     }
 
@@ -540,9 +542,8 @@ impl LanguageServerConnection {
         let mut notifications = Vec::new();
         let start = Instant::now();
 
-        // Read messages until we get a publishDiagnostics notification
-        // or timeout after consuming a few messages
-        for _ in 0..50 {
+        // Read messages until we get a publishDiagnostics notification or timeout
+        loop {
             // Check timeout before each iteration
             if start.elapsed() > DEFAULT_TIMEOUT {
                 log::warn!(
@@ -605,8 +606,6 @@ impl LanguageServerConnection {
                 }
             }
         }
-
-        notifications
     }
 
     /// Wait for language server to finish indexing, capturing both notifications and diagnostics.
@@ -620,9 +619,8 @@ impl LanguageServerConnection {
         let mut diagnostics = Vec::new();
         let start = Instant::now();
 
-        // Read messages until we get a publishDiagnostics notification
-        // or timeout after consuming a few messages
-        for _ in 0..50 {
+        // Read messages until we get a publishDiagnostics notification or timeout
+        loop {
             // Check timeout before each iteration
             if start.elapsed() > DEFAULT_TIMEOUT {
                 log::warn!(
@@ -709,11 +707,6 @@ impl LanguageServerConnection {
                     notifications.push(message);
                 }
             }
-        }
-
-        DidOpenResult {
-            notifications,
-            diagnostics,
         }
     }
 
@@ -809,15 +802,15 @@ impl LanguageServerConnection {
         }
     }
 
-    /// Request go-to-definition
+    /// Request go-to-definition (test-only convenience wrapper).
     ///
     /// Uses the virtual file URI from the temp workspace based on workspace type.
+    #[cfg(test)]
     pub fn goto_definition(
         &mut self,
         _uri: &str,
         position: Position,
     ) -> Option<GotoDefinitionResponse> {
-        // Use the new method but discard notifications for backward compatibility
         self.goto_definition_with_notifications(_uri, position)
             .response
     }
@@ -1131,11 +1124,11 @@ impl LanguageServerConnection {
         }
     }
 
-    /// Request hover information
+    /// Request hover information (test-only convenience wrapper).
     ///
     /// Uses the virtual file URI from the temp workspace based on workspace type.
+    #[cfg(test)]
     pub fn hover(&mut self, _uri: &str, position: Position) -> Option<Hover> {
-        // Use the new method but discard notifications for backward compatibility
         self.hover_with_notifications(_uri, position).response
     }
 
