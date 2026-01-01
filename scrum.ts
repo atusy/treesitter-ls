@@ -7,21 +7,31 @@ const userStoryRoles = [
   "developer editing Lua files",
   "documentation author with Rust code blocks",
   "treesitter-ls user managing configurations",
-] as const satisfies readonly string[];
+] as const satisfies readonly string[]; // Must have at least one role. Avoid generic roles like "user" or "admin". Remove obsolete roles freely.
 
 const scrum: ScrumDashboard = {
   product_goal: {
     statement:
-      "Maintain stable async LSP bridge for core features using single-pool architecture (ADR-0006, 0007, 0008)",
+      "Expand LSP bridge to support most language server features indirectly through bridging (ADR-0006, 0007, 0008)",
     success_metrics: [
-      { metric: "Bridge coverage", target: "Support hover, completion, signatureHelp, definition with fully async implementations" },
-      { metric: "Modular architecture", target: "Bridge module organized with text_document/ subdirectory, single TokioAsyncLanguageServerPool" },
-      { metric: "E2E test coverage", target: "Each bridged feature has E2E test verifying end-to-end async flow" },
+      {
+        metric: "Bridge coverage",
+        target:
+          "Support completion, signatureHelp, references, rename, codeAction, formatting, typeDefinition, implementation, documentHighlight, declaration, inlayHint, callHierarchy, typeHierarchy, documentLink, foldingRange",
+      },
+      {
+        metric: "Modular architecture",
+        target: "Bridge module organized with text_document/ subdirectory matching lsp_impl structure",
+      },
+      {
+        metric: "E2E test coverage",
+        target: "Each bridged feature has E2E test verifying end-to-end flow",
+      },
     ],
   },
 
   // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113) | History: git log -- scrum.yaml, scrum.ts
-  // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow), PBI-171 ($/cancelRequest - tower-lsp internals)
+  // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   product_backlog: [
     // ADR-0009 Implementation: Vertical slices with user-facing value
     // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117)
@@ -137,46 +147,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 120,
-    pbi_id: "PBI-149",
-    goal: "Enable users to set editor-wide defaults in a user config file at XDG standard location",
-    status: "done",
-    subtasks: [
-      {
-        test: "Test user_config_path() returns $XDG_CONFIG_HOME/treesitter-ls/treesitter-ls.toml when XDG_CONFIG_HOME is set",
-        implementation: "Implement user_config_path() function that reads XDG_CONFIG_HOME env var and appends treesitter-ls/treesitter-ls.toml",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "40820bf", message: "feat(config): add user_config_path() with XDG_CONFIG_HOME support", phase: "green" }],
-        notes: [],
-      },
-      {
-        test: "Test user_config_path() returns ~/.config/treesitter-ls/treesitter-ls.toml when XDG_CONFIG_HOME is unset",
-        implementation: "Add fallback logic to user_config_path() using dirs::config_dir() or home_dir() with .config appended",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "45c2174", message: "feat(config): add fallback to ~/.config when XDG_CONFIG_HOME unset", phase: "green" }],
-        notes: [],
-      },
-      {
-        test: "Test load_user_config() returns None (or default Config) when user config file does not exist",
-        implementation: "Implement load_user_config() that returns Ok(None) for missing file - zero-config experience preserved",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "001c566", message: "feat(config): implement load_user_config() with missing file handling", phase: "green" }],
-        notes: [],
-      },
-      {
-        test: "Test load_user_config() returns descriptive ConfigError when user config file exists but contains invalid TOML or schema",
-        implementation: "Add error handling that wraps TOML parse errors with context including file path and error location",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "90caed0", message: "test(config): add test for invalid TOML error handling", phase: "green" }],
-        notes: ["Error handling was implemented in TDD Cycle 3 as part of load_user_config()"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -186,42 +157,24 @@ const scrum: ScrumDashboard = {
     ],
   },
 
+  // Historical sprints (recent 2) | Sprint 1-118: git log -- scrum.yaml, scrum.ts
   completed: [
-    { number: 147, pbi_id: "PBI-174", goal: "Audit API visibility in LanguageCoordinator - 1 method made private", status: "done", subtasks: [] },
-    { number: 146, pbi_id: "PBI-173", goal: "Parameterize offset clamping tests with rstest (3→1 test)", status: "done", subtasks: [] },
-    { number: 145, pbi_id: "PBI-172", goal: "Relocate smoke tests from integration to unit test location", status: "done", subtasks: [] },
-    { number: 144, pbi_id: "PBI-171", goal: "Investigate $/cancelRequest handling via custom_method - blocked by tower-lsp architecture", status: "cancelled", subtasks: [] },
-    { number: 143, pbi_id: "PBI-170", goal: "Investigate $/cancelRequest - deferred (tower-lsp limitation, YAGNI)", status: "cancelled", subtasks: [] },
-    { number: 142, pbi_id: "PBI-169", goal: "Fix bridge bookkeeping memory leak after crashes/restarts", status: "done", subtasks: [] },
-    { number: 141, pbi_id: "PBI-168", goal: "Fix concurrent parse crash recovery to correctly identify failing parsers", status: "done", subtasks: [] },
+    { number: 120, pbi_id: "PBI-149", goal: "Enable users to set editor-wide defaults in a user config file at XDG standard location", status: "done", subtasks: [] },
     { number: 119, pbi_id: "PBI-150", goal: "Enable users to inherit settings from user config to project config without duplication via merge_all()", status: "done", subtasks: [] },
-    { number: 118, pbi_id: "PBI-151", goal: "Enable unified query configuration with queries array and type inference from filename patterns", status: "done", subtasks: [] },
   ],
 
+  // Recent 2 retrospectives | Sprint 1-119: TDD patterns, backward compatibility decisions, transient test failures
   retrospectives: [
-    { sprint: 147, improvements: [
-      { action: "Test review findings (review-tests.md) addressed: smoke tests relocated, tests parameterized, API visibility audited", timing: "immediate", status: "completed", outcome: "3 PBIs completed (172-174), test pyramid improved, rstest adopted for parameterization" },
+    { sprint: 120, improvements: [
+      { action: "XDG path resolution pattern (XDG_CONFIG_HOME → fallback) is reusable - extract generic xdg_path() helper when 2nd usage appears (e.g., cache/data dirs)", timing: "sprint", status: "active", outcome: null },
+      { action: "Multi-sprint ADR implementation strategy worked well - ADR-0010 across 3 sprints (118: schema, 119: merge, 120: user config) - document as planning pattern", timing: "sprint", status: "active", outcome: null },
+      { action: "Integrate load_user_config() into merge_all() pipeline - PBI-149 implements loading but not wiring into config merge", timing: "product", status: "active", outcome: null },
+      { action: "Implement CLI --config option for project config path override (ADR-0010 Phase 4)", timing: "product", status: "active", outcome: null },
     ] },
     { sprint: 119, improvements: [
       { action: "Deep merge HashMap pattern (entry().and_modify().or_insert()) is reusable - extract to generic helper when 3rd usage appears", timing: "sprint", status: "active", outcome: null },
       { action: "Empty Vec fields should inherit from fallback layer - Vec merge uses .is_empty() check, not Option semantics", timing: "immediate", status: "completed", outcome: "merge_language_servers: if !primary.cmd.is_empty() condition (lines 249, 252)" },
       { action: "E2E test failures unrelated to PBI indicate technical debt - add test_lsp_document_highlight to product backlog", timing: "product", status: "active", outcome: null },
-    ] },
-    { sprint: 118, improvements: [
-      { action: "Combined subtasks indicate shared implementation - consider merging during planning when default behavior is intrinsic to core function", timing: "immediate", status: "completed", outcome: "Subtasks 2 and 3 merged: infer_query_kind() includes default in a275d04" },
-      { action: "New public types exported via config.rs need explicit pub - apply YAGNI-pub: verify each pub is needed", timing: "immediate", status: "completed", outcome: "QueryKind, QueryItem, infer_query_kind exported in config.rs for external use" },
-      { action: "Document backward compatibility decisions during planning - not mid-sprint", timing: "sprint", status: "active", outcome: null },
-      { action: "Investigate transient E2E markdown loading failures - may indicate timing issues in test setup", timing: "product", status: "active", outcome: null },
-    ] },
-    { sprint: 144, improvements: [
-      { action: "Investigation: LspServiceBuilder.custom_method cannot intercept $/cancelRequest because tower-lsp registers it first in generated code before custom methods", timing: "product", status: "completed", outcome: "PBI-171 deferred - tower-lsp's Router uses HashMap with first-registration-wins, blocking custom interception" },
-      { action: "Current architecture already supports request superseding: new semantic token requests automatically cancel previous ones via SemanticRequestTracker", timing: "product", status: "completed", outcome: "Explicit $/cancelRequest handling deemed unnecessary (YAGNI) - existing superseding mechanism sufficient for user typing scenarios" },
-    ] },
-    { sprint: 143, improvements: [
-      { action: "Review-codex3 findings: PBI-168, PBI-169 fixed; PBI-170 deferred (tower-lsp limitation, YAGNI)", timing: "product", status: "completed", outcome: "2/3 issues resolved, 1 deferred" },
-    ] },
-    { sprint: 140, improvements: [
-      { action: "Flaky tests eliminated with serial_test for rust-analyzer tests", timing: "immediate", status: "completed", outcome: "373/373 tests pass consistently (10 consecutive runs verified)" },
     ] },
   ],
 };
