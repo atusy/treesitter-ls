@@ -58,7 +58,38 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 116,
+    pbi_id: "PBI-143",
+    goal: "Implement TokioAsyncLanguageServerPool.signature_help() with async I/O and wire into signature_help_impl to replace spawn_blocking pattern for faster signatureHelp in Markdown code blocks",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "Unit test verifies signature_help() returns SignatureHelp from lua-language-server",
+        implementation: "Add signature_help() method to TokioAsyncLanguageServerPool following hover/goto_definition/completion pattern",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Template: completion() method in tokio_async_pool.rs", "Use lua-language-server for faster test (like goto_definition test)"],
+      },
+      {
+        test: "Grep confirms async signature_help path in signature_help_impl.rs",
+        implementation: "Replace spawn_blocking with tokio_async_pool.signature_help() call in signature_help_impl",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Template: hover_impl.rs pattern", "Remove language_server_pool.take_connection call", "Use self.tokio_async_pool.signature_help()"],
+      },
+      {
+        test: "E2E test opens Markdown with Rust code block, requests signatureHelp, receives signatures",
+        implementation: "Update test_lsp_signature_help.lua with retry loop for rust-analyzer indexing",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Existing test has 3s sleep - add retry loop like hover/completion tests", "Pattern: 20 iterations with 500ms sleep"],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
