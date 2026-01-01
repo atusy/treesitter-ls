@@ -1629,6 +1629,16 @@ impl LanguageServer for TreeSitterLs {
         // Must be called BEFORE parse_document which updates the injection_map
         self.invalidate_overlapping_injection_caches(&uri, &edits);
 
+        // Clear old virtual-to-host mappings for this document before re-collecting
+        // This ensures stale diagnostics are replaced with fresh ones
+        self.virtual_to_host.clear_for_host(&uri);
+
+        // Clear existing diagnostics before re-collecting
+        // Send empty diagnostics to clear any previously shown diagnostics
+        self.client
+            .publish_diagnostics(uri.clone(), vec![], None)
+            .await;
+
         // Parse the updated document with edit information
         self.parse_document(uri.clone(), text, language_id.as_deref(), edits)
             .await;
@@ -1639,6 +1649,10 @@ impl LanguageServer for TreeSitterLs {
         // Check for injected languages and trigger auto-install for missing parsers
         // This must be called AFTER parse_document so we have access to the updated AST
         self.check_injected_languages_auto_install(&uri).await;
+
+        // Re-collect and forward diagnostics from bridged language servers
+        // This updates the VirtualToHostRegistry with new mappings and sends fresh diagnostics
+        self.collect_and_forward_injection_diagnostics(&uri).await;
 
         // Request the client to refresh semantic tokens
         // This will trigger the client to request new semantic tokens
