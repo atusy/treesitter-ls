@@ -53,11 +53,10 @@ T["markdown"]["completion returns items with adjusted textEdit ranges"] = functi
 	-- Line 11 is the "p." line inside the code block
 	child.cmd([[normal! 11G$]])
 
-	-- Wait for rust-analyzer to index (this can take a while)
-	vim.uv.sleep(3000)
-
 	-- Use vim.lsp.buf_request_sync to directly test the LSP completion handler
 	-- This bypasses the popup mechanism and directly tests the LSP response
+	-- Note: First completion request triggers connection initialization which includes
+	-- rust-analyzer indexing wait (up to 60s), so we use 90s timeout
 	child.lua([[
 		_G.completion_result = nil
 		local bufnr = vim.api.nvim_get_current_buf()
@@ -69,7 +68,7 @@ T["markdown"]["completion returns items with adjusted textEdit ranges"] = functi
 
 		local client = clients[1]
 		local params = vim.lsp.util.make_position_params(0, client.offset_encoding or "utf-16")
-		local results = vim.lsp.buf_request_sync(bufnr, "textDocument/completion", params, 15000)
+		local results = vim.lsp.buf_request_sync(bufnr, "textDocument/completion", params, 90000)
 
 		if not results then
 			_G.completion_result = { error = "No completion response" }
