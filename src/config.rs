@@ -6,8 +6,8 @@ pub use settings::{
     CaptureMapping, CaptureMappings, LanguageConfig, LanguageSettings, QueryItem, QueryKind,
     QueryTypeMappings, TreeSitterSettings, WorkspaceSettings, infer_query_kind,
 };
-pub use user::{load_user_config, user_config_path, UserConfigError, UserConfigResult};
 use std::collections::HashMap;
+pub use user::{UserConfigError, UserConfigResult, load_user_config, user_config_path};
 
 /// Returns the default search paths for parsers and queries.
 /// Uses the platform-specific data directory (via `dirs` crate):
