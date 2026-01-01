@@ -129,9 +129,78 @@ const scrum: ScrumDashboard = {
     },
     // ADR-0010 Implementation: Configuration Merging Strategy
     // Completed: PBI-151 (Sprint 118)
+    {
+      id: "PBI-150",
+      story: {
+        role: "treesitter-ls user managing configurations",
+        capability: "override only specific settings in my project config while inheriting the rest from user config",
+        benefit: "I avoid repeating parser paths and capture mappings in every project",
+      },
+      acceptance_criteria: [
+        { criterion: "merge_all() merges config layers in precedence order (defaults < user < project < session)", verification: "Unit test: later configs override earlier for scalars" },
+        { criterion: "languages HashMap uses deep merge (project overrides single field, inherits others)", verification: "Unit test: project sets queries, inherits parser from user" },
+        { criterion: "languageServers HashMap uses deep merge", verification: "Unit test: project adds initOptions, inherits cmd" },
+        { criterion: "captureMappings uses deep merge", verification: "Unit test: project overrides variable.builtin, inherits function.builtin" },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-149",
+      story: {
+        role: "treesitter-ls user managing configurations",
+        capability: "set my preferred editor defaults in a single user config file",
+        benefit: "my settings apply across all projects without duplicating configuration",
+      },
+      acceptance_criteria: [
+        { criterion: "User config loads from $XDG_CONFIG_HOME/treesitter-ls/treesitter-ls.toml", verification: "Unit test: config path resolves with XDG_CONFIG_HOME set" },
+        { criterion: "Falls back to ~/.config/treesitter-ls/treesitter-ls.toml when XDG unset", verification: "Unit test: fallback path when XDG not set" },
+        { criterion: "Missing user config silently ignored (zero-config works)", verification: "Unit test: no error when file missing" },
+        { criterion: "Invalid user config causes startup failure with clear error", verification: "Unit test: parse error produces descriptive message" },
+      ],
+      status: "refining",
+    },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 119,
+    pbi_id: "PBI-150",
+    goal: "Enable users to inherit settings from user config to project config without duplication via merge_all()",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "merge_all() with scalar values: later config overrides earlier (e.g., autoInstall: false in project overrides autoInstall: true in user)",
+        implementation: "Implement merge_all(configs: &[Option<TreeSitterSettings>]) that folds configs with primary.or(fallback) for Option scalar fields",
+        type: "behavioral",
+        status: "green",
+        commits: [],
+        notes: ["Tests written: test_merge_all_empty_slice_returns_none, test_merge_all_single_some_returns_it, test_merge_all_scalar_later_wins, test_merge_all_four_layers, test_merge_all_skips_none_configs"],
+      },
+      {
+        test: "languages HashMap deep merge: project sets queries field, inherits parser and bridge from user config for same language key",
+        implementation: "Extend merge_all() to deep merge languages HashMap - iterate keys, merge LanguageConfig fields individually",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "languageServers HashMap deep merge: project adds initializationOptions to rust-analyzer, inherits cmd and languages from user config",
+        implementation: "Extend merge_all() to deep merge languageServers HashMap - iterate keys, merge LanguageServerConfig fields individually",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "captureMappings deep merge: project overrides variable.builtin mapping, inherits function.builtin from user config at same language/query-type level",
+        implementation: "Extend merge_all() to deep merge captureMappings nested HashMap - merge per language, per query-type, per capture key",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
