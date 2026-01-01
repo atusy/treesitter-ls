@@ -64,13 +64,13 @@ const scrum: ScrumDashboard = {
     number: 121,
     pbi_id: "PBI-143",
     goal: "Implement fully async signatureHelp for Rust code blocks in Markdown, completing ADR-0009 async migration for high-frequency LSP methods",
-    status: "planning",
+    status: "in_progress",
     subtasks: [
       {
         test: "Unit test verifies TokioAsyncLanguageServerPool.signature_help() returns Option<SignatureHelp>",
         implementation: "Add signature_help() method to TokioAsyncLanguageServerPool following hover/completion pattern with ServerState tracking",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: ["Follow existing hover()/completion() pattern", "Reuse sync_document for didOpen/didChange", "30s timeout matching other methods"],
       },
