@@ -45,6 +45,68 @@ pub struct TokioAsyncBridgeConnection {
     shutdown_tx: Option<oneshot::Sender<()>>,
 }
 
+impl TokioAsyncBridgeConnection {
+    /// Spawn a new language server process using tokio::process::Command.
+    ///
+    /// This creates a child process with stdin/stdout piped for LSP communication.
+    /// A background reader task is spawned to handle incoming responses.
+    ///
+    /// # Arguments
+    /// * `command` - The command to spawn (e.g., "rust-analyzer")
+    /// * `args` - Arguments to pass to the command
+    ///
+    /// # Returns
+    /// A new TokioAsyncBridgeConnection wrapping the spawned process
+    #[allow(dead_code)]
+    pub async fn spawn(command: &str, args: &[&str]) -> Result<Self, String> {
+        use std::process::Stdio;
+        use tokio::process::Command;
+
+        // Spawn the child process with piped stdin/stdout
+        let mut child = Command::new(command)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("Failed to spawn process '{}': {}", command, e))?;
+
+        // Extract stdin and stdout from the child process (AC2)
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "Failed to capture stdin".to_string())?;
+
+        let _stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "Failed to capture stdout".to_string())?;
+
+        // Create the pending requests map
+        let pending_requests: Arc<DashMap<i64, PendingRequest>> = Arc::new(DashMap::new());
+
+        // Create shutdown channel
+        let (shutdown_tx, _shutdown_rx) = oneshot::channel::<()>();
+
+        // Create placeholder reader task (will be enhanced in PBI-136)
+        // For now, just spawn an empty task that waits for shutdown
+        let reader_handle = tokio::spawn(async move {
+            // Placeholder: just keep the stdout alive
+            // Full implementation with select! comes in PBI-136
+            let _ = _stdout;
+            let _ = _shutdown_rx.await;
+        });
+
+        Ok(Self {
+            stdin: tokio::sync::Mutex::new(stdin),
+            pending_requests,
+            next_request_id: AtomicI64::new(1),
+            reader_handle: Some(reader_handle),
+            shutdown_tx: Some(shutdown_tx),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,5 +152,56 @@ mod tests {
         // Verify the connection has all required fields populated
         // (the struct fields are private, so we rely on the constructor succeeding)
         drop(conn);
+    }
+
+    /// Test that spawn() extracts stdin wrapped in tokio::sync::Mutex.
+    /// Verifies AC2: Async stdin/stdout handles are obtained from the tokio Child process.
+    #[tokio::test]
+    async fn spawn_extracts_stdin_stdout_from_child() {
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[]).await;
+        assert!(result.is_ok(), "spawn() should succeed");
+
+        let conn = result.unwrap();
+        // Verify stdin is accessible through the Mutex by attempting to lock it
+        // This proves the stdin was extracted and wrapped correctly
+        let stdin_guard = conn.stdin.lock().await;
+        // If we can acquire the lock, the stdin was properly set up
+        drop(stdin_guard);
+    }
+
+    /// Test that spawn() creates a reader task handle and shutdown sender.
+    /// Verifies the reader_handle is a tokio::task::JoinHandle and shutdown_tx exists.
+    #[tokio::test]
+    async fn spawn_creates_reader_task_handle() {
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[]).await;
+        assert!(result.is_ok(), "spawn() should succeed");
+
+        let mut conn = result.unwrap();
+
+        // Verify reader_handle is Some (task was spawned)
+        assert!(
+            conn.reader_handle.is_some(),
+            "reader_handle should be Some after spawn"
+        );
+
+        // Verify shutdown_tx is Some
+        assert!(
+            conn.shutdown_tx.is_some(),
+            "shutdown_tx should be Some after spawn"
+        );
+
+        // Send shutdown signal and verify the task completes
+        if let Some(shutdown_tx) = conn.shutdown_tx.take() {
+            let _ = shutdown_tx.send(());
+        }
+
+        // Await the reader task to verify it's a valid JoinHandle
+        if let Some(handle) = conn.reader_handle.take() {
+            let result = handle.await;
+            assert!(
+                result.is_ok(),
+                "Reader task should complete successfully after shutdown"
+            );
+        }
     }
 }
