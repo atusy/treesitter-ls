@@ -208,9 +208,9 @@ const scrum: ScrumDashboard = {
         test: "Unit test verifies that TokioAsyncLanguageServerPool wraps connection in tokio::Mutex and hover() acquires lock before sync_document+request sequence",
         implementation: "Add connection_locks: DashMap<String, Arc<tokio::sync::Mutex<()>>> to TokioAsyncLanguageServerPool and acquire lock at start of hover()",
         type: "behavioral",
-        status: "green",
+        status: "completed",
         commits: [{ hash: "fb72afb", message: "test(bridge): add connection lock infrastructure for hover serialization", phase: "green" }],
-        notes: ["The Mutex guards the sync_document+hover atomic sequence, not the connection itself", "Test: pool_provides_connection_lock_for_serialization"],
+        notes: ["The Mutex guards the sync_document+hover atomic sequence, not the connection itself", "Test: pool_provides_connection_lock_for_serialization", "No refactoring needed - code already clean"],
       },
       {
         test: "Unit test verifies second concurrent hover() call blocks until first completes (using tokio::time::timeout to detect blocking)",
