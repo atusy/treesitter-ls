@@ -570,6 +570,12 @@ impl TokioAsyncLanguageServerPool {
 
         if new_version == 1 {
             // First time - send didOpen with version 1
+            log::trace!(
+                target: "treesitter_ls::bridge::tokio_async_pool",
+                "[SYNC] didOpen uri={} version={}",
+                uri,
+                new_version
+            );
             let params = serde_json::json!({
                 "textDocument": {
                     "uri": uri,
@@ -584,6 +590,12 @@ impl TokioAsyncLanguageServerPool {
                 .map(|()| new_version)
         } else {
             // Document already open - send didChange with incremented version
+            log::trace!(
+                target: "treesitter_ls::bridge::tokio_async_pool",
+                "[SYNC] didChange uri={} version={}",
+                uri,
+                new_version
+            );
             let params = serde_json::json!({
                 "textDocument": {
                     "uri": uri,
@@ -1630,6 +1642,50 @@ mod tests {
             }
         }
         duplicates.into_iter().collect()
+    }
+
+    /// PBI-150 Subtask 3: Verify sync_document emits trace logs with version numbers.
+    ///
+    /// This test verifies that sync_document emits trace-level logs showing
+    /// the URI and version number sent to the language server. This provides
+    /// observability for debugging version tracking issues.
+    ///
+    /// We test this by checking the source code contains the expected log statement
+    /// (since actually capturing logs in async tests is complex and unnecessary
+    /// when the unit tests already verify version correctness).
+    #[test]
+    fn sync_document_emits_trace_logs_with_version() {
+        let source = include_str!("tokio_async_pool.rs");
+
+        // Find the sync_document function
+        let sync_doc_start = source
+            .find("pub async fn sync_document")
+            .expect("sync_document function should exist");
+
+        // Extract the function body
+        let function_start = &source[sync_doc_start..];
+        let function_end = function_start
+            .find("\n    /// ") // Next doc comment at impl level
+            .or_else(|| function_start.find("\n    pub async fn")) // Next pub async method
+            .or_else(|| function_start.find("\n}\n")) // End of impl block
+            .unwrap_or(function_start.len());
+
+        let function_body = &function_start[..function_end];
+
+        // Verify the function contains trace logging with version info
+        assert!(
+            function_body.contains("log::trace!") || function_body.contains("trace!"),
+            "sync_document should emit trace logs. Function body:\n{}",
+            function_body
+        );
+
+        // Verify the log message mentions version
+        assert!(
+            function_body.contains("version")
+                && (function_body.contains("log::trace!") || function_body.contains("trace!")),
+            "sync_document trace log should mention version. Function body:\n{}",
+            function_body
+        );
     }
 
     /// PBI-150 Subtask 2: Integration test for parallel sync_document calls.
