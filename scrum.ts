@@ -29,35 +29,11 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113) | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113), PBI-144 to PBI-150 (Sprint 114-120) | History: git log -- scrum.yaml, scrum.ts
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   product_backlog: [
     // ADR-0009 Implementation: Vertical slices with user-facing value
-    // Completed: PBI-144 to PBI-149 (Sprint 114-119) | History: git log -- scrum.yaml, scrum.ts
     // Critical concurrency fixes from review.md (new issues after Sprint 118)
-    {
-      id: "PBI-150",
-      story: {
-        role: "Rustacean editing Markdown",
-        capability: "have document edits always reach the language server in order",
-        benefit: "hover and other LSP features show up-to-date information even during rapid editing",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "Document version increments use atomic fetch_add or per-URI lock",
-          verification: "Unit test verifies versions are strictly monotonic under concurrent access",
-        },
-        {
-          criterion: "Concurrent sync_document calls produce sequential version numbers",
-          verification: "Integration test with parallel sync_document calls verifies no duplicate versions",
-        },
-        {
-          criterion: "LSP server never sees decreasing or duplicate version numbers",
-          verification: "Trace log confirms monotonically increasing versions in didChange notifications",
-        },
-      ],
-      status: "ready",
-    },
     {
       id: "PBI-151",
       story: {
@@ -175,57 +151,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 120,
-    pbi_id: "PBI-150",
-    goal: "Make document version increments atomic to prevent duplicate versions under concurrent access",
-    status: "review",
-    subtasks: [
-      {
-        test: "Unit test: concurrent increment_document_version calls produce strictly monotonic versions (verifies AtomicU32)",
-        implementation: "Changed document_versions from DashMap<String, u32> to DashMap<String, AtomicU32>, use fetch_add(1, SeqCst)",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "9cb0159", message: "fix(bridge): use AtomicU32 for document version tracking", phase: "green" },
-        ],
-        notes: [
-          "Test: concurrent_version_increments_produce_monotonic_versions spawns 100 tasks with barrier",
-          "AtomicU32::fetch_add atomically increments and returns previous value",
-          "No separate read-then-write, so no race window",
-        ],
-      },
-      {
-        test: "Integration test: parallel sync_document calls produce sequential version numbers with no duplicates",
-        implementation: "Modify sync_document to return Option<u32> (version sent), verify concurrent calls produce unique versions",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "9e35779", message: "test(bridge): add integration test for parallel sync_document version tracking", phase: "green" },
-        ],
-        notes: [
-          "Uses real TokioAsyncLanguageServerPool with rust-analyzer connection",
-          "Spawns N concurrent sync_document calls with barrier for simultaneous start",
-          "Collects versions via return value (sync_document returns Option<u32>)",
-          "Asserts: count(unique_versions) == N and versions are consecutive",
-        ],
-      },
-      {
-        test: "Trace log confirms monotonically increasing versions in didChange notifications",
-        implementation: "Add trace logging to sync_document showing version numbers sent",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "25f2546", message: "feat(bridge): add trace logging for document version tracking", phase: "green" },
-        ],
-        notes: [
-          "Add log::trace! in sync_document showing uri and version",
-          "Test verifies sync_document contains trace logging with version info",
-          "Log format: [SYNC] didOpen/didChange uri={uri} version={version}",
-        ],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -235,22 +161,24 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-118: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-119: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 120, pbi_id: "PBI-150", goal: "Make document version increments atomic to prevent duplicate versions under concurrent access", status: "done", subtasks: [] },
     { number: 119, pbi_id: "PBI-149", goal: "Serialize concurrent hover requests per connection using tokio::Mutex", status: "done", subtasks: [] },
-    { number: 118, pbi_id: "PBI-147", goal: "Wait for rust-analyzer indexing before first hover request", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-116: modular refactoring pattern, E2E indexing waits, vertical slice validation
+  // Recent 2 retrospectives | Sprint 1-117: modular refactoring pattern, E2E indexing waits, vertical slice validation
   retrospectives: [
+    { sprint: 120, improvements: [
+      { action: "Review all sync_document callers for compatibility with new return type Option<u32> and document migration pattern", timing: "sprint", status: "active", outcome: null },
+      { action: "Document atomic operations pattern for version/counter tracking in ADR and apply to similar scenarios", timing: "sprint", status: "active", outcome: null },
+      { action: "Create PBI to fix flaky test spawn_and_initialize_waits_for_indexing and establish test stability monitoring", timing: "product", status: "active", outcome: null },
+      { action: "Create PBI for production observability of document version tracking anomalies", timing: "product", status: "active", outcome: null },
+    ] },
     { sprint: 119, improvements: [
       { action: "Merge lock infrastructure and lock usage into single subtask when implementation is simple (avoid over-decomposition)", timing: "sprint", status: "active", outcome: null },
       { action: "Investigate test parallelization issues causing flaky failures and establish parallel test stability baseline", timing: "product", status: "active", outcome: null },
       { action: "Consider test optimization strategies for slow rust-analyzer dependent tests (mocking, selective execution)", timing: "sprint", status: "active", outcome: null },
-    ] },
-    { sprint: 118, improvements: [
-      { action: "Language server behavior varies by context - design fallback signals when primary indicators are unreliable", timing: "sprint", status: "active", outcome: null },
-      { action: "Indexing wait should be part of connection initialization architecture from the start", timing: "sprint", status: "active", outcome: null },
     ] },
   ],
 };
