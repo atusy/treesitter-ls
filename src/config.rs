@@ -21,6 +21,13 @@ pub fn default_search_paths() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Merge multiple TreeSitterSettings configs in order.
+/// Later configs in the slice have higher precedence (override earlier ones).
+/// Use this for layered config: `merge_all(&[defaults, user, project, session])`
+pub fn merge_all(configs: &[Option<TreeSitterSettings>]) -> Option<TreeSitterSettings> {
+    configs.iter().cloned().reduce(merge_settings).flatten()
+}
+
 /// Merge two TreeSitterSettings, preferring values from `primary` over `fallback`
 pub fn merge_settings(
     fallback: Option<TreeSitterSettings>,
@@ -591,6 +598,125 @@ mod tests {
             "Path should end with 'treesitter-ls': {}",
             path
         );
+    }
+
+    // PBI-150: merge_all() tests for multi-layer config merging
+
+    #[test]
+    fn test_merge_all_empty_slice_returns_none() {
+        // Empty config slice should return None
+        let result = merge_all(&[]);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_merge_all_single_some_returns_it() {
+        // Single Some config should return that config
+        let config = TreeSitterSettings {
+            search_paths: Some(vec!["/path/one".to_string()]),
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: Some(true),
+            language_servers: None,
+        };
+        let result = merge_all(&[Some(config.clone())]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_eq!(result.search_paths, Some(vec!["/path/one".to_string()]));
+        assert_eq!(result.auto_install, Some(true));
+    }
+
+    #[test]
+    fn test_merge_all_scalar_later_wins() {
+        // Later config's scalar values should override earlier ones
+        // Simulates: user config has autoInstall=true, project has autoInstall=false
+        let user_config = TreeSitterSettings {
+            search_paths: Some(vec!["/user/path".to_string()]),
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: Some(true),
+            language_servers: None,
+        };
+        let project_config = TreeSitterSettings {
+            search_paths: Some(vec!["/project/path".to_string()]),
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: Some(false),
+            language_servers: None,
+        };
+
+        let result = merge_all(&[Some(user_config), Some(project_config)]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        // Project's values should win (later overrides earlier)
+        assert_eq!(result.search_paths, Some(vec!["/project/path".to_string()]));
+        assert_eq!(result.auto_install, Some(false));
+    }
+
+    #[test]
+    fn test_merge_all_four_layers() {
+        // Test the full 4-layer merge: defaults < user < project < session
+        let defaults = TreeSitterSettings {
+            search_paths: Some(vec!["/default/path".to_string()]),
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: Some(true),
+            language_servers: None,
+        };
+        let user_config = TreeSitterSettings {
+            search_paths: None, // Not overriding, should inherit from defaults
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: Some(true),
+            language_servers: None,
+        };
+        let project_config = TreeSitterSettings {
+            search_paths: Some(vec!["/project/path".to_string()]),
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: None, // Not overriding, should inherit
+            language_servers: None,
+        };
+        let session_config = TreeSitterSettings {
+            search_paths: None, // Not overriding
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: Some(false), // Session wins
+            language_servers: None,
+        };
+
+        let result = merge_all(&[
+            Some(defaults),
+            Some(user_config),
+            Some(project_config),
+            Some(session_config),
+        ]);
+
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        // search_paths: project wins (later non-None override)
+        assert_eq!(result.search_paths, Some(vec!["/project/path".to_string()]));
+        // auto_install: session wins
+        assert_eq!(result.auto_install, Some(false));
+    }
+
+    #[test]
+    fn test_merge_all_skips_none_configs() {
+        // None configs in the slice should be skipped
+        let config = TreeSitterSettings {
+            search_paths: Some(vec!["/path".to_string()]),
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: Some(true),
+            language_servers: None,
+        };
+
+        let result = merge_all(&[None, Some(config.clone()), None]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_eq!(result.search_paths, Some(vec!["/path".to_string()]));
     }
 
     #[test]
