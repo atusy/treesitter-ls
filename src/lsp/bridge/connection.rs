@@ -19,7 +19,7 @@ use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdout, Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tower_lsp::lsp_types::*;
 
 /// Default timeout for bridge I/O operations (30 seconds).
@@ -263,18 +263,53 @@ impl LanguageServerConnection {
     ///
     /// # Parameters
     /// - `expected_id`: The request ID to wait for
-    /// - `_timeout`: Maximum duration to wait for the response (currently unused, will be implemented)
+    /// - `timeout`: Maximum duration to wait for the response
+    ///
+    /// # Returns
+    /// Returns `ResponseWithNotifications` with:
+    /// - `response: Some(...)` if the expected response arrives before timeout
+    /// - `response: None` if timeout expires, EOF reached, or error occurs
+    /// - `notifications`: Any $/progress notifications captured while waiting
     pub(crate) fn read_response_for_id_with_notifications(
         &mut self,
         expected_id: i64,
-        _timeout: Duration,
+        timeout: Duration,
     ) -> ResponseWithNotifications {
         let mut notifications = Vec::new();
+        let start = Instant::now();
 
         loop {
+            // Check timeout before each read operation
+            if start.elapsed() > timeout {
+                log::warn!(
+                    target: "treesitter_ls::bridge",
+                    "Timeout waiting for response ID {} after {:?}",
+                    expected_id,
+                    timeout
+                );
+                return ResponseWithNotifications {
+                    response: None,
+                    notifications,
+                };
+            }
+
             // Read headers
             let mut content_length = 0;
             loop {
+                // Check timeout in inner loop as well
+                if start.elapsed() > timeout {
+                    log::warn!(
+                        target: "treesitter_ls::bridge",
+                        "Timeout during header read for response ID {} after {:?}",
+                        expected_id,
+                        timeout
+                    );
+                    return ResponseWithNotifications {
+                        response: None,
+                        notifications,
+                    };
+                }
+
                 let mut line = String::new();
                 match self.stdout_reader.read_line(&mut line) {
                     Ok(0) => {
@@ -1480,6 +1515,51 @@ mod tests {
 
         // Verify the constant exists and has expected value
         assert_eq!(DEFAULT_TIMEOUT, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn read_response_for_id_with_notifications_returns_none_on_timeout() {
+        // This test verifies that when no data arrives within the timeout period,
+        // the method returns ResponseWithNotifications with response: None.
+
+        if !check_rust_analyzer_available() {
+            return;
+        }
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        let mut conn = LanguageServerConnection::spawn(&config).unwrap();
+
+        // Request an ID that will never get a response (nothing sends request 9999)
+        // With a very short timeout, the method should return None instead of hanging
+        let start = std::time::Instant::now();
+        let short_timeout = Duration::from_millis(100);
+        let result = conn.read_response_for_id_with_notifications(9999, short_timeout);
+
+        let elapsed = start.elapsed();
+
+        // The method should have returned (not hung forever)
+        // It should return within roughly the timeout period (allow some slack)
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "Method should return within timeout, not hang forever. Elapsed: {:?}",
+            elapsed
+        );
+
+        // Response should be None since no response for ID 9999 arrived
+        assert!(
+            result.response.is_none(),
+            "Response should be None on timeout"
+        );
+
+        // Notifications may or may not be present (rust-analyzer might send some)
+        // but the struct should be valid
+        let _ = result.notifications;
     }
 
     /// Helper to check if rust-analyzer is available for testing.
