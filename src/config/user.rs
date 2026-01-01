@@ -244,4 +244,60 @@ mod tests {
             "should parse searchPaths"
         );
     }
+
+    #[test]
+    fn load_user_config_returns_descriptive_error_for_invalid_toml() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        // Save original XDG_CONFIG_HOME
+        let original = env::var("XDG_CONFIG_HOME").ok();
+
+        // Create temp directory with invalid TOML config file
+        let temp_dir = TempDir::new().expect("failed to create temp dir");
+        let config_dir = temp_dir.path().join("treesitter-ls");
+        fs::create_dir_all(&config_dir).expect("failed to create config dir");
+
+        let config_path = config_dir.join("treesitter-ls.toml");
+        // Invalid TOML: missing closing bracket
+        let invalid_content = r#"
+            autoInstall = true
+            searchPaths = ["/path/one"
+        "#;
+        fs::write(&config_path, invalid_content).expect("failed to write config file");
+
+        // SAFETY: Tests run single-threaded
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        }
+
+        let result = load_user_config();
+
+        // Restore original
+        unsafe {
+            match original {
+                Some(val) => env::set_var("XDG_CONFIG_HOME", val),
+                None => env::remove_var("XDG_CONFIG_HOME"),
+            }
+        }
+
+        // Should return an error with descriptive message
+        assert!(result.is_err(), "load_user_config should return Err for invalid TOML");
+        let error = result.unwrap_err();
+
+        // Error message should include the file path
+        let error_message = error.to_string();
+        assert!(
+            error_message.contains("treesitter-ls.toml"),
+            "error should include file path, got: {}",
+            error_message
+        );
+
+        // Error message should describe the parse issue
+        assert!(
+            error_message.contains("Failed to parse") || error_message.contains("parse"),
+            "error should describe the parse failure, got: {}",
+            error_message
+        );
+    }
 }
