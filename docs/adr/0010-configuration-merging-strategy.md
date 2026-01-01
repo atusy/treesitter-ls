@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted (Implemented across Sprints 118, 119, 120)
 
 ## Context
 
@@ -276,24 +276,26 @@ fn load_configuration(cli_config_path: Option<&Path>) -> Option<TreeSitterSettin
 
 ## Implementation Phases
 
-### Phase 1: Query Configuration Schema (Not started)
-- [ ] Add `QueryItem` struct with `path` (required) and `kind` (optional) fields
-- [ ] Add `queries: Option<Vec<QueryItem>>` field to `LanguageConfig`
-- [ ] Implement `QueryKind` enum (`Highlights`, `Locals`, `Injections`) with default `Highlights`
-- [ ] Implement type inference from filename (e.g., `*highlights*.scm` → `Highlights`)
-- [ ] Normalize `queries` + legacy fields into unified internal representation
-- [ ] Emit deprecation warning when legacy `highlights`/`locals`/`injections` fields are used
+**Overall Progress**: Phases 1-3 completed. Core configuration loading infrastructure is in place. Remaining work: CLI options and end-to-end testing.
 
-### Phase 2: Core Merging (Not started)
-- [ ] Implement `merge_all()` function for layered config merging
-- [ ] Deep merge for `languages` HashMap
-- [ ] Deep merge for `languageServers` HashMap
-- [ ] Deep merge for `captureMappings`
+### Phase 1: Query Configuration Schema (Completed - Sprint 118, PBI-151)
+- [x] Add `QueryItem` struct with `path` (required) and `kind` (optional) fields
+- [x] Add `queries: Option<Vec<QueryItem>>` field to `LanguageConfig`
+- [x] Implement `QueryKind` enum (`Highlights`, `Locals`, `Injections`) with default `Highlights`
+- [x] Implement type inference from filename (e.g., `*highlights*.scm` → `Highlights`)
+- [x] Normalize `queries` + legacy fields into unified internal representation
+- [x] Emit deprecation warning when legacy `highlights`/`locals`/`injections` fields are used
 
-### Phase 3: User Configuration File (Not started)
-- [ ] XDG Base Directory compliance for config path
-- [ ] Load user config from `$XDG_CONFIG_HOME/treesitter-ls/treesitter-ls.toml`
-- [ ] Silent ignore for missing user config file
+### Phase 2: Core Merging (Completed - Sprint 119, PBI-150)
+- [x] Implement `merge_all()` function for layered config merging
+- [x] Deep merge for `languages` HashMap
+- [x] Deep merge for `languageServers` HashMap
+- [x] Deep merge for `captureMappings`
+
+### Phase 3: User Configuration File (Completed - Sprint 120, PBI-149)
+- [x] XDG Base Directory compliance for config path
+- [x] Load user config from `$XDG_CONFIG_HOME/treesitter-ls/treesitter-ls.toml`
+- [x] Silent ignore for missing user config file
 
 ### Phase 4: Project Configuration (Partial - existing `./treesitter-ls.toml`)
 - [x] Load project config from `./treesitter-ls.toml`
