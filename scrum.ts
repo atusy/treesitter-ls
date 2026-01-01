@@ -118,22 +118,8 @@ const scrum: ScrumDashboard = {
       status: "ready",
     },
     // ADR-0010 Implementation: Configuration Merging Strategy
-    // Completed: PBI-151 (Sprint 118)
-    {
-      id: "PBI-150",
-      story: {
-        role: "treesitter-ls user managing configurations",
-        capability: "override only specific settings in my project config while inheriting the rest from user config",
-        benefit: "I avoid repeating parser paths and capture mappings in every project",
-      },
-      acceptance_criteria: [
-        { criterion: "merge_all() merges config layers in precedence order (defaults < user < project < session)", verification: "Unit test: later configs override earlier for scalars" },
-        { criterion: "languages HashMap uses deep merge (project overrides single field, inherits others)", verification: "Unit test: project sets queries, inherits parser from user" },
-        { criterion: "languageServers HashMap uses deep merge", verification: "Unit test: project adds initOptions, inherits cmd" },
-        { criterion: "captureMappings uses deep merge", verification: "Unit test: project overrides variable.builtin, inherits function.builtin" },
-      ],
-      status: "ready",
-    },
+    // Completed: PBI-151 (Sprint 118), PBI-150 (Sprint 119)
+
     {
       id: "PBI-149",
       story: {
@@ -151,46 +137,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 119,
-    pbi_id: "PBI-150",
-    goal: "Enable users to inherit settings from user config to project config without duplication via merge_all()",
-    status: "review",
-    subtasks: [
-      {
-        test: "merge_all() with scalar values: later config overrides earlier (e.g., autoInstall: false in project overrides autoInstall: true in user)",
-        implementation: "Implement merge_all(configs: &[Option<TreeSitterSettings>]) that folds configs with primary.or(fallback) for Option scalar fields",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "6675e28", message: "feat(config): add merge_all() for multi-layer config merging", phase: "green" }],
-        notes: ["Tests written: test_merge_all_empty_slice_returns_none, test_merge_all_single_some_returns_it, test_merge_all_scalar_later_wins, test_merge_all_four_layers, test_merge_all_skips_none_configs"],
-      },
-      {
-        test: "languages HashMap deep merge: project sets queries field, inherits parser and bridge from user config for same language key",
-        implementation: "Extend merge_all() to deep merge languages HashMap - iterate keys, merge LanguageConfig fields individually",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "cc2612e", message: "feat(config): deep merge languages HashMap", phase: "green" }],
-        notes: ["Tests: test_merge_all_languages_deep_merge, test_merge_all_languages_adds_new_keys"],
-      },
-      {
-        test: "languageServers HashMap deep merge: project adds initializationOptions to rust-analyzer, inherits cmd and languages from user config",
-        implementation: "Extend merge_all() to deep merge languageServers HashMap - iterate keys, merge LanguageServerConfig fields individually",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "3c95c92", message: "feat(config): deep merge languageServers HashMap", phase: "green" }],
-        notes: ["Tests: test_merge_all_language_servers_deep_merge, test_merge_all_language_servers_adds_new_server"],
-      },
-      {
-        test: "captureMappings deep merge: project overrides variable.builtin mapping, inherits function.builtin from user config at same language/query-type level",
-        implementation: "Extend merge_all() to deep merge captureMappings nested HashMap - merge per language, per query-type, per capture key",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "1acf169", message: "test(config): verify captureMappings deep merge through merge_all()", phase: "green" }],
-        notes: ["Tests: test_merge_all_capture_mappings_deep_merge, test_merge_all_capture_mappings_adds_new_language, test_merge_all_capture_mappings_locals_and_folds - merge_capture_mappings already does deep merge, tests verify through merge_all"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -208,8 +155,8 @@ const scrum: ScrumDashboard = {
     { number: 143, pbi_id: "PBI-170", goal: "Investigate $/cancelRequest - deferred (tower-lsp limitation, YAGNI)", status: "cancelled", subtasks: [] },
     { number: 142, pbi_id: "PBI-169", goal: "Fix bridge bookkeeping memory leak after crashes/restarts", status: "done", subtasks: [] },
     { number: 141, pbi_id: "PBI-168", goal: "Fix concurrent parse crash recovery to correctly identify failing parsers", status: "done", subtasks: [] },
+    { number: 119, pbi_id: "PBI-150", goal: "Enable users to inherit settings from user config to project config without duplication via merge_all()", status: "done", subtasks: [] },
     { number: 118, pbi_id: "PBI-151", goal: "Enable unified query configuration with queries array and type inference from filename patterns", status: "done", subtasks: [] },
-    { number: 117, pbi_id: "PBI-146", goal: "Track document versions per virtual URI, send didOpen on first access and didChange with incremented version", status: "done", subtasks: [] },
   ],
 
   retrospectives: [
