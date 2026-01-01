@@ -215,9 +215,9 @@ const scrum: ScrumDashboard = {
         test: "resolve_with_wildcard() merges wildcard with specific key - test with captureMappings['rust'] having partial mappings combined with '_' defaults",
         implementation: "Implement resolve_and_merge_with_wildcard() that deep-merges wildcard HashMap with specific key HashMap (specific overrides wildcard)",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
-        notes: [],
+        notes: ["Merge logic was already implemented in subtask 1 - test confirms behavior"],
       },
       {
         test: "Specific capture name in language key overrides same capture name in wildcard - test '@function' in rust overrides '@function' in '_'",
