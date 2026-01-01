@@ -30,6 +30,8 @@ use tower_lsp::lsp_types::*;
 pub struct AsyncLanguageServerPool {
     /// Active connections by key (server name)
     connections: DashMap<String, Arc<AsyncBridgeConnection>>,
+    /// Virtual file URIs per connection key (for textDocument requests)
+    virtual_uris: DashMap<String, String>,
     /// Channel for forwarding $/progress notifications
     notification_sender: mpsc::Sender<Value>,
 }
@@ -42,6 +44,7 @@ impl AsyncLanguageServerPool {
     pub fn new(notification_sender: mpsc::Sender<Value>) -> Self {
         Self {
             connections: DashMap::new(),
+            virtual_uris: DashMap::new(),
             notification_sender,
         }
     }
@@ -75,7 +78,7 @@ impl AsyncLanguageServerPool {
         let config_clone = config.clone();
         let notif_sender = self.notification_sender.clone();
 
-        let conn = tokio::task::spawn_blocking(move || {
+        let (conn, virtual_uri) = tokio::task::spawn_blocking(move || {
             Self::spawn_async_connection_blocking(&config_clone, notif_sender)
         })
         .await
@@ -83,15 +86,19 @@ impl AsyncLanguageServerPool {
 
         let conn = Arc::new(conn);
         self.connections.insert(key.to_string(), conn.clone());
+        // Store the virtual URI for this connection (used by textDocument methods)
+        self.virtual_uris.insert(key.to_string(), virtual_uri);
 
         Some(conn)
     }
 
     /// Spawn a new async connection from config (blocking version for spawn_blocking).
+    ///
+    /// Returns both the connection and the virtual file URI for textDocument requests.
     fn spawn_async_connection_blocking(
         config: &BridgeServerConfig,
         notification_sender: mpsc::Sender<Value>,
-    ) -> Option<AsyncBridgeConnection> {
+    ) -> Option<(AsyncBridgeConnection, String)> {
         let program = config.cmd.first()?;
 
         // Create temp directory
@@ -112,7 +119,7 @@ impl AsyncLanguageServerPool {
             .map(|lang| language_to_extension(lang))
             .unwrap_or("rs");
 
-        let _virtual_file_path =
+        let virtual_file_path =
             setup_workspace_with_option(&temp_dir, config.workspace_type, extension)?;
 
         let root_uri = format!("file://{}", temp_dir.display());
@@ -165,7 +172,9 @@ impl AsyncLanguageServerPool {
             program
         );
 
-        Some(conn)
+        // Return connection along with the virtual file URI
+        let virtual_uri = format!("file://{}", virtual_file_path.display());
+        Some((conn, virtual_uri))
     }
 
     /// Check if the pool has a connection for the given key.
@@ -227,11 +236,11 @@ impl AsyncLanguageServerPool {
     }
 
     /// Get the virtual file URI for a connection.
-    fn get_virtual_uri(&self, _key: &str) -> Option<String> {
-        // For now, construct from temp dir pattern
-        // In a full implementation, we'd store this in the connection
-        // TODO: Store virtual_file_path in AsyncBridgeConnection
-        None // Placeholder - need to refactor connection to store this
+    ///
+    /// Returns the stored virtual file URI that was created when the connection
+    /// was spawned. This URI is used for textDocument/* requests.
+    pub fn get_virtual_uri(&self, key: &str) -> Option<String> {
+        self.virtual_uris.get(key).map(|r| r.clone())
     }
 
     /// Ensure a document is open in the language server.
@@ -324,6 +333,47 @@ mod tests {
         assert!(
             Arc::ptr_eq(&conn1.unwrap(), &conn2.unwrap()),
             "Concurrent gets should return the same connection"
+        );
+    }
+
+    #[tokio::test]
+    async fn async_pool_stores_virtual_uri_after_connection() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = AsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Get a connection
+        let conn = pool.get_connection("rust-analyzer", &config).await;
+        assert!(conn.is_some(), "Should get a connection");
+
+        // Virtual URI should be stored and retrievable
+        let virtual_uri = pool.get_virtual_uri("rust-analyzer");
+        assert!(
+            virtual_uri.is_some(),
+            "Virtual URI should be stored after connection"
+        );
+
+        let uri = virtual_uri.unwrap();
+        assert!(
+            uri.starts_with("file://"),
+            "Virtual URI should be a file:// URI, got: {}",
+            uri
+        );
+        assert!(
+            uri.ends_with(".rs"),
+            "Virtual URI should end with .rs for rust, got: {}",
+            uri
         );
     }
 }
