@@ -2007,4 +2007,61 @@ mod tests {
             "Should NOT inherit wildcard's initialization_options"
         );
     }
+
+    #[test]
+    fn test_resolve_language_server_with_wildcard_returns_none_when_neither_exists() {
+        // ADR-0011: Neither wildcard nor specific key -> return None
+        use settings::BridgeServerConfig;
+
+        let mut servers: HashMap<String, BridgeServerConfig> = HashMap::new();
+
+        // Only pyright exists, no wildcard
+        servers.insert(
+            "pyright".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["pyright-langserver".to_string()],
+                languages: vec!["python".to_string()],
+                initialization_options: None,
+                workspace_type: None,
+            },
+        );
+
+        // Resolve for "rust-analyzer" which doesn't exist and no wildcard
+        let result = resolve_language_server_with_wildcard(&servers, "rust-analyzer");
+
+        assert!(
+            result.is_none(),
+            "Should return None when neither wildcard nor specific key exists"
+        );
+    }
+
+    #[test]
+    fn test_resolve_language_server_with_wildcard_specific_only() {
+        // ADR-0011: No wildcard, only specific key -> return specific
+        use settings::BridgeServerConfig;
+
+        let mut servers: HashMap<String, BridgeServerConfig> = HashMap::new();
+
+        // Only rust-analyzer exists, no wildcard
+        servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["rust-analyzer".to_string()],
+                languages: vec!["rust".to_string()],
+                initialization_options: None,
+                workspace_type: Some(settings::WorkspaceType::Cargo),
+            },
+        );
+
+        // Resolve for "rust-analyzer" - should return it directly
+        let result = resolve_language_server_with_wildcard(&servers, "rust-analyzer");
+
+        assert!(result.is_some(), "Should return Some when specific key exists");
+        let resolved = result.unwrap();
+        assert_eq!(
+            resolved.cmd,
+            vec!["rust-analyzer".to_string()],
+            "Should return specific config"
+        );
+    }
 }
