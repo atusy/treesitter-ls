@@ -163,7 +163,7 @@ const scrum: ScrumDashboard = {
         test: "Unit test: verify state transition on non-empty response; empty responses keep Indexing state",
         implementation: "After hover() returns Some(Hover) with non-empty contents, call pool.set_server_state(key, Ready); do not transition on None or empty",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: ["AC3: ServerState transitions from Indexing to Ready on first non-empty hover/completion response"],
       },
