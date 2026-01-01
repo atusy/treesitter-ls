@@ -130,46 +130,7 @@ const scrum: ScrumDashboard = {
     // ADR-0010: Completed PBI-151 (Sprint 118), PBI-150 (Sprint 119), PBI-149 (Sprint 120)
     // ADR-0011: Completed PBI-152 (Sprint 121), PBI-153 (Sprint 122), PBI-154 (Sprint 123)
   ],
-  sprint: {
-    number: 123,
-    pbi_id: "PBI-154",
-    goal: "Enable users to define default language server settings using a wildcard key",
-    status: "done",
-    subtasks: [
-      {
-        test: "languageServers['rust-analyzer'] inherits from languageServers['_']",
-        implementation: "languageServers._ provides default settings inherited by all server entries",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "4a410a8", message: "feat(config): add resolve_language_server_with_wildcard for ADR-0011", phase: "green" }],
-        notes: ["Reuse resolve_with_wildcard pattern from PBI-152/153"],
-      },
-      {
-        test: "rust-analyzer-specific rootMarkers override _ rootMarkers",
-        implementation: "Server-specific values override wildcard values",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "215ce9e", message: "test(config): add test for server-specific values overriding wildcard", phase: "green" }],
-        notes: ["Implementation already covered by subtask 1"],
-      },
-      {
-        test: "languageServers['new-server'] returns _ values when specific key absent",
-        implementation: "Missing server key falls back to wildcard defaults",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "c5fd55b", message: "test(config): add edge case tests for language server wildcard resolution", phase: "green" }],
-        notes: ["Implementation already covered by subtask 1, edge cases tested"],
-      },
-      {
-        test: "E2E: server using inherited _ settings produces correct semantic tokens",
-        implementation: "Wildcard server settings work in semantic token flow",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "677465b", message: "test(config): add integration tests for languageServers wildcard", phase: "green" }],
-        notes: ["Integration test verifies wildcard inheritance; semantic tokens use captureMappings not languageServers"],
-      },
-    ],
-  },
+  sprint: null,
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
@@ -185,7 +146,7 @@ const scrum: ScrumDashboard = {
   // Retrospectives (recent 2)
   retrospectives: [
     { sprint: 123, improvements: [
-      { action: "ADR-0011 implementation complete - all 3 phases done", timing: "immediate", status: "completed", outcome: "Full wildcard support" },
+      { action: "ADR-0011 implementation complete - all 3 phases done", timing: "immediate", status: "completed", outcome: "Full wildcard support across captureMappings, languages, and languageServers" },
     ] },
     { sprint: 122, improvements: [
       { action: "ADR-0011 status updated to Accepted", timing: "immediate", status: "completed", outcome: "Phase 2 complete" },
