@@ -454,6 +454,11 @@ impl TokioAsyncLanguageServerPool {
         content: &str,
         position: tower_lsp::lsp_types::Position,
     ) -> Option<tower_lsp::lsp_types::Hover> {
+        // Acquire connection lock to serialize concurrent hover requests.
+        // This prevents race conditions where didChange and hover RPCs interleave.
+        let lock = self.get_connection_lock(key);
+        let _lock_guard = lock.lock().await;
+
         let conn = self.get_connection(key, config).await?;
 
         // Get virtual file URI
@@ -1353,5 +1358,71 @@ mod tests {
 
         // Lock should be reusable
         let _guard2 = lock.lock().await;
+    }
+
+    /// PBI-149 Subtask 2: Test that hover() acquires connection lock and holds it during execution.
+    ///
+    /// This test verifies that when two hover requests are issued concurrently,
+    /// the second one blocks until the first completes. This proves the lock
+    /// is being acquired in hover() and held for the entire didChange+hover sequence.
+    ///
+    /// We use a mock scenario where we:
+    /// 1. Manually acquire the lock before calling hover()
+    /// 2. Spawn hover() in background - it should block trying to acquire the lock
+    /// 3. Verify hover hasn't completed while we hold the lock
+    /// 4. Release our lock
+    /// 5. Verify hover can now proceed (though it will fail without real connection)
+    #[tokio::test]
+    async fn hover_acquires_connection_lock_for_serialization() {
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = std::sync::Arc::new(super::TokioAsyncLanguageServerPool::new(tx));
+
+        // Manually acquire the lock to simulate a concurrent hover holding it
+        let lock = pool.get_connection_lock("test-server");
+        let guard = lock.lock().await;
+
+        // Try to call hover() in a background task - it should block on lock acquisition
+        let pool_clone = pool.clone();
+        let config = BridgeServerConfig {
+            cmd: vec!["test-server".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        let hover_task = tokio::spawn(async move {
+            pool_clone.hover(
+                "test-server",
+                &config,
+                "file:///test.rs",
+                "rust",
+                "fn main() {}",
+                tower_lsp::lsp_types::Position { line: 0, character: 0 },
+            ).await
+        });
+
+        // Give the hover task a moment to try acquiring the lock
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // The hover task should still be blocked (not finished)
+        assert!(
+            !hover_task.is_finished(),
+            "hover() should block while lock is held by another task"
+        );
+
+        // Release the lock
+        drop(guard);
+
+        // Now the hover task should be able to proceed (it will fail because
+        // there's no real connection, but the point is it's no longer blocked on the lock)
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            hover_task
+        ).await;
+
+        assert!(
+            result.is_ok(),
+            "hover() should unblock after lock is released"
+        );
     }
 }
