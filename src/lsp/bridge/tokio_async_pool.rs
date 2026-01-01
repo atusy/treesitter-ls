@@ -286,10 +286,13 @@ impl TokioAsyncLanguageServerPool {
                 },
                 "contentChanges": [{ "text": content }]
             });
-            self.set_document_version(uri, new_version);
-            conn.send_notification("textDocument/didChange", params)
-                .await
-                .ok()
+            match conn.send_notification("textDocument/didChange", params).await {
+                Ok(()) => {
+                    self.set_document_version(uri, new_version);
+                    Some(())
+                }
+                Err(_) => None,
+            }
         } else {
             // First time - send didOpen with version 1
             let params = serde_json::json!({
@@ -300,10 +303,13 @@ impl TokioAsyncLanguageServerPool {
                     "text": content,
                 }
             });
-            self.set_document_version(uri, 1);
-            conn.send_notification("textDocument/didOpen", params)
-                .await
-                .ok()
+            match conn.send_notification("textDocument/didOpen", params).await {
+                Ok(()) => {
+                    self.set_document_version(uri, 1);
+                    Some(())
+                }
+                Err(_) => None,
+            }
         }
     }
 }
@@ -311,6 +317,8 @@ impl TokioAsyncLanguageServerPool {
 #[cfg(test)]
 mod tests {
     use crate::config::settings::{BridgeServerConfig, WorkspaceType};
+    use crate::lsp::bridge::tokio_connection::TokioAsyncBridgeConnection;
+    use std::time::Duration;
     use tokio::sync::mpsc;
 
     fn check_rust_analyzer_available() -> bool {
@@ -318,6 +326,16 @@ mod tests {
             .arg("--version")
             .output()
             .is_ok()
+    }
+
+    #[cfg(unix)]
+    fn short_lived_command() -> (&'static str, &'static [&'static str]) {
+        ("/bin/sh", &["-c", "exit 0"])
+    }
+
+    #[cfg(windows)]
+    fn short_lived_command() -> (&'static str, &'static [&'static str]) {
+        ("cmd.exe", &["/C", "exit 0"])
     }
 
     /// Test that TokioAsyncLanguageServerPool::get_connection returns
@@ -844,6 +862,35 @@ mod tests {
             pool.get_document_version("file:///other.rs"),
             Some(5),
             "Second URI should have its own version"
+        );
+    }
+
+    /// When a notification fails to send, the document version should remain unchanged.
+    #[tokio::test]
+    async fn sync_document_does_not_set_version_when_notification_fails() {
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let (command, args) = short_lived_command();
+        let conn = TokioAsyncBridgeConnection::spawn(command, args, None, None, None)
+            .await
+            .expect("short-lived command should spawn");
+
+        // Allow the stub process to exit so writes will fail with BrokenPipe.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let uri = "file:///failing.rs";
+        let result = pool
+            .sync_document(&conn, uri, "rust", "fn main() {}")
+            .await;
+
+        assert!(
+            result.is_none(),
+            "sync_document should return None when the notification fails"
+        );
+        assert!(
+            pool.get_document_version(uri).is_none(),
+            "Version should remain unset when notification fails"
         );
     }
 }
