@@ -59,14 +59,44 @@ pub struct QueryTypeMappings {
 
 pub type CaptureMappings = HashMap<String, QueryTypeMappings>;
 
+/// Query type for treesitter query files.
+///
+/// Used in the unified `queries` field to specify what kind of query a file contains.
+/// When not specified, the kind is inferred from the filename pattern.
+#[derive(Debug, Clone, Copy, Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum QueryKind {
+    /// Syntax highlighting queries
+    Highlights,
+    /// Local definitions/references queries (for scope analysis)
+    Locals,
+    /// Language injection queries (for embedded languages)
+    Injections,
+}
+
+/// A single query file configuration entry.
+///
+/// Used in the unified `queries` array to specify query files with optional type.
+/// Example: `{ path = "./highlights.scm", kind = "highlights" }`
+#[derive(Debug, Clone, Deserialize, serde::Serialize, PartialEq, Eq)]
+pub struct QueryItem {
+    /// Path to the query file (required)
+    pub path: String,
+    /// Query type: highlights, locals, or injections (optional - inferred from filename if omitted)
+    pub kind: Option<QueryKind>,
+}
+
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct LanguageConfig {
     pub library: Option<String>,
-    /// Query file paths for syntax highlighting
+    /// Unified query file configuration (new format)
+    /// Each entry has a path and optional kind (inferred from filename if omitted)
+    pub queries: Option<Vec<QueryItem>>,
+    /// Query file paths for syntax highlighting (legacy field)
     pub highlights: Option<Vec<String>>,
-    /// Query file paths for locals/definitions
+    /// Query file paths for locals/definitions (legacy field)
     pub locals: Option<Vec<String>>,
-    /// Query file paths for language injections
+    /// Query file paths for language injections (legacy field)
     pub injections: Option<Vec<String>>,
     /// Languages to bridge for this host filetype (map format).
     /// - None (omitted): Bridge ALL configured languages (default behavior)
@@ -572,6 +602,7 @@ mod tests {
                 lang.to_string(),
                 LanguageConfig {
                     library: Some(format!("/usr/lib/libtree-sitter-{}.so", lang)),
+                    queries: None,
                     highlights: Some(vec![format!("/etc/treesitter/{}/highlights.scm", lang)]),
                     locals: None,
                     injections: None,
@@ -594,6 +625,7 @@ mod tests {
         // Language detection now relies entirely on languageId from DidOpen
         let config = LanguageConfig {
             library: Some("/path/to/parser.so".to_string()),
+            queries: None,
             highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
             locals: None,
             injections: None,
@@ -1033,5 +1065,74 @@ mod tests {
         assert_eq!(bridge.len(), 2);
         assert!(bridge.get("python").unwrap().enabled);
         assert!(!bridge.get("r").unwrap().enabled);
+    }
+
+    // PBI-151: Unified query configuration with QueryItem struct
+    #[test]
+    fn should_parse_query_item_with_path_and_kind() {
+        // QueryItem should have path (required) and kind (optional) fields
+        // kind can be "highlights", "locals", or "injections"
+        let toml_str = r#"
+            path = "/path/to/highlights.scm"
+            kind = "highlights"
+        "#;
+
+        let item: QueryItem = toml::from_str(toml_str).unwrap();
+        assert_eq!(item.path, "/path/to/highlights.scm");
+        assert_eq!(item.kind, Some(QueryKind::Highlights));
+    }
+
+    #[test]
+    fn should_parse_query_item_without_kind() {
+        // kind is optional - defaults to None (type inference happens later)
+        let toml_str = r#"
+            path = "/path/to/custom.scm"
+        "#;
+
+        let item: QueryItem = toml::from_str(toml_str).unwrap();
+        assert_eq!(item.path, "/path/to/custom.scm");
+        assert!(item.kind.is_none());
+    }
+
+    #[test]
+    fn should_parse_query_kind_enum_variants() {
+        // QueryKind enum should have Highlights, Locals, Injections variants
+        let highlights_toml = r#"path = "/a.scm"
+kind = "highlights""#;
+        let locals_toml = r#"path = "/b.scm"
+kind = "locals""#;
+        let injections_toml = r#"path = "/c.scm"
+kind = "injections""#;
+
+        let h: QueryItem = toml::from_str(highlights_toml).unwrap();
+        let l: QueryItem = toml::from_str(locals_toml).unwrap();
+        let i: QueryItem = toml::from_str(injections_toml).unwrap();
+
+        assert_eq!(h.kind, Some(QueryKind::Highlights));
+        assert_eq!(l.kind, Some(QueryKind::Locals));
+        assert_eq!(i.kind, Some(QueryKind::Injections));
+    }
+
+    #[test]
+    fn should_parse_queries_array_in_language_config() {
+        // LanguageConfig should have queries: Option<Vec<QueryItem>>
+        let config_toml = r#"
+            library = "/path/to/parser.so"
+            [[queries]]
+            path = "/path/to/highlights.scm"
+
+            [[queries]]
+            path = "/path/to/locals.scm"
+            kind = "locals"
+        "#;
+
+        let config: LanguageConfig = toml::from_str(config_toml).unwrap();
+        assert!(config.queries.is_some());
+        let queries = config.queries.unwrap();
+        assert_eq!(queries.len(), 2);
+        assert_eq!(queries[0].path, "/path/to/highlights.scm");
+        assert!(queries[0].kind.is_none());
+        assert_eq!(queries[1].path, "/path/to/locals.scm");
+        assert_eq!(queries[1].kind, Some(QueryKind::Locals));
     }
 }
