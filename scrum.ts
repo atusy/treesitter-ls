@@ -34,6 +34,99 @@ const scrum: ScrumDashboard = {
   product_backlog: [
     // ADR-0009 Implementation: Vertical slices with user-facing value
     // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117), PBI-147 (Sprint 118)
+    // Critical concurrency fixes from review.md (new issues after Sprint 118)
+    {
+      id: "PBI-149",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "get correct hover results even when moving cursor quickly between code blocks",
+        benefit: "hover information always matches the code under the cursor, not stale or wrong content",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Concurrent hover requests are serialized per connection using tokio::Mutex or semaphore",
+          verification: "Unit test verifies sequential execution when two hovers race",
+        },
+        {
+          criterion: "Each hover request has exclusive access to connection during didChange+hover sequence",
+          verification: "Integration test sends concurrent hovers and verifies correct responses",
+        },
+        {
+          criterion: "Rapid cursor movement produces correct hover results",
+          verification: "E2E test moves cursor quickly between code blocks, all hover results match expected content",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-150",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "have document edits always reach the language server in order",
+        benefit: "hover and other LSP features show up-to-date information even during rapid editing",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Document version increments use atomic fetch_add or per-URI lock",
+          verification: "Unit test verifies versions are strictly monotonic under concurrent access",
+        },
+        {
+          criterion: "Concurrent sync_document calls produce sequential version numbers",
+          verification: "Integration test with parallel sync_document calls verifies no duplicate versions",
+        },
+        {
+          criterion: "LSP server never sees decreasing or duplicate version numbers",
+          verification: "Trace log confirms monotonically increasing versions in didChange notifications",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-151",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "see language server progress indicators while working on code",
+        benefit: "feedback about rust-analyzer activity (rebuilding, checking) stays visible throughout the session",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Background task continuously drains notification receivers and forwards $/progress",
+          verification: "Unit test verifies forwarding continues after initial indexing wait",
+        },
+        {
+          criterion: "$/progress notifications reach client during hover requests (not just initial indexing)",
+          verification: "Integration test triggers rebuild and verifies $/progress forwarded",
+        },
+        {
+          criterion: "Editor shows progress indicators when rust-analyzer rebuilds after code changes",
+          verification: "E2E test edits code, verifies progress notifications received by client",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-152",
+      story: {
+        role: "developer editing Lua files",
+        capability: "get first hover result quickly even with minimal language server activity",
+        benefit: "hover works within seconds, not waiting up to 60 seconds for timeout",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Indexing wait treats single completion signal as sufficient (or is configurable)",
+          verification: "Unit test with mock server emitting 1 notification verifies fast completion",
+        },
+        {
+          criterion: "wait_for_indexing returns promptly when server is ready but quiet",
+          verification: "Integration test with lua-language-server returns hover within 5 seconds",
+        },
+        {
+          criterion: "First hover request returns quickly for simple files",
+          verification: "E2E test with simple Lua code block verifies hover returns within 5 seconds",
+        },
+      ],
+      status: "ready",
+    },
     {
       id: "PBI-141",
       story: {
@@ -124,18 +217,11 @@ const scrum: ScrumDashboard = {
   // Recent 2 retrospectives | Sprint 1-116: modular refactoring pattern, E2E indexing waits, vertical slice validation
   retrospectives: [
     { sprint: 118, improvements: [
-      { action: "MILESTONE: All 4 blocking issues from review.md now resolved (Sprints 115-118: $/progress, process leaks, document versioning, indexing wait)", timing: "immediate", status: "completed", outcome: "review.md blocking issues cleared - async bridge feature-complete for production" },
       { action: "Language server behavior varies by context - design fallback signals when primary indicators are unreliable", timing: "sprint", status: "active", outcome: null },
-      { action: "publishDiagnostics as fallback for indexing detection when $/progress is absent", timing: "immediate", status: "completed", outcome: "is_indexing_complete() checks both $/progress and publishDiagnostics" },
-      { action: "Quiet period heuristics prevent race conditions - wait for stability not just first signal", timing: "immediate", status: "completed", outcome: "2+ diagnostics + 500ms quiet period ensures new content processed" },
       { action: "Indexing wait should be part of connection initialization architecture from the start", timing: "sprint", status: "active", outcome: null },
-      { action: "E2E test simplification validates design improvement - single call with timeout better than retry loops", timing: "immediate", status: "completed", outcome: "E2E test: removed 20-retry loop, single hover() with 10s timeout" },
     ] },
     { sprint: 117, improvements: [
-      { action: "Study reference implementation patterns before new features - sync bridge had versioning model", timing: "sprint", status: "completed", outcome: "PBI-146 implemented document versioning matching sync bridge pattern" },
-      { action: "DashMap provides thread-safe state without explicit locking - prefer for concurrent access patterns", timing: "immediate", status: "completed", outcome: "document_versions: DashMap<String, u32> in TokioAsyncLanguageServerPool" },
-      { action: "LSP spec: didOpen once per URI, didChange for updates with incrementing version", timing: "immediate", status: "completed", outcome: "sync_document checks version map, sends didOpen v1 or didChange v+1" },
-      { action: "Tightly coupled changes belong in single commit - all 4 subtasks shared c2a78c0", timing: "immediate", status: "completed", outcome: "fix(bridge): track document versions per URI, send didOpen/didChange correctly" },
+      { action: "Study reference implementation patterns before new features - sync bridge had versioning model", timing: "sprint", status: "active", outcome: null },
     ] },
   ],
 };
