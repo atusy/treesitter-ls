@@ -60,7 +60,38 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 121,
+    pbi_id: "PBI-143",
+    goal: "Implement fully async signatureHelp for Rust code blocks in Markdown, completing ADR-0009 async migration for high-frequency LSP methods",
+    status: "planning",
+    subtasks: [
+      {
+        test: "Unit test verifies TokioAsyncLanguageServerPool.signature_help() returns Option<SignatureHelp>",
+        implementation: "Add signature_help() method to TokioAsyncLanguageServerPool following hover/completion pattern with ServerState tracking",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Follow existing hover()/completion() pattern", "Reuse sync_document for didOpen/didChange", "30s timeout matching other methods"],
+      },
+      {
+        test: "grep confirms signatureHelp handler uses async pool.signature_help() path instead of spawn_blocking",
+        implementation: "Modify signature_help.rs to use tokio_async_pool.signature_help() for bridged requests",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Replace spawn_blocking with async pool call", "Remove sync connection take/return pattern", "Forward notifications via pool channel"],
+      },
+      {
+        test: "E2E test test_lsp_signature_help.lua passes with async implementation",
+        implementation: "Verify existing E2E test works with new async path - no changes expected if implementation correct",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Existing test should pass unchanged", "May need timeout adjustment per Sprint 120 lesson (15s -> 90s pattern)"],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
@@ -70,10 +101,10 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-118: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-119: git log -- scrum.yaml, scrum.ts
   completed: [
     { number: 120, pbi_id: "PBI-142", goal: "Implement fully async completion with TokioAsyncLanguageServerPool", status: "done", subtasks: [] },
-    { number: 118, pbi_id: "PBI-147", goal: "Wait for rust-analyzer indexing completion before returning connection, enabling single hover requests without retry loops", status: "done", subtasks: [] },
+    { number: 119, pbi_id: "PBI-141", goal: "Implement fully async goto_definition with ServerState tracking", status: "done", subtasks: [] },
   ],
 
   // Recent 2 retrospectives | Sprint 1-116: modular refactoring pattern, E2E indexing waits, vertical slice validation, RAII cleanup
