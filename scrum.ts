@@ -128,7 +128,7 @@ const scrum: ScrumDashboard = {
       status: "ready",
     },
     // ADR-0010: Completed PBI-151 (Sprint 118), PBI-150 (Sprint 119), PBI-149 (Sprint 120)
-    // ADR-0011: Completed PBI-152 (Sprint 121)
+    // ADR-0011: Completed PBI-152 (Sprint 121), PBI-153 (Sprint 122)
     {
       id: "PBI-153",
       story: {
@@ -142,7 +142,7 @@ const scrum: ScrumDashboard = {
         { criterion: "Nested wildcard resolution applies outer then inner wildcards", verification: "Unit test: resolve languages._ -> languages.python, then bridge._ -> bridge.rust" },
         { criterion: "Language-specific and bridge-specific values override their respective wildcards", verification: "Unit test: python.bridge.javascript overrides _.bridge._ settings" },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-154",
@@ -164,7 +164,7 @@ const scrum: ScrumDashboard = {
     number: 122,
     pbi_id: "PBI-153",
     goal: "Enable wildcard keys in languages and bridge configurations for default settings",
-    status: "review",
+    status: "done",
     subtasks: [
       {
         test: "Unit test: languages['rust'] inherits enabled/bridge from languages['_']",
@@ -207,10 +207,10 @@ const scrum: ScrumDashboard = {
       { name: "E2E tests pass", run: "make test_nvim" },
     ],
   },
-  // Historical sprints (recent 2) | Sprint 1-119: git log -- scrum.yaml, scrum.ts | Sprint 120-121: config
+  // Historical sprints (recent 2) | Sprint 1-119: git log -- scrum.yaml, scrum.ts | Sprint 120-122: config
   completed: [
+    { number: 122, pbi_id: "PBI-153", goal: "Enable wildcard keys in languages and bridge configurations for default settings", status: "done", subtasks: [] },
     { number: 121, pbi_id: "PBI-152", goal: "Enable wildcard _ key in captureMappings for defaults", status: "done", subtasks: [] },
-    { number: 120, pbi_id: "PBI-149", goal: "Load user config from XDG_CONFIG_HOME", status: "done", subtasks: [] },
   ],
   // Retrospectives (recent 2) | Sprint 1-120: wildcard strategies, XDG patterns
   retrospectives: [
