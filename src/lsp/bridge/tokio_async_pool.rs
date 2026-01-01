@@ -17,6 +17,19 @@ use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+/// Server state for tracking indexing status.
+///
+/// Language servers like rust-analyzer require an indexing phase after startup
+/// before they can provide accurate results. This enum tracks whether a server
+/// is still indexing or ready to provide full results.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServerState {
+    /// Server is still indexing, may return empty/incomplete results
+    Indexing,
+    /// Server has finished indexing, returns full results
+    Ready,
+}
+
 /// Pool of tokio-based async language server connections.
 ///
 /// Unlike `AsyncLanguageServerPool` which uses `spawn_blocking` for initialization,
@@ -31,6 +44,8 @@ pub struct TokioAsyncLanguageServerPool {
     notification_sender: mpsc::Sender<Value>,
     /// Document versions per virtual URI (for didOpen/didChange tracking)
     document_versions: DashMap<String, u32>,
+    /// Server states per connection key (for indexing state tracking)
+    server_states: DashMap<String, ServerState>,
 }
 
 impl TokioAsyncLanguageServerPool {
@@ -44,6 +59,7 @@ impl TokioAsyncLanguageServerPool {
             virtual_uris: DashMap::new(),
             notification_sender,
             document_versions: DashMap::new(),
+            server_states: DashMap::new(),
         }
     }
 
@@ -77,6 +93,9 @@ impl TokioAsyncLanguageServerPool {
         let conn = Arc::new(conn);
         self.connections.insert(key.to_string(), conn.clone());
         self.virtual_uris.insert(key.to_string(), virtual_uri);
+        // Initialize server state to Indexing (ADR-0010: informative message during indexing)
+        self.server_states
+            .insert(key.to_string(), ServerState::Indexing);
 
         Some(conn)
     }
@@ -203,6 +222,22 @@ impl TokioAsyncLanguageServerPool {
     /// Used internally to track document versions for didOpen/didChange.
     pub fn set_document_version(&self, uri: &str, version: u32) {
         self.document_versions.insert(uri.to_string(), version);
+    }
+
+    /// Get the server state for a connection key.
+    ///
+    /// Returns the current server state (Indexing/Ready) if the connection exists,
+    /// or None if no connection has been established for this key.
+    pub fn get_server_state(&self, key: &str) -> Option<ServerState> {
+        self.server_states.get(key).map(|v| *v)
+    }
+
+    /// Set the server state for a connection key.
+    ///
+    /// Used to transition from Indexing to Ready when the server
+    /// returns a non-empty response.
+    pub fn set_server_state(&self, key: &str, state: ServerState) {
+        self.server_states.insert(key.to_string(), state);
     }
 }
 
@@ -892,6 +927,50 @@ mod tests {
         assert!(
             pool.get_document_version(uri).is_none(),
             "Version should remain unset when notification fails"
+        );
+    }
+
+    /// Test that new connection starts with state Indexing.
+    ///
+    /// AC1: TokioAsyncLanguageServerPool tracks ServerState enum per connection,
+    /// starting in Indexing state after spawn.
+    #[tokio::test]
+    async fn new_connection_starts_with_state_indexing() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Before getting connection, no state should exist
+        assert!(
+            pool.get_server_state("rust-analyzer").is_none(),
+            "No server state should exist before connection"
+        );
+
+        // Get a connection (should spawn, initialize, and set state to Indexing)
+        let conn = pool.get_connection("rust-analyzer", &config).await;
+        assert!(conn.is_some(), "Should get a connection");
+
+        // After connection is established, state should be Indexing
+        let state = pool.get_server_state("rust-analyzer");
+        assert!(
+            state.is_some(),
+            "Server state should exist after connection"
+        );
+        assert_eq!(
+            state.unwrap(),
+            super::ServerState::Indexing,
+            "New connection should start with Indexing state"
         );
     }
 }
