@@ -59,7 +59,7 @@ const scrum: ScrumDashboard = {
           verification: "Integration test opens Markdown with Rust code block, requests hover, receives type info",
         },
       ],
-      status: "ready",
+      status: "done",
     },
   ],
 
@@ -67,7 +67,7 @@ const scrum: ScrumDashboard = {
     number: 113,
     pbi_id: "PBI-140",
     goal: "Implement fully async hover bridging with TokioAsyncBridgeConnection reader task, TokioAsyncLanguageServerPool, and wire into hover_impl to replace spawn_blocking pattern",
-    status: "in_progress",
+    status: "done",
     subtasks: [
       // Subtask 1: Implement reader task with select! for clean shutdown (AC1)
       {
@@ -128,8 +128,8 @@ const scrum: ScrumDashboard = {
         test: "Integration test: Open Markdown with Rust code block, request hover in code block, receive type info",
         implementation: "Create test in tests/ that spawns treesitter-ls, opens Markdown file with ```rust block, sends textDocument/hover, verifies Hover response contains Rust type information",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "0de999b", message: "test(e2e): add hover E2E test for Markdown code blocks", phase: "green" }],
         notes: ["AC4 verification", "Can use existing test pattern from test_auto_install_integration.rs", "Verify hover content contains fn signature or type info"],
       },
     ],
