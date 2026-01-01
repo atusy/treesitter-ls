@@ -114,11 +114,9 @@ impl TokioAsyncLanguageServerPool {
 
         let root_uri = format!("file://{}", temp_dir.display());
 
-        // Spawn connection using TokioAsyncBridgeConnection
-        // Note: spawn() takes command and args, but we need to set the working directory.
-        // For now, we'll spawn without changing directory and rely on the process default.
-        // TODO: Add cwd support to TokioAsyncBridgeConnection::spawn()
-        let conn = TokioAsyncBridgeConnection::spawn(program, &args)
+        // Spawn connection using TokioAsyncBridgeConnection with cwd set to temp_dir
+        // This is critical for language servers like rust-analyzer that need to find Cargo.toml
+        let conn = TokioAsyncBridgeConnection::spawn_with_cwd(program, &args, Some(&temp_dir))
             .await
             .ok()?;
 
@@ -280,12 +278,21 @@ impl TokioAsyncLanguageServerPool {
             .ok()?;
 
         // Parse response
-        result
-            .response?
-            .get("result")
-            .cloned()
-            .filter(|r| !r.is_null())
-            .and_then(|r| serde_json::from_value(r).ok())
+        let response = result.response?;
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio_async_pool",
+            "[DEFINITION] Response: {:?}",
+            response
+        );
+
+        let result_value = response.get("result").cloned().filter(|r| !r.is_null())?;
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio_async_pool",
+            "[DEFINITION] Result value: {:?}",
+            result_value
+        );
+
+        serde_json::from_value(result_value).ok()
     }
 
     /// Ensure a document is open in the language server.

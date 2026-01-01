@@ -50,21 +50,31 @@ T["markdown"]["definition"] = function()
 	local before = child.api.nvim_win_get_cursor(0)
 	MiniTest.expect.equality(before[1], 9, "Cursor should start on line 9")
 
-	-- Call definition in child vim
-	child.lua([[vim.lsp.buf.definition()]])
+	-- Call definition with retry - rust-analyzer may need time to index
+	-- Similar to hover test which also retries for indexing
+	local jumped = false
+	for _ = 1, 20 do
+		child.lua([[vim.lsp.buf.definition()]])
 
-	-- Poll child's cursor position until it moves to line 4 or timeout
-	-- This properly waits for the async LSP response in the child
-	local jumped = helper.wait(10000, function()
-		local line = child.api.nvim_win_get_cursor(0)[1]
-		return line == 4
-	end, 100)
+		-- Wait for cursor to move to line 4
+		local did_jump = helper.wait(1000, function()
+			local line = child.api.nvim_win_get_cursor(0)[1]
+			return line == 4
+		end, 50)
+
+		if did_jump then
+			jumped = true
+			break
+		end
+
+		-- Wait before retry (rust-analyzer may still be indexing)
+		vim.wait(500)
+	end
 
 	-- Get final cursor position for error message
 	local after = child.api.nvim_win_get_cursor(0)
 
 	-- Assert the jump occurred
-
 	MiniTest.expect.equality(
 		after[1],
 		4,

@@ -61,15 +61,36 @@ impl TokioAsyncBridgeConnection {
     /// A new TokioAsyncBridgeConnection wrapping the spawned process
     #[allow(dead_code)]
     pub async fn spawn(command: &str, args: &[&str]) -> Result<Self, String> {
+        Self::spawn_with_cwd(command, args, None).await
+    }
+
+    /// Spawn a language server process with explicit working directory.
+    ///
+    /// # Arguments
+    /// * `command` - The command to spawn
+    /// * `args` - Arguments to pass to the command
+    /// * `cwd` - Optional working directory for the process
+    #[allow(dead_code)]
+    pub async fn spawn_with_cwd(
+        command: &str,
+        args: &[&str],
+        cwd: Option<&std::path::Path>,
+    ) -> Result<Self, String> {
         use std::process::Stdio;
         use tokio::process::Command;
 
         // Spawn the child process with piped stdin/stdout
-        let mut child = Command::new(command)
-            .args(args)
+        let mut cmd = Command::new(command);
+        cmd.args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::null());
+
+        if let Some(dir) = cwd {
+            cmd.current_dir(dir);
+        }
+
+        let mut child = cmd
             .spawn()
             .map_err(|e| format!("Failed to spawn process '{}': {}", command, e))?;
 
