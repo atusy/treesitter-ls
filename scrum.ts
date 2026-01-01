@@ -151,7 +151,46 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 117,
+    pbi_id: "PBI-146",
+    goal: "Track document versions per virtual URI, send didOpen on first access and didChange with incremented version on subsequent accesses, ensuring hover responses reflect the latest code",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "pool_tracks_document_versions_per_uri",
+        implementation: "Add document_versions: DashMap<String, u32> to TokioAsyncLanguageServerPool",
+        type: "behavioral",
+        status: "green",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "first_access_sends_did_open_with_version_1",
+        implementation: "Check if URI exists in document_versions, if not send didOpen and insert version 1",
+        type: "behavioral",
+        status: "green",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "subsequent_access_sends_did_change_with_incremented_version",
+        implementation: "If URI exists, increment version, send didChange with new content",
+        type: "behavioral",
+        status: "green",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "hover_returns_updated_content_after_edit (E2E)",
+        implementation: "Verify the full flow works end-to-end",
+        type: "behavioral",
+        status: "green",
+        commits: [],
+        notes: [],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
