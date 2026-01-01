@@ -29,6 +29,8 @@ pub struct TokioAsyncLanguageServerPool {
     virtual_uris: DashMap<String, String>,
     /// Channel for forwarding $/progress notifications
     notification_sender: mpsc::Sender<Value>,
+    /// Document versions per virtual URI (for didOpen/didChange tracking)
+    document_versions: DashMap<String, u32>,
 }
 
 impl TokioAsyncLanguageServerPool {
@@ -41,6 +43,7 @@ impl TokioAsyncLanguageServerPool {
             connections: DashMap::new(),
             virtual_uris: DashMap::new(),
             notification_sender,
+            document_versions: DashMap::new(),
         }
     }
 
@@ -186,6 +189,21 @@ impl TokioAsyncLanguageServerPool {
     pub fn notification_sender(&self) -> &mpsc::Sender<Value> {
         &self.notification_sender
     }
+
+    /// Get the document version for a URI.
+    ///
+    /// Returns the current version number if the URI has been opened,
+    /// or None if the URI has not been opened yet.
+    pub fn get_document_version(&self, uri: &str) -> Option<u32> {
+        self.document_versions.get(uri).map(|v| *v)
+    }
+
+    /// Set the document version for a URI.
+    ///
+    /// Used internally to track document versions for didOpen/didChange.
+    pub fn set_document_version(&self, uri: &str, version: u32) {
+        self.document_versions.insert(uri.to_string(), version);
+    }
 }
 
 /// High-level async bridge request methods.
@@ -216,8 +234,8 @@ impl TokioAsyncLanguageServerPool {
         // Get virtual file URI
         let virtual_uri = self.get_virtual_uri(key)?;
 
-        // Send didOpen
-        self.ensure_document_open(&conn, &virtual_uri, language_id, content)
+        // Sync document (didOpen on first access, didChange on subsequent)
+        self.sync_document(&conn, &virtual_uri, language_id, content)
             .await?;
 
         // Send hover request
@@ -243,28 +261,50 @@ impl TokioAsyncLanguageServerPool {
             .and_then(|r| serde_json::from_value(r).ok())
     }
 
-    /// Ensure a document is open in the language server.
-    async fn ensure_document_open(
+    /// Sync document content with the language server.
+    ///
+    /// On first access for a URI: sends didOpen with version 1.
+    /// On subsequent access: sends didChange with incremented version.
+    ///
+    /// This replaces `ensure_document_open` to properly handle the LSP protocol
+    /// requirement that didOpen is only sent once per document, and subsequent
+    /// content updates use didChange with incrementing versions.
+    pub async fn sync_document(
         &self,
         conn: &super::tokio_connection::TokioAsyncBridgeConnection,
         uri: &str,
         language_id: &str,
         content: &str,
     ) -> Option<()> {
-        // TODO: Track document versions per connection
-        // For now, always send didOpen
-        let params = serde_json::json!({
-            "textDocument": {
-                "uri": uri,
-                "languageId": language_id,
-                "version": 1,
-                "text": content,
-            }
-        });
-
-        conn.send_notification("textDocument/didOpen", params)
-            .await
-            .ok()
+        if let Some(current_version) = self.get_document_version(uri) {
+            // Document already open - send didChange with incremented version
+            let new_version = current_version + 1;
+            let params = serde_json::json!({
+                "textDocument": {
+                    "uri": uri,
+                    "version": new_version,
+                },
+                "contentChanges": [{ "text": content }]
+            });
+            self.set_document_version(uri, new_version);
+            conn.send_notification("textDocument/didChange", params)
+                .await
+                .ok()
+        } else {
+            // First time - send didOpen with version 1
+            let params = serde_json::json!({
+                "textDocument": {
+                    "uri": uri,
+                    "languageId": language_id,
+                    "version": 1,
+                    "text": content,
+                }
+            });
+            self.set_document_version(uri, 1);
+            conn.send_notification("textDocument/didOpen", params)
+                .await
+                .ok()
+        }
     }
 }
 
@@ -523,5 +563,287 @@ mod tests {
                 assert!(!arr.is_empty(), "Hover array should not be empty");
             }
         }
+    }
+
+    /// E2E test: hover returns updated content after document edit.
+    ///
+    /// Subtask 4: Verify that when content is changed via sync_document,
+    /// subsequent hover requests return information from the updated content.
+    #[tokio::test]
+    async fn hover_returns_updated_content_after_edit() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // First content: function returns i32
+        let content1 = "fn get_value() -> i32 { 42 }";
+        let position = tower_lsp::lsp_types::Position {
+            line: 0,
+            character: 3,
+        };
+
+        // First hover request (with initial content)
+        let mut hover1 = None;
+        for _attempt in 0..10 {
+            hover1 = pool
+                .hover(
+                    "rust-analyzer",
+                    &config,
+                    "file:///test.rs",
+                    "rust",
+                    content1,
+                    position,
+                )
+                .await;
+
+            if hover1.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+
+        assert!(hover1.is_some(), "First hover should return result");
+        let hover1_content = match hover1.unwrap().contents {
+            tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
+            tower_lsp::lsp_types::HoverContents::Scalar(s) => match s {
+                tower_lsp::lsp_types::MarkedString::String(s) => s,
+                tower_lsp::lsp_types::MarkedString::LanguageString(ls) => ls.value,
+            },
+            tower_lsp::lsp_types::HoverContents::Array(arr) => arr
+                .into_iter()
+                .map(|s| match s {
+                    tower_lsp::lsp_types::MarkedString::String(s) => s,
+                    tower_lsp::lsp_types::MarkedString::LanguageString(ls) => ls.value,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        };
+        assert!(
+            hover1_content.contains("i32"),
+            "First hover should show i32 return type, got: {}",
+            hover1_content
+        );
+
+        // Second content: function returns String
+        let content2 = "fn get_value() -> String { String::new() }";
+
+        // Second hover request (with updated content)
+        let mut hover2 = None;
+        for _attempt in 0..10 {
+            hover2 = pool
+                .hover(
+                    "rust-analyzer",
+                    &config,
+                    "file:///test.rs",
+                    "rust",
+                    content2,
+                    position,
+                )
+                .await;
+
+            if hover2.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+
+        assert!(hover2.is_some(), "Second hover should return result");
+        let hover2_content = match hover2.unwrap().contents {
+            tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
+            tower_lsp::lsp_types::HoverContents::Scalar(s) => match s {
+                tower_lsp::lsp_types::MarkedString::String(s) => s,
+                tower_lsp::lsp_types::MarkedString::LanguageString(ls) => ls.value,
+            },
+            tower_lsp::lsp_types::HoverContents::Array(arr) => arr
+                .into_iter()
+                .map(|s| match s {
+                    tower_lsp::lsp_types::MarkedString::String(s) => s,
+                    tower_lsp::lsp_types::MarkedString::LanguageString(ls) => ls.value,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        };
+        assert!(
+            hover2_content.contains("String"),
+            "Second hover should show String return type (not i32), got: {}",
+            hover2_content
+        );
+        assert!(
+            !hover2_content.contains("i32"),
+            "Second hover should NOT show i32 (should be updated), got: {}",
+            hover2_content
+        );
+
+        // Verify version incremented (may be > 2 due to retries)
+        let virtual_uri = pool.get_virtual_uri("rust-analyzer").unwrap();
+        let version = pool.get_document_version(&virtual_uri).unwrap();
+        assert!(
+            version >= 2,
+            "Version should be at least 2 after two hover calls, got: {}",
+            version
+        );
+    }
+
+    /// Test that subsequent access sends didChange with incremented version.
+    ///
+    /// Subtask 3: When sync_document is called for a URI that has already been
+    /// opened, it should send didChange with incremented version.
+    #[tokio::test]
+    async fn subsequent_access_sends_did_change_with_incremented_version() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Get a connection to establish the virtual URI
+        let conn = pool.get_connection("rust-analyzer", &config).await;
+        assert!(conn.is_some(), "Should get a connection");
+        let conn = conn.unwrap();
+
+        let virtual_uri = pool.get_virtual_uri("rust-analyzer").unwrap();
+
+        // First access - should send didOpen with version 1
+        let content1 = "fn main() {}";
+        pool.sync_document(&conn, &virtual_uri, "rust", content1)
+            .await;
+        assert_eq!(
+            pool.get_document_version(&virtual_uri),
+            Some(1),
+            "Version should be 1 after first access"
+        );
+
+        // Second access - should send didChange with version 2
+        let content2 = "fn main() { let x = 42; }";
+        pool.sync_document(&conn, &virtual_uri, "rust", content2)
+            .await;
+        assert_eq!(
+            pool.get_document_version(&virtual_uri),
+            Some(2),
+            "Version should be 2 after second access (didChange)"
+        );
+
+        // Third access - should send didChange with version 3
+        let content3 = "fn main() { let x = 100; }";
+        pool.sync_document(&conn, &virtual_uri, "rust", content3)
+            .await;
+        assert_eq!(
+            pool.get_document_version(&virtual_uri),
+            Some(3),
+            "Version should be 3 after third access (didChange)"
+        );
+    }
+
+    /// Test that first access sends didOpen with version 1.
+    ///
+    /// Subtask 2: When ensure_document_open is called for a URI that hasn't been
+    /// opened yet, it should send didOpen with version 1 and store version 1.
+    #[tokio::test]
+    async fn first_access_sends_did_open_with_version_1() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Get a connection to establish the virtual URI
+        let conn = pool.get_connection("rust-analyzer", &config).await;
+        assert!(conn.is_some(), "Should get a connection");
+        let conn = conn.unwrap();
+
+        let virtual_uri = pool.get_virtual_uri("rust-analyzer").unwrap();
+
+        // Before first access, no version should exist
+        assert!(
+            pool.get_document_version(&virtual_uri).is_none(),
+            "No version should exist before first access"
+        );
+
+        // Call sync_document (new name for ensure_document_open)
+        let content = "fn main() {}";
+        pool.sync_document(&conn, &virtual_uri, "rust", content)
+            .await;
+
+        // After first access, version should be 1
+        assert_eq!(
+            pool.get_document_version(&virtual_uri),
+            Some(1),
+            "Version should be 1 after first access (didOpen)"
+        );
+    }
+
+    /// Test that pool tracks document versions per URI.
+    ///
+    /// Subtask 1: TokioAsyncLanguageServerPool should have a document_versions field
+    /// that tracks the version number for each virtual URI.
+    #[tokio::test]
+    async fn pool_tracks_document_versions_per_uri() {
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        // Pool should have document_versions field accessible via method
+        // Initially, no URIs should have versions
+        assert!(
+            pool.get_document_version("file:///test.rs").is_none(),
+            "No version should exist for unknown URI"
+        );
+
+        // After setting a version, it should be retrievable
+        pool.set_document_version("file:///test.rs", 1);
+        assert_eq!(
+            pool.get_document_version("file:///test.rs"),
+            Some(1),
+            "Version 1 should be set for URI"
+        );
+
+        // Updating version should work
+        pool.set_document_version("file:///test.rs", 2);
+        assert_eq!(
+            pool.get_document_version("file:///test.rs"),
+            Some(2),
+            "Version should be updated to 2"
+        );
+
+        // Different URIs should have independent versions
+        pool.set_document_version("file:///other.rs", 5);
+        assert_eq!(
+            pool.get_document_version("file:///test.rs"),
+            Some(2),
+            "First URI version should be unchanged"
+        );
+        assert_eq!(
+            pool.get_document_version("file:///other.rs"),
+            Some(5),
+            "Second URI should have its own version"
+        );
     }
 }
