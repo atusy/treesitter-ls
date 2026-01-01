@@ -35,37 +35,28 @@ const scrum: ScrumDashboard = {
   product_backlog: [
     // ADR-0009 Implementation: Vertical slices with user-facing value
     // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117)
-    // Rejected: PBI-147 (wait for indexing) - replaced by PBI-149 (informative message approach)
     {
-      id: "PBI-149",
+      id: "PBI-147",
       story: {
         role: "Rustacean editing Markdown",
-        capability: "see informative message when hover fails due to server indexing",
-        benefit: "I understand why hover isn't working and know I can retry later",
+        capability: "get hover results on first request without needing to retry",
+        benefit: "hover works reliably the first time I trigger it on a new code block",
       },
       acceptance_criteria: [
         {
-          criterion: "TokioAsyncLanguageServerPool tracks ServerState enum (Indexing/Ready) per connection, starting in Indexing state after spawn",
-          verification: "Unit test: new connection starts with state Indexing",
+          criterion: "spawn_and_initialize waits for rust-analyzer to complete initial indexing",
+          verification: "Unit test verifies hover is not called until indexing is complete",
         },
         {
-          criterion: "hover_impl returns '{ contents: \"⏳ indexing (rust-analyzer)\" }' when ServerState is Indexing",
-          verification: "Unit test: hover request with Indexing state returns informative message",
+          criterion: "Wait uses $/progress notifications to detect indexing completion",
+          verification: "Unit test verifies $/progress notifications are monitored and indexing end is detected",
         },
         {
-          criterion: "ServerState transitions from Indexing to Ready after first non-empty hover or completion response",
-          verification: "Unit test: verify state transition on non-empty response; empty responses keep Indexing state",
-        },
-        {
-          criterion: "Other LSP features (completion, signatureHelp, definition, references) return empty/null during Indexing without special message",
-          verification: "Unit test: completion returns [], definition returns null during Indexing state",
-        },
-        {
-          criterion: "End-to-end flow works: hover during indexing shows message, hover after Ready shows normal content",
-          verification: "E2E test: trigger hover immediately after server spawn (verify message), wait and retry (verify normal hover)",
+          criterion: "Single hover request returns result without retry loop",
+          verification: "E2E test verifies single hover request returns result (no retry loop needed)",
         },
       ],
-      status: "done",
+      status: "ready",
     },
     {
       id: "PBI-141",
@@ -137,63 +128,10 @@ const scrum: ScrumDashboard = {
       status: "ready",
     },
     // ADR-0010 Implementation: Configuration Merging Strategy
-    {
-      id: "PBI-151",
-      story: {
-        role: "treesitter-ls user managing configurations",
-        capability: "configure query files using a unified queries field with automatic type inference",
-        benefit: "I write less configuration and filenames like highlights.scm are self-documenting",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "QueryItem struct with path (required) and kind (optional) fields parses correctly",
-          verification: "Unit test verifies TOML parsing of queries array with and without kind field",
-        },
-        {
-          criterion: "Type inference: *highlights*.scm -> highlights, *locals*.scm -> locals, *injections*.scm -> injections",
-          verification: "Unit test verifies type inference for various filename patterns",
-        },
-        {
-          criterion: "Default kind is highlights when filename has no recognizable pattern",
-          verification: "Unit test verifies custom.scm and python.scm default to highlights",
-        },
-      ],
-      status: "ready",
-    },
+    // Completed: PBI-151 (Sprint 118)
   ],
 
-  sprint: {
-    number: 118,
-    pbi_id: "PBI-151",
-    goal: "Enable unified query configuration with a queries array that infers type from filename patterns (*highlights*.scm, *locals*.scm, *injections*.scm), reducing configuration verbosity",
-    status: "done",
-    subtasks: [
-      {
-        test: "Verify QueryItem struct with path (required) and kind (optional) fields parses from TOML correctly",
-        implementation: "Define QueryItem struct with serde derives for path: String and kind: Option<QueryKind>",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "d7c430f", message: "feat(config): add QueryItem struct and QueryKind enum for unified query configuration", phase: "green" }],
-        notes: [],
-      },
-      {
-        test: "Verify type inference: *highlights*.scm -> highlights, *locals*.scm -> locals, *injections*.scm -> injections",
-        implementation: "Implement infer_query_kind() function that matches filename patterns to QueryKind enum",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "a275d04", message: "feat(config): add infer_query_kind function for filename-based type inference", phase: "green" }],
-        notes: [],
-      },
-      {
-        test: "Verify custom.scm and python.scm (no recognizable pattern) default to highlights kind",
-        implementation: "Return QueryKind::Highlights as default when no pattern matches in infer_query_kind()",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "a275d04", message: "feat(config): add infer_query_kind function for filename-based type inference", phase: "green" }],
-        notes: ["Combined with subtask 2 since both were implemented in same function"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -205,18 +143,17 @@ const scrum: ScrumDashboard = {
 
   // Historical sprints (recent 2) | Sprint 1-117: git log -- scrum.yaml, scrum.ts
   completed: [
-    { number: 118, pbi_id: "PBI-149", goal: "Show informative 'indexing' message during hover when rust-analyzer is still initializing, with state tracking to transition to normal responses once ready", status: "done", subtasks: [] },
-    { number: 117, pbi_id: "PBI-146", goal: "Track document versions per virtual URI, send didOpen on first access and didChange with incremented version on subsequent accesses, ensuring hover responses reflect the latest code", status: "done", subtasks: [] },
+    { number: 118, pbi_id: "PBI-151", goal: "Enable unified query configuration with queries array and type inference from filename patterns", status: "done", subtasks: [] },
+    { number: 117, pbi_id: "PBI-146", goal: "Track document versions per virtual URI, send didOpen on first access and didChange with incremented version", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-116: modular refactoring pattern, E2E indexing waits, vertical slice validation
+  // Recent 2 retrospectives | Sprint 1-117: TDD patterns, backward compatibility decisions, transient test failures
   retrospectives: [
     { sprint: 118, improvements: [
-      { action: "ADR-driven development accelerates implementation - ADR-0010 pre-defined architecture, state machine, and detection heuristic", timing: "sprint", status: "active", outcome: null },
-      { action: "Reusable patterns across sprints reduce cognitive load - DashMap from Sprint 117 enabled consistent state tracking", timing: "immediate", status: "completed", outcome: "server_states: DashMap<String, ServerState> mirrors document_versions pattern" },
-      { action: "E2E test retries indicate timing assumptions - 20-attempt loop with 500ms wait works but shows brittleness", timing: "sprint", status: "active", outcome: null },
-      { action: "Non-deterministic test assertions reduce reliability - comment 'may or may not see indexing message' shows test unpredictability", timing: "product", status: "active", outcome: null },
-      { action: "Feature changes ripple to existing tests - hover test updated for indexing state shows broader impact than anticipated", timing: "sprint", status: "active", outcome: null },
+      { action: "Combined subtasks indicate shared implementation - consider merging during planning when default behavior is intrinsic to core function", timing: "immediate", status: "completed", outcome: "Subtasks 2 and 3 merged: infer_query_kind() includes default in a275d04" },
+      { action: "New public types exported via config.rs need explicit pub - apply YAGNI-pub: verify each pub is needed", timing: "immediate", status: "completed", outcome: "QueryKind, QueryItem, infer_query_kind exported in config.rs for external use" },
+      { action: "Document backward compatibility decisions during planning - not mid-sprint", timing: "sprint", status: "active", outcome: null },
+      { action: "Investigate transient E2E markdown loading failures - may indicate timing issues in test setup", timing: "product", status: "active", outcome: null },
     ] },
     { sprint: 117, improvements: [
       { action: "Study reference implementation patterns before new features - sync bridge had versioning model", timing: "sprint", status: "active", outcome: null },
