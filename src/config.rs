@@ -52,6 +52,40 @@ pub fn resolve_with_wildcard(map: &CaptureMappings, key: &str) -> Option<QueryTy
     }
 }
 
+/// Resolve a language key from a map with wildcard fallback and merging.
+///
+/// Implements ADR-0011 wildcard config inheritance for languages HashMap:
+/// - If both wildcard ("_") and specific key exist: merge them (specific overrides wildcard)
+/// - If only wildcard exists: return wildcard
+/// - If only specific key exists: return specific key
+/// - If neither exists: return None
+///
+/// The merge creates a new LanguageConfig where specific values override wildcard values.
+pub fn resolve_language_with_wildcard(
+    map: &HashMap<String, LanguageConfig>,
+    key: &str,
+) -> Option<LanguageConfig> {
+    let wildcard = map.get("_");
+    let specific = map.get(key);
+
+    match (wildcard, specific) {
+        (Some(w), Some(s)) => {
+            // Merge: start with wildcard, override with specific
+            Some(LanguageConfig {
+                library: s.library.clone().or_else(|| w.library.clone()),
+                queries: s.queries.clone().or_else(|| w.queries.clone()),
+                highlights: s.highlights.clone().or_else(|| w.highlights.clone()),
+                locals: s.locals.clone().or_else(|| w.locals.clone()),
+                injections: s.injections.clone().or_else(|| w.injections.clone()),
+                bridge: s.bridge.clone().or_else(|| w.bridge.clone()),
+            })
+        }
+        (Some(w), None) => Some(w.clone()),
+        (None, Some(s)) => Some(s.clone()),
+        (None, None) => None,
+    }
+}
+
 /// Returns the default search paths for parsers and queries.
 /// Uses the platform-specific data directory (via `dirs` crate):
 /// - Linux: ~/.local/share/treesitter-ls
@@ -1471,6 +1505,52 @@ mod tests {
             resolved.highlights.get("type.builtin"),
             Some(&"type.defaultLibrary".to_string()),
             "Should include rust-specific 'type.builtin'"
+        );
+    }
+
+    // PBI-153: Languages Wildcard Inheritance (ADR-0011)
+
+    #[test]
+    fn test_resolve_language_with_wildcard_returns_wildcard_when_specific_absent() {
+        // ADR-0011: languages['rust'] inherits from languages['_']
+        // When languages only has "_" and we ask for "rust",
+        // we should get the wildcard's settings
+        let mut languages: HashMap<String, LanguageConfig> = HashMap::new();
+
+        // Wildcard has library and bridge settings
+        let mut wildcard_bridge = HashMap::new();
+        wildcard_bridge.insert(
+            "rust".to_string(),
+            settings::BridgeLanguageConfig { enabled: true },
+        );
+
+        languages.insert(
+            "_".to_string(),
+            LanguageConfig {
+                library: Some("/default/path.so".to_string()),
+                queries: None,
+                highlights: Some(vec!["/default/highlights.scm".to_string()]),
+                locals: None,
+                injections: None,
+                bridge: Some(wildcard_bridge),
+            },
+        );
+
+        // Resolve for "rust" which doesn't exist - should return wildcard
+        let result = resolve_language_with_wildcard(&languages, "rust");
+
+        assert!(result.is_some(), "Should return Some when wildcard exists");
+        let resolved = result.unwrap();
+        assert_eq!(
+            resolved.library,
+            Some("/default/path.so".to_string()),
+            "Should inherit library from wildcard"
+        );
+        assert!(resolved.bridge.is_some(), "Should inherit bridge from wildcard");
+        let bridge = resolved.bridge.as_ref().unwrap();
+        assert!(
+            bridge.get("rust").is_some_and(|c| c.enabled),
+            "Should inherit bridge settings from wildcard"
         );
     }
 
