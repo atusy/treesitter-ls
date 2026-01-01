@@ -24,7 +24,12 @@ impl std::fmt::Display for UserConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             UserConfigError::ParseError { path, source } => {
-                write!(f, "Failed to parse user config at {}: {}", path.display(), source)
+                write!(
+                    f,
+                    "Failed to parse user config at {}: {}",
+                    path.display(),
+                    source
+                )
             }
         }
     }
@@ -56,11 +61,10 @@ pub fn load_user_config() -> UserConfigResult<Option<TreeSitterSettings>> {
     }
 
     // Read and parse the file
-    let contents = std::fs::read_to_string(&path)
-        .map_err(|_| UserConfigError::ParseError {
-            path: path.clone(),
-            source: toml::from_str::<TreeSitterSettings>("").unwrap_err(), // Placeholder error for IO issues
-        })?;
+    let contents = std::fs::read_to_string(&path).map_err(|_| UserConfigError::ParseError {
+        path: path.clone(),
+        source: toml::from_str::<TreeSitterSettings>("").unwrap_err(), // Placeholder error for IO issues
+    })?;
 
     let settings = toml::from_str::<TreeSitterSettings>(&contents)
         .map_err(|e| UserConfigError::ParseError { path, source: e })?;
@@ -78,12 +82,20 @@ pub fn load_user_config() -> UserConfigResult<Option<TreeSitterSettings>> {
 pub fn user_config_path() -> Option<PathBuf> {
     // Check XDG_CONFIG_HOME first
     if let Ok(xdg_config) = std::env::var("XDG_CONFIG_HOME") {
-        return Some(PathBuf::from(xdg_config).join("treesitter-ls").join("treesitter-ls.toml"));
+        return Some(
+            PathBuf::from(xdg_config)
+                .join("treesitter-ls")
+                .join("treesitter-ls.toml"),
+        );
     }
 
     // Fallback to ~/.config/treesitter-ls/treesitter-ls.toml
     // dirs::home_dir() returns the user's home directory
-    dirs::home_dir().map(|home| home.join(".config").join("treesitter-ls").join("treesitter-ls.toml"))
+    dirs::home_dir().map(|home| {
+        home.join(".config")
+            .join("treesitter-ls")
+            .join("treesitter-ls.toml")
+    })
 }
 
 #[cfg(test)]
@@ -114,7 +126,10 @@ mod tests {
             }
         }
 
-        assert!(path.is_some(), "user_config_path should return Some when XDG_CONFIG_HOME is set");
+        assert!(
+            path.is_some(),
+            "user_config_path should return Some when XDG_CONFIG_HOME is set"
+        );
         let path = path.unwrap();
         assert_eq!(
             path,
@@ -146,7 +161,10 @@ mod tests {
 
         // On a normal system, we should get a path even without XDG_CONFIG_HOME
         // It should fall back to $HOME/.config/treesitter-ls/treesitter-ls.toml
-        assert!(path.is_some(), "user_config_path should return Some even when XDG_CONFIG_HOME is unset");
+        assert!(
+            path.is_some(),
+            "user_config_path should return Some even when XDG_CONFIG_HOME is unset"
+        );
         let path = path.unwrap();
 
         // Verify the path structure - should end with treesitter-ls/treesitter-ls.toml
@@ -189,7 +207,10 @@ mod tests {
         }
 
         // Should succeed with None (no error, just missing file)
-        assert!(result.is_ok(), "load_user_config should return Ok for missing file");
+        assert!(
+            result.is_ok(),
+            "load_user_config should return Ok for missing file"
+        );
         assert!(
             result.unwrap().is_none(),
             "load_user_config should return None when config file is missing"
@@ -232,12 +253,22 @@ mod tests {
         }
 
         // Should succeed with Some(settings)
-        assert!(result.is_ok(), "load_user_config should return Ok for valid file");
+        assert!(
+            result.is_ok(),
+            "load_user_config should return Ok for valid file"
+        );
         let settings = result.unwrap();
-        assert!(settings.is_some(), "load_user_config should return Some for existing file");
+        assert!(
+            settings.is_some(),
+            "load_user_config should return Some for existing file"
+        );
 
         let settings = settings.unwrap();
-        assert_eq!(settings.auto_install, Some(false), "should parse autoInstall");
+        assert_eq!(
+            settings.auto_install,
+            Some(false),
+            "should parse autoInstall"
+        );
         assert_eq!(
             settings.search_paths,
             Some(vec!["/user/custom/path".to_string()]),
@@ -282,7 +313,10 @@ mod tests {
         }
 
         // Should return an error with descriptive message
-        assert!(result.is_err(), "load_user_config should return Err for invalid TOML");
+        assert!(
+            result.is_err(),
+            "load_user_config should return Err for invalid TOML"
+        );
         let error = result.unwrap_err();
 
         // Error message should include the file path
