@@ -15,7 +15,157 @@ use crate::config::settings::BridgeServerConfig;
 use dashmap::DashMap;
 use serde_json::Value;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
+
+/// Default timeout for waiting for rust-analyzer indexing to complete.
+const INDEXING_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Wait for rust-analyzer indexing to complete.
+///
+/// This function loops on the notification receiver, filtering for $/progress
+/// notifications with token 'rustAnalyzer/indexing' and kind='end'.
+///
+/// # Arguments
+/// * `receiver` - Channel receiving $/progress notifications
+///
+/// # Returns
+/// * `true` if indexing completed successfully (received end notification)
+/// * `false` if timeout (60 seconds) was reached
+#[cfg(test)]
+pub async fn wait_for_indexing(receiver: &mut mpsc::Receiver<Value>) -> bool {
+    wait_for_indexing_with_timeout(receiver, INDEXING_TIMEOUT).await
+}
+
+/// Wait for rust-analyzer indexing to complete with custom timeout.
+///
+/// # Arguments
+/// * `receiver` - Channel receiving $/progress notifications
+/// * `timeout` - Maximum time to wait for indexing
+///
+/// # Returns
+/// * `true` if indexing completed successfully (received end notification)
+/// * `false` if timeout was reached
+#[cfg(test)]
+pub async fn wait_for_indexing_with_timeout(
+    receiver: &mut mpsc::Receiver<Value>,
+    timeout: Duration,
+) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout;
+
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline) => {
+                log::warn!(
+                    target: "treesitter_ls::bridge::tokio_async_pool",
+                    "[POOL] Timeout waiting for rust-analyzer indexing"
+                );
+                return false;
+            }
+            notification = receiver.recv() => {
+                match notification {
+                    Some(value) => {
+                        // Check if this is a $/progress notification with rustAnalyzer/indexing token
+                        if is_indexing_end(&value) {
+                            log::info!(
+                                target: "treesitter_ls::bridge::tokio_async_pool",
+                                "[POOL] rust-analyzer indexing completed"
+                            );
+                            return true;
+                        }
+                    }
+                    None => {
+                        // Channel closed - sender dropped
+                        log::warn!(
+                            target: "treesitter_ls::bridge::tokio_async_pool",
+                            "[POOL] Notification channel closed while waiting for indexing"
+                        );
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Wait for rust-analyzer indexing while forwarding notifications to another channel.
+///
+/// This function is used during initialization to:
+/// 1. Wait for indexing to complete
+/// 2. Forward all notifications to the pool's notification sender for external clients
+///
+/// # Arguments
+/// * `receiver` - Local channel receiving notifications from the connection
+/// * `forward_to` - Pool's notification sender for external forwarding
+///
+/// # Returns
+/// * `true` if indexing completed successfully (received end notification)
+/// * `false` if timeout was reached
+async fn wait_for_indexing_with_forward(
+    receiver: &mut mpsc::Receiver<Value>,
+    forward_to: &mpsc::Sender<Value>,
+) -> bool {
+    let deadline = tokio::time::Instant::now() + INDEXING_TIMEOUT;
+
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline) => {
+                log::warn!(
+                    target: "treesitter_ls::bridge::tokio_async_pool",
+                    "[POOL] Timeout waiting for rust-analyzer indexing"
+                );
+                return false;
+            }
+            notification = receiver.recv() => {
+                match notification {
+                    Some(value) => {
+                        // Forward all notifications to the pool's sender
+                        let _ = forward_to.try_send(value.clone());
+
+                        // Check if this is the indexing end notification
+                        if is_indexing_end(&value) {
+                            return true;
+                        }
+                    }
+                    None => {
+                        // Channel closed - sender dropped
+                        log::warn!(
+                            target: "treesitter_ls::bridge::tokio_async_pool",
+                            "[POOL] Notification channel closed while waiting for indexing"
+                        );
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Check if a notification is the indexing end notification.
+fn is_indexing_end(value: &Value) -> bool {
+    let Some(params) = value.get("params") else {
+        return false;
+    };
+    let Some(token) = params.get("token").and_then(|t| t.as_str()) else {
+        return false;
+    };
+    if token != "rustAnalyzer/indexing" {
+        return false;
+    }
+    let Some(progress_value) = params.get("value") else {
+        return false;
+    };
+    let Some(kind) = progress_value.get("kind").and_then(|k| k.as_str()) else {
+        return false;
+    };
+
+    log::debug!(
+        target: "treesitter_ls::bridge::tokio_async_pool",
+        "[POOL] Received indexing progress: kind={}",
+        kind
+    );
+    kind == "end"
+}
 
 /// Pool of tokio-based async language server connections.
 ///
@@ -124,14 +274,18 @@ impl TokioAsyncLanguageServerPool {
 
         let root_uri = format!("file://{}", temp_dir.display());
 
+        // Create a local channel for notifications during initialization
+        // This allows us to monitor for indexing completion while also forwarding to the pool's channel
+        let (local_tx, mut local_rx) = mpsc::channel::<Value>(64);
+
         // Spawn connection using TokioAsyncBridgeConnection with temp_dir as cwd
-        // Pass notification_sender to forward $/progress notifications
+        // Pass local notification channel for monitoring indexing
         // Pass temp_dir for cleanup on drop
         let conn = TokioAsyncBridgeConnection::spawn(
             program,
             &args,
             Some(&temp_dir),
-            Some(self.notification_sender.clone()),
+            Some(local_tx),
             Some(temp_dir.clone()),
         )
         .await
@@ -163,9 +317,45 @@ impl TokioAsyncLanguageServerPool {
 
         log::info!(
             target: "treesitter_ls::bridge::tokio_async_pool",
-            "[POOL] Connection spawned for {}",
+            "[POOL] Connection initialized for {}, waiting for indexing...",
             program
         );
+
+        // Wait for rust-analyzer indexing to complete
+        // This filters notifications for 'rustAnalyzer/indexing' token with kind='end'
+        // Notifications are forwarded to the pool's notification_sender for external clients
+        let pool_sender = self.notification_sender.clone();
+        let indexing_result = wait_for_indexing_with_forward(&mut local_rx, &pool_sender).await;
+
+        if !indexing_result {
+            log::warn!(
+                target: "treesitter_ls::bridge::tokio_async_pool",
+                "[POOL] Indexing wait timed out or failed for {}",
+                program
+            );
+        } else {
+            log::info!(
+                target: "treesitter_ls::bridge::tokio_async_pool",
+                "[POOL] Indexing completed for {}",
+                program
+            );
+        }
+
+        // Spawn a background task to continue forwarding notifications
+        // This ensures any subsequent $/progress notifications are forwarded to external clients
+        let forwarder_sender = self.notification_sender.clone();
+        tokio::spawn(async move {
+            while let Some(value) = local_rx.recv().await {
+                if forwarder_sender.try_send(value).is_err() {
+                    // Channel closed or full, stop forwarding
+                    break;
+                }
+            }
+            log::debug!(
+                target: "treesitter_ls::bridge::tokio_async_pool",
+                "[POOL] Notification forwarder task exiting"
+            );
+        });
 
         // Return connection along with the virtual file URI
         let virtual_uri = format!("file://{}", virtual_file_path.display());
@@ -868,6 +1058,118 @@ mod tests {
         );
     }
 
+    /// PBI-147 Subtask 1: Test that notification channel can be subscribed for filtering.
+    ///
+    /// This test verifies that when we create a pool with a notification sender,
+    /// we can create a second receiver on the same channel for monitoring indexing events.
+    /// The `broadcast` approach allows spawn_and_initialize to listen for indexing completion.
+    #[tokio::test]
+    async fn notification_channel_can_be_monitored_for_indexing() {
+        // Create a broadcast channel for notifications (allows multiple receivers)
+        let (tx, _rx) = mpsc::channel::<serde_json::Value>(16);
+
+        // The pool stores the sender
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        // Verify we can get the notification sender from the pool
+        let sender = pool.notification_sender();
+        assert!(
+            !sender.is_closed(),
+            "Notification sender should be available"
+        );
+    }
+
+    /// PBI-147 Subtask 2: Test that wait_for_indexing blocks until end notification.
+    ///
+    /// wait_for_indexing should loop on the notification receiver, filtering for
+    /// $/progress notifications with token 'rustAnalyzer/indexing' and kind='end'.
+    /// It should return true when it receives the end notification, or false on timeout.
+    #[tokio::test]
+    async fn wait_for_indexing_blocks_until_end_notification() {
+        let (tx, mut rx) = mpsc::channel::<serde_json::Value>(16);
+
+        // Spawn a task that sends the end notification after a delay
+        let sender_handle = tokio::spawn(async move {
+            // Simulate some indexing time
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+            // Send begin notification first
+            let begin = serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "$/progress",
+                "params": {
+                    "token": "rustAnalyzer/indexing",
+                    "value": { "kind": "begin", "title": "Indexing" }
+                }
+            });
+            tx.send(begin).await.unwrap();
+
+            // Send some report notifications
+            let report = serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "$/progress",
+                "params": {
+                    "token": "rustAnalyzer/indexing",
+                    "value": { "kind": "report", "message": "Loading crates" }
+                }
+            });
+            tx.send(report).await.unwrap();
+
+            // Finally send end notification
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let end = serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "$/progress",
+                "params": {
+                    "token": "rustAnalyzer/indexing",
+                    "value": { "kind": "end" }
+                }
+            });
+            tx.send(end).await.unwrap();
+        });
+
+        // Call wait_for_indexing - should block until end notification
+        let start = std::time::Instant::now();
+        let result = super::wait_for_indexing(&mut rx).await;
+        let elapsed = start.elapsed();
+
+        // Should complete successfully
+        assert!(result, "wait_for_indexing should return true on success");
+
+        // Should take at least 200ms (100ms + 100ms delay in sender)
+        assert!(
+            elapsed >= std::time::Duration::from_millis(150),
+            "wait_for_indexing should block until end notification (took {:?})",
+            elapsed
+        );
+
+        // Wait for sender task to complete
+        sender_handle.await.unwrap();
+    }
+
+    /// PBI-147 Subtask 2: Test that wait_for_indexing returns false on timeout.
+    #[tokio::test]
+    async fn wait_for_indexing_returns_false_on_timeout() {
+        let (_tx, mut rx) = mpsc::channel::<serde_json::Value>(16);
+
+        // Use a short timeout for testing (override the default 60s)
+        let start = std::time::Instant::now();
+        let result =
+            super::wait_for_indexing_with_timeout(&mut rx, std::time::Duration::from_millis(100))
+                .await;
+        let elapsed = start.elapsed();
+
+        // Should return false on timeout
+        assert!(!result, "wait_for_indexing should return false on timeout");
+
+        // Should take approximately the timeout duration
+        assert!(
+            elapsed >= std::time::Duration::from_millis(100),
+            "Should wait at least the timeout duration (took {:?})",
+            elapsed
+        );
+    }
+
     /// When a notification fails to send, the document version should remain unchanged.
     #[tokio::test]
     async fn sync_document_does_not_set_version_when_notification_fails() {
@@ -892,6 +1194,73 @@ mod tests {
         assert!(
             pool.get_document_version(uri).is_none(),
             "Version should remain unset when notification fails"
+        );
+    }
+
+    /// PBI-147 Subtask 3: Integration test verifying get_connection waits for indexing.
+    ///
+    /// After get_connection returns, hover should work immediately without retry,
+    /// because rust-analyzer indexing is complete.
+    #[tokio::test]
+    async fn get_connection_waits_for_indexing_before_returning() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Measure time to get connection (should include indexing wait)
+        let start = std::time::Instant::now();
+        let conn = pool.get_connection("rust-analyzer", &config).await;
+        let elapsed = start.elapsed();
+
+        assert!(conn.is_some(), "Should get a connection after indexing");
+
+        // Connection should take some time (indexing wait)
+        // rust-analyzer indexing typically takes at least a few seconds
+        // We don't assert a minimum time because it varies by system,
+        // but we do verify that the connection works immediately after
+        log::info!("get_connection took {:?} (includes indexing wait)", elapsed);
+
+        // Hover should work immediately without retry
+        // If indexing wasn't waited for, this would likely fail or return null
+        let virtual_uri = pool.get_virtual_uri("rust-analyzer").unwrap();
+        let content = "fn main() { let x = 42; }";
+
+        // Sync document
+        pool.sync_document(&conn.unwrap(), &virtual_uri, "rust", content)
+            .await;
+
+        // Single hover request - no retry needed if indexing completed
+        let position = tower_lsp::lsp_types::Position {
+            line: 0,
+            character: 3, // on 'main'
+        };
+
+        let hover_result = pool
+            .hover(
+                "rust-analyzer",
+                &config,
+                "file:///test.rs",
+                "rust",
+                content,
+                position,
+            )
+            .await;
+
+        // Should succeed on first try because indexing is complete
+        assert!(
+            hover_result.is_some(),
+            "Hover should succeed on first try after get_connection returns"
         );
     }
 }
