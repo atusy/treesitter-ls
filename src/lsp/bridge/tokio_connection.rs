@@ -18,7 +18,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{ChildStdin, ChildStdout};
+use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
@@ -43,6 +43,8 @@ pub struct TokioAsyncBridgeConnection {
     reader_handle: Option<JoinHandle<()>>,
     /// Shutdown signal sender
     shutdown_tx: Option<oneshot::Sender<()>>,
+    /// Child process handle (for cleanup on drop)
+    child: Option<Child>,
 }
 
 impl TokioAsyncBridgeConnection {
@@ -86,6 +88,7 @@ impl TokioAsyncBridgeConnection {
             .map_err(|e| format!("Failed to spawn process '{}': {}", command, e))?;
 
         // Extract stdin and stdout from the child process (AC2)
+        // Note: We keep the child handle for cleanup on drop
         let stdin = child
             .stdin
             .take()
@@ -116,6 +119,7 @@ impl TokioAsyncBridgeConnection {
             next_request_id: AtomicI64::new(1),
             reader_handle: Some(reader_handle),
             shutdown_tx: Some(shutdown_tx),
+            child: Some(child),
         })
     }
 
@@ -793,5 +797,35 @@ mod tests {
         // Verify connection works
         let stdin_guard = conn.stdin.lock().await;
         drop(stdin_guard);
+    }
+
+    /// PBI-148 Subtask 1: Test that spawn() stores Child handle for cleanup.
+    ///
+    /// The Child handle must be stored in the connection struct so that Drop
+    /// can properly send shutdown/exit requests and wait for the process to exit.
+    /// Without storing the Child, the process becomes orphaned when the connection
+    /// is dropped.
+    #[tokio::test]
+    async fn spawn_stores_child_handle_for_cleanup() {
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None).await;
+        assert!(result.is_ok(), "spawn() should succeed");
+
+        let mut conn = result.unwrap();
+
+        // Verify the child field exists and is Some after spawn
+        assert!(
+            conn.child.is_some(),
+            "child handle should be stored after spawn"
+        );
+
+        // Verify we can access the child and it's alive
+        if let Some(ref mut child) = conn.child {
+            // try_wait returns Ok(None) if process is still running
+            let status = child.try_wait();
+            assert!(
+                matches!(status, Ok(None)),
+                "child process should be running after spawn"
+            );
+        }
     }
 }
