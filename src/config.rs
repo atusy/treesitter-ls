@@ -54,8 +54,11 @@ pub fn merge_settings(
                 // Prefer primary auto_install, fall back to fallback
                 auto_install: primary.auto_install.or(fallback.auto_install),
 
-                // Prefer primary language_servers, fall back to fallback
-                language_servers: primary.language_servers.or(fallback.language_servers),
+                // Deep merge language_servers HashMap
+                language_servers: merge_language_servers(
+                    fallback.language_servers,
+                    primary.language_servers,
+                ),
             };
             Some(merged)
         }
@@ -227,6 +230,42 @@ fn merge_languages(
             .or_insert(primary_config);
     }
     fallback
+}
+
+fn merge_language_servers(
+    fallback: Option<HashMap<String, settings::BridgeServerConfig>>,
+    primary: Option<HashMap<String, settings::BridgeServerConfig>>,
+) -> Option<HashMap<String, settings::BridgeServerConfig>> {
+    match (fallback, primary) {
+        (None, None) => None,
+        (Some(servers), None) | (None, Some(servers)) => Some(servers),
+        (Some(mut fallback_servers), Some(primary_servers)) => {
+            // Deep merge: for each server key, merge individual BridgeServerConfig fields
+            for (key, primary_config) in primary_servers {
+                fallback_servers
+                    .entry(key)
+                    .and_modify(|fallback_config| {
+                        // For Vec fields: use primary if non-empty, else keep fallback
+                        if !primary_config.cmd.is_empty() {
+                            fallback_config.cmd = primary_config.cmd.clone();
+                        }
+                        if !primary_config.languages.is_empty() {
+                            fallback_config.languages = primary_config.languages.clone();
+                        }
+                        // For Option fields: primary.or(fallback)
+                        fallback_config.initialization_options = primary_config
+                            .initialization_options
+                            .clone()
+                            .or(fallback_config.initialization_options.take());
+                        fallback_config.workspace_type = primary_config
+                            .workspace_type
+                            .or(fallback_config.workspace_type.take());
+                    })
+                    .or_insert(primary_config);
+            }
+            Some(fallback_servers)
+        }
+    }
 }
 
 fn merge_capture_mappings(
@@ -917,6 +956,145 @@ mod tests {
         assert_eq!(
             result.languages["rust"].library,
             Some("/project/rust.so".to_string())
+        );
+    }
+
+    // PBI-150 Subtask 3: Deep merge for languageServers HashMap
+
+    #[test]
+    fn test_merge_all_language_servers_deep_merge() {
+        // Project adds initializationOptions to rust-analyzer, inherits cmd and languages from user
+        use serde_json::json;
+        use settings::{BridgeServerConfig, WorkspaceType};
+
+        let mut user_servers = HashMap::new();
+        user_servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["rust-analyzer".to_string()],
+                languages: vec!["rust".to_string()],
+                initialization_options: None,
+                workspace_type: Some(WorkspaceType::Cargo),
+            },
+        );
+
+        let user_config = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: Some(user_servers),
+        };
+
+        // Project only adds initializationOptions
+        let mut project_servers = HashMap::new();
+        project_servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec![],       // Empty, should inherit from user
+                languages: vec![], // Empty, should inherit from user
+                initialization_options: Some(json!({ "linkedProjects": ["./Cargo.toml"] })),
+                workspace_type: None, // Should inherit from user
+            },
+        );
+
+        let project_config = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: Some(project_servers),
+        };
+
+        let result = merge_all(&[Some(user_config), Some(project_config)]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        assert!(result.language_servers.is_some());
+        let servers = result.language_servers.as_ref().unwrap();
+        assert!(servers.contains_key("rust-analyzer"));
+
+        let ra = &servers["rust-analyzer"];
+
+        // cmd: inherited from user (project was empty)
+        assert_eq!(ra.cmd, vec!["rust-analyzer".to_string()]);
+
+        // languages: inherited from user (project was empty)
+        assert_eq!(ra.languages, vec!["rust".to_string()]);
+
+        // initializationOptions: added by project
+        assert!(ra.initialization_options.is_some());
+        let init_opts = ra.initialization_options.as_ref().unwrap();
+        assert!(init_opts.get("linkedProjects").is_some());
+
+        // workspaceType: inherited from user
+        assert_eq!(ra.workspace_type, Some(WorkspaceType::Cargo));
+    }
+
+    #[test]
+    fn test_merge_all_language_servers_adds_new_server() {
+        // User has rust-analyzer, project adds pyright - both should exist
+        use settings::BridgeServerConfig;
+
+        let mut user_servers = HashMap::new();
+        user_servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["rust-analyzer".to_string()],
+                languages: vec!["rust".to_string()],
+                initialization_options: None,
+                workspace_type: None,
+            },
+        );
+
+        let user_config = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: Some(user_servers),
+        };
+
+        let mut project_servers = HashMap::new();
+        project_servers.insert(
+            "pyright".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["pyright-langserver".to_string(), "--stdio".to_string()],
+                languages: vec!["python".to_string()],
+                initialization_options: None,
+                workspace_type: None,
+            },
+        );
+
+        let project_config = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: Some(project_servers),
+        };
+
+        let result = merge_all(&[Some(user_config), Some(project_config)]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        assert!(result.language_servers.is_some());
+        let servers = result.language_servers.as_ref().unwrap();
+
+        // Both servers should exist
+        assert!(servers.contains_key("rust-analyzer"));
+        assert!(servers.contains_key("pyright"));
+
+        // rust-analyzer from user
+        assert_eq!(
+            servers["rust-analyzer"].cmd,
+            vec!["rust-analyzer".to_string()]
+        );
+
+        // pyright from project
+        assert_eq!(
+            servers["pyright"].cmd,
+            vec!["pyright-langserver".to_string(), "--stdio".to_string()]
         );
     }
 }
