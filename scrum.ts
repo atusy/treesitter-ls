@@ -133,11 +133,50 @@ const scrum: ScrumDashboard = {
         { criterion: "Missing user config silently ignored (zero-config works)", verification: "Unit test: no error when file missing" },
         { criterion: "Invalid user config causes startup failure with clear error", verification: "Unit test: parse error produces descriptive message" },
       ],
-      status: "refining",
+      status: "ready",
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 120,
+    pbi_id: "PBI-149",
+    goal: "Enable users to set editor-wide defaults in a user config file at XDG standard location",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "Test user_config_path() returns $XDG_CONFIG_HOME/treesitter-ls/treesitter-ls.toml when XDG_CONFIG_HOME is set",
+        implementation: "Implement user_config_path() function that reads XDG_CONFIG_HOME env var and appends treesitter-ls/treesitter-ls.toml",
+        type: "behavioral",
+        status: "green",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Test user_config_path() returns ~/.config/treesitter-ls/treesitter-ls.toml when XDG_CONFIG_HOME is unset",
+        implementation: "Add fallback logic to user_config_path() using dirs::config_dir() or home_dir() with .config appended",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Test load_user_config() returns None (or default Config) when user config file does not exist",
+        implementation: "Implement load_user_config() that returns Ok(None) for missing file - zero-config experience preserved",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Test load_user_config() returns descriptive ConfigError when user config file exists but contains invalid TOML or schema",
+        implementation: "Add error handling that wraps TOML parse errors with context including file path and error location",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
