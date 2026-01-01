@@ -6,6 +6,7 @@ const userStoryRoles = [
   "Rustacean editing Markdown",
   "developer editing Lua files",
   "documentation author with Rust code blocks",
+  "treesitter-ls user managing configurations",
 ] as const satisfies readonly string[]; // Must have at least one role. Avoid generic roles like "user" or "admin". Remove obsolete roles freely.
 
 const scrum: ScrumDashboard = {
@@ -126,9 +127,64 @@ const scrum: ScrumDashboard = {
       ],
       status: "ready",
     },
+    // ADR-0010 Implementation: Configuration Merging Strategy
+    {
+      id: "PBI-151",
+      story: {
+        role: "treesitter-ls user managing configurations",
+        capability: "configure query files using a unified queries field with automatic type inference",
+        benefit: "I write less configuration and filenames like highlights.scm are self-documenting",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "QueryItem struct with path (required) and kind (optional) fields parses correctly",
+          verification: "Unit test verifies TOML parsing of queries array with and without kind field",
+        },
+        {
+          criterion: "Type inference: *highlights*.scm -> highlights, *locals*.scm -> locals, *injections*.scm -> injections",
+          verification: "Unit test verifies type inference for various filename patterns",
+        },
+        {
+          criterion: "Default kind is highlights when filename has no recognizable pattern",
+          verification: "Unit test verifies custom.scm and python.scm default to highlights",
+        },
+      ],
+      status: "ready",
+    },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 118,
+    pbi_id: "PBI-151",
+    goal: "Enable unified query configuration with a queries array that infers type from filename patterns (*highlights*.scm, *locals*.scm, *injections*.scm), reducing configuration verbosity",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "Verify QueryItem struct with path (required) and kind (optional) fields parses from TOML correctly",
+        implementation: "Define QueryItem struct with serde derives for path: String and kind: Option<QueryKind>",
+        type: "behavioral",
+        status: "completed",
+        commits: [{ hash: "d7c430f", message: "feat(config): add QueryItem struct and QueryKind enum for unified query configuration", phase: "green" }],
+        notes: [],
+      },
+      {
+        test: "Verify type inference: *highlights*.scm -> highlights, *locals*.scm -> locals, *injections*.scm -> injections",
+        implementation: "Implement infer_query_kind() function that matches filename patterns to QueryKind enum",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Verify custom.scm and python.scm (no recognizable pattern) default to highlights kind",
+        implementation: "Return QueryKind::Highlights as default when no pattern matches in infer_query_kind()",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
