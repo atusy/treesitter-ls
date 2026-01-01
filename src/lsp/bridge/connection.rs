@@ -459,15 +459,39 @@ impl LanguageServerConnection {
     /// Similar to `wait_for_indexing`, but returns any `$/progress` notifications
     /// received while waiting. This allows callers to forward progress notifications
     /// to the client during initialization.
+    ///
+    /// Uses DEFAULT_TIMEOUT to prevent indefinite hangs if the language server
+    /// is slow or unresponsive.
     fn wait_for_indexing_with_notifications(&mut self) -> Vec<Value> {
         let mut notifications = Vec::new();
+        let start = Instant::now();
 
         // Read messages until we get a publishDiagnostics notification
         // or timeout after consuming a few messages
         for _ in 0..50 {
+            // Check timeout before each iteration
+            if start.elapsed() > DEFAULT_TIMEOUT {
+                log::warn!(
+                    target: "treesitter_ls::bridge",
+                    "Timeout waiting for indexing after {:?}",
+                    DEFAULT_TIMEOUT
+                );
+                return notifications;
+            }
+
             // Read headers
             let mut content_length = 0;
             loop {
+                // Check timeout in inner loop as well
+                if start.elapsed() > DEFAULT_TIMEOUT {
+                    log::warn!(
+                        target: "treesitter_ls::bridge",
+                        "Timeout during header read while waiting for indexing after {:?}",
+                        DEFAULT_TIMEOUT
+                    );
+                    return notifications;
+                }
+
                 let mut line = String::new();
                 if self.stdout_reader.read_line(&mut line).ok().unwrap_or(0) == 0 {
                     return notifications; // EOF
