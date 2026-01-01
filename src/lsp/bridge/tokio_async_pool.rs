@@ -401,6 +401,59 @@ impl TokioAsyncLanguageServerPool {
         definition_result
     }
 
+    /// Send a completion request asynchronously.
+    ///
+    /// # Arguments
+    /// * `key` - Connection pool key
+    /// * `config` - Server configuration
+    /// * `_uri` - Document URI (unused, we use virtual URI)
+    /// * `language_id` - Language ID for the document
+    /// * `content` - Document content
+    /// * `position` - Completion position
+    pub async fn completion(
+        &self,
+        key: &str,
+        config: &BridgeServerConfig,
+        _uri: &str,
+        language_id: &str,
+        content: &str,
+        position: tower_lsp::lsp_types::Position,
+    ) -> Option<tower_lsp::lsp_types::CompletionResponse> {
+        let conn = self.get_connection(key, config).await?;
+
+        // Get virtual file URI
+        let virtual_uri = self.get_virtual_uri(key)?;
+
+        // Sync document (didOpen on first access, didChange on subsequent)
+        self.sync_document(&conn, &virtual_uri, language_id, content)
+            .await?;
+
+        // Send completion request
+        let params = serde_json::json!({
+            "textDocument": { "uri": virtual_uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let (_, receiver) = conn
+            .send_request("textDocument/completion", params)
+            .await
+            .ok()?;
+
+        // Await response asynchronously with timeout
+        let result = tokio::time::timeout(std::time::Duration::from_secs(30), receiver)
+            .await
+            .ok()?
+            .ok()?;
+
+        // Parse response - CompletionResponse can be CompletionItem[] or CompletionList
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
     /// Sync document content with the language server.
     ///
     /// On first access for a URI: sends didOpen with version 1.
@@ -1377,6 +1430,85 @@ fn main() {
             line.unwrap(),
             0,
             "Definition should be on line 0 (fn example)"
+        );
+    }
+
+    /// PBI-142 Subtask 1: Test that completion() returns CompletionResponse from rust-analyzer.
+    ///
+    /// completion() must:
+    /// 1. Get or create connection
+    /// 2. Sync document (didOpen/didChange)
+    /// 3. Send textDocument/completion request
+    /// 4. Await response
+    /// 5. Parse and return CompletionResponse
+    #[tokio::test]
+    async fn completion_returns_items_from_rust_analyzer() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Rust code with struct - completion after "p." should show field names
+        let content = r#"struct Point { x: i32, y: i32 }
+
+fn main() {
+    let p = Point { x: 1, y: 2 };
+    p.
+}"#;
+
+        // Position after "p." (line 4, character 6 - after the dot)
+        let position = tower_lsp::lsp_types::Position {
+            line: 4,
+            character: 6,
+        };
+
+        // Call completion() method
+        let completion_result = pool
+            .completion(
+                "rust-analyzer",
+                &config,
+                "file:///test.rs",
+                "rust",
+                content,
+                position,
+            )
+            .await;
+
+        // Should return Some(CompletionResponse) with items
+        assert!(
+            completion_result.is_some(),
+            "completion() should return Some(CompletionResponse) for struct field access"
+        );
+
+        let completion = completion_result.unwrap();
+
+        // Verify we got completion items
+        let items = match completion {
+            tower_lsp::lsp_types::CompletionResponse::Array(items) => items,
+            tower_lsp::lsp_types::CompletionResponse::List(list) => list.items,
+        };
+
+        assert!(
+            !items.is_empty(),
+            "Should have at least one completion item"
+        );
+
+        // Check that we got the expected field completions (x and y)
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            labels.iter().any(|l| *l == "x" || *l == "y"),
+            "Should include field completions (x or y), got: {:?}",
+            labels
         );
     }
 }
