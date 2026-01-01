@@ -29,12 +29,17 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-142 (Sprint 1-115) | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-143 (Sprint 1-116) | History: git log -- scrum.yaml, scrum.ts
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   product_backlog: [
-    // ADR-0009 Implementation: Vertical slices with user-facing value
+    // ADR-0008 async bridge implementation complete: hover, goto_definition, completion, signatureHelp
+    // Next: expand bridge to additional features (references, rename, codeAction, formatting, etc.)
+  ],
+
+  previous_sprints: [
     {
-      id: "PBI-143",
+      number: 116,
+      pbi_id: "PBI-143",
       story: {
         role: "Rustacean editing Markdown",
         capability: "have signatureHelp requests in Markdown code blocks use fully async I/O",
@@ -58,45 +63,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 116,
-    pbi_id: "PBI-143",
-    goal: "Implement TokioAsyncLanguageServerPool.signature_help() with async I/O and wire into signature_help_impl to replace spawn_blocking pattern for faster signatureHelp in Markdown code blocks",
-    status: "done",
-    subtasks: [
-      {
-        test: "Unit test verifies signature_help() returns SignatureHelp from lua-language-server",
-        implementation: "Add signature_help() method to TokioAsyncLanguageServerPool following hover/goto_definition/completion pattern",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "5699f03", message: "test(bridge): add signature_help test for TokioAsyncLanguageServerPool", phase: "green" },
-          { hash: "c1fca04", message: "feat(bridge): add signature_help() to TokioAsyncLanguageServerPool", phase: "green" },
-        ],
-        notes: ["Template: completion() method in tokio_async_pool.rs", "Use lua-language-server for faster test (like goto_definition test)"],
-      },
-      {
-        test: "Grep confirms async signature_help path in signature_help_impl.rs",
-        implementation: "Replace spawn_blocking with tokio_async_pool.signature_help() call in signature_help_impl",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "24931ff", message: "feat(lsp): wire signature_help_impl to use async TokioAsyncLanguageServerPool", phase: "green" },
-        ],
-        notes: ["Template: hover_impl.rs pattern", "Remove language_server_pool.take_connection call", "Use self.tokio_async_pool.signature_help()"],
-      },
-      {
-        test: "E2E test opens Markdown with Rust code block, requests signatureHelp, receives signatures",
-        implementation: "Update test_lsp_signature_help.lua with retry loop for rust-analyzer indexing",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "5dbec03", message: "test(e2e): update signature_help E2E test with retry loop", phase: "green" },
-        ],
-        notes: ["Existing test has 3s sleep - add retry loop like hover/completion tests", "Pattern: 20 iterations with 500ms sleep"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -106,22 +73,31 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-114: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-115: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 116, pbi_id: "PBI-143", goal: "Implement TokioAsyncLanguageServerPool.signature_help() with async I/O and wire into signature_help_impl to replace spawn_blocking pattern for faster signatureHelp in Markdown code blocks", status: "done", subtasks: [] },
     { number: 115, pbi_id: "PBI-142", goal: "Implement TokioAsyncLanguageServerPool.completion() with async I/O and wire into completion_impl to replace spawn_blocking pattern for faster completion in Markdown code blocks", status: "done", subtasks: [] },
-    { number: 114, pbi_id: "PBI-141", goal: "Implement TokioAsyncLanguageServerPool.goto_definition() with async I/O and wire into definition_impl to replace spawn_blocking pattern for faster go-to-definition in Markdown code blocks", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-113: modular refactoring pattern, E2E indexing waits
+  // Recent 2 retrospectives | Sprint 1-114: modular refactoring pattern, E2E indexing waits
   retrospectives: [
+    {
+      sprint: 116,
+      improvements: [
+        { action: "ADR-0008 async bridge implementation COMPLETE - all 4 core request types (hover, goto_definition, completion, signatureHelp) now use TokioAsyncLanguageServerPool with fully async I/O (no spawn_blocking)", timing: "immediate", status: "completed", outcome: "Sprint 116 completed signatureHelp; async bridge foundational layer complete" },
+        { action: "Pattern template approach proven highly effective - Sprint 116 followed completion() as template with zero friction; 3 subtasks completed in 4 commits (5699f03, c1fca04, 24931ff, 5dbec03)", timing: "immediate", status: "completed", outcome: "signatureHelp implementation straightforward by following completion pattern" },
+        { action: "E2E test type_definition failing (cursor at line 9, expected line 4) - appears unrelated to Sprint 116 work (signatureHelp); may be pre-existing or new issue in type_definition bridge path", timing: "sprint", status: "active", outcome: null },
+        { action: "Next bridge features to consider: typeDefinition, implementation, references, rename, codeAction, formatting, documentHighlight per ADR-0008 priority", timing: "product", status: "active", outcome: null },
+      ],
+    },
     {
       sprint: 115,
       improvements: [
         { action: "Template pattern (hover -> goto_definition -> completion) working smoothly - each new feature follows established pattern with minimal friction", timing: "immediate", status: "completed", outcome: "completion() implemented by following goto_definition() as template; pattern now proven across 3 features" },
         { action: "E2E test already existed for completion, just needed retry loop for rust-analyzer indexing - consistent pattern emerging across E2E tests", timing: "immediate", status: "completed", outcome: "E2E test passes with 20-iteration retry loop; same pattern as hover test" },
         { action: "Flaky test in sync bridge (did_open_uses_connection_info_write_virtual_file) still present - passes with --test-threads=1, fails intermittently with parallel execution", timing: "sprint", status: "active", outcome: null },
-        { action: "Continue pattern for PBI-143 (signatureHelp) - last remaining async bridge PBI; follow established template", timing: "sprint", status: "active", outcome: null },
-        { action: "Consider adding shared E2E test helper for retry pattern - duplicate retry logic across hover/completion tests could be extracted", timing: "product", status: "active", outcome: null },
+        { action: "Continue pattern for PBI-143 (signatureHelp) - last remaining async bridge PBI; follow established template", timing: "sprint", status: "completed", outcome: "Sprint 116 completed PBI-143 following completion template" },
+        { action: "Consider adding shared E2E test helper for retry pattern - duplicate retry logic across hover/completion/signatureHelp tests could be extracted", timing: "product", status: "active", outcome: null },
       ],
     },
     {
@@ -131,7 +107,7 @@ const scrum: ScrumDashboard = {
         { action: "Addressed Sprint 113 action: removed #[allow(dead_code)] annotations from TokioAsyncLanguageServerPool now that hover() and goto_definition() are wired into production", timing: "immediate", status: "completed", outcome: "Commit 58390b3 - kept dead_code only on has_connection() and notification_sender() (test-only or not yet used)" },
         { action: "Discovered cwd issue for rust-analyzer - language servers may need cwd set to workspace root; added spawn_with_cwd() to TokioAsyncBridgeConnection", timing: "immediate", status: "completed", outcome: "E2E test now passes with proper cwd handling for rust-analyzer" },
         { action: "Fix outdated comment in definition.rs (line 170) - says 'spawn_blocking' but code now uses async pool.goto_definition(); similar comments in inlay_hint.rs, implementation.rs also need update when those migrate to async", timing: "sprint", status: "active", outcome: null },
-        { action: "Continue pattern for PBI-142 (completion) and PBI-143 (signatureHelp) - follow hover/goto_definition template for consistent implementation", timing: "sprint", status: "completed", outcome: "Completed PBI-142 (completion) in Sprint 115 following same pattern" },
+        { action: "Continue pattern for PBI-142 (completion) and PBI-143 (signatureHelp) - follow hover/goto_definition template for consistent implementation", timing: "sprint", status: "completed", outcome: "Completed PBI-142 (completion) in Sprint 115, PBI-143 (signatureHelp) in Sprint 116" },
       ],
     },
   ],
