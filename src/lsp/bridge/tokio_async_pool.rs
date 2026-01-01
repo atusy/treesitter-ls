@@ -235,6 +235,59 @@ impl TokioAsyncLanguageServerPool {
             .and_then(|r| serde_json::from_value(r).ok())
     }
 
+    /// Send a goto_definition request asynchronously.
+    ///
+    /// # Arguments
+    /// * `key` - Connection pool key
+    /// * `config` - Server configuration
+    /// * `_uri` - Document URI (unused, we use virtual URI)
+    /// * `language_id` - Language ID for the document
+    /// * `content` - Document content
+    /// * `position` - Definition position
+    pub async fn goto_definition(
+        &self,
+        key: &str,
+        config: &BridgeServerConfig,
+        _uri: &str,
+        language_id: &str,
+        content: &str,
+        position: tower_lsp::lsp_types::Position,
+    ) -> Option<tower_lsp::lsp_types::GotoDefinitionResponse> {
+        let conn = self.get_connection(key, config).await?;
+
+        // Get virtual file URI
+        let virtual_uri = self.get_virtual_uri(key)?;
+
+        // Send didOpen
+        self.ensure_document_open(&conn, &virtual_uri, language_id, content)
+            .await?;
+
+        // Send definition request
+        let params = serde_json::json!({
+            "textDocument": { "uri": virtual_uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let (_, receiver) = conn
+            .send_request("textDocument/definition", params)
+            .await
+            .ok()?;
+
+        // Await response asynchronously with timeout
+        let result = tokio::time::timeout(std::time::Duration::from_secs(30), receiver)
+            .await
+            .ok()?
+            .ok()?;
+
+        // Parse response
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
     /// Ensure a document is open in the language server.
     async fn ensure_document_open(
         &self,
