@@ -127,28 +127,8 @@ const scrum: ScrumDashboard = {
       ],
       status: "ready",
     },
-    // ADR-0010 Implementation: Configuration Merging Strategy
-    // Completed: PBI-151 (Sprint 118), PBI-150 (Sprint 119)
-
-    // ADR-0011 Implementation: Wildcard Config Inheritance
-    // Phase 1: captureMappings wildcard (ready)
-    // Phase 2: languages wildcard (refining)
-    // Phase 3: languageServers wildcard (refining)
-    {
-      id: "PBI-152",
-      story: {
-        role: "treesitter-ls user managing configurations",
-        capability: "define common capture mappings once using a wildcard key and have them automatically apply to all languages",
-        benefit: "I avoid duplicating semantic token mappings across every language I configure",
-      },
-      acceptance_criteria: [
-        { criterion: "resolve_with_wildcard() function merges wildcard (_) with specific key", verification: "Unit test: merge(captureMappings['_'], captureMappings['rust']) returns combined mappings" },
-        { criterion: "Specific key values override wildcard values for same capture name", verification: "Unit test: rust-specific mapping overrides _ mapping for same capture" },
-        { criterion: "Missing specific key falls back to wildcard entirely", verification: "Unit test: captureMappings['python'] returns _ values when python key absent" },
-        { criterion: "captureMappings lookup uses wildcard resolution", verification: "E2E test: semantic tokens use mappings from _ when language-specific not defined" },
-      ],
-      status: "ready",
-    },
+    // ADR-0010: Completed PBI-151 (Sprint 118), PBI-150 (Sprint 119), PBI-149 (Sprint 120)
+    // ADR-0011: Completed PBI-152 (Sprint 121)
     {
       id: "PBI-153",
       story: {
@@ -179,65 +159,8 @@ const scrum: ScrumDashboard = {
       ],
       status: "refining",
     },
-
-    {
-      id: "PBI-149",
-      story: {
-        role: "treesitter-ls user managing configurations",
-        capability: "set my preferred editor defaults in a single user config file",
-        benefit: "my settings apply across all projects without duplicating configuration",
-      },
-      acceptance_criteria: [
-        { criterion: "User config loads from $XDG_CONFIG_HOME/treesitter-ls/treesitter-ls.toml", verification: "Unit test: config path resolves with XDG_CONFIG_HOME set" },
-        { criterion: "Falls back to ~/.config/treesitter-ls/treesitter-ls.toml when XDG unset", verification: "Unit test: fallback path when XDG not set" },
-        { criterion: "Missing user config silently ignored (zero-config works)", verification: "Unit test: no error when file missing" },
-        { criterion: "Invalid user config causes startup failure with clear error", verification: "Unit test: parse error produces descriptive message" },
-      ],
-      status: "done",
-    },
   ],
-
-  sprint: {
-    number: 121,
-    pbi_id: "PBI-152",
-    goal: "Enable users to define common capture mappings once using _ wildcard and have them apply to all languages",
-    status: "review",
-    subtasks: [
-      {
-        test: "resolve_with_wildcard() returns wildcard value when specific key absent - test with captureMappings['python'] where only '_' exists",
-        implementation: "Implement resolve_with_wildcard<K, V>(map: &HashMap<K, V>, key: &K, wildcard: &K) -> Option<&V> that checks key first, then wildcard",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "2c62805", message: "feat(config): add resolve_with_wildcard for ADR-0011 wildcard inheritance", phase: "green" }],
-        notes: [],
-      },
-      {
-        test: "resolve_with_wildcard() merges wildcard with specific key - test with captureMappings['rust'] having partial mappings combined with '_' defaults",
-        implementation: "Implement resolve_and_merge_with_wildcard() that deep-merges wildcard HashMap with specific key HashMap (specific overrides wildcard)",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Merge logic was already implemented in subtask 1 - test confirms behavior"],
-      },
-      {
-        test: "Specific capture name in language key overrides same capture name in wildcard - test '@function' in rust overrides '@function' in '_'",
-        implementation: "Ensure merge logic uses entry().or_insert() pattern so specific values take precedence over wildcard values",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Override behavior already implemented in merge logic"],
-      },
-      {
-        test: "E2E: semantic tokens use mappings from '_' when language-specific captureMappings not defined",
-        implementation: "Apply resolve_and_merge_with_wildcard() to captureMappings lookup in semantic_tokens.rs or config resolution path",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["apply_capture_mapping already implements fallback semantics - checks specific first, then wildcard. This achieves same result as merge approach."],
-      },
-    ],
-  },
-
+  sprint: null,
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
@@ -245,33 +168,24 @@ const scrum: ScrumDashboard = {
       { name: "E2E tests pass", run: "make test_nvim" },
     ],
   },
-
-  // Historical sprints (recent 2) | Sprint 1-118: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-119: git log -- scrum.yaml, scrum.ts
   completed: [
-    { number: 120, pbi_id: "PBI-149", goal: "Enable users to set editor-wide defaults in a user config file at XDG standard location", status: "done", subtasks: [] },
-    { number: 119, pbi_id: "PBI-150", goal: "Enable users to inherit settings from user config to project config without duplication via merge_all()", status: "done", subtasks: [] },
+    { number: 121, pbi_id: "PBI-152", goal: "Enable wildcard _ key in captureMappings for defaults", status: "done", subtasks: [] },
+    { number: 120, pbi_id: "PBI-149", goal: "Load user config from XDG_CONFIG_HOME", status: "done", subtasks: [] },
   ],
-
-  // Recent 2 retrospectives | Sprint 1-119: TDD patterns, backward compatibility decisions, transient test failures
+  // Retrospectives (recent 2) | Sprint 1-120: wildcard strategies, XDG patterns
   retrospectives: [
-    { sprint: 120, improvements: [
-      { action: "XDG path resolution pattern (XDG_CONFIG_HOME → fallback) is reusable - extract generic xdg_path() helper when 2nd usage appears (e.g., cache/data dirs)", timing: "sprint", status: "active", outcome: null },
-      { action: "Multi-sprint ADR implementation strategy worked well - ADR-0010 across 3 sprints (118: schema, 119: merge, 120: user config) - document as planning pattern", timing: "sprint", status: "active", outcome: null },
-      { action: "Integrate load_user_config() into merge_all() pipeline - PBI-149 implements loading but not wiring into config merge", timing: "product", status: "active", outcome: null },
-      { action: "Implement CLI --config option for project config path override (ADR-0010 Phase 4)", timing: "product", status: "active", outcome: null },
+    { sprint: 121, improvements: [
+      { action: "Two wildcard strategies documented in ADR-0011", timing: "immediate", status: "completed", outcome: "ADR-0011 notes" },
+      { action: "Decide canonical wildcard pattern for PBI-153/154", timing: "sprint", status: "active", outcome: null },
     ] },
-    { sprint: 119, improvements: [
-      { action: "Deep merge HashMap pattern (entry().and_modify().or_insert()) is reusable - extract to generic helper when 3rd usage appears", timing: "sprint", status: "active", outcome: null },
-      { action: "Empty Vec fields should inherit from fallback layer - Vec merge uses .is_empty() check, not Option semantics", timing: "immediate", status: "completed", outcome: "merge_language_servers: if !primary.cmd.is_empty() condition (lines 249, 252)" },
-      { action: "E2E test failures unrelated to PBI indicate technical debt - add test_lsp_document_highlight to product backlog", timing: "product", status: "active", outcome: null },
+    { sprint: 120, improvements: [
+      { action: "Integrate load_user_config() into merge_all() pipeline", timing: "product", status: "active", outcome: null },
     ] },
   ],
 };
 
-// ============================================================
-// Type Definitions (DO NOT MODIFY - request human review for schema changes)
-// ============================================================
-
+// Type Definitions (DO NOT MODIFY) =============================================
 // PBI lifecycle: draft (idea) -> refining (gathering info) -> ready (can start) -> done
 type PBIStatus = "draft" | "refining" | "ready" | "done";
 
