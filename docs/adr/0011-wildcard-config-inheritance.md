@@ -16,7 +16,7 @@ The expected behavior is that `rust` inherits all mappings from `_` and only ove
 
 This pattern could also apply to other HashMaps:
 - `languages._` could define default language settings (e.g., default `bridge` filter)
-- `bridge.servers._` could define default server settings
+- `languageServers._` could define default server settings
 
 ## Decision
 
@@ -54,8 +54,45 @@ This means:
 | HashMap | Wildcard Key | Use Case |
 |---------|--------------|----------|
 | `captureMappings` | `_` | Default capture-to-token mappings for all languages |
-| `languages` | `_` (future) | Default language settings (e.g., default `bridge` filter) |
-| `bridge.servers` | `_` (future) | Default server settings |
+| `languages` | `_` (future) | Default language settings (see nested wildcards below) |
+| `languages.{lang}.bridge` | `_` (future) | Default bridge settings for all injection targets |
+| `languageServers` | `_` (future) | Default server settings |
+
+### Nested Wildcards
+
+Wildcards can be nested when HashMaps contain other HashMaps. Resolution applies recursively:
+
+```
+effective[python].bridge[rust] = merge(
+    merge(languages["_"], languages["python"]).bridge["_"],
+    merge(languages["_"], languages["python"]).bridge["rust"]
+)
+```
+
+**Resolution order:**
+1. Resolve outer wildcard: `languages._` → `languages.python`
+2. Resolve inner wildcard: `bridge._` → `bridge.rust`
+
+### Example: languages._.bridge._ (Nested Wildcards)
+
+```toml
+# Default bridge settings for ALL languages and ALL injection targets
+[languages._.bridge._]
+enabled = true
+isolation = true
+
+# Python-specific: disable bridging to JavaScript
+[languages.python.bridge.javascript]
+enabled = false
+
+# Effective config for languages.python.bridge.rust:
+# enabled = true    # inherited from languages._.bridge._
+# isolation = true   # inherited from languages._.bridge._
+
+# Effective config for languages.python.bridge.javascript:
+# enabled = false   # overridden by python-specific setting
+# isolation = true   # inherited from languages._.bridge._
+```
 
 ### Example: captureMappings
 
@@ -103,6 +140,7 @@ This means:
 
 - **Two-phase resolution**: Must merge layers first, then resolve wildcards
 - **Complexity**: Users must understand both cross-layer and wildcard merging
+- **Nested wildcards add depth**: `languages._.bridge._` requires recursive resolution
 - **Order matters**: `_` must be processed before specific keys during resolution
 
 ### Neutral
@@ -139,6 +177,7 @@ fn resolve_with_wildcard<V: Merge>(
 
 ### Phase 2: languages Wildcard (Future)
 - [ ] Apply wildcard resolution to `languages._` for default language settings
+- [ ] Apply nested wildcard resolution to `languages.{lang}.bridge._` for default bridge settings
 - [ ] Integration test: Define `_` in user config, override in project
 
 ### Phase 3: languageServers Wildcard (Future)
