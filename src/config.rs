@@ -1476,4 +1476,58 @@ mod tests {
             "Should include rust-specific 'type.builtin'"
         );
     }
+
+    #[test]
+    fn test_resolve_with_wildcard_specific_overrides_same_capture_name() {
+        // ADR-0011: Specific key values override wildcard values for same capture name
+        // Example: rust has different "function" mapping than wildcard
+        let mut mappings = CaptureMappings::new();
+
+        // Wildcard has function -> function
+        let mut wildcard_highlights = HashMap::new();
+        wildcard_highlights.insert("function".to_string(), "function".to_string());
+        wildcard_highlights.insert("variable".to_string(), "variable".to_string());
+
+        mappings.insert(
+            "_".to_string(),
+            QueryTypeMappings {
+                highlights: wildcard_highlights,
+                locals: HashMap::new(),
+                folds: HashMap::new(),
+            },
+        );
+
+        // Rust overrides function mapping to suppress it (empty string)
+        let mut rust_highlights = HashMap::new();
+        rust_highlights.insert("function".to_string(), "".to_string());
+
+        mappings.insert(
+            "rust".to_string(),
+            QueryTypeMappings {
+                highlights: rust_highlights,
+                locals: HashMap::new(),
+                folds: HashMap::new(),
+            },
+        );
+
+        // Resolve for "rust" - rust's "function" should override wildcard's "function"
+        let result = resolve_with_wildcard(&mappings, "rust");
+
+        assert!(result.is_some(), "Should return merged mappings");
+        let resolved = result.unwrap();
+
+        // Overridden by rust-specific (empty string suppresses the token)
+        assert_eq!(
+            resolved.highlights.get("function"),
+            Some(&"".to_string()),
+            "Rust-specific 'function' should override wildcard 'function'"
+        );
+
+        // Still inherited from wildcard
+        assert_eq!(
+            resolved.highlights.get("variable"),
+            Some(&"variable".to_string()),
+            "Should still inherit 'variable' from wildcard"
+        );
+    }
 }
