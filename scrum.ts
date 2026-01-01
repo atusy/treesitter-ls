@@ -130,6 +130,56 @@ const scrum: ScrumDashboard = {
     // ADR-0010 Implementation: Configuration Merging Strategy
     // Completed: PBI-151 (Sprint 118), PBI-150 (Sprint 119)
 
+    // ADR-0011 Implementation: Wildcard Config Inheritance
+    // Phase 1: captureMappings wildcard (ready)
+    // Phase 2: languages wildcard (refining)
+    // Phase 3: languageServers wildcard (refining)
+    {
+      id: "PBI-152",
+      story: {
+        role: "treesitter-ls user managing configurations",
+        capability: "define common capture mappings once using a wildcard key and have them automatically apply to all languages",
+        benefit: "I avoid duplicating semantic token mappings across every language I configure",
+      },
+      acceptance_criteria: [
+        { criterion: "resolve_with_wildcard() function merges wildcard (_) with specific key", verification: "Unit test: merge(captureMappings['_'], captureMappings['rust']) returns combined mappings" },
+        { criterion: "Specific key values override wildcard values for same capture name", verification: "Unit test: rust-specific mapping overrides _ mapping for same capture" },
+        { criterion: "Missing specific key falls back to wildcard entirely", verification: "Unit test: captureMappings['python'] returns _ values when python key absent" },
+        { criterion: "captureMappings lookup uses wildcard resolution", verification: "E2E test: semantic tokens use mappings from _ when language-specific not defined" },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-153",
+      story: {
+        role: "treesitter-ls user managing configurations",
+        capability: "define default language settings and bridge configurations using wildcard keys",
+        benefit: "I set global defaults for all languages and only override specific languages that need different behavior",
+      },
+      acceptance_criteria: [
+        { criterion: "languages._ provides default settings inherited by all language entries", verification: "Unit test: languages['rust'] inherits enabled/bridge from languages['_']" },
+        { criterion: "languages.{lang}.bridge._ provides default bridge settings for all injection targets", verification: "Unit test: bridge['javascript'] inherits from bridge['_'] within a language" },
+        { criterion: "Nested wildcard resolution applies outer then inner wildcards", verification: "Unit test: resolve languages._ -> languages.python, then bridge._ -> bridge.rust" },
+        { criterion: "Language-specific and bridge-specific values override their respective wildcards", verification: "Unit test: python.bridge.javascript overrides _.bridge._ settings" },
+      ],
+      status: "refining",
+    },
+    {
+      id: "PBI-154",
+      story: {
+        role: "treesitter-ls user managing configurations",
+        capability: "define default language server settings using a wildcard key",
+        benefit: "I configure common server options once and only specify per-server overrides where needed",
+      },
+      acceptance_criteria: [
+        { criterion: "languageServers._ provides default settings inherited by all server entries", verification: "Unit test: languageServers['rust-analyzer'] inherits from languageServers['_']" },
+        { criterion: "Server-specific values override wildcard values", verification: "Unit test: rust-analyzer-specific rootMarkers override _ rootMarkers" },
+        { criterion: "Missing server key falls back to wildcard defaults", verification: "Unit test: languageServers['new-server'] returns _ values when specific key absent" },
+        { criterion: "Wildcard server settings work in semantic token flow", verification: "E2E test: server using inherited _ settings produces correct semantic tokens" },
+      ],
+      status: "refining",
+    },
+
     {
       id: "PBI-149",
       story: {
@@ -147,7 +197,46 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 121,
+    pbi_id: "PBI-152",
+    goal: "Enable users to define common capture mappings once using _ wildcard and have them apply to all languages",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "resolve_with_wildcard() returns wildcard value when specific key absent - test with captureMappings['python'] where only '_' exists",
+        implementation: "Implement resolve_with_wildcard<K, V>(map: &HashMap<K, V>, key: &K, wildcard: &K) -> Option<&V> that checks key first, then wildcard",
+        type: "behavioral",
+        status: "completed",
+        commits: [{ hash: "2c62805", message: "feat(config): add resolve_with_wildcard for ADR-0011 wildcard inheritance", phase: "green" }],
+        notes: [],
+      },
+      {
+        test: "resolve_with_wildcard() merges wildcard with specific key - test with captureMappings['rust'] having partial mappings combined with '_' defaults",
+        implementation: "Implement resolve_and_merge_with_wildcard() that deep-merges wildcard HashMap with specific key HashMap (specific overrides wildcard)",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Specific capture name in language key overrides same capture name in wildcard - test '@function' in rust overrides '@function' in '_'",
+        implementation: "Ensure merge logic uses entry().or_insert() pattern so specific values take precedence over wildcard values",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "E2E: semantic tokens use mappings from '_' when language-specific captureMappings not defined",
+        implementation: "Apply resolve_and_merge_with_wildcard() to captureMappings lookup in semantic_tokens.rs or config resolution path",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
