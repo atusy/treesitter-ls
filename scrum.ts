@@ -119,8 +119,8 @@ const scrum: ScrumDashboard = {
         test: "Integration test: hover_impl returns valid Hover through async path (no spawn_blocking)",
         implementation: "Modify hover_impl to call self.tokio_async_pool.hover() instead of spawn_blocking with sync connection, remove spawn_blocking call, use .await",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "b4c5c52", message: "feat(hover): replace spawn_blocking with async pool.hover()", phase: "green" }],
         notes: ["AC3: grep confirms no spawn_blocking in hover.rs", "Translate position host->virtual before call, virtual->host after response", "Forward progress notifications to client"],
       },
       // Subtask 7: End-to-end integration test with rust-analyzer
