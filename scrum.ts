@@ -29,54 +29,10 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-133 | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-134 | History: git log -- scrum.yaml, scrum.ts
   // PBI-091 (idle cleanup): Deferred - infrastructure already implemented, needs wiring (low priority)
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
   product_backlog: [
-    {
-      id: "PBI-132",
-      story: {
-        role: "developer editing Lua files",
-        capability: "have treesitter-ls remain responsive when bridged language servers are slow or unresponsive",
-        benefit: "the LSP does not hang indefinitely when rust-analyzer or other bridged servers fail to respond",
-      },
-      acceptance_criteria: [
-        { criterion: "Bridge I/O operations have configurable timeout", verification: "read_response_for_id_with_notifications accepts timeout parameter; defaults to 30 seconds" },
-        { criterion: "Timeout triggers graceful error handling", verification: "When timeout expires, function returns None response with empty notifications; no infinite loop" },
-        { criterion: "All bridge request methods use timeout", verification: "22+ *_with_notifications methods pass DEFAULT_TIMEOUT to read function" },
-        { criterion: "Unit test verifies timeout behavior", verification: "Test read_response_for_id_with_notifications returns None after timeout" },
-      ],
-      status: "done",
-    },
-    {
-      id: "PBI-133",
-      story: {
-        role: "developer editing Lua files",
-        capability: "have DashMap operations in DocumentStore verified safe and documented",
-        benefit: "the LSP does not freeze when concurrent document updates occur and future changes maintain safety",
-      },
-      acceptance_criteria: [
-        { criterion: "DashMap lock safety verified with concurrent test", verification: "Unit test spawns multiple threads calling update_document and get concurrently; no deadlock within 5 seconds" },
-        { criterion: "DocumentStore methods have lock safety comments", verification: "Each method using DashMap has comment explaining why lock pattern is safe (e.g., 'Ref consumed by and_then before insert')" },
-        { criterion: "CLAUDE.md DashMap pattern documented", verification: "CLAUDE.md 'DashMap Lock Pattern' section exists with safe/unsafe examples (already present)" },
-      ],
-      status: "done",
-    },
-    {
-      id: "PBI-134",
-      story: {
-        role: "developer editing Lua files",
-        capability: "have bridge connection use async request/response queue pattern",
-        benefit: "concurrent LSP requests share one connection without blocking each other",
-      },
-      acceptance_criteria: [
-        { criterion: "Single connection handles multiple concurrent requests", verification: "Background reader dispatches responses by request ID; no duplicate connections spawned" },
-        { criterion: "Requests get responses via channel", verification: "send_request returns oneshot::Receiver<Response>; caller awaits response asynchronously" },
-        { criterion: "Response routing uses request ID", verification: "pending_requests map stores Sender by ID; reader routes responses to correct caller" },
-        { criterion: "Existing unit tests still pass", verification: "make test passes; no regression in bridge functionality" },
-      ],
-      status: "done",
-    },
     {
       id: "PBI-135",
       story: {
@@ -109,51 +65,15 @@ const scrum: ScrumDashboard = {
   ],
 
   sprint: {
-    number: 112,
-    pbi_id: "PBI-134",
-    goal: "Implement async request/response queue pattern for bridge connections",
-    status: "done",
+    number: 113,
+    pbi_id: "PBI-135",
+    goal: "Migrate all remaining bridge handlers to async pool pattern",
+    status: "in_progress",
     subtasks: [
-      {
-        test: "Unit test for pending_requests map routing",
-        implementation: "Add pending_requests: Arc<DashMap<i64, oneshot::Sender<Response>>> to AsyncBridgeConnection",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Created async_connection.rs with pending_requests map and routing test"],
-      },
-      {
-        test: "Test send_request returns receiver that gets response",
-        implementation: "send_request writes JSON-RPC, stores sender in map, returns receiver",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["AsyncBridgeConnection.send_request returns (id, oneshot::Receiver<ResponseResult>)"],
-      },
-      {
-        test: "Test background reader dispatches responses correctly",
-        implementation: "Background thread reads responses, looks up sender by ID, sends response",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["reader_loop spawned in AsyncBridgeConnection::new routes by request ID"],
-      },
-      {
-        test: "Existing bridge tests still pass",
-        implementation: "AsyncLanguageServerPool wraps AsyncBridgeConnection; old pool unchanged",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["make test passes; async pool tests verify concurrent request sharing"],
-      },
-      {
-        test: "High-frequency handlers use async pool",
-        implementation: "Wire hover, completion, signatureHelp, documentHighlight to async_language_server_pool",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "a6beafa", message: "feat(bridge): wire async pool to high-frequency LSP handlers", phase: "green" }],
-        notes: ["4 most frequently called handlers now use shared connection pattern; remaining handlers in PBI-135"],
-      },
+      { test: "Navigation handlers use async pool", implementation: "Update definition, declaration, implementation, typeDefinition, references to use async_language_server_pool", type: "behavioral", status: "pending", commits: [], notes: [] },
+      { test: "Edit handlers use async pool", implementation: "Update rename, codeAction, formatting to use async_language_server_pool", type: "behavioral", status: "pending", commits: [], notes: [] },
+      { test: "Document handlers use async pool", implementation: "Update inlayHint, foldingRange, documentLink to use async_language_server_pool", type: "behavioral", status: "pending", commits: [], notes: [] },
+      { test: "Hierarchy handlers use async pool", implementation: "Update callHierarchy and typeHierarchy handlers to use async_language_server_pool", type: "behavioral", status: "pending", commits: [], notes: [] },
     ],
   },
 
@@ -165,27 +85,26 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-109: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-110: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 112, pbi_id: "PBI-134", goal: "Implement async request/response queue pattern for bridge connections", status: "done", subtasks: [] },
     { number: 111, pbi_id: "PBI-134", goal: "Add per-key mutex to LanguageServerPool (cancelled - approach insufficient)", status: "cancelled", subtasks: [] },
-    { number: 110, pbi_id: "PBI-133", goal: "Verify DashMap lock safety with concurrent test and add safety documentation", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-108: modular refactoring pattern, E2E indexing waits
+  // Recent 2 retrospectives | Sprint 1-109: modular refactoring pattern, E2E indexing waits
   retrospectives: [
+    {
+      sprint: 112,
+      improvements: [
+        { action: "AsyncConnectionWithInfo wrapper pattern works well - stores per-connection state (virtual_file_path, version) alongside the connection", timing: "immediate", status: "completed", outcome: "Cleaner than modifying AsyncBridgeConnection directly; separation of concerns" },
+        { action: "Incremental migration is valid - migrating high-frequency handlers first provides immediate value while deferring rest to next sprint", timing: "immediate", status: "completed", outcome: "4 handlers migrated in PBI-134; remaining 12+ handlers deferred to PBI-135" },
+      ],
+    },
     {
       sprint: 110,
       improvements: [
         { action: "Investigate root cause earlier when PBI assumes a bug exists - validate assumption before detailed implementation planning", timing: "immediate", status: "completed", outcome: "Sprint 110 refinement correctly pivoted from 'fix deadlock' to 'verify and document safety' when code was found already safe" },
-        { action: "Document Rust's .and_then() pattern as key to DashMap safety - it consumes Ref guard before subsequent operations", timing: "immediate", status: "completed", outcome: "Lock safety comments added to DocumentStore methods explaining .and_then() pattern" },
         { action: "User hang issue investigation: bridge I/O timeout (Sprint 109) and DashMap (Sprint 110) ruled out - investigate tokio::spawn panics or other mutex contention as next step", timing: "product", status: "completed", outcome: "Root cause identified: concurrent LSP requests (hover, completion, etc.) spawning duplicate connections fighting over stdout. Fixed via async pool pattern in Sprint 112 (PBI-134)" },
-      ],
-    },
-    {
-      sprint: 109,
-      improvements: [
-        { action: "Blocking I/O timeout checks happen between read operations, not during - for truly responsive timeout would need async I/O", timing: "product", status: "completed", outcome: "30s timeout prevents indefinite hangs; async migration deferred" },
-        { action: "PBIs should have ≤4 acceptance criteria to fit in one sprint; large PBIs should be split", timing: "immediate", status: "completed", outcome: "PBI-132 split from original 6 ACs to 4 ACs; DashMap fix moved to PBI-133" },
       ],
     },
   ],
