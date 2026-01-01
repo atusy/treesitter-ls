@@ -34,6 +34,76 @@ const scrum: ScrumDashboard = {
   product_backlog: [
     // ADR-0009 Implementation: Vertical slices with user-facing value
     // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115) - async bridge + progress notifications
+    // HIGH PRIORITY: Blocking issues from review.md - must fix before continuing with async migration
+    {
+      id: "PBI-148",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "have language server processes properly cleaned up",
+        benefit: "my system doesn't slow down or run out of disk space after using hover",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "TokioAsyncBridgeConnection stores Child handle",
+          verification: "Unit test verifies Child handle is accessible and not dropped after spawn",
+        },
+        {
+          criterion: "Drop sends shutdown request, waits for exit, removes temp_dir",
+          verification: "Unit test verifies cleanup on connection drop: shutdown sent, process exited, temp_dir removed",
+        },
+        {
+          criterion: "No zombie processes or orphaned temp directories after connection lifecycle",
+          verification: "E2E test creates and drops connections, verifies no treesitter-ls-* dirs remain in /tmp",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-146",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "see updated hover results when I edit code in Markdown blocks",
+        benefit: "hover information reflects my latest code changes, not stale cached content",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "TokioAsyncLanguageServerPool tracks document versions per virtual URI",
+          verification: "Unit test verifies version counter increments per URI and persists across requests",
+        },
+        {
+          criterion: "First open sends didOpen, subsequent requests send didChange with incremented version",
+          verification: "Unit test verifies didOpen on first request, didChange on subsequent requests with version > 1",
+        },
+        {
+          criterion: "Content updates are reflected in hover responses",
+          verification: "E2E test edits code block, requests hover, verifies response matches updated content",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-147",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "get hover results on first request without needing to retry",
+        benefit: "hover works reliably the first time I trigger it on a new code block",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "spawn_and_initialize waits for rust-analyzer to complete initial indexing",
+          verification: "Unit test verifies hover is not called until indexing is complete",
+        },
+        {
+          criterion: "Wait uses $/progress notifications to detect indexing completion",
+          verification: "Unit test verifies $/progress notifications are monitored and indexing end is detected",
+        },
+        {
+          criterion: "Single hover request returns result without retry loop",
+          verification: "E2E test verifies single hover request returns result (no retry loop needed)",
+        },
+      ],
+      status: "ready",
+    },
     {
       id: "PBI-141",
       story: {
@@ -105,7 +175,46 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 116,
+    pbi_id: "PBI-148",
+    goal: "Prevent resource leaks by storing Child handle and temp_dir, sending proper LSP shutdown sequence on drop, and cleaning up temporary workspace",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "spawn_stores_child_handle_for_cleanup",
+        implementation: "Add `child: Option<tokio::process::Child>` field to TokioAsyncBridgeConnection, store after spawn",
+        type: "behavioral",
+        status: "green",
+        commits: [],
+        notes: ["tokio_connection.rs:86-88 - Child spawned but handle not stored"],
+      },
+      {
+        test: "connection_tracks_temp_dir_for_cleanup",
+        implementation: "Store temp_dir path in connection or pass to pool; need path available at drop time",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["tokio_async_pool.rs:97-103 - temp_dir created but not tracked for cleanup"],
+      },
+      {
+        test: "drop_sends_shutdown_and_exit_to_language_server",
+        implementation: "In Drop, send 'shutdown' request, send 'exit' notification, wait for child",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["tokio_connection.rs:341-357 - Drop only aborts reader, no shutdown/exit", "Reference: connection.rs:1513-1543 - LanguageServerConnection::shutdown"],
+      },
+      {
+        test: "drop_removes_temp_directory",
+        implementation: "After child exits, remove temp_dir using tokio::fs or std::fs",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Must clean up /tmp/treesitter-ls-* directories to prevent disk clutter"],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
