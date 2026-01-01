@@ -16,11 +16,11 @@ const scrum: ScrumDashboard = {
       {
         metric: "Bridge coverage",
         target:
-          "Support completion, signatureHelp, references, rename, codeAction, formatting",
+          "Support completion, signatureHelp, references, rename, codeAction, formatting, typeDefinition, implementation, documentHighlight, declaration, inlayHint, callHierarchy, typeHierarchy, documentLink, foldingRange",
       },
       {
         metric: "Modular architecture",
-        target: "Bridge module split into per-feature files for maintainability",
+        target: "Bridge module organized with text_document/ subdirectory matching lsp_impl structure",
       },
       {
         metric: "E2E test coverage",
@@ -29,11 +29,9 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-122 | History: git log -- scrum.yaml, scrum.ts
-  // PBI-091 (idle cleanup): Infrastructure - already implemented, needs wiring (low priority)
+  // Completed PBIs: PBI-001 through PBI-134 | History: git log -- scrum.yaml, scrum.ts
+  // PBI-091 (idle cleanup): Deferred - infrastructure already implemented, needs wiring (low priority)
   // PBI-107 (remove WorkspaceType): Deferred - rust-analyzer linkedProjects too slow
-  // PBI-120: Done in e600402 - bridge filter map with enabled flag (docs in docs/README.md)
-  // PBI-122: Done in 26cc8b4 - removed stale deprecation comment from lsp_impl.rs
   product_backlog: [],
 
   sprint: null,
@@ -46,26 +44,28 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-97: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-110: git log -- scrum.yaml, scrum.ts
   completed: [
-    { number: 99, pbi_id: "PBI-122", goal: "Remove stale deprecation comment from lsp_impl.rs", status: "done", subtasks: [] },
-    { number: 98, pbi_id: "PBI-121", goal: "Refactor lsp_impl.rs into modular file structure", status: "done", subtasks: [] },
+    { number: 111, pbi_id: "PBI-134", goal: "Store virtual_file_path in AsyncLanguageServerPool so get_virtual_uri returns valid URIs", status: "done", subtasks: [] },
+    { number: 110, pbi_id: "PBI-133", goal: "Verify DashMap lock safety with concurrent test and add safety documentation", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-97: git log -- scrum.yaml, scrum.ts
+  // Recent 2 retrospectives | Sprint 1-109: modular refactoring pattern, E2E indexing waits
   retrospectives: [
     {
-      sprint: 99,
+      sprint: 111,
       improvements: [
-        { action: "Exploration agent efficiently identified single deprecated artifact in codebase", timing: "immediate", status: "completed", outcome: "Stale DEPRECATED comment removed from lsp_impl.rs" },
-        { action: "Consider periodic code hygiene checks to catch stale comments earlier", timing: "sprint", status: "active", outcome: null },
+        { action: "PR review from external tools (gemini-code-assist) caught real bug - continue using automated PR review for async bridge features", timing: "immediate", status: "completed", outcome: "gemini-code-assist identified get_virtual_uri always returning None; bug fixed in Sprint 111" },
+        { action: "When implementing new async connection features, always verify the full request flow including stored state (virtual URIs, document versions) before marking complete", timing: "immediate", status: "completed", outcome: "Added test async_pool_stores_virtual_uri_after_connection to verify URI storage" },
+        { action: "Add E2E test for async bridge hover feature to verify end-to-end flow works (unit test exists but no E2E coverage)", timing: "product", status: "active", outcome: null },
       ],
     },
     {
-      sprint: 98,
+      sprint: 110,
       improvements: [
-        { action: "Modular refactoring with *_impl delegation decomposed 3800+ line file into 10 focused text_document modules", timing: "immediate", status: "completed", outcome: "pub(crate) *_impl methods called from LanguageServer trait impl" },
-        { action: "File organization by LSP category (text_document/) creates natural boundaries for future workspace/ and window/", timing: "product", status: "active", outcome: null },
+        { action: "Investigate root cause earlier when PBI assumes a bug exists - validate assumption before detailed implementation planning", timing: "immediate", status: "completed", outcome: "Sprint 110 refinement correctly pivoted from 'fix deadlock' to 'verify and document safety' when code was found already safe" },
+        { action: "Document Rust's .and_then() pattern as key to DashMap safety - it consumes Ref guard before subsequent operations", timing: "immediate", status: "completed", outcome: "Lock safety comments added to DocumentStore methods explaining .and_then() pattern" },
+        { action: "User hang issue investigation: bridge I/O timeout (Sprint 109) and DashMap (Sprint 110) ruled out - investigate tokio::spawn panics or other mutex contention as next step", timing: "product", status: "active", outcome: null },
       ],
     },
   ],

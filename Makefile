@@ -82,13 +82,9 @@ target/debug/treesitter-ls: build-debug
 
 deps/treesitter/.installed: target/debug/treesitter-ls
 	@mkdir -p deps/treesitter
-	./target/debug/treesitter-ls language install lua --data-dir deps/treesitter
-	./target/debug/treesitter-ls language install luadoc --data-dir deps/treesitter
-	./target/debug/treesitter-ls language install rust --data-dir deps/treesitter
-	./target/debug/treesitter-ls language install markdown --data-dir deps/treesitter
-	./target/debug/treesitter-ls language install markdown_inline --data-dir deps/treesitter
-	./target/debug/treesitter-ls language install yaml --data-dir deps/treesitter
-	./target/debug/treesitter-ls language install r --data-dir deps/treesitter
+	for lang in lua rust markdown markdown_inline yaml; do \
+		./target/debug/treesitter-ls language install $$lang --data-dir deps/treesitter --force; \
+	done
 	@touch $@
 
 deps/treesitter: deps/treesitter/.installed

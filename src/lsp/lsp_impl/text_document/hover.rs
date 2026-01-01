@@ -113,6 +113,13 @@ impl TreeSitterLs {
         // Get language server connection from pool
         let pool_key = server_config.cmd.first().cloned().unwrap_or_default();
 
+        self.client
+            .log_message(
+                MessageType::LOG,
+                format!("[HOVER] bridge START pool_key={}", pool_key),
+            )
+            .await;
+
         // Take connection from pool (will spawn if none exists)
         let conn = match self
             .language_server_pool
@@ -130,24 +137,53 @@ impl TreeSitterLs {
             }
         };
 
+        self.client
+            .log_message(
+                MessageType::LOG,
+                "[HOVER] got connection, calling spawn_blocking".to_string(),
+            )
+            .await;
+
         let virtual_uri_clone = virtual_uri.clone();
         let result = tokio::task::spawn_blocking(move || {
+            // Note: Can't use log_message inside spawn_blocking (not async)
+            // Using timestamps to measure timing
+            let start = std::time::Instant::now();
             let mut conn = conn;
+
             // Open the virtual document
             conn.did_open(&virtual_uri_clone, "rust", &virtual_content);
+            let did_open_elapsed = start.elapsed();
 
             // Request hover with notifications capture
             let result = conn.hover_with_notifications(&virtual_uri_clone, virtual_position);
+            let total_elapsed = start.elapsed();
 
-            // Return both result and connection for pool return
-            (result, conn)
+            // Return timing info along with result
+            (result, conn, did_open_elapsed, total_elapsed)
         })
         .await;
 
+        self.client
+            .log_message(
+                MessageType::LOG,
+                "[HOVER] spawn_blocking returned".to_string(),
+            )
+            .await;
+
         // Handle spawn_blocking result and return connection to pool
         let (hover, notifications) = match result {
-            Ok((result, conn)) => {
+            Ok((result, conn, did_open_elapsed, total_elapsed)) => {
                 self.language_server_pool.return_connection(&pool_key, conn);
+                self.client
+                    .log_message(
+                        MessageType::LOG,
+                        format!(
+                            "[HOVER] timing: did_open={:?}, total={:?}",
+                            did_open_elapsed, total_elapsed
+                        ),
+                    )
+                    .await;
                 (result.response, result.notifications)
             }
             Err(e) => {
@@ -157,6 +193,13 @@ impl TreeSitterLs {
                 (None, vec![])
             }
         };
+
+        self.client
+            .log_message(
+                MessageType::LOG,
+                format!("[HOVER] bridge DONE has_hover={}", hover.is_some()),
+            )
+            .await;
 
         // Forward captured progress notifications to the client
         for notification in notifications {

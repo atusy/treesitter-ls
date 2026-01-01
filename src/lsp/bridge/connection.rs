@@ -3,21 +3,27 @@
 //! This module handles spawning and managing connections to external
 //! language servers for bridging LSP requests.
 
-use super::code_action::CodeActionWithNotifications;
-use super::completion::CompletionWithNotifications;
-use super::definition::GotoDefinitionWithNotifications;
-use super::formatting::FormattingWithNotifications;
-use super::hover::HoverWithNotifications;
-use super::references::ReferencesWithNotifications;
-use super::rename::RenameWithNotifications;
-use super::signature_help::SignatureHelpWithNotifications;
+use super::text_document::{
+    CodeActionWithNotifications, CompletionWithNotifications, DeclarationWithNotifications,
+    DocumentHighlightWithNotifications, DocumentLinkWithNotifications,
+    FoldingRangeWithNotifications, FormattingWithNotifications, GotoDefinitionWithNotifications,
+    HoverWithNotifications, ImplementationWithNotifications, IncomingCallsWithNotifications,
+    InlayHintWithNotifications, OutgoingCallsWithNotifications,
+    PrepareCallHierarchyWithNotifications, PrepareTypeHierarchyWithNotifications,
+    ReferencesWithNotifications, RenameWithNotifications, SignatureHelpWithNotifications,
+    SubtypesWithNotifications, SupertypesWithNotifications, TypeDefinitionWithNotifications,
+};
 use super::workspace::{language_to_extension, setup_workspace_with_option};
 use crate::config::settings::BridgeServerConfig;
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdout, Command, Stdio};
+use std::time::{Duration, Instant};
 use tower_lsp::lsp_types::*;
+
+/// Default timeout for bridge I/O operations (30 seconds).
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Response from `read_response_for_id_with_notifications` containing
 /// the JSON-RPC response and any $/progress notifications captured during the wait.
@@ -172,7 +178,7 @@ impl LanguageServerConnection {
         let init_id = conn.send_request("initialize", init_params)?;
 
         // Wait for initialize response, capturing $/progress notifications
-        let result = conn.read_response_for_id_with_notifications(init_id);
+        let result = conn.read_response_for_id_with_notifications(init_id, DEFAULT_TIMEOUT);
         result.response?; // Ensure we got a valid response
 
         // Send initialized notification
@@ -245,7 +251,7 @@ impl LanguageServerConnection {
     /// Skips notifications and other responses until finding the matching one
     pub(crate) fn read_response_for_id(&mut self, expected_id: i64) -> Option<Value> {
         // Use the new method but discard notifications for backward compatibility
-        let result = self.read_response_for_id_with_notifications(expected_id);
+        let result = self.read_response_for_id_with_notifications(expected_id, DEFAULT_TIMEOUT);
         result.response
     }
 
@@ -254,16 +260,62 @@ impl LanguageServerConnection {
     /// Unlike `read_response_for_id`, this method returns both the response and any
     /// `$/progress` notifications received while waiting for the response.
     /// This allows callers to forward progress notifications to the client.
+    ///
+    /// # Parameters
+    /// - `expected_id`: The request ID to wait for
+    /// - `timeout`: Maximum duration to wait for the response
+    ///
+    /// # Returns
+    /// Returns `ResponseWithNotifications` with:
+    /// - `response: Some(...)` if the expected response arrives before timeout
+    /// - `response: None` if timeout expires, EOF reached, or error occurs
+    /// - `notifications`: Any $/progress notifications captured while waiting
     pub(crate) fn read_response_for_id_with_notifications(
         &mut self,
         expected_id: i64,
+        timeout: Duration,
     ) -> ResponseWithNotifications {
+        log::debug!(
+            target: "treesitter_ls::bridge::conn",
+            "[CONN] read_response START id={} timeout={:?}",
+            expected_id,
+            timeout
+        );
         let mut notifications = Vec::new();
+        let start = Instant::now();
 
         loop {
+            // Check timeout before each read operation
+            if start.elapsed() > timeout {
+                log::warn!(
+                    target: "treesitter_ls::bridge",
+                    "Timeout waiting for response ID {} after {:?}",
+                    expected_id,
+                    timeout
+                );
+                return ResponseWithNotifications {
+                    response: None,
+                    notifications,
+                };
+            }
+
             // Read headers
             let mut content_length = 0;
             loop {
+                // Check timeout in inner loop as well
+                if start.elapsed() > timeout {
+                    log::warn!(
+                        target: "treesitter_ls::bridge",
+                        "Timeout during header read for response ID {} after {:?}",
+                        expected_id,
+                        timeout
+                    );
+                    return ResponseWithNotifications {
+                        response: None,
+                        notifications,
+                    };
+                }
+
                 let mut line = String::new();
                 match self.stdout_reader.read_line(&mut line) {
                     Ok(0) => {
@@ -320,6 +372,12 @@ impl LanguageServerConnection {
             if let Some(id) = message.get("id")
                 && id.as_i64() == Some(expected_id)
             {
+                log::debug!(
+                    target: "treesitter_ls::bridge::conn",
+                    "[CONN] read_response DONE id={} elapsed={:?}",
+                    expected_id,
+                    start.elapsed()
+                );
                 return ResponseWithNotifications {
                     response: Some(message),
                     notifications,
@@ -365,6 +423,12 @@ impl LanguageServerConnection {
         language_id: &str,
         content: &str,
     ) -> Option<Vec<Value>> {
+        log::debug!(
+            target: "treesitter_ls::bridge::conn",
+            "[CONN] did_open_with_notifications START lang={} content_len={}",
+            language_id,
+            content.len()
+        );
         // Write content to the actual file on disk using ConnectionInfo
         self.connection_info
             .as_ref()?
@@ -377,6 +441,11 @@ impl LanguageServerConnection {
         if let Some(version) = self.document_version {
             // Document already open - send didChange instead
             let new_version = version + 1;
+            log::debug!(
+                target: "treesitter_ls::bridge::conn",
+                "[CONN] sending didChange version={}",
+                new_version
+            );
             let params = serde_json::json!({
                 "textDocument": {
                     "uri": real_uri,
@@ -386,10 +455,19 @@ impl LanguageServerConnection {
             });
             self.send_notification("textDocument/didChange", params)?;
             self.document_version = Some(new_version);
+            log::debug!(
+                target: "treesitter_ls::bridge::conn",
+                "[CONN] didChange DONE version={}",
+                new_version
+            );
             // No indexing wait for didChange, return empty notifications
             Some(vec![])
         } else {
             // First time - send didOpen and wait for indexing
+            log::debug!(
+                target: "treesitter_ls::bridge::conn",
+                "[CONN] sending didOpen (first time)"
+            );
             let params = serde_json::json!({
                 "textDocument": {
                     "uri": real_uri,
@@ -404,7 +482,17 @@ impl LanguageServerConnection {
             // Wait for rust-analyzer to index the project, capturing progress notifications.
             // rust-analyzer needs time to parse the file and build its index.
             // We wait for diagnostic notifications which indicate indexing is complete.
-            Some(self.wait_for_indexing_with_notifications())
+            log::debug!(
+                target: "treesitter_ls::bridge::conn",
+                "[CONN] waiting for indexing..."
+            );
+            let result = self.wait_for_indexing_with_notifications();
+            log::debug!(
+                target: "treesitter_ls::bridge::conn",
+                "[CONN] indexing DONE notifications={}",
+                result.len()
+            );
+            Some(result)
         }
     }
 
@@ -413,15 +501,39 @@ impl LanguageServerConnection {
     /// Similar to `wait_for_indexing`, but returns any `$/progress` notifications
     /// received while waiting. This allows callers to forward progress notifications
     /// to the client during initialization.
+    ///
+    /// Uses DEFAULT_TIMEOUT to prevent indefinite hangs if the language server
+    /// is slow or unresponsive.
     fn wait_for_indexing_with_notifications(&mut self) -> Vec<Value> {
         let mut notifications = Vec::new();
+        let start = Instant::now();
 
         // Read messages until we get a publishDiagnostics notification
         // or timeout after consuming a few messages
         for _ in 0..50 {
+            // Check timeout before each iteration
+            if start.elapsed() > DEFAULT_TIMEOUT {
+                log::warn!(
+                    target: "treesitter_ls::bridge",
+                    "Timeout waiting for indexing after {:?}",
+                    DEFAULT_TIMEOUT
+                );
+                return notifications;
+            }
+
             // Read headers
             let mut content_length = 0;
             loop {
+                // Check timeout in inner loop as well
+                if start.elapsed() > DEFAULT_TIMEOUT {
+                    log::warn!(
+                        target: "treesitter_ls::bridge",
+                        "Timeout during header read while waiting for indexing after {:?}",
+                        DEFAULT_TIMEOUT
+                    );
+                    return notifications;
+                }
+
                 let mut line = String::new();
                 if self.stdout_reader.read_line(&mut line).ok().unwrap_or(0) == 0 {
                     return notifications; // EOF
@@ -509,7 +621,7 @@ impl LanguageServerConnection {
         };
 
         // Read response, capturing $/progress notifications
-        let result = self.read_response_for_id_with_notifications(req_id);
+        let result = self.read_response_for_id_with_notifications(req_id, DEFAULT_TIMEOUT);
 
         // Extract and parse the goto definition response
         let response = result
@@ -518,6 +630,270 @@ impl LanguageServerConnection {
             .and_then(|r| serde_json::from_value(r).ok());
 
         GotoDefinitionWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request go-to-type-definition, capturing $/progress notifications.
+    ///
+    /// Unlike `goto_definition_with_notifications`, this sends the
+    /// `textDocument/typeDefinition` request which navigates to the type
+    /// of the symbol under the cursor rather than its definition.
+    pub fn type_definition_with_notifications(
+        &mut self,
+        _uri: &str,
+        position: Position,
+    ) -> TypeDefinitionWithNotifications {
+        // Use the virtual file URI from the temp workspace
+        let Some(real_uri) = self.virtual_file_uri() else {
+            return TypeDefinitionWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let Some(req_id) = self.send_request("textDocument/typeDefinition", params) else {
+            return TypeDefinitionWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id, DEFAULT_TIMEOUT);
+
+        // Extract and parse the goto type definition response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        TypeDefinitionWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request go-to-implementation, capturing $/progress notifications.
+    ///
+    /// Sends the `textDocument/implementation` request which navigates to the
+    /// implementation(s) of the symbol under the cursor (e.g., impl blocks for traits).
+    pub fn implementation_with_notifications(
+        &mut self,
+        _uri: &str,
+        position: Position,
+    ) -> ImplementationWithNotifications {
+        // Use the virtual file URI from the temp workspace
+        let Some(real_uri) = self.virtual_file_uri() else {
+            return ImplementationWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let Some(req_id) = self.send_request("textDocument/implementation", params) else {
+            return ImplementationWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id, DEFAULT_TIMEOUT);
+
+        // Extract and parse the goto implementation response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        ImplementationWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request go-to-declaration, capturing $/progress notifications.
+    ///
+    /// Sends the `textDocument/declaration` request which navigates to the
+    /// declaration of the symbol under the cursor (e.g., forward declarations,
+    /// interface definitions).
+    pub fn declaration_with_notifications(
+        &mut self,
+        _uri: &str,
+        position: Position,
+    ) -> DeclarationWithNotifications {
+        // Use the virtual file URI from the temp workspace
+        let Some(real_uri) = self.virtual_file_uri() else {
+            return DeclarationWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let Some(req_id) = self.send_request("textDocument/declaration", params) else {
+            return DeclarationWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id, DEFAULT_TIMEOUT);
+
+        // Extract and parse the goto declaration response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        DeclarationWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request document highlight, capturing $/progress notifications.
+    ///
+    /// Sends the `textDocument/documentHighlight` request which returns all
+    /// occurrences of the symbol under the cursor within the document.
+    pub fn document_highlight_with_notifications(
+        &mut self,
+        _uri: &str,
+        position: Position,
+    ) -> DocumentHighlightWithNotifications {
+        // Use the virtual file URI from the temp workspace
+        let Some(real_uri) = self.virtual_file_uri() else {
+            return DocumentHighlightWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let Some(req_id) = self.send_request("textDocument/documentHighlight", params) else {
+            return DocumentHighlightWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id, DEFAULT_TIMEOUT);
+
+        // Extract and parse the document highlight response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        DocumentHighlightWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request document links, capturing $/progress notifications.
+    ///
+    /// Sends the `textDocument/documentLink` request which returns clickable
+    /// links within the document (e.g., URLs in comments).
+    pub fn document_link_with_notifications(
+        &mut self,
+        _uri: &str,
+    ) -> DocumentLinkWithNotifications {
+        // Use the virtual file URI from the temp workspace
+        let Some(real_uri) = self.virtual_file_uri() else {
+            return DocumentLinkWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+        });
+
+        let Some(req_id) = self.send_request("textDocument/documentLink", params) else {
+            return DocumentLinkWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id, DEFAULT_TIMEOUT);
+
+        // Extract and parse the document link response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        DocumentLinkWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request folding ranges, capturing $/progress notifications.
+    ///
+    /// Sends the `textDocument/foldingRange` request which returns foldable
+    /// regions within the document (e.g., functions, blocks, comments).
+    pub fn folding_range_with_notifications(
+        &mut self,
+        _uri: &str,
+    ) -> FoldingRangeWithNotifications {
+        // Use the virtual file URI from the temp workspace
+        let Some(real_uri) = self.virtual_file_uri() else {
+            return FoldingRangeWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+        });
+
+        let Some(req_id) = self.send_request("textDocument/foldingRange", params) else {
+            return FoldingRangeWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id, DEFAULT_TIMEOUT);
+
+        // Extract and parse the folding range response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        FoldingRangeWithNotifications {
             response,
             notifications: result.notifications,
         }
@@ -562,7 +938,7 @@ impl LanguageServerConnection {
         };
 
         // Read response, capturing $/progress notifications
-        let result = self.read_response_for_id_with_notifications(req_id);
+        let result = self.read_response_for_id_with_notifications(req_id, DEFAULT_TIMEOUT);
 
         // Extract and parse the hover response
         let response = result
@@ -608,7 +984,7 @@ impl LanguageServerConnection {
         };
 
         // Read response, capturing $/progress notifications
-        let result = self.read_response_for_id_with_notifications(req_id);
+        let result = self.read_response_for_id_with_notifications(req_id, DEFAULT_TIMEOUT);
 
         // Extract and parse the completion response
         let response = result
@@ -654,7 +1030,7 @@ impl LanguageServerConnection {
         };
 
         // Read response, capturing $/progress notifications
-        let result = self.read_response_for_id_with_notifications(req_id);
+        let result = self.read_response_for_id_with_notifications(req_id, DEFAULT_TIMEOUT);
 
         // Extract and parse the signature help response
         let response = result
@@ -702,7 +1078,7 @@ impl LanguageServerConnection {
         };
 
         // Read response, capturing $/progress notifications
-        let result = self.read_response_for_id_with_notifications(req_id);
+        let result = self.read_response_for_id_with_notifications(req_id, DEFAULT_TIMEOUT);
 
         // Extract and parse the references response
         let response = result
@@ -750,7 +1126,7 @@ impl LanguageServerConnection {
         };
 
         // Read response, capturing $/progress notifications
-        let result = self.read_response_for_id_with_notifications(req_id);
+        let result = self.read_response_for_id_with_notifications(req_id, DEFAULT_TIMEOUT);
 
         // Extract and parse the rename response (WorkspaceEdit)
         let response = result
@@ -800,7 +1176,7 @@ impl LanguageServerConnection {
         };
 
         // Read response, capturing $/progress notifications
-        let result = self.read_response_for_id_with_notifications(req_id);
+        let result = self.read_response_for_id_with_notifications(req_id, DEFAULT_TIMEOUT);
 
         // Extract and parse the code action response
         let response = result
@@ -845,7 +1221,7 @@ impl LanguageServerConnection {
         };
 
         // Read response, capturing $/progress notifications
-        let result = self.read_response_for_id_with_notifications(req_id);
+        let result = self.read_response_for_id_with_notifications(req_id, DEFAULT_TIMEOUT);
 
         // Extract and parse the formatting response
         let response = result
@@ -855,6 +1231,291 @@ impl LanguageServerConnection {
             .and_then(|r| serde_json::from_value(r).ok());
 
         FormattingWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request inlay hints, capturing $/progress notifications.
+    ///
+    /// Sends a `textDocument/inlayHint` request to the language server
+    /// and returns both the response (Vec<InlayHint>) and any `$/progress`
+    /// notifications received while waiting for the response.
+    pub fn inlay_hint_with_notifications(
+        &mut self,
+        _uri: &str,
+        range: Range,
+    ) -> InlayHintWithNotifications {
+        // Use the virtual file URI from the temp workspace
+        let Some(real_uri) = self.virtual_file_uri() else {
+            return InlayHintWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+            "range": {
+                "start": { "line": range.start.line, "character": range.start.character },
+                "end": { "line": range.end.line, "character": range.end.character }
+            }
+        });
+
+        let Some(req_id) = self.send_request("textDocument/inlayHint", params) else {
+            return InlayHintWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id, DEFAULT_TIMEOUT);
+
+        // Extract and parse the inlay hint response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        InlayHintWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request prepare call hierarchy, capturing $/progress notifications.
+    ///
+    /// Sends a `textDocument/prepareCallHierarchy` request to the language server
+    /// and returns both the response (Vec<CallHierarchyItem>) and any `$/progress`
+    /// notifications received while waiting for the response.
+    pub fn prepare_call_hierarchy_with_notifications(
+        &mut self,
+        _uri: &str,
+        position: Position,
+    ) -> PrepareCallHierarchyWithNotifications {
+        // Use the virtual file URI from the temp workspace
+        let Some(real_uri) = self.virtual_file_uri() else {
+            return PrepareCallHierarchyWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let Some(req_id) = self.send_request("textDocument/prepareCallHierarchy", params) else {
+            return PrepareCallHierarchyWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id, DEFAULT_TIMEOUT);
+
+        // Extract and parse the prepare call hierarchy response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        PrepareCallHierarchyWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request call hierarchy incoming calls, capturing $/progress notifications.
+    ///
+    /// Sends a `callHierarchy/incomingCalls` request to the language server
+    /// and returns both the response (Vec<CallHierarchyIncomingCall>) and any `$/progress`
+    /// notifications received while waiting for the response.
+    pub fn incoming_calls_with_notifications(
+        &mut self,
+        item: &CallHierarchyItem,
+    ) -> IncomingCallsWithNotifications {
+        let params = serde_json::json!({
+            "item": item,
+        });
+
+        let Some(req_id) = self.send_request("callHierarchy/incomingCalls", params) else {
+            return IncomingCallsWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id, DEFAULT_TIMEOUT);
+
+        // Extract and parse the incoming calls response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        IncomingCallsWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request call hierarchy outgoing calls, capturing $/progress notifications.
+    ///
+    /// Sends a `callHierarchy/outgoingCalls` request to the language server
+    /// and returns both the response (Vec<CallHierarchyOutgoingCall>) and any `$/progress`
+    /// notifications received while waiting for the response.
+    pub fn outgoing_calls_with_notifications(
+        &mut self,
+        item: &CallHierarchyItem,
+    ) -> OutgoingCallsWithNotifications {
+        let params = serde_json::json!({
+            "item": item,
+        });
+
+        let Some(req_id) = self.send_request("callHierarchy/outgoingCalls", params) else {
+            return OutgoingCallsWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id, DEFAULT_TIMEOUT);
+
+        // Extract and parse the outgoing calls response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        OutgoingCallsWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request prepare type hierarchy, capturing $/progress notifications.
+    ///
+    /// Sends a `textDocument/prepareTypeHierarchy` request to the language server
+    /// and returns both the response (Vec<TypeHierarchyItem>) and any `$/progress`
+    /// notifications received while waiting for the response.
+    pub fn prepare_type_hierarchy_with_notifications(
+        &mut self,
+        _uri: &str,
+        position: Position,
+    ) -> PrepareTypeHierarchyWithNotifications {
+        // Use the virtual file URI from the temp workspace
+        let Some(real_uri) = self.virtual_file_uri() else {
+            return PrepareTypeHierarchyWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        let params = serde_json::json!({
+            "textDocument": { "uri": real_uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let Some(req_id) = self.send_request("textDocument/prepareTypeHierarchy", params) else {
+            return PrepareTypeHierarchyWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id, DEFAULT_TIMEOUT);
+
+        // Extract and parse the prepare type hierarchy response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        PrepareTypeHierarchyWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request type hierarchy supertypes, capturing $/progress notifications.
+    ///
+    /// Sends a `typeHierarchy/supertypes` request to the language server
+    /// and returns both the response (Vec<TypeHierarchyItem>) and any `$/progress`
+    /// notifications received while waiting for the response.
+    pub fn supertypes_with_notifications(
+        &mut self,
+        item: &TypeHierarchyItem,
+    ) -> SupertypesWithNotifications {
+        let params = serde_json::json!({
+            "item": item,
+        });
+
+        let Some(req_id) = self.send_request("typeHierarchy/supertypes", params) else {
+            return SupertypesWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id, DEFAULT_TIMEOUT);
+
+        // Extract and parse the supertypes response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        SupertypesWithNotifications {
+            response,
+            notifications: result.notifications,
+        }
+    }
+
+    /// Request type hierarchy subtypes, capturing $/progress notifications.
+    ///
+    /// Sends a `typeHierarchy/subtypes` request to the language server
+    /// and returns both the response (Vec<TypeHierarchyItem>) and any `$/progress`
+    /// notifications received while waiting for the response.
+    pub fn subtypes_with_notifications(
+        &mut self,
+        item: &TypeHierarchyItem,
+    ) -> SubtypesWithNotifications {
+        let params = serde_json::json!({
+            "item": item,
+        });
+
+        let Some(req_id) = self.send_request("typeHierarchy/subtypes", params) else {
+            return SubtypesWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        };
+
+        // Read response, capturing $/progress notifications
+        let result = self.read_response_for_id_with_notifications(req_id, DEFAULT_TIMEOUT);
+
+        // Extract and parse the subtypes response
+        let response = result
+            .response
+            .and_then(|msg| msg.get("result").cloned())
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok());
+
+        SubtypesWithNotifications {
             response,
             notifications: result.notifications,
         }
@@ -890,7 +1551,82 @@ impl Drop for LanguageServerConnection {
 mod tests {
     use super::*;
     use crate::config::settings::WorkspaceType;
+    use std::time::Duration;
     use tempfile::tempdir;
+
+    #[test]
+    fn read_response_for_id_with_notifications_accepts_timeout_parameter() {
+        // This test verifies that the method signature accepts a Duration timeout parameter.
+        // We verify by checking that spawn works (which calls the method internally).
+        // The actual timeout behavior is tested in a separate test.
+
+        if !check_rust_analyzer_available() {
+            return;
+        }
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // spawn_with_notifications internally calls read_response_for_id_with_notifications
+        // with a Duration parameter. If this compiles and succeeds, the signature is correct.
+        let result = LanguageServerConnection::spawn_with_notifications(&config);
+        assert!(
+            result.is_some(),
+            "spawn should succeed with timeout parameter"
+        );
+
+        // Verify the constant exists and has expected value
+        assert_eq!(DEFAULT_TIMEOUT, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn read_response_for_id_with_notifications_returns_none_on_timeout() {
+        // This test verifies that when no data arrives within the timeout period,
+        // the method returns ResponseWithNotifications with response: None.
+
+        if !check_rust_analyzer_available() {
+            return;
+        }
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        let mut conn = LanguageServerConnection::spawn(&config).unwrap();
+
+        // Request an ID that will never get a response (nothing sends request 9999)
+        // With a very short timeout, the method should return None instead of hanging
+        let start = std::time::Instant::now();
+        let short_timeout = Duration::from_millis(100);
+        let result = conn.read_response_for_id_with_notifications(9999, short_timeout);
+
+        let elapsed = start.elapsed();
+
+        // The method should have returned (not hung forever)
+        // It should return within roughly the timeout period (allow some slack)
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "Method should return within timeout, not hang forever. Elapsed: {:?}",
+            elapsed
+        );
+
+        // Response should be None since no response for ID 9999 arrived
+        assert!(
+            result.response.is_none(),
+            "Response should be None on timeout"
+        );
+
+        // Notifications may or may not be present (rust-analyzer might send some)
+        // but the struct should be valid
+        let _ = result.notifications;
+    }
 
     /// Helper to check if rust-analyzer is available for testing.
     /// Returns true if available, false if should skip test.

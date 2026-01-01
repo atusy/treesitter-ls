@@ -14,23 +14,6 @@ Tree-sitter-based language server for accurate parsing and language-aware featur
 
 Download the latest release for your platform from [GitHub Releases](https://github.com/atusy/treesitter-ls/releases)
 
-### Build from Source
-
-Requirements:
-- Rust (latest stable)
-- Cargo
-
-```bash
-# Clone the repository
-git clone https://github.com/atusy/treesitter-ls.git
-cd treesitter-ls
-
-# Build release binary
-cargo build --release
-
-# Binary location: target/release/treesitter-ls
-```
-
 ### Enable Automatic Parser/Query Installation
 
 Prepare the following, and treesitter-ls will auto-install parsers/queries as needed:
@@ -64,9 +47,18 @@ treesitter-ls supports LSP features via three mechanisms:
 | Selection Range | ✅ | ✅ | ❌ |
 | Code Actions | ✅ | ✅ | ✅ |
 | Go-to Definition | ❌ | ❌ | ✅ |
+| Go-to Type Definition | ❌ | ❌ | ✅ |
+| Go-to Implementation | ❌ | ❌ | ✅ |
+| Go-to Declaration | ❌ | ❌ | ✅ |
 | Hover | ❌ | ❌ | ✅ |
 | Completion | ❌ | ❌ | ✅ |
 | Signature Help | ❌ | ❌ | ✅ |
 | Find References | ❌ | ❌ | ✅ |
+| Document Highlight | ❌ | ❌ | ✅ |
 | Rename | ❌ | ❌ | ✅ |
 | Formatting | ❌ | ❌ | ✅ |
+| Inlay Hints | ❌ | ❌ | ✅ |
+| Call Hierarchy | ❌ | ❌ | ✅ |
+| Type Hierarchy | ❌ | ❌ | ✅ |
+| Document Link | ❌ | ❌ | ✅ |
+| Folding Range | ❌ | ❌ | ✅ |

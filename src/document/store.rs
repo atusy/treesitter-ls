@@ -41,6 +41,7 @@ impl DocumentStore {
         Self::default()
     }
 
+    // Lock safety: Single insert() call - no read lock held before or during write
     pub fn insert(&self, uri: Url, text: String, language_id: Option<String>, tree: Option<Tree>) {
         let document = match (language_id, tree) {
             (Some(lang), Some(t)) => Document::with_tree(text, lang, t),
@@ -51,14 +52,18 @@ impl DocumentStore {
         self.documents.insert(uri, document);
     }
 
+    // Lock safety: Returns DocumentHandle wrapping Ref - caller holds read lock until drop
+    // Callers must not call write methods while holding the returned handle
     pub fn get(&self, uri: &Url) -> Option<DocumentHandle<'_>> {
         self.documents.get(uri).map(DocumentHandle::new)
     }
 
+    // Lock safety: Uses get_mut() for in-place updates (single write lock, no prior read lock).
+    // For fallback path, and_then() consumes Ref before insert - no read lock held during write.
     pub fn update_document(&self, uri: Url, text: String, new_tree: Option<Tree>) {
         // Try to update in place to preserve previous_tree and previous_text
         if let Some(tree) = new_tree {
-            // Check if document exists - update in place to preserve previous state
+            // Lock safety: get_mut() acquires write lock directly - safe for in-place update
             if let Some(mut doc) = self.documents.get_mut(&uri) {
                 doc.update_tree_and_text(tree, text);
                 return;
@@ -72,14 +77,15 @@ impl DocumentStore {
         }
 
         // No new tree provided - use fallback logic
+        // Lock safety: and_then() consumes Ref, extracting owned String before insert
         let language_id = self
             .documents
             .get(&uri)
             .and_then(|doc| doc.language_id().map(String::from));
 
         match language_id {
+            // Lock safety: and_then() consumes Ref, extracting owned Tree clone before insert
             Some(lang) => {
-                // Preserve existing tree if no new tree provided
                 let existing_tree = self.documents.get(&uri).and_then(|doc| doc.tree().cloned());
                 if let Some(tree) = existing_tree {
                     self.documents
@@ -96,6 +102,7 @@ impl DocumentStore {
 
     /// Get the existing tree and apply edits for incremental parsing
     /// Returns the edited tree without updating the document store
+    // Lock safety: and_then() consumes Ref, returning owned Tree clone - no read lock held after return
     pub fn get_edited_tree(&self, uri: &Url, edits: &[InputEdit]) -> Option<Tree> {
         self.documents.get(uri).and_then(|doc| {
             doc.tree().map(|tree| {
@@ -108,10 +115,12 @@ impl DocumentStore {
         })
     }
 
+    // Lock safety: map() consumes Ref, returning owned String clone - no read lock held after return
     pub fn get_document_text(&self, uri: &Url) -> Option<String> {
         self.documents.get(uri).map(|doc| doc.text().to_string())
     }
 
+    // Lock safety: Single remove() call - no read lock held before or during write
     pub fn remove(&self, uri: &Url) -> Option<Document> {
         self.documents.remove(uri).map(|(_, doc)| doc)
     }
@@ -120,6 +129,106 @@ impl DocumentStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn test_concurrent_update_and_get_no_deadlock() {
+        // This test verifies that concurrent update_document and get operations
+        // do not cause deadlock. The test uses a timeout to detect deadlock.
+        let store = Arc::new(DocumentStore::new());
+        let uri = Url::parse("file:///test.rs").unwrap();
+
+        // Insert initial document
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
+        let initial_text = "fn main() {}".to_string();
+        let tree = parser.parse(&initial_text, None).unwrap();
+        store.insert(
+            uri.clone(),
+            initial_text,
+            Some("rust".to_string()),
+            Some(tree),
+        );
+
+        let num_threads = 10;
+        let iterations_per_thread = 100;
+        let mut handles = vec![];
+
+        // Spawn writer threads
+        for i in 0..num_threads {
+            let store_clone = store.clone();
+            let uri_clone = uri.clone();
+            let mut parser = tree_sitter::Parser::new();
+            parser
+                .set_language(&tree_sitter_rust::LANGUAGE.into())
+                .unwrap();
+
+            let handle = thread::spawn(move || {
+                for j in 0..iterations_per_thread {
+                    let text =
+                        format!("fn main() {{ let x = {}; }}", i * iterations_per_thread + j);
+                    let tree = parser.parse(&text, None).unwrap();
+                    store_clone.update_document(uri_clone.clone(), text, Some(tree));
+                }
+            });
+            handles.push(handle);
+        }
+
+        // Spawn reader threads
+        for _ in 0..num_threads {
+            let store_clone = store.clone();
+            let uri_clone = uri.clone();
+
+            let handle = thread::spawn(move || {
+                for _ in 0..iterations_per_thread {
+                    // get() returns a Ref which holds a read lock
+                    if let Some(doc) = store_clone.get(&uri_clone) {
+                        // Access the document while holding the lock
+                        let _ = doc.text();
+                        let _ = doc.tree();
+                    }
+                }
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all threads with timeout (5 seconds)
+        // If deadlock occurs, this will hang and the test will fail
+        let timeout = Duration::from_secs(5);
+        let start = std::time::Instant::now();
+
+        for handle in handles {
+            let remaining = timeout.saturating_sub(start.elapsed());
+            if remaining.is_zero() {
+                panic!("Test timed out - possible deadlock detected");
+            }
+
+            // Use a channel to implement join with timeout
+            let (tx, rx) = std::sync::mpsc::channel();
+            let join_handle = thread::spawn(move || {
+                let result = handle.join();
+                let _ = tx.send(result);
+            });
+
+            match rx.recv_timeout(remaining) {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => panic!("Thread panicked"),
+                Err(_) => panic!("Test timed out - possible deadlock detected"),
+            }
+
+            // Clean up the join wrapper thread
+            let _ = join_handle.join();
+        }
+
+        // If we get here, no deadlock occurred
+        // Verify final state is consistent
+        let doc = store.get(&uri).expect("Document should exist");
+        assert!(!doc.text().is_empty());
+    }
 
     #[test]
     fn test_add_and_get_document() {

@@ -1236,6 +1236,15 @@ impl LanguageServer for TreeSitterLs {
                 ),
                 selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
+                type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
+                implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
+                declaration_provider: Some(DeclarationCapability::Simple(true)),
+                document_highlight_provider: Some(OneOf::Left(true)),
+                document_link_provider: Some(DocumentLinkOptions {
+                    resolve_provider: Some(false),
+                    work_done_progress_options: Default::default(),
+                }),
+                folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 completion_provider: Some(CompletionOptions {
                     trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
@@ -1249,6 +1258,14 @@ impl LanguageServer for TreeSitterLs {
                 references_provider: Some(OneOf::Left(true)),
                 rename_provider: Some(OneOf::Left(true)),
                 document_formatting_provider: Some(OneOf::Left(true)),
+                inlay_hint_provider: Some(OneOf::Left(true)),
+                call_hierarchy_provider: Some(CallHierarchyServerCapability::Simple(true)),
+                // type_hierarchy_provider is not in lsp-types 0.94.1 ServerCapabilities struct,
+                // but we can advertise it via experimental field. The tower-lsp LanguageServer
+                // trait does have the methods (prepare_type_hierarchy, supertypes, subtypes).
+                experimental: Some(serde_json::json!({
+                    "typeHierarchyProvider": true
+                })),
                 ..ServerCapabilities::default()
             },
         })
@@ -1392,6 +1409,10 @@ impl LanguageServer for TreeSitterLs {
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri;
+
+        self.client
+            .log_message(MessageType::LOG, format!("[DID_CHANGE] START uri={}", uri))
+            .await;
 
         // Retrieve the stored document info
         let (language_id, old_text) = {
@@ -1554,6 +1575,42 @@ impl LanguageServer for TreeSitterLs {
         self.goto_definition_impl(params).await
     }
 
+    async fn goto_type_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        self.goto_type_definition_impl(params).await
+    }
+
+    async fn goto_implementation(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        self.goto_implementation_impl(params).await
+    }
+
+    async fn goto_declaration(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        self.goto_declaration_impl(params).await
+    }
+
+    async fn document_highlight(
+        &self,
+        params: DocumentHighlightParams,
+    ) -> Result<Option<Vec<DocumentHighlight>>> {
+        self.document_highlight_impl(params).await
+    }
+
+    async fn document_link(&self, params: DocumentLinkParams) -> Result<Option<Vec<DocumentLink>>> {
+        self.document_link_impl(params).await
+    }
+
+    async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
+        self.folding_range_impl(params).await
+    }
+
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         self.hover_impl(params).await
     }
@@ -1576,6 +1633,52 @@ impl LanguageServer for TreeSitterLs {
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
         self.formatting_impl(params).await
+    }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        self.inlay_hint_impl(params).await
+    }
+
+    async fn prepare_call_hierarchy(
+        &self,
+        params: CallHierarchyPrepareParams,
+    ) -> Result<Option<Vec<CallHierarchyItem>>> {
+        self.prepare_call_hierarchy_impl(params).await
+    }
+
+    async fn incoming_calls(
+        &self,
+        params: CallHierarchyIncomingCallsParams,
+    ) -> Result<Option<Vec<CallHierarchyIncomingCall>>> {
+        self.incoming_calls_impl(params).await
+    }
+
+    async fn outgoing_calls(
+        &self,
+        params: CallHierarchyOutgoingCallsParams,
+    ) -> Result<Option<Vec<CallHierarchyOutgoingCall>>> {
+        self.outgoing_calls_impl(params).await
+    }
+
+    async fn prepare_type_hierarchy(
+        &self,
+        params: TypeHierarchyPrepareParams,
+    ) -> Result<Option<Vec<TypeHierarchyItem>>> {
+        self.prepare_type_hierarchy_impl(params).await
+    }
+
+    async fn supertypes(
+        &self,
+        params: TypeHierarchySupertypesParams,
+    ) -> Result<Option<Vec<TypeHierarchyItem>>> {
+        self.supertypes_impl(params).await
+    }
+
+    async fn subtypes(
+        &self,
+        params: TypeHierarchySubtypesParams,
+    ) -> Result<Option<Vec<TypeHierarchyItem>>> {
+        self.subtypes_impl(params).await
     }
 }
 
