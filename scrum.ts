@@ -171,15 +171,15 @@ const scrum: ScrumDashboard = {
         implementation: "Apply resolve_with_wildcard() to languages HashMap resolution",
         type: "behavioral",
         status: "green",
-        commits: [{ hash: "", message: "feat(config): add resolve_language_with_wildcard for languages wildcard inheritance", phase: "green" }],
+        commits: [{ hash: "5e4796b", message: "feat(config): add resolve_language_with_wildcard for languages wildcard inheritance", phase: "green" }],
         notes: ["Reuse resolve_with_wildcard() from PBI-152 (captureMappings)"],
       },
       {
         test: "Unit test: bridge['javascript'] inherits from bridge['_'] within a language",
         implementation: "Apply resolve_with_wildcard() to languages.{lang}.bridge HashMap resolution",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "green",
+        commits: [{ hash: "", message: "feat(config): add resolve_bridge_with_wildcard for bridge wildcard inheritance", phase: "green" }],
         notes: ["Inner wildcard resolution for bridge settings"],
       },
       {
