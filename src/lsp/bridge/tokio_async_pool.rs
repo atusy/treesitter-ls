@@ -179,6 +179,87 @@ impl TokioAsyncLanguageServerPool {
     }
 }
 
+/// High-level async bridge request methods.
+///
+/// These methods handle the full flow: get/create connection, send didOpen if needed,
+/// send the request, and return the response.
+impl TokioAsyncLanguageServerPool {
+    /// Send a hover request asynchronously.
+    ///
+    /// # Arguments
+    /// * `key` - Connection pool key
+    /// * `config` - Server configuration
+    /// * `_uri` - Document URI (unused, we use virtual URI)
+    /// * `language_id` - Language ID for the document
+    /// * `content` - Document content
+    /// * `position` - Hover position
+    #[allow(dead_code)]
+    pub async fn hover(
+        &self,
+        key: &str,
+        config: &BridgeServerConfig,
+        _uri: &str,
+        language_id: &str,
+        content: &str,
+        position: tower_lsp::lsp_types::Position,
+    ) -> Option<tower_lsp::lsp_types::Hover> {
+        let conn = self.get_connection(key, config).await?;
+
+        // Get virtual file URI
+        let virtual_uri = self.get_virtual_uri(key)?;
+
+        // Send didOpen
+        self.ensure_document_open(&conn, &virtual_uri, language_id, content)
+            .await?;
+
+        // Send hover request
+        let params = serde_json::json!({
+            "textDocument": { "uri": virtual_uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let (_, receiver) = conn.send_request("textDocument/hover", params).await.ok()?;
+
+        // Await response asynchronously with timeout
+        let result = tokio::time::timeout(std::time::Duration::from_secs(30), receiver)
+            .await
+            .ok()?
+            .ok()?;
+
+        // Parse response
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
+    /// Ensure a document is open in the language server.
+    async fn ensure_document_open(
+        &self,
+        conn: &super::tokio_connection::TokioAsyncBridgeConnection,
+        uri: &str,
+        language_id: &str,
+        content: &str,
+    ) -> Option<()> {
+        // TODO: Track document versions per connection
+        // For now, always send didOpen
+        let params = serde_json::json!({
+            "textDocument": {
+                "uri": uri,
+                "languageId": language_id,
+                "version": 1,
+                "text": content,
+            }
+        });
+
+        conn.send_notification("textDocument/didOpen", params)
+            .await
+            .ok()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::config::settings::{BridgeServerConfig, WorkspaceType};
@@ -300,5 +381,86 @@ mod tests {
             std::sync::Arc::ptr_eq(&conn1.unwrap(), &conn2.unwrap()),
             "Concurrent gets should return the same connection"
         );
+    }
+
+    /// Test that hover() returns Hover from rust-analyzer.
+    ///
+    /// This is the key test for Subtask 4: hover() must:
+    /// 1. Get or create connection
+    /// 2. Call ensure_document_open (didOpen)
+    /// 3. Send textDocument/hover request
+    /// 4. Await response
+    /// 5. Parse and return Hover
+    #[tokio::test]
+    async fn hover_returns_hover_from_rust_analyzer() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Simple Rust code with a function
+        let content = "fn main() { let x = 42; }";
+
+        // Request hover at position of 'main' function (line 0, character 3)
+        let position = tower_lsp::lsp_types::Position {
+            line: 0,
+            character: 3,
+        };
+
+        // Call hover() method with retry for rust-analyzer indexing
+        // rust-analyzer may return "content modified" error while indexing
+        let mut hover_result = None;
+        for _attempt in 0..10 {
+            hover_result = pool
+                .hover(
+                    "rust-analyzer",
+                    &config,
+                    "file:///test.rs", // host URI (not used by tokio pool)
+                    "rust",
+                    content,
+                    position,
+                )
+                .await;
+
+            if hover_result.is_some() {
+                break;
+            }
+
+            // rust-analyzer may return "content modified" or null while indexing
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+
+        // Should return Some(Hover) with type information
+        assert!(
+            hover_result.is_some(),
+            "hover() should return Some(Hover) for 'main' function"
+        );
+
+        let hover = hover_result.unwrap();
+        // Verify hover contains content (the exact format depends on rust-analyzer)
+        match hover.contents {
+            tower_lsp::lsp_types::HoverContents::Markup(markup) => {
+                assert!(
+                    !markup.value.is_empty(),
+                    "Hover should contain markup content"
+                );
+            }
+            tower_lsp::lsp_types::HoverContents::Scalar(_) => {
+                // Also acceptable
+            }
+            tower_lsp::lsp_types::HoverContents::Array(arr) => {
+                assert!(!arr.is_empty(), "Hover array should not be empty");
+            }
+        }
     }
 }
