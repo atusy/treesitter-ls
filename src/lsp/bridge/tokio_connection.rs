@@ -16,8 +16,8 @@ use crate::lsp::bridge::async_connection::ResponseResult;
 use dashmap::DashMap;
 use serde_json::Value;
 use std::sync::Arc;
-use std::sync::atomic::AtomicI64;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use std::sync::atomic::{AtomicI64, Ordering};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
@@ -190,6 +190,111 @@ impl TokioAsyncBridgeConnection {
             target: "treesitter_ls::bridge::tokio",
             "[READER] Reader loop exiting"
         );
+    }
+
+    /// Send a JSON-RPC request and return a receiver for the response.
+    ///
+    /// This method is fully async. It writes the request to stdin and returns
+    /// immediately with a receiver. The caller can await the response asynchronously.
+    ///
+    /// # Arguments
+    /// * `method` - The JSON-RPC method name
+    /// * `params` - The request parameters
+    ///
+    /// # Returns
+    /// A tuple of (request_id, receiver) where the receiver will contain the response
+    /// when it arrives, or an error if the request could not be sent.
+    #[allow(dead_code)]
+    pub async fn send_request(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<(i64, oneshot::Receiver<ResponseResult>), String> {
+        // Generate request ID atomically
+        let id = self.next_request_id.fetch_add(1, Ordering::SeqCst);
+
+        // Create oneshot channel for response
+        let (sender, receiver) = oneshot::channel();
+
+        // Register pending request BEFORE sending (to avoid race with reader)
+        self.pending_requests.insert(id, sender);
+
+        // Build request
+        let request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        });
+
+        // Write request to stdin
+        let content = serde_json::to_string(&request).map_err(|e| format!("JSON error: {}", e))?;
+        let header = format!("Content-Length: {}\r\n\r\n", content.len());
+
+        {
+            let mut stdin = self.stdin.lock().await;
+            stdin
+                .write_all(header.as_bytes())
+                .await
+                .map_err(|e| format!("Write error: {}", e))?;
+            stdin
+                .write_all(content.as_bytes())
+                .await
+                .map_err(|e| format!("Write error: {}", e))?;
+            stdin
+                .flush()
+                .await
+                .map_err(|e| format!("Flush error: {}", e))?;
+        }
+
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio",
+            "[CONN] Sent request id={} method={}",
+            id,
+            method
+        );
+
+        Ok((id, receiver))
+    }
+
+    /// Send a JSON-RPC notification (no response expected).
+    ///
+    /// # Arguments
+    /// * `method` - The notification method name
+    /// * `params` - The notification parameters
+    #[allow(dead_code)]
+    pub async fn send_notification(&self, method: &str, params: Value) -> Result<(), String> {
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+        });
+
+        let content =
+            serde_json::to_string(&notification).map_err(|e| format!("JSON error: {}", e))?;
+        let header = format!("Content-Length: {}\r\n\r\n", content.len());
+
+        let mut stdin = self.stdin.lock().await;
+        stdin
+            .write_all(header.as_bytes())
+            .await
+            .map_err(|e| format!("Write error: {}", e))?;
+        stdin
+            .write_all(content.as_bytes())
+            .await
+            .map_err(|e| format!("Write error: {}", e))?;
+        stdin
+            .flush()
+            .await
+            .map_err(|e| format!("Flush error: {}", e))?;
+
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio",
+            "[CONN] Sent notification method={}",
+            method
+        );
+
+        Ok(())
     }
 
     /// Read a single JSON-RPC message from the reader.
@@ -424,5 +529,67 @@ mod tests {
             Some(1),
             "Response should have correct ID"
         );
+    }
+
+    /// Test that send_request returns a receiver that resolves when reader routes matching response.
+    ///
+    /// This is the key test for Subtask 2: send_request must:
+    /// 1. Increment next_request_id atomically
+    /// 2. Insert oneshot::Sender into pending_requests before writing
+    /// 3. Write LSP message format (Content-Length header + JSON body)
+    /// 4. Return receiver that resolves when reader routes the response
+    #[tokio::test]
+    async fn send_request_returns_receiver_that_resolves_on_response() {
+        // Use 'cat' as an echo server - we write to stdin, it echoes to stdout
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[]).await;
+        assert!(result.is_ok(), "spawn() should succeed");
+
+        let conn = result.unwrap();
+
+        // Send a request using the send_request method
+        let params = serde_json::json!({"test": "value"});
+        let receiver = conn.send_request("test/method", params).await;
+        assert!(receiver.is_ok(), "send_request should succeed");
+
+        let (id, rx) = receiver.unwrap();
+        assert!(id > 0, "Request ID should be positive");
+
+        // Wait for the response (cat echoes our message back)
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), rx).await;
+
+        assert!(
+            result.is_ok(),
+            "Should receive response within timeout: {:?}",
+            result.err()
+        );
+
+        let response_result = result.unwrap();
+        assert!(response_result.is_ok(), "Receiver should not be dropped");
+
+        let response_result = response_result.unwrap();
+        assert!(response_result.response.is_some(), "Response should be set");
+
+        let response_value = response_result.response.unwrap();
+        assert_eq!(
+            response_value.get("id").and_then(|v| v.as_i64()),
+            Some(id),
+            "Response should have the same ID we sent"
+        );
+    }
+
+    /// Test that send_notification sends a message without expecting a response.
+    #[tokio::test]
+    async fn send_notification_sends_message_without_response() {
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[]).await;
+        assert!(result.is_ok(), "spawn() should succeed");
+
+        let conn = result.unwrap();
+
+        // Send a notification
+        let params = serde_json::json!({"test": "notification"});
+        let result = conn.send_notification("test/notification", params).await;
+
+        // send_notification should succeed (not block waiting for response)
+        assert!(result.is_ok(), "send_notification should succeed");
     }
 }
