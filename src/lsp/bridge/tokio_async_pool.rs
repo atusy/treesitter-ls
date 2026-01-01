@@ -286,7 +286,10 @@ impl TokioAsyncLanguageServerPool {
                 },
                 "contentChanges": [{ "text": content }]
             });
-            match conn.send_notification("textDocument/didChange", params).await {
+            match conn
+                .send_notification("textDocument/didChange", params)
+                .await
+            {
                 Ok(()) => {
                     self.set_document_version(uri, new_version);
                     Some(())
@@ -880,9 +883,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         let uri = "file:///failing.rs";
-        let result = pool
-            .sync_document(&conn, uri, "rust", "fn main() {}")
-            .await;
+        let result = pool.sync_document(&conn, uri, "rust", "fn main() {}").await;
 
         assert!(
             result.is_none(),
