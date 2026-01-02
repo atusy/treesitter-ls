@@ -1,5 +1,5 @@
--- E2E test for hover in Markdown code blocks with rust-analyzer bridge
--- Verifies hover requests work through async bridge path
+-- E2E test for hover indexing state feedback (PBI-149)
+-- Verifies hover shows informative indexing message during rust-analyzer initialization
 
 local child = MiniTest.new_child_neovim()
 
@@ -33,7 +33,7 @@ local function create_file_test_set(ext, lines)
 	})
 end
 
--- Test markdown file with Rust code block
+-- Test markdown file with Rust code block for indexing message
 T["markdown"] = create_file_test_set(".md", {
 	"# Example",
 	"",
@@ -44,8 +44,8 @@ T["markdown"] = create_file_test_set(".md", {
 	"```",
 })
 
-T["markdown"]["hover_returns_content"] = function()
-	-- Position cursor on "main" on line 4, column 4 (on the 'm' of main)
+T["markdown"]["hover_shows_indexing_feedback"] = function()
+	-- Position cursor on "main" on line 4, column 4
 	-- Use type_keys for reliable cursor positioning
 	child.type_keys("4G4|")
 
@@ -53,15 +53,13 @@ T["markdown"]["hover_returns_content"] = function()
 	local before = child.api.nvim_win_get_cursor(0)
 	MiniTest.expect.equality(before[1], 4, "Cursor should be on line 4")
 
-	-- Trigger hover and wait for a floating window to appear
-	-- During indexing, hover returns "indexing (rust-analyzer)" message (PBI-149)
-	-- Either response proves the async bridge is working correctly
+	-- Trigger hover immediately after LSP attach (during indexing)
+	-- PBI-149: Should show informative indexing message
 	local hover_content = nil
-	local found_hover = helper.wait(10000, function()
+	local found_hover = helper.wait(5000, function()
 		child.lua([[vim.lsp.buf.hover()]])
 		child.lua([[vim.wait(500)]])
 
-		-- Check all windows for a floating window
 		local wins = child.api.nvim_list_wins()
 		for _, win in ipairs(wins) do
 			local config = child.api.nvim_win_get_config(win)
@@ -77,20 +75,15 @@ T["markdown"]["hover_returns_content"] = function()
 
 	MiniTest.expect.equality(found_hover, true, "Hover should show a floating window")
 
-	-- Verify we got some content (either indexing message or real hover)
-	-- Both prove the async bridge is working
+	-- Verify the indexing message format (PBI-149 acceptance criteria)
+	-- Should show hourglass emoji and mention rust-analyzer
+	local has_indexing_format = hover_content:find("indexing") ~= nil
+		and hover_content:find("rust%-analyzer") ~= nil
 	MiniTest.expect.equality(
-		hover_content ~= nil and #hover_content > 0,
+		has_indexing_format,
 		true,
-		"Hover content should not be empty"
+		"Indexing message should mention 'indexing' and 'rust-analyzer', got: " .. hover_content
 	)
-
-	-- Verify it's related to rust-analyzer (either real content or indexing message)
-	local is_valid = hover_content:find("main") ~= nil
-		or hover_content:find("fn") ~= nil
-		or hover_content:find("rust%-analyzer") ~= nil
-		or hover_content:find("indexing") ~= nil
-	MiniTest.expect.equality(is_valid, true, "Hover should show function info or indexing status")
 end
 
 return T
