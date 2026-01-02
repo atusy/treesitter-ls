@@ -79,7 +79,7 @@ const scrum: ScrumDashboard = {
           verification: "E2E test opens Markdown with Rust code block, requests completion, receives items",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-143",
