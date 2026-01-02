@@ -4,7 +4,17 @@ expression: sanitized
 ---
 {
   "contents": {
-    "kind": "markdown",
-    "value": "⏳ indexing (rust-analyzer)"
+    "kind": "plaintext",
+    "value": "virtual\n\nfn main()"
+  },
+  "range": {
+    "end": {
+      "character": 7,
+      "line": 3
+    },
+    "start": {
+      "character": 3,
+      "line": 3
+    }
   }
 }

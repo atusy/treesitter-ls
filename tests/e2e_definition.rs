@@ -237,14 +237,14 @@ fn test_definition_returns_location() {
             response
         );
 
-        let result = response.get("result").unwrap().clone();
+        let result = response.get("result").cloned().unwrap_or(Value::Null);
 
         // Result can be Location, Location[], LocationLink[], or null
         // treesitter-ls bridges to rust-analyzer which typically returns LocationLink[]
-        if !result.is_null() {
-            Some(result)
-        } else {
-            None
+        match &result {
+            Value::Null => None,
+            Value::Array(locations) if locations.is_empty() => None,
+            _ => Some(result),
         }
     });
 
@@ -347,10 +347,10 @@ fn test_definition_snapshot() {
         );
 
         let result = response.get("result").cloned().unwrap_or(Value::Null);
-        if !result.is_null() {
-            Some(result)
-        } else {
-            None
+        match &result {
+            Value::Null => None,
+            Value::Array(locations) if locations.is_empty() => None,
+            _ => Some(result),
         }
     });
 

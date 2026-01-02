@@ -172,10 +172,15 @@ fn test_hover_snapshot() {
         );
 
         let result = response.get("result").cloned().unwrap_or(Value::Null);
-        if !result.is_null() {
-            Some(result)
-        } else {
+        if result.is_null() {
+            return None;
+        }
+
+        let sanitized = sanitize_hover_response(&result);
+        if hover_contains_indexing_message(&sanitized) {
             None
+        } else {
+            Some(result)
         }
     });
 
@@ -191,4 +196,19 @@ fn test_hover_snapshot() {
 
     // Capture snapshot
     insta::assert_json_snapshot!("hover_response", sanitized);
+}
+
+fn hover_contains_indexing_message(hover: &Value) -> bool {
+    match hover.get("contents") {
+        Some(Value::String(value)) => value.contains("indexing"),
+        Some(Value::Object(obj)) => obj
+            .get("value")
+            .and_then(|v| v.as_str())
+            .map(|s| s.contains("indexing"))
+            .unwrap_or(false),
+        Some(Value::Array(values)) => values
+            .iter()
+            .any(|v| v.as_str().map(|s| s.contains("indexing")).unwrap_or(false)),
+        _ => false,
+    }
 }
