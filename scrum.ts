@@ -168,8 +168,14 @@ const scrum: ScrumDashboard = {
         test: "Add sanitization helper for hover responses that replaces non-deterministic data (file URIs, markdown formatting variations)",
         implementation: "Create sanitize_hover_response function in tests/helpers_sanitization.rs to normalize hover content for snapshot comparison",
         type: "structural",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "3e1b7d0",
+            message: "refactor(test): add sanitization helper for hover responses",
+            phase: "refactoring",
+          },
+        ],
         notes: [
           "Structural refactoring to support snapshot testing",
           "Prepares for hover snapshot test in next subtask",
