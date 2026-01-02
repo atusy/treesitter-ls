@@ -140,6 +140,12 @@ fn parse_parsers_lua(content: &str) -> Result<HashMap<String, ParserMetadata>, M
         }
     }
 
+    if parsers.is_empty() {
+        return Err(MetadataError::ParseError(
+            "No languages found in parsers.lua".to_string(),
+        ));
+    }
+
     Ok(parsers)
 }
 
@@ -263,13 +269,13 @@ pub fn list_supported_languages(
 /// This function checks if the given language name exists in the nvim-treesitter
 /// parsers.lua metadata. Uses caching via FetchOptions to avoid repeated HTTP requests.
 ///
-/// Returns `true` if the language is supported, `false` otherwise.
-/// Network errors or parse errors also result in `false` being returned.
-pub fn is_language_supported(language: &str, options: Option<&FetchOptions>) -> bool {
-    match fetch_parsers_lua_with_options(options) {
-        Ok(parsers) => parsers.contains_key(language),
-        Err(_) => false, // Network error or parse error - treat as unsupported
-    }
+/// Returns `Ok(true)` if the language is supported, `Ok(false)` otherwise.
+/// Network errors or parse errors return `Err`.
+pub fn is_language_supported(
+    language: &str,
+    options: Option<&FetchOptions>,
+) -> Result<bool, MetadataError> {
+    fetch_parsers_lua_with_options(options).map(|parsers| parsers.contains_key(language))
 }
 
 #[cfg(test)]
@@ -447,7 +453,7 @@ return {
         cache.write(mock_parsers_lua).expect("write cache");
 
         // is_language_supported should return true for 'lua' (known language)
-        let result = is_language_supported("lua", Some(&options));
+        let result = is_language_supported("lua", Some(&options)).expect("metadata available");
         assert!(result, "Expected 'lua' to be supported");
     }
 
@@ -477,11 +483,9 @@ return {
         cache.write(mock_parsers_lua).expect("write cache");
 
         // is_language_supported should return false for 'fake_lang_xyz' (unsupported)
-        let result = is_language_supported("fake_lang_xyz", Some(&options));
-        assert!(
-            !result,
-            "Expected 'fake_lang_xyz' to be unsupported (return false)"
-        );
+        let result =
+            is_language_supported("fake_lang_xyz", Some(&options)).expect("metadata available");
+        assert!(!result, "Expected 'fake_lang_xyz' to be unsupported");
     }
 
     #[test]
@@ -528,10 +532,14 @@ return {
 
         // Make multiple is_language_supported calls
         // These should all use the cached metadata (no HTTP request)
-        let lua_supported = is_language_supported("lua", Some(&options));
-        let rust_supported = is_language_supported("rust", Some(&options));
-        let python_supported = is_language_supported("python", Some(&options));
-        let fake_supported = is_language_supported("nonexistent_lang", Some(&options));
+        let lua_supported =
+            is_language_supported("lua", Some(&options)).expect("metadata available");
+        let rust_supported =
+            is_language_supported("rust", Some(&options)).expect("metadata available");
+        let python_supported =
+            is_language_supported("python", Some(&options)).expect("metadata available");
+        let fake_supported =
+            is_language_supported("nonexistent_lang", Some(&options)).expect("metadata available");
 
         // Verify all results are correct (proving cache was used)
         assert!(lua_supported, "lua should be supported");
@@ -548,6 +556,25 @@ return {
         assert!(
             cache_content.unwrap().contains("lua"),
             "Cache content should be unchanged"
+        );
+    }
+
+    #[test]
+    fn test_is_language_supported_returns_error_for_invalid_metadata() {
+        let temp = tempdir().expect("Failed to create temp dir");
+        let options = FetchOptions {
+            data_dir: Some(temp.path()),
+            use_cache: true,
+        };
+
+        let cache = MetadataCache::with_default_ttl(temp.path());
+        let mock_parsers_lua = "return {}";
+        cache.write(mock_parsers_lua).expect("write cache");
+
+        let result = is_language_supported("lua", Some(&options));
+        assert!(
+            matches!(result, Err(MetadataError::ParseError(_))),
+            "Expected parse error for invalid metadata"
         );
     }
 }
