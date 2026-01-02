@@ -382,7 +382,30 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 133,
+    pbi_id: "PBI-159",
+    goal: "Fix didOpen race condition with per-URI document opening locks",
+    status: "planning",
+    subtasks: [
+      {
+        test: "Concurrent first-access requests send only one didOpen",
+        implementation: "Add document_open_locks: Mutex<HashMap<String, Arc<Mutex<()>>>> to pool, use per-URI lock in sync_document",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "All existing tests pass with synchronized didOpen",
+        implementation: "Verify no behavioral changes for single-threaded access",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
