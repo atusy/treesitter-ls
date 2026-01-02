@@ -10,7 +10,7 @@ use crate::analysis::next_result_id;
 use crate::analysis::{
     InjectionMap, InjectionTokenCache, LEGEND_MODIFIERS, LEGEND_TYPES, SemanticTokenCache,
 };
-use crate::config::{TreeSitterSettings, WorkspaceSettings};
+use crate::config::{TreeSitterSettings, WorkspaceSettings, resolve_language_settings_with_wildcard};
 use crate::document::DocumentStore;
 use crate::language::injection::{CacheableInjectionRegion, collect_all_injections};
 use crate::language::{DocumentParserPool, FailedParserRegistry, LanguageCoordinator};
@@ -479,6 +479,10 @@ impl TreeSitterLs {
     /// - No server is configured for this injection language, OR
     /// - The host language has a bridge filter that excludes this injection language
     ///
+    /// Uses wildcard resolution (ADR-0011) for host language lookup:
+    /// - If host language is not defined, inherits from languages._ if present
+    /// - This allows setting default bridge filters for all hosts via languages._
+    ///
     /// # Arguments
     /// * `host_language` - The language of the host document (e.g., "markdown")
     /// * `injection_language` - The injection language to bridge (e.g., "rust", "python")
@@ -489,8 +493,9 @@ impl TreeSitterLs {
     ) -> Option<crate::config::settings::BridgeServerConfig> {
         let settings = self.settings.load();
 
-        // Check if host language has a bridge filter that disallows this injection
-        if let Some(host_settings) = settings.languages.get(host_language)
+        // Use wildcard resolution for host language lookup (ADR-0011)
+        // This allows languages._ to define default bridge filters
+        if let Some(host_settings) = resolve_language_settings_with_wildcard(&settings.languages, host_language)
             && !host_settings.is_language_bridgeable(injection_language)
         {
             log::debug!(
@@ -1632,6 +1637,130 @@ mod tests {
         assert!(
             progress_params.is_none(),
             "Should return None for malformed $/progress params"
+        );
+    }
+
+    /// PBI-155 Subtask 2: Test wildcard language config inheritance
+    ///
+    /// This test verifies that languages._ (wildcard) settings are inherited
+    /// by specific languages when looking up language configs.
+    ///
+    /// The key behavior:
+    /// - languages._ defines default bridge settings (e.g., disable all by default)
+    /// - languages.markdown overrides only bridge for rust (enable it)
+    /// - When looking up "quarto" (not defined), it should inherit from languages._
+    #[test]
+    fn test_language_config_inherits_from_wildcard() {
+        use crate::config::{LanguageConfig, resolve_language_with_wildcard};
+        use crate::config::settings::BridgeLanguageConfig;
+
+        let mut languages: HashMap<String, LanguageConfig> = HashMap::new();
+
+        // Wildcard language: disable bridging by default (empty bridge filter)
+        let wildcard_bridge = HashMap::new(); // Empty = disable all bridging
+        languages.insert(
+            "_".to_string(),
+            LanguageConfig {
+                library: None,
+                queries: None,
+                highlights: Some(vec!["/default/highlights.scm".to_string()]),
+                locals: None,
+                injections: None,
+                bridge: Some(wildcard_bridge),
+            },
+        );
+
+        // Markdown: enable only rust bridging
+        let mut markdown_bridge = HashMap::new();
+        markdown_bridge.insert("rust".to_string(), BridgeLanguageConfig { enabled: true });
+        languages.insert(
+            "markdown".to_string(),
+            LanguageConfig {
+                library: None,
+                queries: None,
+                highlights: None, // Should inherit from wildcard
+                locals: None,
+                injections: None,
+                bridge: Some(markdown_bridge),
+            },
+        );
+
+        // Test 1: "markdown" should have its own bridge filter (not wildcard's)
+        let markdown = resolve_language_with_wildcard(&languages, "markdown").unwrap();
+        assert!(
+            markdown.highlights.is_some(),
+            "markdown should inherit highlights from wildcard"
+        );
+        assert_eq!(
+            markdown.highlights.as_ref().unwrap(),
+            &vec!["/default/highlights.scm".to_string()],
+            "markdown should inherit highlights from wildcard"
+        );
+        // Bridge should be markdown-specific, not inherited from wildcard
+        let bridge = markdown.bridge.as_ref().unwrap();
+        assert!(
+            bridge.get("rust").is_some(),
+            "markdown bridge should have rust entry"
+        );
+
+        // Test 2: "quarto" (not defined) should get wildcard settings entirely
+        let quarto = resolve_language_with_wildcard(&languages, "quarto").unwrap();
+        assert!(
+            quarto.highlights.is_some(),
+            "quarto should inherit highlights from wildcard"
+        );
+        // Bridge should be wildcard's empty filter (disable all)
+        let quarto_bridge = quarto.bridge.as_ref().unwrap();
+        assert!(
+            quarto_bridge.is_empty(),
+            "quarto should inherit empty bridge filter from wildcard"
+        );
+    }
+
+    /// PBI-155 Subtask 2: Test that LanguageSettings lookup uses wildcard resolution
+    ///
+    /// This test verifies the wiring: when we look up host language settings
+    /// using WorkspaceSettings.languages (HashMap<String, LanguageSettings>),
+    /// we should use wildcard resolution so that undefined languages inherit
+    /// from languages._ settings.
+    ///
+    /// Since get_bridge_config_for_language needs TreeSitterLs which is hard to instantiate
+    /// in unit tests, we verify the behavior at the LanguageSettings level.
+    #[test]
+    fn test_language_settings_wildcard_lookup_blocks_bridging_for_undefined_host() {
+        use crate::config::{LanguageSettings, resolve_language_settings_with_wildcard};
+
+        // This test documents the EXPECTED behavior after wiring:
+        // - languages._ has empty bridge filter (block all)
+        // - Looking up "quarto" (undefined) should find and use the wildcard settings
+        //
+        // Currently this fails because get_bridge_config_for_language uses
+        // settings.languages.get() directly instead of wildcard resolution.
+
+        let mut languages: HashMap<String, LanguageSettings> = HashMap::new();
+
+        // Wildcard: block all bridging with empty filter
+        languages.insert(
+            "_".to_string(),
+            LanguageSettings::with_bridge(None, vec![], None, None, Some(HashMap::new())),
+        );
+
+        // Look up "quarto" which doesn't exist - should inherit from wildcard
+        let quarto = resolve_language_settings_with_wildcard(&languages, "quarto");
+        assert!(
+            quarto.is_some(),
+            "Looking up undefined 'quarto' should return wildcard settings"
+        );
+
+        let quarto_settings = quarto.unwrap();
+        // The wildcard has empty bridge filter, so is_language_bridgeable should return false
+        assert!(
+            !quarto_settings.is_language_bridgeable("rust"),
+            "quarto (inherited from wildcard) should block bridging for rust"
+        );
+        assert!(
+            !quarto_settings.is_language_bridgeable("python"),
+            "quarto (inherited from wildcard) should block bridging for python"
         );
     }
 
