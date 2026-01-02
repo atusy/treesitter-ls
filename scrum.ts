@@ -306,8 +306,14 @@ const scrum: ScrumDashboard = {
         test: "Refactor E2E test helpers by extracting create_test_markdown_file variants into reusable module",
         implementation: "Create tests/helpers_test_fixtures.rs with functions for hover_fixture, completion_fixture, references_fixture",
         type: "structural",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "f85a362",
+            message: "refactor(test): extract test fixture helpers into reusable module",
+            phase: "refactoring",
+          },
+        ],
         notes: [
           "Final refactoring to consolidate common test setup patterns",
           "Prepares clean foundation for future LSP feature migrations (rename, codeAction, etc.)",
