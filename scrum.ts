@@ -106,85 +106,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 123,
-    pbi_id: "PBI-150",
-    goal: "Fix all resource cleanup paths in TokioAsyncBridgeConnection to prevent memory leaks and hanging requests",
-    status: "review" as SprintStatus,
-    subtasks: [
-      {
-        test: "Test: send_request returns (id, receiver) tuple instead of just receiver",
-        implementation: "Modify send_request to return (i64, oneshot::Receiver<ResponseResult>) so callers can remove pending_requests entry on timeout",
-        type: "structural" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [],
-        notes: ["send_request signature already correct - verified existing implementation"],
-      },
-      {
-        test: "Test: Pool methods (hover/completion/definition/signature_help) remove pending_requests entry when timeout occurs",
-        implementation: "Add timeout cleanup in tokio_async_pool.rs methods to remove pending entry using returned request ID",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [],
-        notes: ["Added remove_pending_request() method to TokioAsyncBridgeConnection", "Updated all pool methods (hover, definition, completion, signature_help) to clean up on timeout"],
-      },
-      {
-        test: "Test: When reader_loop gets EOF, all pending_requests are cleared and receive None response immediately",
-        implementation: "In reader_loop, when Ok(None) or Err occurs, iterate pending_requests and send None response to all before breaking",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [],
-        notes: ["Added cleanup in both Ok(None) and Err branches", "Uses DashMap iteration pattern: collect IDs, then remove and notify"],
-      },
-      {
-        test: "Test: When send_request write fails, pending_requests entry is removed before returning error",
-        implementation: "Add error handling in send_request to remove pending entry if write_all/flush fails",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [],
-        notes: ["Wrapped write operations in async block with error handling", "Removes pending entry before returning error"],
-      },
-      {
-        test: "Test: When TokioAsyncBridgeConnection drops, pending_requests is cleared and all callers receive None immediately",
-        implementation: "In Drop impl, iterate pending_requests and send None to all senders before cleanup",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [],
-        notes: ["Added pending request cleanup as step 1 in Drop impl", "Updated cleanup step numbering"],
-      },
-    ],
-    review: {
-      date: "2026-01-03",
-      dod_results: {
-        unit_tests: "PASS - 361 tests passed (cargo test)",
-        code_quality: "PASS - No clippy warnings, formatting correct (make check)",
-        e2e_tests: "PASS - 29 E2E tests passed (make test_nvim)",
-      },
-      acceptance_criteria_verification: [
-        {
-          criterion: "Timeout cleanup: When request times out, pending_requests entry is removed",
-          status: "VERIFIED",
-          evidence: "remove_pending_request() method exists at tokio_connection.rs:374. All pool methods (hover:255, definition:313, completion:371, signature_help:429) call it on timeout.",
-        },
-        {
-          criterion: "EOF cleanup: When language server dies, all pending requests receive None response immediately",
-          status: "VERIFIED",
-          evidence: "reader_loop handles Ok(None) at lines 215-233 and Err at lines 235-254. Both paths iterate pending requests, send None response, and break immediately.",
-        },
-        {
-          criterion: "Write error cleanup: When stdin write fails, pending_requests entry is removed",
-          status: "VERIFIED",
-          evidence: "send_request wraps write operations in async block (lines 305-315). On error, removes pending entry at line 313 before returning error.",
-        },
-        {
-          criterion: "Drop cleanup: When TokioAsyncBridgeConnection drops, pending_requests is cleared and callers notified",
-          status: "VERIFIED",
-          evidence: "Drop impl (lines 450-507) clears pending requests as step 1 (lines 452-461), sending None response to all callers before other cleanup.",
-        },
-      ],
-      increment_status: "DONE - All DoD checks passed, all acceptance criteria verified",
-    },
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -194,7 +116,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-120: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-121: git log -- scrum.yaml, scrum.ts
   completed: [
     { number: 120, pbi_id: "PBI-151", goal: "Migrate critical Neovim E2E tests (hover, completion, references) to Rust with snapshot verification, establishing reusable patterns and helpers for future migrations", status: "done", subtasks: [] },
     { number: 119, pbi_id: "PBI-150", goal: "Implement Rust-based E2E testing infrastructure for go-to-definition with snapshot testing, enabling faster and more reliable tests without Neovim dependency", status: "done", subtasks: [] },
@@ -202,6 +124,9 @@ const scrum: ScrumDashboard = {
 
   // Recent 2 retrospectives | Sprint 1-120: ADR-driven development, reusable patterns, E2E test timing
   retrospectives: [
+    { sprint: 123, improvements: [
+      { action: "Refactor repeated cleanup pattern (collect IDs, iterate, remove, send None) into helper method - pattern appears in 3 places: EOF (Ok/Err branches), Drop impl", timing: "immediate", status: "completed", outcome: "Created clear_all_pending_requests() helper method, replaced 3 duplicated cleanup blocks (lines 223, 235, 456 in tokio_connection.rs)" },
+    ] },
     { sprint: 122, improvements: [
       { action: "Delete E2E test files for removed features (13 files)", timing: "immediate", status: "completed", outcome: "Deleted 13 obsolete test files - retained: hover, completion, definition, signature_help + infrastructure tests" },
       { action: "Document architectural simplification decision (Sprint 122: deleted 16+ handlers, 3 legacy pools, ~1000+ lines) in ADR covering rationale for retaining only async implementations (hover, completion, signatureHelp, definition)", timing: "product", status: "active", outcome: null },
