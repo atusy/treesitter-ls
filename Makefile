@@ -33,7 +33,7 @@ clean:
 # Note: Only integration tests without the e2e feature flag are run
 .PHONY: test
 test:
-	$(CARGO) test --lib --test '*' --skip e2e_
+	$(CARGO) test --lib --test '*' -- --skip e2e_
 
 # Run all Rust-based E2E tests (auto-discovers tests matching tests/e2e_*.rs)
 .PHONY: test_e2e
