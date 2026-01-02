@@ -408,9 +408,9 @@ const scrum: ScrumDashboard = {
         test: "Verify shutdown tests still pass",
         implementation: "Extract cleanup logic into static handle_connection_end() method",
         type: "structural",
-        status: "pending",
-        commits: [],
-        notes: [],
+        status: "completed",
+        commits: [{ hash: "ac215a9", message: "refactor(bridge): extract handle_connection_end() from reader_loop", phase: "green" }],
+        notes: ["Baseline test passes - verified shutdown cleanup works correctly", "Extracted handle_connection_end() - all tests pass"],
       },
       {
         test: "All reader tests pass, reader_loop is under 50 lines",
