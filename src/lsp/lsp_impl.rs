@@ -614,20 +614,15 @@ impl TreeSitterLs {
                     data_dir: Some(dir.as_path()),
                     use_cache: true,
                 });
-        let (should_skip, reason) =
-            super::auto_install::should_skip_unsupported_language(language, fetch_options.as_ref());
-        if should_skip {
-            if let Some(reason) = reason {
-                let (message_type, message) = match reason {
-                    super::auto_install::SkipReason::UnsupportedLanguage { .. } => {
-                        (MessageType::INFO, reason.message())
-                    }
-                    super::auto_install::SkipReason::MetadataUnavailable { .. } => {
-                        (MessageType::WARNING, reason.message())
-                    }
-                };
-                self.client.log_message(message_type, message).await;
-            }
+        if let Err(reason) =
+            super::auto_install::should_skip_unsupported_language(language, fetch_options.as_ref())
+        {
+            let message = reason.message();
+            let message_type = match reason {
+                super::auto_install::SkipReason::UnsupportedLanguage { .. } => MessageType::INFO,
+                super::auto_install::SkipReason::MetadataUnavailable { .. } => MessageType::WARNING,
+            };
+            self.client.log_message(message_type, message).await;
             return;
         }
 

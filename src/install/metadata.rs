@@ -44,6 +44,8 @@ pub enum MetadataError {
     HttpError(String),
     /// JSON parsing failed.
     ParseError(String),
+    /// Metadata existed but contained no languages.
+    EmptyMetadata,
 }
 
 impl std::fmt::Display for MetadataError {
@@ -58,6 +60,10 @@ impl std::fmt::Display for MetadataError {
             }
             Self::HttpError(msg) => write!(f, "HTTP error: {}", msg),
             Self::ParseError(msg) => write!(f, "Parse error: {}", msg),
+            Self::EmptyMetadata => write!(
+                f,
+                "Metadata did not contain any languages; cache may be empty or outdated"
+            ),
         }
     }
 }
@@ -141,9 +147,7 @@ fn parse_parsers_lua(content: &str) -> Result<HashMap<String, ParserMetadata>, M
     }
 
     if parsers.is_empty() {
-        return Err(MetadataError::ParseError(
-            "No languages found in parsers.lua".to_string(),
-        ));
+        return Err(MetadataError::EmptyMetadata);
     }
 
     Ok(parsers)
@@ -360,6 +364,15 @@ return {
     }
 
     #[test]
+    fn test_parse_parsers_lua_returns_empty_metadata_error() {
+        let result = parse_parsers_lua("return {}");
+        assert!(
+            matches!(result, Err(MetadataError::EmptyMetadata)),
+            "Expected empty metadata error"
+        );
+    }
+
+    #[test]
     fn test_find_matching_brace() {
         let s = "{ foo { bar } baz }";
         let result = find_matching_brace(s);
@@ -423,6 +436,8 @@ return {
     fn test_is_language_supported_returns_true_for_known_language() {
         // Test that is_language_supported returns true for known language like 'lua'
         // Uses cached metadata via FetchOptions to avoid repeated HTTP requests
+        use crate::install::test_helpers::setup_mock_metadata_cache;
+
         let temp = tempdir().expect("Failed to create temp dir");
         let options = FetchOptions {
             data_dir: Some(temp.path()),
@@ -431,7 +446,6 @@ return {
 
         // First, populate the cache by fetching any language (or mock the cache)
         // For unit test, we mock the cache with parsers.lua content
-        let cache = MetadataCache::with_default_ttl(temp.path());
         let mock_parsers_lua = r#"
 return {
   lua = {
@@ -450,7 +464,7 @@ return {
   },
 }
 "#;
-        cache.write(mock_parsers_lua).expect("write cache");
+        setup_mock_metadata_cache(temp.path(), mock_parsers_lua);
 
         // is_language_supported should return true for 'lua' (known language)
         let result = is_language_supported("lua", Some(&options)).expect("metadata available");
@@ -461,6 +475,8 @@ return {
     fn test_is_language_supported_returns_false_for_unsupported_language() {
         // Test that is_language_supported returns false for unsupported language
         // like 'fake_lang_xyz' without error
+        use crate::install::test_helpers::setup_mock_metadata_cache;
+
         let temp = tempdir().expect("Failed to create temp dir");
         let options = FetchOptions {
             data_dir: Some(temp.path()),
@@ -468,7 +484,6 @@ return {
         };
 
         // Mock the cache with parsers.lua content that does NOT include 'fake_lang_xyz'
-        let cache = MetadataCache::with_default_ttl(temp.path());
         let mock_parsers_lua = r#"
 return {
   lua = {
@@ -480,7 +495,7 @@ return {
   },
 }
 "#;
-        cache.write(mock_parsers_lua).expect("write cache");
+        setup_mock_metadata_cache(temp.path(), mock_parsers_lua);
 
         // is_language_supported should return false for 'fake_lang_xyz' (unsupported)
         let result =
@@ -492,6 +507,8 @@ return {
     fn test_is_language_supported_reuses_cached_metadata() {
         // Test that multiple is_language_supported checks reuse cached metadata
         // This verifies the caching behavior via FetchOptions with the 1-hour TTL
+        use crate::install::test_helpers::setup_mock_metadata_cache;
+
         let temp = tempdir().expect("Failed to create temp dir");
         let options = FetchOptions {
             data_dir: Some(temp.path()),
@@ -499,7 +516,6 @@ return {
         };
 
         // Mock the cache with parsers.lua content
-        let cache = MetadataCache::with_default_ttl(temp.path());
         let mock_parsers_lua = r#"
 return {
   lua = {
@@ -525,7 +541,9 @@ return {
   },
 }
 "#;
-        cache.write(mock_parsers_lua).expect("write cache");
+        setup_mock_metadata_cache(temp.path(), mock_parsers_lua);
+
+        let cache = MetadataCache::with_default_ttl(temp.path());
 
         // Verify cache file exists before first call
         assert!(cache.read().is_some(), "Cache should exist after writing");
@@ -561,20 +579,21 @@ return {
 
     #[test]
     fn test_is_language_supported_returns_error_for_invalid_metadata() {
+        use crate::install::test_helpers::setup_mock_metadata_cache;
+
         let temp = tempdir().expect("Failed to create temp dir");
         let options = FetchOptions {
             data_dir: Some(temp.path()),
             use_cache: true,
         };
 
-        let cache = MetadataCache::with_default_ttl(temp.path());
         let mock_parsers_lua = "return {}";
-        cache.write(mock_parsers_lua).expect("write cache");
+        setup_mock_metadata_cache(temp.path(), mock_parsers_lua);
 
         let result = is_language_supported("lua", Some(&options));
         assert!(
-            matches!(result, Err(MetadataError::ParseError(_))),
-            "Expected parse error for invalid metadata"
+            matches!(result, Err(MetadataError::EmptyMetadata)),
+            "Expected empty metadata error for invalid metadata"
         );
     }
 }

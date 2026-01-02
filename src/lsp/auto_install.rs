@@ -130,9 +130,8 @@ pub fn get_injected_languages(
 
 /// Check if a language should be skipped during auto-install because it's not supported.
 ///
-/// Returns a tuple of (should_skip, reason) where:
-/// - should_skip: true if the language is NOT supported by nvim-treesitter and should be skipped
-/// - reason: Some(message) explaining why installation was skipped, or None if not skipping
+/// Returns `Ok(())` when the language is supported and auto-install can proceed,
+/// otherwise `Err(SkipReason)` describing why installation should be skipped.
 ///
 /// This function uses cached metadata from nvim-treesitter to avoid repeated HTTP requests.
 ///
@@ -142,22 +141,16 @@ pub fn get_injected_languages(
 pub fn should_skip_unsupported_language(
     language: &str,
     options: Option<&FetchOptions>,
-) -> (bool, Option<SkipReason>) {
+) -> Result<(), SkipReason> {
     match is_language_supported(language, options) {
-        Ok(true) => (false, None),
-        Ok(false) => (
-            true,
-            Some(SkipReason::UnsupportedLanguage {
-                language: language.to_string(),
-            }),
-        ),
-        Err(err) => (
-            true,
-            Some(SkipReason::MetadataUnavailable {
-                language: language.to_string(),
-                error: err,
-            }),
-        ),
+        Ok(true) => Ok(()),
+        Ok(false) => Err(SkipReason::UnsupportedLanguage {
+            language: language.to_string(),
+        }),
+        Err(err) => Err(SkipReason::MetadataUnavailable {
+            language: language.to_string(),
+            error: err,
+        }),
     }
 }
 
@@ -283,8 +276,8 @@ mod tests {
     }
 
     #[test]
-    fn test_should_skip_unsupported_language_returns_true_for_unsupported() {
-        // Test that should_skip_unsupported_language returns true for unsupported languages
+    fn test_should_skip_unsupported_language_returns_err_for_unsupported() {
+        // Test that should_skip_unsupported_language returns Err for unsupported languages
         // with a reason explaining why installation was skipped
         use crate::install::metadata::FetchOptions;
         use crate::install::test_helpers::setup_mock_metadata_cache;
@@ -311,17 +304,12 @@ return {
             use_cache: true,
         };
 
-        // should_skip_unsupported_language should return true for 'fake_lang_xyz'
-        let (should_skip, reason) =
-            should_skip_unsupported_language("fake_lang_xyz", Some(&options));
-        assert!(
-            should_skip,
-            "Expected to skip unsupported language 'fake_lang_xyz'"
-        );
-        assert!(reason.is_some(), "Expected a reason for skipping");
+        // should_skip_unsupported_language should return Err for 'fake_lang_xyz'
+        let result = should_skip_unsupported_language("fake_lang_xyz", Some(&options));
+        assert!(result.is_err(), "Expected to skip unsupported language");
         assert!(
             matches!(
-                reason.unwrap(),
+                result.unwrap_err(),
                 SkipReason::UnsupportedLanguage { language }
                     if language == "fake_lang_xyz"
             ),
@@ -330,8 +318,8 @@ return {
     }
 
     #[test]
-    fn test_should_skip_unsupported_language_returns_false_for_supported() {
-        // Test that should_skip_unsupported_language returns false for supported languages
+    fn test_should_skip_unsupported_language_returns_ok_for_supported() {
+        // Test that should_skip_unsupported_language returns Ok for supported languages
         use crate::install::metadata::FetchOptions;
         use crate::install::test_helpers::setup_mock_metadata_cache;
         use tempfile::tempdir;
@@ -357,13 +345,12 @@ return {
             use_cache: true,
         };
 
-        // should_skip_unsupported_language should return false for 'lua'
-        let (should_skip, reason) = should_skip_unsupported_language("lua", Some(&options));
+        // should_skip_unsupported_language should return Ok for 'lua'
+        let result = should_skip_unsupported_language("lua", Some(&options));
         assert!(
-            !should_skip,
+            result.is_ok(),
             "Expected NOT to skip supported language 'lua'"
         );
-        assert!(reason.is_none(), "Expected no reason when not skipping");
     }
 
     #[test]
@@ -380,10 +367,10 @@ return {
             use_cache: true,
         };
 
-        let (should_skip, reason) = should_skip_unsupported_language("lua", Some(&options));
-        assert!(should_skip, "Expected to skip when metadata is invalid");
+        let result = should_skip_unsupported_language("lua", Some(&options));
+        assert!(result.is_err(), "Expected to skip when metadata is invalid");
         assert!(
-            matches!(reason, Some(SkipReason::MetadataUnavailable { .. })),
+            matches!(result, Err(SkipReason::MetadataUnavailable { .. })),
             "Expected MetadataUnavailable reason"
         );
     }
