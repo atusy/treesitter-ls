@@ -219,8 +219,13 @@ impl From<&LanguageSettings> for LanguageConfig {
 
         if let Some(ref queries) = settings.queries {
             for query in queries {
-                match query.kind {
-                    Some(settings::QueryKind::Highlights) | None => {
+                // Use explicit kind, or infer from filename, or skip if unrecognized
+                let effective_kind = query
+                    .kind
+                    .or_else(|| settings::infer_query_kind(&query.path));
+
+                match effective_kind {
+                    Some(settings::QueryKind::Highlights) => {
                         highlights.push(query.path.clone());
                     }
                     Some(settings::QueryKind::Locals) => {
@@ -228,6 +233,9 @@ impl From<&LanguageSettings> for LanguageConfig {
                     }
                     Some(settings::QueryKind::Injections) => {
                         injections.push(query.path.clone());
+                    }
+                    None => {
+                        // Skip files with unrecognized patterns (no kind specified and cannot infer)
                     }
                 }
             }

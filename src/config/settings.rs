@@ -86,6 +86,31 @@ pub struct QueryItem {
     pub kind: Option<QueryKind>,
 }
 
+/// Infer the query kind from a file path based on filename patterns.
+///
+/// Rules:
+/// - `*highlights*.scm` -> `Some(Highlights)`
+/// - `*locals*.scm` -> `Some(Locals)`
+/// - `*injections*.scm` -> `Some(Injections)`
+/// - Otherwise -> `None` (unknown patterns are skipped by callers)
+pub fn infer_query_kind(path: &str) -> Option<QueryKind> {
+    // Extract filename from path using std::path for cross-platform support
+    let filename = std::path::Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(path);
+
+    if filename.contains("injections") {
+        Some(QueryKind::Injections)
+    } else if filename.contains("locals") {
+        Some(QueryKind::Locals)
+    } else if filename.contains("highlights") {
+        Some(QueryKind::Highlights)
+    } else {
+        None
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct LanguageConfig {
     pub library: Option<String>,
@@ -241,32 +266,6 @@ impl WorkspaceSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Infer the query kind from a file path based on filename patterns.
-    ///
-    /// Rules:
-    /// - `*highlights*.scm` -> `Highlights`
-    /// - `*locals*.scm` -> `Locals`
-    /// - `*injections*.scm` -> `Injections`
-    /// - Otherwise -> `Highlights` (default)
-    fn infer_query_kind(path: &str) -> QueryKind {
-        // Extract filename from path using std::path for cross-platform support
-        let filename = std::path::Path::new(path)
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or(path);
-
-        if filename.contains("injections") {
-            QueryKind::Injections
-        } else if filename.contains("locals") {
-            QueryKind::Locals
-        } else if filename.contains("highlights") {
-            QueryKind::Highlights
-        } else {
-            // Default to Highlights for unrecognized patterns
-            QueryKind::Highlights
-        }
-    }
 
     #[test]
     fn should_distinguish_between_unspecified_and_empty_queries() {
@@ -1183,72 +1182,72 @@ kind = "injections""#;
     // PBI-151 Subtask 2: Type inference for query kinds
     #[test]
     fn should_infer_highlights_from_filename_pattern() {
-        // *highlights*.scm -> Highlights
-        assert_eq!(infer_query_kind("highlights.scm"), QueryKind::Highlights);
+        // *highlights*.scm -> Some(Highlights)
+        assert_eq!(
+            infer_query_kind("highlights.scm"),
+            Some(QueryKind::Highlights)
+        );
         assert_eq!(
             infer_query_kind("/path/to/highlights.scm"),
-            QueryKind::Highlights
+            Some(QueryKind::Highlights)
         );
         assert_eq!(
             infer_query_kind("./queries/python-highlights.scm"),
-            QueryKind::Highlights
+            Some(QueryKind::Highlights)
         );
         assert_eq!(
             infer_query_kind("/usr/share/python/highlights.scm"),
-            QueryKind::Highlights
+            Some(QueryKind::Highlights)
         );
     }
 
     #[test]
     fn should_infer_locals_from_filename_pattern() {
-        // *locals*.scm -> Locals
-        assert_eq!(infer_query_kind("locals.scm"), QueryKind::Locals);
-        assert_eq!(infer_query_kind("/path/to/locals.scm"), QueryKind::Locals);
+        // *locals*.scm -> Some(Locals)
+        assert_eq!(infer_query_kind("locals.scm"), Some(QueryKind::Locals));
+        assert_eq!(
+            infer_query_kind("/path/to/locals.scm"),
+            Some(QueryKind::Locals)
+        );
         assert_eq!(
             infer_query_kind("./queries/rust-locals.scm"),
-            QueryKind::Locals
+            Some(QueryKind::Locals)
         );
         assert_eq!(
             infer_query_kind("/usr/share/python-locals.scm"),
-            QueryKind::Locals
+            Some(QueryKind::Locals)
         );
     }
 
     #[test]
     fn should_infer_injections_from_filename_pattern() {
-        // *injections*.scm -> Injections
-        assert_eq!(infer_query_kind("injections.scm"), QueryKind::Injections);
+        // *injections*.scm -> Some(Injections)
+        assert_eq!(
+            infer_query_kind("injections.scm"),
+            Some(QueryKind::Injections)
+        );
         assert_eq!(
             infer_query_kind("/path/to/injections.scm"),
-            QueryKind::Injections
+            Some(QueryKind::Injections)
         );
         assert_eq!(
             infer_query_kind("./my-custom-injections.scm"),
-            QueryKind::Injections
+            Some(QueryKind::Injections)
         );
         assert_eq!(
             infer_query_kind("/usr/share/markdown-injections.scm"),
-            QueryKind::Injections
+            Some(QueryKind::Injections)
         );
     }
 
-    // PBI-151 Subtask 3: Default to highlights for unrecognized patterns
     #[test]
-    fn should_default_to_highlights_for_unrecognized_patterns() {
-        // Files without highlights/locals/injections in the name should default to Highlights
-        assert_eq!(infer_query_kind("custom.scm"), QueryKind::Highlights);
-        assert_eq!(infer_query_kind("python.scm"), QueryKind::Highlights);
-        assert_eq!(
-            infer_query_kind("/path/to/queries.scm"),
-            QueryKind::Highlights
-        );
-        assert_eq!(
-            infer_query_kind("./custom-queries.scm"),
-            QueryKind::Highlights
-        );
-        assert_eq!(
-            infer_query_kind("/usr/share/rust.scm"),
-            QueryKind::Highlights
-        );
+    fn should_return_none_for_unrecognized_patterns() {
+        // Files without highlights/locals/injections in the name should return None
+        // (callers skip these files silently)
+        assert_eq!(infer_query_kind("custom.scm"), None);
+        assert_eq!(infer_query_kind("python.scm"), None);
+        assert_eq!(infer_query_kind("/path/to/queries.scm"), None);
+        assert_eq!(infer_query_kind("./custom-queries.scm"), None);
+        assert_eq!(infer_query_kind("/usr/share/rust.scm"), None);
     }
 }
