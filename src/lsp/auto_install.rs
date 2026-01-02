@@ -189,7 +189,7 @@ impl SkipReason {
 }
 
 // Default timeout for metadata support checks; keeps the LSP path responsive
-const METADATA_CHECK_TIMEOUT: Duration = Duration::from_secs(60);
+const METADATA_CHECK_TIMEOUT: Duration = Duration::from_secs(65);
 
 #[derive(Clone)]
 struct FetchOptionsOwned {
