@@ -93,26 +93,7 @@ fn test_hover_returns_content() {
     );
 
     // Extract contents as string for validation
-    let contents_value = hover.get("contents").unwrap();
-    let contents_str = match contents_value {
-        Value::String(s) => s.clone(),
-        Value::Object(obj) => {
-            // MarkedString or MarkupContent
-            if let Some(value) = obj.get("value") {
-                value.as_str().unwrap_or("").to_string()
-            } else {
-                format!("{:?}", obj)
-            }
-        }
-        Value::Array(arr) => {
-            // Array of MarkedString
-            arr.iter()
-                .filter_map(|v| v.as_str())
-                .collect::<Vec<_>>()
-                .join("\n")
-        }
-        _ => format!("{:?}", contents_value),
-    };
+    let contents_str = extract_hover_contents_as_string(&hover);
 
     // Verify contents contains expected information
     // Either real hover content ('main' or 'fn') or indexing message (PBI-149)
@@ -196,6 +177,34 @@ fn test_hover_snapshot() {
 
     // Capture snapshot
     insta::assert_json_snapshot!("hover_response", sanitized);
+}
+
+/// Extract hover contents as a single normalized string.
+///
+/// Handles multiple content format types:
+/// - `Value::String`: Direct string content
+/// - `Value::Object`: MarkupContent or MarkedString with "value" field
+/// - `Value::Array`: Array of MarkedString values
+fn extract_hover_contents_as_string(hover: &Value) -> String {
+    match hover.get("contents") {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Object(obj)) => {
+            // MarkedString or MarkupContent
+            if let Some(value) = obj.get("value") {
+                value.as_str().unwrap_or("").to_string()
+            } else {
+                format!("{:?}", obj)
+            }
+        }
+        Some(Value::Array(arr)) => {
+            // Array of MarkedString
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+        _ => format!("{:?}", hover.get("contents")),
+    }
 }
 
 fn hover_contains_indexing_message(hover: &Value) -> bool {
