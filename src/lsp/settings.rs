@@ -1,4 +1,6 @@
-use crate::config::{TreeSitterSettings, WorkspaceSettings, load_user_config, merge_all};
+use crate::config::{
+    TreeSitterSettings, WorkspaceSettings, defaults::default_settings, load_user_config, merge_all,
+};
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -58,18 +60,21 @@ pub fn load_settings(
 ) -> SettingsLoadOutcome {
     let mut events = Vec::new();
 
-    // Layer 1: User config from XDG_CONFIG_HOME (~/.config/treesitter-ls/treesitter-ls.toml)
+    // Layer 1: Programmed defaults (ADR-0010: lowest precedence)
+    let defaults = Some(default_settings());
+
+    // Layer 2: User config from XDG_CONFIG_HOME (~/.config/treesitter-ls/treesitter-ls.toml)
     let user_config = load_user_config_with_events(&mut events);
 
-    // Layer 2: Project config from root_path/treesitter-ls.toml
+    // Layer 3: Project config from root_path/treesitter-ls.toml
     let project_settings = load_toml_settings(root_path, &mut events);
 
-    // Layer 3: Override settings from initialization options or client configuration
+    // Layer 4: Override settings from initialization options or client configuration
     let override_settings = override_settings
         .and_then(|(source, value)| parse_override_settings(source, value, &mut events));
 
-    // Merge all layers: user < project < override (later layers override earlier)
-    let merged = merge_all(&[user_config, project_settings, override_settings]);
+    // Merge all layers: defaults < user < project < override (later layers override earlier)
+    let merged = merge_all(&[defaults, user_config, project_settings, override_settings]);
     let settings = merged.map(WorkspaceSettings::from);
 
     SettingsLoadOutcome { settings, events }
