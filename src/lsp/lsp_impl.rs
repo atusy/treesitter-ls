@@ -2123,7 +2123,7 @@ mod tests {
         // Wildcard: block all bridging with empty filter
         languages.insert(
             "_".to_string(),
-            LanguageSettings::with_bridge(None, vec![], Some(HashMap::new())),
+            LanguageSettings::with_bridge(None, None, Some(HashMap::new())),
         );
 
         // Look up "quarto" which doesn't exist - should inherit from wildcard
@@ -2301,7 +2301,7 @@ mod tests {
         let mut bridge_filter = HashMap::new();
         bridge_filter.insert("python".to_string(), BridgeLanguageConfig { enabled: true });
         bridge_filter.insert("r".to_string(), BridgeLanguageConfig { enabled: true });
-        let markdown_settings = LanguageSettings::with_bridge(None, vec![], Some(bridge_filter));
+        let markdown_settings = LanguageSettings::with_bridge(None, None, Some(bridge_filter));
 
         // Router should allow python (enabled in filter)
         assert!(
@@ -2322,7 +2322,7 @@ mod tests {
         );
 
         // Host quarto with no bridge filter (default: all)
-        let quarto_settings = LanguageSettings::new(None, vec![]);
+        let quarto_settings = LanguageSettings::new(None, None);
 
         // Router should allow all languages
         assert!(
@@ -2335,7 +2335,7 @@ mod tests {
         );
 
         // Host rmd with empty bridge filter (disable all)
-        let rmd_settings = LanguageSettings::with_bridge(None, vec![], Some(HashMap::new()));
+        let rmd_settings = LanguageSettings::with_bridge(None, None, Some(HashMap::new()));
 
         // Router should block all languages
         assert!(
