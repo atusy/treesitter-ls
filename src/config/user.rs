@@ -101,9 +101,11 @@ pub fn user_config_path() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::env;
 
     #[test]
+    #[serial(xdg_env)]
     fn user_config_path_uses_xdg_config_home_when_set() {
         // Save original value
         let original = env::var("XDG_CONFIG_HOME").ok();
@@ -139,6 +141,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(xdg_env)]
     fn user_config_path_falls_back_to_home_config_when_xdg_unset() {
         // Save original value
         let original = env::var("XDG_CONFIG_HOME").ok();
@@ -183,6 +186,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(xdg_env)]
     fn load_user_config_returns_none_for_missing_file() {
         use tempfile::TempDir;
 
@@ -218,6 +222,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(xdg_env)]
     fn load_user_config_loads_valid_toml_file() {
         use std::fs;
         use tempfile::TempDir;
@@ -277,6 +282,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(xdg_env)]
     fn load_user_config_returns_descriptive_error_for_invalid_toml() {
         use std::fs;
         use tempfile::TempDir;

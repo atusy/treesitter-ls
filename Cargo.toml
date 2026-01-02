@@ -40,6 +40,7 @@ tree-sitter-yaml = "0.7"
 streaming-iterator = "0.1"
 criterion = { version = "0.5", features = ["html_reports"] }
 filetime = "0.2"
+serial_test = "3"
 
 [[bench]]
 name = "injection_tokens"
