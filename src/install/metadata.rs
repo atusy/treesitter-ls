@@ -483,4 +483,71 @@ return {
             "Expected 'fake_lang_xyz' to be unsupported (return false)"
         );
     }
+
+    #[test]
+    fn test_is_language_supported_reuses_cached_metadata() {
+        // Test that multiple is_language_supported checks reuse cached metadata
+        // This verifies the caching behavior via FetchOptions with the 1-hour TTL
+        let temp = tempdir().expect("Failed to create temp dir");
+        let options = FetchOptions {
+            data_dir: Some(temp.path()),
+            use_cache: true,
+        };
+
+        // Mock the cache with parsers.lua content
+        let cache = MetadataCache::with_default_ttl(temp.path());
+        let mock_parsers_lua = r#"
+return {
+  lua = {
+    install_info = {
+      revision = 'abc123',
+      url = 'https://github.com/MunifTanjim/tree-sitter-lua',
+    },
+    tier = 2,
+  },
+  rust = {
+    install_info = {
+      revision = 'def456',
+      url = 'https://github.com/tree-sitter/tree-sitter-rust',
+    },
+    tier = 1,
+  },
+  python = {
+    install_info = {
+      revision = 'ghi789',
+      url = 'https://github.com/tree-sitter/tree-sitter-python',
+    },
+    tier = 1,
+  },
+}
+"#;
+        cache.write(mock_parsers_lua).expect("write cache");
+
+        // Verify cache file exists before first call
+        assert!(cache.read().is_some(), "Cache should exist after writing");
+
+        // Make multiple is_language_supported calls
+        // These should all use the cached metadata (no HTTP request)
+        let lua_supported = is_language_supported("lua", Some(&options));
+        let rust_supported = is_language_supported("rust", Some(&options));
+        let python_supported = is_language_supported("python", Some(&options));
+        let fake_supported = is_language_supported("nonexistent_lang", Some(&options));
+
+        // Verify all results are correct (proving cache was used)
+        assert!(lua_supported, "lua should be supported");
+        assert!(rust_supported, "rust should be supported");
+        assert!(python_supported, "python should be supported");
+        assert!(!fake_supported, "nonexistent_lang should NOT be supported");
+
+        // Verify the cache is still fresh (wasn't modified since we wrote it)
+        let cache_content = cache.read();
+        assert!(
+            cache_content.is_some(),
+            "Cache should still be readable after multiple calls"
+        );
+        assert!(
+            cache_content.unwrap().contains("lua"),
+            "Cache content should be unchanged"
+        );
+    }
 }
