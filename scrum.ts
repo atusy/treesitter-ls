@@ -240,7 +240,7 @@ const scrum: ScrumDashboard = {
           verification: "Run `make test` and `make test_nvim` - all tests pass",
         },
       ],
-      status: "in_progress",
+      status: "done",
     },
     {
       id: "PBI-162",
@@ -382,105 +382,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 139,
-    pbi_id: "PBI-161",
-    goal: "Fix parser auto-install race causing server crashes on rapid edits",
-    status: "review",
-    subtasks: [
-      {
-        test: "Investigate root cause of parser auto-install race condition",
-        implementation: "Trace didOpen → maybe_auto_install_language → install_language_async → parse_document flow to identify where concurrent file write and load happens",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: [
-          "Race condition occurs between install_language_async (writing .dylib) and parse_document (loading .dylib)",
-          "didOpen at line 1060 calls maybe_auto_install_language (line 1101) which spawns background install",
-          "Then didOpen calls parse_document (line 1110) which tries to load the parser",
-          "parse_document → ensure_language_loaded → try_load_language_by_id → parser_loader.load_language",
-          "If install is still writing, libloading::Library::new panics on partial binary",
-          "InstallingLanguages tracker exists but only prevents duplicate installs, not concurrent load during install",
-        ],
-      },
-      {
-        test: "Design coordination solution to prevent concurrent install/parse",
-        implementation: "Analyze flow and design fix: make maybe_auto_install_language return bool, skip parse_document in didOpen if install was triggered",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: [
-          "Solution: make maybe_auto_install_language return bool indicating if install was triggered",
-          "If true, skip parse_document in didOpen - let reload_language_after_install handle it",
-          "reload_language_after_install (line 848) already calls parse_document after install completes",
-          "This prevents the race: parse_document only runs after install writes the complete .dylib file",
-          "Preserves async background install behavior - no blocking waits in didOpen",
-          "Simple change with minimal code impact - just add return value and conditional check",
-        ],
-      },
-      {
-        test: "Implement fix to skip parse_document when auto-install is triggered",
-        implementation: "Add bool return to maybe_auto_install_language, check in didOpen to skip parse if true, update check_injected_languages_auto_install call site",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "1f60582",
-            message: "fix(auto-install): prevent race between parser install and load (PBI-161)",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Updated maybe_auto_install_language signature to return bool",
-          "Returns true if install triggered (already installing, parser exists, or new install started)",
-          "Returns false if install skipped (unsupported language, no data dir, etc)",
-          "didOpen now tracks skip_parse flag and conditionally skips parse_document call",
-          "check_injected_languages_auto_install ignores return value (injections never skip parse)",
-          "372/373 tests pass (1 flaky rust-analyzer test - pre-existing in PBI-163)",
-        ],
-      },
-      {
-        test: "Verify all tests pass with race condition fix",
-        implementation: "Run make test to verify fix doesn't break existing functionality",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: [
-          "372/373 unit tests pass consistently",
-          "1 flaky test varies (completion, signature_help, or concurrent_first_access)",
-          "These are known flaky rust-analyzer tests tracked in PBI-163",
-          "cargo check passes with no warnings",
-          "Core functionality (parse_document, auto-install coordination) works correctly",
-        ],
-      },
-    ],
-    review: {
-      date: "2026-01-03",
-      dod_results: {
-        unit_tests: "PASS - 372/373 tests pass (1 flaky rust-analyzer test is pre-existing - tracked in PBI-163)",
-        code_quality: "PASS - cargo check passes with no warnings",
-        e2e_tests: "SKIP - Race condition fix requires timing-dependent E2E test which is impractical",
-      },
-      acceptance_criteria_verification: [
-        {
-          criterion: "Parser auto-install coordinates with parsing operations",
-          status: "VERIFIED",
-          evidence: "maybe_auto_install_language returns bool indicating if install triggered. didOpen checks this and skips parse_document if true. reload_language_after_install calls parse_document after install completes (line 848), ensuring parsing only happens after .dylib file is fully written.",
-        },
-        {
-          criterion: "Rapid edits after file open don't trigger panic",
-          status: "VERIFIED",
-          evidence: "The race condition is eliminated: didOpen → maybe_auto_install_language returns true → skip parse_document → install completes → reload_language_after_install → parse_document. No concurrent write/load of .dylib file.",
-        },
-        {
-          criterion: "All tests pass with coordinated auto-install",
-          status: "VERIFIED",
-          evidence: "372/373 unit tests pass. 1 flaky test (rust-analyzer integration) is pre-existing issue tracked in PBI-163. cargo check passes with no warnings. Fix is minimal and surgical - only affects auto-install flow.",
-        },
-      ],
-      increment_status: "ACCEPTED - PBI-161 complete. Parser auto-install now coordinates with parsing operations to prevent race condition. When a file is opened with an unknown language, didOpen skips parse_document if auto-install is triggered, letting reload_language_after_install handle parsing after the .dylib file is completely written. This eliminates timing-dependent crashes when editing immediately after opening files. The fix preserves async background install behavior while preventing concurrent file write/load operations.",
-    },
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -490,7 +392,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 3) | Sprint 1-135: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 3) | Sprint 1-136: git log -- scrum.yaml, scrum.ts
   completed: [
     {
       number: 128,
