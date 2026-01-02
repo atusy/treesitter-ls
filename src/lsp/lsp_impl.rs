@@ -25,6 +25,7 @@ use tokio::sync::Mutex;
 use super::auto_install::{InstallingLanguages, get_injected_languages};
 use super::bridge::TokioAsyncLanguageServerPool;
 use super::progress::{create_progress_begin, create_progress_end};
+use super::semantic_request_tracker::SemanticRequestTracker;
 
 /// Parse a JSON notification and extract ProgressParams if it's a $/progress notification.
 ///
@@ -81,6 +82,8 @@ pub struct TreeSitterLs {
     /// Wrapped in Option so it can be taken once when starting the forwarder task.
     tokio_notification_rx:
         tokio::sync::Mutex<Option<tokio::sync::mpsc::Receiver<serde_json::Value>>>,
+    /// Tracks active semantic token requests for cancellation support
+    semantic_request_tracker: SemanticRequestTracker,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -130,6 +133,7 @@ impl TreeSitterLs {
             failed_parsers,
             tokio_async_pool: TokioAsyncLanguageServerPool::new(tokio_notification_tx),
             tokio_notification_rx: tokio::sync::Mutex::new(Some(tokio_notification_rx)),
+            semantic_request_tracker: SemanticRequestTracker::new(),
         }
     }
 
@@ -1170,6 +1174,9 @@ impl LanguageServer for TreeSitterLs {
 
         // Clean up semantic token cache for this document
         self.semantic_cache.remove(&uri);
+
+        // Cancel any pending semantic token requests for this document
+        self.semantic_request_tracker.cancel_all_for_uri(&uri);
 
         // Clean up bridge documents for this specific host document only
         // This ensures other open documents continue to have working bridge features

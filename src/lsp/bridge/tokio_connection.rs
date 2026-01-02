@@ -473,12 +473,12 @@ impl TokioAsyncBridgeConnection {
             // try_wait returns Ok(Some(status)) if the process has exited
             // try_wait returns Err if there was an error checking the status
             match child.try_wait() {
-                Ok(None) => true,      // Process is still running
-                Ok(Some(_)) => false,  // Process has exited
-                Err(_) => false,       // Error checking status - assume dead
+                Ok(None) => true,     // Process is still running
+                Ok(Some(_)) => false, // Process has exited
+                Err(_) => false,      // Error checking status - assume dead
             }
         } else {
-            false  // No child process - connection was never properly initialized
+            false // No child process - connection was never properly initialized
         }
     }
 
