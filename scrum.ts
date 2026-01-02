@@ -116,9 +116,9 @@ const scrum: ScrumDashboard = {
         test: "close_document sends textDocument/didClose notification to bridge server",
         implementation: "Add close_document_with_notification() method to pool that sends didClose and removes version tracking",
         type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
+        status: "green",
+        commits: [{ hash: "0eb46c3", message: "feat(bridge): add close_document_async to send didClose notification", phase: "green" }],
+        notes: ["Added close_document_async() that sends didClose and removes version tracking"],
       },
       {
         test: "did_close in lsp_impl calls bridge pool cleanup for all active connections",
