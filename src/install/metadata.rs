@@ -258,6 +258,20 @@ pub fn list_supported_languages(
     Ok(languages)
 }
 
+/// Check if a language is supported by nvim-treesitter.
+///
+/// This function checks if the given language name exists in the nvim-treesitter
+/// parsers.lua metadata. Uses caching via FetchOptions to avoid repeated HTTP requests.
+///
+/// Returns `true` if the language is supported, `false` otherwise.
+/// Network errors or parse errors also result in `false` being returned.
+pub fn is_language_supported(language: &str, options: Option<&FetchOptions>) -> bool {
+    match list_supported_languages(options) {
+        Ok(languages) => languages.iter().any(|l| l == language),
+        Err(_) => false, // Network error or parse error - treat as unsupported
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,5 +411,43 @@ return {
         assert!(is_reserved_key("maintainers"));
         assert!(!is_reserved_key("lua"));
         assert!(!is_reserved_key("rust"));
+    }
+
+    #[test]
+    fn test_is_language_supported_returns_true_for_known_language() {
+        // Test that is_language_supported returns true for known language like 'lua'
+        // Uses cached metadata via FetchOptions to avoid repeated HTTP requests
+        let temp = tempdir().expect("Failed to create temp dir");
+        let options = FetchOptions {
+            data_dir: Some(temp.path()),
+            use_cache: true,
+        };
+
+        // First, populate the cache by fetching any language (or mock the cache)
+        // For unit test, we mock the cache with parsers.lua content
+        let cache = MetadataCache::with_default_ttl(temp.path());
+        let mock_parsers_lua = r#"
+return {
+  lua = {
+    install_info = {
+      revision = 'abc123',
+      url = 'https://github.com/MunifTanjim/tree-sitter-lua',
+    },
+    tier = 2,
+  },
+  rust = {
+    install_info = {
+      revision = 'def456',
+      url = 'https://github.com/tree-sitter/tree-sitter-rust',
+    },
+    tier = 1,
+  },
+}
+"#;
+        cache.write(mock_parsers_lua).expect("write cache");
+
+        // is_language_supported should return true for 'lua' (known language)
+        let result = is_language_supported("lua", Some(&options));
+        assert!(result, "Expected 'lua' to be supported");
     }
 }
