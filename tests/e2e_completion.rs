@@ -12,6 +12,7 @@ mod helpers;
 use helpers::lsp_client::LspClient;
 use helpers::lsp_init::initialize_with_rust_bridge;
 use helpers::lsp_polling::poll_until;
+use helpers::sanitization::sanitize_completion_response;
 use serde_json::json;
 
 /// Create a temporary markdown file with Rust code block for completion testing.
@@ -177,4 +178,87 @@ fn test_completion_returns_items() {
             "Completion items should have label"
         );
     }
+}
+
+/// Test that completion response is deterministic and can be snapshot tested.
+///
+/// This test verifies:
+/// - Completion items are stable across runs
+/// - Sanitization removes non-deterministic data (temp paths, URIs)
+/// - Snapshot captures expected response structure
+/// - textEdit ranges are properly adjusted to host coordinates
+#[test]
+fn test_completion_snapshot() {
+    let mut client = LspClient::new();
+
+    // Initialize with bridge configuration
+    initialize_with_rust_bridge(&mut client);
+
+    // Create and open test file
+    let (uri, content, _temp_file) = create_completion_test_markdown_file();
+    client.send_notification(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": uri,
+                "languageId": "markdown",
+                "version": 1,
+                "text": content
+            }
+        }),
+    );
+
+    // Request completion after 'p.' on line 10, column 6 (0-indexed)
+    // Retry to wait for rust-analyzer indexing
+    let completion_result = poll_until(20, 500, || {
+        let response = client.send_request(
+            "textDocument/completion",
+            json!({
+                "textDocument": {
+                    "uri": uri
+                },
+                "position": {
+                    "line": 10,
+                    "character": 6
+                }
+            }),
+        );
+
+        let result = response.get("result").cloned().unwrap_or(json!(null));
+        if !result.is_null() {
+            Some(result)
+        } else {
+            None
+        }
+    });
+
+    assert!(
+        completion_result.is_some(),
+        "Expected completion result for snapshot testing"
+    );
+
+    let completion = completion_result.unwrap();
+
+    // Sanitize the completion response for deterministic snapshot
+    let mut sanitized = sanitize_completion_response(&completion);
+
+    // Filter to only include struct field completions (x and y) for deterministic snapshot
+    // rust-analyzer may return different additional completions depending on indexing state
+    if let Some(items) = sanitized.get_mut("items") {
+        if let Some(items_array) = items.as_array_mut() {
+            items_array.retain(|item| {
+                let label = item.get("label").and_then(|v| v.as_str()).unwrap_or("");
+                label == "x" || label == "y"
+            });
+            // Sort by label for consistent ordering
+            items_array.sort_by(|a, b| {
+                let label_a = a.get("label").and_then(|v| v.as_str()).unwrap_or("");
+                let label_b = b.get("label").and_then(|v| v.as_str()).unwrap_or("");
+                label_a.cmp(label_b)
+            });
+        }
+    }
+
+    // Capture snapshot
+    insta::assert_json_snapshot!("completion_response", sanitized);
 }

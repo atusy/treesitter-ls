@@ -63,6 +63,70 @@ fn sanitize_hover_contents(contents: &Value) -> Value {
     }
 }
 
+/// Sanitize completion response for snapshot testing.
+///
+/// Replaces non-deterministic data:
+/// - File URIs in textEdit -> "<TEST_FILE_URI>"
+/// - Temp file paths in documentation -> "<TEMP_PATH>"
+///
+/// # Arguments
+/// * `completion` - The Completion response (CompletionList or array of items)
+///
+/// # Returns
+/// * Sanitized completion response suitable for snapshot comparison
+pub fn sanitize_completion_response(completion: &Value) -> Value {
+    let mut sanitized = completion.clone();
+
+    // Handle CompletionList format
+    if let Some(items) = sanitized.get_mut("items") {
+        if let Some(items_array) = items.as_array_mut() {
+            for item in items_array {
+                sanitize_completion_item(item);
+            }
+        }
+    } else if let Some(items_array) = sanitized.as_array_mut() {
+        // Handle array of CompletionItem format
+        for item in items_array {
+            sanitize_completion_item(item);
+        }
+    }
+
+    sanitized
+}
+
+/// Sanitize a single completion item.
+fn sanitize_completion_item(item: &mut Value) {
+    // Sanitize textEdit URI
+    if let Some(text_edit) = item.get_mut("textEdit") {
+        if let Some(uri) = text_edit.get_mut("uri") {
+            *uri = Value::String("<TEST_FILE_URI>".to_string());
+        }
+        // Also sanitize newText if it contains temp paths
+        if let Some(new_text) = text_edit.get_mut("newText") {
+            if let Some(s) = new_text.as_str() {
+                *new_text = Value::String(sanitize_text(s));
+            }
+        }
+    }
+
+    // Sanitize documentation if present
+    if let Some(documentation) = item.get_mut("documentation") {
+        match documentation {
+            Value::String(s) => {
+                *documentation = Value::String(sanitize_text(s));
+            }
+            Value::Object(obj) => {
+                if let Some(value) = obj.get_mut("value") {
+                    if let Some(s) = value.as_str() {
+                        *value = Value::String(sanitize_text(s));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Sanitize text content by replacing temp file paths.
 fn sanitize_text(text: &str) -> String {
     // Replace /var/folders/... (macOS temp) and /tmp/... (Linux temp) paths
