@@ -106,7 +106,54 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 123,
+    pbi_id: "PBI-150",
+    goal: "Fix all resource cleanup paths in TokioAsyncBridgeConnection to prevent memory leaks and hanging requests",
+    status: "in_progress" as SprintStatus,
+    subtasks: [
+      {
+        test: "Test: send_request returns (id, receiver) tuple instead of just receiver",
+        implementation: "Modify send_request to return (i64, oneshot::Receiver<ResponseResult>) so callers can remove pending_requests entry on timeout",
+        type: "structural" as SubtaskType,
+        status: "completed" as SubtaskStatus,
+        commits: [],
+        notes: ["send_request signature already correct - verified existing implementation"],
+      },
+      {
+        test: "Test: Pool methods (hover/completion/definition/signature_help) remove pending_requests entry when timeout occurs",
+        implementation: "Add timeout cleanup in tokio_async_pool.rs methods to remove pending entry using returned request ID",
+        type: "behavioral" as SubtaskType,
+        status: "completed" as SubtaskStatus,
+        commits: [],
+        notes: ["Added remove_pending_request() method to TokioAsyncBridgeConnection", "Updated all pool methods (hover, definition, completion, signature_help) to clean up on timeout"],
+      },
+      {
+        test: "Test: When reader_loop gets EOF, all pending_requests are cleared and receive None response immediately",
+        implementation: "In reader_loop, when Ok(None) or Err occurs, iterate pending_requests and send None response to all before breaking",
+        type: "behavioral" as SubtaskType,
+        status: "completed" as SubtaskStatus,
+        commits: [],
+        notes: ["Added cleanup in both Ok(None) and Err branches", "Uses DashMap iteration pattern: collect IDs, then remove and notify"],
+      },
+      {
+        test: "Test: When send_request write fails, pending_requests entry is removed before returning error",
+        implementation: "Add error handling in send_request to remove pending entry if write_all/flush fails",
+        type: "behavioral" as SubtaskType,
+        status: "completed" as SubtaskStatus,
+        commits: [],
+        notes: ["Wrapped write operations in async block with error handling", "Removes pending entry before returning error"],
+      },
+      {
+        test: "Test: When TokioAsyncBridgeConnection drops, pending_requests is cleared and all callers receive None immediately",
+        implementation: "In Drop impl, iterate pending_requests and send None to all senders before cleanup",
+        type: "behavioral" as SubtaskType,
+        status: "completed" as SubtaskStatus,
+        commits: [],
+        notes: ["Added pending request cleanup as step 1 in Drop impl", "Updated cleanup step numbering"],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
