@@ -185,8 +185,14 @@ const scrum: ScrumDashboard = {
         test: "Write test_hover_snapshot test that captures sanitized hover response in insta snapshot",
         implementation: "Add snapshot test using insta::assert_json_snapshot with sanitized hover response",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "6ef5e56",
+            message: "test(e2e): add hover snapshot test with deterministic verification",
+            phase: "green",
+          },
+        ],
         notes: [
           "Verifies hover content is deterministic and stable across runs",
           "Documents expected hover response structure",
