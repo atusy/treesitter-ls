@@ -289,8 +289,14 @@ const scrum: ScrumDashboard = {
         test: "Write test_references_snapshot test that captures sanitized reference locations",
         implementation: "Add snapshot test for references response with sanitized URIs and stable coordinates",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "7781792",
+            message: "test(e2e): add references snapshot test with deterministic verification",
+            phase: "green",
+          },
+        ],
         notes: [
           "Completes the TDD cycle for references migration",
           "Establishes pattern: functional test -> refactor helpers -> snapshot test",
