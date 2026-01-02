@@ -272,8 +272,14 @@ where
             }
         }
         _ = &mut timeout_fut => {
-            // The task is still running; abort to avoid leaking blocking work
-            // and report the timeout to the caller.
+            // The task is still running; abort to avoid leaking blocking work at the
+            // async layer and report the timeout to the caller.
+            //
+            // NOTE: This does not forcibly cancel the underlying synchronous HTTP
+            // request performed by the metadata layer; that request may continue
+            // running in the blocking thread until the HTTP client's own timeout
+            // (also 60 seconds) is reached. That HTTP timeout acts as the final
+            // backstop for resource cleanup.
             check.abort();
             (
                 true,
