@@ -110,7 +110,7 @@ const scrum: ScrumDashboard = {
     number: 123,
     pbi_id: "PBI-150",
     goal: "Fix all resource cleanup paths in TokioAsyncBridgeConnection to prevent memory leaks and hanging requests",
-    status: "in_progress" as SprintStatus,
+    status: "review" as SprintStatus,
     subtasks: [
       {
         test: "Test: send_request returns (id, receiver) tuple instead of just receiver",
@@ -153,6 +153,37 @@ const scrum: ScrumDashboard = {
         notes: ["Added pending request cleanup as step 1 in Drop impl", "Updated cleanup step numbering"],
       },
     ],
+    review: {
+      date: "2026-01-03",
+      dod_results: {
+        unit_tests: "PASS - 361 tests passed (cargo test)",
+        code_quality: "PASS - No clippy warnings, formatting correct (make check)",
+        e2e_tests: "PASS - 29 E2E tests passed (make test_nvim)",
+      },
+      acceptance_criteria_verification: [
+        {
+          criterion: "Timeout cleanup: When request times out, pending_requests entry is removed",
+          status: "VERIFIED",
+          evidence: "remove_pending_request() method exists at tokio_connection.rs:374. All pool methods (hover:255, definition:313, completion:371, signature_help:429) call it on timeout.",
+        },
+        {
+          criterion: "EOF cleanup: When language server dies, all pending requests receive None response immediately",
+          status: "VERIFIED",
+          evidence: "reader_loop handles Ok(None) at lines 215-233 and Err at lines 235-254. Both paths iterate pending requests, send None response, and break immediately.",
+        },
+        {
+          criterion: "Write error cleanup: When stdin write fails, pending_requests entry is removed",
+          status: "VERIFIED",
+          evidence: "send_request wraps write operations in async block (lines 305-315). On error, removes pending entry at line 313 before returning error.",
+        },
+        {
+          criterion: "Drop cleanup: When TokioAsyncBridgeConnection drops, pending_requests is cleared and callers notified",
+          status: "VERIFIED",
+          evidence: "Drop impl (lines 450-507) clears pending requests as step 1 (lines 452-461), sending None response to all callers before other cleanup.",
+        },
+      ],
+      increment_status: "DONE - All DoD checks passed, all acceptance criteria verified",
+    },
   },
 
   definition_of_done: {
@@ -266,12 +297,30 @@ interface Subtask {
   notes: string[];
 }
 
+interface ACVerification {
+  criterion: string;
+  status: "VERIFIED" | "FAILED" | "PENDING";
+  evidence: string;
+}
+
+interface SprintReview {
+  date: string;
+  dod_results: {
+    unit_tests: string;
+    code_quality: string;
+    e2e_tests: string;
+  };
+  acceptance_criteria_verification: ACVerification[];
+  increment_status: string;
+}
+
 interface Sprint {
   number: number;
   pbi_id: string;
   goal: string;
   status: SprintStatus;
   subtasks: Subtask[];
+  review?: SprintReview;
 }
 
 interface DoDCheck {
