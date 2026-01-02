@@ -89,10 +89,15 @@ pub struct QueryItem {
 /// Infer the query kind from a file path based on filename patterns.
 ///
 /// Rules:
-/// - `*highlights*.scm` -> `Some(Highlights)`
-/// - `*locals*.scm` -> `Some(Locals)`
-/// - `*injections*.scm` -> `Some(Injections)`
+/// - Exact match `highlights.scm` -> `Some(Highlights)`
+/// - Exact match `locals.scm` -> `Some(Locals)`
+/// - Exact match `injections.scm` -> `Some(Injections)`
 /// - Otherwise -> `None` (unknown patterns are skipped by callers)
+///
+/// Examples:
+/// - `injections.scm` -> matches
+/// - `rust-injections.scm` -> does NOT match (only exact filename matches)
+/// - `local-injections.scm` -> does NOT match (only exact filename matches)
 pub fn infer_query_kind(path: &str) -> Option<QueryKind> {
     // Extract filename from path using std::path for cross-platform support
     let filename = std::path::Path::new(path)
@@ -100,14 +105,12 @@ pub fn infer_query_kind(path: &str) -> Option<QueryKind> {
         .and_then(|s| s.to_str())
         .unwrap_or(path);
 
-    if filename.contains("injections") {
-        Some(QueryKind::Injections)
-    } else if filename.contains("locals") {
-        Some(QueryKind::Locals)
-    } else if filename.contains("highlights") {
-        Some(QueryKind::Highlights)
-    } else {
-        None
+    // Only match exact filenames
+    match filename {
+        "injections.scm" => Some(QueryKind::Injections),
+        "locals.scm" => Some(QueryKind::Locals),
+        "highlights.scm" => Some(QueryKind::Highlights),
+        _ => None,
     }
 }
 
@@ -1182,7 +1185,7 @@ kind = "injections""#;
     // PBI-151 Subtask 2: Type inference for query kinds
     #[test]
     fn should_infer_highlights_from_filename_pattern() {
-        // *highlights*.scm -> Some(Highlights)
+        // Only exact match "highlights.scm" -> Some(Highlights)
         assert_eq!(
             infer_query_kind("highlights.scm"),
             Some(QueryKind::Highlights)
@@ -1192,36 +1195,31 @@ kind = "injections""#;
             Some(QueryKind::Highlights)
         );
         assert_eq!(
-            infer_query_kind("./queries/python-highlights.scm"),
-            Some(QueryKind::Highlights)
-        );
-        assert_eq!(
             infer_query_kind("/usr/share/python/highlights.scm"),
             Some(QueryKind::Highlights)
         );
+        // Prefixed variants should NOT match (only exact filename)
+        assert_eq!(infer_query_kind("./queries/python-highlights.scm"), None);
+        assert_eq!(infer_query_kind("rust-highlights.scm"), None);
     }
 
     #[test]
     fn should_infer_locals_from_filename_pattern() {
-        // *locals*.scm -> Some(Locals)
+        // Only exact match "locals.scm" -> Some(Locals)
         assert_eq!(infer_query_kind("locals.scm"), Some(QueryKind::Locals));
         assert_eq!(
             infer_query_kind("/path/to/locals.scm"),
             Some(QueryKind::Locals)
         );
-        assert_eq!(
-            infer_query_kind("./queries/rust-locals.scm"),
-            Some(QueryKind::Locals)
-        );
-        assert_eq!(
-            infer_query_kind("/usr/share/python-locals.scm"),
-            Some(QueryKind::Locals)
-        );
+        // Prefixed variants should NOT match (only exact filename)
+        assert_eq!(infer_query_kind("./queries/rust-locals.scm"), None);
+        assert_eq!(infer_query_kind("/usr/share/python-locals.scm"), None);
+        assert_eq!(infer_query_kind("javascript-locals.scm"), None);
     }
 
     #[test]
     fn should_infer_injections_from_filename_pattern() {
-        // *injections*.scm -> Some(Injections)
+        // Only exact match "injections.scm" -> Some(Injections)
         assert_eq!(
             infer_query_kind("injections.scm"),
             Some(QueryKind::Injections)
@@ -1230,14 +1228,10 @@ kind = "injections""#;
             infer_query_kind("/path/to/injections.scm"),
             Some(QueryKind::Injections)
         );
-        assert_eq!(
-            infer_query_kind("./my-custom-injections.scm"),
-            Some(QueryKind::Injections)
-        );
-        assert_eq!(
-            infer_query_kind("/usr/share/markdown-injections.scm"),
-            Some(QueryKind::Injections)
-        );
+        // Prefixed variants should NOT match (only exact filename)
+        assert_eq!(infer_query_kind("./markdown-injections.scm"), None);
+        assert_eq!(infer_query_kind("/usr/share/markdown-injections.scm"), None);
+        assert_eq!(infer_query_kind("rust-injections.scm"), None);
     }
 
     #[test]
@@ -1249,5 +1243,33 @@ kind = "injections""#;
         assert_eq!(infer_query_kind("/path/to/queries.scm"), None);
         assert_eq!(infer_query_kind("./custom-queries.scm"), None);
         assert_eq!(infer_query_kind("/usr/share/rust.scm"), None);
+    }
+
+    #[test]
+    fn should_not_match_files_with_prefixes_before_pattern() {
+        // Files like "local-injections.scm" should NOT match because they have
+        // additional text before the pattern. Only exact matches like "injections.scm"
+        // or suffix matches like "rust-injections.scm" should match.
+        assert_eq!(
+            infer_query_kind("local-injections.scm"),
+            None,
+            "local-injections.scm should not match injections pattern"
+        );
+        assert_eq!(
+            infer_query_kind("global-locals.scm"),
+            None,
+            "global-locals.scm should not match locals pattern"
+        );
+        assert_eq!(
+            infer_query_kind("custom-highlights.scm"),
+            None,
+            "custom-highlights.scm should not match highlights pattern"
+        );
+        // Files with multiple dashes before the pattern should also not match
+        assert_eq!(
+            infer_query_kind("very-local-injections.scm"),
+            None,
+            "very-local-injections.scm should not match"
+        );
     }
 }
