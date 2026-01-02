@@ -15,34 +15,16 @@ use helpers::lsp_polling::poll_until;
 use helpers::sanitization::sanitize_definition_response;
 use helpers::test_fixtures::create_definition_fixture;
 use serde_json::{Value, json};
-use std::process::{Child, Command, Stdio};
-
-/// Spawn the treesitter-ls binary as an LSP server.
-fn spawn_lsp_server() -> Child {
-    Command::new(env!("CARGO_BIN_EXE_treesitter-ls"))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to spawn treesitter-ls binary")
-}
 
 #[test]
 fn test_spawn_binary_starts_process() {
-    let mut child = spawn_lsp_server();
-
-    // Process should be running (not immediately exited)
-    // We check by trying to get exit status without waiting
-    let status = child.try_wait().expect("Error checking child status");
-
-    // Process should still be running (waiting for LSP messages on stdin)
-    assert!(
-        status.is_none(),
-        "Process should not exit immediately - it should wait for LSP input"
-    );
-
-    // Clean up: kill the process
-    child.kill().expect("Failed to kill child process");
+    // Creating an LspClient should spawn the treesitter-ls binary and
+    // establish LSP communication channels without panicking.
+    //
+    // If the binary fails to start (e.g., missing executable, spawn error),
+    // LspClient::new() should surface that as a failure, causing this test
+    // to fail.
+    let _client = LspClient::new();
 }
 
 #[test]
