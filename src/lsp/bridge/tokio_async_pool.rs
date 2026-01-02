@@ -404,7 +404,7 @@ impl TokioAsyncLanguageServerPool {
     /// # Arguments
     /// * `key` - Connection pool key
     /// * `config` - Server configuration
-    /// * `_uri` - Document URI (unused, we use virtual URI)
+    /// * `host_uri` - Host document URI (for tracking host-to-bridge mapping)
     /// * `language_id` - Language ID for the document
     /// * `content` - Document content
     /// * `position` - Hover position
@@ -412,7 +412,7 @@ impl TokioAsyncLanguageServerPool {
         &self,
         key: &str,
         config: &BridgeServerConfig,
-        _uri: &str,
+        host_uri: &str,
         language_id: &str,
         content: &str,
         position: tower_lsp::lsp_types::Position,
@@ -422,8 +422,8 @@ impl TokioAsyncLanguageServerPool {
         // Get virtual file URI
         let virtual_uri = self.get_virtual_uri(key)?;
 
-        // Sync document (didOpen on first access, didChange on subsequent)
-        self.sync_document(&conn, &virtual_uri, language_id, content)
+        // Sync document with host URI tracking (didOpen on first access, didChange on subsequent)
+        self.sync_document_with_host(&conn, &virtual_uri, language_id, content, host_uri)
             .await?;
 
         // Send hover request
@@ -459,7 +459,7 @@ impl TokioAsyncLanguageServerPool {
     /// # Arguments
     /// * `key` - Connection pool key
     /// * `config` - Server configuration
-    /// * `_uri` - Document URI (unused, we use virtual URI)
+    /// * `host_uri` - Host document URI (for tracking host-to-bridge mapping)
     /// * `language_id` - Language ID for the document
     /// * `content` - Document content
     /// * `position` - Definition position
@@ -467,7 +467,7 @@ impl TokioAsyncLanguageServerPool {
         &self,
         key: &str,
         config: &BridgeServerConfig,
-        _uri: &str,
+        host_uri: &str,
         language_id: &str,
         content: &str,
         position: tower_lsp::lsp_types::Position,
@@ -477,8 +477,8 @@ impl TokioAsyncLanguageServerPool {
         // Get virtual file URI
         let virtual_uri = self.get_virtual_uri(key)?;
 
-        // Sync document (didOpen on first access, didChange on subsequent)
-        self.sync_document(&conn, &virtual_uri, language_id, content)
+        // Sync document with host URI tracking (didOpen on first access, didChange on subsequent)
+        self.sync_document_with_host(&conn, &virtual_uri, language_id, content, host_uri)
             .await?;
 
         // Send goto definition request
@@ -517,7 +517,7 @@ impl TokioAsyncLanguageServerPool {
     /// # Arguments
     /// * `key` - Connection pool key
     /// * `config` - Server configuration
-    /// * `_uri` - Document URI (unused, we use virtual URI)
+    /// * `host_uri` - Host document URI (for tracking host-to-bridge mapping)
     /// * `language_id` - Language ID for the document
     /// * `content` - Document content
     /// * `position` - Completion position
@@ -525,7 +525,7 @@ impl TokioAsyncLanguageServerPool {
         &self,
         key: &str,
         config: &BridgeServerConfig,
-        _uri: &str,
+        host_uri: &str,
         language_id: &str,
         content: &str,
         position: tower_lsp::lsp_types::Position,
@@ -535,8 +535,8 @@ impl TokioAsyncLanguageServerPool {
         // Get virtual file URI
         let virtual_uri = self.get_virtual_uri(key)?;
 
-        // Sync document (didOpen on first access, didChange on subsequent)
-        self.sync_document(&conn, &virtual_uri, language_id, content)
+        // Sync document with host URI tracking (didOpen on first access, didChange on subsequent)
+        self.sync_document_with_host(&conn, &virtual_uri, language_id, content, host_uri)
             .await?;
 
         // Send completion request
@@ -575,7 +575,7 @@ impl TokioAsyncLanguageServerPool {
     /// # Arguments
     /// * `key` - Connection pool key
     /// * `config` - Server configuration
-    /// * `_uri` - Document URI (unused, we use virtual URI)
+    /// * `host_uri` - Host document URI (for tracking host-to-bridge mapping)
     /// * `language_id` - Language ID for the document
     /// * `content` - Document content
     /// * `position` - Signature help position
@@ -583,7 +583,7 @@ impl TokioAsyncLanguageServerPool {
         &self,
         key: &str,
         config: &BridgeServerConfig,
-        _uri: &str,
+        host_uri: &str,
         language_id: &str,
         content: &str,
         position: tower_lsp::lsp_types::Position,
@@ -593,8 +593,8 @@ impl TokioAsyncLanguageServerPool {
         // Get virtual file URI
         let virtual_uri = self.get_virtual_uri(key)?;
 
-        // Sync document (didOpen on first access, didChange on subsequent)
-        self.sync_document(&conn, &virtual_uri, language_id, content)
+        // Sync document with host URI tracking (didOpen on first access, didChange on subsequent)
+        self.sync_document_with_host(&conn, &virtual_uri, language_id, content, host_uri)
             .await?;
 
         // Send signature help request

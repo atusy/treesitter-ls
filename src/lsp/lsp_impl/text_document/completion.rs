@@ -106,12 +106,6 @@ impl TreeSitterLs {
         // Translate host position to virtual position
         let virtual_position = cacheable.translate_host_to_virtual(position);
 
-        // Create a virtual URI for the injection
-        let virtual_uri = format!(
-            "file:///tmp/treesitter-ls-virtual-{}.rs",
-            std::process::id()
-        );
-
         // Get pool key from config
         let pool_key = server_config.cmd.first().cloned().unwrap_or_default();
 
@@ -123,12 +117,13 @@ impl TreeSitterLs {
             .await;
 
         // Use fully async completion via TokioAsyncLanguageServerPool
+        // Pass the host document URI for tracking host-to-bridge mapping
         let completion = self
             .tokio_async_pool
             .completion(
                 &pool_key,
                 &server_config,
-                &virtual_uri,
+                uri.as_str(),
                 &region.language,
                 &virtual_content,
                 virtual_position,

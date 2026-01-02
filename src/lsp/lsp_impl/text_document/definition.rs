@@ -157,15 +157,6 @@ impl TreeSitterLs {
             )
             .await;
 
-        // Create a virtual URI for the injection
-        let virtual_uri = format!(
-            "file:///tmp/treesitter-ls-virtual-{}.rs",
-            std::process::id()
-        );
-        self.client
-            .log_message(MessageType::INFO, format!("Virtual URI: {}", virtual_uri))
-            .await;
-
         // Get bridge server config for this language
         // The bridge filter is checked inside get_bridge_config_for_language
         let Some(server_config) =
@@ -194,12 +185,13 @@ impl TreeSitterLs {
             .await;
 
         // Use fully async goto_definition via TokioAsyncLanguageServerPool
+        // Pass the host document URI for tracking host-to-bridge mapping
         let definition = self
             .tokio_async_pool
             .goto_definition(
                 &pool_key,
                 &server_config,
-                &virtual_uri,
+                uri.as_str(),
                 &region.language,
                 &virtual_content,
                 virtual_position,
