@@ -11,12 +11,12 @@ use std::sync::OnceLock;
 // These are compiled once at first use and cached for efficiency
 fn macos_temp_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| Regex::new(r"/var/folders/[^/]+/[^/]+/[TP]/[^\s\):]+").unwrap())
+    REGEX.get_or_init(|| Regex::new(r"/var/folders/[^/]+/[^/]+/[TP]/[^:]+").unwrap())
 }
 
 fn linux_temp_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| Regex::new(r"/tmp/[^\s\):]+").unwrap())
+    REGEX.get_or_init(|| Regex::new(r"/tmp/[^:]+").unwrap())
 }
 
 /// Sanitize hover response for snapshot testing.
