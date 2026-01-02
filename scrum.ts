@@ -124,6 +124,11 @@ const scrum: ScrumDashboard = {
 
   // Recent 2 retrospectives | Sprint 1-120: ADR-driven development, reusable patterns, E2E test timing
   retrospectives: [
+    { sprint: 121, improvements: [
+      { action: "Create migration guide documenting async bridge series lessons learned (Sprints 119-121: hover, definition, completion, signatureHelp) including E2E_TEST_CHECKLIST.md patterns and pre-implementation review process", timing: "product", status: "active", outcome: null },
+      { action: "Fix 4 pre-existing E2E test failures identified in other test files to maintain test suite health", timing: "sprint", status: "active", outcome: null },
+      { action: "Audit remaining LSP E2E tests (type_definition, declaration, references, code_action, rename) and migrate to helper.retry_for_lsp_indexing() pattern where manual sleep patterns exist", timing: "product", status: "active", outcome: null },
+    ] },
     { sprint: 120, improvements: [
       { action: "Plan helper module architecture during sprint planning - identify reusable abstractions (LspClient, test fixtures, initialization patterns) before implementation starts to avoid mid-sprint extraction", timing: "sprint", status: "active", outcome: null },
       { action: "Document snapshot testing sanitization patterns - create testing guide explaining URI replacement, range normalization, non-deterministic data handling with examples from hover/completion/references tests", timing: "sprint", status: "active", outcome: null },
