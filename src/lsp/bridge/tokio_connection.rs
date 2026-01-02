@@ -55,8 +55,8 @@ pub struct TokioAsyncBridgeConnection {
     reader_handle: Option<JoinHandle<()>>,
     /// Shutdown signal sender
     shutdown_tx: Option<oneshot::Sender<()>>,
-    /// Child process handle (for cleanup on drop)
-    child: Option<Child>,
+    /// Child process handle (for cleanup on drop, protected by Mutex for is_alive() access)
+    child: Option<tokio::sync::Mutex<Child>>,
     /// Temporary directory path (for cleanup on drop)
     temp_dir: Option<PathBuf>,
 }
@@ -135,7 +135,7 @@ impl TokioAsyncBridgeConnection {
             next_request_id: AtomicI64::new(1),
             reader_handle: Some(reader_handle),
             shutdown_tx: Some(shutdown_tx),
-            child: Some(child),
+            child: Some(tokio::sync::Mutex::new(child)),
             temp_dir,
         })
     }
@@ -443,7 +443,8 @@ impl TokioAsyncBridgeConnection {
             .await?;
 
         // Wait for child to exit
-        if let Some(ref mut child) = self.child {
+        if let Some(ref child_mutex) = self.child {
+            let mut child = child_mutex.lock().await;
             let _ = tokio::time::timeout(std::time::Duration::from_millis(500), child.wait()).await;
         }
 
@@ -453,6 +454,32 @@ impl TokioAsyncBridgeConnection {
         );
 
         Ok(())
+    }
+
+    /// Check if the child process is still alive.
+    ///
+    /// This method checks whether the bridge language server process is still running.
+    /// It is used for health monitoring to detect crashed or killed processes.
+    ///
+    /// This is an async method because it needs to acquire the Mutex lock on the child process.
+    ///
+    /// # Returns
+    /// * `true` if the child process is still running
+    /// * `false` if the child process has exited or was never spawned
+    pub async fn is_alive(&self) -> bool {
+        if let Some(ref child_mutex) = self.child {
+            let mut child = child_mutex.lock().await;
+            // try_wait returns Ok(None) if the process is still running
+            // try_wait returns Ok(Some(status)) if the process has exited
+            // try_wait returns Err if there was an error checking the status
+            match child.try_wait() {
+                Ok(None) => true,      // Process is still running
+                Ok(Some(_)) => false,  // Process has exited
+                Err(_) => false,       // Error checking status - assume dead
+            }
+        } else {
+            false  // No child process - connection was never properly initialized
+        }
     }
 
     /// Read a single JSON-RPC message from the reader.
@@ -514,12 +541,21 @@ impl Drop for TokioAsyncBridgeConnection {
         // 4. Kill the child process
         // We skip sending shutdown/exit since block_on can't be called from async context
         // and the process will be killed anyway
-        if let Some(mut child) = self.child.take() {
-            let _ = child.start_kill();
-            log::debug!(
-                target: "treesitter_ls::bridge::tokio",
-                "[CONN] Killed child process"
-            );
+        if let Some(child_mutex) = self.child.take() {
+            // Use try_lock to avoid blocking in Drop - if we can't get the lock, the process
+            // will be cleaned up when the Mutex is dropped anyway
+            if let Ok(mut child) = child_mutex.try_lock() {
+                let _ = child.start_kill();
+                log::debug!(
+                    target: "treesitter_ls::bridge::tokio",
+                    "[CONN] Killed child process"
+                );
+            } else {
+                log::warn!(
+                    target: "treesitter_ls::bridge::tokio",
+                    "[CONN] Could not acquire child lock in Drop, process may not be killed"
+                );
+            }
         }
 
         // 5. Remove temp_dir (sync I/O is safe in Drop)
@@ -970,7 +1006,7 @@ mod tests {
         let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None, None).await;
         assert!(result.is_ok(), "spawn() should succeed");
 
-        let mut conn = result.unwrap();
+        let conn = result.unwrap();
 
         // Verify the child field exists and is Some after spawn
         assert!(
@@ -979,7 +1015,8 @@ mod tests {
         );
 
         // Verify we can access the child and it's alive
-        if let Some(ref mut child) = conn.child {
+        if let Some(ref child_mutex) = conn.child {
+            let mut child = child_mutex.lock().await;
             // try_wait returns Ok(None) if process is still running
             let status = child.try_wait();
             assert!(
@@ -1044,20 +1081,18 @@ mod tests {
         let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None, None).await;
         assert!(result.is_ok(), "spawn() should succeed");
 
-        let mut conn = result.unwrap();
-
-        // Take a copy of the child for verification after drop
-        let mut child = conn.child.take().expect("child should be present");
+        let conn = result.unwrap();
 
         // Verify child is alive before drop
-        let status = child.try_wait();
-        assert!(
-            matches!(status, Ok(None)),
-            "child process should be running before drop"
-        );
-
-        // Put child back
-        conn.child = Some(child);
+        {
+            let child_mutex = conn.child.as_ref().expect("child should be present");
+            let mut child = child_mutex.lock().await;
+            let status = child.try_wait();
+            assert!(
+                matches!(status, Ok(None)),
+                "child process should be running before drop"
+            );
+        }
 
         // Drop the connection
         drop(conn);
@@ -1113,6 +1148,50 @@ mod tests {
         assert!(
             !temp_dir.exists(),
             "temp_dir should be removed after connection is dropped"
+        );
+    }
+
+    /// PBI-157 AC1: Test that is_alive() returns true for running process.
+    ///
+    /// When a connection is freshly spawned, the child process is running.
+    /// is_alive() should return true.
+    #[tokio::test]
+    async fn is_alive_returns_true_for_running_process() {
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None, None).await;
+        assert!(result.is_ok(), "spawn() should succeed");
+
+        let conn = result.unwrap();
+
+        // Immediately after spawn, process should be alive
+        assert!(
+            conn.is_alive().await,
+            "is_alive() should return true for running process"
+        );
+    }
+
+    /// PBI-157 AC1: Test that is_alive() returns false for dead process.
+    ///
+    /// When the child process exits (naturally or via kill), is_alive() should return false.
+    #[tokio::test]
+    async fn is_alive_returns_false_for_dead_process() {
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None, None).await;
+        assert!(result.is_ok(), "spawn() should succeed");
+
+        let conn = result.unwrap();
+
+        // Kill the child process
+        if let Some(ref child_mutex) = conn.child {
+            let mut child = child_mutex.lock().await;
+            let _ = child.kill().await;
+        }
+
+        // Give the process time to exit
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // After killing, process should be dead
+        assert!(
+            !conn.is_alive().await,
+            "is_alive() should return false for dead process"
         );
     }
 }
