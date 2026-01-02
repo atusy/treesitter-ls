@@ -12,7 +12,6 @@ use crate::analysis::{
 };
 use crate::config::{TreeSitterSettings, WorkspaceSettings};
 use crate::document::DocumentStore;
-use crate::error::LockResultExt;
 use crate::language::injection::{CacheableInjectionRegion, collect_all_injections};
 use crate::language::{DocumentParserPool, FailedParserRegistry, LanguageCoordinator};
 use crate::language::{LanguageEvent, LanguageLogLevel};
@@ -20,7 +19,8 @@ use crate::lsp::{SettingsEvent, SettingsEventKind, SettingsSource, load_settings
 use crate::text::PositionMapper;
 use arc_swap::ArcSwap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use super::auto_install::{InstallingLanguages, get_injected_languages};
 use super::bridge::TokioAsyncLanguageServerPool;
@@ -391,29 +391,48 @@ impl TreeSitterLs {
             events.extend(load_result.events.clone());
 
             // Parse the document with crash detection
+            // Narrow critical section: checkout parser → release lock → parse in spawn_blocking → return parser
             let parsed_tree = {
-                let mut pool = self
-                    .parser_pool
-                    .lock()
-                    .recover_poison("parse_document parser_pool")
-                    .unwrap();
-                if let Some(mut parser) = pool.acquire(&language_name) {
+                // Checkout parser from pool (brief lock)
+                let parser = {
+                    let mut pool = self.parser_pool.lock().await;
+                    pool.acquire(&language_name)
+                };
+
+                if let Some(mut parser) = parser {
                     let old_tree = if !edits.is_empty() {
                         self.documents.get_edited_tree(&uri, &edits)
                     } else {
                         self.documents.get(&uri).and_then(|doc| doc.tree().cloned())
                     };
 
-                    // Record that we're about to parse (for crash detection)
-                    let _ = self.failed_parsers.begin_parsing(&language_name);
+                    let language_name_clone = language_name.clone();
+                    let text_clone = text.clone();
+                    let failed_parsers = self.failed_parsers.clone();
 
-                    let result = parser.parse(&text, old_tree.as_ref());
+                    // Parse in spawn_blocking to avoid blocking tokio worker thread
+                    let result = tokio::task::spawn_blocking(move || {
+                        // Record that we're about to parse (for crash detection)
+                        let _ = failed_parsers.begin_parsing(&language_name_clone);
 
-                    // Parsing succeeded without crash - clear the state
-                    let _ = self.failed_parsers.end_parsing();
+                        let parse_result = parser.parse(&text_clone, old_tree.as_ref());
 
-                    pool.release(language_name.clone(), parser);
-                    result
+                        // Parsing succeeded without crash - clear the state
+                        let _ = failed_parsers.end_parsing();
+
+                        (parser, parse_result)
+                    })
+                    .await
+                    .ok();
+
+                    if let Some((parser, parse_result)) = result {
+                        // Return parser to pool (brief lock)
+                        let mut pool = self.parser_pool.lock().await;
+                        pool.release(language_name.clone(), parser);
+                        parse_result
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }

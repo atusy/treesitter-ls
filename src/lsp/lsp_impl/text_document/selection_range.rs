@@ -4,7 +4,6 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 
 use crate::analysis::handle_selection_range;
-use crate::error::LockResultExt;
 
 use super::super::TreeSitterLs;
 
@@ -37,19 +36,34 @@ impl TreeSitterLs {
             let text = doc.text().to_string();
             drop(doc); // Release lock before acquiring parser pool
 
-            let sync_parse_result = {
-                let mut pool = self
-                    .parser_pool
-                    .lock()
-                    .recover_poison("selection_range sync_parse")
-                    .unwrap();
-                if let Some(mut parser) = pool.acquire(&language_name) {
-                    let result = parser.parse(&text, None);
-                    pool.release(language_name.clone(), parser);
-                    result
+            // Checkout parser (brief lock)
+            let parser = {
+                let mut pool = self.parser_pool.lock().await;
+                pool.acquire(&language_name)
+            };
+
+            let sync_parse_result = if let Some(mut parser) = parser {
+                let text_clone = text.clone();
+                let language_name_clone = language_name.clone();
+
+                // Parse in spawn_blocking to avoid blocking tokio worker thread
+                let result = tokio::task::spawn_blocking(move || {
+                    let parse_result = parser.parse(&text_clone, None);
+                    (parser, parse_result)
+                })
+                .await
+                .ok();
+
+                if let Some((parser, parse_result)) = result {
+                    // Return parser to pool (brief lock)
+                    let mut pool = self.parser_pool.lock().await;
+                    pool.release(language_name_clone, parser);
+                    parse_result
                 } else {
                     None
                 }
+            } else {
+                None
             };
 
             if let Some(tree) = sync_parse_result {
@@ -65,22 +79,14 @@ impl TreeSitterLs {
             };
 
             // Use full injection parsing handler with coordinator and parser pool
-            let mut pool = self
-                .parser_pool
-                .lock()
-                .recover_poison("selection_range parser_pool")
-                .unwrap();
+            let mut pool = self.parser_pool.lock().await;
             let result = handle_selection_range(&doc, &positions, &self.language, &mut pool);
 
             return Ok(Some(result));
         }
 
         // Use full injection parsing handler with coordinator and parser pool
-        let mut pool = self
-            .parser_pool
-            .lock()
-            .recover_poison("selection_range parser_pool")
-            .unwrap();
+        let mut pool = self.parser_pool.lock().await;
         let result = handle_selection_range(&doc, &positions, &self.language, &mut pool);
 
         Ok(Some(result))

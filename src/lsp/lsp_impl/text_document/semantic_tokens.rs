@@ -8,7 +8,6 @@ use crate::analysis::{
     decode_semantic_tokens, encode_semantic_tokens, handle_semantic_tokens_full_delta,
     next_result_id,
 };
-use crate::error::LockResultExt;
 
 use super::super::TreeSitterLs;
 
@@ -67,20 +66,36 @@ impl TreeSitterLs {
                     // This handles the race condition where semantic tokens are
                     // requested before didOpen finishes parsing.
                     drop(doc); // Release lock before acquiring parser pool
-                    let sync_parse_result = {
-                        let mut pool = self
-                            .parser_pool
-                            .lock()
-                            .recover_poison("semantic_tokens_full sync_parse")
-                            .unwrap();
-                        if let Some(mut parser) = pool.acquire(&language_name) {
-                            let result = parser.parse(&text, None);
-                            pool.release(language_name.clone(), parser);
-                            result
+
+                    // Checkout parser (brief lock)
+                    let parser = {
+                        let mut pool = self.parser_pool.lock().await;
+                        pool.acquire(&language_name)
+                    };
+
+                    let sync_parse_result = if let Some(mut parser) = parser {
+                        let text_clone = text.clone();
+                        let language_name_clone = language_name.clone();
+
+                        // Parse in spawn_blocking to avoid blocking tokio worker thread
+                        let result = tokio::task::spawn_blocking(move || {
+                            let parse_result = parser.parse(&text_clone, None);
+                            (parser, parse_result)
+                        })
+                        .await
+                        .ok();
+
+                        if let Some((parser, parse_result)) = result {
+                            // Return parser to pool (brief lock)
+                            let mut pool = self.parser_pool.lock().await;
+                            pool.release(language_name_clone, parser);
+                            parse_result
                         } else {
                             None
                         }
-                    }; // pool lock released here
+                    } else {
+                        None
+                    };
 
                     match sync_parse_result {
                         Some(tree) => {
@@ -106,11 +121,7 @@ impl TreeSitterLs {
             let capture_mappings = self.language.get_capture_mappings();
 
             // Use injection-aware handler (works with or without injection support)
-            let mut pool = self
-                .parser_pool
-                .lock()
-                .recover_poison("semantic_tokens_full parser_pool")
-                .unwrap();
+            let mut pool = self.parser_pool.lock().await;
             crate::analysis::handle_semantic_tokens_full(
                 &text,
                 &tree,
@@ -218,11 +229,7 @@ impl TreeSitterLs {
             let capture_mappings = self.language.get_capture_mappings();
 
             // Use injection-aware handler (works with or without injection support)
-            let mut pool = self
-                .parser_pool
-                .lock()
-                .recover_poison("semantic_tokens_full_delta parser_pool")
-                .unwrap();
+            let mut pool = self.parser_pool.lock().await;
 
             // Incremental Tokenization Path
             // ==============================
@@ -408,11 +415,7 @@ impl TreeSitterLs {
         let capture_mappings = self.language.get_capture_mappings();
 
         // Use injection-aware handler (works with or without injection support)
-        let mut pool = self
-            .parser_pool
-            .lock()
-            .recover_poison("semantic_tokens_range parser_pool")
-            .unwrap();
+        let mut pool = self.parser_pool.lock().await;
         let result = crate::analysis::handle_semantic_tokens_range(
             text,
             tree,
