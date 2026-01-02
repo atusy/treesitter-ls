@@ -34,16 +34,10 @@ clean:
 test:
 	$(CARGO) test --lib
 
-# List of Rust-based E2E test suites
-E2E_TESTS = e2e_completion e2e_definition e2e_hover e2e_references
-
-# Run all Rust-based E2E tests
+# Run all Rust-based E2E tests (auto-discovers tests matching tests/e2e_*.rs)
 .PHONY: test_e2e
 test_e2e:
-	@for suite in $(E2E_TESTS); do \
-		echo "Running $$suite..."; \
-		$(CARGO) test --features e2e --test $$suite || exit $$?; \
-	done
+	$(CARGO) test --features e2e --test 'e2e_*'
 
 # Run all tests (unit + E2E)
 .PHONY: test_all
