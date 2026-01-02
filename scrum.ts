@@ -106,222 +106,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 120,
-    pbi_id: "PBI-151",
-    goal: "Migrate critical Neovim E2E tests (hover, completion, references) to Rust with snapshot verification, establishing reusable patterns and helpers for future migrations",
-    status: "done",
-    subtasks: [
-      {
-        test: "Extract poll_until helper from e2e_definition.rs retry logic into test helper module",
-        implementation: "Create tests/helpers_lsp_polling.rs with poll_until(max_attempts, delay_ms, predicate) function that encapsulates retry-with-timeout pattern",
-        type: "structural",
-        status: "completed",
-        commits: [
-          {
-            hash: "f187c14",
-            message: "refactor(test): extract poll_until helper for E2E test retry logic",
-            phase: "refactoring",
-          },
-        ],
-        notes: [
-          "Addresses Sprint 119 retrospective: Extract retry-with-timeout pattern into reusable test helper",
-          "This is structural refactoring to prepare for test migrations",
-        ],
-      },
-      {
-        test: "Refactor e2e_definition.rs tests to use poll_until helper instead of manual retry loops",
-        implementation: "Replace the 20-attempt retry loops in e2e_definition.rs with calls to poll_until helper",
-        type: "structural",
-        status: "completed",
-        commits: [
-          {
-            hash: "5196299",
-            message: "refactor(test): use poll_until helper in e2e_definition tests",
-            phase: "refactoring",
-          },
-        ],
-        notes: [
-          "Validates the poll_until abstraction works for existing definition tests",
-          "This refactoring proves the helper is reusable before writing new tests",
-        ],
-      },
-      {
-        test: "Write test_hover_returns_content Rust E2E test that sends hover request at cursor position and validates response structure",
-        implementation: "Implement hover E2E test using LspClient to send textDocument/hover request, poll_until for response, assert hover content exists",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "2ebdc1c",
-            message: "test(e2e): migrate hover test from Lua to Rust",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Migrates from tests/test_lsp_hover.lua",
-          "Cursor on 'main' in fn main() at line 4, column 4",
-          "Accepts either real hover content or 'indexing (rust-analyzer)' message (PBI-149)",
-        ],
-      },
-      {
-        test: "Add sanitization helper for hover responses that replaces non-deterministic data (file URIs, markdown formatting variations)",
-        implementation: "Create sanitize_hover_response function in tests/helpers_sanitization.rs to normalize hover content for snapshot comparison",
-        type: "structural",
-        status: "completed",
-        commits: [
-          {
-            hash: "3e1b7d0",
-            message: "refactor(test): add sanitization helper for hover responses",
-            phase: "refactoring",
-          },
-        ],
-        notes: [
-          "Structural refactoring to support snapshot testing",
-          "Prepares for hover snapshot test in next subtask",
-        ],
-      },
-      {
-        test: "Write test_hover_snapshot test that captures sanitized hover response in insta snapshot",
-        implementation: "Add snapshot test using insta::assert_json_snapshot with sanitized hover response",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "6ef5e56",
-            message: "test(e2e): add hover snapshot test with deterministic verification",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Verifies hover content is deterministic and stable across runs",
-          "Documents expected hover response structure",
-        ],
-      },
-      {
-        test: "Extract LspClient into shared test helper module for reuse across E2E test files",
-        implementation: "Move LspClient struct and implementation from e2e_definition.rs to tests/helpers_lsp_client.rs, export as pub",
-        type: "structural",
-        status: "completed",
-        commits: [
-          {
-            hash: "d0e500c",
-            message: "refactor(test): extract LspClient into shared test helper module",
-            phase: "refactoring",
-          },
-        ],
-        notes: [
-          "Addresses PBI-151 acceptance criterion: LspClient helper in reusable module",
-          "Enables upcoming completion and references tests to reuse LspClient",
-        ],
-      },
-      {
-        test: "Write test_completion_returns_items Rust E2E test that requests completion after 'p.' and validates struct field items",
-        implementation: "Implement completion E2E test using shared LspClient, poll_until, verify completion items include 'x' and 'y' fields",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "2cf5f0e",
-            message: "test(e2e): migrate completion test from Lua to Rust",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Migrates from tests/test_lsp_completion.lua",
-          "Cursor after 'p.' on line 11 inside Rust code block",
-          "Verifies textEdit ranges are in host document coordinates (line >= 10)",
-        ],
-      },
-      {
-        test: "Refactor completion test to extract common initialization pattern into helper function",
-        implementation: "Create initialize_with_bridge helper that encapsulates initialize + initialized + bridge config setup",
-        type: "structural",
-        status: "completed",
-        commits: [
-          {
-            hash: "12e2c80",
-            message: "refactor(test): extract initialization helper for E2E tests",
-            phase: "refactoring",
-          },
-        ],
-        notes: [
-          "Reduces duplication across definition, hover, and completion tests",
-          "Prepares clean foundation for references test",
-        ],
-      },
-      {
-        test: "Write test_completion_snapshot test that captures sanitized completion items in snapshot",
-        implementation: "Add snapshot test for completion response with sanitized textEdit ranges",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "1b1f30e",
-            message: "test(e2e): add completion snapshot test with deterministic verification",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Verifies completion items are stable and deterministic",
-          "Validates range adjustment from virtual to host coordinates",
-        ],
-      },
-      {
-        test: "Write test_references_returns_locations Rust E2E test that finds all references to variable 'x'",
-        implementation: "Implement references E2E test using shared helpers, poll_until, verify 3+ reference locations with host coordinates",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "88b486d",
-            message: "test(e2e): migrate references test from Lua to Rust",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Migrates from tests/test_lsp_references.lua",
-          "Cursor on 'x' definition at line 5",
-          "Expects references at lines 5, 6, 7 (all >= line 3 in 0-indexed host coordinates)",
-        ],
-      },
-      {
-        test: "Write test_references_snapshot test that captures sanitized reference locations",
-        implementation: "Add snapshot test for references response with sanitized URIs and stable coordinates",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "7781792",
-            message: "test(e2e): add references snapshot test with deterministic verification",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Completes the TDD cycle for references migration",
-          "Establishes pattern: functional test -> refactor helpers -> snapshot test",
-        ],
-      },
-      {
-        test: "Refactor E2E test helpers by extracting create_test_markdown_file variants into reusable module",
-        implementation: "Create tests/helpers_test_fixtures.rs with functions for hover_fixture, completion_fixture, references_fixture",
-        type: "structural",
-        status: "completed",
-        commits: [
-          {
-            hash: "f85a362",
-            message: "refactor(test): extract test fixture helpers into reusable module",
-            phase: "refactoring",
-          },
-        ],
-        notes: [
-          "Final refactoring to consolidate common test setup patterns",
-          "Prepares clean foundation for future LSP feature migrations (rename, codeAction, etc.)",
-          "User requirement: refactor E2E test on every migration cycles",
-        ],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -331,27 +116,26 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-118: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-119: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 120, pbi_id: "PBI-151", goal: "Migrate critical Neovim E2E tests (hover, completion, references) to Rust with snapshot verification, establishing reusable patterns and helpers for future migrations", status: "done", subtasks: [] },
     { number: 119, pbi_id: "PBI-150", goal: "Implement Rust-based E2E testing infrastructure for go-to-definition with snapshot testing, enabling faster and more reliable tests without Neovim dependency", status: "done", subtasks: [] },
-    { number: 118, pbi_id: "PBI-149", goal: "Show informative 'indexing' message during hover when rust-analyzer is still initializing, with state tracking to transition to normal responses once ready", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-117: modular refactoring pattern, E2E indexing waits, vertical slice validation
+  // Recent 2 retrospectives | Sprint 1-119: ADR-driven development, reusable patterns, E2E test timing
   retrospectives: [
+    { sprint: 120, improvements: [
+      { action: "Plan helper module architecture during sprint planning - identify reusable abstractions (LspClient, test fixtures, initialization patterns) before implementation starts to avoid mid-sprint extraction", timing: "sprint", status: "active", outcome: null },
+      { action: "Document snapshot testing sanitization patterns - create testing guide explaining URI replacement, range normalization, non-deterministic data handling with examples from hover/completion/references tests", timing: "sprint", status: "active", outcome: null },
+      { action: "Apply LSP spec study to test design - even for test migrations, studying textDocument/hover, textDocument/completion, textDocument/references spec helps identify edge cases and sanitization needs upfront", timing: "immediate", status: "active", outcome: null },
+      { action: "Consider extracting E2E test helpers into shared testing library - tests/helpers_*.rs modules (lsp_client, lsp_polling, sanitization, fixtures) could become reusable crate if more LSP features will be tested", timing: "product", status: "active", outcome: null },
+    ] },
     { sprint: 119, improvements: [
       { action: "Study LSP specification sections before implementing new LSP features - JSON-RPC 2.0, notification vs request semantics, server-initiated requests", timing: "immediate", status: "active", outcome: null },
-      { action: "Extract retry-with-timeout pattern into reusable test helper - poll_until or wait_for_lsp_response with configurable attempts/delay", timing: "immediate", status: "active", outcome: null },
+      { action: "Extract retry-with-timeout pattern into reusable test helper - poll_until or wait_for_lsp_response with configurable attempts/delay", timing: "immediate", status: "completed", outcome: "poll_until(max_attempts, delay_ms, predicate) helper created in tests/helpers_lsp_polling.rs (Sprint 120 subtask 1-2)" },
       { action: "Document snapshot testing best practices - sanitization strategies for non-deterministic data (temp paths, timestamps, PIDs)", timing: "sprint", status: "active", outcome: null },
       { action: "Establish E2E testing strategy guidelines - when to use Rust E2E (protocol verification, CI speed) vs Neovim E2E (editor integration, user workflow)", timing: "sprint", status: "active", outcome: null },
-      { action: "Consider migrating critical Neovim E2E tests to Rust - evaluate hover, completion for snapshot testing benefits", timing: "product", status: "active", outcome: null },
-    ] },
-    { sprint: 118, improvements: [
-      { action: "ADR-driven development accelerates implementation - ADR-0010 pre-defined architecture, state machine, and detection heuristic", timing: "sprint", status: "active", outcome: null },
-      { action: "Reusable patterns across sprints reduce cognitive load - DashMap from Sprint 117 enabled consistent state tracking", timing: "immediate", status: "completed", outcome: "server_states: DashMap<String, ServerState> mirrors document_versions pattern" },
-      { action: "E2E test retries indicate timing assumptions - 20-attempt loop with 500ms wait works but shows brittleness", timing: "sprint", status: "active", outcome: null },
-      { action: "Non-deterministic test assertions reduce reliability - comment 'may or may not see indexing message' shows test unpredictability", timing: "product", status: "active", outcome: null },
-      { action: "Feature changes ripple to existing tests - hover test updated for indexing state shows broader impact than anticipated", timing: "sprint", status: "active", outcome: null },
+      { action: "Consider migrating critical Neovim E2E tests to Rust - evaluate hover, completion for snapshot testing benefits", timing: "product", status: "completed", outcome: "Sprint 120 successfully migrated hover, completion, references with snapshot verification - pattern proven effective" },
     ] },
   ],
 };
