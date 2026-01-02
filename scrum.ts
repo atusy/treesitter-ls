@@ -173,8 +173,14 @@ const scrum: ScrumDashboard = {
         test: "E2E test uses helper.retry_for_lsp_indexing() and verifies signature help returns valid response for function call",
         implementation: "Refactor test_lsp_signature_help.lua to use retry helper instead of manual sleep, strengthen assertions",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "615d164",
+            message: "test(e2e): refactor signature_help test to use retry helper",
+            phase: "green",
+          },
+        ],
         notes: [
           "MUST use _G.helper.retry_for_lsp_indexing() from scripts/minimal_init.lua",
           "Remove vim.uv.sleep(3000) and manual retry loop (current line 55)",
