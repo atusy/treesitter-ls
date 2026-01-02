@@ -13,31 +13,8 @@ use helpers::lsp_client::LspClient;
 use helpers::lsp_init::initialize_with_rust_bridge;
 use helpers::lsp_polling::poll_until;
 use helpers::sanitization::sanitize_hover_response;
+use helpers::test_fixtures::create_hover_fixture;
 use serde_json::{Value, json};
-
-/// Create a temporary markdown file with Rust code block for hover testing.
-/// Equivalent to test_lsp_hover.lua markdown fixture.
-fn create_hover_test_markdown_file() -> (String, String, tempfile::NamedTempFile) {
-    let content = r#"# Example
-
-```rust
-fn main() {
-    println!("Hello, world!");
-}
-```
-"#;
-
-    let temp_file = tempfile::Builder::new()
-        .suffix(".md")
-        .tempfile()
-        .expect("Failed to create temp file");
-
-    std::fs::write(temp_file.path(), content).expect("Failed to write temp file");
-
-    let uri = format!("file://{}", temp_file.path().display());
-
-    (uri, content.to_string(), temp_file)
-}
 
 /// Test that hover returns content for Rust code in Markdown.
 ///
@@ -54,7 +31,7 @@ fn test_hover_returns_content() {
     initialize_with_rust_bridge(&mut client);
 
     // Create and open test file
-    let (uri, content, _temp_file) = create_hover_test_markdown_file();
+    let (uri, content, _temp_file) = create_hover_fixture();
     client.send_notification(
         "textDocument/didOpen",
         json!({
@@ -165,7 +142,7 @@ fn test_hover_snapshot() {
     initialize_with_rust_bridge(&mut client);
 
     // Create and open test file
-    let (uri, content, _temp_file) = create_hover_test_markdown_file();
+    let (uri, content, _temp_file) = create_hover_fixture();
     client.send_notification(
         "textDocument/didOpen",
         json!({

@@ -13,37 +13,8 @@ use helpers::lsp_client::LspClient;
 use helpers::lsp_init::initialize_with_rust_bridge;
 use helpers::lsp_polling::poll_until;
 use helpers::sanitization::sanitize_completion_response;
+use helpers::test_fixtures::create_completion_fixture;
 use serde_json::json;
-
-/// Create a temporary markdown file with Rust code block for completion testing.
-/// Equivalent to test_lsp_completion.lua markdown fixture.
-fn create_completion_test_markdown_file() -> (String, String, tempfile::NamedTempFile) {
-    let content = r#"# Rust Example
-
-```rust
-struct Point {
-    x: i32,
-    y: i32,
-}
-
-fn main() {
-    let p = Point { x: 1, y: 2 };
-    p.
-}
-```
-"#;
-
-    let temp_file = tempfile::Builder::new()
-        .suffix(".md")
-        .tempfile()
-        .expect("Failed to create temp file");
-
-    std::fs::write(temp_file.path(), content).expect("Failed to write temp file");
-
-    let uri = format!("file://{}", temp_file.path().display());
-
-    (uri, content.to_string(), temp_file)
-}
 
 /// Test that completion returns struct field items with adjusted textEdit ranges.
 ///
@@ -62,7 +33,7 @@ fn test_completion_returns_items() {
     initialize_with_rust_bridge(&mut client);
 
     // Create and open test file
-    let (uri, content, _temp_file) = create_completion_test_markdown_file();
+    let (uri, content, _temp_file) = create_completion_fixture();
     client.send_notification(
         "textDocument/didOpen",
         json!({
@@ -195,7 +166,7 @@ fn test_completion_snapshot() {
     initialize_with_rust_bridge(&mut client);
 
     // Create and open test file
-    let (uri, content, _temp_file) = create_completion_test_markdown_file();
+    let (uri, content, _temp_file) = create_completion_fixture();
     client.send_notification(
         "textDocument/didOpen",
         json!({

@@ -13,33 +13,8 @@ use helpers::lsp_client::LspClient;
 use helpers::lsp_init::initialize_with_rust_bridge;
 use helpers::lsp_polling::poll_until;
 use helpers::sanitization::sanitize_references_response;
+use helpers::test_fixtures::create_references_fixture;
 use serde_json::json;
-
-/// Create a temporary markdown file with Rust code block for references testing.
-/// Equivalent to test_lsp_references.lua markdown fixture.
-fn create_references_test_markdown_file() -> (String, String, tempfile::NamedTempFile) {
-    let content = r#"# Rust Example
-
-```rust
-fn main() {
-    let x = 42;
-    let y = x + 1;
-    let z = x * 2;
-}
-```
-"#;
-
-    let temp_file = tempfile::Builder::new()
-        .suffix(".md")
-        .tempfile()
-        .expect("Failed to create temp file");
-
-    std::fs::write(temp_file.path(), content).expect("Failed to write temp file");
-
-    let uri = format!("file://{}", temp_file.path().display());
-
-    (uri, content.to_string(), temp_file)
-}
 
 /// Test that references returns locations for all uses of variable 'x'.
 ///
@@ -58,7 +33,7 @@ fn test_references_returns_locations() {
     initialize_with_rust_bridge(&mut client);
 
     // Create and open test file
-    let (uri, content, _temp_file) = create_references_test_markdown_file();
+    let (uri, content, _temp_file) = create_references_fixture();
     client.send_notification(
         "textDocument/didOpen",
         json!({
@@ -165,7 +140,7 @@ fn test_references_snapshot() {
     initialize_with_rust_bridge(&mut client);
 
     // Create and open test file
-    let (uri, content, _temp_file) = create_references_test_markdown_file();
+    let (uri, content, _temp_file) = create_references_fixture();
     client.send_notification(
         "textDocument/didOpen",
         json!({

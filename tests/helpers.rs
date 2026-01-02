@@ -11,3 +11,6 @@ pub mod sanitization;
 
 #[path = "helpers_lsp_init.rs"]
 pub mod lsp_init;
+
+#[path = "helpers_test_fixtures.rs"]
+pub mod test_fixtures;
