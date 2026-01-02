@@ -114,7 +114,7 @@ impl TreeSitterLs {
         std::thread::spawn(super::bridge::startup_cleanup);
 
         // Create notification channel for tokio async pool
-        let (tokio_notification_tx, tokio_notification_rx) = tokio::sync::mpsc::channel(64);
+        let (tokio_notification_tx, tokio_notification_rx) = tokio::sync::mpsc::channel(256);
 
         Self {
             client,

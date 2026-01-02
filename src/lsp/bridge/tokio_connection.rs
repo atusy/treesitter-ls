@@ -22,6 +22,9 @@ use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
+/// Maximum number of pending requests before backpressure kicks in
+const MAX_PENDING_REQUESTS: usize = 100;
+
 /// Result of a response read operation
 #[derive(Debug)]
 pub struct ResponseResult {
@@ -208,7 +211,13 @@ impl TokioAsyncBridgeConnection {
                                         target: "treesitter_ls::bridge::tokio",
                                         "[READER] Forwarding $/progress notification"
                                     );
-                                    let _ = sender.try_send(message);
+                                    if let Err(e) = sender.try_send(message) {
+                                        log::warn!(
+                                            target: "treesitter_ls::bridge",
+                                            "Notification channel full, dropped message: {}",
+                                            e
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -264,6 +273,11 @@ impl TokioAsyncBridgeConnection {
         method: &str,
         params: Value,
     ) -> Result<(i64, oneshot::Receiver<ResponseResult>), String> {
+        // Check backpressure limit
+        if self.pending_requests.len() >= MAX_PENDING_REQUESTS {
+            return Err("Too many pending requests (backpressure limit reached)".to_string());
+        }
+
         // Generate request ID atomically
         let id = self.next_request_id.fetch_add(1, Ordering::SeqCst);
 

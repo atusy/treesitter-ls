@@ -17,6 +17,10 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
+use tokio::time::{Duration, timeout};
+
+/// Timeout for language server initialization
+const INIT_TIMEOUT_SECS: u64 = 60;
 
 /// Pool of tokio-based async language server connections.
 ///
@@ -97,7 +101,23 @@ impl TokioAsyncLanguageServerPool {
             key
         );
 
-        let (conn, virtual_uri) = self.spawn_and_initialize(config).await?;
+        let spawn_result = timeout(
+            Duration::from_secs(INIT_TIMEOUT_SECS),
+            self.spawn_and_initialize(config),
+        )
+        .await;
+
+        let (conn, virtual_uri) = match spawn_result {
+            Ok(Some(result)) => result,
+            Ok(None) => {
+                log::warn!(target: "treesitter_ls::bridge", "spawn_and_initialize returned None");
+                return None;
+            }
+            Err(_) => {
+                log::warn!(target: "treesitter_ls::bridge", "spawn_and_initialize timed out after {}s", INIT_TIMEOUT_SECS);
+                return None;
+            }
+        };
         let conn = Arc::new(conn);
 
         // Insert into maps
@@ -242,6 +262,18 @@ impl TokioAsyncLanguageServerPool {
             .entry(uri.to_string())
             .and_modify(|v| *v += 1)
             .or_insert(1)
+    }
+
+    /// Remove document version tracking when a document is closed.
+    /// This prevents unbounded growth of document_versions map.
+    pub fn close_document(&self, uri: &str) {
+        self.document_versions.remove(uri);
+    }
+
+    /// Get the count of tracked document versions (for testing).
+    #[cfg(test)]
+    pub fn document_versions_count(&self) -> usize {
+        self.document_versions.len()
     }
 }
 
