@@ -320,7 +320,10 @@ fn test_shutdown_terminates_cleanly() {
     client.send_notification("initialized", json!({}));
 
     // Verify server is running
-    assert!(client.is_running(), "Server should be running before shutdown");
+    assert!(
+        client.is_running(),
+        "Server should be running before shutdown"
+    );
 
     // Send shutdown request (server should acknowledge but stay running)
     // Note: LSP shutdown takes no params
