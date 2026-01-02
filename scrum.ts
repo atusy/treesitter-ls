@@ -148,19 +148,19 @@ const scrum: ScrumDashboard = {
     { number: 118, pbi_id: "PBI-147", goal: "Return an informative 'No result or indexing' message when bridged hover has no result, ensuring users understand the reason instead of seeing silent empty responses", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-116: modular refactoring pattern, E2E indexing waits, vertical slice validation
+  // Recent 2 retrospectives | Sprint 1-117: modular refactoring pattern, E2E indexing waits, vertical slice validation
   retrospectives: [
+    { sprint: 119, improvements: [
+      { action: "Reuse existing caching and metadata infrastructure patterns for new features - FetchOptions with TTL proved effective for nvim-treesitter metadata", timing: "immediate", status: "active", outcome: null },
+      { action: "Pre-existing E2E test failures should block sprint planning - 12 failing bridge tests indicate deferred technical debt", timing: "sprint", status: "active", outcome: null },
+      { action: "Design integration test acceptance criteria with specific verification targets - 'existing tests pass' led to no-op subtask", timing: "sprint", status: "active", outcome: null },
+      { action: "User experience issues (noisy errors) should trigger immediate investigation - waiting until PBI-150 suggests reactive rather than proactive approach", timing: "product", status: "active", outcome: null },
+    ] },
     { sprint: 118, improvements: [
       { action: "Prefer simple user-facing feedback over complex state management - 'No result or indexing' message vs $/progress tracking", timing: "sprint", status: "active", outcome: null },
       { action: "When reverting features, analyze root cause before re-attempting - previous async approach was 'too buggy' due to state complexity", timing: "sprint", status: "active", outcome: null },
       { action: "Helper functions enable testability - create_no_result_hover() testable in isolation", timing: "immediate", status: "completed", outcome: "pub(crate) fn create_no_result_hover() with unit test verification" },
       { action: "Course corrections are valid sprint outcomes - simpler approach after revert delivered user value", timing: "immediate", status: "completed", outcome: "PBI-147 completed with informative message instead of complex indexing state" },
-    ] },
-    { sprint: 117, improvements: [
-      { action: "Study reference implementation patterns before new features - sync bridge had versioning model", timing: "sprint", status: "active", outcome: null },
-      { action: "DashMap provides thread-safe state without explicit locking - prefer for concurrent access patterns", timing: "immediate", status: "completed", outcome: "document_versions: DashMap<String, u32> in TokioAsyncLanguageServerPool" },
-      { action: "LSP spec: didOpen once per URI, didChange for updates with incrementing version", timing: "immediate", status: "completed", outcome: "sync_document checks version map, sends didOpen v1 or didChange v+1" },
-      { action: "Tightly coupled changes belong in single commit - all 4 subtasks shared c2a78c0", timing: "immediate", status: "completed", outcome: "fix(bridge): track document versions per URI, send didOpen/didChange correctly" },
     ] },
   ],
 };
