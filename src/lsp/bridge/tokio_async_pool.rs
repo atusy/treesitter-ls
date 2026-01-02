@@ -31,8 +31,10 @@ const INIT_TIMEOUT_SECS: u64 = 60;
 pub struct TokioAsyncLanguageServerPool {
     /// Active connections by key (server name)
     connections: DashMap<String, Arc<TokioAsyncBridgeConnection>>,
-    /// Virtual file URIs per connection key (for textDocument requests)
-    virtual_uris: DashMap<String, String>,
+    /// Virtual file URIs per (host_uri, connection key) for per-document isolation
+    /// Changed from DashMap<String, String> to prevent concurrent requests from different
+    /// host documents from overwriting each other's content (PBI-158)
+    virtual_uris: DashMap<(String, String), String>,
     /// Channel for forwarding $/progress notifications
     notification_sender: mpsc::Sender<Value>,
     /// Document versions per virtual URI (for didOpen/didChange tracking)
@@ -84,13 +86,22 @@ impl TokioAsyncLanguageServerPool {
     /// # Arguments
     /// * `key` - Unique key for this connection (typically server name)
     /// * `config` - Configuration for spawning a new connection if needed
+    /// * `host_uri` - Host document URI (for per-document virtual file isolation)
     pub async fn get_connection(
         &self,
         key: &str,
         config: &BridgeServerConfig,
+        host_uri: &str,
     ) -> Option<Arc<TokioAsyncBridgeConnection>> {
         // Fast path: check if we already have a connection
         if let Some(conn) = self.connections.get(key) {
+            // Connection exists, but we may need to create a new virtual URI for this host
+            if self.virtual_uris.get(&(host_uri.to_string(), key.to_string())).is_none() {
+                // Spawn a virtual file for this host document
+                if let Some(virtual_uri) = self.spawn_virtual_uri_for_host(config, host_uri, key).await {
+                    self.virtual_uris.insert((host_uri.to_string(), key.to_string()), virtual_uri);
+                }
+            }
             return Some(conn.clone());
         }
 
@@ -108,6 +119,13 @@ impl TokioAsyncLanguageServerPool {
 
         // Double-check: another task might have created the connection while we waited for the lock
         if let Some(conn) = self.connections.get(key) {
+            // Connection exists, but we may need to create a new virtual URI for this host
+            if self.virtual_uris.get(&(host_uri.to_string(), key.to_string())).is_none() {
+                // Spawn a virtual file for this host document
+                if let Some(virtual_uri) = self.spawn_virtual_uri_for_host(config, host_uri, key).await {
+                    self.virtual_uris.insert((host_uri.to_string(), key.to_string()), virtual_uri);
+                }
+            }
             return Some(conn.clone());
         }
 
@@ -120,7 +138,7 @@ impl TokioAsyncLanguageServerPool {
 
         let spawn_result = timeout(
             Duration::from_secs(INIT_TIMEOUT_SECS),
-            self.spawn_and_initialize(config),
+            self.spawn_and_initialize(config, host_uri, key),
         )
         .await;
 
@@ -139,7 +157,7 @@ impl TokioAsyncLanguageServerPool {
 
         // Insert into maps
         self.connections.insert(key.to_string(), conn.clone());
-        self.virtual_uris.insert(key.to_string(), virtual_uri);
+        self.virtual_uris.insert((host_uri.to_string(), key.to_string()), virtual_uri);
 
         Some(conn)
     }
@@ -147,9 +165,16 @@ impl TokioAsyncLanguageServerPool {
     /// Spawn a new connection and initialize it with the language server.
     ///
     /// This is fully async unlike `AsyncLanguageServerPool::spawn_async_connection_blocking`.
+    ///
+    /// # Arguments
+    /// * `config` - Server configuration
+    /// * `host_uri` - Host document URI (for unique virtual file naming)
+    /// * `key` - Server key (for unique virtual file naming)
     async fn spawn_and_initialize(
         &self,
         config: &BridgeServerConfig,
+        _host_uri: &str,
+        _key: &str,
     ) -> Option<(TokioAsyncBridgeConnection, String)> {
         let program = config.cmd.first()?;
         let args: Vec<&str> = config.cmd.iter().skip(1).map(|s| s.as_str()).collect();
@@ -236,17 +261,69 @@ impl TokioAsyncLanguageServerPool {
         Some((conn, virtual_uri))
     }
 
+    /// Spawn a virtual URI for a specific host document without spawning a new connection.
+    ///
+    /// This creates a new virtual file in the existing connection's workspace for the
+    /// given host document, enabling per-document content isolation.
+    async fn spawn_virtual_uri_for_host(
+        &self,
+        config: &BridgeServerConfig,
+        host_uri: &str,
+        key: &str,
+    ) -> Option<String> {
+        // Hash the host URI to create a unique but stable identifier
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        host_uri.hash(&mut hasher);
+        let host_hash = hasher.finish();
+
+        // Determine extension
+        let extension = config
+            .languages
+            .first()
+            .map(|lang| language_to_extension(lang))
+            .unwrap_or("rs");
+
+        // Create a unique virtual file path based on host URI hash
+        // Use the first connection's temp directory if available
+        if let Some(_first_conn_entry) = self.connections.get(key) {
+            // Get any existing virtual URI to extract temp directory
+            if let Some(existing_uri_entry) = self.virtual_uris.iter().find(|entry| entry.key().1 == key) {
+                let existing_uri = existing_uri_entry.value();
+                // Extract temp directory from existing URI
+                if let Some(path_str) = existing_uri.strip_prefix("file://") {
+                    if let Some(parent_dir) = std::path::Path::new(path_str).parent() {
+                        // Create new virtual file in same workspace
+                        let virtual_file_path = parent_dir.join(format!("virtual-{}.{}", host_hash, extension));
+                        return Some(format!("file://{}", virtual_file_path.display()));
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
     /// Check if the pool has a connection for the given key.
     pub fn has_connection(&self, key: &str) -> bool {
         self.connections.contains_key(key)
     }
 
-    /// Get the virtual file URI for a connection.
+    /// Get the virtual file URI for a connection and host document.
     ///
-    /// Returns the stored virtual file URI that was created when the connection
-    /// was spawned. This URI is used for textDocument/* requests.
-    pub fn get_virtual_uri(&self, key: &str) -> Option<String> {
-        self.virtual_uris.get(key).map(|r| r.clone())
+    /// Returns the stored virtual file URI that was created for the specific
+    /// host document when the connection was accessed. This URI is used for
+    /// textDocument/* requests and provides per-document content isolation.
+    ///
+    /// # Arguments
+    /// * `key` - Server key (e.g., "rust-analyzer")
+    /// * `host_uri` - Host document URI (e.g., "file:///test/doc.md")
+    pub fn get_virtual_uri(&self, key: &str, host_uri: &str) -> Option<String> {
+        self.virtual_uris
+            .get(&(host_uri.to_string(), key.to_string()))
+            .map(|r| r.clone())
     }
 
     /// Get the notification sender for forwarding $/progress notifications.
@@ -354,12 +431,15 @@ impl TokioAsyncLanguageServerPool {
 
             if !still_in_use {
                 // No other host uses this bridge URI, safe to close
-                // Find the connection for this bridge URI
-                if let Some((conn, _)) = self.connections.iter().find_map(|entry| {
-                    self.virtual_uris
-                        .get(entry.key())
-                        .filter(|uri| **uri == bridge_uri)
-                        .map(|_| (entry.value().clone(), entry.key().clone()))
+                // Find the connection for this bridge URI by iterating through virtual_uris
+                if let Some((conn, _)) = self.virtual_uris.iter().find_map(|entry| {
+                    let (_host_key, server_key) = entry.key();
+                    let uri = entry.value();
+                    if uri == &bridge_uri {
+                        self.connections.get(server_key).map(|conn| (conn.clone(), server_key.clone()))
+                    } else {
+                        None
+                    }
                 }) {
                     self.close_document_async(&conn, &bridge_uri).await;
                 }
@@ -374,12 +454,12 @@ impl TokioAsyncLanguageServerPool {
     pub async fn close_all_documents(&self) {
         // Collect connection-uri pairs to avoid holding DashMap locks during async operations
         let conn_uri_pairs: Vec<_> = self
-            .connections
+            .virtual_uris
             .iter()
             .filter_map(|entry| {
-                let key = entry.key().clone();
-                let conn = entry.value().clone();
-                self.virtual_uris.get(&key).map(|uri| (conn, uri.clone()))
+                let (_host_uri, server_key) = entry.key();
+                let virtual_uri = entry.value().clone();
+                self.connections.get(server_key).map(|conn| (conn.clone(), virtual_uri))
             })
             .collect();
 
@@ -413,10 +493,10 @@ impl TokioAsyncLanguageServerPool {
         content: &str,
         position: tower_lsp::lsp_types::Position,
     ) -> Option<tower_lsp::lsp_types::Hover> {
-        let conn = self.get_connection(key, config).await?;
+        let conn = self.get_connection(key, config, host_uri).await?;
 
-        // Get virtual file URI
-        let virtual_uri = self.get_virtual_uri(key)?;
+        // Get virtual file URI for this specific host document
+        let virtual_uri = self.get_virtual_uri(key, host_uri)?;
 
         // Sync document with host URI tracking (didOpen on first access, didChange on subsequent)
         self.sync_document_with_host(&conn, &virtual_uri, language_id, content, host_uri)
@@ -468,10 +548,10 @@ impl TokioAsyncLanguageServerPool {
         content: &str,
         position: tower_lsp::lsp_types::Position,
     ) -> Option<tower_lsp::lsp_types::GotoDefinitionResponse> {
-        let conn = self.get_connection(key, config).await?;
+        let conn = self.get_connection(key, config, host_uri).await?;
 
-        // Get virtual file URI
-        let virtual_uri = self.get_virtual_uri(key)?;
+        // Get virtual file URI for this specific host document
+        let virtual_uri = self.get_virtual_uri(key, host_uri)?;
 
         // Sync document with host URI tracking (didOpen on first access, didChange on subsequent)
         self.sync_document_with_host(&conn, &virtual_uri, language_id, content, host_uri)
@@ -526,10 +606,10 @@ impl TokioAsyncLanguageServerPool {
         content: &str,
         position: tower_lsp::lsp_types::Position,
     ) -> Option<tower_lsp::lsp_types::CompletionResponse> {
-        let conn = self.get_connection(key, config).await?;
+        let conn = self.get_connection(key, config, host_uri).await?;
 
-        // Get virtual file URI
-        let virtual_uri = self.get_virtual_uri(key)?;
+        // Get virtual file URI for this specific host document
+        let virtual_uri = self.get_virtual_uri(key, host_uri)?;
 
         // Sync document with host URI tracking (didOpen on first access, didChange on subsequent)
         self.sync_document_with_host(&conn, &virtual_uri, language_id, content, host_uri)
@@ -584,10 +664,10 @@ impl TokioAsyncLanguageServerPool {
         content: &str,
         position: tower_lsp::lsp_types::Position,
     ) -> Option<tower_lsp::lsp_types::SignatureHelp> {
-        let conn = self.get_connection(key, config).await?;
+        let conn = self.get_connection(key, config, host_uri).await?;
 
-        // Get virtual file URI
-        let virtual_uri = self.get_virtual_uri(key)?;
+        // Get virtual file URI for this specific host document
+        let virtual_uri = self.get_virtual_uri(key, host_uri)?;
 
         // Sync document with host URI tracking (didOpen on first access, didChange on subsequent)
         self.sync_document_with_host(&conn, &virtual_uri, language_id, content, host_uri)
@@ -771,7 +851,7 @@ mod tests {
         };
 
         // Get a connection (should spawn, initialize, and return Arc<TokioAsyncBridgeConnection>)
-        let conn = pool.get_connection("rust-analyzer", &config).await;
+        let conn = pool.get_connection("rust-analyzer", &config, "file:///test.rs").await;
         assert!(conn.is_some(), "Should get a connection");
 
         // Second call should return the same connection (not spawn new)
@@ -800,11 +880,12 @@ mod tests {
         };
 
         // Get a connection
-        let conn = pool.get_connection("rust-analyzer", &config).await;
+        let host_uri = "file:///test.rs";
+        let conn = pool.get_connection("rust-analyzer", &config, host_uri).await;
         assert!(conn.is_some(), "Should get a connection");
 
         // Virtual URI should be stored and retrievable
-        let virtual_uri = pool.get_virtual_uri("rust-analyzer");
+        let virtual_uri = pool.get_virtual_uri("rust-analyzer", host_uri);
         assert!(
             virtual_uri.is_some(),
             "Virtual URI should be stored after connection"
@@ -842,9 +923,10 @@ mod tests {
         };
 
         // Get first connection
-        let conn1 = pool.get_connection("rust-analyzer", &config).await;
+        let host_uri = "file:///test.rs";
+        let conn1 = pool.get_connection("rust-analyzer", &config, host_uri).await;
         // Get second connection - should return the same one
-        let conn2 = pool.get_connection("rust-analyzer", &config).await;
+        let conn2 = pool.get_connection("rust-analyzer", &config, host_uri).await;
 
         assert!(conn1.is_some() && conn2.is_some());
         // Both should be Arc pointers to the same connection
@@ -1104,7 +1186,7 @@ mod tests {
         );
 
         // Verify version incremented (may be > 2 due to retries)
-        let virtual_uri = pool.get_virtual_uri("rust-analyzer").unwrap();
+        let virtual_uri = pool.get_virtual_uri("rust-analyzer", "file:///test.rs").unwrap();
         let version = pool.get_document_version(&virtual_uri).unwrap();
         assert!(
             version >= 2,
@@ -1135,11 +1217,12 @@ mod tests {
         };
 
         // Get a connection to establish the virtual URI
-        let conn = pool.get_connection("rust-analyzer", &config).await;
+        let host_uri = "file:///test.rs";
+        let conn = pool.get_connection("rust-analyzer", &config, host_uri).await;
         assert!(conn.is_some(), "Should get a connection");
         let conn = conn.unwrap();
 
-        let virtual_uri = pool.get_virtual_uri("rust-analyzer").unwrap();
+        let virtual_uri = pool.get_virtual_uri("rust-analyzer", host_uri).unwrap();
 
         // First access - should send didOpen with version 1
         let content1 = "fn main() {}";
@@ -1194,11 +1277,12 @@ mod tests {
         };
 
         // Get a connection to establish the virtual URI
-        let conn = pool.get_connection("rust-analyzer", &config).await;
+        let host_uri = "file:///test.rs";
+        let conn = pool.get_connection("rust-analyzer", &config, host_uri).await;
         assert!(conn.is_some(), "Should get a connection");
         let conn = conn.unwrap();
 
-        let virtual_uri = pool.get_virtual_uri("rust-analyzer").unwrap();
+        let virtual_uri = pool.get_virtual_uri("rust-analyzer", host_uri).unwrap();
 
         // Before first access, no version should exist
         assert!(
@@ -1433,11 +1517,12 @@ mod tests {
         };
 
         // Get connection and establish virtual URI
-        let conn = pool.get_connection("rust-analyzer", &config).await;
+        let host_uri = "file:///test.rs";
+        let conn = pool.get_connection("rust-analyzer", &config, host_uri).await;
         assert!(conn.is_some(), "Should get a connection");
         let conn = conn.unwrap();
 
-        let virtual_uri = pool.get_virtual_uri("rust-analyzer").unwrap();
+        let virtual_uri = pool.get_virtual_uri("rust-analyzer", host_uri).unwrap();
 
         // Send 10 concurrent sync_document calls
         let mut handles = vec![];
@@ -1509,7 +1594,7 @@ mod tests {
 
             let handle = tokio::spawn(async move {
                 pool_clone
-                    .get_connection("rust-analyzer", &config_clone)
+                    .get_connection("rust-analyzer", &config_clone, "file:///test.rs")
                     .await
             });
             handles.push(handle);
@@ -1557,14 +1642,15 @@ mod tests {
             workspace_type: Some(WorkspaceType::Cargo),
         };
 
-        // Get a connection
-        let conn = pool.get_connection("rust-analyzer", &config).await;
+        let host_uri_1 = "file:///test/document1.md";
+        let host_uri_2 = "file:///test/document2.md";
+
+        // Get a connection (use host_uri_1)
+        let conn = pool.get_connection("rust-analyzer", &config, host_uri_1).await;
         assert!(conn.is_some(), "Should get a connection");
         let conn = conn.unwrap();
 
-        let virtual_uri = pool.get_virtual_uri("rust-analyzer").unwrap();
-        let host_uri_1 = "file:///test/document1.md";
-        let host_uri_2 = "file:///test/document2.md";
+        let virtual_uri = pool.get_virtual_uri("rust-analyzer", host_uri_1).unwrap();
 
         // Open documents from two different host URIs using the same virtual URI
         let content1 = "fn main() {}";
@@ -1628,13 +1714,14 @@ mod tests {
             workspace_type: Some(WorkspaceType::Cargo),
         };
 
+        let host_uri = "file:///test/document.md";
+
         // Get a connection
-        let conn = pool.get_connection("rust-analyzer", &config).await;
+        let conn = pool.get_connection("rust-analyzer", &config, host_uri).await;
         assert!(conn.is_some(), "Should get a connection");
         let conn = conn.unwrap();
 
-        let virtual_uri = pool.get_virtual_uri("rust-analyzer").unwrap();
-        let host_uri = "file:///test/document.md";
+        let virtual_uri = pool.get_virtual_uri("rust-analyzer", host_uri).unwrap();
 
         // Sync document with host URI
         let content = "fn main() {}";
@@ -1676,11 +1763,12 @@ mod tests {
         };
 
         // Get a connection
-        let conn = pool.get_connection("rust-analyzer", &config).await;
+        let host_uri = "file:///test.rs";
+        let conn = pool.get_connection("rust-analyzer", &config, host_uri).await;
         assert!(conn.is_some(), "Should get a connection");
         let conn = conn.unwrap();
 
-        let virtual_uri = pool.get_virtual_uri("rust-analyzer").unwrap();
+        let virtual_uri = pool.get_virtual_uri("rust-analyzer", host_uri).unwrap();
 
         // Open document first
         let content = "fn main() {}";
@@ -1700,6 +1788,57 @@ mod tests {
         assert!(
             pool.get_document_version(&virtual_uri).is_none(),
             "Document version should be removed after close"
+        );
+    }
+
+    /// Test that different host documents get different virtual URIs for the same server.
+    ///
+    /// PBI-158 Subtask 1: virtual_uris should be keyed by (host_uri, server_name) instead
+    /// of just server_name, so that each host document gets its own virtual file.
+    #[tokio::test]
+    async fn different_host_documents_get_different_virtual_uris() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        let host_uri_1 = "file:///test/doc1.md";
+        let host_uri_2 = "file:///test/doc2.md";
+
+        // Get connections for two different host documents
+        let conn1 = pool.get_connection("rust-analyzer", &config, host_uri_1).await;
+        let conn2 = pool.get_connection("rust-analyzer", &config, host_uri_2).await;
+
+        assert!(conn1.is_some(), "Should get connection for host 1");
+        assert!(conn2.is_some(), "Should get connection for host 2");
+
+        // Both should share the same connection (same server)
+        assert!(
+            std::sync::Arc::ptr_eq(&conn1.unwrap(), &conn2.unwrap()),
+            "Same server should share connection"
+        );
+
+        // But each host should get its own virtual URI
+        let virtual_uri_1 = pool.get_virtual_uri("rust-analyzer", host_uri_1);
+        let virtual_uri_2 = pool.get_virtual_uri("rust-analyzer", host_uri_2);
+
+        assert!(virtual_uri_1.is_some(), "Host 1 should have virtual URI");
+        assert!(virtual_uri_2.is_some(), "Host 2 should have virtual URI");
+
+        assert_ne!(
+            virtual_uri_1.unwrap(),
+            virtual_uri_2.unwrap(),
+            "Different host documents should have different virtual URIs for isolation"
         );
     }
 }
