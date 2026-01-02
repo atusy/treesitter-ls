@@ -53,6 +53,12 @@ pub struct TokioAsyncLanguageServerPool {
     /// - Quick lookup of per-key lock (outer sync Mutex, held briefly)
     /// - Per-key async locking (inner tokio Mutex, held across spawn)
     spawn_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// Per-URI document opening locks to prevent duplicate didOpen notifications (PBI-159).
+    ///
+    /// Similar to spawn_locks, this uses the double-mutex pattern to ensure only one
+    /// thread sends didOpen for a given URI, preventing protocol errors from duplicate
+    /// open notifications under concurrent load.
+    document_open_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     /// Instance-level counter for generating unique temporary directory names
     spawn_counter: AtomicU64,
 }
@@ -70,6 +76,7 @@ impl TokioAsyncLanguageServerPool {
             document_versions: DashMap::new(),
             host_to_bridge_uris: DashMap::new(),
             spawn_locks: Mutex::new(HashMap::new()),
+            document_open_locks: Mutex::new(HashMap::new()),
             spawn_counter: AtomicU64::new(0),
         }
     }
@@ -763,8 +770,9 @@ impl TokioAsyncLanguageServerPool {
     /// requirement that didOpen is only sent once per document, and subsequent
     /// content updates use didChange with incrementing versions.
     ///
-    /// Uses atomic version increment to prevent race conditions where concurrent
-    /// calls could send duplicate version numbers.
+    /// Uses per-URI document opening locks (PBI-159) to prevent race conditions where
+    /// concurrent calls could both see no version, both send didOpen, causing protocol
+    /// errors. The lock is held across the check-send-increment sequence to ensure atomicity.
     pub async fn sync_document(
         &self,
         conn: &super::tokio_connection::TokioAsyncBridgeConnection,
@@ -772,7 +780,20 @@ impl TokioAsyncLanguageServerPool {
         language_id: &str,
         content: &str,
     ) -> Option<()> {
+        // Get or create a lock for this URI (PBI-159)
+        let lock = {
+            let mut locks = self.document_open_locks.lock().await;
+            locks
+                .entry(uri.to_string())
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone()
+        };
+
+        // Acquire the per-URI lock to serialize first-access check and didOpen sending
+        let _guard = lock.lock().await;
+
         // Check if document has been opened (version exists)
+        // This check is now protected by the per-URI lock
         let is_first_access = self.get_document_version(uri).is_none();
 
         if is_first_access {
@@ -787,7 +808,7 @@ impl TokioAsyncLanguageServerPool {
             });
             match conn.send_notification("textDocument/didOpen", params).await {
                 Ok(()) => {
-                    // Atomically set version to 1 (or keep existing if another call won the race)
+                    // Atomically set version to 1
                     self.increment_document_version(uri);
                     Some(())
                 }
