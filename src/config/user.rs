@@ -125,8 +125,7 @@ mod tests {
         let original = env::var("XDG_CONFIG_HOME").ok();
 
         // Set XDG_CONFIG_HOME to a custom path
-        // SAFETY: Tests run single-threaded by default with --test-threads=1
-        // This is safe in test context where env manipulation is expected
+        // SAFETY: #[serial(xdg_env)] prevents concurrent modification of XDG_CONFIG_HOME
         unsafe {
             env::set_var("XDG_CONFIG_HOME", "/custom/config");
         }
@@ -134,7 +133,7 @@ mod tests {
         let path = user_config_path();
 
         // Restore original value
-        // SAFETY: Same as above - restoring original env state
+        // SAFETY: #[serial(xdg_env)] prevents concurrent modification of XDG_CONFIG_HOME
         unsafe {
             match original {
                 Some(val) => env::set_var("XDG_CONFIG_HOME", val),
@@ -161,7 +160,7 @@ mod tests {
         let original = env::var("XDG_CONFIG_HOME").ok();
 
         // Remove XDG_CONFIG_HOME to test fallback
-        // SAFETY: Tests run single-threaded by default with --test-threads=1
+        // SAFETY: #[serial(xdg_env)] prevents concurrent modification of XDG_CONFIG_HOME
         unsafe {
             env::remove_var("XDG_CONFIG_HOME");
         }
@@ -169,7 +168,7 @@ mod tests {
         let path = user_config_path();
 
         // Restore original value
-        // SAFETY: Same as above - restoring original env state
+        // SAFETY: #[serial(xdg_env)] prevents concurrent modification of XDG_CONFIG_HOME
         unsafe {
             if let Some(val) = original {
                 env::set_var("XDG_CONFIG_HOME", val);
@@ -209,7 +208,7 @@ mod tests {
 
         // Point to a temp directory where no config file exists
         let temp_dir = TempDir::new().expect("failed to create temp dir");
-        // SAFETY: Tests run single-threaded
+        // SAFETY: #[serial(xdg_env)] prevents concurrent modification of XDG_CONFIG_HOME
         unsafe {
             env::set_var("XDG_CONFIG_HOME", temp_dir.path());
         }
@@ -256,7 +255,7 @@ mod tests {
         "#;
         fs::write(&config_path, config_content).expect("failed to write config file");
 
-        // SAFETY: Tests run single-threaded
+        // SAFETY: #[serial(xdg_env)] prevents concurrent modification of XDG_CONFIG_HOME
         unsafe {
             env::set_var("XDG_CONFIG_HOME", temp_dir.path());
         }
@@ -264,6 +263,7 @@ mod tests {
         let result = load_user_config();
 
         // Restore original
+        // SAFETY: #[serial(xdg_env)] prevents concurrent modification of XDG_CONFIG_HOME
         unsafe {
             match original {
                 Some(val) => env::set_var("XDG_CONFIG_HOME", val),
@@ -317,7 +317,7 @@ mod tests {
         "#;
         fs::write(&config_path, invalid_content).expect("failed to write config file");
 
-        // SAFETY: Tests run single-threaded
+        // SAFETY: #[serial(xdg_env)] prevents concurrent modification of XDG_CONFIG_HOME
         unsafe {
             env::set_var("XDG_CONFIG_HOME", temp_dir.path());
         }
@@ -325,6 +325,7 @@ mod tests {
         let result = load_user_config();
 
         // Restore original
+        // SAFETY: #[serial(xdg_env)] prevents concurrent modification of XDG_CONFIG_HOME
         unsafe {
             match original {
                 Some(val) => env::set_var("XDG_CONFIG_HOME", val),

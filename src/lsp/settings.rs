@@ -211,7 +211,7 @@ mod tests {
         .expect("failed to write project config");
 
         // Point XDG_CONFIG_HOME to our temp directory
-        // SAFETY: Tests run single-threaded
+        // SAFETY: #[serial(xdg_env)] prevents concurrent modification of XDG_CONFIG_HOME
         unsafe {
             env::set_var("XDG_CONFIG_HOME", user_config_dir.path());
         }
@@ -220,6 +220,7 @@ mod tests {
         let outcome = load_settings(Some(project_dir.path()), None);
 
         // Restore original XDG_CONFIG_HOME
+        // SAFETY: #[serial(xdg_env)] prevents concurrent modification of XDG_CONFIG_HOME
         unsafe {
             match original_xdg {
                 Some(val) => env::set_var("XDG_CONFIG_HOME", val),
@@ -288,6 +289,7 @@ mod tests {
         .expect("failed to write project config");
 
         // Point XDG_CONFIG_HOME to our temp directory
+        // SAFETY: #[serial(xdg_env)] prevents concurrent modification of XDG_CONFIG_HOME
         unsafe {
             env::set_var("XDG_CONFIG_HOME", user_config_dir.path());
         }
@@ -304,6 +306,7 @@ mod tests {
         );
 
         // Restore original XDG_CONFIG_HOME
+        // SAFETY: #[serial(xdg_env)] prevents concurrent modification of XDG_CONFIG_HOME
         unsafe {
             match original_xdg {
                 Some(val) => env::set_var("XDG_CONFIG_HOME", val),
@@ -351,6 +354,7 @@ mod tests {
         .expect("failed to write user config");
 
         // Point XDG_CONFIG_HOME to our temp directory
+        // SAFETY: #[serial(xdg_env)] prevents concurrent modification of XDG_CONFIG_HOME
         unsafe {
             env::set_var("XDG_CONFIG_HOME", user_config_dir.path());
         }
@@ -359,6 +363,7 @@ mod tests {
         let outcome = load_settings(None, None);
 
         // Restore original XDG_CONFIG_HOME
+        // SAFETY: #[serial(xdg_env)] prevents concurrent modification of XDG_CONFIG_HOME
         unsafe {
             match original_xdg {
                 Some(val) => env::set_var("XDG_CONFIG_HOME", val),
