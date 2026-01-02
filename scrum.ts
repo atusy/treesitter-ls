@@ -263,7 +263,7 @@ const scrum: ScrumDashboard = {
           verification: "Run `make test` and `make test_nvim` - all tests pass",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-163",
@@ -392,7 +392,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-135: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-136: git log -- scrum.yaml, scrum.ts
   completed: [
     {
       number: 128,
