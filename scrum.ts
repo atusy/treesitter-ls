@@ -382,7 +382,46 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 132,
+    pbi_id: "PBI-155",
+    goal: "Refactor reader_loop for maintainability with clear separation of concerns",
+    status: "planning",
+    subtasks: [
+      {
+        test: "Verify reader_routes_responses_to_pending_requests still passes",
+        implementation: "Extract lines 182-203 into static handle_response() method",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Verify reader_forwards_progress_notifications_to_channel still passes",
+        implementation: "Extract lines 204-222 into static handle_notification() method",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Verify shutdown tests still pass",
+        implementation: "Extract cleanup logic into static handle_connection_end() method",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "All reader tests pass, reader_loop is under 50 lines",
+        implementation: "Refactor reader_loop to delegate to extracted methods",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
