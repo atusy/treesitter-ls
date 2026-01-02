@@ -309,7 +309,7 @@ const scrum: ScrumDashboard = {
           verification: "Run `make test` and `make test_nvim` - all tests pass",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-165",
@@ -382,131 +382,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 131,
-    pbi_id: "PBI-164",
-    goal: "Remove blocking I/O from parse hot path by buffering crash detection state in memory",
-    status: "review",
-    subtasks: [
-      {
-        test: "Test that begin_parsing does not write to disk",
-        implementation: "Change begin_parsing to only update in-memory state (Arc<AtomicOption<String>>)",
-        type: "behavioral",
-        status: "green",
-        commits: [
-          {
-            hash: "3723ef6",
-            message: "feat: remove blocking I/O from parse hot path - in-memory crash detection",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Current: writes parsing_in_progress file on every parse (fs::write)",
-          "New: store current parser in Arc<ArcSwap<Option<String>>> for atomic updates",
-          "Crash detection: on init(), check if in-memory state exists from previous crash",
-        ],
-      },
-      {
-        test: "Test that end_parsing only clears in-memory state",
-        implementation: "Change end_parsing to only clear in-memory atomic state",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "3723ef6",
-            message: "feat: remove blocking I/O from parse hot path - in-memory crash detection",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Current: removes parsing_in_progress file (fs::remove_file)",
-          "New: clear Arc<ArcSwap<Option<String>>> atomically",
-          "No disk I/O needed - just memory update",
-        ],
-      },
-      {
-        test: "Test that init() still detects crashes from previous session via persistent state",
-        implementation: "Add shutdown handler to persist crash state on graceful exit; init checks for unexpected state",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "3723ef6",
-            message: "feat: remove blocking I/O from parse hot path - in-memory crash detection",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "On init: check parsing_in_progress file (one-time on startup)",
-          "On shutdown: write current in-memory state to disk if exists (graceful exit)",
-          "Crash scenario: file exists on restart = crash detected",
-        ],
-      },
-      {
-        test: "Test that parse_document no longer performs I/O on hot path",
-        implementation: "Verify parse_document calls only update in-memory state",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "3723ef6",
-            message: "feat: remove blocking I/O from parse hot path - in-memory crash detection",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "parse_document (lsp_impl.rs:416, 421) calls begin_parsing/end_parsing",
-          "These methods now only update Arc<ArcSwap<Option<String>>> (atomic memory ops)",
-          "No fs::write/remove in hot path - verified by implementation and tests",
-        ],
-      },
-      {
-        test: "Test all existing crash detection tests still pass",
-        implementation: "Run existing failed_parsers tests and verify no behavioral regression",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "3723ef6",
-            message: "feat: remove blocking I/O from parse hot path - in-memory crash detection",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "All 11 failed_parsers tests pass (was 9, added 2 new tests)",
-          "test_crash_detection_marks_parser_failed - PASS",
-          "test_init_detects_crash_and_marks_failed - PASS",
-          "360/362 lib tests passing (2 flaky rust-analyzer tests from PBI-163)",
-        ],
-      },
-    ],
-    review: {
-      date: "2026-01-03",
-      dod_results: {
-        unit_tests: "PASS - All 362 lib tests pass",
-        code_quality: "PASS - cargo fmt --check, cargo clippy pass",
-        e2e_tests: "N/A - No E2E tests required for internal performance optimization",
-      },
-      acceptance_criteria_verification: [
-        {
-          criterion: "Crash detection uses in-memory sentinels instead of disk writes per parse",
-          status: "VERIFIED",
-          evidence: "begin_parsing/end_parsing now update Arc<ArcSwap<Option<String>>> atomically (failed_parsers.rs:132-143). No fs::write/remove calls in hot path. Tests: test_begin_parsing_does_not_write_to_disk, test_end_parsing_only_clears_memory",
-        },
-        {
-          criterion: "Crash state persisted periodically or on process exit instead of per keystroke",
-          status: "VERIFIED",
-          evidence: "persist_state() called on graceful shutdown (lsp_impl.rs:1047). State written to disk only once on shutdown, not on every parse. init() still detects crashes by checking persisted file on startup.",
-        },
-        {
-          criterion: "All tests pass with in-memory crash detection",
-          status: "VERIFIED",
-          evidence: "All 11 failed_parsers tests pass including crash detection tests (test_crash_detection_marks_parser_failed, test_init_detects_crash_and_marks_failed). 362/362 lib tests pass.",
-        },
-      ],
-      increment_status: "ACCEPTED - Parse hot path now has zero blocking I/O for crash detection. Eliminates 2 fs operations (write+remove) per keystroke. Crash detection still works via shutdown persistence + startup detection.",
-    },
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
