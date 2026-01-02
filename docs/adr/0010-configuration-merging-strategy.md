@@ -266,6 +266,7 @@ fn load_configuration(cli_config_path: Option<&Path>) -> Option<TreeSitterSettin
 - **No "unset" mechanism**: Cannot explicitly remove a field inherited from earlier layers (would need `null` support)
 - **File I/O at startup**: Reading up to two config files adds latency (minimal in practice)
 - **Transition period**: Both `queries` and legacy fields (`highlights`, `locals`, `injections`) must be supported during migration
+- **Infrastructure-integration gap**: Phases 1-3 (Sprints 118-120) built infrastructure (schema, merging, user config loading) but delivered ZERO user value until Sprint 124 wired APIs into application. Lesson: infrastructure sprints must be followed by integration sprints within 1-2 sprints to realize value.
 
 ### Neutral
 
