@@ -615,13 +615,17 @@ impl TreeSitterLs {
     /// * `uri` - The document URI that triggered the install
     /// * `text` - The document text
     /// * `is_injection` - True if this is an injection language (not the document's main language)
+    ///
+    /// # Returns
+    /// `true` if installation was triggered (caller should skip parse_document),
+    /// `false` if installation was not triggered (caller should proceed with parse_document)
     async fn maybe_auto_install_language(
         &self,
         language: &str,
         uri: Url,
         text: String,
         is_injection: bool,
-    ) {
+    ) -> bool {
         // Check if language is supported by nvim-treesitter before attempting install
         // Use cached metadata to avoid repeated HTTP requests
         let default_data_dir = crate::install::default_data_dir();
@@ -638,7 +642,7 @@ impl TreeSitterLs {
             let message_type = reason.message_type();
             let message = reason.message();
             self.client.log_message(message_type, message).await;
-            return;
+            return false; // Not supported - no install triggered
         }
 
         // Try to start installation (returns false if already installing)
@@ -649,7 +653,7 @@ impl TreeSitterLs {
                     format!("Language '{}' is already being installed", language),
                 )
                 .await;
-            return;
+            return true; // Already installing - caller should skip parse
         }
 
         // Send progress Begin notification
@@ -672,7 +676,7 @@ impl TreeSitterLs {
                     .send_notification::<Progress>(create_progress_end(language, false))
                     .await;
                 self.installing_languages.finish_install(language);
-                return;
+                return false; // No data dir - install failed, no parse needed
             }
         };
 
@@ -695,7 +699,7 @@ impl TreeSitterLs {
             self.installing_languages.finish_install(language);
             self.reload_language_after_install(language, &data_dir, uri, text, is_injection)
                 .await;
-            return;
+            return true; // Parser exists - reload triggered, caller should skip parse
         }
 
         self.client
@@ -778,6 +782,10 @@ impl TreeSitterLs {
                 )
                 .await;
         }
+
+        // Installation was triggered and will complete in background
+        // reload_language_after_install will handle parse_document
+        true
     }
 
     /// Reload a language after installation and optionally re-parse the document.
@@ -906,7 +914,8 @@ impl TreeSitterLs {
                         // Language not loaded - trigger auto-install with resolved name
                         // maybe_auto_install_language uses InstallingLanguages to prevent duplicates
                         // is_injection=true: Don't re-parse the document with injection language
-                        self.maybe_auto_install_language(
+                        // Return value ignored - for injections we never skip parsing (host document already parsed)
+                        let _ = self.maybe_auto_install_language(
                             &resolved_lang,
                             uri.clone(),
                             text.clone(),
@@ -1076,6 +1085,8 @@ impl LanguageServer for TreeSitterLs {
 
         // Check if we need to auto-install
         let mut deferred_events = Vec::new();
+        let mut skip_parse = false; // Track if auto-install was triggered
+
         if let Some(ref lang) = language_name {
             let load_result = self.language.ensure_language_loaded(lang);
 
@@ -1098,7 +1109,8 @@ impl LanguageServer for TreeSitterLs {
                 if self.is_auto_install_enabled() {
                     // Language failed to load and auto-install is enabled
                     // is_injection=false: This is the document's main language
-                    self.maybe_auto_install_language(lang, uri.clone(), text.clone(), false)
+                    // If install is triggered, skip parse_document here - reload_language_after_install will handle it
+                    skip_parse = self.maybe_auto_install_language(lang, uri.clone(), text.clone(), false)
                         .await;
                 } else {
                     // Notify user that parser is missing and needs manual installation
@@ -1107,13 +1119,18 @@ impl LanguageServer for TreeSitterLs {
             }
         }
 
-        self.parse_document(
-            params.text_document.uri,
-            params.text_document.text,
-            Some(&language_id),
-            vec![], // No edits for initial document open
-        )
-        .await;
+        // Only parse if auto-install was NOT triggered
+        // If auto-install was triggered, reload_language_after_install will call parse_document
+        // after the parser file is completely written, preventing race condition
+        if !skip_parse {
+            self.parse_document(
+                params.text_document.uri,
+                params.text_document.text,
+                Some(&language_id),
+                vec![], // No edits for initial document open
+            )
+            .await;
+        }
 
         // Now handle deferred SemanticTokensRefresh events after document is parsed
         if !deferred_events.is_empty() {
