@@ -450,4 +450,37 @@ return {
         let result = is_language_supported("lua", Some(&options));
         assert!(result, "Expected 'lua' to be supported");
     }
+
+    #[test]
+    fn test_is_language_supported_returns_false_for_unsupported_language() {
+        // Test that is_language_supported returns false for unsupported language
+        // like 'fake_lang_xyz' without error
+        let temp = tempdir().expect("Failed to create temp dir");
+        let options = FetchOptions {
+            data_dir: Some(temp.path()),
+            use_cache: true,
+        };
+
+        // Mock the cache with parsers.lua content that does NOT include 'fake_lang_xyz'
+        let cache = MetadataCache::with_default_ttl(temp.path());
+        let mock_parsers_lua = r#"
+return {
+  lua = {
+    install_info = {
+      revision = 'abc123',
+      url = 'https://github.com/MunifTanjim/tree-sitter-lua',
+    },
+    tier = 2,
+  },
+}
+"#;
+        cache.write(mock_parsers_lua).expect("write cache");
+
+        // is_language_supported should return false for 'fake_lang_xyz' (unsupported)
+        let result = is_language_supported("fake_lang_xyz", Some(&options));
+        assert!(
+            !result,
+            "Expected 'fake_lang_xyz' to be unsupported (return false)"
+        );
+    }
 }
