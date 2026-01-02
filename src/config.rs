@@ -402,105 +402,101 @@ impl From<WorkspaceSettings> for TreeSitterSettings {
 }
 
 fn merge_languages(
-    mut fallback: HashMap<String, LanguageConfig>,
-    primary: HashMap<String, LanguageConfig>,
+    mut base: HashMap<String, LanguageConfig>,
+    overlay: HashMap<String, LanguageConfig>,
 ) -> HashMap<String, LanguageConfig> {
-    // Deep merge: for each language key, merge individual LanguageConfig fields
-    for (key, primary_config) in primary {
-        fallback
-            .entry(key)
-            .and_modify(|fallback_config| {
-                // primary.or_else(|| fallback) for each Option field
-                fallback_config.library = primary_config
+    // Deep merge: overlay values override base values for the same key
+    for (key, overlay_config) in overlay {
+        base.entry(key)
+            .and_modify(|base_config| {
+                // For each field: use overlay if Some, otherwise keep base
+                base_config.library = overlay_config
                     .library
                     .clone()
-                    .or_else(|| fallback_config.library.clone());
-                fallback_config.queries = primary_config
+                    .or_else(|| base_config.library.clone());
+                base_config.queries = overlay_config
                     .queries
                     .clone()
-                    .or_else(|| fallback_config.queries.clone());
-                fallback_config.highlights = primary_config
+                    .or_else(|| base_config.queries.clone());
+                base_config.highlights = overlay_config
                     .highlights
                     .clone()
-                    .or_else(|| fallback_config.highlights.clone());
-                fallback_config.locals = primary_config
+                    .or_else(|| base_config.highlights.clone());
+                base_config.locals = overlay_config
                     .locals
                     .clone()
-                    .or_else(|| fallback_config.locals.clone());
-                fallback_config.injections = primary_config
+                    .or_else(|| base_config.locals.clone());
+                base_config.injections = overlay_config
                     .injections
                     .clone()
-                    .or_else(|| fallback_config.injections.clone());
-                fallback_config.bridge = primary_config
+                    .or_else(|| base_config.injections.clone());
+                base_config.bridge = overlay_config
                     .bridge
                     .clone()
-                    .or_else(|| fallback_config.bridge.clone());
+                    .or_else(|| base_config.bridge.clone());
             })
-            .or_insert(primary_config);
+            .or_insert(overlay_config);
     }
-    fallback
+    base
 }
 
 fn merge_language_servers(
-    fallback: Option<HashMap<String, settings::BridgeServerConfig>>,
-    primary: Option<HashMap<String, settings::BridgeServerConfig>>,
+    base: Option<HashMap<String, settings::BridgeServerConfig>>,
+    overlay: Option<HashMap<String, settings::BridgeServerConfig>>,
 ) -> Option<HashMap<String, settings::BridgeServerConfig>> {
-    match (fallback, primary) {
+    match (base, overlay) {
         (None, None) => None,
         (Some(servers), None) | (None, Some(servers)) => Some(servers),
-        (Some(mut fallback_servers), Some(primary_servers)) => {
-            // Deep merge: for each server key, merge individual BridgeServerConfig fields
-            for (key, primary_config) in primary_servers {
-                fallback_servers
+        (Some(mut base_servers), Some(overlay_servers)) => {
+            // Deep merge: overlay values override base values for the same key
+            for (key, overlay_config) in overlay_servers {
+                base_servers
                     .entry(key)
-                    .and_modify(|fallback_config| {
-                        // For Vec fields: use primary if non-empty, else keep fallback
-                        if !primary_config.cmd.is_empty() {
-                            fallback_config.cmd = primary_config.cmd.clone();
+                    .and_modify(|base_config| {
+                        // For Vec fields: use overlay if non-empty, otherwise keep base
+                        if !overlay_config.cmd.is_empty() {
+                            base_config.cmd = overlay_config.cmd.clone();
                         }
-                        if !primary_config.languages.is_empty() {
-                            fallback_config.languages = primary_config.languages.clone();
+                        if !overlay_config.languages.is_empty() {
+                            base_config.languages = overlay_config.languages.clone();
                         }
-                        // For Option fields: primary.or_else(|| fallback)
-                        fallback_config.initialization_options = primary_config
+                        // For Option fields: use overlay if Some, otherwise keep base
+                        base_config.initialization_options = overlay_config
                             .initialization_options
                             .clone()
-                            .or_else(|| fallback_config.initialization_options.clone());
-                        fallback_config.workspace_type = primary_config
-                            .workspace_type
-                            .or(fallback_config.workspace_type);
+                            .or_else(|| base_config.initialization_options.clone());
+                        base_config.workspace_type =
+                            overlay_config.workspace_type.or(base_config.workspace_type);
                     })
-                    .or_insert(primary_config);
+                    .or_insert(overlay_config);
             }
-            Some(fallback_servers)
+            Some(base_servers)
         }
     }
 }
 
 fn merge_capture_mappings(
-    mut fallback: CaptureMappings,
-    primary: CaptureMappings,
+    mut base: CaptureMappings,
+    overlay: CaptureMappings,
 ) -> CaptureMappings {
-    for (lang, primary_mappings) in primary {
-        fallback
-            .entry(lang)
-            .and_modify(|fallback_mappings| {
-                // Merge highlights
-                for (k, v) in primary_mappings.highlights.clone() {
-                    fallback_mappings.highlights.insert(k, v);
+    // Deep merge: overlay values override base values for the same key
+    for (lang, overlay_mappings) in overlay {
+        base.entry(lang)
+            .and_modify(|base_mappings| {
+                // Merge each mapping type: overlay entries override base entries
+                for (k, v) in overlay_mappings.highlights.clone() {
+                    base_mappings.highlights.insert(k, v);
                 }
-                // Merge locals
-                for (k, v) in primary_mappings.locals.clone() {
-                    fallback_mappings.locals.insert(k, v);
+                for (k, v) in overlay_mappings.locals.clone() {
+                    base_mappings.locals.insert(k, v);
                 }
-                // Merge folds
-                for (k, v) in primary_mappings.folds.clone() {
-                    fallback_mappings.folds.insert(k, v);
+                for (k, v) in overlay_mappings.folds.clone() {
+                    base_mappings.folds.insert(k, v);
                 }
             })
-            .or_insert(primary_mappings);
+            .or_insert(overlay_mappings);
     }
-    fallback
+    base
 }
 
 #[cfg(test)]
