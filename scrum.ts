@@ -320,13 +320,20 @@ const scrum: ScrumDashboard = {
         test: "Add test: close_documents_for_host only closes bridge documents for specified host URI",
         implementation: "Rename close_all_documents to close_documents_for_host, accept host_uri parameter. Look up associated virtual URIs from host_to_bridge_uris, send didClose only for those URIs, and remove the host URI from the mapping.",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "034dced",
+            message: "feat(bridge): implement close_documents_for_host with scoped cleanup",
+            phase: "green",
+          },
+        ],
         notes: [
           "TDD Red: Write test opening two files with code blocks, close one, verify other's bridge state remains",
           "TDD Green: Implement scoped cleanup using host_to_bridge_uris lookup",
           "Cleanup: Remove host URI from mapping after closing its bridge documents",
-          "Edge case: If virtual URI has no more host URIs, remove it from document_versions"
+          "Edge case: If virtual URI has no more host URIs, remove it from document_versions",
+          "Implementation: close_documents_for_host checks if other hosts still use the bridge URI before actually sending didClose",
         ],
       },
       {
