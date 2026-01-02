@@ -93,15 +93,13 @@ pub(crate) fn resolve_language_settings_with_wildcard(
         (Some(w), Some(s)) => {
             // Merge: start with wildcard, override with specific
             Some(LanguageSettings {
-                library: s.library.clone().or_else(|| w.library.clone()),
+                parser: s.parser.clone().or_else(|| w.parser.clone()),
                 // For Vec fields: use specific if non-empty, else wildcard
-                highlights: if s.highlights.is_empty() {
-                    w.highlights.clone()
+                queries: if s.queries.is_empty() {
+                    w.queries.clone()
                 } else {
-                    s.highlights.clone()
+                    s.queries.clone()
                 },
-                locals: s.locals.clone().or_else(|| w.locals.clone()),
-                injections: s.injections.clone().or_else(|| w.injections.clone()),
                 // Deep merge bridge HashMaps: wildcard + specific
                 bridge: merge_bridge_maps(&w.bridge, &s.bridge),
             })
@@ -172,38 +170,83 @@ pub fn merge_settings(
 
 impl From<&LanguageConfig> for LanguageSettings {
     fn from(config: &LanguageConfig) -> Self {
-        let highlights = config.highlights.clone().unwrap_or_default();
-        let locals = config.locals.clone();
-        let injections = config.injections.clone();
-        let bridge = config.bridge.clone();
+        // Convert from LanguageConfig to LanguageSettings
+        // Priority: unified queries field > legacy separate fields
+        let queries = if let Some(ref q) = config.queries {
+            q.clone()
+        } else {
+            // Convert legacy fields to unified queries format
+            let mut queries = Vec::new();
+            if let Some(ref highlights) = config.highlights {
+                for path in highlights {
+                    queries.push(settings::QueryItem {
+                        path: path.clone(),
+                        kind: Some(settings::QueryKind::Highlights),
+                    });
+                }
+            }
+            if let Some(ref locals) = config.locals {
+                for path in locals {
+                    queries.push(settings::QueryItem {
+                        path: path.clone(),
+                        kind: Some(settings::QueryKind::Locals),
+                    });
+                }
+            }
+            if let Some(ref injections) = config.injections {
+                for path in injections {
+                    queries.push(settings::QueryItem {
+                        path: path.clone(),
+                        kind: Some(settings::QueryKind::Injections),
+                    });
+                }
+            }
+            queries
+        };
 
-        LanguageSettings::with_bridge(
-            config.library.clone(),
-            highlights,
-            locals,
-            injections,
-            bridge,
-        )
+        LanguageSettings::with_bridge(config.library.clone(), queries, config.bridge.clone())
     }
 }
 
 impl From<&LanguageSettings> for LanguageConfig {
     fn from(settings: &LanguageSettings) -> Self {
-        let highlights = if settings.highlights.is_empty() {
-            None
-        } else {
-            Some(settings.highlights.clone())
-        };
-        let locals = settings.locals.clone();
-        let injections = settings.injections.clone();
+        // Convert unified queries to separate fields for LanguageConfig
+        let mut highlights: Vec<String> = Vec::new();
+        let mut locals: Vec<String> = Vec::new();
+        let mut injections: Vec<String> = Vec::new();
+
+        for query in &settings.queries {
+            match query.kind {
+                Some(settings::QueryKind::Highlights) | None => {
+                    highlights.push(query.path.clone());
+                }
+                Some(settings::QueryKind::Locals) => {
+                    locals.push(query.path.clone());
+                }
+                Some(settings::QueryKind::Injections) => {
+                    injections.push(query.path.clone());
+                }
+            }
+        }
 
         LanguageConfig {
-            library: settings.library.clone(),
-            // filetypes removed from LanguageConfig (PBI-061)
-            queries: None, // Conversion from LanguageSettings uses legacy fields
-            highlights,
-            locals,
-            injections,
+            library: settings.parser.clone(),
+            queries: Some(settings.queries.clone()),
+            highlights: if highlights.is_empty() {
+                None
+            } else {
+                Some(highlights)
+            },
+            locals: if locals.is_empty() {
+                None
+            } else {
+                Some(locals)
+            },
+            injections: if injections.is_empty() {
+                None
+            } else {
+                Some(injections)
+            },
             bridge: settings.bridge.clone(),
         }
     }
@@ -1004,14 +1047,20 @@ mod tests {
 
         let settings: LanguageSettings = LanguageSettings::from(&config);
 
-        // Verify injections is preserved in conversion
-        assert!(
-            settings.injections.is_some(),
-            "Injections should be preserved in conversion"
+        // Verify queries is populated with both highlights and injections
+        assert_eq!(settings.queries.len(), 2);
+        // First query should be highlights (converted from legacy field)
+        assert_eq!(settings.queries[0].path, "/path/to/highlights.scm");
+        assert_eq!(
+            settings.queries[0].kind,
+            Some(settings::QueryKind::Highlights)
         );
-        let injections = settings.injections.as_ref().unwrap();
-        assert_eq!(injections.len(), 1);
-        assert_eq!(injections[0], "/path/to/injections.scm");
+        // Second query should be injections (converted from legacy field)
+        assert_eq!(settings.queries[1].path, "/path/to/injections.scm");
+        assert_eq!(
+            settings.queries[1].kind,
+            Some(settings::QueryKind::Injections)
+        );
     }
 
     // PBI-150 Subtask 2: Deep merge for languages HashMap
