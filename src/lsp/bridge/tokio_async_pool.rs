@@ -96,10 +96,17 @@ impl TokioAsyncLanguageServerPool {
         // Fast path: check if we already have a connection
         if let Some(conn) = self.connections.get(key) {
             // Connection exists, but we may need to create a new virtual URI for this host
-            if self.virtual_uris.get(&(host_uri.to_string(), key.to_string())).is_none() {
+            if self
+                .virtual_uris
+                .get(&(host_uri.to_string(), key.to_string()))
+                .is_none()
+            {
                 // Spawn a virtual file for this host document
-                if let Some(virtual_uri) = self.spawn_virtual_uri_for_host(config, host_uri, key).await {
-                    self.virtual_uris.insert((host_uri.to_string(), key.to_string()), virtual_uri);
+                if let Some(virtual_uri) =
+                    self.spawn_virtual_uri_for_host(config, host_uri, key).await
+                {
+                    self.virtual_uris
+                        .insert((host_uri.to_string(), key.to_string()), virtual_uri);
                 }
             }
             return Some(conn.clone());
@@ -120,10 +127,17 @@ impl TokioAsyncLanguageServerPool {
         // Double-check: another task might have created the connection while we waited for the lock
         if let Some(conn) = self.connections.get(key) {
             // Connection exists, but we may need to create a new virtual URI for this host
-            if self.virtual_uris.get(&(host_uri.to_string(), key.to_string())).is_none() {
+            if self
+                .virtual_uris
+                .get(&(host_uri.to_string(), key.to_string()))
+                .is_none()
+            {
                 // Spawn a virtual file for this host document
-                if let Some(virtual_uri) = self.spawn_virtual_uri_for_host(config, host_uri, key).await {
-                    self.virtual_uris.insert((host_uri.to_string(), key.to_string()), virtual_uri);
+                if let Some(virtual_uri) =
+                    self.spawn_virtual_uri_for_host(config, host_uri, key).await
+                {
+                    self.virtual_uris
+                        .insert((host_uri.to_string(), key.to_string()), virtual_uri);
                 }
             }
             return Some(conn.clone());
@@ -157,7 +171,8 @@ impl TokioAsyncLanguageServerPool {
 
         // Insert into maps
         self.connections.insert(key.to_string(), conn.clone());
-        self.virtual_uris.insert((host_uri.to_string(), key.to_string()), virtual_uri);
+        self.virtual_uris
+            .insert((host_uri.to_string(), key.to_string()), virtual_uri);
 
         Some(conn)
     }
@@ -290,15 +305,18 @@ impl TokioAsyncLanguageServerPool {
         // Use the first connection's temp directory if available
         if let Some(_first_conn_entry) = self.connections.get(key) {
             // Get any existing virtual URI to extract temp directory
-            if let Some(existing_uri_entry) = self.virtual_uris.iter().find(|entry| entry.key().1 == key) {
+            if let Some(existing_uri_entry) =
+                self.virtual_uris.iter().find(|entry| entry.key().1 == key)
+            {
                 let existing_uri = existing_uri_entry.value();
                 // Extract temp directory from existing URI
-                if let Some(path_str) = existing_uri.strip_prefix("file://") {
-                    if let Some(parent_dir) = std::path::Path::new(path_str).parent() {
-                        // Create new virtual file in same workspace
-                        let virtual_file_path = parent_dir.join(format!("virtual-{}.{}", host_hash, extension));
-                        return Some(format!("file://{}", virtual_file_path.display()));
-                    }
+                if let Some(path_str) = existing_uri.strip_prefix("file://")
+                    && let Some(parent_dir) = std::path::Path::new(path_str).parent()
+                {
+                    // Create new virtual file in same workspace
+                    let virtual_file_path =
+                        parent_dir.join(format!("virtual-{}.{}", host_hash, extension));
+                    return Some(format!("file://{}", virtual_file_path.display()));
                 }
             }
         }
@@ -436,7 +454,9 @@ impl TokioAsyncLanguageServerPool {
                     let (_host_key, server_key) = entry.key();
                     let uri = entry.value();
                     if uri == &bridge_uri {
-                        self.connections.get(server_key).map(|conn| (conn.clone(), server_key.clone()))
+                        self.connections
+                            .get(server_key)
+                            .map(|conn| (conn.clone(), server_key.clone()))
                     } else {
                         None
                     }
@@ -459,7 +479,9 @@ impl TokioAsyncLanguageServerPool {
             .filter_map(|entry| {
                 let (_host_uri, server_key) = entry.key();
                 let virtual_uri = entry.value().clone();
-                self.connections.get(server_key).map(|conn| (conn.clone(), virtual_uri))
+                self.connections
+                    .get(server_key)
+                    .map(|conn| (conn.clone(), virtual_uri))
             })
             .collect();
 
@@ -851,7 +873,9 @@ mod tests {
         };
 
         // Get a connection (should spawn, initialize, and return Arc<TokioAsyncBridgeConnection>)
-        let conn = pool.get_connection("rust-analyzer", &config, "file:///test.rs").await;
+        let conn = pool
+            .get_connection("rust-analyzer", &config, "file:///test.rs")
+            .await;
         assert!(conn.is_some(), "Should get a connection");
 
         // Second call should return the same connection (not spawn new)
@@ -881,7 +905,9 @@ mod tests {
 
         // Get a connection
         let host_uri = "file:///test.rs";
-        let conn = pool.get_connection("rust-analyzer", &config, host_uri).await;
+        let conn = pool
+            .get_connection("rust-analyzer", &config, host_uri)
+            .await;
         assert!(conn.is_some(), "Should get a connection");
 
         // Virtual URI should be stored and retrievable
@@ -924,9 +950,13 @@ mod tests {
 
         // Get first connection
         let host_uri = "file:///test.rs";
-        let conn1 = pool.get_connection("rust-analyzer", &config, host_uri).await;
+        let conn1 = pool
+            .get_connection("rust-analyzer", &config, host_uri)
+            .await;
         // Get second connection - should return the same one
-        let conn2 = pool.get_connection("rust-analyzer", &config, host_uri).await;
+        let conn2 = pool
+            .get_connection("rust-analyzer", &config, host_uri)
+            .await;
 
         assert!(conn1.is_some() && conn2.is_some());
         // Both should be Arc pointers to the same connection
@@ -1186,7 +1216,9 @@ mod tests {
         );
 
         // Verify version incremented (may be > 2 due to retries)
-        let virtual_uri = pool.get_virtual_uri("rust-analyzer", "file:///test.rs").unwrap();
+        let virtual_uri = pool
+            .get_virtual_uri("rust-analyzer", "file:///test.rs")
+            .unwrap();
         let version = pool.get_document_version(&virtual_uri).unwrap();
         assert!(
             version >= 2,
@@ -1218,7 +1250,9 @@ mod tests {
 
         // Get a connection to establish the virtual URI
         let host_uri = "file:///test.rs";
-        let conn = pool.get_connection("rust-analyzer", &config, host_uri).await;
+        let conn = pool
+            .get_connection("rust-analyzer", &config, host_uri)
+            .await;
         assert!(conn.is_some(), "Should get a connection");
         let conn = conn.unwrap();
 
@@ -1278,7 +1312,9 @@ mod tests {
 
         // Get a connection to establish the virtual URI
         let host_uri = "file:///test.rs";
-        let conn = pool.get_connection("rust-analyzer", &config, host_uri).await;
+        let conn = pool
+            .get_connection("rust-analyzer", &config, host_uri)
+            .await;
         assert!(conn.is_some(), "Should get a connection");
         let conn = conn.unwrap();
 
@@ -1518,7 +1554,9 @@ mod tests {
 
         // Get connection and establish virtual URI
         let host_uri = "file:///test.rs";
-        let conn = pool.get_connection("rust-analyzer", &config, host_uri).await;
+        let conn = pool
+            .get_connection("rust-analyzer", &config, host_uri)
+            .await;
         assert!(conn.is_some(), "Should get a connection");
         let conn = conn.unwrap();
 
@@ -1646,7 +1684,9 @@ mod tests {
         let host_uri_2 = "file:///test/document2.md";
 
         // Get a connection (use host_uri_1)
-        let conn = pool.get_connection("rust-analyzer", &config, host_uri_1).await;
+        let conn = pool
+            .get_connection("rust-analyzer", &config, host_uri_1)
+            .await;
         assert!(conn.is_some(), "Should get a connection");
         let conn = conn.unwrap();
 
@@ -1717,7 +1757,9 @@ mod tests {
         let host_uri = "file:///test/document.md";
 
         // Get a connection
-        let conn = pool.get_connection("rust-analyzer", &config, host_uri).await;
+        let conn = pool
+            .get_connection("rust-analyzer", &config, host_uri)
+            .await;
         assert!(conn.is_some(), "Should get a connection");
         let conn = conn.unwrap();
 
@@ -1764,7 +1806,9 @@ mod tests {
 
         // Get a connection
         let host_uri = "file:///test.rs";
-        let conn = pool.get_connection("rust-analyzer", &config, host_uri).await;
+        let conn = pool
+            .get_connection("rust-analyzer", &config, host_uri)
+            .await;
         assert!(conn.is_some(), "Should get a connection");
         let conn = conn.unwrap();
 
@@ -1816,8 +1860,12 @@ mod tests {
         let host_uri_2 = "file:///test/doc2.md";
 
         // Get connections for two different host documents
-        let conn1 = pool.get_connection("rust-analyzer", &config, host_uri_1).await;
-        let conn2 = pool.get_connection("rust-analyzer", &config, host_uri_2).await;
+        let conn1 = pool
+            .get_connection("rust-analyzer", &config, host_uri_1)
+            .await;
+        let conn2 = pool
+            .get_connection("rust-analyzer", &config, host_uri_2)
+            .await;
 
         assert!(conn1.is_some(), "Should get connection for host 1");
         assert!(conn2.is_some(), "Should get connection for host 2");
