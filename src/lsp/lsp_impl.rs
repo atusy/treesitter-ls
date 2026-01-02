@@ -2114,13 +2114,6 @@ mod tests {
     fn test_language_settings_wildcard_lookup_blocks_bridging_for_undefined_host() {
         use crate::config::{LanguageSettings, resolve_language_settings_with_wildcard};
 
-        // This test documents the EXPECTED behavior after wiring:
-        // - languages._ has empty bridge filter (block all)
-        // - Looking up "quarto" (undefined) should find and use the wildcard settings
-        //
-        // Currently this fails because get_bridge_config_for_language uses
-        // settings.languages.get() directly instead of wildcard resolution.
-
         let mut languages: HashMap<String, LanguageSettings> = HashMap::new();
 
         // Wildcard: block all bridging with empty filter
