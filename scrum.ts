@@ -104,71 +104,193 @@ const scrum: ScrumDashboard = {
       ],
       status: "ready",
     },
+    {
+      id: "PBI-156",
+      story: {
+        role: "developer editing Lua files",
+        capability: "have only my document's bridge state cleaned up when I close a file",
+        benefit: "other open documents continue working with bridge features without unexpected state loss",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Host-to-bridge URI mapping tracks which bridge documents belong to each host document",
+          verification: "Verify data structure maps host document URIs to their associated bridge virtual URIs",
+        },
+        {
+          criterion: "didClose only closes bridge documents for the specific host document",
+          verification: "Open two files with code blocks, close one, verify bridge state remains for the other file",
+        },
+        {
+          criterion: "All tests pass with scoped document cleanup",
+          verification: "Run `make test` and `make test_nvim` - all tests pass",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-157",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "have bridge LSP features auto-recover after bridge server crashes",
+        benefit: "continue working without restarting entire LSP when bridge process fails",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Connection health check detects dead bridge processes",
+          verification: "Verify get_connection checks process liveness before returning cached connection",
+        },
+        {
+          criterion: "Dead connections are evicted and new processes spawned automatically",
+          verification: "Kill bridge process, trigger request, verify new process spawned and request succeeds",
+        },
+        {
+          criterion: "All tests pass with health monitoring",
+          verification: "Run `make test` and `make test_nvim` - all tests pass",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-158",
+      story: {
+        role: "documentation author with Rust code blocks",
+        capability: "have concurrent bridge requests not interfere with each other",
+        benefit: "get correct hover/completion results even when multiple requests are in flight",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Each injection gets unique virtual URI to prevent content collision",
+          verification: "Verify sync_document generates unique URI per host document + injection combination",
+        },
+        {
+          criterion: "Concurrent requests for different injections don't overwrite each other's content",
+          verification: "E2E test: trigger two hover requests simultaneously for different code blocks, verify both get correct results",
+        },
+        {
+          criterion: "All tests pass with per-document URIs",
+          verification: "Run `make test` and `make test_nvim` - all tests pass",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-159",
+      story: {
+        role: "developer editing Lua files",
+        capability: "have bridge server receive exactly one didOpen per document",
+        benefit: "avoid protocol errors and inconsistent state from duplicate open notifications",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Concurrent first-access requests synchronize didOpen sending",
+          verification: "Verify sync_document uses proper locking to ensure only one didOpen is sent per URI",
+        },
+        {
+          criterion: "Bridge server logs show single didOpen even under concurrent load",
+          verification: "Unit test: spawn multiple concurrent requests for fresh connection, verify single didOpen sent",
+        },
+        {
+          criterion: "All tests pass with synchronized didOpen",
+          verification: "Run `make test` and `make test_nvim` - all tests pass",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-160",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "have no orphaned bridge processes when initialization times out",
+        benefit: "prevent resource leaks and temp directory accumulation",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Timed-out initialization cancels spawn and cleans up process",
+          verification: "Verify timeout handler calls kill() and waits for child process to exit",
+        },
+        {
+          criterion: "Temp directories are removed when initialization fails",
+          verification: "Trigger timeout, verify temp directory is cleaned up",
+        },
+        {
+          criterion: "All tests pass with proper timeout cleanup",
+          verification: "Run `make test` and `make test_nvim` - all tests pass",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-161",
+      story: {
+        role: "documentation author with Rust code blocks",
+        capability: "edit files immediately after opening without server crashes",
+        benefit: "reliable editing experience without timing-dependent failures",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Parser auto-install coordinates with parsing operations",
+          verification: "Verify parser loader waits for downloads to complete before attempting deserialization",
+        },
+        {
+          criterion: "Rapid edits after file open don't trigger panic",
+          verification: "E2E test: open file, immediately type, verify no server crash",
+        },
+        {
+          criterion: "All tests pass with coordinated auto-install",
+          verification: "Run `make test` and `make test_nvim` - all tests pass",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-162",
+      story: {
+        role: "developer editing Lua files",
+        capability: "have responsive hover/completion during fast typing",
+        benefit: "avoid UI freezes from expensive semantic token computation",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Semantic token handlers observe cancellation tokens",
+          verification: "Verify handlers check is_cancelled() and return early when request is cancelled",
+        },
+        {
+          criterion: "Rapid edits don't queue unbounded semantic token computations",
+          verification: "Add debouncing or request coalescing to prevent computation backlog",
+        },
+        {
+          criterion: "All tests pass with cancellation support",
+          verification: "Run `make test` and `make test_nvim` - all tests pass",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-163",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "have reliable unit test suite without flaky failures",
+        benefit: "trust test results and catch real regressions",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Rust-analyzer resource contention is identified and mitigated",
+          verification: "Investigate why completion and signature_help tests fail intermittently",
+        },
+        {
+          criterion: "Unit tests pass consistently (357/357)",
+          verification: "Run `make test` 10 times - all runs should pass",
+        },
+        {
+          criterion: "Test environment properly isolates rust-analyzer instances",
+          verification: "Verify tests use separate temp directories or sequential execution to avoid conflicts",
+        },
+      ],
+      status: "ready",
+    },
   ],
 
-  sprint: {
-    number: 127,
-    pbi_id: "PBI-154",
-    goal: "Implement proper document lifecycle cleanup when host documents are closed",
-    status: "review",
-    subtasks: [
-      {
-        test: "close_document sends textDocument/didClose notification to bridge server",
-        implementation: "Add close_document_with_notification() method to pool that sends didClose and removes version tracking",
-        type: "behavioral",
-        status: "green",
-        commits: [{ hash: "0eb46c3", message: "feat(bridge): add close_document_async to send didClose notification", phase: "green" }],
-        notes: ["Added close_document_async() that sends didClose and removes version tracking"],
-      },
-      {
-        test: "did_close in lsp_impl calls bridge pool cleanup for all active connections",
-        implementation: "Wire did_close() to iterate connections and call close_document for each virtual URI",
-        type: "behavioral",
-        status: "green",
-        commits: [{ hash: "bb567b3", message: "feat(bridge): wire didClose to close_all_documents for cleanup", phase: "green" }],
-        notes: ["Added close_all_documents() that iterates all connections and sends didClose", "Wired did_close() in lsp_impl.rs to call tokio_async_pool.close_all_documents()"],
-      },
-      {
-        test: "All tests pass with document cleanup wiring",
-        implementation: "Run make test and make test_nvim to verify no regressions",
-        type: "behavioral",
-        status: "green",
-        commits: [],
-        notes: [],
-      },
-    ],
-    review: {
-      date: "2026-01-03",
-      dod_results: {
-        unit_tests: "PARTIAL: 355/357 passed - 2 flaky rust-analyzer tests (completion, signature_help) failed due to indexing timing, unrelated to document cleanup functionality",
-        code_quality: "PASS: cargo check, clippy, and fmt all pass with no warnings",
-        e2e_tests: "PASS: All 29 nvim E2E tests pass successfully"
-      },
-      acceptance_criteria_verification: [
-        {
-          criterion: "close_document() is called when didClose LSP event is received",
-          status: "VERIFIED",
-          evidence: "lsp_impl.rs:1148 - did_close() calls tokio_async_pool.close_all_documents() to cleanup bridge documents when host document closes"
-        },
-        {
-          criterion: "Document versions are removed from bridge tracking",
-          status: "VERIFIED",
-          evidence: "tokio_async_pool.rs:313 - close_document() removes document_versions entry via DashMap::remove(); close_document_async() always calls close_document() at line 313"
-        },
-        {
-          criterion: "didClose notification sent to bridge LSP server",
-          status: "VERIFIED",
-          evidence: "tokio_async_pool.rs:302-310 - close_document_async() sends textDocument/didClose notification with correct URI parameter to bridge connection"
-        },
-        {
-          criterion: "All tests pass with document cleanup",
-          status: "VERIFIED",
-          evidence: "E2E tests: 29/29 pass. Unit tests: 355/357 pass - 2 failures are pre-existing flaky rust-analyzer indexing tests unrelated to PBI-154 cleanup functionality"
-        }
-      ],
-      increment_status: "POTENTIALLY SHIPPABLE: All acceptance criteria verified. Document cleanup implementation complete with proper didClose notification and version tracking removal. E2E tests confirm no regressions. Unit test failures are pre-existing flaky tests unrelated to this increment."
-    }
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -178,7 +300,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-124: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-125: git log -- scrum.yaml, scrum.ts
   completed: [
     { number: 120, pbi_id: "PBI-151", goal: "Migrate critical Neovim E2E tests (hover, completion, references) to Rust with snapshot verification, establishing reusable patterns and helpers for future migrations", status: "done", subtasks: [] },
     { number: 119, pbi_id: "PBI-150", goal: "Implement Rust-based E2E testing infrastructure for go-to-definition with snapshot testing, enabling faster and more reliable tests without Neovim dependency", status: "done", subtasks: [] },
@@ -186,12 +308,18 @@ const scrum: ScrumDashboard = {
 
   // Recent 2 retrospectives | Sprint 1-120: ADR-driven development, reusable patterns, E2E test timing
   retrospectives: [
-    { sprint: 126, improvements: [
-      { action: "Consider investigating flaky unit tests in future sprint - 3 tests fail due to rust-analyzer resource contention", timing: "product", status: "active", outcome: null },
+    { sprint: 127, improvements: [
+      { action: "Fix close_all_documents to only close bridge documents for specific host document - current implementation closes ALL bridge docs on ANY host close (PBI-156)", timing: "product", status: "active", outcome: null },
+      { action: "Add bridge connection health monitoring and auto-recovery - dead processes never replaced, leaving features permanently broken (PBI-157)", timing: "product", status: "active", outcome: null },
+      { action: "Implement per-document virtual URIs - shared URI causes concurrent requests to overwrite each other's content (PBI-158)", timing: "product", status: "active", outcome: null },
+      { action: "Fix didOpen race condition with proper synchronization - concurrent first access sends duplicate didOpen (PBI-159)", timing: "product", status: "active", outcome: null },
+      { action: "Implement proper cleanup for timed-out bridge initializations - partially spawned servers leak processes and temp dirs (PBI-160)", timing: "product", status: "active", outcome: null },
+      { action: "Fix auto-install race that crashes server on immediate edits after file open (PBI-161)", timing: "product", status: "active", outcome: null },
+      { action: "Implement cancellation and backpressure for semantic tokens - flood during fast typing starves other requests (PBI-162)", timing: "product", status: "active", outcome: null },
+      { action: "Investigate and fix flaky rust-analyzer unit tests - 2/357 tests fail intermittently due to resource contention (PBI-163)", timing: "product", status: "active", outcome: null },
     ] },
-    { sprint: 125, improvements: [
-      { action: "Wire close_document() to didClose LSP events in future sprint - currently implemented but not connected to actual document close events", timing: "product", status: "completed", outcome: "Created PBI-154 to implement document lifecycle cleanup integration" },
-      { action: "Update review-stability.md to mark all issues as resolved - PBI-150 (resource cleanup), PBI-151 (race conditions), PBI-152 (robustness) completed", timing: "immediate", status: "completed", outcome: "Added resolution notes to review-stability.md marking HIGH-3, HIGH-4, HIGH-6, MEDIUM-2 as RESOLVED with sprint references" },
+    { sprint: 126, improvements: [
+      { action: "Consider investigating flaky unit tests in future sprint - 3 tests fail due to rust-analyzer resource contention", timing: "product", status: "completed", outcome: "Created PBI-163 to investigate and fix flaky rust-analyzer unit tests" },
     ] },
     { sprint: 124, improvements: [
       { action: "Continue with PBI-152 to address robustness issues (backpressure, notification overflow, resource cleanup, initialization timeout)", timing: "product", status: "completed", outcome: "PBI-152 completed in Sprint 125 with all 4 robustness improvements implemented" },
