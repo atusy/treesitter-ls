@@ -288,6 +288,52 @@ const scrum: ScrumDashboard = {
       ],
       status: "ready",
     },
+    {
+      id: "PBI-164",
+      story: {
+        role: "developer editing Lua files",
+        capability: "have fast LSP responses without blocking I/O in hot path",
+        benefit: "avoid latency spikes from synchronous disk writes on every keystroke",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Crash detection uses in-memory sentinels instead of disk writes per parse",
+          verification: "Verify parse_document no longer performs synchronous fs writes via failed_parsers.begin_parsing/end_parsing on each edit",
+        },
+        {
+          criterion: "Crash state persisted periodically or on process exit instead of per keystroke",
+          verification: "Profile didChange handler - verify no blocking I/O in parse path",
+        },
+        {
+          criterion: "All tests pass with in-memory crash detection",
+          verification: "Run `make test` and `make test_nvim` - all tests pass",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-165",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "have responsive LSP features during concurrent parsing",
+        benefit: "avoid head-of-line blocking when multiple requests need parser access",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Parser pool uses tokio::sync::Mutex instead of std::sync::Mutex",
+          verification: "Verify parser pool lock is async-aware and doesn't block tokio worker threads",
+        },
+        {
+          criterion: "Heavy parsing work offloaded to spawn_blocking",
+          verification: "Verify Parser::parse executes in blocking thread pool, only holding async lock for checkout/return",
+        },
+        {
+          criterion: "All tests pass with async-aware parser pool",
+          verification: "Run `make test` and `make test_nvim` - all tests pass",
+        },
+      ],
+      status: "ready",
+    },
   ],
 
   sprint: null,
@@ -300,7 +346,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-125: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-126: git log -- scrum.yaml, scrum.ts
   completed: [
     {
       number: 128,
@@ -433,18 +479,11 @@ const scrum: ScrumDashboard = {
 
   // Recent 2 retrospectives | Sprint 1-120: ADR-driven development, reusable patterns, E2E test timing
   retrospectives: [
-    { sprint: 127, improvements: [
-      { action: "Fix close_all_documents to only close bridge documents for specific host document - current implementation closes ALL bridge docs on ANY host close (PBI-156)", timing: "product", status: "active", outcome: null },
-      { action: "Add bridge connection health monitoring and auto-recovery - dead processes never replaced, leaving features permanently broken (PBI-157)", timing: "product", status: "active", outcome: null },
-      { action: "Implement per-document virtual URIs - shared URI causes concurrent requests to overwrite each other's content (PBI-158)", timing: "product", status: "active", outcome: null },
-      { action: "Fix didOpen race condition with proper synchronization - concurrent first access sends duplicate didOpen (PBI-159)", timing: "product", status: "active", outcome: null },
-      { action: "Implement proper cleanup for timed-out bridge initializations - partially spawned servers leak processes and temp dirs (PBI-160)", timing: "product", status: "active", outcome: null },
-      { action: "Fix auto-install race that crashes server on immediate edits after file open (PBI-161)", timing: "product", status: "active", outcome: null },
-      { action: "Implement cancellation and backpressure for semantic tokens - flood during fast typing starves other requests (PBI-162)", timing: "product", status: "active", outcome: null },
-      { action: "Investigate and fix flaky rust-analyzer unit tests - 2/357 tests fail intermittently due to resource contention (PBI-163)", timing: "product", status: "active", outcome: null },
+    { sprint: 128, improvements: [
+      { action: "Add E2E test coverage for bridge document lifecycle", timing: "sprint", status: "active", outcome: null },
     ] },
-    { sprint: 126, improvements: [
-      { action: "Consider investigating flaky unit tests in future sprint - 3 tests fail due to rust-analyzer resource contention", timing: "product", status: "completed", outcome: "Created PBI-163 to investigate and fix flaky rust-analyzer unit tests" },
+    { sprint: 127, improvements: [
+      { action: "Stability review findings captured as PBI-156 through PBI-165", timing: "product", status: "completed", outcome: "All issues tracked in product backlog" },
     ] },
     { sprint: 124, improvements: [
       { action: "Continue with PBI-152 to address robustness issues (backpressure, notification overflow, resource cleanup, initialization timeout)", timing: "product", status: "completed", outcome: "PBI-152 completed in Sprint 125 with all 4 robustness improvements implemented" },
