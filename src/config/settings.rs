@@ -277,13 +277,22 @@ mod tests {
         // Case 1: queries not specified (should be None)
         // User didn't specify queries - should inherit from wildcard/defaults
         let unspecified = LanguageSettings::new(None, None);
-        assert!(unspecified.queries.is_none(), "Unspecified queries should be None");
+        assert!(
+            unspecified.queries.is_none(),
+            "Unspecified queries should be None"
+        );
 
         // Case 2: queries explicitly empty (should be Some([]))
         // User explicitly set queries to empty - should override wildcard with empty list
         let explicitly_empty = LanguageSettings::new(None, Some(vec![]));
-        assert!(explicitly_empty.queries.is_some(), "Explicitly empty should be Some");
-        assert!(explicitly_empty.queries.as_ref().unwrap().is_empty(), "Should be empty vec");
+        assert!(
+            explicitly_empty.queries.is_some(),
+            "Explicitly empty should be Some"
+        );
+        assert!(
+            explicitly_empty.queries.as_ref().unwrap().is_empty(),
+            "Should be empty vec"
+        );
 
         // Case 3: queries with items
         let with_items = LanguageSettings::new(
@@ -701,8 +710,14 @@ mod tests {
 
         assert_eq!(settings.parser, Some("/path/to/parser.so".to_string()));
         assert_eq!(settings.queries.as_ref().unwrap().len(), 1);
-        assert_eq!(settings.queries.as_ref().unwrap()[0].path, "/path/to/highlights.scm");
-        assert_eq!(settings.queries.as_ref().unwrap()[0].kind, Some(QueryKind::Highlights));
+        assert_eq!(
+            settings.queries.as_ref().unwrap()[0].path,
+            "/path/to/highlights.scm"
+        );
+        assert_eq!(
+            settings.queries.as_ref().unwrap()[0].kind,
+            Some(QueryKind::Highlights)
+        );
     }
 
     #[test]

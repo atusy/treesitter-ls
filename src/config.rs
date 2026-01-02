@@ -171,7 +171,10 @@ impl From<&LanguageConfig> for LanguageSettings {
         // Priority: unified queries field > legacy separate fields
         let queries = if let Some(ref q) = config.queries {
             Some(q.clone())
-        } else if config.highlights.is_some() || config.locals.is_some() || config.injections.is_some() {
+        } else if config.highlights.is_some()
+            || config.locals.is_some()
+            || config.injections.is_some()
+        {
             // Convert legacy fields to unified queries format
             let mut queries = Vec::new();
             if let Some(ref highlights) = config.highlights {
@@ -1054,16 +1057,10 @@ mod tests {
         assert_eq!(queries.len(), 2);
         // First query should be highlights (converted from legacy field)
         assert_eq!(queries[0].path, "/path/to/highlights.scm");
-        assert_eq!(
-            queries[0].kind,
-            Some(settings::QueryKind::Highlights)
-        );
+        assert_eq!(queries[0].kind, Some(settings::QueryKind::Highlights));
         // Second query should be injections (converted from legacy field)
         assert_eq!(queries[1].path, "/path/to/injections.scm");
-        assert_eq!(
-            queries[1].kind,
-            Some(settings::QueryKind::Injections)
-        );
+        assert_eq!(queries[1].kind, Some(settings::QueryKind::Injections));
     }
 
     // PBI-150 Subtask 2: Deep merge for languages HashMap
