@@ -136,7 +136,11 @@ fn sanitize_definition_range(value: &Value) -> Value {
 fn sanitize_recursive(value: &Value, drop_data_field: bool) -> Value {
     match value {
         Value::String(s) => Value::String(sanitize_text(s)),
-        Value::Array(arr) => Value::Array(arr.iter().map(|v| sanitize_recursive(v, drop_data_field)).collect()),
+        Value::Array(arr) => Value::Array(
+            arr.iter()
+                .map(|v| sanitize_recursive(v, drop_data_field))
+                .collect(),
+        ),
         Value::Object(obj) => {
             let mut map = serde_json::Map::new();
             for (key, val) in obj {
