@@ -102,7 +102,7 @@ const scrum: ScrumDashboard = {
           verification: "E2E test opens Markdown with Rust code block, requests signatureHelp, receives signatures",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-156",
@@ -382,46 +382,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 132,
-    pbi_id: "PBI-155",
-    goal: "Refactor reader_loop for maintainability with clear separation of concerns",
-    status: "in_progress",
-    subtasks: [
-      {
-        test: "Verify reader_routes_responses_to_pending_requests still passes",
-        implementation: "Extract lines 182-203 into static handle_response() method",
-        type: "structural",
-        status: "completed",
-        commits: [{ hash: "b63db34", message: "refactor(bridge): extract handle_response() from reader_loop", phase: "green" }],
-        notes: ["Baseline test passes - verified response routing works correctly", "Extracted handle_response() - test still passes"],
-      },
-      {
-        test: "Verify reader_forwards_progress_notifications_to_channel still passes",
-        implementation: "Extract lines 204-222 into static handle_notification() method",
-        type: "structural",
-        status: "completed",
-        commits: [{ hash: "96c3179", message: "refactor(bridge): extract handle_notification() from reader_loop", phase: "green" }],
-        notes: ["Baseline test passes - verified notification forwarding works correctly", "Extracted handle_notification() - test still passes"],
-      },
-      {
-        test: "Verify shutdown tests still pass",
-        implementation: "Extract cleanup logic into static handle_connection_end() method",
-        type: "structural",
-        status: "completed",
-        commits: [{ hash: "ac215a9", message: "refactor(bridge): extract handle_connection_end() from reader_loop", phase: "green" }],
-        notes: ["Baseline test passes - verified shutdown cleanup works correctly", "Extracted handle_connection_end() - all tests pass"],
-      },
-      {
-        test: "All reader tests pass, reader_loop is under 50 lines",
-        implementation: "Refactor reader_loop to delegate to extracted methods",
-        type: "structural",
-        status: "completed",
-        commits: [],
-        notes: ["reader_loop body is 47 lines (under 50-line target)", "All 19 tokio_connection tests pass", "No additional refactoring needed - delegation complete from previous subtasks"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -431,7 +392,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-128: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-131: git log -- scrum.yaml, scrum.ts
   completed: [
     {
       number: 128,
