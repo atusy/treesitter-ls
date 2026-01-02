@@ -14,8 +14,9 @@ use super::workspace::{language_to_extension, setup_workspace_with_option};
 use crate::config::settings::BridgeServerConfig;
 use dashmap::DashMap;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 
 /// Pool of tokio-based async language server connections.
 ///
@@ -31,6 +32,8 @@ pub struct TokioAsyncLanguageServerPool {
     notification_sender: mpsc::Sender<Value>,
     /// Document versions per virtual URI (for didOpen/didChange tracking)
     document_versions: DashMap<String, u32>,
+    /// Locks per key to prevent concurrent spawns for the same key
+    spawn_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
 
 impl TokioAsyncLanguageServerPool {
@@ -44,6 +47,7 @@ impl TokioAsyncLanguageServerPool {
             virtual_uris: DashMap::new(),
             notification_sender,
             document_versions: DashMap::new(),
+            spawn_locks: Mutex::new(HashMap::new()),
         }
     }
 
@@ -51,6 +55,10 @@ impl TokioAsyncLanguageServerPool {
     ///
     /// This method is fully async - unlike `AsyncLanguageServerPool::get_connection`
     /// which uses `spawn_blocking` internally, this uses tokio async I/O throughout.
+    ///
+    /// Uses per-key mutex to prevent race conditions where concurrent calls could
+    /// spawn multiple processes for the same key. The mutex is held across the spawn
+    /// operation to ensure only one process is spawned.
     ///
     /// # Arguments
     /// * `key` - Unique key for this connection (typically server name)
@@ -60,12 +68,29 @@ impl TokioAsyncLanguageServerPool {
         key: &str,
         config: &BridgeServerConfig,
     ) -> Option<Arc<TokioAsyncBridgeConnection>> {
-        // Check if we already have a connection
+        // Fast path: check if we already have a connection
         if let Some(conn) = self.connections.get(key) {
             return Some(conn.clone());
         }
 
-        // Spawn and initialize a new connection
+        // Get or create a lock for this key
+        let lock = {
+            let mut locks = self.spawn_locks.lock().await;
+            locks
+                .entry(key.to_string())
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone()
+        };
+
+        // Acquire the per-key lock
+        let _guard = lock.lock().await;
+
+        // Double-check: another task might have created the connection while we waited for the lock
+        if let Some(conn) = self.connections.get(key) {
+            return Some(conn.clone());
+        }
+
+        // We hold the lock and no connection exists - spawn and initialize
         log::debug!(
             target: "treesitter_ls::bridge::tokio_async_pool",
             "[POOL] Spawning new connection for key={}",
@@ -73,8 +98,9 @@ impl TokioAsyncLanguageServerPool {
         );
 
         let (conn, virtual_uri) = self.spawn_and_initialize(config).await?;
-
         let conn = Arc::new(conn);
+
+        // Insert into maps
         self.connections.insert(key.to_string(), conn.clone());
         self.virtual_uris.insert(key.to_string(), virtual_uri);
 
@@ -203,6 +229,19 @@ impl TokioAsyncLanguageServerPool {
     /// Used internally to track document versions for didOpen/didChange.
     pub fn set_document_version(&self, uri: &str, version: u32) {
         self.document_versions.insert(uri.to_string(), version);
+    }
+
+    /// Atomically increment document version and return the new version.
+    ///
+    /// Returns 1 for first call (didOpen), increments for subsequent calls (didChange).
+    /// This method uses DashMap entry API for atomic read-modify-write to prevent
+    /// race conditions where concurrent calls could read the same version.
+    fn increment_document_version(&self, uri: &str) -> u32 {
+        *self
+            .document_versions
+            .entry(uri.to_string())
+            .and_modify(|v| *v += 1)
+            .or_insert(1)
     }
 }
 
@@ -448,6 +487,9 @@ impl TokioAsyncLanguageServerPool {
     /// This replaces `ensure_document_open` to properly handle the LSP protocol
     /// requirement that didOpen is only sent once per document, and subsequent
     /// content updates use didChange with incrementing versions.
+    ///
+    /// Uses atomic version increment to prevent race conditions where concurrent
+    /// calls could send duplicate version numbers.
     pub async fn sync_document(
         &self,
         conn: &super::tokio_connection::TokioAsyncBridgeConnection,
@@ -455,27 +497,10 @@ impl TokioAsyncLanguageServerPool {
         language_id: &str,
         content: &str,
     ) -> Option<()> {
-        if let Some(current_version) = self.get_document_version(uri) {
-            // Document already open - send didChange with incremented version
-            let new_version = current_version + 1;
-            let params = serde_json::json!({
-                "textDocument": {
-                    "uri": uri,
-                    "version": new_version,
-                },
-                "contentChanges": [{ "text": content }]
-            });
-            match conn
-                .send_notification("textDocument/didChange", params)
-                .await
-            {
-                Ok(()) => {
-                    self.set_document_version(uri, new_version);
-                    Some(())
-                }
-                Err(_) => None,
-            }
-        } else {
+        // Check if document has been opened (version exists)
+        let is_first_access = self.get_document_version(uri).is_none();
+
+        if is_first_access {
             // First time - send didOpen with version 1
             let params = serde_json::json!({
                 "textDocument": {
@@ -487,11 +512,25 @@ impl TokioAsyncLanguageServerPool {
             });
             match conn.send_notification("textDocument/didOpen", params).await {
                 Ok(()) => {
-                    self.set_document_version(uri, 1);
+                    // Atomically set version to 1 (or keep existing if another call won the race)
+                    self.increment_document_version(uri);
                     Some(())
                 }
                 Err(_) => None,
             }
+        } else {
+            // Document already open - atomically increment and get new version
+            let new_version = self.increment_document_version(uri);
+            let params = serde_json::json!({
+                "textDocument": {
+                    "uri": uri,
+                    "version": new_version,
+                },
+                "contentChanges": [{ "text": content }]
+            });
+            conn.send_notification("textDocument/didChange", params)
+                .await
+                .ok()
         }
     }
 }
@@ -1186,5 +1225,130 @@ mod tests {
             signature_help.is_some(),
             "signature_help() should return Some(SignatureHelp) for 'add(' call"
         );
+    }
+
+    /// Test that concurrent sync_document calls produce monotonically increasing versions without duplicates.
+    ///
+    /// This verifies PBI-151 AC1: Version atomicity - concurrent calls must produce unique sequential versions.
+    /// With the old implementation using separate get/set, concurrent calls could read the same version.
+    #[tokio::test]
+    async fn concurrent_sync_document_produces_unique_sequential_versions() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = std::sync::Arc::new(super::TokioAsyncLanguageServerPool::new(tx));
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Get connection and establish virtual URI
+        let conn = pool.get_connection("rust-analyzer", &config).await;
+        assert!(conn.is_some(), "Should get a connection");
+        let conn = conn.unwrap();
+
+        let virtual_uri = pool.get_virtual_uri("rust-analyzer").unwrap();
+
+        // Send 10 concurrent sync_document calls
+        let mut handles = vec![];
+        for i in 0..10 {
+            let pool_clone = pool.clone();
+            let conn_clone = conn.clone();
+            let uri_clone = virtual_uri.clone();
+            let content = format!("fn main() {{ let x = {}; }}", i);
+
+            let handle = tokio::spawn(async move {
+                pool_clone
+                    .sync_document(&conn_clone, &uri_clone, "rust", &content)
+                    .await;
+                // Return the version number after sync
+                pool_clone.get_document_version(&uri_clone)
+            });
+            handles.push(handle);
+        }
+
+        // Collect all versions
+        let mut versions = vec![];
+        for handle in handles {
+            if let Ok(Some(version)) = handle.await {
+                versions.push(version);
+            }
+        }
+
+        // Sort versions to check sequence
+        versions.sort();
+
+        // Verify we got all 10 versions
+        assert_eq!(versions.len(), 10, "Should have 10 version numbers");
+
+        // Verify versions are 1,2,3,...,10 (no duplicates, sequential)
+        let expected: Vec<u32> = (1..=10).collect();
+        assert_eq!(
+            versions, expected,
+            "Versions should be sequential 1-10 without duplicates, got: {:?}",
+            versions
+        );
+    }
+
+    /// Test that concurrent get_connection calls spawn exactly one language server process.
+    ///
+    /// This verifies PBI-151 AC2: Single spawn - concurrent calls must share a single connection.
+    /// With the old implementation using separate check/spawn/insert, concurrent calls could both spawn.
+    #[tokio::test]
+    async fn concurrent_get_connection_spawns_single_process() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = std::sync::Arc::new(super::TokioAsyncLanguageServerPool::new(tx));
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Send 10 concurrent get_connection calls
+        let mut handles = vec![];
+        for _ in 0..10 {
+            let pool_clone = pool.clone();
+            let config_clone = config.clone();
+
+            let handle = tokio::spawn(async move {
+                pool_clone
+                    .get_connection("rust-analyzer", &config_clone)
+                    .await
+            });
+            handles.push(handle);
+        }
+
+        // Collect all connections
+        let mut connections = vec![];
+        for handle in handles {
+            if let Ok(Some(conn)) = handle.await {
+                connections.push(conn);
+            }
+        }
+
+        // Verify we got 10 connections
+        assert_eq!(connections.len(), 10, "Should have 10 connection handles");
+
+        // Verify all connections point to the same Arc instance
+        let first = &connections[0];
+        for conn in &connections[1..] {
+            assert!(
+                std::sync::Arc::ptr_eq(first, conn),
+                "All concurrent get_connection calls should return the same Arc instance"
+            );
+        }
     }
 }

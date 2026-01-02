@@ -220,7 +220,7 @@ impl TokioAsyncBridgeConnection {
                             );
 
                             // Clean up all pending requests
-                            conn.clear_all_pending_requests();
+                            Self::clear_pending_requests(&pending);
 
                             break;
                         }
@@ -232,7 +232,7 @@ impl TokioAsyncBridgeConnection {
                             );
 
                             // Clean up all pending requests on error
-                            conn.clear_all_pending_requests();
+                            Self::clear_pending_requests(&pending);
 
                             break;
                         }
@@ -367,9 +367,16 @@ impl TokioAsyncBridgeConnection {
     /// This helper consolidates the cleanup pattern used in reader_loop (EOF/Error)
     /// and Drop impl.
     fn clear_all_pending_requests(&self) {
-        let ids: Vec<i64> = self.pending_requests.iter().map(|r| *r.key()).collect();
+        Self::clear_pending_requests(&self.pending_requests);
+    }
+
+    /// Static helper to clear pending requests from a DashMap.
+    ///
+    /// Used by both instance method and static reader_loop.
+    fn clear_pending_requests(pending: &Arc<DashMap<i64, PendingRequest>>) {
+        let ids: Vec<i64> = pending.iter().map(|r| *r.key()).collect();
         for id in ids {
-            if let Some((_, sender)) = self.pending_requests.remove(&id) {
+            if let Some((_, sender)) = pending.remove(&id) {
                 let _ = sender.send(ResponseResult {
                     response: None,
                     notifications: vec![],
