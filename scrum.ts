@@ -128,58 +128,11 @@ const scrum: ScrumDashboard = {
           verification: "Integration test: auto-install for 'lua' proceeds normally (existing tests pass)",
         },
       ],
-      status: "ready",
+      status: "done",
     },
   ],
 
-  sprint: {
-    number: 119,
-    pbi_id: "PBI-150",
-    goal: "Skip unsupported languages during auto-install by checking nvim-treesitter metadata before attempting installation, with cached metadata to avoid repeated HTTP requests",
-    status: "in_progress",
-    subtasks: [
-      {
-        test: "Unit test: is_language_supported returns true for known language (e.g., 'lua') using cached metadata",
-        implementation: "Add is_language_supported function in metadata.rs that wraps list_supported_languages with FetchOptions caching",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: ["list_supported_languages already exists with caching via FetchOptions"],
-      },
-      {
-        test: "Unit test: is_language_supported returns false for unsupported language (e.g., 'fake_lang_xyz') without error",
-        implementation: "Ensure is_language_supported gracefully returns false for non-existent languages",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: ["MetadataError::LanguageNotFound should be caught and converted to false"],
-      },
-      {
-        test: "Unit test: maybe_auto_install_language skips installation for unsupported language and logs info message",
-        implementation: "Add is_language_supported check at start of maybe_auto_install_language before try_start_install",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: ["Log message should explain why installation was skipped (not supported by nvim-treesitter)"],
-      },
-      {
-        test: "Unit test: multiple is_language_supported checks reuse cached metadata (verify via cache TTL behavior)",
-        implementation: "Leverage existing MetadataCache with 1-hour TTL from FetchOptions",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: ["Existing cache.rs already provides caching; verify it's used via FetchOptions in is_language_supported"],
-      },
-      {
-        test: "Integration test: auto-install for 'lua' proceeds normally (existing tests pass)",
-        implementation: "Run existing auto-install integration tests to verify no regression",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: ["AC4: Verify existing behavior is preserved for supported languages"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -191,8 +144,8 @@ const scrum: ScrumDashboard = {
 
   // Historical sprints (recent 2) | Sprint 1-117: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 119, pbi_id: "PBI-150", goal: "Skip unsupported languages during auto-install by checking nvim-treesitter metadata before attempting installation, with cached metadata to avoid repeated HTTP requests", status: "done", subtasks: [] },
     { number: 118, pbi_id: "PBI-147", goal: "Return an informative 'No result or indexing' message when bridged hover has no result, ensuring users understand the reason instead of seeing silent empty responses", status: "done", subtasks: [] },
-    { number: 117, pbi_id: "PBI-146", goal: "Track document versions per virtual URI, send didOpen on first access and didChange with incremented version on subsequent accesses, ensuring hover responses reflect the latest code", status: "done", subtasks: [] },
   ],
 
   // Recent 2 retrospectives | Sprint 1-116: modular refactoring pattern, E2E indexing waits, vertical slice validation
