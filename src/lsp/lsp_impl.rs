@@ -524,14 +524,9 @@ impl TreeSitterLs {
 
                 if let Some(resolved_config) =
                     resolve_language_server_with_wildcard(servers, server_name)
+                        .filter(|c| c.languages.iter().any(|l| l == injection_language))
                 {
-                    if resolved_config
-                        .languages
-                        .iter()
-                        .any(|l| l == injection_language)
-                    {
-                        return Some(resolved_config);
-                    }
+                    return Some(resolved_config);
                 }
             }
         }
@@ -1754,7 +1749,7 @@ mod tests {
         // Wildcard: block all bridging with empty filter
         languages.insert(
             "_".to_string(),
-            LanguageSettings::with_bridge(None, vec![], None, None, Some(HashMap::new())),
+            LanguageSettings::with_bridge(None, vec![], Some(HashMap::new())),
         );
 
         // Look up "quarto" which doesn't exist - should inherit from wildcard
@@ -1932,8 +1927,7 @@ mod tests {
         let mut bridge_filter = HashMap::new();
         bridge_filter.insert("python".to_string(), BridgeLanguageConfig { enabled: true });
         bridge_filter.insert("r".to_string(), BridgeLanguageConfig { enabled: true });
-        let markdown_settings =
-            LanguageSettings::with_bridge(None, vec![], None, None, Some(bridge_filter));
+        let markdown_settings = LanguageSettings::with_bridge(None, vec![], Some(bridge_filter));
 
         // Router should allow python (enabled in filter)
         assert!(
@@ -1954,7 +1948,7 @@ mod tests {
         );
 
         // Host quarto with no bridge filter (default: all)
-        let quarto_settings = LanguageSettings::new(None, vec![], None, None);
+        let quarto_settings = LanguageSettings::new(None, vec![]);
 
         // Router should allow all languages
         assert!(
@@ -1967,8 +1961,7 @@ mod tests {
         );
 
         // Host rmd with empty bridge filter (disable all)
-        let rmd_settings =
-            LanguageSettings::with_bridge(None, vec![], None, None, Some(HashMap::new()));
+        let rmd_settings = LanguageSettings::with_bridge(None, vec![], Some(HashMap::new()));
 
         // Router should block all languages
         assert!(

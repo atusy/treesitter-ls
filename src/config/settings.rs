@@ -127,10 +127,10 @@ pub struct TreeSitterSettings {
 /// Per-language Tree-sitter language configuration surfaced to the domain.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LanguageSettings {
-    pub library: Option<String>,
-    pub highlights: Vec<String>,
-    pub locals: Option<Vec<String>>,
-    pub injections: Option<Vec<String>>,
+    /// Path to the parser library (renamed from `library` for clarity)
+    pub parser: Option<String>,
+    /// Unified query file configuration
+    pub queries: Vec<QueryItem>,
     /// Languages to bridge for this host filetype (map format).
     /// - None (omitted): Bridge ALL configured languages (default behavior)
     /// - Some({}): Bridge NOTHING (disable bridging for this host)
@@ -139,34 +139,23 @@ pub struct LanguageSettings {
 }
 
 impl LanguageSettings {
-    pub fn new(
-        library: Option<String>,
-        highlights: Vec<String>,
-        locals: Option<Vec<String>>,
-        injections: Option<Vec<String>>,
-    ) -> Self {
+    pub fn new(parser: Option<String>, queries: Vec<QueryItem>) -> Self {
         Self {
-            library,
-            highlights,
-            locals,
-            injections,
+            parser,
+            queries,
             bridge: None,
         }
     }
 
     /// Create LanguageSettings with bridge filter configuration.
     pub fn with_bridge(
-        library: Option<String>,
-        highlights: Vec<String>,
-        locals: Option<Vec<String>>,
-        injections: Option<Vec<String>>,
+        parser: Option<String>,
+        queries: Vec<QueryItem>,
         bridge: Option<HashMap<String, BridgeLanguageConfig>>,
     ) -> Self {
         Self {
-            library,
-            highlights,
-            locals,
-            injections,
+            parser,
+            queries,
             bridge,
         }
     }
@@ -668,19 +657,20 @@ mod tests {
     }
 
     #[test]
-    fn should_not_have_filetypes_field_in_language_settings() {
-        // PBI-061 S48.3: filetypes field should be removed from LanguageSettings
-        // Language detection relies on languageId from DidOpen, not config filetypes
+    fn should_create_language_settings_with_parser_and_queries() {
+        // PBI-156: LanguageSettings uses parser (not library) and unified queries
         let settings = LanguageSettings::new(
             Some("/path/to/parser.so".to_string()),
-            // No filetypes parameter - constructor should only take 4 args
-            vec!["/path/to/highlights.scm".to_string()],
-            None,
-            None,
+            vec![QueryItem {
+                path: "/path/to/highlights.scm".to_string(),
+                kind: Some(QueryKind::Highlights),
+            }],
         );
 
-        assert_eq!(settings.library, Some("/path/to/parser.so".to_string()));
-        assert_eq!(settings.highlights, vec!["/path/to/highlights.scm"]);
+        assert_eq!(settings.parser, Some("/path/to/parser.so".to_string()));
+        assert_eq!(settings.queries.len(), 1);
+        assert_eq!(settings.queries[0].path, "/path/to/highlights.scm");
+        assert_eq!(settings.queries[0].kind, Some(QueryKind::Highlights));
     }
 
     #[test]
@@ -870,12 +860,7 @@ mod tests {
     fn test_bridge_filter_null_bridges_all_languages() {
         // PBI-108 AC3: bridge omitted or null bridges all configured languages
         // When bridge is None (default), all languages should be bridgeable
-        let settings = LanguageSettings::new(
-            None,
-            vec!["/path/to/highlights.scm".to_string()],
-            None,
-            None,
-        );
+        let settings = LanguageSettings::new(None, vec![]);
 
         // Default (None) should bridge all languages
         assert!(
@@ -901,9 +886,7 @@ mod tests {
         // PBI-120: Empty bridge map disables all bridging for that host filetype
         let settings = LanguageSettings::with_bridge(
             None,
-            vec!["/path/to/highlights.scm".to_string()],
-            None,
-            None,
+            vec![],
             Some(HashMap::new()), // Empty map disables all bridging
         );
 
@@ -929,13 +912,7 @@ mod tests {
         bridge.insert("python".to_string(), BridgeLanguageConfig { enabled: true });
         bridge.insert("r".to_string(), BridgeLanguageConfig { enabled: true });
 
-        let settings = LanguageSettings::with_bridge(
-            None,
-            vec!["/path/to/highlights.scm".to_string()],
-            None,
-            None,
-            Some(bridge),
-        );
+        let settings = LanguageSettings::with_bridge(None, vec![], Some(bridge));
 
         // Enabled languages should be allowed
         assert!(
@@ -965,13 +942,7 @@ mod tests {
         bridge.insert("python".to_string(), BridgeLanguageConfig { enabled: true });
         bridge.insert("r".to_string(), BridgeLanguageConfig { enabled: false });
 
-        let settings = LanguageSettings::with_bridge(
-            None,
-            vec!["/path/to/highlights.scm".to_string()],
-            None,
-            None,
-            Some(bridge),
-        );
+        let settings = LanguageSettings::with_bridge(None, vec![], Some(bridge));
 
         // python with enabled: true should be allowed
         assert!(
