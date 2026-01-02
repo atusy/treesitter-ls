@@ -9,7 +9,6 @@ use crate::install::metadata::{FetchOptions, MetadataError, is_language_supporte
 use crate::language::LanguageCoordinator;
 use crate::language::injection::collect_all_injections;
 use std::collections::HashSet;
-use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -135,6 +134,7 @@ pub fn get_injected_languages(
 ///
 /// Returns a tuple of (should_skip, reason) where:
 /// - should_skip: true if the language is NOT supported by nvim-treesitter and should be skipped
+///   or when metadata could not be fetched within the timeout
 /// - reason: Some(message) explaining why installation was skipped or why metadata was unavailable
 ///
 /// This function uses cached metadata from nvim-treesitter to avoid repeated HTTP requests.
@@ -174,7 +174,7 @@ impl SkipReason {
                 language
             ),
             SkipReason::MetadataUnavailable { language, error } => format!(
-                "Could not verify support for '{}' due to metadata error: {}. Proceeding with auto-install attempt.",
+                "Could not verify support for '{}' due to metadata error: {}. Skipping auto-install.",
                 language, error
             ),
         }
@@ -215,55 +215,73 @@ impl FetchOptionsOwned {
     }
 }
 
-async fn default_support_check(
+fn default_support_check(
     language: String,
     options: Option<FetchOptionsOwned>,
 ) -> Result<bool, MetadataError> {
-    tokio::task::spawn_blocking(move || {
-        let options = options.as_ref().map(FetchOptionsOwned::as_borrowed);
-        is_language_supported(&language, options.as_ref())
-    })
-    .await
-    .map_err(|err| {
-        MetadataError::HttpError(format!("Metadata support check task failed: {}", err))
-    })?
+    let options = options.as_ref().map(FetchOptionsOwned::as_borrowed);
+    is_language_supported(&language, options.as_ref())
 }
 
-async fn should_skip_unsupported_language_with_checker<F, Fut>(
+async fn should_skip_unsupported_language_with_checker<F>(
     language: &str,
     options: Option<&FetchOptions<'_>>,
     timeout: Duration,
     check_fn: F,
 ) -> (bool, Option<SkipReason>)
 where
-    F: FnOnce(String, Option<FetchOptionsOwned>) -> Fut,
-    Fut: Future<Output = Result<bool, MetadataError>> + Send,
+    F: FnOnce(String, Option<FetchOptionsOwned>) -> Result<bool, MetadataError> + Send + 'static,
 {
     let owned_language = language.to_string();
     let owned_options = options.map(FetchOptionsOwned::from);
 
-    match tokio::time::timeout(timeout, check_fn(owned_language.clone(), owned_options)).await {
-        Ok(Ok(true)) => (false, None),
-        Ok(Ok(false)) => (
-            true,
-            Some(SkipReason::UnsupportedLanguage {
-                language: owned_language,
-            }),
-        ),
-        Ok(Err(error)) => (
-            false,
-            Some(SkipReason::MetadataUnavailable {
-                language: owned_language,
-                error,
-            }),
-        ),
-        Err(_) => (
-            false,
-            Some(SkipReason::MetadataUnavailable {
-                language: owned_language,
-                error: MetadataError::Timeout,
-            }),
-        ),
+    let language_for_check = owned_language.clone();
+    let mut check =
+        tokio::task::spawn_blocking(move || check_fn(language_for_check, owned_options));
+    let timeout_fut = tokio::time::sleep(timeout);
+    tokio::pin!(timeout_fut);
+
+    tokio::select! {
+        result = &mut check => {
+            match result {
+                Ok(Ok(true)) => (false, None),
+                Ok(Ok(false)) => (
+                    true,
+                    Some(SkipReason::UnsupportedLanguage {
+                        language: owned_language,
+                    }),
+                ),
+                Ok(Err(error)) => (
+                    true,
+                    Some(SkipReason::MetadataUnavailable {
+                        language: owned_language,
+                        error,
+                    }),
+                ),
+                Err(err) => (
+                    true,
+                    Some(SkipReason::MetadataUnavailable {
+                        language: owned_language,
+                        error: MetadataError::HttpError(format!(
+                            "Metadata support check task failed: {}",
+                            err
+                        )),
+                    }),
+                ),
+            }
+        }
+        _ = &mut timeout_fut => {
+            // The task is still running; abort to avoid leaking blocking work
+            // and report the timeout to the caller.
+            check.abort();
+            (
+                true,
+                Some(SkipReason::MetadataUnavailable {
+                    language: owned_language,
+                    error: MetadataError::Timeout,
+                }),
+            )
+        }
     }
 }
 
@@ -459,8 +477,8 @@ return {
 
         let (should_skip, reason) = should_skip_unsupported_language("lua", Some(&options)).await;
         assert!(
-            !should_skip,
-            "Metadata errors should not prevent auto-install attempts"
+            should_skip,
+            "Metadata errors should prevent auto-install attempts"
         );
         assert!(
             matches!(reason, Some(SkipReason::MetadataUnavailable { .. })),
@@ -469,23 +487,20 @@ return {
     }
 
     #[tokio::test]
-    async fn test_should_skip_unsupported_language_times_out_and_proceeds() {
-        // A slow metadata lookup should time out and allow installation to continue
+    async fn test_should_skip_unsupported_language_times_out_and_skips() {
+        // A slow metadata lookup should time out and skip auto-install to avoid duplicate work
         let (should_skip, reason) = should_skip_unsupported_language_with_checker(
             "lua",
             None,
             Duration::from_millis(20),
-            |lang, _options| async move {
-                tokio::time::sleep(Duration::from_millis(50)).await;
+            |lang, _options| {
+                std::thread::sleep(Duration::from_millis(50));
                 Ok(lang == "lua")
             },
         )
         .await;
 
-        assert!(
-            !should_skip,
-            "Timeouts should fall back to attempting installation"
-        );
+        assert!(should_skip, "Timeouts should skip auto-install attempts");
         assert!(
             matches!(reason, Some(SkipReason::MetadataUnavailable { language, .. }) if language == "lua"),
             "Timeouts should report metadata unavailable for the language"
