@@ -116,7 +116,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-119: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-120: git log -- scrum.yaml, scrum.ts
   completed: [
     { number: 120, pbi_id: "PBI-151", goal: "Migrate critical Neovim E2E tests (hover, completion, references) to Rust with snapshot verification, establishing reusable patterns and helpers for future migrations", status: "done", subtasks: [] },
     { number: 119, pbi_id: "PBI-150", goal: "Implement Rust-based E2E testing infrastructure for go-to-definition with snapshot testing, enabling faster and more reliable tests without Neovim dependency", status: "done", subtasks: [] },
