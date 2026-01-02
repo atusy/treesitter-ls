@@ -502,8 +502,15 @@ return {
 
         assert!(should_skip, "Timeouts should skip auto-install attempts");
         assert!(
-            matches!(reason, Some(SkipReason::MetadataUnavailable { language, .. }) if language == "lua"),
-            "Timeouts should report metadata unavailable for the language"
+            matches!(
+                &reason,
+                Some(SkipReason::MetadataUnavailable {
+                    language,
+                    error: MetadataError::Timeout
+                }) if language == "lua"
+            ),
+            "Timeouts should report MetadataError::Timeout, got: {:?}",
+            reason
         );
     }
 
