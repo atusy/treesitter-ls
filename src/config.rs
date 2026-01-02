@@ -94,12 +94,9 @@ pub(crate) fn resolve_language_settings_with_wildcard(
             // Merge: start with wildcard, override with specific
             Some(LanguageSettings {
                 parser: s.parser.clone().or_else(|| w.parser.clone()),
-                // For Vec fields: use specific if non-empty, else wildcard
-                queries: if s.queries.is_empty() {
-                    w.queries.clone()
-                } else {
-                    s.queries.clone()
-                },
+                // For Option<Vec> fields: use specific if Some, else wildcard
+                // This allows specific to override wildcard with Some([]) (explicitly empty)
+                queries: s.queries.clone().or_else(|| w.queries.clone()),
                 // Deep merge bridge HashMaps: wildcard + specific
                 bridge: merge_bridge_maps(&w.bridge, &s.bridge),
             })
@@ -173,8 +170,8 @@ impl From<&LanguageConfig> for LanguageSettings {
         // Convert from LanguageConfig to LanguageSettings
         // Priority: unified queries field > legacy separate fields
         let queries = if let Some(ref q) = config.queries {
-            q.clone()
-        } else {
+            Some(q.clone())
+        } else if config.highlights.is_some() || config.locals.is_some() || config.injections.is_some() {
             // Convert legacy fields to unified queries format
             let mut queries = Vec::new();
             if let Some(ref highlights) = config.highlights {
@@ -201,7 +198,9 @@ impl From<&LanguageConfig> for LanguageSettings {
                     });
                 }
             }
-            queries
+            Some(queries)
+        } else {
+            None
         };
 
         LanguageSettings::with_bridge(config.library.clone(), queries, config.bridge.clone())
@@ -215,23 +214,25 @@ impl From<&LanguageSettings> for LanguageConfig {
         let mut locals: Vec<String> = Vec::new();
         let mut injections: Vec<String> = Vec::new();
 
-        for query in &settings.queries {
-            match query.kind {
-                Some(settings::QueryKind::Highlights) | None => {
-                    highlights.push(query.path.clone());
-                }
-                Some(settings::QueryKind::Locals) => {
-                    locals.push(query.path.clone());
-                }
-                Some(settings::QueryKind::Injections) => {
-                    injections.push(query.path.clone());
+        if let Some(ref queries) = settings.queries {
+            for query in queries {
+                match query.kind {
+                    Some(settings::QueryKind::Highlights) | None => {
+                        highlights.push(query.path.clone());
+                    }
+                    Some(settings::QueryKind::Locals) => {
+                        locals.push(query.path.clone());
+                    }
+                    Some(settings::QueryKind::Injections) => {
+                        injections.push(query.path.clone());
+                    }
                 }
             }
         }
 
         LanguageConfig {
             library: settings.parser.clone(),
-            queries: Some(settings.queries.clone()),
+            queries: settings.queries.clone(),
             highlights: if highlights.is_empty() {
                 None
             } else {
@@ -1048,17 +1049,19 @@ mod tests {
         let settings: LanguageSettings = LanguageSettings::from(&config);
 
         // Verify queries is populated with both highlights and injections
-        assert_eq!(settings.queries.len(), 2);
+        assert!(settings.queries.is_some());
+        let queries = settings.queries.as_ref().unwrap();
+        assert_eq!(queries.len(), 2);
         // First query should be highlights (converted from legacy field)
-        assert_eq!(settings.queries[0].path, "/path/to/highlights.scm");
+        assert_eq!(queries[0].path, "/path/to/highlights.scm");
         assert_eq!(
-            settings.queries[0].kind,
+            queries[0].kind,
             Some(settings::QueryKind::Highlights)
         );
         // Second query should be injections (converted from legacy field)
-        assert_eq!(settings.queries[1].path, "/path/to/injections.scm");
+        assert_eq!(queries[1].path, "/path/to/injections.scm");
         assert_eq!(
-            settings.queries[1].kind,
+            queries[1].kind,
             Some(settings::QueryKind::Injections)
         );
     }

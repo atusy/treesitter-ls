@@ -130,7 +130,10 @@ pub struct LanguageSettings {
     /// Path to the parser library (renamed from `library` for clarity)
     pub parser: Option<String>,
     /// Unified query file configuration
-    pub queries: Vec<QueryItem>,
+    /// - None: Not specified (inherit from wildcard/defaults)
+    /// - Some([]): Explicitly empty (override wildcard with no queries)
+    /// - Some([...]): Specified queries
+    pub queries: Option<Vec<QueryItem>>,
     /// Languages to bridge for this host filetype (map format).
     /// - None (omitted): Bridge ALL configured languages (default behavior)
     /// - Some({}): Bridge NOTHING (disable bridging for this host)
@@ -139,7 +142,7 @@ pub struct LanguageSettings {
 }
 
 impl LanguageSettings {
-    pub fn new(parser: Option<String>, queries: Vec<QueryItem>) -> Self {
+    pub fn new(parser: Option<String>, queries: Option<Vec<QueryItem>>) -> Self {
         Self {
             parser,
             queries,
@@ -150,7 +153,7 @@ impl LanguageSettings {
     /// Create LanguageSettings with bridge filter configuration.
     pub fn with_bridge(
         parser: Option<String>,
-        queries: Vec<QueryItem>,
+        queries: Option<Vec<QueryItem>>,
         bridge: Option<HashMap<String, BridgeLanguageConfig>>,
     ) -> Self {
         Self {
@@ -263,6 +266,35 @@ mod tests {
             // Default to Highlights for unrecognized patterns
             QueryKind::Highlights
         }
+    }
+
+    #[test]
+    fn should_distinguish_between_unspecified_and_empty_queries() {
+        // This test demonstrates the need for Option<Vec<QueryItem>>
+        // to distinguish between "not specified" and "explicitly empty"
+        // which is critical for merging logic in resolve_language_settings_with_wildcard
+
+        // Case 1: queries not specified (should be None)
+        // User didn't specify queries - should inherit from wildcard/defaults
+        let unspecified = LanguageSettings::new(None, None);
+        assert!(unspecified.queries.is_none(), "Unspecified queries should be None");
+
+        // Case 2: queries explicitly empty (should be Some([]))
+        // User explicitly set queries to empty - should override wildcard with empty list
+        let explicitly_empty = LanguageSettings::new(None, Some(vec![]));
+        assert!(explicitly_empty.queries.is_some(), "Explicitly empty should be Some");
+        assert!(explicitly_empty.queries.as_ref().unwrap().is_empty(), "Should be empty vec");
+
+        // Case 3: queries with items
+        let with_items = LanguageSettings::new(
+            None,
+            Some(vec![QueryItem {
+                path: "/path/to/highlights.scm".to_string(),
+                kind: Some(QueryKind::Highlights),
+            }]),
+        );
+        assert!(with_items.queries.is_some());
+        assert_eq!(with_items.queries.as_ref().unwrap().len(), 1);
     }
 
     #[test]
@@ -661,16 +693,16 @@ mod tests {
         // PBI-156: LanguageSettings uses parser (not library) and unified queries
         let settings = LanguageSettings::new(
             Some("/path/to/parser.so".to_string()),
-            vec![QueryItem {
+            Some(vec![QueryItem {
                 path: "/path/to/highlights.scm".to_string(),
                 kind: Some(QueryKind::Highlights),
-            }],
+            }]),
         );
 
         assert_eq!(settings.parser, Some("/path/to/parser.so".to_string()));
-        assert_eq!(settings.queries.len(), 1);
-        assert_eq!(settings.queries[0].path, "/path/to/highlights.scm");
-        assert_eq!(settings.queries[0].kind, Some(QueryKind::Highlights));
+        assert_eq!(settings.queries.as_ref().unwrap().len(), 1);
+        assert_eq!(settings.queries.as_ref().unwrap()[0].path, "/path/to/highlights.scm");
+        assert_eq!(settings.queries.as_ref().unwrap()[0].kind, Some(QueryKind::Highlights));
     }
 
     #[test]
@@ -860,7 +892,7 @@ mod tests {
     fn test_bridge_filter_null_bridges_all_languages() {
         // PBI-108 AC3: bridge omitted or null bridges all configured languages
         // When bridge is None (default), all languages should be bridgeable
-        let settings = LanguageSettings::new(None, vec![]);
+        let settings = LanguageSettings::new(None, None);
 
         // Default (None) should bridge all languages
         assert!(
@@ -886,7 +918,7 @@ mod tests {
         // PBI-120: Empty bridge map disables all bridging for that host filetype
         let settings = LanguageSettings::with_bridge(
             None,
-            vec![],
+            None,
             Some(HashMap::new()), // Empty map disables all bridging
         );
 
@@ -912,7 +944,7 @@ mod tests {
         bridge.insert("python".to_string(), BridgeLanguageConfig { enabled: true });
         bridge.insert("r".to_string(), BridgeLanguageConfig { enabled: true });
 
-        let settings = LanguageSettings::with_bridge(None, vec![], Some(bridge));
+        let settings = LanguageSettings::with_bridge(None, None, Some(bridge));
 
         // Enabled languages should be allowed
         assert!(
@@ -942,7 +974,7 @@ mod tests {
         bridge.insert("python".to_string(), BridgeLanguageConfig { enabled: true });
         bridge.insert("r".to_string(), BridgeLanguageConfig { enabled: false });
 
-        let settings = LanguageSettings::with_bridge(None, vec![], Some(bridge));
+        let settings = LanguageSettings::with_bridge(None, None, Some(bridge));
 
         // python with enabled: true should be allowed
         assert!(
