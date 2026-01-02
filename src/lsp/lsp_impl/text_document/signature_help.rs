@@ -1,7 +1,6 @@
 //! Signature help method for TreeSitterLs.
 
 use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::notification::Progress;
 use tower_lsp::lsp_types::*;
 
 use crate::language::injection::CacheableInjectionRegion;
@@ -139,7 +138,10 @@ impl TreeSitterLs {
         self.client
             .log_message(
                 MessageType::LOG,
-                format!("[SIGNATURE_HELP] async bridge DONE has_signature_help={}", signature_help.is_some()),
+                format!(
+                    "[SIGNATURE_HELP] async bridge DONE has_signature_help={}",
+                    signature_help.is_some()
+                ),
             )
             .await;
 
