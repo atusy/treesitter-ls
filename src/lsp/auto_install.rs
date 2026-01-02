@@ -5,11 +5,12 @@
 
 use crate::document::DocumentStore;
 use crate::error::LockResultExt;
+use crate::install::metadata::{FetchOptions, MetadataError, is_language_supported};
 use crate::language::LanguageCoordinator;
 use crate::language::injection::collect_all_injections;
 use std::collections::HashSet;
 use std::sync::Mutex;
-use tower_lsp::lsp_types::Url;
+use tower_lsp::lsp_types::{MessageType, Url};
 
 /// Tracks languages currently being installed to prevent duplicate installs.
 pub struct InstallingLanguages {
@@ -127,6 +128,65 @@ pub fn get_injected_languages(
     injections.iter().map(|i| i.language.clone()).collect()
 }
 
+/// Check if a language should be skipped during auto-install because it's not supported.
+///
+/// Returns `Ok(())` when the language is supported and auto-install can proceed,
+/// otherwise `Err(SkipReason)` describing why installation should be skipped.
+///
+/// This function uses cached metadata from nvim-treesitter to avoid repeated HTTP requests.
+///
+/// # Arguments
+/// * `language` - The language name to check
+/// * `options` - FetchOptions for metadata caching (use with data_dir and use_cache: true)
+pub fn should_skip_unsupported_language(
+    language: &str,
+    options: Option<&FetchOptions>,
+) -> Result<(), SkipReason> {
+    match is_language_supported(language, options) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(SkipReason::UnsupportedLanguage {
+            language: language.to_string(),
+        }),
+        Err(err) => Err(SkipReason::MetadataUnavailable {
+            language: language.to_string(),
+            error: err,
+        }),
+    }
+}
+
+#[derive(Debug)]
+pub enum SkipReason {
+    UnsupportedLanguage {
+        language: String,
+    },
+    MetadataUnavailable {
+        language: String,
+        error: MetadataError,
+    },
+}
+
+impl SkipReason {
+    pub fn message(&self) -> String {
+        match self {
+            SkipReason::UnsupportedLanguage { language } => format!(
+                "Language '{}' is not supported by nvim-treesitter. Skipping auto-install.",
+                language
+            ),
+            SkipReason::MetadataUnavailable { language, error } => format!(
+                "Could not verify support for '{}' due to metadata error: {}. Skipping auto-install.",
+                language, error
+            ),
+        }
+    }
+
+    pub fn message_type(&self) -> MessageType {
+        match self {
+            SkipReason::UnsupportedLanguage { .. } => MessageType::INFO,
+            SkipReason::MetadataUnavailable { .. } => MessageType::WARNING,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,5 +280,121 @@ mod tests {
 
         // Should have both "text" and "regex"
         assert!(unique_multi.contains("text") || unique_multi.contains("regex"));
+    }
+
+    #[test]
+    fn test_should_skip_unsupported_language_returns_err_for_unsupported() {
+        // Test that should_skip_unsupported_language returns Err for unsupported languages
+        // with a reason explaining why installation was skipped
+        use crate::install::metadata::FetchOptions;
+        use crate::install::test_helpers::setup_mock_metadata_cache;
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("Failed to create temp dir");
+
+        // Mock the cache with parsers.lua content that includes only 'lua'
+        let mock_parsers_lua = r#"
+return {
+  lua = {
+    install_info = {
+      revision = 'abc123',
+      url = 'https://github.com/MunifTanjim/tree-sitter-lua',
+    },
+    tier = 2,
+  },
+}
+"#;
+        setup_mock_metadata_cache(temp.path(), mock_parsers_lua);
+
+        let options = FetchOptions {
+            data_dir: Some(temp.path()),
+            use_cache: true,
+        };
+
+        // should_skip_unsupported_language should return Err for 'fake_lang_xyz'
+        let result = should_skip_unsupported_language("fake_lang_xyz", Some(&options));
+        assert!(result.is_err(), "Expected to skip unsupported language");
+        assert!(
+            matches!(
+                result.unwrap_err(),
+                SkipReason::UnsupportedLanguage { language }
+                    if language == "fake_lang_xyz"
+            ),
+            "Expected UnsupportedLanguage reason"
+        );
+    }
+
+    #[test]
+    fn test_should_skip_unsupported_language_returns_ok_for_supported() {
+        // Test that should_skip_unsupported_language returns Ok for supported languages
+        use crate::install::metadata::FetchOptions;
+        use crate::install::test_helpers::setup_mock_metadata_cache;
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("Failed to create temp dir");
+
+        // Mock the cache with parsers.lua content that includes 'lua'
+        let mock_parsers_lua = r#"
+return {
+  lua = {
+    install_info = {
+      revision = 'abc123',
+      url = 'https://github.com/MunifTanjim/tree-sitter-lua',
+    },
+    tier = 2,
+  },
+}
+"#;
+        setup_mock_metadata_cache(temp.path(), mock_parsers_lua);
+
+        let options = FetchOptions {
+            data_dir: Some(temp.path()),
+            use_cache: true,
+        };
+
+        // should_skip_unsupported_language should return Ok for 'lua'
+        let result = should_skip_unsupported_language("lua", Some(&options));
+        assert!(
+            result.is_ok(),
+            "Expected NOT to skip supported language 'lua'"
+        );
+    }
+
+    #[test]
+    fn test_should_skip_unsupported_language_reports_metadata_error() {
+        use crate::install::metadata::FetchOptions;
+        use crate::install::test_helpers::setup_mock_metadata_cache;
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("Failed to create temp dir");
+        setup_mock_metadata_cache(temp.path(), "return {}");
+
+        let options = FetchOptions {
+            data_dir: Some(temp.path()),
+            use_cache: true,
+        };
+
+        let result = should_skip_unsupported_language("lua", Some(&options));
+        assert!(result.is_err(), "Expected to skip when metadata is invalid");
+        assert!(
+            matches!(result, Err(SkipReason::MetadataUnavailable { .. })),
+            "Expected MetadataUnavailable reason"
+        );
+    }
+
+    #[test]
+    fn skip_reason_reports_message_type() {
+        use tower_lsp::lsp_types::MessageType;
+
+        let unsupported = SkipReason::UnsupportedLanguage {
+            language: "lua".into(),
+        };
+        assert_eq!(unsupported.message_type(), MessageType::INFO);
+
+        let metadata_err = SkipReason::MetadataUnavailable {
+            language: "lua".into(),
+            error: MetadataError::HttpError("boom".into()),
+        };
+        assert_eq!(metadata_err.message_type(), MessageType::WARNING);
     }
 }

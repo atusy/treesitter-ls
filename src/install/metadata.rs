@@ -44,6 +44,8 @@ pub enum MetadataError {
     HttpError(String),
     /// JSON parsing failed.
     ParseError(String),
+    /// Metadata existed but contained no languages.
+    EmptyMetadata,
 }
 
 impl std::fmt::Display for MetadataError {
@@ -58,6 +60,10 @@ impl std::fmt::Display for MetadataError {
             }
             Self::HttpError(msg) => write!(f, "HTTP error: {}", msg),
             Self::ParseError(msg) => write!(f, "Parse error: {}", msg),
+            Self::EmptyMetadata => write!(
+                f,
+                "Metadata did not contain any languages; cache may be empty or outdated"
+            ),
         }
     }
 }
@@ -138,6 +144,10 @@ fn parse_parsers_lua(content: &str) -> Result<HashMap<String, ParserMetadata>, M
         if let Some(info) = extract_parser_metadata(content, &lang) {
             parsers.insert(lang, info);
         }
+    }
+
+    if parsers.is_empty() {
+        return Err(MetadataError::EmptyMetadata);
     }
 
     Ok(parsers)
@@ -258,6 +268,20 @@ pub fn list_supported_languages(
     Ok(languages)
 }
 
+/// Check if a language is supported by nvim-treesitter.
+///
+/// This function checks if the given language name exists in the nvim-treesitter
+/// parsers.lua metadata. Uses caching via FetchOptions to avoid repeated HTTP requests.
+///
+/// Returns `Ok(true)` if the language is supported, `Ok(false)` otherwise.
+/// Network errors or parse errors return `Err`.
+pub fn is_language_supported(
+    language: &str,
+    options: Option<&FetchOptions>,
+) -> Result<bool, MetadataError> {
+    fetch_parsers_lua_with_options(options).map(|parsers| parsers.contains_key(language))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,6 +364,15 @@ return {
     }
 
     #[test]
+    fn test_parse_parsers_lua_returns_empty_metadata_error() {
+        let result = parse_parsers_lua("return {}");
+        assert!(
+            matches!(result, Err(MetadataError::EmptyMetadata)),
+            "Expected empty metadata error"
+        );
+    }
+
+    #[test]
     fn test_find_matching_brace() {
         let s = "{ foo { bar } baz }";
         let result = find_matching_brace(s);
@@ -397,5 +430,153 @@ return {
         assert!(is_reserved_key("maintainers"));
         assert!(!is_reserved_key("lua"));
         assert!(!is_reserved_key("rust"));
+    }
+
+    #[test]
+    fn test_is_language_supported_returns_true_for_known_language() {
+        // Test that is_language_supported returns true for known language like 'lua'
+        // Uses cached metadata via FetchOptions to avoid repeated HTTP requests
+        use crate::install::test_helpers::setup_mock_metadata_cache;
+
+        let temp = tempdir().expect("Failed to create temp dir");
+        let options = FetchOptions {
+            data_dir: Some(temp.path()),
+            use_cache: true,
+        };
+
+        // First, populate the cache by fetching any language (or mock the cache)
+        // For unit test, we mock the cache with parsers.lua content
+        let mock_parsers_lua = r#"
+return {
+  lua = {
+    install_info = {
+      revision = 'abc123',
+      url = 'https://github.com/MunifTanjim/tree-sitter-lua',
+    },
+    tier = 2,
+  },
+  rust = {
+    install_info = {
+      revision = 'def456',
+      url = 'https://github.com/tree-sitter/tree-sitter-rust',
+    },
+    tier = 1,
+  },
+}
+"#;
+        setup_mock_metadata_cache(temp.path(), mock_parsers_lua);
+
+        // is_language_supported should return true for 'lua' (known language)
+        let result = is_language_supported("lua", Some(&options)).expect("metadata available");
+        assert!(result, "Expected 'lua' to be supported");
+    }
+
+    #[test]
+    fn test_is_language_supported_returns_false_for_unsupported_language() {
+        // Test that is_language_supported returns false for unsupported language
+        // like 'fake_lang_xyz' without error
+        use crate::install::test_helpers::setup_mock_metadata_cache;
+
+        let temp = tempdir().expect("Failed to create temp dir");
+        let options = FetchOptions {
+            data_dir: Some(temp.path()),
+            use_cache: true,
+        };
+
+        // Mock the cache with parsers.lua content that does NOT include 'fake_lang_xyz'
+        let mock_parsers_lua = r#"
+return {
+  lua = {
+    install_info = {
+      revision = 'abc123',
+      url = 'https://github.com/MunifTanjim/tree-sitter-lua',
+    },
+    tier = 2,
+  },
+}
+"#;
+        setup_mock_metadata_cache(temp.path(), mock_parsers_lua);
+
+        // is_language_supported should return false for 'fake_lang_xyz' (unsupported)
+        let result =
+            is_language_supported("fake_lang_xyz", Some(&options)).expect("metadata available");
+        assert!(!result, "Expected 'fake_lang_xyz' to be unsupported");
+    }
+
+    #[test]
+    fn test_is_language_supported_reuses_cached_metadata() {
+        // Test that multiple is_language_supported checks reuse cached metadata
+        // This verifies the caching behavior via FetchOptions with the 1-hour TTL
+        use crate::install::test_helpers::setup_mock_metadata_cache;
+
+        let temp = tempdir().expect("Failed to create temp dir");
+        let options = FetchOptions {
+            data_dir: Some(temp.path()),
+            use_cache: true,
+        };
+
+        // Mock the cache with parsers.lua content
+        let mock_parsers_lua = r#"
+return {
+  lua = {
+    install_info = {
+      revision = 'abc123',
+      url = 'https://github.com/MunifTanjim/tree-sitter-lua',
+    },
+    tier = 2,
+  },
+  rust = {
+    install_info = {
+      revision = 'def456',
+      url = 'https://github.com/tree-sitter/tree-sitter-rust',
+    },
+    tier = 1,
+  },
+  python = {
+    install_info = {
+      revision = 'ghi789',
+      url = 'https://github.com/tree-sitter/tree-sitter-python',
+    },
+    tier = 1,
+  },
+}
+"#;
+        setup_mock_metadata_cache(temp.path(), mock_parsers_lua);
+
+        // Multiple calls should all use cached metadata (no network requests)
+        let lua_supported =
+            is_language_supported("lua", Some(&options)).expect("metadata available");
+        let rust_supported =
+            is_language_supported("rust", Some(&options)).expect("metadata available");
+        let python_supported =
+            is_language_supported("python", Some(&options)).expect("metadata available");
+        let fake_supported =
+            is_language_supported("nonexistent_lang", Some(&options)).expect("metadata available");
+
+        // Verify all results are correct (proving cache was used)
+        assert!(lua_supported, "lua should be supported");
+        assert!(rust_supported, "rust should be supported");
+        assert!(python_supported, "python should be supported");
+        assert!(!fake_supported, "nonexistent_lang should NOT be supported");
+    }
+
+    #[test]
+    fn test_is_language_supported_returns_error_for_invalid_metadata() {
+        use crate::install::test_helpers::setup_mock_metadata_cache;
+
+        let temp = tempdir().expect("Failed to create temp dir");
+        let options = FetchOptions {
+            data_dir: Some(temp.path()),
+            use_cache: true,
+        };
+
+        let mock_parsers_lua = "return {}";
+        setup_mock_metadata_cache(temp.path(), mock_parsers_lua);
+
+        let result = is_language_supported("lua", Some(&options));
+        assert!(
+            matches!(result, Err(MetadataError::EmptyMetadata)),
+            "Expected empty metadata error for invalid metadata"
+        );
     }
 }
