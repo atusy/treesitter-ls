@@ -1524,17 +1524,25 @@ fn main() {
             character: 22, // after "add("
         };
 
-        // Call signature_help() method
-        let signature_result = pool
-            .signature_help(
-                "rust-analyzer",
-                &config,
-                "file:///test.rs",
-                "rust",
-                content,
-                position,
-            )
-            .await;
+        // Call signature_help() method with retry for indexing
+        // PBI-149: During indexing, signature_help returns None, so we retry
+        let mut signature_result = None;
+        for _ in 0..20 {
+            signature_result = pool
+                .signature_help(
+                    "rust-analyzer",
+                    &config,
+                    "file:///test.rs",
+                    "rust",
+                    content,
+                    position,
+                )
+                .await;
+            if signature_result.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
 
         // Should return Some(SignatureHelp) with function signature
         assert!(
@@ -1598,17 +1606,25 @@ fn main() {
             character: 6,
         };
 
-        // Call completion() method
-        let completion_result = pool
-            .completion(
-                "rust-analyzer",
-                &config,
-                "file:///test.rs",
-                "rust",
-                content,
-                position,
-            )
-            .await;
+        // Call completion() method with retry for indexing
+        // PBI-149: During indexing, completion returns None, so we retry
+        let mut completion_result = None;
+        for _ in 0..20 {
+            completion_result = pool
+                .completion(
+                    "rust-analyzer",
+                    &config,
+                    "file:///test.rs",
+                    "rust",
+                    content,
+                    position,
+                )
+                .await;
+            if completion_result.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
 
         // Should return Some(CompletionResponse) with items
         assert!(
