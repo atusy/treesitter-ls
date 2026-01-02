@@ -145,15 +145,15 @@ pub fn should_skip_unsupported_language(
 ) -> (bool, Option<String>) {
     if is_language_supported(language, options) {
         // Language is supported - don't skip
-        (false, None)
-    } else {
-        // Language is not supported - skip with reason
-        let reason = format!(
-            "Language '{}' is not supported by nvim-treesitter. Skipping auto-install.",
-            language
-        );
-        (true, Some(reason))
+        return (false, None);
     }
+
+    // Language is not supported - skip with reason
+    let reason = format!(
+        "Language '{}' is not supported by nvim-treesitter. Skipping auto-install.",
+        language
+    );
+    (true, Some(reason))
 }
 
 #[cfg(test)]
