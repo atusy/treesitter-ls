@@ -16,7 +16,7 @@ treesitter-ls needs to support multiple configuration sources to accommodate dif
 The limitations of the current system are:
 
 - Missing **User-wide defaults**
-- **Project-specific settings** are the only based on `./treesitter-ls.toml`
+- **Project-specific settings** are only based on `./treesitter-ls.toml`
 - Complex `captureMappings` overrides must be duplicated in each project's `treesitter-ls.toml`
 
 The standard pattern in many language servers and CLI tools is layered configuration with clear precedence rules. This ADR proposes adding a **user configuration layer** between programmed defaults and project config.
@@ -51,7 +51,7 @@ queries = [
    - `*highlights*.scm` → `"highlights"`
    - `*locals*.scm` → `"locals"`
    - `*injections*.scm` → `"injections"`
-2. Otherwise, default to `"highlights"`
+2. Otherwise, skip the query item
 
 **Examples of type inference:**
 
