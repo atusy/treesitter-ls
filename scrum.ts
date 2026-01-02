@@ -194,7 +194,7 @@ const scrum: ScrumDashboard = {
           verification: "Run `make test` and `make test_nvim` - all tests pass",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-160",
@@ -382,30 +382,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 133,
-    pbi_id: "PBI-159",
-    goal: "Fix didOpen race condition with per-URI document opening locks",
-    status: "planning",
-    subtasks: [
-      {
-        test: "Concurrent first-access requests send only one didOpen",
-        implementation: "Add document_open_locks: Mutex<HashMap<String, Arc<Mutex<()>>>> to pool, use per-URI lock in sync_document",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-      {
-        test: "All existing tests pass with synchronized didOpen",
-        implementation: "Verify no behavioral changes for single-threaded access",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -415,7 +392,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-131: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-132: git log -- scrum.yaml, scrum.ts
   completed: [
     {
       number: 128,
