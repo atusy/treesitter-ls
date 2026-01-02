@@ -14,7 +14,7 @@ expression: sanitized
         "line": 5
       }
     },
-    "uri": "file://<TEMP_PATH>/test.md"
+    "uri": "<TEST_FILE_URI>"
   },
   {
     "range": {
@@ -27,7 +27,7 @@ expression: sanitized
         "line": 6
       }
     },
-    "uri": "file://<TEMP_PATH>/test.md"
+    "uri": "<TEST_FILE_URI>"
   },
   {
     "range": {
@@ -40,6 +40,6 @@ expression: sanitized
         "line": 4
       }
     },
-    "uri": "file://<TEMP_PATH>/test.md"
+    "uri": "<TEST_FILE_URI>"
   }
 ]

@@ -174,7 +174,7 @@ fn sanitize_recursive(value: &Value, drop_data_field: bool) -> Value {
 
 fn sanitize_uri(uri: &str) -> String {
     if uri.starts_with("file://") {
-        "file://<TEMP_PATH>/test.md".to_string()
+        "<TEST_FILE_URI>".to_string()
     } else {
         sanitize_text(uri)
     }
@@ -289,7 +289,7 @@ mod tests {
         let sanitized = sanitize_references_response(&references);
         let uri = sanitized[0]["uri"].as_str().unwrap();
 
-        assert_eq!(uri, "file://<TEMP_PATH>/test.md");
+        assert_eq!(uri, "<TEST_FILE_URI>");
         assert!(sanitized[0]["range"]["start"]["line"].is_number());
     }
 
