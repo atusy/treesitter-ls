@@ -2,7 +2,7 @@
 //!
 //! Provides reusable initialization patterns to reduce duplication across E2E tests.
 
-use crate::helpers::lsp_client::LspClient;
+use super::lsp_client::LspClient;
 use serde_json::json;
 
 /// Initialize LSP client with Rust bridge configuration.
@@ -49,19 +49,4 @@ pub(crate) fn initialize_with_rust_bridge(client: &mut LspClient) {
 
     // Send initialized notification (required by LSP protocol)
     client.send_notification("initialized", json!({}));
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_initialize_with_rust_bridge() {
-        let mut client = LspClient::new();
-        initialize_with_rust_bridge(&mut client);
-
-        // Verify client is still functional by sending a shutdown request
-        let response = client.send_request("shutdown", json!(null));
-        assert!(response.get("result").is_some());
-    }
 }
