@@ -12,7 +12,6 @@
 //! - Uses `oneshot::Sender<()>` for shutdown instead of `AtomicBool`
 //! - Reader task uses `tokio::select!` for clean shutdown handling
 
-use crate::lsp::bridge::async_connection::ResponseResult;
 use dashmap::DashMap;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -22,6 +21,15 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
+
+/// Result of a response read operation
+#[derive(Debug)]
+pub struct ResponseResult {
+    /// The JSON-RPC response (or None if error/timeout)
+    pub response: Option<Value>,
+    /// Captured $/progress notifications
+    pub notifications: Vec<Value>,
+}
 
 /// Pending request entry - stores the sender for a response
 type PendingRequest = oneshot::Sender<ResponseResult>;

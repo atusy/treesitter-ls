@@ -23,7 +23,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use super::auto_install::{InstallingLanguages, get_injected_languages};
-use super::bridge::{LanguageServerPool, TokioAsyncLanguageServerPool};
+use super::bridge::TokioAsyncLanguageServerPool;
 use super::progress::{create_progress_begin, create_progress_end};
 
 /// Parse a JSON notification and extract ProgressParams if it's a $/progress notification.
@@ -75,8 +75,6 @@ pub struct TreeSitterLs {
     installing_languages: InstallingLanguages,
     /// Tracks parsers that have crashed
     failed_parsers: FailedParserRegistry,
-    /// Pool of language server connections for injection bridging (sync)
-    language_server_pool: LanguageServerPool,
     /// Tokio-based async language server pool for fully async bridging
     tokio_async_pool: TokioAsyncLanguageServerPool,
     /// Receiver for progress notifications from tokio async pool.
@@ -99,7 +97,6 @@ impl std::fmt::Debug for TreeSitterLs {
             .field("settings", &"ArcSwap<WorkspaceSettings>")
             .field("installing_languages", &"InstallingLanguages")
             .field("failed_parsers", &"FailedParserRegistry")
-            .field("language_server_pool", &"LanguageServerPool")
             .field("tokio_async_pool", &"TokioAsyncLanguageServerPool")
             .finish_non_exhaustive()
     }
@@ -131,7 +128,6 @@ impl TreeSitterLs {
             settings: ArcSwap::new(Arc::new(WorkspaceSettings::default())),
             installing_languages: InstallingLanguages::new(),
             failed_parsers,
-            language_server_pool: LanguageServerPool::new(),
             tokio_async_pool: TokioAsyncLanguageServerPool::new(tokio_notification_tx),
             tokio_notification_rx: tokio::sync::Mutex::new(Some(tokio_notification_rx)),
         }
@@ -903,334 +899,6 @@ impl TreeSitterLs {
             }
         }
     }
-
-    /// Eagerly spawn bridge server connections for injection regions in the background.
-    ///
-    /// This pre-warms connections so that the first goto-definition request is fast.
-    /// Called after parse_document completes so we have access to the AST.
-    ///
-    /// For each unique injection language that has a bridge server configured
-    /// (and allowed by the host language's bridge filter), triggers
-    /// spawn_in_background_with_notifications to start the connection
-    /// asynchronously and forward any $/progress notifications to the LSP client.
-    fn eager_spawn_for_injections(&self, uri: &Url) {
-        // Get the host language for this document
-        let Some(host_language) = self.get_language_for_document(uri) else {
-            return;
-        };
-
-        // Get unique injected languages from the document
-        let languages = get_injected_languages(uri, &self.language, &self.documents);
-
-        if languages.is_empty() {
-            return;
-        }
-
-        log::debug!(
-            target: "treesitter_ls::eager_spawn",
-            "eager_spawn_for_injections: {} (host: {}) - found {} languages: {:?}",
-            uri,
-            host_language,
-            languages.len(),
-            languages
-        );
-
-        // For each injection language, check if it has a bridge config and spawn
-        // (bridge filter is checked inside get_bridge_config_for_language)
-        for lang in languages {
-            let Some(config) = self.get_bridge_config_for_language(&host_language, &lang) else {
-                continue;
-            };
-
-            let pool_key = config.cmd.first().cloned().unwrap_or_default();
-
-            // Create a channel for receiving progress notifications
-            let (tx, mut rx) = tokio::sync::mpsc::channel::<serde_json::Value>(100);
-
-            // Spawn with notification forwarding
-            self.language_server_pool
-                .spawn_in_background_with_notifications(&pool_key, &config, tx);
-
-            log::debug!(
-                target: "treesitter_ls::eager_spawn",
-                "Triggered background spawn for {} (language: {})",
-                pool_key,
-                lang
-            );
-
-            // Spawn a task to forward progress notifications to the client
-            let client = self.client.clone();
-            tokio::spawn(async move {
-                while let Some(notification) = rx.recv().await {
-                    if let Some(params) = notification.get("params")
-                        && let Ok(progress_params) =
-                            serde_json::from_value::<ProgressParams>(params.clone())
-                    {
-                        client.send_notification::<Progress>(progress_params).await;
-                    }
-                }
-            });
-        }
-    }
-
-    /// Try to bridge code action request to an external language server.
-    ///
-    /// Returns Some(CodeActionResponse) if the request was successfully bridged,
-    /// None if the position is not in an injection region or bridging failed.
-    async fn try_bridge_code_action(
-        &self,
-        uri: &Url,
-        text: &str,
-        tree: &tree_sitter::Tree,
-        language_name: &str,
-        range: Range,
-    ) -> Option<CodeActionResponse> {
-        // Get injection query to detect injection regions
-        let injection_query = self.language.get_injection_query(language_name)?;
-
-        // Collect all injection regions
-        let injections = crate::language::injection::collect_all_injections(
-            &tree.root_node(),
-            text,
-            Some(injection_query.as_ref()),
-        )?;
-
-        // Convert Position to byte offset
-        let mapper = PositionMapper::new(text);
-        let byte_offset = mapper.position_to_byte(range.start)?;
-
-        // Find which injection region (if any) contains this position
-        let matching_region = injections.iter().find(|inj| {
-            let start = inj.content_node.start_byte();
-            let end = inj.content_node.end_byte();
-            byte_offset >= start && byte_offset < end
-        })?;
-
-        // Get bridge server config for this language
-        let server_config =
-            self.get_bridge_config_for_language(language_name, &matching_region.language)?;
-
-        // Create cacheable region for position translation
-        let cacheable = crate::language::injection::CacheableInjectionRegion::from_region_info(
-            matching_region,
-            "temp",
-            text,
-        );
-
-        // Extract virtual document content
-        let virtual_content = cacheable.extract_content(text).to_owned();
-
-        // Translate host range to virtual range
-        let virtual_range = Range {
-            start: cacheable.translate_host_to_virtual(range.start),
-            end: cacheable.translate_host_to_virtual(range.end),
-        };
-
-        // Create a virtual URI for the injection
-        let virtual_uri = format!(
-            "file:///tmp/treesitter-ls-virtual-{}.rs",
-            std::process::id()
-        );
-
-        // Get language server connection from pool
-        let pool_key = server_config.cmd.first().cloned().unwrap_or_default();
-
-        // Take connection from pool (will spawn if none exists)
-        let conn = self
-            .language_server_pool
-            .take_connection(&pool_key, &server_config)?;
-
-        let virtual_uri_clone = virtual_uri.clone();
-        let uri_clone = uri.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let mut conn = conn;
-            // Open the virtual document
-            conn.did_open(&virtual_uri_clone, "rust", &virtual_content);
-
-            // Request code action with notifications capture
-            let result = conn.code_action_with_notifications(&virtual_uri_clone, virtual_range);
-
-            // Return both result and connection for pool return
-            (result, conn, uri_clone, cacheable)
-        })
-        .await;
-
-        // Handle spawn_blocking result and return connection to pool
-        let (code_action_result, notifications, uri_for_translate, cacheable_for_translate) =
-            match result {
-                Ok((result, conn, uri, cacheable)) => {
-                    self.language_server_pool.return_connection(&pool_key, conn);
-                    (result.response, result.notifications, uri, cacheable)
-                }
-                Err(e) => {
-                    self.client
-                        .log_message(MessageType::ERROR, format!("spawn_blocking failed: {}", e))
-                        .await;
-                    return None;
-                }
-            };
-
-        // Forward captured progress notifications to the client
-        for notification in notifications {
-            if let Some(params) = notification.get("params")
-                && let Ok(progress_params) =
-                    serde_json::from_value::<ProgressParams>(params.clone())
-            {
-                self.client
-                    .send_notification::<Progress>(progress_params)
-                    .await;
-            }
-        }
-
-        // Translate CodeActionResponse ranges back to host document coordinates
-        code_action_result.map(|actions| {
-            actions
-                .into_iter()
-                .map(|action_or_cmd| {
-                    self.translate_code_action_or_command(
-                        action_or_cmd,
-                        &uri_for_translate,
-                        &cacheable_for_translate,
-                    )
-                })
-                .collect()
-        })
-    }
-
-    /// Translate a CodeActionOrCommand from virtual to host coordinates.
-    fn translate_code_action_or_command(
-        &self,
-        action_or_cmd: CodeActionOrCommand,
-        uri: &Url,
-        cacheable: &crate::language::injection::CacheableInjectionRegion,
-    ) -> CodeActionOrCommand {
-        match action_or_cmd {
-            CodeActionOrCommand::Command(cmd) => {
-                // Commands don't have ranges, no translation needed
-                CodeActionOrCommand::Command(cmd)
-            }
-            CodeActionOrCommand::CodeAction(action) => {
-                let translated_action = CodeAction {
-                    title: action.title,
-                    kind: action.kind,
-                    diagnostics: action.diagnostics.map(|diags| {
-                        diags
-                            .into_iter()
-                            .map(|diag| Diagnostic {
-                                range: Range {
-                                    start: cacheable.translate_virtual_to_host(diag.range.start),
-                                    end: cacheable.translate_virtual_to_host(diag.range.end),
-                                },
-                                ..diag
-                            })
-                            .collect()
-                    }),
-                    edit: action
-                        .edit
-                        .map(|edit| self.translate_workspace_edit(edit, uri, cacheable)),
-                    command: action.command,
-                    is_preferred: action.is_preferred,
-                    disabled: action.disabled,
-                    data: action.data,
-                };
-                CodeActionOrCommand::CodeAction(translated_action)
-            }
-        }
-    }
-
-    /// Translate a WorkspaceEdit from virtual to host coordinates.
-    fn translate_workspace_edit(
-        &self,
-        edit: WorkspaceEdit,
-        uri: &Url,
-        cacheable: &crate::language::injection::CacheableInjectionRegion,
-    ) -> WorkspaceEdit {
-        // Translate changes (HashMap<Uri, Vec<TextEdit>>)
-        let changes = edit.changes.map(|changes| {
-            changes
-                .into_values()
-                .map(|edits| {
-                    // Remap URI to host document and translate ranges
-                    let translated_edits: Vec<TextEdit> = edits
-                        .into_iter()
-                        .map(|text_edit| TextEdit {
-                            range: Range {
-                                start: cacheable.translate_virtual_to_host(text_edit.range.start),
-                                end: cacheable.translate_virtual_to_host(text_edit.range.end),
-                            },
-                            new_text: text_edit.new_text,
-                        })
-                        .collect();
-                    (uri.clone(), translated_edits)
-                })
-                .collect()
-        });
-
-        // Translate document_changes (Vec<DocumentChangeOperation>)
-        let document_changes = edit.document_changes.map(|doc_changes| {
-            match doc_changes {
-                DocumentChanges::Edits(edits) => {
-                    let translated_edits: Vec<TextDocumentEdit> = edits
-                        .into_iter()
-                        .map(|text_doc_edit| {
-                            let translated_text_edits: Vec<OneOf<TextEdit, AnnotatedTextEdit>> =
-                                text_doc_edit
-                                    .edits
-                                    .into_iter()
-                                    .map(|edit| match edit {
-                                        OneOf::Left(text_edit) => OneOf::Left(TextEdit {
-                                            range: Range {
-                                                start: cacheable.translate_virtual_to_host(
-                                                    text_edit.range.start,
-                                                ),
-                                                end: cacheable
-                                                    .translate_virtual_to_host(text_edit.range.end),
-                                            },
-                                            new_text: text_edit.new_text,
-                                        }),
-                                        OneOf::Right(annotated_edit) => {
-                                            OneOf::Right(AnnotatedTextEdit {
-                                                text_edit: TextEdit {
-                                                    range: Range {
-                                                        start: cacheable.translate_virtual_to_host(
-                                                            annotated_edit.text_edit.range.start,
-                                                        ),
-                                                        end: cacheable.translate_virtual_to_host(
-                                                            annotated_edit.text_edit.range.end,
-                                                        ),
-                                                    },
-                                                    new_text: annotated_edit.text_edit.new_text,
-                                                },
-                                                annotation_id: annotated_edit.annotation_id,
-                                            })
-                                        }
-                                    })
-                                    .collect();
-                            TextDocumentEdit {
-                                text_document: OptionalVersionedTextDocumentIdentifier {
-                                    uri: uri.clone(),
-                                    version: text_doc_edit.text_document.version,
-                                },
-                                edits: translated_text_edits,
-                            }
-                        })
-                        .collect();
-                    DocumentChanges::Edits(translated_edits)
-                }
-                DocumentChanges::Operations(ops) => {
-                    // For operations (create/rename/delete), we don't translate
-                    // as they operate on whole files, not ranges within the injection
-                    DocumentChanges::Operations(ops)
-                }
-            }
-        });
-
-        WorkspaceEdit {
-            changes,
-            document_changes,
-            change_annotations: edit.change_annotations,
-        }
-    }
 }
 
 #[tower_lsp::async_trait]
@@ -1315,7 +983,6 @@ impl LanguageServer for TreeSitterLs {
                         })),
                     },
                 )),
-                code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 semantic_tokens_provider: Some(
                     SemanticTokensServerCapabilities::SemanticTokensOptions(
                         SemanticTokensOptions {
@@ -1331,15 +998,6 @@ impl LanguageServer for TreeSitterLs {
                 ),
                 selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
-                type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
-                implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
-                declaration_provider: Some(DeclarationCapability::Simple(true)),
-                document_highlight_provider: Some(OneOf::Left(true)),
-                document_link_provider: Some(DocumentLinkOptions {
-                    resolve_provider: Some(false),
-                    work_done_progress_options: Default::default(),
-                }),
-                folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 completion_provider: Some(CompletionOptions {
                     trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
@@ -1350,17 +1008,6 @@ impl LanguageServer for TreeSitterLs {
                     retrigger_characters: Some(vec![",".to_string()]),
                     ..Default::default()
                 }),
-                references_provider: Some(OneOf::Left(true)),
-                rename_provider: Some(OneOf::Left(true)),
-                document_formatting_provider: Some(OneOf::Left(true)),
-                inlay_hint_provider: Some(OneOf::Left(true)),
-                call_hierarchy_provider: Some(CallHierarchyServerCapability::Simple(true)),
-                // type_hierarchy_provider is not in lsp-types 0.94.1 ServerCapabilities struct,
-                // but we can advertise it via experimental field. The tower-lsp LanguageServer
-                // trait does have the methods (prepare_type_hierarchy, supertypes, subtypes).
-                experimental: Some(serde_json::json!({
-                    "typeHierarchyProvider": true
-                })),
                 ..ServerCapabilities::default()
             },
         })
@@ -1445,10 +1092,6 @@ impl LanguageServer for TreeSitterLs {
         // Check for injected languages and trigger auto-install for missing parsers
         // This must be called AFTER parse_document so we have access to the AST
         self.check_injected_languages_auto_install(&uri).await;
-
-        // Eagerly spawn bridge server connections for injection regions
-        // This pre-warms connections so first goto-definition is fast
-        self.eager_spawn_for_injections(&uri);
 
         // Check if queries are ready for the document
         if let Some(language_name) = self.get_language_for_document(&uri) {
@@ -1662,51 +1305,11 @@ impl LanguageServer for TreeSitterLs {
         self.selection_range_impl(params).await
     }
 
-    async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
-        self.code_action_impl(params).await
-    }
-
     async fn goto_definition(
         &self,
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
         self.goto_definition_impl(params).await
-    }
-
-    async fn goto_type_definition(
-        &self,
-        params: GotoDefinitionParams,
-    ) -> Result<Option<GotoDefinitionResponse>> {
-        self.goto_type_definition_impl(params).await
-    }
-
-    async fn goto_implementation(
-        &self,
-        params: GotoDefinitionParams,
-    ) -> Result<Option<GotoDefinitionResponse>> {
-        self.goto_implementation_impl(params).await
-    }
-
-    async fn goto_declaration(
-        &self,
-        params: GotoDefinitionParams,
-    ) -> Result<Option<GotoDefinitionResponse>> {
-        self.goto_declaration_impl(params).await
-    }
-
-    async fn document_highlight(
-        &self,
-        params: DocumentHighlightParams,
-    ) -> Result<Option<Vec<DocumentHighlight>>> {
-        self.document_highlight_impl(params).await
-    }
-
-    async fn document_link(&self, params: DocumentLinkParams) -> Result<Option<Vec<DocumentLink>>> {
-        self.document_link_impl(params).await
-    }
-
-    async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
-        self.folding_range_impl(params).await
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
@@ -1719,64 +1322,6 @@ impl LanguageServer for TreeSitterLs {
 
     async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
         self.signature_help_impl(params).await
-    }
-
-    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
-        self.references_impl(params).await
-    }
-
-    async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
-        self.rename_impl(params).await
-    }
-
-    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
-        self.formatting_impl(params).await
-    }
-
-    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
-        self.inlay_hint_impl(params).await
-    }
-
-    async fn prepare_call_hierarchy(
-        &self,
-        params: CallHierarchyPrepareParams,
-    ) -> Result<Option<Vec<CallHierarchyItem>>> {
-        self.prepare_call_hierarchy_impl(params).await
-    }
-
-    async fn incoming_calls(
-        &self,
-        params: CallHierarchyIncomingCallsParams,
-    ) -> Result<Option<Vec<CallHierarchyIncomingCall>>> {
-        self.incoming_calls_impl(params).await
-    }
-
-    async fn outgoing_calls(
-        &self,
-        params: CallHierarchyOutgoingCallsParams,
-    ) -> Result<Option<Vec<CallHierarchyOutgoingCall>>> {
-        self.outgoing_calls_impl(params).await
-    }
-
-    async fn prepare_type_hierarchy(
-        &self,
-        params: TypeHierarchyPrepareParams,
-    ) -> Result<Option<Vec<TypeHierarchyItem>>> {
-        self.prepare_type_hierarchy_impl(params).await
-    }
-
-    async fn supertypes(
-        &self,
-        params: TypeHierarchySupertypesParams,
-    ) -> Result<Option<Vec<TypeHierarchyItem>>> {
-        self.supertypes_impl(params).await
-    }
-
-    async fn subtypes(
-        &self,
-        params: TypeHierarchySubtypesParams,
-    ) -> Result<Option<Vec<TypeHierarchyItem>>> {
-        self.subtypes_impl(params).await
     }
 }
 
