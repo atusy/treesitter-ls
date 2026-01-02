@@ -6,7 +6,10 @@
 //!
 //! PBI-154: languageServers Wildcard Config Inheritance
 //! PBI-155: Wire Config APIs into Application
+//!
+//! Note: Tests that modify environment variables use #[serial] to prevent race conditions.
 
+use serial_test::serial;
 use std::collections::HashMap;
 use treesitter_ls::config::{
     TreeSitterSettings, load_user_config, merge_all, resolve_language_server_with_wildcard,
@@ -132,6 +135,7 @@ fn test_unconfigured_server_uses_wildcard_defaults() {
 /// 3. Creates a user config file with unique settings
 /// 4. Calls load_user_config() and verifies settings are loaded
 #[test]
+#[serial(xdg_env)]
 fn test_user_config_loaded_from_xdg_config_home() {
     use std::env;
     use std::fs;
@@ -157,15 +161,14 @@ fn test_user_config_loaded_from_xdg_config_home() {
     .expect("failed to write user config");
 
     // Point XDG_CONFIG_HOME to our temp directory
-    // SAFETY: Tests run single-threaded with --test-threads=1
-    unsafe {
-        env::set_var("XDG_CONFIG_HOME", user_config_dir.path());
-    }
+    // SAFETY: #[serial] ensures single-threaded execution
+    unsafe { env::set_var("XDG_CONFIG_HOME", user_config_dir.path()) };
 
     // Load user config
     let result = load_user_config();
 
     // Restore original XDG_CONFIG_HOME
+    // SAFETY: #[serial] ensures single-threaded execution
     unsafe {
         match original_xdg {
             Some(val) => env::set_var("XDG_CONFIG_HOME", val),

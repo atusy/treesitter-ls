@@ -166,6 +166,7 @@ fn parse_override_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use tempfile::TempDir;
 
     /// PBI-155 Subtask 1: Verify load_settings() uses 4-layer merge
@@ -174,6 +175,7 @@ mod tests {
     /// 1. Loads user config from XDG_CONFIG_HOME
     /// 2. Uses merge_all() with 4 layers: defaults < user < project < init_options
     #[test]
+    #[serial(xdg_env)]
     fn test_load_settings_merges_user_config_with_project_and_override() {
         use std::env;
         use std::fs;
@@ -251,6 +253,7 @@ mod tests {
 
     /// PBI-155: Verify override_settings (init_options) has highest precedence
     #[test]
+    #[serial(xdg_env)]
     fn test_load_settings_override_has_highest_precedence() {
         use std::env;
         use std::fs;
@@ -324,6 +327,7 @@ mod tests {
 
     /// PBI-155: Verify user config loading logs appropriate events
     #[test]
+    #[serial(xdg_env)]
     fn test_load_settings_logs_user_config_events() {
         use std::env;
         use std::fs;
