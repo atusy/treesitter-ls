@@ -8,6 +8,22 @@ pub mod metadata;
 pub mod parser;
 pub mod queries;
 
+/// Test helper module for setting up mock metadata cache.
+#[cfg(test)]
+pub mod test_helpers {
+    use super::cache::MetadataCache;
+    use std::path::Path;
+
+    /// Set up a mock metadata cache with the given content.
+    ///
+    /// This writes the provided content to the cache file in the given directory,
+    /// allowing tests to use a controlled set of parsers.lua data without HTTP requests.
+    pub fn setup_mock_metadata_cache(data_dir: &Path, content: &str) {
+        let cache = MetadataCache::with_default_ttl(data_dir);
+        cache.write(content).expect("Failed to write mock cache");
+    }
+}
+
 pub use parser::parser_file_exists;
 
 use std::path::PathBuf;

@@ -604,6 +604,24 @@ impl TreeSitterLs {
         text: String,
         is_injection: bool,
     ) {
+        // Check if language is supported by nvim-treesitter before attempting install
+        // Use cached metadata to avoid repeated HTTP requests
+        let data_dir = crate::install::default_data_dir();
+        let fetch_options = data_dir
+            .as_ref()
+            .map(|dir| crate::install::metadata::FetchOptions {
+                data_dir: Some(dir.as_path()),
+                use_cache: true,
+            });
+        let (should_skip, reason) =
+            super::auto_install::should_skip_unsupported_language(language, fetch_options.as_ref());
+        if should_skip {
+            if let Some(msg) = reason {
+                self.client.log_message(MessageType::INFO, msg).await;
+            }
+            return;
+        }
+
         // Try to start installation (returns false if already installing)
         if !self.installing_languages.try_start_install(language) {
             self.client

@@ -5,6 +5,7 @@
 
 use crate::document::DocumentStore;
 use crate::error::LockResultExt;
+use crate::install::metadata::{FetchOptions, is_language_supported};
 use crate::language::LanguageCoordinator;
 use crate::language::injection::collect_all_injections;
 use std::collections::HashSet;
@@ -127,6 +128,34 @@ pub fn get_injected_languages(
     injections.iter().map(|i| i.language.clone()).collect()
 }
 
+/// Check if a language should be skipped during auto-install because it's not supported.
+///
+/// Returns a tuple of (should_skip, reason) where:
+/// - should_skip: true if the language is NOT supported by nvim-treesitter and should be skipped
+/// - reason: Some(message) explaining why installation was skipped, or None if not skipping
+///
+/// This function uses cached metadata from nvim-treesitter to avoid repeated HTTP requests.
+///
+/// # Arguments
+/// * `language` - The language name to check
+/// * `options` - FetchOptions for metadata caching (use with data_dir and use_cache: true)
+pub fn should_skip_unsupported_language(
+    language: &str,
+    options: Option<&FetchOptions>,
+) -> (bool, Option<String>) {
+    if is_language_supported(language, options) {
+        // Language is supported - don't skip
+        (false, None)
+    } else {
+        // Language is not supported - skip with reason
+        let reason = format!(
+            "Language '{}' is not supported by nvim-treesitter. Skipping auto-install.",
+            language
+        );
+        (true, Some(reason))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,5 +249,87 @@ mod tests {
 
         // Should have both "text" and "regex"
         assert!(unique_multi.contains("text") || unique_multi.contains("regex"));
+    }
+
+    #[test]
+    fn test_should_skip_unsupported_language_returns_true_for_unsupported() {
+        // Test that should_skip_unsupported_language returns true for unsupported languages
+        // with a reason explaining why installation was skipped
+        use crate::install::metadata::FetchOptions;
+        use crate::install::test_helpers::setup_mock_metadata_cache;
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("Failed to create temp dir");
+
+        // Mock the cache with parsers.lua content that includes only 'lua'
+        let mock_parsers_lua = r#"
+return {
+  lua = {
+    install_info = {
+      revision = 'abc123',
+      url = 'https://github.com/MunifTanjim/tree-sitter-lua',
+    },
+    tier = 2,
+  },
+}
+"#;
+        setup_mock_metadata_cache(temp.path(), mock_parsers_lua);
+
+        let options = FetchOptions {
+            data_dir: Some(temp.path()),
+            use_cache: true,
+        };
+
+        // should_skip_unsupported_language should return true for 'fake_lang_xyz'
+        let (should_skip, reason) =
+            should_skip_unsupported_language("fake_lang_xyz", Some(&options));
+        assert!(
+            should_skip,
+            "Expected to skip unsupported language 'fake_lang_xyz'"
+        );
+        assert!(reason.is_some(), "Expected a reason for skipping");
+        let reason_str = reason.unwrap();
+        assert!(
+            reason_str.contains("not supported") || reason_str.contains("nvim-treesitter"),
+            "Reason should mention nvim-treesitter support: {}",
+            reason_str
+        );
+    }
+
+    #[test]
+    fn test_should_skip_unsupported_language_returns_false_for_supported() {
+        // Test that should_skip_unsupported_language returns false for supported languages
+        use crate::install::metadata::FetchOptions;
+        use crate::install::test_helpers::setup_mock_metadata_cache;
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("Failed to create temp dir");
+
+        // Mock the cache with parsers.lua content that includes 'lua'
+        let mock_parsers_lua = r#"
+return {
+  lua = {
+    install_info = {
+      revision = 'abc123',
+      url = 'https://github.com/MunifTanjim/tree-sitter-lua',
+    },
+    tier = 2,
+  },
+}
+"#;
+        setup_mock_metadata_cache(temp.path(), mock_parsers_lua);
+
+        let options = FetchOptions {
+            data_dir: Some(temp.path()),
+            use_cache: true,
+        };
+
+        // should_skip_unsupported_language should return false for 'lua'
+        let (should_skip, reason) = should_skip_unsupported_language("lua", Some(&options));
+        assert!(
+            !should_skip,
+            "Expected NOT to skip supported language 'lua'"
+        );
+        assert!(reason.is_none(), "Expected no reason when not skipping");
     }
 }
