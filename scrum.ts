@@ -33,39 +33,7 @@ const scrum: ScrumDashboard = {
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   product_backlog: [
     // ADR-0009 Implementation: Vertical slices with user-facing value
-    // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117)
-    // Rejected: PBI-147 (wait for indexing) - replaced by PBI-149 (informative message approach)
-    {
-      id: "PBI-149",
-      story: {
-        role: "Rustacean editing Markdown",
-        capability: "see informative message when hover fails due to server indexing",
-        benefit: "I understand why hover isn't working and know I can retry later",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "TokioAsyncLanguageServerPool tracks ServerState enum (Indexing/Ready) per connection, starting in Indexing state after spawn",
-          verification: "Unit test: new connection starts with state Indexing",
-        },
-        {
-          criterion: "hover_impl returns '{ contents: \"⏳ indexing (rust-analyzer)\" }' when ServerState is Indexing",
-          verification: "Unit test: hover request with Indexing state returns informative message",
-        },
-        {
-          criterion: "ServerState transitions from Indexing to Ready after first non-empty hover or completion response",
-          verification: "Unit test: verify state transition on non-empty response; empty responses keep Indexing state",
-        },
-        {
-          criterion: "Other LSP features (completion, signatureHelp, definition, references) return empty/null during Indexing without special message",
-          verification: "Unit test: completion returns [], definition returns null during Indexing state",
-        },
-        {
-          criterion: "End-to-end flow works: hover during indexing shows message, hover after Ready shows normal content",
-          verification: "E2E test: trigger hover immediately after server spawn (verify message), wait and retry (verify normal hover)",
-        },
-      ],
-      status: "done",
-    },
+    // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117), PBI-147 (Sprint 118)
     {
       id: "PBI-141",
       story: {
@@ -149,18 +117,17 @@ const scrum: ScrumDashboard = {
 
   // Historical sprints (recent 2) | Sprint 1-117: git log -- scrum.yaml, scrum.ts
   completed: [
-    { number: 118, pbi_id: "PBI-149", goal: "Show informative 'indexing' message during hover when rust-analyzer is still initializing, with state tracking to transition to normal responses once ready", status: "done", subtasks: [] },
+    { number: 118, pbi_id: "PBI-147", goal: "Return an informative 'No result or indexing' message when bridged hover has no result, ensuring users understand the reason instead of seeing silent empty responses", status: "done", subtasks: [] },
     { number: 117, pbi_id: "PBI-146", goal: "Track document versions per virtual URI, send didOpen on first access and didChange with incremented version on subsequent accesses, ensuring hover responses reflect the latest code", status: "done", subtasks: [] },
   ],
 
   // Recent 2 retrospectives | Sprint 1-116: modular refactoring pattern, E2E indexing waits, vertical slice validation
   retrospectives: [
     { sprint: 118, improvements: [
-      { action: "ADR-driven development accelerates implementation - ADR-0010 pre-defined architecture, state machine, and detection heuristic", timing: "sprint", status: "active", outcome: null },
-      { action: "Reusable patterns across sprints reduce cognitive load - DashMap from Sprint 117 enabled consistent state tracking", timing: "immediate", status: "completed", outcome: "server_states: DashMap<String, ServerState> mirrors document_versions pattern" },
-      { action: "E2E test retries indicate timing assumptions - 20-attempt loop with 500ms wait works but shows brittleness", timing: "sprint", status: "active", outcome: null },
-      { action: "Non-deterministic test assertions reduce reliability - comment 'may or may not see indexing message' shows test unpredictability", timing: "product", status: "active", outcome: null },
-      { action: "Feature changes ripple to existing tests - hover test updated for indexing state shows broader impact than anticipated", timing: "sprint", status: "active", outcome: null },
+      { action: "Prefer simple user-facing feedback over complex state management - 'No result or indexing' message vs $/progress tracking", timing: "sprint", status: "active", outcome: null },
+      { action: "When reverting features, analyze root cause before re-attempting - previous async approach was 'too buggy' due to state complexity", timing: "sprint", status: "active", outcome: null },
+      { action: "Helper functions enable testability - create_no_result_hover() testable in isolation", timing: "immediate", status: "completed", outcome: "pub(crate) fn create_no_result_hover() with unit test verification" },
+      { action: "Course corrections are valid sprint outcomes - simpler approach after revert delivered user value", timing: "immediate", status: "completed", outcome: "PBI-147 completed with informative message instead of complex indexing state" },
     ] },
     { sprint: 117, improvements: [
       { action: "Study reference implementation patterns before new features - sync bridge had versioning model", timing: "sprint", status: "active", outcome: null },

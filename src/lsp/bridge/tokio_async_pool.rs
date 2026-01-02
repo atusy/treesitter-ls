@@ -16,38 +16,6 @@ use dashmap::DashMap;
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tower_lsp::lsp_types::{Hover, HoverContents, MarkedString};
-
-/// Check if hover content is non-empty.
-///
-/// A Hover object may exist but contain empty content (e.g., empty MarkupContent
-/// or empty array). This function checks that the content is actually meaningful.
-fn is_hover_content_non_empty(hover: &Hover) -> bool {
-    match &hover.contents {
-        HoverContents::Markup(m) => !m.value.is_empty(),
-        HoverContents::Scalar(s) => match s {
-            MarkedString::String(s) => !s.is_empty(),
-            MarkedString::LanguageString(ls) => !ls.value.is_empty(),
-        },
-        HoverContents::Array(arr) => arr.iter().any(|s| match s {
-            MarkedString::String(s) => !s.is_empty(),
-            MarkedString::LanguageString(ls) => !ls.value.is_empty(),
-        }),
-    }
-}
-
-/// Server state for tracking indexing status.
-///
-/// Language servers like rust-analyzer require an indexing phase after startup
-/// before they can provide accurate results. This enum tracks whether a server
-/// is still indexing or ready to provide full results.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ServerState {
-    /// Server is still indexing, may return empty/incomplete results
-    Indexing,
-    /// Server has finished indexing, returns full results
-    Ready,
-}
 
 /// Pool of tokio-based async language server connections.
 ///
@@ -63,8 +31,6 @@ pub struct TokioAsyncLanguageServerPool {
     notification_sender: mpsc::Sender<Value>,
     /// Document versions per virtual URI (for didOpen/didChange tracking)
     document_versions: DashMap<String, u32>,
-    /// Server states per connection key (for indexing state tracking)
-    server_states: DashMap<String, ServerState>,
 }
 
 impl TokioAsyncLanguageServerPool {
@@ -78,7 +44,6 @@ impl TokioAsyncLanguageServerPool {
             virtual_uris: DashMap::new(),
             notification_sender,
             document_versions: DashMap::new(),
-            server_states: DashMap::new(),
         }
     }
 
@@ -112,9 +77,6 @@ impl TokioAsyncLanguageServerPool {
         let conn = Arc::new(conn);
         self.connections.insert(key.to_string(), conn.clone());
         self.virtual_uris.insert(key.to_string(), virtual_uri);
-        // Initialize server state to Indexing (ADR-0010: informative message during indexing)
-        self.server_states
-            .insert(key.to_string(), ServerState::Indexing);
 
         Some(conn)
     }
@@ -242,22 +204,6 @@ impl TokioAsyncLanguageServerPool {
     pub fn set_document_version(&self, uri: &str, version: u32) {
         self.document_versions.insert(uri.to_string(), version);
     }
-
-    /// Get the server state for a connection key.
-    ///
-    /// Returns the current server state (Indexing/Ready) if the connection exists,
-    /// or None if no connection has been established for this key.
-    pub fn get_server_state(&self, key: &str) -> Option<ServerState> {
-        self.server_states.get(key).map(|v| *v)
-    }
-
-    /// Set the server state for a connection key.
-    ///
-    /// Used to transition from Indexing to Ready when the server
-    /// returns a non-empty response.
-    pub fn set_server_state(&self, key: &str, state: ServerState) {
-        self.server_states.insert(key.to_string(), state);
-    }
 }
 
 /// High-level async bridge request methods.
@@ -266,10 +212,6 @@ impl TokioAsyncLanguageServerPool {
 /// send the request, and return the response.
 impl TokioAsyncLanguageServerPool {
     /// Send a hover request asynchronously.
-    ///
-    /// If the server is in Indexing state and returns an empty response, returns
-    /// an informative message instead of None. This helps users understand why
-    /// hover isn't working during rust-analyzer's indexing phase.
     ///
     /// # Arguments
     /// * `key` - Connection pool key
@@ -292,9 +234,6 @@ impl TokioAsyncLanguageServerPool {
         // Get virtual file URI
         let virtual_uri = self.get_virtual_uri(key)?;
 
-        // Check server state before making the request
-        let server_state = self.get_server_state(key);
-
         // Sync document (didOpen on first access, didChange on subsequent)
         self.sync_document(&conn, &virtual_uri, language_id, content)
             .await?;
@@ -314,41 +253,12 @@ impl TokioAsyncLanguageServerPool {
             .ok()?;
 
         // Parse response
-        let hover_result: Option<tower_lsp::lsp_types::Hover> = result
+        result
             .response?
             .get("result")
             .cloned()
             .filter(|r| !r.is_null())
-            .and_then(|r| serde_json::from_value(r).ok());
-
-        // ADR-0010: Transition to Ready state on non-empty hover response
-        let has_non_empty_content = hover_result
-            .as_ref()
-            .is_some_and(is_hover_content_non_empty);
-        if has_non_empty_content && server_state == Some(ServerState::Indexing) {
-            self.set_server_state(key, ServerState::Ready);
-            log::debug!(
-                target: "treesitter_ls::bridge::tokio_async_pool",
-                "[POOL] Server {} transitioned to Ready state (got hover response)",
-                key
-            );
-        }
-
-        // ADR-0010: Return informative message during Indexing state
-        if hover_result.is_none() && server_state == Some(ServerState::Indexing) {
-            // Return informative hover message with hourglass emoji and server name
-            return Some(tower_lsp::lsp_types::Hover {
-                contents: tower_lsp::lsp_types::HoverContents::Markup(
-                    tower_lsp::lsp_types::MarkupContent {
-                        kind: tower_lsp::lsp_types::MarkupKind::Markdown,
-                        value: format!("\u{23f3} indexing ({})", key),
-                    },
-                ),
-                range: None,
-            });
-        }
-
-        hover_result
+            .and_then(|r| serde_json::from_value(r).ok())
     }
 
     /// Sync document content with the language server.
@@ -414,10 +324,6 @@ mod tests {
     use std::time::Duration;
     use tokio::sync::mpsc;
 
-    // =========================================================================
-    // Test Helpers
-    // =========================================================================
-
     fn check_rust_analyzer_available() -> bool {
         std::process::Command::new("rust-analyzer")
             .arg("--version")
@@ -435,52 +341,181 @@ mod tests {
         ("cmd.exe", &["/C", "exit 0"])
     }
 
-    fn rust_analyzer_config() -> BridgeServerConfig {
-        BridgeServerConfig {
+    /// Test that TokioAsyncLanguageServerPool::get_connection returns
+    /// Arc<TokioAsyncBridgeConnection> after spawn+initialize.
+    ///
+    /// This is the key test for Subtask 3: get_connection must:
+    /// 1. Spawn process using TokioAsyncBridgeConnection::spawn()
+    /// 2. Send initialize request
+    /// 3. Wait for response
+    /// 4. Send initialized notification
+    /// 5. Store virtual_uri
+    /// 6. Return Arc<TokioAsyncBridgeConnection>
+    #[tokio::test]
+    async fn get_connection_returns_arc_tokio_connection_after_initialize() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
             cmd: vec!["rust-analyzer".to_string()],
             languages: vec!["rust".to_string()],
             initialization_options: None,
             workspace_type: Some(WorkspaceType::Cargo),
-        }
+        };
+
+        // Get a connection (should spawn, initialize, and return Arc<TokioAsyncBridgeConnection>)
+        let conn = pool.get_connection("rust-analyzer", &config).await;
+        assert!(conn.is_some(), "Should get a connection");
+
+        // Second call should return the same connection (not spawn new)
+        assert!(
+            pool.has_connection("rust-analyzer"),
+            "Pool should have connection after get"
+        );
     }
 
-    fn create_pool() -> super::TokioAsyncLanguageServerPool {
+    /// Test that pool stores virtual_uri after connection is established.
+    #[tokio::test]
+    async fn pool_stores_virtual_uri_after_connection() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
         let (tx, _rx) = mpsc::channel(16);
-        super::TokioAsyncLanguageServerPool::new(tx)
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Get a connection
+        let conn = pool.get_connection("rust-analyzer", &config).await;
+        assert!(conn.is_some(), "Should get a connection");
+
+        // Virtual URI should be stored and retrievable
+        let virtual_uri = pool.get_virtual_uri("rust-analyzer");
+        assert!(
+            virtual_uri.is_some(),
+            "Virtual URI should be stored after connection"
+        );
+
+        let uri = virtual_uri.unwrap();
+        assert!(
+            uri.starts_with("file://"),
+            "Virtual URI should be a file:// URI, got: {}",
+            uri
+        );
+        assert!(
+            uri.ends_with(".rs"),
+            "Virtual URI should end with .rs for rust, got: {}",
+            uri
+        );
     }
 
-    /// Extract text content from HoverContents.
-    fn extract_hover_content(hover: &tower_lsp::lsp_types::Hover) -> String {
-        match &hover.contents {
-            tower_lsp::lsp_types::HoverContents::Markup(m) => m.value.clone(),
-            tower_lsp::lsp_types::HoverContents::Scalar(s) => match s {
-                tower_lsp::lsp_types::MarkedString::String(s) => s.clone(),
-                tower_lsp::lsp_types::MarkedString::LanguageString(ls) => ls.value.clone(),
-            },
-            tower_lsp::lsp_types::HoverContents::Array(arr) => arr
-                .iter()
-                .map(|s| match s {
-                    tower_lsp::lsp_types::MarkedString::String(s) => s.clone(),
-                    tower_lsp::lsp_types::MarkedString::LanguageString(ls) => ls.value.clone(),
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
+    /// Test that concurrent gets share the same connection.
+    #[tokio::test]
+    async fn concurrent_gets_share_same_connection() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
         }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = std::sync::Arc::new(super::TokioAsyncLanguageServerPool::new(tx));
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Get first connection
+        let conn1 = pool.get_connection("rust-analyzer", &config).await;
+        // Get second connection - should return the same one
+        let conn2 = pool.get_connection("rust-analyzer", &config).await;
+
+        assert!(conn1.is_some() && conn2.is_some());
+        // Both should be Arc pointers to the same connection
+        assert!(
+            std::sync::Arc::ptr_eq(&conn1.unwrap(), &conn2.unwrap()),
+            "Concurrent gets should return the same connection"
+        );
     }
 
-    /// Retry hover until we get content matching the predicate, or timeout.
-    async fn wait_for_hover<F>(
+    /// Test that spawn_and_initialize uses async pattern for workspace setup.
+    ///
+    /// This verifies AC3: setup_workspace calls use spawn_blocking wrapper to avoid
+    /// blocking the tokio runtime on synchronous file I/O operations.
+    ///
+    /// The test reads the source file and verifies the pattern:
+    /// - setup_workspace_with_option call must be inside spawn_blocking
+    #[test]
+    fn spawn_and_initialize_workspace_setup_uses_async_pattern() {
+        let source = include_str!("tokio_async_pool.rs");
+
+        // Find the spawn_and_initialize function
+        let spawn_and_initialize_start = source
+            .find("async fn spawn_and_initialize")
+            .expect("spawn_and_initialize function should exist");
+
+        // Extract just the function body (up to the next pub async fn or end of impl)
+        let function_start = &source[spawn_and_initialize_start..];
+        // Find end of function - look for next function definition or end marker
+        let function_end = function_start
+            .find("\n    /// ") // Next doc comment at impl level
+            .or_else(|| function_start.find("\n    pub async fn")) // Next pub async method
+            .or_else(|| function_start.find("\n    #[allow(dead_code)]\n    pub")) // Next method with allow
+            .unwrap_or(function_start.len());
+
+        let function_body = &function_start[..function_end];
+
+        // Verify the function body contains spawn_blocking with setup_workspace_with_option
+        // The pattern should be tokio::task::spawn_blocking wrapping the setup call
+        assert!(
+            function_body.contains("spawn_blocking"),
+            "spawn_and_initialize should use spawn_blocking for setup_workspace_with_option.\n\
+             Function body:\n{}",
+            function_body
+        );
+
+        // Also verify setup_workspace_with_option is inside the spawn_blocking closure
+        let spawn_blocking_pos = function_body.find("spawn_blocking");
+        let setup_pos = function_body.find("setup_workspace_with_option");
+
+        assert!(
+            spawn_blocking_pos.is_some() && setup_pos.is_some(),
+            "Both spawn_blocking and setup_workspace_with_option should exist in spawn_and_initialize"
+        );
+
+        // spawn_blocking should appear before setup_workspace_with_option in the code
+        // (the setup call is inside the spawn_blocking closure)
+        assert!(
+            spawn_blocking_pos.unwrap() < setup_pos.unwrap(),
+            "spawn_blocking should wrap setup_workspace_with_option call"
+        );
+    }
+
+    /// Retry hover request until success or max attempts reached.
+    ///
+    /// rust-analyzer may return None while indexing. This helper retries
+    /// up to 10 times with 500ms delay between attempts.
+    async fn hover_with_retry(
         pool: &super::TokioAsyncLanguageServerPool,
         config: &BridgeServerConfig,
         content: &str,
         position: tower_lsp::lsp_types::Position,
-        max_attempts: usize,
-        predicate: F,
-    ) -> Option<String>
-    where
-        F: Fn(&str) -> bool,
-    {
-        for _attempt in 0..max_attempts {
+    ) -> Option<tower_lsp::lsp_types::Hover> {
+        for _ in 0..10 {
             if let Some(hover) = pool
                 .hover(
                     "rust-analyzer",
@@ -492,292 +527,296 @@ mod tests {
                 )
                 .await
             {
-                let hover_content = extract_hover_content(&hover);
-                if predicate(&hover_content) {
-                    return Some(hover_content);
-                }
+                return Some(hover);
             }
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
         None
     }
 
-    // =========================================================================
-    // Connection Pool Tests
-    // =========================================================================
+    /// Extract string content from HoverContents.
+    fn hover_content_to_string(contents: tower_lsp::lsp_types::HoverContents) -> String {
+        match contents {
+            tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
+            tower_lsp::lsp_types::HoverContents::Scalar(s) => match s {
+                tower_lsp::lsp_types::MarkedString::String(s) => s,
+                tower_lsp::lsp_types::MarkedString::LanguageString(ls) => ls.value,
+            },
+            tower_lsp::lsp_types::HoverContents::Array(arr) => arr
+                .into_iter()
+                .map(|s| match s {
+                    tower_lsp::lsp_types::MarkedString::String(s) => s,
+                    tower_lsp::lsp_types::MarkedString::LanguageString(ls) => ls.value,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
+    }
 
+    /// Test that hover() returns Hover from rust-analyzer.
     #[tokio::test]
-    async fn get_connection_returns_arc_after_initialize() {
+    async fn hover_returns_hover_from_rust_analyzer() {
         if !check_rust_analyzer_available() {
             eprintln!("Skipping: rust-analyzer not installed");
             return;
         }
 
-        let pool = create_pool();
-        let config = rust_analyzer_config();
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
 
-        let conn = pool.get_connection("rust-analyzer", &config).await;
-        assert!(conn.is_some(), "Should get a connection");
-        assert!(
-            pool.has_connection("rust-analyzer"),
-            "Pool should have connection after get"
-        );
-    }
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
 
-    #[tokio::test]
-    async fn pool_stores_virtual_uri_after_connection() {
-        if !check_rust_analyzer_available() {
-            eprintln!("Skipping: rust-analyzer not installed");
-            return;
-        }
-
-        let pool = create_pool();
-        let config = rust_analyzer_config();
-
-        pool.get_connection("rust-analyzer", &config).await;
-
-        let uri = pool
-            .get_virtual_uri("rust-analyzer")
-            .expect("Virtual URI should be stored");
-        assert!(
-            uri.starts_with("file://"),
-            "Should be file:// URI, got: {}",
-            uri
-        );
-        assert!(
-            uri.ends_with(".rs"),
-            "Should end with .rs for rust, got: {}",
-            uri
-        );
-    }
-
-    #[tokio::test]
-    async fn concurrent_gets_share_same_connection() {
-        if !check_rust_analyzer_available() {
-            eprintln!("Skipping: rust-analyzer not installed");
-            return;
-        }
-
-        let pool = std::sync::Arc::new(create_pool());
-        let config = rust_analyzer_config();
-
-        let conn1 = pool.get_connection("rust-analyzer", &config).await;
-        let conn2 = pool.get_connection("rust-analyzer", &config).await;
-
-        assert!(conn1.is_some() && conn2.is_some());
-        assert!(
-            std::sync::Arc::ptr_eq(&conn1.unwrap(), &conn2.unwrap()),
-            "Concurrent gets should return the same connection"
-        );
-    }
-
-    // =========================================================================
-    // Workspace Setup Tests
-    // =========================================================================
-
-    #[test]
-    fn spawn_and_initialize_uses_spawn_blocking_for_workspace_setup() {
-        let source = include_str!("tokio_async_pool.rs");
-        let fn_start = source
-            .find("async fn spawn_and_initialize")
-            .expect("spawn_and_initialize function should exist");
-
-        let function_body = &source[fn_start..];
-        let fn_end = function_body
-            .find("\n    /// ")
-            .or_else(|| function_body.find("\n    pub async fn"))
-            .unwrap_or(function_body.len());
-        let function_body = &function_body[..fn_end];
-
-        let spawn_pos = function_body.find("spawn_blocking");
-        let setup_pos = function_body.find("setup_workspace_with_option");
-
-        assert!(spawn_pos.is_some() && setup_pos.is_some());
-        assert!(
-            spawn_pos.unwrap() < setup_pos.unwrap(),
-            "spawn_blocking should wrap setup_workspace_with_option"
-        );
-    }
-
-    // =========================================================================
-    // Hover Tests
-    // =========================================================================
-
-    #[tokio::test]
-    async fn hover_returns_content_from_rust_analyzer() {
-        if !check_rust_analyzer_available() {
-            eprintln!("Skipping: rust-analyzer not installed");
-            return;
-        }
-
-        let pool = create_pool();
-        let config = rust_analyzer_config();
+        let content = "fn main() { let x = 42; }";
         let position = tower_lsp::lsp_types::Position {
             line: 0,
             character: 3,
         };
 
-        let hover_content = wait_for_hover(
-            &pool,
-            &config,
-            "fn main() { let x = 42; }",
-            position,
-            10,
-            |content| !content.is_empty(),
-        )
-        .await;
+        let hover = hover_with_retry(&pool, &config, content, position).await;
 
-        assert!(hover_content.is_some(), "hover() should return content");
+        assert!(
+            hover.is_some(),
+            "hover() should return Some(Hover) for 'main' function"
+        );
+
+        let content_str = hover_content_to_string(hover.unwrap().contents);
+        assert!(!content_str.is_empty(), "Hover should contain content");
     }
 
+    /// E2E test: hover returns updated content after document edit.
     #[tokio::test]
-    async fn hover_reflects_document_changes() {
+    async fn hover_returns_updated_content_after_edit() {
         if !check_rust_analyzer_available() {
             eprintln!("Skipping: rust-analyzer not installed");
             return;
         }
 
-        let pool = create_pool();
-        let config = rust_analyzer_config();
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
         let position = tower_lsp::lsp_types::Position {
             line: 0,
             character: 3,
         };
 
-        // First content with i32 return type
-        let hover1 = wait_for_hover(
-            &pool,
-            &config,
-            "fn get_value() -> i32 { 42 }",
-            position,
-            20,
-            |c| !c.contains("indexing") && c.contains("i32"),
-        )
-        .await
-        .expect("Should get i32 hover");
-
+        // First hover: function returns i32
+        let hover1 =
+            hover_with_retry(&pool, &config, "fn get_value() -> i32 { 42 }", position).await;
+        assert!(hover1.is_some(), "First hover should return result");
+        let hover1_content = hover_content_to_string(hover1.unwrap().contents);
         assert!(
-            hover1.contains("i32"),
-            "First hover should show i32, got: {}",
-            hover1
+            hover1_content.contains("i32"),
+            "First hover should show i32 return type, got: {}",
+            hover1_content
         );
 
-        // Second content with String return type
-        let hover2 = wait_for_hover(
+        // Second hover: function returns String
+        let hover2 = hover_with_retry(
             &pool,
             &config,
             "fn get_value() -> String { String::new() }",
             position,
-            20,
-            |c| !c.contains("indexing") && c.contains("String"),
         )
-        .await
-        .expect("Should get String hover");
-
+        .await;
+        assert!(hover2.is_some(), "Second hover should return result");
+        let hover2_content = hover_content_to_string(hover2.unwrap().contents);
         assert!(
-            hover2.contains("String"),
-            "Second hover should show String, got: {}",
-            hover2
+            hover2_content.contains("String"),
+            "Second hover should show String return type (not i32), got: {}",
+            hover2_content
         );
         assert!(
-            !hover2.contains("i32"),
-            "Should not show old i32 type, got: {}",
-            hover2
+            !hover2_content.contains("i32"),
+            "Second hover should NOT show i32 (should be updated), got: {}",
+            hover2_content
         );
 
-        // Verify version incremented
+        // Verify version incremented (may be > 2 due to retries)
         let virtual_uri = pool.get_virtual_uri("rust-analyzer").unwrap();
         let version = pool.get_document_version(&virtual_uri).unwrap();
         assert!(
             version >= 2,
-            "Version should be at least 2, got: {}",
+            "Version should be at least 2 after two hover calls, got: {}",
             version
         );
     }
 
-    // =========================================================================
-    // Document Sync Tests
-    // =========================================================================
-
+    /// Test that subsequent access sends didChange with incremented version.
+    ///
+    /// Subtask 3: When sync_document is called for a URI that has already been
+    /// opened, it should send didChange with incremented version.
     #[tokio::test]
-    async fn sync_document_increments_version_on_each_call() {
+    async fn subsequent_access_sends_did_change_with_incremented_version() {
         if !check_rust_analyzer_available() {
             eprintln!("Skipping: rust-analyzer not installed");
             return;
         }
 
-        let pool = create_pool();
-        let config = rust_analyzer_config();
-        let conn = pool.get_connection("rust-analyzer", &config).await.unwrap();
-        let uri = pool.get_virtual_uri("rust-analyzer").unwrap();
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
 
-        pool.sync_document(&conn, &uri, "rust", "fn main() {}")
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Get a connection to establish the virtual URI
+        let conn = pool.get_connection("rust-analyzer", &config).await;
+        assert!(conn.is_some(), "Should get a connection");
+        let conn = conn.unwrap();
+
+        let virtual_uri = pool.get_virtual_uri("rust-analyzer").unwrap();
+
+        // First access - should send didOpen with version 1
+        let content1 = "fn main() {}";
+        pool.sync_document(&conn, &virtual_uri, "rust", content1)
             .await;
-        assert_eq!(pool.get_document_version(&uri), Some(1));
-
-        pool.sync_document(&conn, &uri, "rust", "fn main() { let x = 42; }")
-            .await;
-        assert_eq!(pool.get_document_version(&uri), Some(2));
-
-        pool.sync_document(&conn, &uri, "rust", "fn main() { let x = 100; }")
-            .await;
-        assert_eq!(pool.get_document_version(&uri), Some(3));
-    }
-
-    #[tokio::test]
-    async fn first_sync_document_sets_version_to_1() {
-        if !check_rust_analyzer_available() {
-            eprintln!("Skipping: rust-analyzer not installed");
-            return;
-        }
-
-        let pool = create_pool();
-        let config = rust_analyzer_config();
-        let conn = pool.get_connection("rust-analyzer", &config).await.unwrap();
-        let uri = pool.get_virtual_uri("rust-analyzer").unwrap();
-
-        assert!(
-            pool.get_document_version(&uri).is_none(),
-            "No version before first access"
-        );
-
-        pool.sync_document(&conn, &uri, "rust", "fn main() {}")
-            .await;
-
         assert_eq!(
-            pool.get_document_version(&uri),
+            pool.get_document_version(&virtual_uri),
             Some(1),
-            "Version should be 1 after didOpen"
+            "Version should be 1 after first access"
+        );
+
+        // Second access - should send didChange with version 2
+        let content2 = "fn main() { let x = 42; }";
+        pool.sync_document(&conn, &virtual_uri, "rust", content2)
+            .await;
+        assert_eq!(
+            pool.get_document_version(&virtual_uri),
+            Some(2),
+            "Version should be 2 after second access (didChange)"
+        );
+
+        // Third access - should send didChange with version 3
+        let content3 = "fn main() { let x = 100; }";
+        pool.sync_document(&conn, &virtual_uri, "rust", content3)
+            .await;
+        assert_eq!(
+            pool.get_document_version(&virtual_uri),
+            Some(3),
+            "Version should be 3 after third access (didChange)"
         );
     }
 
+    /// Test that first access sends didOpen with version 1.
+    ///
+    /// Subtask 2: When ensure_document_open is called for a URI that hasn't been
+    /// opened yet, it should send didOpen with version 1 and store version 1.
     #[tokio::test]
-    async fn document_versions_are_independent_per_uri() {
-        let pool = create_pool();
+    async fn first_access_sends_did_open_with_version_1() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
 
-        assert!(pool.get_document_version("file:///test.rs").is_none());
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
 
-        pool.set_document_version("file:///test.rs", 1);
-        assert_eq!(pool.get_document_version("file:///test.rs"), Some(1));
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
 
-        pool.set_document_version("file:///test.rs", 2);
-        assert_eq!(pool.get_document_version("file:///test.rs"), Some(2));
+        // Get a connection to establish the virtual URI
+        let conn = pool.get_connection("rust-analyzer", &config).await;
+        assert!(conn.is_some(), "Should get a connection");
+        let conn = conn.unwrap();
 
-        pool.set_document_version("file:///other.rs", 5);
-        assert_eq!(pool.get_document_version("file:///test.rs"), Some(2));
-        assert_eq!(pool.get_document_version("file:///other.rs"), Some(5));
+        let virtual_uri = pool.get_virtual_uri("rust-analyzer").unwrap();
+
+        // Before first access, no version should exist
+        assert!(
+            pool.get_document_version(&virtual_uri).is_none(),
+            "No version should exist before first access"
+        );
+
+        // Call sync_document (new name for ensure_document_open)
+        let content = "fn main() {}";
+        pool.sync_document(&conn, &virtual_uri, "rust", content)
+            .await;
+
+        // After first access, version should be 1
+        assert_eq!(
+            pool.get_document_version(&virtual_uri),
+            Some(1),
+            "Version should be 1 after first access (didOpen)"
+        );
     }
 
+    /// Test that pool tracks document versions per URI.
+    ///
+    /// Subtask 1: TokioAsyncLanguageServerPool should have a document_versions field
+    /// that tracks the version number for each virtual URI.
     #[tokio::test]
-    async fn sync_document_does_not_set_version_on_failure() {
-        let pool = create_pool();
+    async fn pool_tracks_document_versions_per_uri() {
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        // Pool should have document_versions field accessible via method
+        // Initially, no URIs should have versions
+        assert!(
+            pool.get_document_version("file:///test.rs").is_none(),
+            "No version should exist for unknown URI"
+        );
+
+        // After setting a version, it should be retrievable
+        pool.set_document_version("file:///test.rs", 1);
+        assert_eq!(
+            pool.get_document_version("file:///test.rs"),
+            Some(1),
+            "Version 1 should be set for URI"
+        );
+
+        // Updating version should work
+        pool.set_document_version("file:///test.rs", 2);
+        assert_eq!(
+            pool.get_document_version("file:///test.rs"),
+            Some(2),
+            "Version should be updated to 2"
+        );
+
+        // Different URIs should have independent versions
+        pool.set_document_version("file:///other.rs", 5);
+        assert_eq!(
+            pool.get_document_version("file:///test.rs"),
+            Some(2),
+            "First URI version should be unchanged"
+        );
+        assert_eq!(
+            pool.get_document_version("file:///other.rs"),
+            Some(5),
+            "Second URI should have its own version"
+        );
+    }
+
+    /// When a notification fails to send, the document version should remain unchanged.
+    #[tokio::test]
+    async fn sync_document_does_not_set_version_when_notification_fails() {
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
 
         let (command, args) = short_lived_command();
         let conn = TokioAsyncBridgeConnection::spawn(command, args, None, None, None)
             .await
             .expect("short-lived command should spawn");
 
-        // Allow process to exit so writes fail
+        // Allow the stub process to exit so writes will fail with BrokenPipe.
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         let uri = "file:///failing.rs";
@@ -785,130 +824,11 @@ mod tests {
 
         assert!(
             result.is_none(),
-            "sync_document should return None on failure"
+            "sync_document should return None when the notification fails"
         );
         assert!(
             pool.get_document_version(uri).is_none(),
-            "Version should remain unset"
-        );
-    }
-
-    // =========================================================================
-    // Server State Tests (ADR-0010)
-    // =========================================================================
-
-    #[tokio::test]
-    async fn new_connection_starts_in_indexing_state() {
-        if !check_rust_analyzer_available() {
-            eprintln!("Skipping: rust-analyzer not installed");
-            return;
-        }
-
-        let pool = create_pool();
-        let config = rust_analyzer_config();
-
-        assert!(pool.get_server_state("rust-analyzer").is_none());
-
-        pool.get_connection("rust-analyzer", &config).await;
-
-        assert_eq!(
-            pool.get_server_state("rust-analyzer"),
-            Some(super::ServerState::Indexing)
-        );
-    }
-
-    #[tokio::test]
-    async fn hover_shows_indexing_message_during_indexing_state() {
-        if !check_rust_analyzer_available() {
-            eprintln!("Skipping: rust-analyzer not installed");
-            return;
-        }
-
-        let pool = create_pool();
-        let config = rust_analyzer_config();
-        let position = tower_lsp::lsp_types::Position {
-            line: 0,
-            character: 3,
-        };
-
-        // Single immediate hover call (no retries) to catch indexing state
-        let hover = pool
-            .hover(
-                "rust-analyzer",
-                &config,
-                "file:///test.rs",
-                "rust",
-                "fn main() {}",
-                position,
-            )
-            .await
-            .expect("Should return hover during Indexing");
-
-        let content = extract_hover_content(&hover);
-        assert!(
-            content.contains("indexing"),
-            "Should mention indexing, got: {}",
-            content
-        );
-        assert!(
-            content.contains("rust-analyzer"),
-            "Should mention server name, got: {}",
-            content
-        );
-    }
-
-    #[tokio::test]
-    async fn server_state_can_transition_to_ready() {
-        let pool = create_pool();
-
-        pool.set_server_state("test-server", super::ServerState::Indexing);
-        assert_eq!(
-            pool.get_server_state("test-server"),
-            Some(super::ServerState::Indexing)
-        );
-
-        pool.set_server_state("test-server", super::ServerState::Ready);
-        assert_eq!(
-            pool.get_server_state("test-server"),
-            Some(super::ServerState::Ready)
-        );
-    }
-
-    #[tokio::test]
-    async fn hover_transitions_state_to_ready_on_real_response() {
-        if !check_rust_analyzer_available() {
-            eprintln!("Skipping: rust-analyzer not installed");
-            return;
-        }
-
-        let pool = create_pool();
-        let config = rust_analyzer_config();
-        let position = tower_lsp::lsp_types::Position {
-            line: 0,
-            character: 3,
-        };
-
-        pool.get_connection("rust-analyzer", &config).await;
-        assert_eq!(
-            pool.get_server_state("rust-analyzer"),
-            Some(super::ServerState::Indexing)
-        );
-
-        // Wait for real hover response
-        let hover_content = wait_for_hover(
-            &pool,
-            &config,
-            "fn main() { let x = 42; }",
-            position,
-            20,
-            |c| !c.contains("indexing") && c.contains("main"),
-        )
-        .await;
-
-        assert!(hover_content.is_some(), "Should eventually get real hover");
-        assert_eq!(
-            pool.get_server_state("rust-analyzer"),
-            Some(super::ServerState::Ready)
+            "Version should remain unset when notification fails"
         );
     }
 }
