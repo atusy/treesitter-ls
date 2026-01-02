@@ -230,14 +230,35 @@ impl LspClient {
         let _ = self.child.kill();
     }
 
-    /// Access the child process (for checking status in tests).
-    pub(crate) fn child(&mut self) -> &mut Child {
-        &mut self.child
-    }
-
     /// Close stdin to signal EOF (for shutdown testing).
     pub(crate) fn close_stdin(&mut self) {
         self.stdin = None;
+    }
+
+    /// Check if the server process is still running.
+    pub(crate) fn is_running(&mut self) -> bool {
+        self.child
+            .try_wait()
+            .expect("Error checking child status")
+            .is_none()
+    }
+
+    /// Wait for the process to exit with a timeout.
+    /// Returns the exit status if the process exited, or None if timeout occurred.
+    pub(crate) fn wait_for_exit(&mut self, timeout: Duration) -> Option<std::process::ExitStatus> {
+        let start = Instant::now();
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(status)) => return Some(status),
+                Ok(None) => {
+                    if start.elapsed() > timeout {
+                        return None;
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err(_) => return None,
+            }
+        }
     }
 }
 

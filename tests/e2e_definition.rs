@@ -111,12 +111,8 @@ fn test_did_open_after_initialize() {
     std::thread::sleep(std::time::Duration::from_millis(100));
 
     // Verify server is still running (didn't crash on didOpen)
-    let status = client
-        .child()
-        .try_wait()
-        .expect("Error checking child status");
     assert!(
-        status.is_none(),
+        client.is_running(),
         "Server should still be running after didOpen"
     );
 }
@@ -324,11 +320,7 @@ fn test_shutdown_terminates_cleanly() {
     client.send_notification("initialized", json!({}));
 
     // Verify server is running
-    let status = client
-        .child()
-        .try_wait()
-        .expect("Error checking child status");
-    assert!(status.is_none(), "Server should be running before shutdown");
+    assert!(client.is_running(), "Server should be running before shutdown");
 
     // Send shutdown request (server should acknowledge but stay running)
     // Note: LSP shutdown takes no params
@@ -340,12 +332,8 @@ fn test_shutdown_terminates_cleanly() {
     );
 
     // Server should still be running after shutdown (waiting for exit notification)
-    let status = client
-        .child()
-        .try_wait()
-        .expect("Error checking child status");
     assert!(
-        status.is_none(),
+        client.is_running(),
         "Server should still be running after shutdown, waiting for exit notification"
     );
 
@@ -356,26 +344,11 @@ fn test_shutdown_terminates_cleanly() {
     client.close_stdin();
 
     // Wait for process to exit (up to 2 seconds)
-    let mut status = None;
-    for _ in 0..20 {
-        status = client
-            .child()
-            .try_wait()
-            .expect("Error checking child status");
-        if status.is_some() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-
-    // Verify process has exited
-    assert!(
-        status.is_some(),
-        "Server should have exited after exit notification"
-    );
+    let exit_status = client
+        .wait_for_exit(std::time::Duration::from_secs(2))
+        .expect("Server should have exited after exit notification");
 
     // Verify clean exit (exit code 0)
-    let exit_status = status.unwrap();
     assert!(
         exit_status.success(),
         "Server should exit cleanly with code 0, got: {:?}",
