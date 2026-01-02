@@ -11,20 +11,20 @@ const userStoryRoles = [
 const scrum: ScrumDashboard = {
   product_goal: {
     statement:
-      "Expand LSP bridge to support most language server features indirectly through bridging (ADR-0006, 0007, 0008)",
+      "Maintain stable async LSP bridge for core features using single-pool architecture (ADR-0006, 0007, 0008)",
     success_metrics: [
       {
         metric: "Bridge coverage",
         target:
-          "Support completion, signatureHelp, references, rename, codeAction, formatting, typeDefinition, implementation, documentHighlight, declaration, inlayHint, callHierarchy, typeHierarchy, documentLink, foldingRange",
+          "Support hover, completion, signatureHelp, definition with fully async implementations",
       },
       {
         metric: "Modular architecture",
-        target: "Bridge module organized with text_document/ subdirectory matching lsp_impl structure",
+        target: "Bridge module organized with text_document/ subdirectory, single TokioAsyncLanguageServerPool",
       },
       {
         metric: "E2E test coverage",
-        target: "Each bridged feature has E2E test verifying end-to-end flow",
+        target: "Each bridged feature has E2E test verifying end-to-end async flow",
       },
     ],
   },
@@ -124,10 +124,9 @@ const scrum: ScrumDashboard = {
 
   // Recent 2 retrospectives | Sprint 1-120: ADR-driven development, reusable patterns, E2E test timing
   retrospectives: [
-    { sprint: 121, improvements: [
-      { action: "Create migration guide documenting async bridge series lessons learned (Sprints 119-121: hover, definition, completion, signatureHelp) including E2E_TEST_CHECKLIST.md patterns and pre-implementation review process", timing: "product", status: "active", outcome: null },
-      { action: "Fix 4 pre-existing E2E test failures identified in other test files to maintain test suite health", timing: "sprint", status: "active", outcome: null },
-      { action: "Audit remaining LSP E2E tests (type_definition, declaration, references, code_action, rename) and migrate to helper.retry_for_lsp_indexing() pattern where manual sleep patterns exist", timing: "product", status: "active", outcome: null },
+    { sprint: 122, improvements: [
+      { action: "Delete E2E test files for removed features (13 files)", timing: "immediate", status: "completed", outcome: "Deleted 13 obsolete test files - retained: hover, completion, definition, signature_help + infrastructure tests" },
+      { action: "Document architectural simplification decision (Sprint 122: deleted 16+ handlers, 3 legacy pools, ~1000+ lines) in ADR covering rationale for retaining only async implementations (hover, completion, signatureHelp, definition)", timing: "product", status: "active", outcome: null },
     ] },
     { sprint: 120, improvements: [
       { action: "Plan helper module architecture during sprint planning - identify reusable abstractions (LspClient, test fixtures, initialization patterns) before implementation starts to avoid mid-sprint extraction", timing: "sprint", status: "active", outcome: null },
