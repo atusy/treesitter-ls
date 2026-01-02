@@ -33,30 +33,7 @@ const scrum: ScrumDashboard = {
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   product_backlog: [
     // ADR-0009 Implementation: Vertical slices with user-facing value
-    // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117)
-    {
-      id: "PBI-147",
-      story: {
-        role: "Rustacean editing Markdown",
-        capability: "see an informative message when hover has no result due to indexing or missing information",
-        benefit: "I understand why hover returned no result instead of seeing silent failure",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "When bridged LSP returns None/empty for hover, return 'No result or indexing' message",
-          verification: "Unit test verifies hover returns informative message when bridged LSP returns None",
-        },
-        {
-          criterion: "Hover request always returns either valid result OR informative message (never empty)",
-          verification: "E2E test verifies hover never returns empty/null - always has content",
-        },
-        {
-          criterion: "No complex state tracking or indexing wait logic required",
-          verification: "Code review confirms no $/progress monitoring or indexing state management",
-        },
-      ],
-      status: "ready",
-    },
+    // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117), PBI-147 (Sprint 118)
     {
       id: "PBI-141",
       story: {
@@ -128,38 +105,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 118,
-    pbi_id: "PBI-147",
-    goal: "Return an informative 'No result or indexing' message when bridged hover has no result, ensuring users understand the reason instead of seeing silent empty responses",
-    status: "review",
-    subtasks: [
-      {
-        test: "Unit test: hover_impl returns Hover with informative message when tokio_async_pool.hover() returns None - verify message contains 'No result or indexing'",
-        implementation: "In hover_impl, replace `return Ok(None)` at line 143-145 with returning a Hover containing MarkupContent with 'No result or indexing' message",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "4dae1a1", message: "feat(hover): return informative message when bridged LSP has no result", phase: "green" }],
-        notes: [
-          "Location: src/lsp/lsp_impl/text_document/hover.rs line 143-145",
-          "Simple approach: no state tracking, just return message instead of None",
-          "Message should be user-friendly and explain possible causes",
-        ],
-      },
-      {
-        test: "E2E test: hover in Markdown Rust code block always returns content (never null) - verify response has contents field",
-        implementation: "Verify existing E2E test in test_nvim covers this case; add explicit assertion if needed",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "4dae1a1", message: "feat(hover): return informative message when bridged LSP has no result", phase: "green" }],
-        notes: [
-          "Acceptance criteria: hover never returns empty/null",
-          "May need to adjust E2E test timing or assertions",
-          "E2E test added: hover_always_returns_content_not_null",
-        ],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -169,25 +115,25 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-116: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-117: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 118, pbi_id: "PBI-147", goal: "Return an informative 'No result or indexing' message when bridged hover has no result, ensuring users understand the reason instead of seeing silent empty responses", status: "done", subtasks: [] },
     { number: 117, pbi_id: "PBI-146", goal: "Track document versions per virtual URI, send didOpen on first access and didChange with incremented version on subsequent accesses, ensuring hover responses reflect the latest code", status: "done", subtasks: [] },
-    { number: 116, pbi_id: "PBI-148", goal: "Prevent resource leaks by storing Child handle and temp_dir, sending proper LSP shutdown sequence on drop, and cleaning up temporary workspace", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-115: modular refactoring pattern, E2E indexing waits, vertical slice validation
+  // Recent 2 retrospectives | Sprint 1-116: modular refactoring pattern, E2E indexing waits, vertical slice validation
   retrospectives: [
+    { sprint: 118, improvements: [
+      { action: "Prefer simple user-facing feedback over complex state management - 'No result or indexing' message vs $/progress tracking", timing: "sprint", status: "active", outcome: null },
+      { action: "When reverting features, analyze root cause before re-attempting - previous async approach was 'too buggy' due to state complexity", timing: "sprint", status: "active", outcome: null },
+      { action: "Helper functions enable testability - create_no_result_hover() testable in isolation", timing: "immediate", status: "completed", outcome: "pub(crate) fn create_no_result_hover() with unit test verification" },
+      { action: "Course corrections are valid sprint outcomes - simpler approach after revert delivered user value", timing: "immediate", status: "completed", outcome: "PBI-147 completed with informative message instead of complex indexing state" },
+    ] },
     { sprint: 117, improvements: [
       { action: "Study reference implementation patterns before new features - sync bridge had versioning model", timing: "sprint", status: "active", outcome: null },
       { action: "DashMap provides thread-safe state without explicit locking - prefer for concurrent access patterns", timing: "immediate", status: "completed", outcome: "document_versions: DashMap<String, u32> in TokioAsyncLanguageServerPool" },
       { action: "LSP spec: didOpen once per URI, didChange for updates with incrementing version", timing: "immediate", status: "completed", outcome: "sync_document checks version map, sends didOpen v1 or didChange v+1" },
       { action: "Tightly coupled changes belong in single commit - all 4 subtasks shared c2a78c0", timing: "immediate", status: "completed", outcome: "fix(bridge): track document versions per URI, send didOpen/didChange correctly" },
-    ] },
-    { sprint: 116, improvements: [
-      { action: "review.md caught resource leaks before production; continue for complex PRs", timing: "sprint", status: "completed", outcome: "PBI-148 fixed process/temp_dir leaks with proper RAII" },
-      { action: "Store resource handles in struct from spawn - essential for RAII cleanup", timing: "immediate", status: "completed", outcome: "child: Option<Child>, temp_dir: Option<PathBuf>" },
-      { action: "Async shutdown() alongside sync Drop for graceful cleanup when needed", timing: "immediate", status: "completed", outcome: "shutdown() sends LSP exit; Drop kills+removes sync" },
-      { action: "E2E test /tmp cleanup as standard for resource cleanup PBIs", timing: "product", status: "active", outcome: null },
     ] },
   ],
 };
