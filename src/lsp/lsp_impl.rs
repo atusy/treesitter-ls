@@ -1143,6 +1143,10 @@ impl LanguageServer for TreeSitterLs {
         // Clean up semantic token cache for this document
         self.semantic_cache.remove(&uri);
 
+        // Clean up bridge documents - send didClose to all bridge servers
+        // and remove document version tracking to prevent memory leaks
+        self.tokio_async_pool.close_all_documents().await;
+
         self.client
             .log_message(MessageType::INFO, "file closed!")
             .await;

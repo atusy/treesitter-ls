@@ -318,6 +318,28 @@ impl TokioAsyncLanguageServerPool {
     pub fn document_versions_count(&self) -> usize {
         self.document_versions.len()
     }
+
+    /// Close all documents in all active connections.
+    ///
+    /// This sends textDocument/didClose for each virtual URI and clears all version tracking.
+    /// Should be called when a host document is closed to clean up bridge state.
+    pub async fn close_all_documents(&self) {
+        // Collect connection-uri pairs to avoid holding DashMap locks during async operations
+        let conn_uri_pairs: Vec<_> = self
+            .connections
+            .iter()
+            .filter_map(|entry| {
+                let key = entry.key().clone();
+                let conn = entry.value().clone();
+                self.virtual_uris.get(&key).map(|uri| (conn, uri.clone()))
+            })
+            .collect();
+
+        // Send didClose for each virtual URI
+        for (conn, virtual_uri) in conn_uri_pairs {
+            self.close_document_async(&conn, &virtual_uri).await;
+        }
+    }
 }
 
 /// High-level async bridge request methods.
