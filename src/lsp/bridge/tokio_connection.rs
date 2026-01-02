@@ -140,6 +140,36 @@ impl TokioAsyncBridgeConnection {
         })
     }
 
+    /// Handle a response message by routing it to the appropriate pending request.
+    ///
+    /// # Arguments
+    /// * `message` - The LSP response message with an "id" field
+    /// * `pending` - Map of pending requests awaiting responses
+    fn handle_response(message: Value, pending: &Arc<DashMap<i64, PendingRequest>>) {
+        if let Some(id) = message.get("id").and_then(|id| id.as_i64()) {
+            log::debug!(
+                target: "treesitter_ls::bridge::tokio",
+                "[READER] Routing response for id={}",
+                id
+            );
+
+            if let Some((_, sender)) = pending.remove(&id) {
+                let result = ResponseResult {
+                    response: Some(message),
+                    notifications: vec![],
+                };
+                // Send response (ignore error if receiver dropped)
+                let _ = sender.send(result);
+            } else {
+                log::warn!(
+                    target: "treesitter_ls::bridge::tokio",
+                    "[READER] No pending request for id={}",
+                    id
+                );
+            }
+        }
+    }
+
     /// Background reader loop that reads responses and routes them to callers.
     ///
     /// Uses tokio::select! to handle:
@@ -180,27 +210,8 @@ impl TokioAsyncBridgeConnection {
                     match result {
                         Ok(Some(message)) => {
                             // Check if this is a response (has "id" field)
-                            if let Some(id) = message.get("id").and_then(|id| id.as_i64()) {
-                                log::debug!(
-                                    target: "treesitter_ls::bridge::tokio",
-                                    "[READER] Routing response for id={}",
-                                    id
-                                );
-
-                                if let Some((_, sender)) = pending.remove(&id) {
-                                    let result = ResponseResult {
-                                        response: Some(message),
-                                        notifications: vec![],
-                                    };
-                                    // Send response (ignore error if receiver dropped)
-                                    let _ = sender.send(result);
-                                } else {
-                                    log::warn!(
-                                        target: "treesitter_ls::bridge::tokio",
-                                        "[READER] No pending request for id={}",
-                                        id
-                                    );
-                                }
+                            if message.get("id").is_some() {
+                                Self::handle_response(message, &pending);
                             } else if let Some(method) = message.get("method").and_then(|m| m.as_str()) {
                                 // This is a notification (method without id)
                                 // Check for $/progress notification and forward it
