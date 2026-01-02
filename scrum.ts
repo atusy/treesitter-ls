@@ -332,7 +332,7 @@ const scrum: ScrumDashboard = {
           verification: "Run `make test` and `make test_nvim` - all tests pass",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-166",
@@ -382,86 +382,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 130,
-    pbi_id: "PBI-165",
-    goal: "Make parser pool async-aware with spawn_blocking for parse operations",
-    status: "review",
-    subtasks: [
-      {
-        test: "Verify build compiles with tokio::sync::Mutex",
-        implementation: "Changed TreeSitterLs.parser_pool from std::sync::Mutex to tokio::sync::Mutex, removed all .recover_poison() calls",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: [
-          "Replaced std::sync::Mutex with tokio::sync::Mutex in lsp_impl.rs",
-          "Removed LockResultExt usage as tokio Mutex doesn't poison",
-          "Updated all .lock() calls to .lock().await throughout codebase",
-        ],
-      },
-      {
-        test: "Verify parse_document uses spawn_blocking and tests pass",
-        implementation: "Refactored parse_document to checkout parser, spawn_blocking for parse, then return parser",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: [
-          "Narrowed critical section: checkout → release lock → spawn_blocking(parse) → return parser",
-          "Cloned failed_parsers for use in spawn_blocking closure",
-          "All lsp_impl tests pass",
-        ],
-      },
-      {
-        test: "Verify semantic_tokens_full fallback parse uses spawn_blocking and tests pass",
-        implementation: "Refactored semantic_tokens_full_impl fallback parse path to use spawn_blocking",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: [
-          "Applied same pattern: checkout → spawn_blocking → return parser",
-          "Handles race condition where semantic tokens requested before didOpen completes",
-        ],
-      },
-      {
-        test: "Verify selection_range fallback parse uses spawn_blocking and tests pass",
-        implementation: "Refactored selection_range_impl fallback parse path to use spawn_blocking",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: [
-          "Applied same pattern for consistency",
-          "All tests pass",
-        ],
-      },
-    ],
-    review: {
-      date: "2026-01-03",
-      dod_results: {
-        unit_tests: "358/360 tests pass (2 flaky bridge tests documented in PBI-163)",
-        code_quality: "All checks pass: cargo check, cargo clippy, cargo fmt",
-        e2e_tests: "Deferred to integration testing - core functionality verified via unit tests",
-      },
-      acceptance_criteria_verification: [
-        {
-          criterion: "Parser pool uses tokio::sync::Mutex instead of std::sync::Mutex",
-          status: "VERIFIED",
-          evidence: "src/lsp/lsp_impl.rs:24 imports tokio::sync::Mutex, line 63 uses Mutex<DocumentParserPool>",
-        },
-        {
-          criterion: "Heavy parsing work offloaded to spawn_blocking",
-          status: "VERIFIED",
-          evidence: "parse_document (line 414), semantic_tokens_full (line 81), selection_range (line 50) all use spawn_blocking. Lock held only during checkout (lines 397-400) and return (lines 430-431)",
-        },
-        {
-          criterion: "All tests pass with async-aware parser pool",
-          status: "VERIFIED",
-          evidence: "358 tests pass. 2 failures are known flaky tests (PBI-163) unrelated to parser pool changes. make check passes cleanly.",
-        },
-      ],
-      increment_status: "PBI-165 COMPLETE: Parser pool is async-aware with tokio::sync::Mutex and spawn_blocking. Concurrent parses for different documents now possible without blocking tokio workers.",
-    },
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -471,7 +392,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-127: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-128: git log -- scrum.yaml, scrum.ts
   completed: [
     {
       number: 128,
