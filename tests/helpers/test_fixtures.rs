@@ -92,7 +92,9 @@ fn create_markdown_file(content: &str) -> (String, String, tempfile::NamedTempFi
 
     std::fs::write(temp_file.path(), content).expect("Failed to write temp file");
 
-    let uri = format!("file://{}", temp_file.path().display());
+    let uri = url::Url::from_file_path(temp_file.path())
+        .expect("Failed to construct file URI from temp file path")
+        .to_string();
 
     (uri, content.to_string(), temp_file)
 }
