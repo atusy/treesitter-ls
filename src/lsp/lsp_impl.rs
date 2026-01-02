@@ -241,8 +241,9 @@ impl TreeSitterLs {
             let edit_end = edit.old_end_byte;
 
             // Query interval tree for overlapping regions (O(log n) instead of O(n))
-            if let Some(overlapping_regions) =
-                self.injection_map.find_overlapping(uri, edit_start, edit_end)
+            if let Some(overlapping_regions) = self
+                .injection_map
+                .find_overlapping(uri, edit_start, edit_end)
             {
                 for region in overlapping_regions {
                     // This region is affected - invalidate its cache

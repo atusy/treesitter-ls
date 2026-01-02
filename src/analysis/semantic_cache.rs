@@ -135,12 +135,9 @@ impl InjectionMap {
 
     /// Retrieve all injection regions for a document.
     pub fn get(&self, uri: &Url) -> Option<Vec<CacheableInjectionRegion>> {
-        self.lappers.get(uri).map(|entry| {
-            entry
-                .iter()
-                .map(|interval| interval.val.clone())
-                .collect()
-        })
+        self.lappers
+            .get(uri)
+            .map(|entry| entry.iter().map(|interval| interval.val.clone()).collect())
     }
 
     /// Remove all injection regions for a document (e.g., on document close).
@@ -634,18 +631,27 @@ mod tests {
         let overlapping = overlapping.unwrap();
 
         // Should find regions 2 (200..250) and 3 (300..350)
-        assert_eq!(overlapping.len(), 2, "Should find exactly 2 overlapping regions");
+        assert_eq!(
+            overlapping.len(),
+            2,
+            "Should find exactly 2 overlapping regions"
+        );
 
-        let region_ids: Vec<&str> = overlapping.iter()
-            .map(|r| r.result_id.as_str())
-            .collect();
+        let region_ids: Vec<&str> = overlapping.iter().map(|r| r.result_id.as_str()).collect();
         assert!(region_ids.contains(&"region-2"), "Should include region-2");
         assert!(region_ids.contains(&"region-3"), "Should include region-3");
 
         // Query with no overlaps
         let no_overlap = map.find_overlapping(&uri, 60, 80);
-        assert!(no_overlap.is_some(), "Should return empty vec for no overlaps");
-        assert_eq!(no_overlap.unwrap().len(), 0, "Should have no overlapping regions");
+        assert!(
+            no_overlap.is_some(),
+            "Should return empty vec for no overlaps"
+        );
+        assert_eq!(
+            no_overlap.unwrap().len(),
+            0,
+            "Should have no overlapping regions"
+        );
 
         // Query on non-existent URI
         let other_uri = Url::parse("file:///other.md").unwrap();
