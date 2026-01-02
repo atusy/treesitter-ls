@@ -1,57 +1,13 @@
 pub mod defaults;
 pub mod settings;
-pub mod user;
+pub(crate) mod user;
 
 pub use settings::{
     BridgeServerConfig, CaptureMapping, CaptureMappings, LanguageConfig, LanguageSettings,
     QueryItem, QueryKind, QueryTypeMappings, TreeSitterSettings, WorkspaceSettings,
-    infer_query_kind,
 };
 use std::collections::HashMap;
-pub use user::{UserConfigError, UserConfigResult, load_user_config, user_config_path};
-
-/// Resolve a key from a map with wildcard fallback and merging.
-///
-/// Implements ADR-0011 wildcard config inheritance:
-/// - If both wildcard ("_") and specific key exist: merge them (specific overrides wildcard)
-/// - If only wildcard exists: return wildcard
-/// - If only specific key exists: return specific key
-/// - If neither exists: return None
-///
-/// The merge creates a new QueryTypeMappings where specific values override wildcard values.
-pub fn resolve_with_wildcard(map: &CaptureMappings, key: &str) -> Option<QueryTypeMappings> {
-    let wildcard = map.get("_");
-    let specific = map.get(key);
-
-    match (wildcard, specific) {
-        (Some(w), Some(s)) => {
-            // Merge: start with wildcard, override with specific
-            let mut merged_highlights = w.highlights.clone();
-            for (k, v) in &s.highlights {
-                merged_highlights.insert(k.clone(), v.clone());
-            }
-
-            let mut merged_locals = w.locals.clone();
-            for (k, v) in &s.locals {
-                merged_locals.insert(k.clone(), v.clone());
-            }
-
-            let mut merged_folds = w.folds.clone();
-            for (k, v) in &s.folds {
-                merged_folds.insert(k.clone(), v.clone());
-            }
-
-            Some(QueryTypeMappings {
-                highlights: merged_highlights,
-                locals: merged_locals,
-                folds: merged_folds,
-            })
-        }
-        (Some(w), None) => Some(w.clone()),
-        (None, Some(s)) => Some(s.clone()),
-        (None, None) => None,
-    }
-}
+pub(crate) use user::load_user_config;
 
 /// Deep merge two optional bridge HashMaps.
 /// Specific values override wildcard values for the same key.
@@ -71,66 +27,6 @@ fn merge_bridge_maps(
     }
 }
 
-/// Resolve a language key from a map with wildcard fallback and merging.
-///
-/// Implements ADR-0011 wildcard config inheritance for languages HashMap:
-/// - If both wildcard ("_") and specific key exist: merge them (specific overrides wildcard)
-/// - If only wildcard exists: return wildcard
-/// - If only specific key exists: return specific key
-/// - If neither exists: return None
-///
-/// The merge creates a new LanguageConfig where specific values override wildcard values.
-pub fn resolve_language_with_wildcard(
-    map: &HashMap<String, LanguageConfig>,
-    key: &str,
-) -> Option<LanguageConfig> {
-    let wildcard = map.get("_");
-    let specific = map.get(key);
-
-    match (wildcard, specific) {
-        (Some(w), Some(s)) => {
-            // Merge: start with wildcard, override with specific
-            Some(LanguageConfig {
-                library: s.library.clone().or_else(|| w.library.clone()),
-                queries: s.queries.clone().or_else(|| w.queries.clone()),
-                highlights: s.highlights.clone().or_else(|| w.highlights.clone()),
-                locals: s.locals.clone().or_else(|| w.locals.clone()),
-                injections: s.injections.clone().or_else(|| w.injections.clone()),
-                // Deep merge bridge HashMaps: wildcard + specific
-                bridge: merge_bridge_maps(&w.bridge, &s.bridge),
-            })
-        }
-        (Some(w), None) => Some(w.clone()),
-        (None, Some(s)) => Some(s.clone()),
-        (None, None) => None,
-    }
-}
-
-/// Resolve a bridge language key from a map with wildcard fallback.
-///
-/// Implements ADR-0011 wildcard config inheritance for bridge HashMap:
-/// - If both wildcard ("_") and specific key exist: return specific (no merge needed for single-field struct)
-/// - If only wildcard exists: return wildcard
-/// - If only specific key exists: return specific key
-/// - If neither exists: return None
-///
-/// Note: BridgeLanguageConfig only has `enabled` field, so no merging is needed.
-pub fn resolve_bridge_with_wildcard(
-    map: &HashMap<String, settings::BridgeLanguageConfig>,
-    key: &str,
-) -> Option<settings::BridgeLanguageConfig> {
-    let wildcard = map.get("_");
-    let specific = map.get(key);
-
-    match (wildcard, specific) {
-        // Specific overrides wildcard entirely (no merge for single-field struct)
-        (Some(_), Some(s)) => Some(s.clone()),
-        (Some(w), None) => Some(w.clone()),
-        (None, Some(s)) => Some(s.clone()),
-        (None, None) => None,
-    }
-}
-
 /// Resolve a language server key from a map with wildcard fallback and merging.
 ///
 /// Implements ADR-0011 wildcard config inheritance for languageServers HashMap:
@@ -140,7 +36,7 @@ pub fn resolve_bridge_with_wildcard(
 /// - If neither exists: return None
 ///
 /// The merge creates a new BridgeServerConfig where specific values override wildcard values.
-pub fn resolve_language_server_with_wildcard(
+pub(crate) fn resolve_language_server_with_wildcard(
     map: &HashMap<String, settings::BridgeServerConfig>,
     key: &str,
 ) -> Option<settings::BridgeServerConfig> {
@@ -186,7 +82,7 @@ pub fn resolve_language_server_with_wildcard(
 ///
 /// The merge creates a new LanguageSettings where specific values override wildcard values.
 /// This is used by get_bridge_config_for_language to look up host language settings.
-pub fn resolve_language_settings_with_wildcard(
+pub(crate) fn resolve_language_settings_with_wildcard(
     map: &HashMap<String, LanguageSettings>,
     key: &str,
 ) -> Option<LanguageSettings> {
@@ -224,7 +120,7 @@ pub fn resolve_language_settings_with_wildcard(
 ///
 /// Note: Returns the base directory only. The resolver functions append
 /// "parser/" or "queries/" subdirectories as needed.
-pub fn default_search_paths() -> Vec<String> {
+pub(crate) fn default_search_paths() -> Vec<String> {
     crate::install::default_data_dir()
         .map(|d| vec![d.to_string_lossy().to_string()])
         .unwrap_or_default()
@@ -233,7 +129,7 @@ pub fn default_search_paths() -> Vec<String> {
 /// Merge multiple TreeSitterSettings configs in order.
 /// Later configs in the slice have higher precedence (override earlier ones).
 /// Use this for layered config: `merge_all(&[defaults, user, project, session])`
-pub fn merge_all(configs: &[Option<TreeSitterSettings>]) -> Option<TreeSitterSettings> {
+pub(crate) fn merge_all(configs: &[Option<TreeSitterSettings>]) -> Option<TreeSitterSettings> {
     configs.iter().cloned().reduce(merge_settings).flatten()
 }
 
@@ -475,10 +371,7 @@ fn merge_language_servers(
     }
 }
 
-fn merge_capture_mappings(
-    mut base: CaptureMappings,
-    overlay: CaptureMappings,
-) -> CaptureMappings {
+fn merge_capture_mappings(mut base: CaptureMappings, overlay: CaptureMappings) -> CaptureMappings {
     // Deep merge: overlay values override base values for the same key
     for (lang, overlay_mappings) in overlay {
         base.entry(lang)
@@ -497,6 +390,112 @@ fn merge_capture_mappings(
             .or_insert(overlay_mappings);
     }
     base
+}
+
+/// Resolve a key from a map with wildcard fallback and merging (test helper).
+///
+/// Implements ADR-0011 wildcard config inheritance:
+/// - If both wildcard ("_") and specific key exist: merge them (specific overrides wildcard)
+/// - If only wildcard exists: return wildcard
+/// - If only specific key exists: return specific key
+/// - If neither exists: return None
+///
+/// The merge creates a new QueryTypeMappings where specific values override wildcard values.
+#[cfg(test)]
+pub(crate) fn resolve_with_wildcard(map: &CaptureMappings, key: &str) -> Option<QueryTypeMappings> {
+    let wildcard = map.get("_");
+    let specific = map.get(key);
+
+    match (wildcard, specific) {
+        (Some(w), Some(s)) => {
+            // Merge: start with wildcard, override with specific
+            let mut merged_highlights = w.highlights.clone();
+            for (k, v) in &s.highlights {
+                merged_highlights.insert(k.clone(), v.clone());
+            }
+
+            let mut merged_locals = w.locals.clone();
+            for (k, v) in &s.locals {
+                merged_locals.insert(k.clone(), v.clone());
+            }
+
+            let mut merged_folds = w.folds.clone();
+            for (k, v) in &s.folds {
+                merged_folds.insert(k.clone(), v.clone());
+            }
+
+            Some(QueryTypeMappings {
+                highlights: merged_highlights,
+                locals: merged_locals,
+                folds: merged_folds,
+            })
+        }
+        (Some(w), None) => Some(w.clone()),
+        (None, Some(s)) => Some(s.clone()),
+        (None, None) => None,
+    }
+}
+
+/// Resolve a language key from a map with wildcard fallback and merging (test helper).
+///
+/// Implements ADR-0011 wildcard config inheritance for languages HashMap:
+/// - If both wildcard ("_") and specific key exist: merge them (specific overrides wildcard)
+/// - If only wildcard exists: return wildcard
+/// - If only specific key exists: return specific key
+/// - If neither exists: return None
+///
+/// The merge creates a new LanguageConfig where specific values override wildcard values.
+#[cfg(test)]
+pub(crate) fn resolve_language_with_wildcard(
+    map: &HashMap<String, LanguageConfig>,
+    key: &str,
+) -> Option<LanguageConfig> {
+    let wildcard = map.get("_");
+    let specific = map.get(key);
+
+    match (wildcard, specific) {
+        (Some(w), Some(s)) => {
+            // Merge: start with wildcard, override with specific
+            Some(LanguageConfig {
+                library: s.library.clone().or_else(|| w.library.clone()),
+                queries: s.queries.clone().or_else(|| w.queries.clone()),
+                highlights: s.highlights.clone().or_else(|| w.highlights.clone()),
+                locals: s.locals.clone().or_else(|| w.locals.clone()),
+                injections: s.injections.clone().or_else(|| w.injections.clone()),
+                // Deep merge bridge HashMaps: wildcard + specific
+                bridge: merge_bridge_maps(&w.bridge, &s.bridge),
+            })
+        }
+        (Some(w), None) => Some(w.clone()),
+        (None, Some(s)) => Some(s.clone()),
+        (None, None) => None,
+    }
+}
+
+/// Resolve a bridge language key from a map with wildcard fallback (test helper).
+///
+/// Implements ADR-0011 wildcard config inheritance for bridge HashMap:
+/// - If both wildcard ("_") and specific key exist: return specific (no merge needed for single-field struct)
+/// - If only wildcard exists: return wildcard
+/// - If only specific key exists: return specific key
+/// - If neither exists: return None
+///
+/// Note: BridgeLanguageConfig only has `enabled` field, so no merging is needed.
+#[cfg(test)]
+pub(crate) fn resolve_bridge_with_wildcard(
+    map: &HashMap<String, settings::BridgeLanguageConfig>,
+    key: &str,
+) -> Option<settings::BridgeLanguageConfig> {
+    let wildcard = map.get("_");
+    let specific = map.get(key);
+
+    match (wildcard, specific) {
+        // Specific overrides wildcard entirely (no merge for single-field struct)
+        (Some(_), Some(s)) => Some(s.clone()),
+        (Some(w), None) => Some(w.clone()),
+        (None, Some(s)) => Some(s.clone()),
+        (None, None) => None,
+    }
 }
 
 #[cfg(test)]
