@@ -10,7 +10,7 @@ use crate::analysis::next_result_id;
 use crate::analysis::{
     InjectionMap, InjectionTokenCache, LEGEND_MODIFIERS, LEGEND_TYPES, SemanticTokenCache,
 };
-use crate::config::{TreeSitterSettings, WorkspaceSettings, resolve_language_settings_with_wildcard};
+use crate::config::{TreeSitterSettings, WorkspaceSettings, resolve_language_settings_with_wildcard, resolve_language_server_with_wildcard};
 use crate::document::DocumentStore;
 use crate::error::LockResultExt;
 use crate::language::injection::{CacheableInjectionRegion, collect_all_injections};
@@ -492,9 +492,15 @@ impl TreeSitterLs {
         // Check if language servers exist
         if let Some(ref servers) = settings.language_servers {
             // Look for a server that handles this language
-            for config in servers.values() {
+            for (server_name, config) in servers.iter() {
+                // Skip wildcard entry - we use it for inheritance, not direct lookup
+                if server_name == "_" {
+                    continue;
+                }
+
                 if config.languages.iter().any(|l| l == injection_language) {
-                    return Some(config.clone());
+                    // Use wildcard resolution to merge with languageServers._ defaults (ADR-0011)
+                    return resolve_language_server_with_wildcard(servers, server_name);
                 }
             }
         }
@@ -2135,6 +2141,64 @@ mod tests {
         assert!(
             !quarto_settings.is_language_bridgeable("python"),
             "quarto (inherited from wildcard) should block bridging for python"
+        );
+    }
+
+    /// PBI-155 Subtask 3: Test that server lookup uses wildcard resolution
+    ///
+    /// This test verifies that when looking up a language server config by name,
+    /// the wildcard server settings (languageServers._) are merged with specific
+    /// server settings.
+    ///
+    /// Key behavior:
+    /// - languageServers._ defines default initialization options
+    /// - languageServers.rust-analyzer overrides only the cmd
+    /// - The resolved rust-analyzer should have both cmd (from specific) and
+    ///   initialization_options (inherited from wildcard)
+    #[test]
+    fn test_language_server_config_inherits_from_wildcard() {
+        use crate::config::{resolve_language_server_with_wildcard, settings::BridgeServerConfig};
+        use serde_json::json;
+
+        let mut servers: HashMap<String, BridgeServerConfig> = HashMap::new();
+
+        // Wildcard server: default initialization options and workspace_type
+        servers.insert(
+            "_".to_string(),
+            BridgeServerConfig {
+                cmd: vec![],
+                languages: vec![],
+                initialization_options: Some(json!({ "checkOnSave": true })),
+                workspace_type: Some(crate::config::settings::WorkspaceType::Generic),
+            },
+        );
+
+        // rust-analyzer: only specifies cmd and languages
+        servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["rust-analyzer".to_string()],
+                languages: vec!["rust".to_string()],
+                initialization_options: None, // Should inherit from wildcard
+                workspace_type: None,          // Should inherit from wildcard
+            },
+        );
+
+        // Test: rust-analyzer should merge with wildcard
+        let ra = resolve_language_server_with_wildcard(&servers, "rust-analyzer").unwrap();
+
+        // cmd from specific
+        assert_eq!(ra.cmd, vec!["rust-analyzer".to_string()]);
+        // languages from specific
+        assert_eq!(ra.languages, vec!["rust".to_string()]);
+        // initialization_options inherited from wildcard
+        assert!(ra.initialization_options.is_some());
+        let opts = ra.initialization_options.as_ref().unwrap();
+        assert_eq!(opts.get("checkOnSave"), Some(&json!(true)));
+        // workspace_type inherited from wildcard
+        assert_eq!(
+            ra.workspace_type,
+            Some(crate::config::settings::WorkspaceType::Generic)
         );
     }
 
