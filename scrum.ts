@@ -148,7 +148,7 @@ const scrum: ScrumDashboard = {
           verification: "Run `make test` and `make test_nvim` - all tests pass",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-158",
@@ -217,7 +217,7 @@ const scrum: ScrumDashboard = {
           verification: "Run `make test` and `make test_nvim` - all tests pass",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-161",
