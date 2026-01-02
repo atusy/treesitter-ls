@@ -116,7 +116,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-122: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-123: git log -- scrum.yaml, scrum.ts
   completed: [
     { number: 120, pbi_id: "PBI-151", goal: "Migrate critical Neovim E2E tests (hover, completion, references) to Rust with snapshot verification, establishing reusable patterns and helpers for future migrations", status: "done", subtasks: [] },
     { number: 119, pbi_id: "PBI-150", goal: "Implement Rust-based E2E testing infrastructure for go-to-definition with snapshot testing, enabling faster and more reliable tests without Neovim dependency", status: "done", subtasks: [] },
@@ -124,12 +124,13 @@ const scrum: ScrumDashboard = {
 
   // Recent 2 retrospectives | Sprint 1-120: ADR-driven development, reusable patterns, E2E test timing
   retrospectives: [
-    { sprint: 124, improvements: [
-      { action: "Continue with PBI-152 to address robustness issues (backpressure, notification overflow, resource cleanup, initialization timeout)", timing: "product", status: "active", outcome: null },
-      { action: "Consider simplifying spawn_locks pattern in future if cleaner alternative emerges", timing: "product", status: "active", outcome: null },
+    { sprint: 125, improvements: [
+      { action: "Wire close_document() to didClose LSP events in future sprint - currently implemented but not connected to actual document close events", timing: "product", status: "active", outcome: null },
+      { action: "Update review-stability.md to mark all issues as resolved - PBI-150 (resource cleanup), PBI-151 (race conditions), PBI-152 (robustness) completed", timing: "immediate", status: "completed", outcome: "Added resolution notes to review-stability.md marking HIGH-3, HIGH-4, HIGH-6, MEDIUM-2 as RESOLVED with sprint references" },
     ] },
-    { sprint: 123, improvements: [
-      { action: "Refactor repeated cleanup pattern (collect IDs, iterate, remove, send None) into helper method - pattern appears in 3 places: EOF (Ok/Err branches), Drop impl", timing: "immediate", status: "completed", outcome: "Created clear_all_pending_requests() helper method, replaced 3 duplicated cleanup blocks (lines 223, 235, 456 in tokio_connection.rs)" },
+    { sprint: 124, improvements: [
+      { action: "Continue with PBI-152 to address robustness issues (backpressure, notification overflow, resource cleanup, initialization timeout)", timing: "product", status: "completed", outcome: "PBI-152 completed in Sprint 125 with all 4 robustness improvements implemented" },
+      { action: "Consider simplifying spawn_locks pattern in future if cleaner alternative emerges", timing: "product", status: "active", outcome: null },
     ] },
     { sprint: 122, improvements: [
       { action: "Delete E2E test files for removed features (13 files)", timing: "immediate", status: "completed", outcome: "Deleted 13 obsolete test files - retained: hover, completion, definition, signature_help + infrastructure tests" },
