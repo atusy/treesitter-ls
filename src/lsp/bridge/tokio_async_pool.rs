@@ -314,6 +314,59 @@ impl TokioAsyncLanguageServerPool {
             .and_then(|r| serde_json::from_value(r).ok())
     }
 
+    /// Send a completion request asynchronously.
+    ///
+    /// # Arguments
+    /// * `key` - Connection pool key
+    /// * `config` - Server configuration
+    /// * `_uri` - Document URI (unused, we use virtual URI)
+    /// * `language_id` - Language ID for the document
+    /// * `content` - Document content
+    /// * `position` - Completion position
+    pub async fn completion(
+        &self,
+        key: &str,
+        config: &BridgeServerConfig,
+        _uri: &str,
+        language_id: &str,
+        content: &str,
+        position: tower_lsp::lsp_types::Position,
+    ) -> Option<tower_lsp::lsp_types::CompletionResponse> {
+        let conn = self.get_connection(key, config).await?;
+
+        // Get virtual file URI
+        let virtual_uri = self.get_virtual_uri(key)?;
+
+        // Sync document (didOpen on first access, didChange on subsequent)
+        self.sync_document(&conn, &virtual_uri, language_id, content)
+            .await?;
+
+        // Send completion request
+        let params = serde_json::json!({
+            "textDocument": { "uri": virtual_uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let (_, receiver) = conn
+            .send_request("textDocument/completion", params)
+            .await
+            .ok()?;
+
+        // Await response asynchronously with timeout
+        let result = tokio::time::timeout(std::time::Duration::from_secs(30), receiver)
+            .await
+            .ok()?
+            .ok()?;
+
+        // Parse response
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
     /// Sync document content with the language server.
     ///
     /// On first access for a URI: sends didOpen with version 1.
@@ -581,6 +634,35 @@ mod tests {
                 .await
             {
                 return Some(hover);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        None
+    }
+
+    /// Retry completion request until success or max attempts reached.
+    ///
+    /// rust-analyzer may return None while indexing. This helper retries
+    /// up to 10 times with 500ms delay between attempts.
+    async fn completion_with_retry(
+        pool: &super::TokioAsyncLanguageServerPool,
+        config: &BridgeServerConfig,
+        content: &str,
+        position: tower_lsp::lsp_types::Position,
+    ) -> Option<tower_lsp::lsp_types::CompletionResponse> {
+        for _ in 0..10 {
+            if let Some(completion) = pool
+                .completion(
+                    "rust-analyzer",
+                    config,
+                    "file:///test.rs",
+                    "rust",
+                    content,
+                    position,
+                )
+                .await
+            {
+                return Some(completion);
             }
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
@@ -927,6 +1009,43 @@ mod tests {
         assert!(
             definition.is_some(),
             "goto_definition() should return Some(GotoDefinitionResponse) for 'get_value' call"
+        );
+    }
+
+    /// Test that completion() returns Some(CompletionResponse) from rust-analyzer.
+    ///
+    /// This verifies PBI-142 AC1: TokioAsyncLanguageServerPool.completion() method
+    /// implemented with async request/response pattern.
+    #[tokio::test]
+    async fn completion_returns_response_from_rust_analyzer() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Code with an incomplete method call to trigger completion
+        let content = "fn main() { let s = String::n }";
+        let position = tower_lsp::lsp_types::Position {
+            line: 0,
+            character: 30, // Position after 'n' in 'String::n'
+        };
+
+        // Use retry helper to handle indexing delays
+        let completion = completion_with_retry(&pool, &config, content, position).await;
+
+        assert!(
+            completion.is_some(),
+            "completion() should return Some(CompletionResponse) for incomplete 'String::n'"
         );
     }
 }

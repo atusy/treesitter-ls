@@ -146,4 +146,94 @@ T["markdown"]["completion returns items with adjusted textEdit ranges"] = functi
 	end
 end
 
+-- Test Rust completion with retry mechanism to verify async path resilience (PBI-142 AC3)
+T["markdown_rust_async"] = create_file_test_set(".md", {
+	"# String Methods Example",
+	"",
+	"```rust",
+	"fn main() {",
+	"    let s = String::n", -- line 5, completion after "String::n"
+	"}",
+	"```",
+})
+
+T["markdown_rust_async"]["completion_through_async_path_with_retry"] = function()
+	-- Position cursor after "String::n" on line 5 (1-indexed in Vim)
+	child.cmd([[normal! 5G$]])
+
+	-- Retry completion request - rust-analyzer may need time to index
+	local got_completion = false
+	for attempt = 1, 20 do
+		-- Request completion
+		child.lua([[
+			_G.completion_result = nil
+			local bufnr = vim.api.nvim_get_current_buf()
+			local clients = vim.lsp.get_clients({ bufnr = bufnr, name = "treesitter-ls" })
+			if #clients == 0 then
+				_G.completion_result = { error = "No LSP client found" }
+				return
+			end
+
+			local client = clients[1]
+			local params = vim.lsp.util.make_position_params(0, client.offset_encoding or "utf-16")
+			local results = vim.lsp.buf_request_sync(bufnr, "textDocument/completion", params, 3000)
+
+			if not results then
+				_G.completion_result = { error = "No completion response" }
+				return
+			end
+
+			for client_id, response in pairs(results) do
+				if response.result then
+					local items = response.result.items or response.result
+					if type(items) == "table" and #items > 0 then
+						-- Look for "new" in completion items (String::new)
+						for _, item in ipairs(items) do
+							if item.label and item.label == "new" then
+								_G.completion_result = {
+									success = true,
+									item_label = item.label,
+									has_textEdit = item.textEdit ~= nil,
+								}
+								return
+							end
+						end
+						-- Got items but no "new" - save for debugging
+						_G.completion_result = {
+							count = #items,
+							first_labels = vim.tbl_map(function(x) return x.label end, vim.list_slice(items, 1, 5)),
+						}
+						return
+					end
+				elseif response.err then
+					_G.completion_result = { error = vim.inspect(response.err) }
+					return
+				end
+			end
+
+			_G.completion_result = { error = "No valid completion items found" }
+		]])
+
+		local result = child.lua_get([[_G.completion_result]])
+
+		if result.success then
+			got_completion = true
+			-- Verify we got the expected completion item
+			MiniTest.expect.equality(result.item_label, "new", "Should get 'new' completion for String::n")
+			MiniTest.expect.equality(result.has_textEdit, true, "Completion item should have textEdit")
+			break
+		end
+
+		-- Wait before retry (rust-analyzer may still be indexing)
+		vim.wait(500)
+	end
+
+	-- Assert that we eventually got completion
+	MiniTest.expect.equality(
+		got_completion,
+		true,
+		"Should eventually get completion through async path (rust-analyzer may need time to index)"
+	)
+end
+
 return T
