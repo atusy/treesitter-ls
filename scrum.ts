@@ -106,7 +106,53 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 124,
+    pbi_id: "PBI-151",
+    goal: "Fix race conditions in version numbering and connection spawning to ensure LSP protocol compliance and efficient resource usage",
+    status: "done" as SprintStatus,
+    subtasks: [
+      {
+        test: "Test: Concurrent sync_document calls produce monotonically increasing version numbers without duplicates",
+        implementation: "Use DashMap entry API for atomic version increment in sync_document",
+        type: "behavioral" as SubtaskType,
+        status: "completed" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Current: separate read (get_document_version) + compute (current_version + 1) + write (set_document_version) allows duplicates",
+          "Fix: Use DashMap::entry().and_modify().or_insert() for atomic read-modify-write",
+          "Files: src/lsp/bridge/tokio_async_pool.rs (sync_document method, increment_document_version helper)",
+          "Implementation: Created increment_document_version() method using DashMap entry API for atomic increment"
+        ],
+      },
+      {
+        test: "Test: Concurrent get_connection calls spawn exactly one language server process",
+        implementation: "Use per-key mutex to prevent concurrent spawns for the same key",
+        type: "behavioral" as SubtaskType,
+        status: "completed" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Current: check (connections.get) + spawn + insert allows concurrent spawns between check and insert",
+          "Fix: Use per-key Mutex with double-check locking pattern to serialize spawns per key",
+          "Files: src/lsp/bridge/tokio_async_pool.rs (get_connection method, spawn_locks field)",
+          "Implementation: Added spawn_locks: Mutex<HashMap<String, Arc<Mutex<()>>>> to hold lock across async spawn"
+        ],
+      },
+      {
+        test: "Test: Run concurrent operation tests to verify both fixes",
+        implementation: "Add integration tests for concurrent sync_document and concurrent get_connection",
+        type: "behavioral" as SubtaskType,
+        status: "completed" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Test 1: Send 10 concurrent sync_document calls, collect versions, verify sequence 1,2,3,...,10 with no duplicates",
+          "Test 2: Send 10 concurrent get_connection calls, verify only one connection instance created",
+          "Files: src/lsp/bridge/tokio_async_pool.rs (#[cfg(test)] mod tests)",
+          "Tests added: concurrent_sync_document_produces_unique_sequential_versions, concurrent_get_connection_spawns_single_process"
+        ],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
