@@ -106,7 +106,84 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 121,
+    pbi_id: "PBI-143",
+    goal: "Implement async signatureHelp for Markdown code blocks, enabling signature help requests to use fully async I/O without blocking other LSP requests, with full E2E_TEST_CHECKLIST.md compliance from the start",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "Unit test in tokio_async_pool.rs verifies pool.signature_help() returns Some(SignatureHelp) from rust-analyzer",
+        implementation: "Add signature_help() method to TokioAsyncLanguageServerPool following completion() pattern (async request/response with 30s timeout)",
+        type: "behavioral",
+        status: "completed",
+        commits: [
+          {
+            hash: "7983721",
+            message: "feat(async): add signature_help() method to TokioAsyncLanguageServerPool",
+            phase: "green",
+          },
+        ],
+        notes: [
+          "Pattern: Copy completion() method (lines 326-368 in tokio_async_pool.rs)",
+          "Change request method to 'textDocument/signatureHelp'",
+          "Change return type to tower_lsp::lsp_types::SignatureHelp",
+          "Follow same sync_document -> send_request -> await response pattern",
+        ],
+      },
+      {
+        test: "Grep verification confirms signature_help.rs uses async pool.signature_help() (no spawn_blocking)",
+        implementation: "Refactor signature_help handler to use tokio_async_pool.signature_help() instead of spawn_blocking path",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Replace spawn_blocking call (line 137) with async pool.signature_help()",
+          "Remove manual notification forwarding (lines 165-175) - async pool handles it",
+          "Follow hover handler refactoring pattern from Sprint 118",
+        ],
+      },
+      {
+        test: "Checklist review documented in commit message (Pre-implementation step from Sprint 120 Retrospective)",
+        implementation: "Review E2E_TEST_CHECKLIST.md and existing test helpers before writing test code",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: [
+          "CRITICAL: This is the Sprint 120 Retrospective action - must be done BEFORE Subtask 4",
+          "Review scripts/minimal_init.lua for helper.retry_for_lsp_indexing() usage",
+          "Review test_lsp_hover.lua and test_lsp_completion.lua for established patterns",
+          "Identify violations in current test_lsp_signature_help.lua (manual sleep, weak assertions)",
+        ],
+      },
+      {
+        test: "E2E test uses helper.retry_for_lsp_indexing() and verifies signature help returns valid response for function call",
+        implementation: "Refactor test_lsp_signature_help.lua to use retry helper instead of manual sleep, strengthen assertions",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "MUST use _G.helper.retry_for_lsp_indexing() from scripts/minimal_init.lua",
+          "Remove vim.uv.sleep(3000) and manual retry loop (current line 55)",
+          "Verify specific signature details: label contains 'add', parameter info present",
+          "Follow E2E_TEST_CHECKLIST.md mandatory patterns (lines 15-38)",
+        ],
+      },
+      {
+        test: "E2E test 'markdown_rust_async_signature_help' verifies async path with realistic scenario showing parameter hints",
+        implementation: "Add dedicated async path E2E test that exercises full signature_help request/response cycle",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Test name must have '_async' suffix per E2E_TEST_CHECKLIST.md",
+          "Realistic scenario: Function with multiple parameters, verify activeParameter tracking",
+          "Strong assertions: Verify signature.parameters array, activeParameter index",
+          "Use helper.retry_for_lsp_indexing() for resilience",
+        ],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
