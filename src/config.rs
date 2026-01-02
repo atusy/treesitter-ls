@@ -53,6 +53,24 @@ pub fn resolve_with_wildcard(map: &CaptureMappings, key: &str) -> Option<QueryTy
     }
 }
 
+/// Deep merge two optional bridge HashMaps.
+/// Specific values override wildcard values for the same key.
+fn merge_bridge_maps(
+    wildcard: &Option<HashMap<String, settings::BridgeLanguageConfig>>,
+    specific: &Option<HashMap<String, settings::BridgeLanguageConfig>>,
+) -> Option<HashMap<String, settings::BridgeLanguageConfig>> {
+    match (wildcard, specific) {
+        (None, None) => None,
+        (Some(wb), None) => Some(wb.clone()),
+        (None, Some(sb)) => Some(sb.clone()),
+        (Some(wb), Some(sb)) => {
+            let mut merged = wb.clone();
+            merged.extend(sb.clone());
+            Some(merged)
+        }
+    }
+}
+
 /// Resolve a language key from a map with wildcard fallback and merging.
 ///
 /// Implements ADR-0011 wildcard config inheritance for languages HashMap:
@@ -78,7 +96,8 @@ pub fn resolve_language_with_wildcard(
                 highlights: s.highlights.clone().or_else(|| w.highlights.clone()),
                 locals: s.locals.clone().or_else(|| w.locals.clone()),
                 injections: s.injections.clone().or_else(|| w.injections.clone()),
-                bridge: s.bridge.clone().or_else(|| w.bridge.clone()),
+                // Deep merge bridge HashMaps: wildcard + specific
+                bridge: merge_bridge_maps(&w.bridge, &s.bridge),
             })
         }
         (Some(w), None) => Some(w.clone()),
@@ -187,8 +206,8 @@ pub fn resolve_language_settings_with_wildcard(
                 },
                 locals: s.locals.clone().or_else(|| w.locals.clone()),
                 injections: s.injections.clone().or_else(|| w.injections.clone()),
-                // For bridge: specific overrides wildcard entirely (no deep merge)
-                bridge: s.bridge.clone().or_else(|| w.bridge.clone()),
+                // Deep merge bridge HashMaps: wildcard + specific
+                bridge: merge_bridge_maps(&w.bridge, &s.bridge),
             })
         }
         (Some(w), None) => Some(w.clone()),
@@ -1728,7 +1747,7 @@ mod tests {
             "Python should inherit library from wildcard"
         );
 
-        // Bridge should be from python-specific (not merged with wildcard bridge)
+        // Bridge should be deep merged: wildcard + python-specific
         assert!(lang_config.bridge.is_some(), "Python should have bridge");
         let bridge = lang_config.bridge.as_ref().unwrap();
 
@@ -1740,12 +1759,16 @@ mod tests {
             "Python's javascript bridge should be disabled (override)"
         );
 
-        // Rust: not in python bridge, should NOT inherit from _.bridge._
-        // because python has its own bridge map that doesn't include _
+        // Rust: inherited from _.bridge._ through deep merge
+        // ADR-0011: bridge maps are deep merged, so python gets wildcard's bridge._
         let rust_resolved = resolve_bridge_with_wildcard(bridge, "rust");
         assert!(
-            rust_resolved.is_none(),
-            "Python's rust bridge should not resolve (no wildcard in python's bridge)"
+            rust_resolved.is_some(),
+            "Python's rust bridge should resolve (inherited from wildcard's bridge._)"
+        );
+        assert!(
+            rust_resolved.unwrap().enabled,
+            "Python's rust bridge should be enabled (from wildcard's bridge._)"
         );
     }
 
@@ -1857,6 +1880,98 @@ mod tests {
         assert!(
             resolved_bridge.unwrap().enabled,
             "Nested wildcard resolution: languages._.bridge._ should apply to python.bridge.rust"
+        );
+    }
+
+    #[test]
+    fn test_resolve_language_with_wildcard_deep_merges_bridge_maps() {
+        // ADR-0011: Bridge maps should be deep merged, not overridden
+        //
+        // Setup:
+        // - languages._.bridge = { rust: enabled=true, go: enabled=true }
+        // - languages.python.bridge = { javascript: enabled=false }
+        //
+        // Expected after merge:
+        // - languages.python.bridge = { rust: true, go: true, javascript: false }
+        //
+        // This tests that python inherits rust/go from wildcard while adding
+        // its own javascript setting.
+        let mut languages: HashMap<String, LanguageConfig> = HashMap::new();
+
+        // Wildcard has default bridge settings for rust and go
+        let mut wildcard_bridge = HashMap::new();
+        wildcard_bridge.insert(
+            "rust".to_string(),
+            settings::BridgeLanguageConfig { enabled: true },
+        );
+        wildcard_bridge.insert(
+            "go".to_string(),
+            settings::BridgeLanguageConfig { enabled: true },
+        );
+
+        languages.insert(
+            "_".to_string(),
+            LanguageConfig {
+                library: Some("/default/path.so".to_string()),
+                queries: None,
+                highlights: None,
+                locals: None,
+                injections: None,
+                bridge: Some(wildcard_bridge),
+            },
+        );
+
+        // Python adds javascript bridge but should inherit rust/go from wildcard
+        let mut python_bridge = HashMap::new();
+        python_bridge.insert(
+            "javascript".to_string(),
+            settings::BridgeLanguageConfig { enabled: false },
+        );
+
+        languages.insert(
+            "python".to_string(),
+            LanguageConfig {
+                library: None, // Inherits from wildcard
+                queries: None,
+                highlights: None,
+                locals: None,
+                injections: None,
+                bridge: Some(python_bridge),
+            },
+        );
+
+        // Resolve for "python" - bridge should be deep merged with wildcard
+        let resolved = resolve_language_with_wildcard(&languages, "python");
+        assert!(resolved.is_some());
+        let lang_config = resolved.unwrap();
+
+        // Library should be inherited from wildcard
+        assert_eq!(
+            lang_config.library,
+            Some("/default/path.so".to_string()),
+            "Python should inherit library from wildcard"
+        );
+
+        // Bridge should be deep merged
+        assert!(lang_config.bridge.is_some(), "Python should have bridge");
+        let bridge = lang_config.bridge.as_ref().unwrap();
+
+        // rust: inherited from wildcard
+        assert!(
+            bridge.get("rust").is_some_and(|c| c.enabled),
+            "Python should inherit rust bridge from wildcard (deep merge)"
+        );
+
+        // go: inherited from wildcard
+        assert!(
+            bridge.get("go").is_some_and(|c| c.enabled),
+            "Python should inherit go bridge from wildcard (deep merge)"
+        );
+
+        // javascript: python-specific
+        assert!(
+            bridge.get("javascript").is_some_and(|c| !c.enabled),
+            "Python should have its own javascript bridge setting"
         );
     }
 
