@@ -10,7 +10,10 @@ use crate::analysis::next_result_id;
 use crate::analysis::{
     InjectionMap, InjectionTokenCache, LEGEND_MODIFIERS, LEGEND_TYPES, SemanticTokenCache,
 };
-use crate::config::{TreeSitterSettings, WorkspaceSettings, resolve_language_settings_with_wildcard, resolve_language_server_with_wildcard};
+use crate::config::{
+    TreeSitterSettings, WorkspaceSettings, resolve_language_server_with_wildcard,
+    resolve_language_settings_with_wildcard,
+};
 use crate::document::DocumentStore;
 use crate::language::injection::{CacheableInjectionRegion, collect_all_injections};
 use crate::language::{DocumentParserPool, FailedParserRegistry, LanguageCoordinator};
@@ -495,7 +498,8 @@ impl TreeSitterLs {
 
         // Use wildcard resolution for host language lookup (ADR-0011)
         // This allows languages._ to define default bridge filters
-        if let Some(host_settings) = resolve_language_settings_with_wildcard(&settings.languages, host_language)
+        if let Some(host_settings) =
+            resolve_language_settings_with_wildcard(&settings.languages, host_language)
             && !host_settings.is_language_bridgeable(injection_language)
         {
             log::debug!(
@@ -1657,8 +1661,8 @@ mod tests {
     /// - When looking up "quarto" (not defined), it should inherit from languages._
     #[test]
     fn test_language_config_inherits_from_wildcard() {
-        use crate::config::{LanguageConfig, resolve_language_with_wildcard};
         use crate::config::settings::BridgeLanguageConfig;
+        use crate::config::{LanguageConfig, resolve_language_with_wildcard};
 
         let mut languages: HashMap<String, LanguageConfig> = HashMap::new();
 
@@ -1806,7 +1810,7 @@ mod tests {
                 cmd: vec!["rust-analyzer".to_string()],
                 languages: vec!["rust".to_string()],
                 initialization_options: None, // Should inherit from wildcard
-                workspace_type: None,          // Should inherit from wildcard
+                workspace_type: None,         // Should inherit from wildcard
             },
         );
 

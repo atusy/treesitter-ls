@@ -9,8 +9,8 @@
 
 use std::collections::HashMap;
 use treesitter_ls::config::{
-    load_user_config, merge_all, resolve_language_server_with_wildcard,
-    settings::BridgeServerConfig, settings::WorkspaceType, TreeSitterSettings,
+    TreeSitterSettings, load_user_config, merge_all, resolve_language_server_with_wildcard,
+    settings::BridgeServerConfig, settings::WorkspaceType,
 };
 
 /// Verify that languageServers._ provides defaults that are inherited by specific servers.

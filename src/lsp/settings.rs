@@ -79,7 +79,9 @@ pub fn load_settings(
 fn load_user_config_with_events(events: &mut Vec<SettingsEvent>) -> Option<TreeSitterSettings> {
     match load_user_config() {
         Ok(Some(settings)) => {
-            events.push(SettingsEvent::info("Loaded user config from XDG_CONFIG_HOME"));
+            events.push(SettingsEvent::info(
+                "Loaded user config from XDG_CONFIG_HOME",
+            ));
             Some(settings)
         }
         Ok(None) => {
@@ -232,7 +234,10 @@ mod tests {
 
         // Verify: user config's searchPath should be present (inherited from user layer)
         assert!(
-            settings.search_paths.iter().any(|p| p == "/user/search/path"),
+            settings
+                .search_paths
+                .iter()
+                .any(|p| p == "/user/search/path"),
             "User config searchPath should be inherited. Got: {:?}",
             settings.search_paths
         );
@@ -366,7 +371,11 @@ mod tests {
         assert!(
             has_user_config_event,
             "Should log info event about loading user config. Events: {:?}",
-            outcome.events.iter().map(|e| &e.message).collect::<Vec<_>>()
+            outcome
+                .events
+                .iter()
+                .map(|e| &e.message)
+                .collect::<Vec<_>>()
         );
     }
 }
