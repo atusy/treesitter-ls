@@ -271,8 +271,14 @@ const scrum: ScrumDashboard = {
         test: "Write test_references_returns_locations Rust E2E test that finds all references to variable 'x'",
         implementation: "Implement references E2E test using shared helpers, poll_until, verify 3+ reference locations with host coordinates",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "88b486d",
+            message: "test(e2e): migrate references test from Lua to Rust",
+            phase: "green",
+          },
+        ],
         notes: [
           "Migrates from tests/test_lsp_references.lua",
           "Cursor on 'x' definition at line 5",
