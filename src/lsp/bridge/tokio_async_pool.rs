@@ -14,7 +14,7 @@ use super::workspace::{language_to_extension, setup_workspace_with_option};
 use crate::config::settings::BridgeServerConfig;
 use dashmap::DashMap;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use tokio::sync::{Mutex, mpsc};
@@ -37,6 +37,9 @@ pub struct TokioAsyncLanguageServerPool {
     notification_sender: mpsc::Sender<Value>,
     /// Document versions per virtual URI (for didOpen/didChange tracking)
     document_versions: DashMap<String, u32>,
+    /// Mapping from host document URIs to their associated bridge virtual URIs
+    /// This tracks which bridge documents belong to each host document for scoped cleanup
+    host_to_bridge_uris: DashMap<String, HashSet<String>>,
     /// Per-key spawn locks to prevent concurrent connection spawning.
     ///
     /// This pattern is necessary because:
@@ -63,6 +66,7 @@ impl TokioAsyncLanguageServerPool {
             virtual_uris: DashMap::new(),
             notification_sender,
             document_versions: DashMap::new(),
+            host_to_bridge_uris: DashMap::new(),
             spawn_locks: Mutex::new(HashMap::new()),
             spawn_counter: AtomicU64::new(0),
         }
@@ -629,6 +633,45 @@ impl TokioAsyncLanguageServerPool {
                 .await
                 .ok()
         }
+    }
+
+    /// Sync document content with the language server, tracking host-to-bridge URI mapping.
+    ///
+    /// This is similar to sync_document but also records which host document URI
+    /// is associated with which bridge virtual URI. This enables scoped cleanup when
+    /// a specific host document is closed.
+    ///
+    /// # Arguments
+    /// * `conn` - Bridge connection
+    /// * `uri` - Virtual URI (bridge document)
+    /// * `language_id` - Language identifier
+    /// * `content` - Document content
+    /// * `host_uri` - Host document URI that owns this bridge document
+    pub async fn sync_document_with_host(
+        &self,
+        conn: &super::tokio_connection::TokioAsyncBridgeConnection,
+        uri: &str,
+        language_id: &str,
+        content: &str,
+        host_uri: &str,
+    ) -> Option<()> {
+        // Track the host-to-bridge mapping
+        self.host_to_bridge_uris
+            .entry(host_uri.to_string())
+            .or_insert_with(HashSet::new)
+            .insert(uri.to_string());
+
+        // Delegate to existing sync_document
+        self.sync_document(conn, uri, language_id, content).await
+    }
+
+    /// Get the bridge virtual URIs associated with a host document URI.
+    ///
+    /// Returns None if the host URI has no associated bridge documents.
+    pub fn get_bridge_uris_for_host(&self, host_uri: &str) -> Option<HashSet<String>> {
+        self.host_to_bridge_uris
+            .get(host_uri)
+            .map(|uris| uris.clone())
     }
 }
 
@@ -1447,6 +1490,52 @@ mod tests {
                 "All concurrent get_connection calls should return the same Arc instance"
             );
         }
+    }
+
+    /// Test that sync_document tracks host-to-bridge URI mapping.
+    ///
+    /// PBI-156 Subtask 1: When sync_document is called with a host URI,
+    /// it should record the mapping from host URI to virtual URI.
+    #[tokio::test]
+    async fn sync_document_tracks_host_to_bridge_uri_mapping() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Get a connection
+        let conn = pool.get_connection("rust-analyzer", &config).await;
+        assert!(conn.is_some(), "Should get a connection");
+        let conn = conn.unwrap();
+
+        let virtual_uri = pool.get_virtual_uri("rust-analyzer").unwrap();
+        let host_uri = "file:///test/document.md";
+
+        // Sync document with host URI
+        let content = "fn main() {}";
+        pool.sync_document_with_host(&conn, &virtual_uri, "rust", content, host_uri)
+            .await;
+
+        // Verify the mapping is tracked
+        let bridge_uris = pool.get_bridge_uris_for_host(host_uri);
+        assert!(
+            bridge_uris.is_some(),
+            "Should track bridge URIs for host URI"
+        );
+        assert!(
+            bridge_uris.unwrap().contains(&virtual_uri),
+            "Should map host URI to virtual URI"
+        );
     }
 
     /// Test that close_document_async sends didClose notification and removes version tracking.
