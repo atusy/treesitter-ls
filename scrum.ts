@@ -125,7 +125,7 @@ const scrum: ScrumDashboard = {
           verification: "Run `make test` and `make test_nvim` - all tests pass",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-157",
@@ -290,11 +290,23 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 128,
-    pbi_id: "PBI-156",
-    goal: "Fix close_all_documents to only close relevant bridge documents",
-    status: "review",
+  sprint: null,
+
+  definition_of_done: {
+    checks: [
+      { name: "All unit tests pass", run: "make test" },
+      { name: "Code quality checks pass", run: "make check" },
+      { name: "E2E tests pass", run: "make test_nvim" },
+    ],
+  },
+
+  // Historical sprints (recent 2) | Sprint 1-125: git log -- scrum.yaml, scrum.ts
+  completed: [
+    {
+      number: 128,
+      pbi_id: "PBI-156",
+      goal: "Fix close_all_documents to only close relevant bridge documents",
+      status: "done",
     subtasks: [
       {
         test: "Add test: TokioAsyncLanguageServerPool tracks host-to-bridge URI mapping",
