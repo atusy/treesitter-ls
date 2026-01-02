@@ -103,9 +103,7 @@ fn test_references_returns_locations() {
     // The references should be at lines 4, 5, 6 (0-indexed) in the Markdown file
     // NOT at lines 0, 1, 2 (virtual document)
     for location in locations {
-        let range = location
-            .get("range")
-            .expect("Location should have range");
+        let range = location.get("range").expect("Location should have range");
         let start_line = range["start"]["line"]
             .as_u64()
             .expect("range.start.line should be number");

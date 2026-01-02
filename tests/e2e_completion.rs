@@ -108,10 +108,7 @@ fn test_completion_returns_items() {
     let mut found_y = false;
 
     for item in items {
-        let label = item
-            .get("label")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let label = item.get("label").and_then(|v| v.as_str()).unwrap_or("");
 
         if label == "x" {
             found_x = true;

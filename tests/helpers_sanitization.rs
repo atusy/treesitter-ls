@@ -56,9 +56,7 @@ fn sanitize_hover_contents(contents: &Value) -> Value {
             }
             Value::Object(sanitized)
         }
-        Value::Array(arr) => {
-            Value::Array(arr.iter().map(sanitize_hover_contents).collect())
-        }
+        Value::Array(arr) => Value::Array(arr.iter().map(sanitize_hover_contents).collect()),
         _ => contents.clone(),
     }
 }

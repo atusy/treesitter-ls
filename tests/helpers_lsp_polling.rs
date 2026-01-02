@@ -20,7 +20,10 @@ where
 {
     for attempt in 1..=max_attempts {
         if let Some(result) = predicate() {
-            eprintln!("poll_until succeeded on attempt {}/{}", attempt, max_attempts);
+            eprintln!(
+                "poll_until succeeded on attempt {}/{}",
+                attempt, max_attempts
+            );
             return Some(result);
         }
 
@@ -48,11 +51,7 @@ mod tests {
         let mut counter = 0;
         let result = poll_until(5, 10, || {
             counter += 1;
-            if counter >= 3 {
-                Some(counter)
-            } else {
-                None
-            }
+            if counter >= 3 { Some(counter) } else { None }
         });
         assert_eq!(result, Some(3));
     }
