@@ -29,10 +29,11 @@ debug:
 clean:
 	$(CARGO) clean
 
-# Run tests (unit tests only, excludes E2E tests)
+# Run tests (unit tests + integration tests, excludes E2E tests)
+# Note: Only integration tests without the e2e feature flag are run
 .PHONY: test
 test:
-	$(CARGO) test --lib
+	$(CARGO) test --lib --test '*' --skip e2e_
 
 # Run all Rust-based E2E tests (auto-discovers tests matching tests/e2e_*.rs)
 .PHONY: test_e2e
@@ -111,7 +112,7 @@ help:
 	@echo "  build         - Build the project in release mode (default)"
 	@echo "  debug         - Build the project in debug mode"
 	@echo "  clean         - Clean build artifacts"
-	@echo "  test          - Run unit tests only (excludes E2E)"
+	@echo "  test          - Run unit and integration tests (excludes E2E)"
 	@echo "  test_e2e      - Run Rust-based E2E tests"
 	@echo "  test_all      - Run all tests (unit + E2E)"
 	@echo "  test_nvim     - Run all Neovim test files"
