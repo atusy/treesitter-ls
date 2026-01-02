@@ -58,32 +58,19 @@ T["markdown"]["implementation"] = function()
 	local before = child.api.nvim_win_get_cursor(0)
 	MiniTest.expect.equality(before[1], 16, "Cursor should start on line 16")
 
-	-- Retry implementation request since rust-analyzer may still be indexing
-	-- During indexing, it returns null which doesn't trigger a jump
-	local jumped = false
-	for _ = 1, 20 do
-		-- Reset cursor position before each attempt
-		child.cmd([[normal! 16G7|]])
+	-- Wait for rust-analyzer to index (this can take a while on first run)
+	vim.uv.sleep(2000)
 
-		-- Call implementation in child vim
-		child.lua([[vim.lsp.buf.implementation()]])
+	-- Call implementation in child vim
+	child.lua([[vim.lsp.buf.implementation()]])
 
-		-- Poll child's cursor position until it moves to line 11 (impl method) or timeout
-		-- rust-analyzer may return the impl block line (10) or the method line (11)
-		-- We accept either as they both point to the implementation
-		local this_attempt_jumped = helper.wait(3000, function()
-			local line = child.api.nvim_win_get_cursor(0)[1]
-			return line == 11 or line == 10
-		end, 100)
-
-		if this_attempt_jumped then
-			jumped = true
-			break
-		end
-
-		-- Wait before retry (rust-analyzer may still be indexing)
-		vim.wait(500)
-	end
+	-- Poll child's cursor position until it moves to line 11 (impl method) or timeout
+	-- rust-analyzer may return the impl block line (10) or the method line (11)
+	-- We accept either as they both point to the implementation
+	local jumped = helper.wait(10000, function()
+		local line = child.api.nvim_win_get_cursor(0)[1]
+		return line == 11 or line == 10
+	end, 100)
 
 	-- Get final cursor position for error message
 	local after = child.api.nvim_win_get_cursor(0)
