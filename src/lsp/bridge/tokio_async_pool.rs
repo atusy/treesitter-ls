@@ -16,6 +16,7 @@ use dashmap::DashMap;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use tokio::sync::{Mutex, mpsc};
 use tokio::time::{Duration, timeout};
 
@@ -36,8 +37,19 @@ pub struct TokioAsyncLanguageServerPool {
     notification_sender: mpsc::Sender<Value>,
     /// Document versions per virtual URI (for didOpen/didChange tracking)
     document_versions: DashMap<String, u32>,
-    /// Locks per key to prevent concurrent spawns for the same key
+    /// Per-key spawn locks to prevent concurrent connection spawning.
+    ///
+    /// This pattern is necessary because:
+    /// 1. DashMap entry API doesn't support async operations
+    /// 2. We need to hold a lock across async spawn_and_initialize
+    /// 3. Each key needs independent locking to allow concurrent spawns for different keys
+    ///
+    /// The double-mutex pattern (Mutex<HashMap<..., Arc<Mutex<()>>>>) allows:
+    /// - Quick lookup of per-key lock (outer sync Mutex, held briefly)
+    /// - Per-key async locking (inner tokio Mutex, held across spawn)
     spawn_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// Instance-level counter for generating unique temporary directory names
+    spawn_counter: AtomicU64,
 }
 
 impl TokioAsyncLanguageServerPool {
@@ -52,6 +64,7 @@ impl TokioAsyncLanguageServerPool {
             notification_sender,
             document_versions: DashMap::new(),
             spawn_locks: Mutex::new(HashMap::new()),
+            spawn_counter: AtomicU64::new(0),
         }
     }
 
@@ -137,9 +150,10 @@ impl TokioAsyncLanguageServerPool {
         let program = config.cmd.first()?;
         let args: Vec<&str> = config.cmd.iter().skip(1).map(|s| s.as_str()).collect();
 
-        // Create temp directory
-        static SPAWN_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let counter = SPAWN_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // Create temp directory with instance-level counter
+        let counter = self
+            .spawn_counter
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let temp_dir = std::env::temp_dir().join(format!(
             "treesitter-ls-tokio-{}-{}-{}",
             program,
