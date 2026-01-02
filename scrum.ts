@@ -340,12 +340,20 @@ const scrum: ScrumDashboard = {
         test: "Add test: did_close handler passes host URI to close_documents_for_host",
         implementation: "Update lsp_impl.rs did_close handler to call close_documents_for_host with the closing host document's URI instead of close_all_documents().",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "a4d0c70",
+            message: "feat(bridge): update pool methods and did_close to use host URIs",
+            phase: "green",
+          },
+        ],
         notes: [
           "TDD Red: Write integration test verifying correct host URI is passed to pool method",
           "TDD Green: Update did_close call site to pass host URI parameter",
-          "This is the final integration point connecting host document lifecycle to scoped bridge cleanup"
+          "This is the final integration point connecting host document lifecycle to scoped bridge cleanup",
+          "Implementation: Updated all pool methods (hover, completion, signature_help, goto_definition) to accept host_uri and call sync_document_with_host",
+          "Also updated all callers to pass host document URI instead of virtual URI",
         ],
       },
       {
