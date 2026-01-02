@@ -139,14 +139,47 @@ impl LspClient {
     }
 
     /// Receive a single LSP message with Content-Length framing.
+    /// Times out after 30 seconds to prevent indefinite blocking on unresponsive servers.
+    /// Validates Content-Length to prevent excessive memory allocation.
     fn receive_message(&mut self) -> Value {
+        const MAX_HEADERS: u32 = 100;
+        const TIMEOUT: Duration = Duration::from_secs(30);
+        const MAX_MESSAGE_SIZE: usize = 100 * 1024 * 1024; // 100MB limit
+
+        let start_time = Instant::now();
+        let mut header_count = 0u32;
+
         // Read Content-Length header
         let mut header = String::new();
         loop {
+            // Check timeout
+            if start_time.elapsed() > TIMEOUT {
+                panic!(
+                    "Timeout reading LSP message header. Elapsed: {:?}",
+                    start_time.elapsed()
+                );
+            }
+
+            // Check header count threshold
+            if header_count >= MAX_HEADERS {
+                panic!(
+                    "Exceeded maximum header count ({}) - server may be sending malformed headers",
+                    MAX_HEADERS
+                );
+            }
+
             header.clear();
-            self.stdout
+            let bytes_read = self
+                .stdout
                 .read_line(&mut header)
                 .expect("Failed to read header line");
+
+            // EOF detection: if read_line returns 0 bytes, the connection closed
+            if bytes_read == 0 {
+                panic!("Server closed connection prematurely while reading header");
+            }
+
+            header_count += 1;
 
             if header == "\r\n" {
                 continue;
@@ -157,13 +190,30 @@ impl LspClient {
                     .trim_start_matches("Content-Length:")
                     .trim()
                     .parse()
-                    .expect("Invalid Content-Length");
+                    .expect("Invalid Content-Length value");
+
+                // Validate Content-Length to prevent excessive allocations
+                if len > MAX_MESSAGE_SIZE {
+                    panic!(
+                        "Content-Length {} exceeds maximum allowed size {}",
+                        len, MAX_MESSAGE_SIZE
+                    );
+                }
+
+                if len == 0 {
+                    panic!("Invalid Content-Length: 0 - message body cannot be empty");
+                }
 
                 // Read empty line
                 let mut empty = String::new();
-                self.stdout
+                let bytes_read = self
+                    .stdout
                     .read_line(&mut empty)
                     .expect("Failed to read empty line");
+
+                if bytes_read == 0 {
+                    panic!("Server closed connection prematurely after header");
+                }
 
                 // Read body
                 let mut body = vec![0u8; len];
