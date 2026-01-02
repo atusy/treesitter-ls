@@ -321,7 +321,7 @@ impl TokioAsyncLanguageServerPool {
         // ADR-0010: Transition to Ready state on non-empty hover response
         let has_non_empty_content = hover_result
             .as_ref()
-            .map_or(false, is_hover_content_non_empty);
+            .is_some_and(is_hover_content_non_empty);
         if has_non_empty_content && server_state == Some(ServerState::Indexing) {
             self.set_server_state(key, ServerState::Ready);
             log::debug!(
