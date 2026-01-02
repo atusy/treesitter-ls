@@ -378,11 +378,92 @@ const scrum: ScrumDashboard = {
           verification: "Run `make test` and `make test_nvim` - all tests pass",
         },
       ],
-      status: "ready",
+      status: "done",
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 138,
+    pbi_id: "PBI-167",
+    goal: "Optimize cache invalidation with interval tree for O(log n) performance",
+    status: "review",
+    subtasks: [
+      {
+        test: "Add test for find_overlapping() API that queries interval tree efficiently",
+        implementation: "Add test_injection_map_find_overlapping_efficiently test that verifies O(log n) overlap query API exists and returns correct overlapping regions",
+        type: "behavioral",
+        status: "completed",
+        commits: [
+          {
+            hash: "d263382",
+            message: "feat(perf): optimize cache invalidation with interval tree (PBI-167)",
+            phase: "green",
+          },
+        ],
+        notes: [
+          "Added rust-lapper dependency for interval tree implementation",
+          "Test creates 100 non-overlapping regions to simulate large document",
+          "Verifies query [225..350] correctly finds regions 2 and 3",
+          "Verifies empty result for non-overlapping query [60..80]",
+          "Verifies None result for non-existent URI",
+        ],
+      },
+      {
+        test: "Refactor InjectionMap to use Lapper instead of Vec",
+        implementation: "Replace Vec storage with Lapper<usize, CacheableInjectionRegion>, update all methods to use interval tree API",
+        type: "structural",
+        status: "completed",
+        commits: [
+          {
+            hash: "d263382",
+            message: "feat(perf): optimize cache invalidation with interval tree (PBI-167)",
+            phase: "green",
+          },
+        ],
+        notes: [
+          "Changed InjectionMap.regions from Vec to Lapper interval tree",
+          "insert() builds interval tree from regions",
+          "get() extracts all regions by iterating intervals",
+          "find_at_position() uses lapper.find() for point query",
+          "Added find_overlapping() for efficient range queries",
+          "All existing tests pass with new implementation",
+        ],
+      },
+      {
+        test: "Update invalidate_overlapping_injection_caches to use O(log n) queries",
+        implementation: "Replace O(n) iteration with find_overlapping() interval tree query in invalidate_overlapping_injection_caches",
+        type: "behavioral",
+        status: "completed",
+        commits: [
+          {
+            hash: "d263382",
+            message: "feat(perf): optimize cache invalidation with interval tree (PBI-167)",
+            phase: "green",
+          },
+        ],
+        notes: [
+          "Removed nested loop that iterated through all regions (O(n))",
+          "Replaced with find_overlapping() call (O(log n))",
+          "Simplified logic - no need to check empty regions upfront",
+          "Performance: 100 regions → ~7 comparisons instead of 100",
+          "All injection cache invalidation tests pass",
+        ],
+      },
+      {
+        test: "All tests pass with optimized implementation",
+        implementation: "Run make test to verify no behavioral changes with interval tree",
+        type: "structural",
+        status: "completed",
+        commits: [],
+        notes: [
+          "All 373 unit tests pass",
+          "cargo check passes with expected warnings from PBI-162",
+          "No behavioral changes - interval tree is drop-in replacement",
+          "Existing injection map tests verify backward compatibility",
+        ],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
