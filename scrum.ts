@@ -33,7 +33,39 @@ const scrum: ScrumDashboard = {
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   product_backlog: [
     // ADR-0009 Implementation: Vertical slices with user-facing value
-    // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117), PBI-147 (Sprint 118)
+    // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117)
+    // Rejected: PBI-147 (wait for indexing) - replaced by PBI-149 (informative message approach)
+    {
+      id: "PBI-149",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "see informative message when hover fails due to server indexing",
+        benefit: "I understand why hover isn't working and know I can retry later",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "TokioAsyncLanguageServerPool tracks ServerState enum (Indexing/Ready) per connection, starting in Indexing state after spawn",
+          verification: "Unit test: new connection starts with state Indexing",
+        },
+        {
+          criterion: "hover_impl returns '{ contents: \"⏳ indexing (rust-analyzer)\" }' when ServerState is Indexing",
+          verification: "Unit test: hover request with Indexing state returns informative message",
+        },
+        {
+          criterion: "ServerState transitions from Indexing to Ready after first non-empty hover or completion response",
+          verification: "Unit test: verify state transition on non-empty response; empty responses keep Indexing state",
+        },
+        {
+          criterion: "Other LSP features (completion, signatureHelp, definition, references) return empty/null during Indexing without special message",
+          verification: "Unit test: completion returns [], definition returns null during Indexing state",
+        },
+        {
+          criterion: "End-to-end flow works: hover during indexing shows message, hover after Ready shows normal content",
+          verification: "E2E test: trigger hover immediately after server spawn (verify message), wait and retry (verify normal hover)",
+        },
+      ],
+      status: "done",
+    },
     {
       id: "PBI-141",
       story: {
@@ -128,74 +160,11 @@ const scrum: ScrumDashboard = {
           verification: "Same test scenario (Lua code block definition lookup) produces equivalent results in both test approaches",
         },
       ],
-      status: "ready",
+      status: "done",
     },
   ],
 
-  sprint: {
-    number: 119,
-    pbi_id: "PBI-150",
-    goal: "Implement Rust-based E2E testing infrastructure for go-to-definition with snapshot testing, enabling faster and more reliable tests without Neovim dependency",
-    status: "review",
-    subtasks: [
-      {
-        test: "Write integration test that spawns treesitter-ls binary and verifies process starts (basic spawn test)",
-        implementation: "Add insta dev-dependency to Cargo.toml, create tests/e2e_definition.rs with minimal test that spawns binary and checks exit on stdin close",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "17b5293", message: "feat(test): add pure Rust E2E tests for go-to-definition (PBI-150)", phase: "green" }],
-        notes: ["Binary already works - test passes immediately (infrastructure setup)"],
-      },
-      {
-        test: "Write test that sends LSP initialize request and expects InitializeResult response with capabilities",
-        implementation: "Add LSP protocol helpers (send_request, receive_response) using serde_json for Content-Length framing",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "17b5293", message: "feat(test): add pure Rust E2E tests for go-to-definition (PBI-150)", phase: "green" }],
-        notes: ["TDD Red: First attempt received window/logMessage notification instead", "TDD Green: Modified receive_response to skip notifications and wait for actual response"],
-      },
-      {
-        test: "Write test that sends textDocument/didOpen notification after initialize handshake",
-        implementation: "Add didOpen notification helper, create test fixture markdown file with Lua code block",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "17b5293", message: "feat(test): add pure Rust E2E tests for go-to-definition (PBI-150)", phase: "green" }],
-        notes: ["Test passes immediately - infrastructure already supports notifications"],
-      },
-      {
-        test: "Write test that sends textDocument/definition request and expects LocationLink or Location response",
-        implementation: "Add definition request helper, parse GotoDefinitionResponse variants",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "17b5293", message: "feat(test): add pure Rust E2E tests for go-to-definition (PBI-150)", phase: "green" }],
-        notes: ["TDD Red: First attempts failed - needed initializationOptions for bridge config", "TDD Red: Also needed receive_response_for_id to skip server-to-client requests", "TDD Green: Added retry logic and initializationOptions matching minimal_init.lua"],
-      },
-      {
-        test: "Write test that captures definition response as insta snapshot for intuitive expected value management",
-        implementation: "Add insta::assert_json_snapshot! for definition response, create first snapshot file",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "17b5293", message: "feat(test): add pure Rust E2E tests for go-to-definition (PBI-150)", phase: "green" }],
-        notes: ["Added sanitize_definition_response to replace temp URIs with stable placeholder", "Snapshot captures Location array with line 3 (fn example definition)"],
-      },
-      {
-        test: "Write test that verifies Rust E2E produces equivalent results to Neovim E2E (same Lua code block scenario)",
-        implementation: "Create matching test fixture (Lua function definition + call), assert line numbers match Neovim test expectations",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "17b5293", message: "feat(test): add pure Rust E2E tests for go-to-definition (PBI-150)", phase: "green" }],
-        notes: ["Actually uses Rust code block (not Lua) same as Neovim test", "Verified: cursor line 8 (0-indexed) -> definition line 3 (0-indexed) matches Neovim line 9 -> line 4 (1-indexed)"],
-      },
-      {
-        test: "Write test that sends shutdown request and verifies clean server termination",
-        implementation: "Add shutdown/exit sequence to test teardown, verify process exits cleanly",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "17b5293", message: "feat(test): add pure Rust E2E tests for go-to-definition (PBI-150)", phase: "green" }],
-        notes: ["TDD Red: shutdown needs no params (modified send_request/send_notification)", "TDD Red: exit notification alone didn't exit - needed stdin close", "TDD Green: stdin=None after exit triggers server process exit"],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -205,25 +174,26 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-117: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-118: git log -- scrum.yaml, scrum.ts
   completed: [
-    { number: 119, pbi_id: "PBI-150", goal: "Skip unsupported languages during auto-install by checking nvim-treesitter metadata before attempting installation, with cached metadata to avoid repeated HTTP requests", status: "done", subtasks: [] },
-    { number: 118, pbi_id: "PBI-147", goal: "Return an informative 'No result or indexing' message when bridged hover has no result, ensuring users understand the reason instead of seeing silent empty responses", status: "done", subtasks: [] },
+    { number: 119, pbi_id: "PBI-150", goal: "Implement Rust-based E2E testing infrastructure for go-to-definition with snapshot testing, enabling faster and more reliable tests without Neovim dependency", status: "done", subtasks: [] },
+    { number: 118, pbi_id: "PBI-149", goal: "Show informative 'indexing' message during hover when rust-analyzer is still initializing, with state tracking to transition to normal responses once ready", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-117: modular refactoring pattern, E2E indexing waits, vertical slice validation
+  // Recent 2 retrospectives | Sprint 1-116: modular refactoring pattern, E2E indexing waits, vertical slice validation
   retrospectives: [
-    { sprint: 119, improvements: [
-      { action: "Reuse existing caching and metadata infrastructure patterns for new features - FetchOptions with TTL proved effective for nvim-treesitter metadata", timing: "immediate", status: "active", outcome: null },
-      { action: "Pre-existing E2E test failures should block sprint planning - 12 failing bridge tests indicate deferred technical debt", timing: "sprint", status: "active", outcome: null },
-      { action: "Design integration test acceptance criteria with specific verification targets - 'existing tests pass' led to no-op subtask", timing: "sprint", status: "active", outcome: null },
-      { action: "User experience issues (noisy errors) should trigger immediate investigation - waiting until PBI-150 suggests reactive rather than proactive approach", timing: "product", status: "active", outcome: null },
-    ] },
     { sprint: 118, improvements: [
-      { action: "Prefer simple user-facing feedback over complex state management - 'No result or indexing' message vs $/progress tracking", timing: "sprint", status: "active", outcome: null },
-      { action: "When reverting features, analyze root cause before re-attempting - previous async approach was 'too buggy' due to state complexity", timing: "sprint", status: "active", outcome: null },
-      { action: "Helper functions enable testability - create_no_result_hover() testable in isolation", timing: "immediate", status: "completed", outcome: "pub(crate) fn create_no_result_hover() with unit test verification" },
-      { action: "Course corrections are valid sprint outcomes - simpler approach after revert delivered user value", timing: "immediate", status: "completed", outcome: "PBI-147 completed with informative message instead of complex indexing state" },
+      { action: "ADR-driven development accelerates implementation - ADR-0010 pre-defined architecture, state machine, and detection heuristic", timing: "sprint", status: "active", outcome: null },
+      { action: "Reusable patterns across sprints reduce cognitive load - DashMap from Sprint 117 enabled consistent state tracking", timing: "immediate", status: "completed", outcome: "server_states: DashMap<String, ServerState> mirrors document_versions pattern" },
+      { action: "E2E test retries indicate timing assumptions - 20-attempt loop with 500ms wait works but shows brittleness", timing: "sprint", status: "active", outcome: null },
+      { action: "Non-deterministic test assertions reduce reliability - comment 'may or may not see indexing message' shows test unpredictability", timing: "product", status: "active", outcome: null },
+      { action: "Feature changes ripple to existing tests - hover test updated for indexing state shows broader impact than anticipated", timing: "sprint", status: "active", outcome: null },
+    ] },
+    { sprint: 117, improvements: [
+      { action: "Study reference implementation patterns before new features - sync bridge had versioning model", timing: "sprint", status: "active", outcome: null },
+      { action: "DashMap provides thread-safe state without explicit locking - prefer for concurrent access patterns", timing: "immediate", status: "completed", outcome: "document_versions: DashMap<String, u32> in TokioAsyncLanguageServerPool" },
+      { action: "LSP spec: didOpen once per URI, didChange for updates with incrementing version", timing: "immediate", status: "completed", outcome: "sync_document checks version map, sends didOpen v1 or didChange v+1" },
+      { action: "Tightly coupled changes belong in single commit - all 4 subtasks shared c2a78c0", timing: "immediate", status: "completed", outcome: "fix(bridge): track document versions per URI, send didOpen/didChange correctly" },
     ] },
   ],
 };
