@@ -29,7 +29,10 @@ fn is_hover_content_non_empty(hover: &Hover) -> bool {
             MarkedString::String(s) => !s.is_empty(),
             MarkedString::LanguageString(ls) => !ls.value.is_empty(),
         },
-        HoverContents::Array(arr) => !arr.is_empty(),
+        HoverContents::Array(arr) => arr.iter().any(|s| match s {
+            MarkedString::String(s) => !s.is_empty(),
+            MarkedString::LanguageString(ls) => !ls.value.is_empty(),
+        }),
     }
 }
 
