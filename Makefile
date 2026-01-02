@@ -29,21 +29,22 @@ debug:
 clean:
 	$(CARGO) clean
 
-# Run tests (unit tests + integration tests, excludes E2E tests)
-# Note: Only integration tests without the e2e feature flag are run
+# Run unit tests only (excludes integration and E2E tests)
 .PHONY: test
 test:
-	$(CARGO) test --lib --test '*' -- --skip e2e_
+	$(CARGO) test --lib
 
-# Run all Rust-based E2E tests (auto-discovers tests matching tests/e2e_*.rs)
+# Run integration and E2E tests (excludes unit tests)
+# - Integration tests: tests/test_*.rs (no feature required)
+# - E2E tests: tests/e2e_*.rs (requires e2e feature)
 .PHONY: test_e2e
 test_e2e:
-	$(CARGO) test --features e2e --test 'e2e_*'
+	$(CARGO) test --features e2e --test 'test_*' --test 'e2e_*'
 
-# Run all tests (unit + E2E)
+# Run all tests (unit + integration + E2E)
 .PHONY: test_all
 test_all:
-	$(CARGO) test --lib && $(MAKE) test_e2e
+	$(CARGO) test --features e2e
 
 # Check code formatting and linting
 .PHONY: check
@@ -112,9 +113,9 @@ help:
 	@echo "  build         - Build the project in release mode (default)"
 	@echo "  debug         - Build the project in debug mode"
 	@echo "  clean         - Clean build artifacts"
-	@echo "  test          - Run unit and integration tests (excludes E2E)"
-	@echo "  test_e2e      - Run Rust-based E2E tests"
-	@echo "  test_all      - Run all tests (unit + E2E)"
+	@echo "  test          - Run unit tests only"
+	@echo "  test_e2e      - Run integration and E2E tests"
+	@echo "  test_all      - Run all tests (unit + integration + E2E)"
 	@echo "  test_nvim     - Run all Neovim test files"
 	@echo "  test_nvim_file - Run test from file at \$$FILE environment variable"
 	@echo "  check         - Run code checks (clippy, fmt)"
