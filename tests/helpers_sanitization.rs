@@ -3,6 +3,7 @@
 //! Provides helpers to normalize LSP responses by replacing non-deterministic
 //! data (file URIs, timestamps, etc.) with stable placeholders.
 
+use regex;
 use serde_json::Value;
 
 /// Sanitize hover response for snapshot testing.
