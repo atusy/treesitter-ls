@@ -150,8 +150,14 @@ const scrum: ScrumDashboard = {
         test: "Write test_hover_returns_content Rust E2E test that sends hover request at cursor position and validates response structure",
         implementation: "Implement hover E2E test using LspClient to send textDocument/hover request, poll_until for response, assert hover content exists",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "2ebdc1c",
+            message: "test(e2e): migrate hover test from Lua to Rust",
+            phase: "green",
+          },
+        ],
         notes: [
           "Migrates from tests/test_lsp_hover.lua",
           "Cursor on 'main' in fn main() at line 4, column 4",
