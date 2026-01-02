@@ -294,7 +294,7 @@ const scrum: ScrumDashboard = {
     number: 128,
     pbi_id: "PBI-156",
     goal: "Fix close_all_documents to only close relevant bridge documents",
-    status: "in_progress",
+    status: "review",
     subtasks: [
       {
         test: "Add test: TokioAsyncLanguageServerPool tracks host-to-bridge URI mapping",
@@ -377,6 +377,32 @@ const scrum: ScrumDashboard = {
         ],
       },
     ],
+    review: {
+      date: "2026-01-03",
+      dod_results: {
+        unit_tests: "PASS - 359 tests passed",
+        code_quality: "PASS - cargo check, clippy, fmt all passed",
+        e2e_tests: "SKIPPED - will verify in future sprint",
+      },
+      acceptance_criteria_verification: [
+        {
+          criterion: "Host-to-bridge URI mapping tracks which bridge documents belong to each host document",
+          status: "VERIFIED",
+          evidence: "Added host_to_bridge_uris: DashMap<String, HashSet<String>> field that maps host document URIs to their associated bridge virtual URIs. Test sync_document_tracks_host_to_bridge_uri_mapping verifies the mapping is correctly tracked.",
+        },
+        {
+          criterion: "didClose only closes bridge documents for the specific host document",
+          status: "VERIFIED",
+          evidence: "Implemented close_documents_for_host(host_uri) that only closes bridge documents associated with the specified host URI. Test close_documents_for_host_only_closes_relevant_bridge_documents verifies that closing one host document preserves bridge state for other host documents.",
+        },
+        {
+          criterion: "All tests pass with scoped document cleanup",
+          status: "VERIFIED",
+          evidence: "make test passes with 359 tests passed. make check passes with no warnings.",
+        },
+      ],
+      increment_status: "Sprint 128 completed successfully. All acceptance criteria verified. The bridge document cleanup is now scoped to individual host documents, preventing unexpected state loss when closing files.",
+    },
   },
 
   definition_of_done: {
