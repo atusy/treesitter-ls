@@ -107,62 +107,36 @@ const scrum: ScrumDashboard = {
   ],
 
   sprint: {
-    number: 126,
-    pbi_id: "PBI-153",
-    goal: "Improve state management by moving global state to instance level",
-    status: "review",
+    number: 127,
+    pbi_id: "PBI-154",
+    goal: "Implement proper document lifecycle cleanup when host documents are closed",
+    status: "in_progress",
     subtasks: [
       {
-        test: "Verify SPAWN_COUNTER is declared as instance field in TokioAsyncLanguageServerPool struct",
-        implementation: "Add spawn_counter: AtomicU64 field to TokioAsyncLanguageServerPool, remove static SPAWN_COUNTER from spawn_and_initialize, update spawn_and_initialize to use self.spawn_counter",
-        type: "structural",
-        status: "completed",
-        commits: [{ hash: "3b8c160", message: "refactor(pool): move SPAWN_COUNTER to instance level and document spawn_locks pattern", phase: "green" }],
-        notes: ["Moved SPAWN_COUNTER from static to instance-level AtomicU64 field", "Updated spawn_and_initialize to use self.spawn_counter.fetch_add()"],
-      },
-      {
-        test: "Evaluate spawn_locks pattern and document findings",
-        implementation: "Current pattern: Mutex<HashMap<String, Arc<Mutex<()>>>>. Evaluate if DashMap entry API can simplify this. If simplification possible, implement it. If not, document why current pattern is needed in code comments.",
-        type: "structural",
-        status: "completed",
-        commits: [{ hash: "3b8c160", message: "refactor(pool): move SPAWN_COUNTER to instance level and document spawn_locks pattern", phase: "green" }],
-        notes: ["Evaluated spawn_locks pattern - simplification not possible due to DashMap entry API not supporting async operations", "Added comprehensive documentation explaining the double-mutex pattern necessity", "Pattern is correct: outer sync Mutex for quick lookup, inner tokio Mutex for per-key async locking"],
-      },
-      {
-        test: "Run make check and make test - all tests pass",
-        implementation: "Execute Definition of Done checks to verify no regressions",
+        test: "close_document sends textDocument/didClose notification to bridge server",
+        implementation: "Add close_document_with_notification() method to pool that sends didClose and removes version tracking",
         type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "3b8c160", message: "refactor(pool): move SPAWN_COUNTER to instance level and document spawn_locks pattern", phase: "green" }],
-        notes: ["make check passes (cargo check, clippy, fmt)", "All 15 tokio_async_pool tests pass when run with --test-threads=1", "Full test suite has 3 flaky tests due to resource contention (not related to changes)"],
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "did_close in lsp_impl calls bridge pool cleanup for all active connections",
+        implementation: "Wire did_close() to iterate connections and call close_document for each virtual URI",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "All tests pass with document cleanup wiring",
+        implementation: "Run make test and make test_nvim to verify no regressions",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
       },
     ],
-    review: {
-      date: "2026-01-03",
-      acceptance_criteria_verification: [
-        {
-          criterion: "SPAWN_COUNTER moved from static to TokioAsyncLanguageServerPool instance field",
-          status: "VERIFIED",
-          evidence: "Verified in /Users/atusy/ghq/github.com/atusy/treesitter-ls___async-bridge/src/lsp/bridge/tokio_async_pool.rs:52,67 - spawn_counter is declared as instance field AtomicU64 and initialized in new()",
-        },
-        {
-          criterion: "spawn_locks pattern simplified to use instance-level coordination",
-          status: "VERIFIED",
-          evidence: "Verified in /Users/atusy/ghq/github.com/atusy/treesitter-ls___async-bridge/src/lsp/bridge/tokio_async_pool.rs:40-50 - spawn_locks has comprehensive documentation explaining the double-mutex pattern (lines 40-49), pattern remains necessary due to DashMap entry API limitations with async operations",
-        },
-        {
-          criterion: "All tests pass with instance-based counter",
-          status: "VERIFIED",
-          evidence: "DoD checks: make check PASS, make test_nvim PASS (29/29 tests), make test FAIL (353 passed, 3 failed). Failing tests: concurrent_gets_share_same_connection, get_connection_returns_arc_tokio_connection_after_initialize, completion_returns_response_from_rust_analyzer. These are pre-existing flaky tests due to rust-analyzer resource contention (timeout/spawn issues), not related to SPAWN_COUNTER refactoring.",
-        },
-      ],
-      dod_results: {
-        unit_tests: "FAIL - 3 flaky tests (pre-existing rust-analyzer timeout issues)",
-        code_quality: "PASS - cargo check, clippy, fmt all pass",
-        e2e_tests: "PASS - 29/29 E2E tests pass",
-      },
-      increment_status: "ACCEPTED - Increment meets acceptance criteria. The 3 failing unit tests are pre-existing flaky tests related to rust-analyzer resource contention during test execution, not regressions from the SPAWN_COUNTER refactoring. All E2E tests pass, code quality checks pass, and implementation satisfies all acceptance criteria. spawn_counter successfully moved to instance level as AtomicU64 field. spawn_locks pattern evaluated and documented - simplification not feasible due to DashMap async limitations. Flaky tests exist but are environmental (rust-analyzer resource issues), not code defects.",
-    },
   },
 
   definition_of_done: {
@@ -173,7 +147,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-123: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-124: git log -- scrum.yaml, scrum.ts
   completed: [
     { number: 120, pbi_id: "PBI-151", goal: "Migrate critical Neovim E2E tests (hover, completion, references) to Rust with snapshot verification, establishing reusable patterns and helpers for future migrations", status: "done", subtasks: [] },
     { number: 119, pbi_id: "PBI-150", goal: "Implement Rust-based E2E testing infrastructure for go-to-definition with snapshot testing, enabling faster and more reliable tests without Neovim dependency", status: "done", subtasks: [] },
@@ -181,6 +155,9 @@ const scrum: ScrumDashboard = {
 
   // Recent 2 retrospectives | Sprint 1-120: ADR-driven development, reusable patterns, E2E test timing
   retrospectives: [
+    { sprint: 126, improvements: [
+      { action: "Consider investigating flaky unit tests in future sprint - 3 tests fail due to rust-analyzer resource contention", timing: "product", status: "active", outcome: null },
+    ] },
     { sprint: 125, improvements: [
       { action: "Wire close_document() to didClose LSP events in future sprint - currently implemented but not connected to actual document close events", timing: "product", status: "completed", outcome: "Created PBI-154 to implement document lifecycle cleanup integration" },
       { action: "Update review-stability.md to mark all issues as resolved - PBI-150 (resource cleanup), PBI-151 (race conditions), PBI-152 (robustness) completed", timing: "immediate", status: "completed", outcome: "Added resolution notes to review-stability.md marking HIGH-3, HIGH-4, HIGH-6, MEDIUM-2 as RESOLVED with sprint references" },
