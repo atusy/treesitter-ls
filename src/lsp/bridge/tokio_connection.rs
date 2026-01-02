@@ -220,15 +220,7 @@ impl TokioAsyncBridgeConnection {
                             );
 
                             // Clean up all pending requests
-                            let ids: Vec<i64> = pending.iter().map(|r| *r.key()).collect();
-                            for id in ids {
-                                if let Some((_, sender)) = pending.remove(&id) {
-                                    let _ = sender.send(ResponseResult {
-                                        response: None,
-                                        notifications: vec![],
-                                    });
-                                }
-                            }
+                            conn.clear_all_pending_requests();
 
                             break;
                         }
@@ -240,15 +232,7 @@ impl TokioAsyncBridgeConnection {
                             );
 
                             // Clean up all pending requests on error
-                            let ids: Vec<i64> = pending.iter().map(|r| *r.key()).collect();
-                            for id in ids {
-                                if let Some((_, sender)) = pending.remove(&id) {
-                                    let _ = sender.send(ResponseResult {
-                                        response: None,
-                                        notifications: vec![],
-                                    });
-                                }
-                            }
+                            conn.clear_all_pending_requests();
 
                             break;
                         }
@@ -375,6 +359,25 @@ impl TokioAsyncBridgeConnection {
         self.pending_requests.remove(&id);
     }
 
+    /// Clear all pending requests and notify them with None response.
+    ///
+    /// Used during shutdown, EOF, or error conditions to notify all waiting
+    /// callers that their requests will not receive responses.
+    ///
+    /// This helper consolidates the cleanup pattern used in reader_loop (EOF/Error)
+    /// and Drop impl.
+    fn clear_all_pending_requests(&self) {
+        let ids: Vec<i64> = self.pending_requests.iter().map(|r| *r.key()).collect();
+        for id in ids {
+            if let Some((_, sender)) = self.pending_requests.remove(&id) {
+                let _ = sender.send(ResponseResult {
+                    response: None,
+                    notifications: vec![],
+                });
+            }
+        }
+    }
+
     /// Gracefully shutdown the language server.
     ///
     /// Sends the LSP shutdown request followed by exit notification.
@@ -450,15 +453,7 @@ impl TokioAsyncBridgeConnection {
 impl Drop for TokioAsyncBridgeConnection {
     fn drop(&mut self) {
         // 1. Notify all pending requests
-        let ids: Vec<i64> = self.pending_requests.iter().map(|r| *r.key()).collect();
-        for id in ids {
-            if let Some((_, sender)) = self.pending_requests.remove(&id) {
-                let _ = sender.send(ResponseResult {
-                    response: None,
-                    notifications: vec![],
-                });
-            }
-        }
+        self.clear_all_pending_requests();
 
         // 2. Send shutdown signal to reader task
         if let Some(shutdown_tx) = self.shutdown_tx.take() {
