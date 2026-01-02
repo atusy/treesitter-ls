@@ -178,19 +178,19 @@ impl TokioAsyncBridgeConnection {
     fn handle_notification(message: Value, notification_sender: &Option<mpsc::Sender<Value>>) {
         if let Some(method) = message.get("method").and_then(|m| m.as_str()) {
             // Check for $/progress notification and forward it
-            if method == "$/progress" {
-                if let Some(sender) = notification_sender {
-                    log::debug!(
-                        target: "treesitter_ls::bridge::tokio",
-                        "[READER] Forwarding $/progress notification"
+            if method == "$/progress"
+                && let Some(sender) = notification_sender
+            {
+                log::debug!(
+                    target: "treesitter_ls::bridge::tokio",
+                    "[READER] Forwarding $/progress notification"
+                );
+                if let Err(e) = sender.try_send(message) {
+                    log::warn!(
+                        target: "treesitter_ls::bridge",
+                        "Notification channel full, dropped message: {}",
+                        e
                     );
-                    if let Err(e) = sender.try_send(message) {
-                        log::warn!(
-                            target: "treesitter_ls::bridge",
-                            "Notification channel full, dropped message: {}",
-                            e
-                        );
-                    }
                 }
             }
         }
