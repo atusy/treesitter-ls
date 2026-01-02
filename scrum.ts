@@ -192,8 +192,14 @@ const scrum: ScrumDashboard = {
         test: "E2E test 'markdown_rust_async_signature_help' verifies async path with realistic scenario showing parameter hints",
         implementation: "Add dedicated async path E2E test that exercises full signature_help request/response cycle",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "a061e5e",
+            message: "test(e2e): add dedicated async signature_help test with multi-parameter scenario",
+            phase: "green",
+          },
+        ],
         notes: [
           "Test name must have '_async' suffix per E2E_TEST_CHECKLIST.md",
           "Realistic scenario: Function with multiple parameters, verify activeParameter tracking",
