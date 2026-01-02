@@ -382,7 +382,74 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 131,
+    pbi_id: "PBI-164",
+    goal: "Remove blocking I/O from parse hot path by buffering crash detection state in memory",
+    status: "planning",
+    subtasks: [
+      {
+        test: "Test that begin_parsing does not write to disk",
+        implementation: "Change begin_parsing to only update in-memory state (Arc<AtomicOption<String>>)",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Current: writes parsing_in_progress file on every parse (fs::write)",
+          "New: store current parser in Arc<ArcSwap<Option<String>>> for atomic updates",
+          "Crash detection: on init(), check if in-memory state exists from previous crash",
+        ],
+      },
+      {
+        test: "Test that end_parsing only clears in-memory state",
+        implementation: "Change end_parsing to only clear in-memory atomic state",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Current: removes parsing_in_progress file (fs::remove_file)",
+          "New: clear Arc<ArcSwap<Option<String>>> atomically",
+          "No disk I/O needed - just memory update",
+        ],
+      },
+      {
+        test: "Test that init() still detects crashes from previous session via persistent state",
+        implementation: "Add shutdown handler to persist crash state on graceful exit; init checks for unexpected state",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "On init: check parsing_in_progress file (one-time on startup)",
+          "On shutdown: write current in-memory state to disk if exists (graceful exit)",
+          "Crash scenario: file exists on restart = crash detected",
+        ],
+      },
+      {
+        test: "Test that parse_document no longer performs I/O on hot path",
+        implementation: "Verify parse_document calls only update in-memory state",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Profile: no fs::write/remove in didChange -> parse_document path",
+          "Only memory operations (atomic swap) in begin/end_parsing",
+          "Disk I/O deferred to init/shutdown lifecycle hooks",
+        ],
+      },
+      {
+        test: "Test all existing crash detection tests still pass",
+        implementation: "Run existing failed_parsers tests and verify no behavioral regression",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "9 existing tests must continue passing",
+          "test_crash_detection_marks_parser_failed",
+          "test_init_detects_crash_and_marks_failed",
+        ],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
