@@ -218,6 +218,18 @@ impl TokioAsyncBridgeConnection {
                                 target: "treesitter_ls::bridge::tokio",
                                 "[READER] EOF or empty read"
                             );
+
+                            // Clean up all pending requests
+                            let ids: Vec<i64> = pending.iter().map(|r| *r.key()).collect();
+                            for id in ids {
+                                if let Some((_, sender)) = pending.remove(&id) {
+                                    let _ = sender.send(ResponseResult {
+                                        response: None,
+                                        notifications: vec![],
+                                    });
+                                }
+                            }
+
                             break;
                         }
                         Err(e) => {
@@ -226,6 +238,18 @@ impl TokioAsyncBridgeConnection {
                                 "[READER] Error reading message: {}",
                                 e
                             );
+
+                            // Clean up all pending requests on error
+                            let ids: Vec<i64> = pending.iter().map(|r| *r.key()).collect();
+                            for id in ids {
+                                if let Some((_, sender)) = pending.remove(&id) {
+                                    let _ = sender.send(ResponseResult {
+                                        response: None,
+                                        notifications: vec![],
+                                    });
+                                }
+                            }
+
                             break;
                         }
                     }
@@ -277,20 +301,17 @@ impl TokioAsyncBridgeConnection {
         let content = serde_json::to_string(&request).map_err(|e| format!("JSON error: {}", e))?;
         let header = format!("Content-Length: {}\r\n\r\n", content.len());
 
-        {
+        // If write fails, clean up pending entry
+        if let Err(e) = async {
             let mut stdin = self.stdin.lock().await;
-            stdin
-                .write_all(header.as_bytes())
-                .await
-                .map_err(|e| format!("Write error: {}", e))?;
-            stdin
-                .write_all(content.as_bytes())
-                .await
-                .map_err(|e| format!("Write error: {}", e))?;
-            stdin
-                .flush()
-                .await
-                .map_err(|e| format!("Flush error: {}", e))?;
+            stdin.write_all(header.as_bytes()).await?;
+            stdin.write_all(content.as_bytes()).await?;
+            stdin.flush().await
+        }
+        .await
+        {
+            self.pending_requests.remove(&id);
+            return Err(format!("Write error: {}", e));
         }
 
         log::debug!(
@@ -340,6 +361,18 @@ impl TokioAsyncBridgeConnection {
         );
 
         Ok(())
+    }
+
+    /// Remove a pending request entry by ID.
+    ///
+    /// Used to clean up pending_requests when a request times out or fails.
+    /// This prevents memory leaks from accumulating pending entries that will
+    /// never receive a response.
+    ///
+    /// # Arguments
+    /// * `id` - The request ID to remove
+    pub fn remove_pending_request(&self, id: i64) {
+        self.pending_requests.remove(&id);
     }
 
     /// Gracefully shutdown the language server.
@@ -416,17 +449,28 @@ impl TokioAsyncBridgeConnection {
 
 impl Drop for TokioAsyncBridgeConnection {
     fn drop(&mut self) {
-        // 1. Send shutdown signal to reader task
+        // 1. Notify all pending requests
+        let ids: Vec<i64> = self.pending_requests.iter().map(|r| *r.key()).collect();
+        for id in ids {
+            if let Some((_, sender)) = self.pending_requests.remove(&id) {
+                let _ = sender.send(ResponseResult {
+                    response: None,
+                    notifications: vec![],
+                });
+            }
+        }
+
+        // 2. Send shutdown signal to reader task
         if let Some(shutdown_tx) = self.shutdown_tx.take() {
             let _ = shutdown_tx.send(());
         }
 
-        // 2. Abort the reader task if it's still running
+        // 3. Abort the reader task if it's still running
         if let Some(handle) = self.reader_handle.take() {
             handle.abort();
         }
 
-        // 3. Kill the child process
+        // 4. Kill the child process
         // We skip sending shutdown/exit since block_on can't be called from async context
         // and the process will be killed anyway
         if let Some(mut child) = self.child.take() {
@@ -437,7 +481,7 @@ impl Drop for TokioAsyncBridgeConnection {
             );
         }
 
-        // 4. Remove temp_dir (sync I/O is safe in Drop)
+        // 5. Remove temp_dir (sync I/O is safe in Drop)
         if let Some(temp_dir) = self.temp_dir.take() {
             if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
                 log::warn!(

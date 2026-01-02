@@ -244,13 +244,18 @@ impl TokioAsyncLanguageServerPool {
             "position": { "line": position.line, "character": position.character },
         });
 
-        let (_, receiver) = conn.send_request("textDocument/hover", params).await.ok()?;
+        let (id, receiver) = conn.send_request("textDocument/hover", params).await.ok()?;
 
         // Await response asynchronously with timeout
-        let result = tokio::time::timeout(std::time::Duration::from_secs(30), receiver)
-            .await
-            .ok()?
-            .ok()?;
+        let result = match tokio::time::timeout(std::time::Duration::from_secs(30), receiver).await
+        {
+            Ok(result) => result.ok()?,
+            Err(_timeout) => {
+                // Clean up pending request on timeout
+                conn.remove_pending_request(id);
+                return None;
+            }
+        };
 
         // Parse response
         result
@@ -294,16 +299,21 @@ impl TokioAsyncLanguageServerPool {
             "position": { "line": position.line, "character": position.character },
         });
 
-        let (_, receiver) = conn
+        let (id, receiver) = conn
             .send_request("textDocument/definition", params)
             .await
             .ok()?;
 
         // Await response asynchronously with timeout
-        let result = tokio::time::timeout(std::time::Duration::from_secs(30), receiver)
-            .await
-            .ok()?
-            .ok()?;
+        let result = match tokio::time::timeout(std::time::Duration::from_secs(30), receiver).await
+        {
+            Ok(result) => result.ok()?,
+            Err(_timeout) => {
+                // Clean up pending request on timeout
+                conn.remove_pending_request(id);
+                return None;
+            }
+        };
 
         // Parse response
         result
@@ -347,16 +357,21 @@ impl TokioAsyncLanguageServerPool {
             "position": { "line": position.line, "character": position.character },
         });
 
-        let (_, receiver) = conn
+        let (id, receiver) = conn
             .send_request("textDocument/completion", params)
             .await
             .ok()?;
 
         // Await response asynchronously with timeout
-        let result = tokio::time::timeout(std::time::Duration::from_secs(30), receiver)
-            .await
-            .ok()?
-            .ok()?;
+        let result = match tokio::time::timeout(std::time::Duration::from_secs(30), receiver).await
+        {
+            Ok(result) => result.ok()?,
+            Err(_timeout) => {
+                // Clean up pending request on timeout
+                conn.remove_pending_request(id);
+                return None;
+            }
+        };
 
         // Parse response
         result
@@ -400,16 +415,21 @@ impl TokioAsyncLanguageServerPool {
             "position": { "line": position.line, "character": position.character },
         });
 
-        let (_, receiver) = conn
+        let (id, receiver) = conn
             .send_request("textDocument/signatureHelp", params)
             .await
             .ok()?;
 
         // Await response asynchronously with timeout
-        let result = tokio::time::timeout(std::time::Duration::from_secs(30), receiver)
-            .await
-            .ok()?
-            .ok()?;
+        let result = match tokio::time::timeout(std::time::Duration::from_secs(30), receiver).await
+        {
+            Ok(result) => result.ok()?,
+            Err(_timeout) => {
+                // Clean up pending request on timeout
+                conn.remove_pending_request(id);
+                return None;
+            }
+        };
 
         // Parse response
         result
