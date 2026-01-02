@@ -122,7 +122,7 @@ const scrum: ScrumDashboard = {
     { number: 119, pbi_id: "PBI-150", goal: "Implement Rust-based E2E testing infrastructure for go-to-definition with snapshot testing, enabling faster and more reliable tests without Neovim dependency", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-119: ADR-driven development, reusable patterns, E2E test timing
+  // Recent 2 retrospectives | Sprint 1-120: ADR-driven development, reusable patterns, E2E test timing
   retrospectives: [
     { sprint: 120, improvements: [
       { action: "Plan helper module architecture during sprint planning - identify reusable abstractions (LspClient, test fixtures, initialization patterns) before implementation starts to avoid mid-sprint extraction", timing: "sprint", status: "active", outcome: null },
