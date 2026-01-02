@@ -106,7 +106,156 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 120,
+    pbi_id: "PBI-151",
+    goal: "Migrate critical Neovim E2E tests (hover, completion, references) to Rust with snapshot verification, establishing reusable patterns and helpers for future migrations",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "Extract poll_until helper from e2e_definition.rs retry logic into test helper module",
+        implementation: "Create tests/helpers_lsp_polling.rs with poll_until(max_attempts, delay_ms, predicate) function that encapsulates retry-with-timeout pattern",
+        type: "structural",
+        status: "completed",
+        commits: [
+          {
+            hash: "f187c14",
+            message: "refactor(test): extract poll_until helper for E2E test retry logic",
+            phase: "refactoring",
+          },
+        ],
+        notes: [
+          "Addresses Sprint 119 retrospective: Extract retry-with-timeout pattern into reusable test helper",
+          "This is structural refactoring to prepare for test migrations",
+        ],
+      },
+      {
+        test: "Refactor e2e_definition.rs tests to use poll_until helper instead of manual retry loops",
+        implementation: "Replace the 20-attempt retry loops in e2e_definition.rs with calls to poll_until helper",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Validates the poll_until abstraction works for existing definition tests",
+          "This refactoring proves the helper is reusable before writing new tests",
+        ],
+      },
+      {
+        test: "Write test_hover_returns_content Rust E2E test that sends hover request at cursor position and validates response structure",
+        implementation: "Implement hover E2E test using LspClient to send textDocument/hover request, poll_until for response, assert hover content exists",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Migrates from tests/test_lsp_hover.lua",
+          "Cursor on 'main' in fn main() at line 4, column 4",
+          "Accepts either real hover content or 'indexing (rust-analyzer)' message (PBI-149)",
+        ],
+      },
+      {
+        test: "Add sanitization helper for hover responses that replaces non-deterministic data (file URIs, markdown formatting variations)",
+        implementation: "Create sanitize_hover_response function in tests/helpers_sanitization.rs to normalize hover content for snapshot comparison",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Structural refactoring to support snapshot testing",
+          "Prepares for hover snapshot test in next subtask",
+        ],
+      },
+      {
+        test: "Write test_hover_snapshot test that captures sanitized hover response in insta snapshot",
+        implementation: "Add snapshot test using insta::assert_json_snapshot with sanitized hover response",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Verifies hover content is deterministic and stable across runs",
+          "Documents expected hover response structure",
+        ],
+      },
+      {
+        test: "Extract LspClient into shared test helper module for reuse across E2E test files",
+        implementation: "Move LspClient struct and implementation from e2e_definition.rs to tests/helpers_lsp_client.rs, export as pub",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Addresses PBI-151 acceptance criterion: LspClient helper in reusable module",
+          "Enables upcoming completion and references tests to reuse LspClient",
+        ],
+      },
+      {
+        test: "Write test_completion_returns_items Rust E2E test that requests completion after 'p.' and validates struct field items",
+        implementation: "Implement completion E2E test using shared LspClient, poll_until, verify completion items include 'x' and 'y' fields",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Migrates from tests/test_lsp_completion.lua",
+          "Cursor after 'p.' on line 11 inside Rust code block",
+          "Verifies textEdit ranges are in host document coordinates (line >= 10)",
+        ],
+      },
+      {
+        test: "Refactor completion test to extract common initialization pattern into helper function",
+        implementation: "Create initialize_with_bridge helper that encapsulates initialize + initialized + bridge config setup",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Reduces duplication across definition, hover, and completion tests",
+          "Prepares clean foundation for references test",
+        ],
+      },
+      {
+        test: "Write test_completion_snapshot test that captures sanitized completion items in snapshot",
+        implementation: "Add snapshot test for completion response with sanitized textEdit ranges",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Verifies completion items are stable and deterministic",
+          "Validates range adjustment from virtual to host coordinates",
+        ],
+      },
+      {
+        test: "Write test_references_returns_locations Rust E2E test that finds all references to variable 'x'",
+        implementation: "Implement references E2E test using shared helpers, poll_until, verify 3+ reference locations with host coordinates",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Migrates from tests/test_lsp_references.lua",
+          "Cursor on 'x' definition at line 5",
+          "Expects references at lines 5, 6, 7 (all >= line 3 in 0-indexed host coordinates)",
+        ],
+      },
+      {
+        test: "Write test_references_snapshot test that captures sanitized reference locations",
+        implementation: "Add snapshot test for references response with sanitized URIs and stable coordinates",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Completes the TDD cycle for references migration",
+          "Establishes pattern: functional test -> refactor helpers -> snapshot test",
+        ],
+      },
+      {
+        test: "Refactor E2E test helpers by extracting create_test_markdown_file variants into reusable module",
+        implementation: "Create tests/helpers_test_fixtures.rs with functions for hover_fixture, completion_fixture, references_fixture",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Final refactoring to consolidate common test setup patterns",
+          "Prepares clean foundation for future LSP feature migrations (rename, codeAction, etc.)",
+          "User requirement: refactor E2E test on every migration cycles",
+        ],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
