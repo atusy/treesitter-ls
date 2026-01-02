@@ -122,9 +122,13 @@ fn fetch_parsers_lua_with_options(
         )));
     }
 
-    let content = response
-        .text()
-        .map_err(|e| MetadataError::HttpError(e.to_string()))?;
+    let content = response.text().map_err(|e| {
+        if e.is_timeout() {
+            MetadataError::Timeout
+        } else {
+            MetadataError::HttpError(e.to_string())
+        }
+    })?;
 
     // Update cache if available
     if let Some(cache) = cache {
