@@ -161,14 +161,14 @@ fn test_user_config_loaded_from_xdg_config_home() {
     .expect("failed to write user config");
 
     // Point XDG_CONFIG_HOME to our temp directory
-    // SAFETY: #[serial] ensures single-threaded execution
+    // SAFETY: #[serial(xdg_env)] prevents concurrent modification of XDG_CONFIG_HOME
     unsafe { env::set_var("XDG_CONFIG_HOME", user_config_dir.path()) };
 
     // Load user config
     let result = load_user_config();
 
     // Restore original XDG_CONFIG_HOME
-    // SAFETY: #[serial] ensures single-threaded execution
+    // SAFETY: #[serial(xdg_env)] prevents concurrent modification of XDG_CONFIG_HOME
     unsafe {
         match original_xdg {
             Some(val) => env::set_var("XDG_CONFIG_HOME", val),
