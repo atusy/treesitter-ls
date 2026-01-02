@@ -135,8 +135,14 @@ const scrum: ScrumDashboard = {
         test: "Grep verification confirms signature_help.rs uses async pool.signature_help() (no spawn_blocking)",
         implementation: "Refactor signature_help handler to use tokio_async_pool.signature_help() instead of spawn_blocking path",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "1e77161",
+            message: "refactor(async): use tokio_async_pool.signature_help() in handler",
+            phase: "green",
+          },
+        ],
         notes: [
           "Replace spawn_blocking call (line 137) with async pool.signature_help()",
           "Remove manual notification forwarding (lines 165-175) - async pool handles it",
