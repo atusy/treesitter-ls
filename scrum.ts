@@ -103,9 +103,83 @@ const scrum: ScrumDashboard = {
       ],
       status: "ready",
     },
+    {
+      id: "PBI-150",
+      story: {
+        role: "documentation author with Rust code blocks",
+        capability: "not see noisy error notifications for unsupported languages during auto-install",
+        benefit: "I get a cleaner experience without failed installation attempts for languages that treesitter-ls cannot support",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "maybe_auto_install_language checks if language exists in nvim-treesitter metadata before attempting installation",
+          verification: "Unit test: calling maybe_auto_install_language with unsupported language (e.g., 'fake_lang') skips installation without error notification",
+        },
+        {
+          criterion: "Supported languages list is cached to avoid repeated HTTP requests during a session",
+          verification: "Unit test: multiple is_language_supported checks reuse cached metadata (verify single HTTP fetch via mock or cache hit count)",
+        },
+        {
+          criterion: "User receives informative log message when language is skipped due to being unsupported",
+          verification: "Unit test: verify log message contains language name and reason (not supported by nvim-treesitter)",
+        },
+        {
+          criterion: "Existing auto-install flow continues to work for supported languages",
+          verification: "Integration test: auto-install for 'lua' proceeds normally (existing tests pass)",
+        },
+      ],
+      status: "ready",
+    },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 119,
+    pbi_id: "PBI-150",
+    goal: "Skip unsupported languages during auto-install by checking nvim-treesitter metadata before attempting installation, with cached metadata to avoid repeated HTTP requests",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "Unit test: is_language_supported returns true for known language (e.g., 'lua') using cached metadata",
+        implementation: "Add is_language_supported function in metadata.rs that wraps list_supported_languages with FetchOptions caching",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["list_supported_languages already exists with caching via FetchOptions"],
+      },
+      {
+        test: "Unit test: is_language_supported returns false for unsupported language (e.g., 'fake_lang_xyz') without error",
+        implementation: "Ensure is_language_supported gracefully returns false for non-existent languages",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["MetadataError::LanguageNotFound should be caught and converted to false"],
+      },
+      {
+        test: "Unit test: maybe_auto_install_language skips installation for unsupported language and logs info message",
+        implementation: "Add is_language_supported check at start of maybe_auto_install_language before try_start_install",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Log message should explain why installation was skipped (not supported by nvim-treesitter)"],
+      },
+      {
+        test: "Unit test: multiple is_language_supported checks reuse cached metadata (verify via cache TTL behavior)",
+        implementation: "Leverage existing MetadataCache with 1-hour TTL from FetchOptions",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Existing cache.rs already provides caching; verify it's used via FetchOptions in is_language_supported"],
+      },
+      {
+        test: "Integration test: auto-install for 'lua' proceeds normally (existing tests pass)",
+        implementation: "Run existing auto-install integration tests to verify no regression",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["AC4: Verify existing behavior is preserved for supported languages"],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
