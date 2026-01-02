@@ -7,6 +7,9 @@
 
 #![cfg(feature = "e2e")]
 
+mod helpers;
+
+use helpers::lsp_polling::poll_until;
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -362,8 +365,7 @@ fn test_definition_returns_location() {
     //
     // Retry up to 20 times with 500ms delay (10 seconds total) to wait for
     // rust-analyzer to finish indexing. This mirrors the Neovim E2E test behavior.
-    let mut result = Value::Null;
-    for attempt in 1..=20 {
+    let result = poll_until(20, 500, || {
         let response = client.send_request(
             "textDocument/definition",
             json!({
@@ -384,23 +386,20 @@ fn test_definition_returns_location() {
             response
         );
 
-        result = response.get("result").unwrap().clone();
+        let result = response.get("result").unwrap().clone();
 
         // Result can be Location, Location[], LocationLink[], or null
         // treesitter-ls bridges to rust-analyzer which typically returns LocationLink[]
         if !result.is_null() {
-            eprintln!("Got non-null definition response on attempt {}", attempt);
-            break;
+            Some(result)
+        } else {
+            None
         }
-
-        // Wait before retry - rust-analyzer may still be indexing
-        std::thread::sleep(std::time::Duration::from_millis(500));
-    }
+    });
 
     assert!(
-        !result.is_null(),
-        "Definition result should not be null for valid position after retries: {:?}",
-        result
+        result.is_some(),
+        "Definition result should not be null for valid position after retries"
     );
 }
 
@@ -487,8 +486,7 @@ fn test_definition_snapshot() {
 
     // Request definition at position of "example()" call on line 8, column 4
     // Retry until we get a non-null response
-    let mut result = Value::Null;
-    for attempt in 1..=20 {
+    let result = poll_until(20, 500, || {
         let response = client.send_request(
             "textDocument/definition",
             json!({
@@ -497,16 +495,16 @@ fn test_definition_snapshot() {
             }),
         );
 
-        result = response.get("result").cloned().unwrap_or(Value::Null);
+        let result = response.get("result").cloned().unwrap_or(Value::Null);
         if !result.is_null() {
-            eprintln!("Got non-null definition response on attempt {}", attempt);
-            break;
+            Some(result)
+        } else {
+            None
         }
+    });
 
-        std::thread::sleep(std::time::Duration::from_millis(500));
-    }
-
-    assert!(!result.is_null(), "Expected non-null definition result");
+    assert!(result.is_some(), "Expected non-null definition result");
+    let result = result.unwrap();
 
     // Sanitize the result for snapshot comparison (replace temp file URI)
     let sanitized = sanitize_definition_response(&result);
@@ -579,8 +577,7 @@ fn test_definition_matches_neovim_behavior() {
     let expected_definition_line = 3; // 0-indexed (Neovim line 4)
 
     // Request definition with retry
-    let mut definition_line = None;
-    for _ in 1..=20 {
+    let definition_line = poll_until(20, 500, || {
         let response = client.send_request(
             "textDocument/definition",
             json!({
@@ -596,19 +593,17 @@ fn test_definition_matches_neovim_behavior() {
                     if let Some(first) = locations.first() {
                         if let Some(range) = first.get("range") {
                             if let Some(start) = range.get("start") {
-                                definition_line = start.get("line").and_then(|l| l.as_u64());
+                                if let Some(line) = start.get("line").and_then(|l| l.as_u64()) {
+                                    return Some(line);
+                                }
                             }
                         }
                     }
                 }
-                if definition_line.is_some() {
-                    break;
-                }
             }
         }
-
-        std::thread::sleep(std::time::Duration::from_millis(500));
-    }
+        None
+    });
 
     let actual_line = definition_line.expect("Should get definition response with line number");
 
