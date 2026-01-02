@@ -10,6 +10,7 @@
 mod helpers;
 
 use helpers::lsp_client::LspClient;
+use helpers::lsp_init::initialize_with_rust_bridge;
 use helpers::lsp_polling::poll_until;
 use helpers::sanitization::sanitize_hover_response;
 use serde_json::{Value, json};
@@ -50,31 +51,7 @@ fn test_hover_returns_content() {
     let mut client = LspClient::new();
 
     // Initialize with bridge configuration
-    let _init_response = client.send_request(
-        "initialize",
-        json!({
-            "processId": std::process::id(),
-            "rootUri": null,
-            "capabilities": {},
-            "initializationOptions": {
-                "languages": {
-                    "markdown": {
-                        "bridge": {
-                            "rust": { "enabled": true }
-                        }
-                    }
-                },
-                "languageServers": {
-                    "rust-analyzer": {
-                        "cmd": ["rust-analyzer"],
-                        "languages": ["rust"],
-                        "workspaceType": "cargo"
-                    }
-                }
-            }
-        }),
-    );
-    client.send_notification("initialized", json!({}));
+    initialize_with_rust_bridge(&mut client);
 
     // Create and open test file
     let (uri, content, _temp_file) = create_hover_test_markdown_file();
@@ -185,31 +162,7 @@ fn test_hover_snapshot() {
     let mut client = LspClient::new();
 
     // Initialize with bridge configuration
-    let _init_response = client.send_request(
-        "initialize",
-        json!({
-            "processId": std::process::id(),
-            "rootUri": null,
-            "capabilities": {},
-            "initializationOptions": {
-                "languages": {
-                    "markdown": {
-                        "bridge": {
-                            "rust": { "enabled": true }
-                        }
-                    }
-                },
-                "languageServers": {
-                    "rust-analyzer": {
-                        "cmd": ["rust-analyzer"],
-                        "languages": ["rust"],
-                        "workspaceType": "cargo"
-                    }
-                }
-            }
-        }),
-    );
-    client.send_notification("initialized", json!({}));
+    initialize_with_rust_bridge(&mut client);
 
     // Create and open test file
     let (uri, content, _temp_file) = create_hover_test_markdown_file();

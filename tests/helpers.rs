@@ -8,3 +8,6 @@ pub mod lsp_polling;
 
 #[path = "helpers_sanitization.rs"]
 pub mod sanitization;
+
+#[path = "helpers_lsp_init.rs"]
+pub mod lsp_init;
