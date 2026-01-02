@@ -13,6 +13,11 @@ pub type UserConfigResult<T> = Result<T, UserConfigError>;
 /// Error type for user config loading.
 #[derive(Debug)]
 pub enum UserConfigError {
+    /// I/O error reading the config file
+    IoError {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     /// TOML parse error with context
     ParseError {
         path: PathBuf,
@@ -23,6 +28,14 @@ pub enum UserConfigError {
 impl std::fmt::Display for UserConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            UserConfigError::IoError { path, source } => {
+                write!(
+                    f,
+                    "Failed to read user config at {}: {}",
+                    path.display(),
+                    source
+                )
+            }
             UserConfigError::ParseError { path, source } => {
                 write!(
                     f,
@@ -38,6 +51,7 @@ impl std::fmt::Display for UserConfigError {
 impl std::error::Error for UserConfigError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            UserConfigError::IoError { source, .. } => Some(source),
             UserConfigError::ParseError { source, .. } => Some(source),
         }
     }
@@ -61,9 +75,9 @@ pub fn load_user_config() -> UserConfigResult<Option<TreeSitterSettings>> {
     }
 
     // Read and parse the file
-    let contents = std::fs::read_to_string(&path).map_err(|_| UserConfigError::ParseError {
+    let contents = std::fs::read_to_string(&path).map_err(|e| UserConfigError::IoError {
         path: path.clone(),
-        source: toml::from_str::<TreeSitterSettings>("").unwrap_err(), // Placeholder error for IO issues
+        source: e,
     })?;
 
     let settings = toml::from_str::<TreeSitterSettings>(&contents)
