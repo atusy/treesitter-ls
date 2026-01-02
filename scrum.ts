@@ -386,15 +386,15 @@ const scrum: ScrumDashboard = {
     number: 132,
     pbi_id: "PBI-155",
     goal: "Refactor reader_loop for maintainability with clear separation of concerns",
-    status: "planning",
+    status: "in_progress",
     subtasks: [
       {
         test: "Verify reader_routes_responses_to_pending_requests still passes",
         implementation: "Extract lines 182-203 into static handle_response() method",
         type: "structural",
-        status: "pending",
-        commits: [],
-        notes: [],
+        status: "completed",
+        commits: [{ hash: "b63db34", message: "refactor(bridge): extract handle_response() from reader_loop", phase: "green" }],
+        notes: ["Baseline test passes - verified response routing works correctly", "Extracted handle_response() - test still passes"],
       },
       {
         test: "Verify reader_forwards_progress_notifications_to_channel still passes",
