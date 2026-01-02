@@ -16,15 +16,26 @@ use helpers::sanitization::sanitize_completion_response;
 use helpers::test_fixtures::create_completion_fixture;
 use serde_json::json;
 
+/// Expected struct field names from the completion fixture.
+/// These must match the field names in `create_completion_fixture` (helpers_test_fixtures.rs).
+/// If the fixture structure changes, these constants must be updated to maintain test validity.
+const EXPECTED_COMPLETION_FIELDS: &[&str] = &["x", "y"];
+
 /// Test that completion returns struct field items with adjusted textEdit ranges.
 ///
 /// Migrates from tests/test_lsp_completion.lua:
 /// - Cursor after 'p.' on line 11 (0-indexed: line 10, column 6)
-/// - Expects completion items including 'x' and 'y' fields
+/// - Expects completion items including struct fields from `create_completion_fixture`
 /// - Verifies textEdit ranges are in host document coordinates (line >= 10)
 ///
 /// This test verifies the async bridge path works for completion requests and that
 /// coordinate translation from virtual to host document is correct.
+///
+/// **Fixture Dependency**: This test is tightly coupled to the struct definition in
+/// `create_completion_fixture` (helpers_test_fixtures.rs). The completion filter
+/// checks for the field names defined in `EXPECTED_COMPLETION_FIELDS`. If the fixture
+/// struct fields are renamed or removed, this constant must be updated to prevent
+/// silent test failures.
 #[test]
 fn test_completion_returns_items() {
     let mut client = LspClient::new();
@@ -99,15 +110,14 @@ fn test_completion_returns_items() {
         "Completion should return at least one item"
     );
 
-    // Check for 'x' or 'y' field in completion items
-    let mut found_x = false;
-    let mut found_y = false;
+    // Check for expected struct fields in completion items
+    let mut found_fields = std::collections::HashSet::new();
 
     for item in items {
         let label = item.get("label").and_then(|v| v.as_str()).unwrap_or("");
 
-        if label == "x" {
-            found_x = true;
+        if EXPECTED_COMPLETION_FIELDS.contains(&label) {
+            found_fields.insert(label);
             // Verify textEdit range is in host document coordinates
             if let Some(text_edit) = item.get("textEdit") {
                 if let Some(range) = text_edit.get("range") {
@@ -120,19 +130,17 @@ fn test_completion_returns_items() {
                 }
             }
         }
-
-        if label == "y" {
-            found_y = true;
-        }
     }
 
     // rust-analyzer may not always return struct fields depending on indexing state
     // So we accept if we found at least some completion items
-    // But if we did find 'x' or 'y', verify coordinates are correct
-    if found_x || found_y {
+    // But if we did find any expected fields, verify coordinates are correct
+    if !found_fields.is_empty() {
         assert!(
-            found_x && found_y,
-            "If struct fields are found, both x and y should be present"
+            found_fields.len() == EXPECTED_COMPLETION_FIELDS.len(),
+            "If struct fields are found, all expected fields {} should be present, but got {:?}",
+            EXPECTED_COMPLETION_FIELDS.join(", "),
+            found_fields
         );
     } else {
         // At minimum, verify we got completion items with proper structure
@@ -151,6 +159,10 @@ fn test_completion_returns_items() {
 /// - Sanitization removes non-deterministic data (temp paths, URIs)
 /// - Snapshot captures expected response structure
 /// - textEdit ranges are properly adjusted to host coordinates
+///
+/// **Fixture Dependency**: This test filters completion items to include only the
+/// expected struct fields defined in `EXPECTED_COMPLETION_FIELDS` to ensure deterministic
+/// snapshots. If the fixture structure changes, the constant must be updated.
 #[test]
 fn test_completion_snapshot() {
     let mut client = LspClient::new();
@@ -206,13 +218,13 @@ fn test_completion_snapshot() {
     // Sanitize the completion response for deterministic snapshot
     let mut sanitized = sanitize_completion_response(&completion);
 
-    // Filter to only include struct field completions (x and y) for deterministic snapshot
+    // Filter to only include expected struct field completions for deterministic snapshot
     // rust-analyzer may return different additional completions depending on indexing state
     if let Some(items) = sanitized.get_mut("items") {
         if let Some(items_array) = items.as_array_mut() {
             items_array.retain(|item| {
                 let label = item.get("label").and_then(|v| v.as_str()).unwrap_or("");
-                label == "x" || label == "y"
+                EXPECTED_COMPLETION_FIELDS.contains(&label)
             });
             // Sort by label for consistent ordering
             items_array.sort_by(|a, b| {
