@@ -636,12 +636,15 @@ impl TreeSitterLs {
                     data_dir: Some(dir.as_path()),
                     use_cache: true,
                 });
-        if let Err(reason) =
+        let (should_skip, reason) =
             super::auto_install::should_skip_unsupported_language(language, fetch_options.as_ref())
-        {
+                .await;
+        if let Some(reason) = &reason {
             let message_type = reason.message_type();
             let message = reason.message();
             self.client.log_message(message_type, message).await;
+        }
+        if should_skip {
             return false; // Not supported - no install triggered
         }
 
