@@ -12,6 +12,7 @@ mod helpers;
 use helpers::lsp_client::LspClient;
 use helpers::lsp_init::initialize_with_rust_bridge;
 use helpers::lsp_polling::poll_until;
+use helpers::sanitization::sanitize_references_response;
 use serde_json::json;
 
 /// Create a temporary markdown file with Rust code block for references testing.
@@ -147,4 +148,73 @@ fn test_references_returns_locations() {
         .map(|loc| loc["range"]["start"]["line"].as_u64().unwrap())
         .collect();
     eprintln!("Found references at lines: {:?}", lines);
+}
+
+/// Test that references response is deterministic and can be snapshot tested.
+///
+/// This test verifies:
+/// - Reference locations are stable across runs
+/// - Sanitization removes non-deterministic data (URIs, temp paths)
+/// - Snapshot captures expected response structure
+/// - Reference coordinates are in host document (lines >= 3)
+#[test]
+fn test_references_snapshot() {
+    let mut client = LspClient::new();
+
+    // Initialize with bridge configuration
+    initialize_with_rust_bridge(&mut client);
+
+    // Create and open test file
+    let (uri, content, _temp_file) = create_references_test_markdown_file();
+    client.send_notification(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": uri,
+                "languageId": "markdown",
+                "version": 1,
+                "text": content
+            }
+        }),
+    );
+
+    // Request references for 'x' on line 4, column 8 (0-indexed)
+    // Retry to wait for rust-analyzer indexing
+    let references_result = poll_until(20, 500, || {
+        let response = client.send_request(
+            "textDocument/references",
+            json!({
+                "textDocument": {
+                    "uri": uri
+                },
+                "position": {
+                    "line": 4,
+                    "character": 8
+                },
+                "context": {
+                    "includeDeclaration": true
+                }
+            }),
+        );
+
+        let result = response.get("result").cloned().unwrap_or(json!(null));
+        if result.is_array() && !result.as_array().unwrap().is_empty() {
+            Some(result)
+        } else {
+            None
+        }
+    });
+
+    assert!(
+        references_result.is_some(),
+        "Expected references result for snapshot testing"
+    );
+
+    let references = references_result.unwrap();
+
+    // Sanitize the references response for deterministic snapshot
+    let sanitized = sanitize_references_response(&references);
+
+    // Capture snapshot
+    insta::assert_json_snapshot!("references_response", sanitized);
 }

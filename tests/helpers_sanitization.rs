@@ -127,6 +127,42 @@ fn sanitize_completion_item(item: &mut Value) {
     }
 }
 
+/// Sanitize references response for snapshot testing.
+///
+/// Replaces non-deterministic data:
+/// - File URIs in location -> "<TEST_FILE_URI>"
+/// - Temp file paths -> "<TEMP_PATH>"
+///
+/// # Arguments
+/// * `references` - The References response (array of Location)
+///
+/// # Returns
+/// * Sanitized references array suitable for snapshot comparison
+pub fn sanitize_references_response(references: &Value) -> Value {
+    let mut sanitized = references.clone();
+
+    if let Some(locations_array) = sanitized.as_array_mut() {
+        for location in locations_array {
+            sanitize_location(location);
+        }
+    }
+
+    sanitized
+}
+
+/// Sanitize a single location.
+fn sanitize_location(location: &mut Value) {
+    // Sanitize URI
+    if let Some(uri) = location.get_mut("uri") {
+        if let Some(uri_str) = uri.as_str() {
+            // Replace the entire temp file URI with placeholder
+            if uri_str.contains("/tmp/") || uri_str.contains("/var/folders/") {
+                *uri = Value::String("file://<TEMP_PATH>/test.md".to_string());
+            }
+        }
+    }
+}
+
 /// Sanitize text content by replacing temp file paths.
 fn sanitize_text(text: &str) -> String {
     // Replace /var/folders/... (macOS temp) and /tmp/... (Linux temp) paths
