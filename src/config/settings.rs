@@ -86,32 +86,6 @@ pub struct QueryItem {
     pub kind: Option<QueryKind>,
 }
 
-/// Infer the query kind from a file path based on filename patterns.
-///
-/// Rules:
-/// - `*highlights*.scm` -> `Highlights`
-/// - `*locals*.scm` -> `Locals`
-/// - `*injections*.scm` -> `Injections`
-/// - Otherwise -> `Highlights` (default)
-pub fn infer_query_kind(path: &str) -> QueryKind {
-    // Extract filename from path using std::path for cross-platform support
-    let filename = std::path::Path::new(path)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or(path);
-
-    if filename.contains("injections") {
-        QueryKind::Injections
-    } else if filename.contains("locals") {
-        QueryKind::Locals
-    } else if filename.contains("highlights") {
-        QueryKind::Highlights
-    } else {
-        // Default to Highlights for unrecognized patterns
-        QueryKind::Highlights
-    }
-}
-
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct LanguageConfig {
     pub library: Option<String>,
@@ -275,6 +249,32 @@ impl WorkspaceSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Infer the query kind from a file path based on filename patterns.
+    ///
+    /// Rules:
+    /// - `*highlights*.scm` -> `Highlights`
+    /// - `*locals*.scm` -> `Locals`
+    /// - `*injections*.scm` -> `Injections`
+    /// - Otherwise -> `Highlights` (default)
+    fn infer_query_kind(path: &str) -> QueryKind {
+        // Extract filename from path using std::path for cross-platform support
+        let filename = std::path::Path::new(path)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(path);
+
+        if filename.contains("injections") {
+            QueryKind::Injections
+        } else if filename.contains("locals") {
+            QueryKind::Locals
+        } else if filename.contains("highlights") {
+            QueryKind::Highlights
+        } else {
+            // Default to Highlights for unrecognized patterns
+            QueryKind::Highlights
+        }
+    }
 
     #[test]
     fn should_parse_valid_configuration() {
