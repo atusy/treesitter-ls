@@ -6,6 +6,7 @@
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::time::{Duration, Instant};
 
 /// LSP client for communicating with treesitter-ls binary.
 ///
@@ -93,9 +94,34 @@ impl LspClient {
 
     /// Receive an LSP response for a specific request id.
     /// Skips server-initiated notifications and requests until finding matching response.
+    /// Times out after 30 seconds or 1000 messages to prevent indefinite hangs.
     fn receive_response_for_id(&mut self, expected_id: i64) -> Value {
+        const MAX_MESSAGES: u32 = 1000;
+        const TIMEOUT: Duration = Duration::from_secs(30);
+
+        let start_time = Instant::now();
+        let mut message_count = 0u32;
+
         loop {
+            // Check timeout
+            if start_time.elapsed() > TIMEOUT {
+                panic!(
+                    "Timeout waiting for response with id {}. Elapsed: {:?}",
+                    expected_id,
+                    start_time.elapsed()
+                );
+            }
+
+            // Check message count threshold
+            if message_count >= MAX_MESSAGES {
+                panic!(
+                    "Exceeded maximum message threshold ({}) waiting for response with id {}",
+                    MAX_MESSAGES, expected_id
+                );
+            }
+
             let message = self.receive_message();
+            message_count += 1;
 
             // Check if this is a response to our request
             if let Some(id) = message.get("id") {
