@@ -6,7 +6,7 @@ use super::parser_pool::{DocumentParserPool, ParserFactory};
 use super::query_loader::QueryLoader;
 use super::query_store::QueryStore;
 use super::registry::LanguageRegistry;
-use crate::config::settings::{infer_query_kind, LanguageConfig, QueryKind};
+use crate::config::settings::{LanguageConfig, QueryKind, infer_query_kind};
 use crate::config::{CaptureMappings, TreeSitterSettings, WorkspaceSettings};
 use std::sync::{Arc, RwLock};
 use tree_sitter::Language;
