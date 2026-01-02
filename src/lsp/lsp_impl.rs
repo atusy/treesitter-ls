@@ -617,11 +617,8 @@ impl TreeSitterLs {
         if let Err(reason) =
             super::auto_install::should_skip_unsupported_language(language, fetch_options.as_ref())
         {
+            let message_type = reason.message_type();
             let message = reason.message();
-            let message_type = match reason {
-                super::auto_install::SkipReason::UnsupportedLanguage { .. } => MessageType::INFO,
-                super::auto_install::SkipReason::MetadataUnavailable { .. } => MessageType::WARNING,
-            };
             self.client.log_message(message_type, message).await;
             return;
         }

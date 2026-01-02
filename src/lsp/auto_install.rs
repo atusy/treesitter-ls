@@ -10,7 +10,7 @@ use crate::language::LanguageCoordinator;
 use crate::language::injection::collect_all_injections;
 use std::collections::HashSet;
 use std::sync::Mutex;
-use tower_lsp::lsp_types::Url;
+use tower_lsp::lsp_types::{MessageType, Url};
 
 /// Tracks languages currently being installed to prevent duplicate installs.
 pub struct InstallingLanguages {
@@ -176,6 +176,13 @@ impl SkipReason {
                 "Could not verify support for '{}' due to metadata error: {}. Skipping auto-install.",
                 language, error
             ),
+        }
+    }
+
+    pub fn message_type(&self) -> MessageType {
+        match self {
+            SkipReason::UnsupportedLanguage { .. } => MessageType::INFO,
+            SkipReason::MetadataUnavailable { .. } => MessageType::WARNING,
         }
     }
 }
@@ -373,5 +380,21 @@ return {
             matches!(result, Err(SkipReason::MetadataUnavailable { .. })),
             "Expected MetadataUnavailable reason"
         );
+    }
+
+    #[test]
+    fn skip_reason_reports_message_type() {
+        use tower_lsp::lsp_types::MessageType;
+
+        let unsupported = SkipReason::UnsupportedLanguage {
+            language: "lua".into(),
+        };
+        assert_eq!(unsupported.message_type(), MessageType::INFO);
+
+        let metadata_err = SkipReason::MetadataUnavailable {
+            language: "lua".into(),
+            error: MetadataError::HttpError("boom".into()),
+        };
+        assert_eq!(metadata_err.message_type(), MessageType::WARNING);
     }
 }

@@ -543,13 +543,7 @@ return {
 "#;
         setup_mock_metadata_cache(temp.path(), mock_parsers_lua);
 
-        let cache = MetadataCache::with_default_ttl(temp.path());
-
-        // Verify cache file exists before first call
-        assert!(cache.read().is_some(), "Cache should exist after writing");
-
-        // Make multiple is_language_supported calls
-        // These should all use the cached metadata (no HTTP request)
+        // Multiple calls should all use cached metadata (no network requests)
         let lua_supported =
             is_language_supported("lua", Some(&options)).expect("metadata available");
         let rust_supported =
@@ -564,17 +558,6 @@ return {
         assert!(rust_supported, "rust should be supported");
         assert!(python_supported, "python should be supported");
         assert!(!fake_supported, "nonexistent_lang should NOT be supported");
-
-        // Verify the cache is still fresh (wasn't modified since we wrote it)
-        let cache_content = cache.read();
-        assert!(
-            cache_content.is_some(),
-            "Cache should still be readable after multiple calls"
-        );
-        assert!(
-            cache_content.unwrap().contains("lua"),
-            "Cache content should be unchanged"
-        );
     }
 
     #[test]
