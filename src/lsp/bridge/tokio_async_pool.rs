@@ -284,6 +284,35 @@ impl TokioAsyncLanguageServerPool {
         self.document_versions.remove(uri);
     }
 
+    /// Close a document asynchronously, sending didClose notification to the bridge server.
+    ///
+    /// This method:
+    /// 1. Sends textDocument/didClose notification to the language server
+    /// 2. Removes the document from version tracking
+    ///
+    /// Should be called when a host document is closed to properly clean up
+    /// the bridge server's document state.
+    pub async fn close_document_async(
+        &self,
+        conn: &super::tokio_connection::TokioAsyncBridgeConnection,
+        uri: &str,
+    ) {
+        // Only send didClose if the document was actually opened (has version tracking)
+        if self.get_document_version(uri).is_some() {
+            let params = serde_json::json!({
+                "textDocument": {
+                    "uri": uri
+                }
+            });
+            // Send didClose notification (ignore errors - connection may be dead)
+            let _ = conn
+                .send_notification("textDocument/didClose", params)
+                .await;
+        }
+        // Always remove version tracking
+        self.close_document(uri);
+    }
+
     /// Get the count of tracked document versions (for testing).
     #[cfg(test)]
     pub fn document_versions_count(&self) -> usize {
@@ -1396,5 +1425,55 @@ mod tests {
                 "All concurrent get_connection calls should return the same Arc instance"
             );
         }
+    }
+
+    /// Test that close_document_async sends didClose notification and removes version tracking.
+    ///
+    /// PBI-154 AC1-3: When close_document_async is called:
+    /// - textDocument/didClose notification is sent to bridge server
+    /// - document_versions entry is removed
+    #[tokio::test]
+    async fn close_document_async_sends_did_close_and_removes_version() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Get a connection
+        let conn = pool.get_connection("rust-analyzer", &config).await;
+        assert!(conn.is_some(), "Should get a connection");
+        let conn = conn.unwrap();
+
+        let virtual_uri = pool.get_virtual_uri("rust-analyzer").unwrap();
+
+        // Open document first
+        let content = "fn main() {}";
+        pool.sync_document(&conn, &virtual_uri, "rust", content)
+            .await;
+
+        // Verify document is tracked
+        assert!(
+            pool.get_document_version(&virtual_uri).is_some(),
+            "Document version should be tracked after sync"
+        );
+
+        // Close document - this should send didClose and remove version tracking
+        pool.close_document_async(&conn, &virtual_uri).await;
+
+        // Verify version tracking is removed
+        assert!(
+            pool.get_document_version(&virtual_uri).is_none(),
+            "Document version should be removed after close"
+        );
     }
 }
