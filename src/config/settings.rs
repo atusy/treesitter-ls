@@ -94,8 +94,11 @@ pub struct QueryItem {
 /// - `*injections*.scm` -> `Injections`
 /// - Otherwise -> `Highlights` (default)
 pub fn infer_query_kind(path: &str) -> QueryKind {
-    // Extract filename from path
-    let filename = path.rsplit('/').next().unwrap_or(path);
+    // Extract filename from path using std::path for cross-platform support
+    let filename = std::path::Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(path);
 
     if filename.contains("injections") {
         QueryKind::Injections
