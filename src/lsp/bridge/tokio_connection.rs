@@ -196,6 +196,22 @@ impl TokioAsyncBridgeConnection {
         }
     }
 
+    /// Handle connection end (EOF or error) by cleaning up pending requests.
+    ///
+    /// # Arguments
+    /// * `pending` - Map of pending requests awaiting responses
+    /// * `reason` - Human-readable reason for connection end (for logging)
+    fn handle_connection_end(pending: &Arc<DashMap<i64, PendingRequest>>, reason: &str) {
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio",
+            "[READER] {}",
+            reason
+        );
+
+        // Clean up all pending requests
+        Self::clear_pending_requests(pending);
+    }
+
     /// Background reader loop that reads responses and routes them to callers.
     ///
     /// Uses tokio::select! to handle:
@@ -245,26 +261,13 @@ impl TokioAsyncBridgeConnection {
                         }
                         Ok(None) => {
                             // EOF or empty read
-                            log::debug!(
-                                target: "treesitter_ls::bridge::tokio",
-                                "[READER] EOF or empty read"
-                            );
-
-                            // Clean up all pending requests
-                            Self::clear_pending_requests(&pending);
-
+                            Self::handle_connection_end(&pending, "EOF or empty read");
                             break;
                         }
                         Err(e) => {
-                            log::warn!(
-                                target: "treesitter_ls::bridge::tokio",
-                                "[READER] Error reading message: {}",
-                                e
-                            );
-
-                            // Clean up all pending requests on error
-                            Self::clear_pending_requests(&pending);
-
+                            // Error reading message
+                            let reason = format!("Error reading message: {}", e);
+                            Self::handle_connection_end(&pending, &reason);
                             break;
                         }
                     }
