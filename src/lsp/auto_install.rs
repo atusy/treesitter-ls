@@ -9,7 +9,10 @@ use crate::install::metadata::{FetchOptions, MetadataError, is_language_supporte
 use crate::language::LanguageCoordinator;
 use crate::language::injection::collect_all_injections;
 use std::collections::HashSet;
+use std::future::Future;
+use std::path::PathBuf;
 use std::sync::Mutex;
+use std::time::Duration;
 use tower_lsp::lsp_types::{MessageType, Url};
 
 /// Tracks languages currently being installed to prevent duplicate installs.
@@ -130,28 +133,26 @@ pub fn get_injected_languages(
 
 /// Check if a language should be skipped during auto-install because it's not supported.
 ///
-/// Returns `Ok(())` when the language is supported and auto-install can proceed,
-/// otherwise `Err(SkipReason)` describing why installation should be skipped.
+/// Returns a tuple of (should_skip, reason) where:
+/// - should_skip: true if the language is NOT supported by nvim-treesitter and should be skipped
+/// - reason: Some(message) explaining why installation was skipped or why metadata was unavailable
 ///
 /// This function uses cached metadata from nvim-treesitter to avoid repeated HTTP requests.
 ///
 /// # Arguments
 /// * `language` - The language name to check
 /// * `options` - FetchOptions for metadata caching (use with data_dir and use_cache: true)
-pub fn should_skip_unsupported_language(
+pub async fn should_skip_unsupported_language(
     language: &str,
-    options: Option<&FetchOptions>,
-) -> Result<(), SkipReason> {
-    match is_language_supported(language, options) {
-        Ok(true) => Ok(()),
-        Ok(false) => Err(SkipReason::UnsupportedLanguage {
-            language: language.to_string(),
-        }),
-        Err(err) => Err(SkipReason::MetadataUnavailable {
-            language: language.to_string(),
-            error: err,
-        }),
-    }
+    options: Option<&FetchOptions<'_>>,
+) -> (bool, Option<SkipReason>) {
+    should_skip_unsupported_language_with_checker(
+        language,
+        options,
+        METADATA_CHECK_TIMEOUT,
+        default_support_check,
+    )
+    .await
 }
 
 #[derive(Debug)]
@@ -173,7 +174,7 @@ impl SkipReason {
                 language
             ),
             SkipReason::MetadataUnavailable { language, error } => format!(
-                "Could not verify support for '{}' due to metadata error: {}. Skipping auto-install.",
+                "Could not verify support for '{}' due to metadata error: {}. Proceeding with auto-install attempt.",
                 language, error
             ),
         }
@@ -187,9 +188,89 @@ impl SkipReason {
     }
 }
 
+const METADATA_CHECK_TIMEOUT: Duration = Duration::from_secs(1);
+
+#[derive(Clone)]
+struct FetchOptionsOwned {
+    data_dir: Option<PathBuf>,
+    use_cache: bool,
+}
+
+impl From<&FetchOptions<'_>> for FetchOptionsOwned {
+    fn from(options: &FetchOptions<'_>) -> Self {
+        Self {
+            data_dir: options.data_dir.map(PathBuf::from),
+            use_cache: options.use_cache,
+        }
+    }
+}
+
+impl FetchOptionsOwned {
+    fn as_borrowed(&self) -> FetchOptions<'_> {
+        FetchOptions {
+            data_dir: self.data_dir.as_deref(),
+            use_cache: self.use_cache,
+        }
+    }
+}
+
+async fn default_support_check(
+    language: String,
+    options: Option<FetchOptionsOwned>,
+) -> Result<bool, MetadataError> {
+    tokio::task::spawn_blocking(move || {
+        let borrowed_options = options.as_ref().map(FetchOptionsOwned::as_borrowed);
+        let borrowed_ref = borrowed_options.as_ref();
+        is_language_supported(&language, borrowed_ref)
+    })
+    .await
+    .map_err(|err| {
+        MetadataError::HttpError(format!("Metadata support check task failed: {}", err))
+    })?
+}
+
+async fn should_skip_unsupported_language_with_checker<F, Fut>(
+    language: &str,
+    options: Option<&FetchOptions<'_>>,
+    timeout: Duration,
+    check_fn: F,
+) -> (bool, Option<SkipReason>)
+where
+    F: FnOnce(String, Option<FetchOptionsOwned>) -> Fut,
+    Fut: Future<Output = Result<bool, MetadataError>> + Send,
+{
+    let owned_language = language.to_string();
+    let owned_options = options.map(FetchOptionsOwned::from);
+
+    match tokio::time::timeout(timeout, check_fn(owned_language.clone(), owned_options)).await {
+        Ok(Ok(true)) => (false, None),
+        Ok(Ok(false)) => (
+            true,
+            Some(SkipReason::UnsupportedLanguage {
+                language: owned_language,
+            }),
+        ),
+        Ok(Err(error)) => (
+            false,
+            Some(SkipReason::MetadataUnavailable {
+                language: owned_language,
+                error,
+            }),
+        ),
+        Err(_) => (
+            false,
+            Some(SkipReason::MetadataUnavailable {
+                language: owned_language,
+                error: MetadataError::Timeout,
+            }),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn should_track_installing_languages() {
@@ -282,9 +363,9 @@ mod tests {
         assert!(unique_multi.contains("text") || unique_multi.contains("regex"));
     }
 
-    #[test]
-    fn test_should_skip_unsupported_language_returns_err_for_unsupported() {
-        // Test that should_skip_unsupported_language returns Err for unsupported languages
+    #[tokio::test]
+    async fn test_should_skip_unsupported_language_returns_true_for_unsupported() {
+        // Test that should_skip_unsupported_language returns true for unsupported languages
         // with a reason explaining why installation was skipped
         use crate::install::metadata::FetchOptions;
         use crate::install::test_helpers::setup_mock_metadata_cache;
@@ -311,22 +392,23 @@ return {
             use_cache: true,
         };
 
-        // should_skip_unsupported_language should return Err for 'fake_lang_xyz'
-        let result = should_skip_unsupported_language("fake_lang_xyz", Some(&options));
-        assert!(result.is_err(), "Expected to skip unsupported language");
+        // should_skip_unsupported_language should return true for 'fake_lang_xyz'
+        let (should_skip, reason) =
+            should_skip_unsupported_language("fake_lang_xyz", Some(&options)).await;
         assert!(
-            matches!(
-                result.unwrap_err(),
-                SkipReason::UnsupportedLanguage { language }
-                    if language == "fake_lang_xyz"
-            ),
+            should_skip,
+            "Expected to skip unsupported language 'fake_lang_xyz'"
+        );
+        let reason = reason.expect("Expected a reason for skipping");
+        assert!(
+            matches!(reason, SkipReason::UnsupportedLanguage { language } if language == "fake_lang_xyz"),
             "Expected UnsupportedLanguage reason"
         );
     }
 
-    #[test]
-    fn test_should_skip_unsupported_language_returns_ok_for_supported() {
-        // Test that should_skip_unsupported_language returns Ok for supported languages
+    #[tokio::test]
+    async fn test_should_skip_unsupported_language_returns_false_for_supported() {
+        // Test that should_skip_unsupported_language returns false for supported languages
         use crate::install::metadata::FetchOptions;
         use crate::install::test_helpers::setup_mock_metadata_cache;
         use tempfile::tempdir;
@@ -352,16 +434,14 @@ return {
             use_cache: true,
         };
 
-        // should_skip_unsupported_language should return Ok for 'lua'
-        let result = should_skip_unsupported_language("lua", Some(&options));
-        assert!(
-            result.is_ok(),
-            "Expected NOT to skip supported language 'lua'"
-        );
+        // should_skip_unsupported_language should return false for 'lua'
+        let (should_skip, reason) = should_skip_unsupported_language("lua", Some(&options)).await;
+        assert!(!should_skip, "Expected NOT to skip supported language 'lua'");
+        assert!(reason.is_none(), "Expected no reason when not skipping");
     }
 
-    #[test]
-    fn test_should_skip_unsupported_language_reports_metadata_error() {
+    #[tokio::test]
+    async fn test_should_skip_unsupported_language_reports_metadata_error() {
         use crate::install::metadata::FetchOptions;
         use crate::install::test_helpers::setup_mock_metadata_cache;
         use tempfile::tempdir;
@@ -374,11 +454,38 @@ return {
             use_cache: true,
         };
 
-        let result = should_skip_unsupported_language("lua", Some(&options));
-        assert!(result.is_err(), "Expected to skip when metadata is invalid");
+        let (should_skip, reason) = should_skip_unsupported_language("lua", Some(&options)).await;
         assert!(
-            matches!(result, Err(SkipReason::MetadataUnavailable { .. })),
+            !should_skip,
+            "Metadata errors should not prevent auto-install attempts"
+        );
+        assert!(
+            matches!(reason, Some(SkipReason::MetadataUnavailable { .. })),
             "Expected MetadataUnavailable reason"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_should_skip_unsupported_language_times_out_and_proceeds() {
+        // A slow metadata lookup should time out and allow installation to continue
+        let (should_skip, reason) = should_skip_unsupported_language_with_checker(
+            "lua",
+            None,
+            Duration::from_millis(20),
+            |lang, _options| async move {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                Ok(lang == "lua")
+            },
+        )
+        .await;
+
+        assert!(
+            !should_skip,
+            "Timeouts should fall back to attempting installation"
+        );
+        assert!(
+            matches!(reason, Some(SkipReason::MetadataUnavailable { language, .. }) if language == "lua"),
+            "Timeouts should report metadata unavailable for the language"
         );
     }
 

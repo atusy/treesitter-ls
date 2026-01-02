@@ -46,6 +46,8 @@ pub enum MetadataError {
     ParseError(String),
     /// Metadata existed but contained no languages.
     EmptyMetadata,
+    /// Metadata fetch exceeded the allowed time.
+    Timeout,
 }
 
 impl std::fmt::Display for MetadataError {
@@ -64,6 +66,7 @@ impl std::fmt::Display for MetadataError {
                 f,
                 "Metadata did not contain any languages; cache may be empty or outdated"
             ),
+            Self::Timeout => write!(f, "Metadata fetch timed out"),
         }
     }
 }
