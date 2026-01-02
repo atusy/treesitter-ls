@@ -157,6 +157,46 @@ pub fn resolve_language_server_with_wildcard(
     }
 }
 
+/// Resolve a LanguageSettings key from a map with wildcard fallback and merging.
+///
+/// Implements ADR-0011 wildcard config inheritance for WorkspaceSettings.languages HashMap:
+/// - If both wildcard ("_") and specific key exist: merge them (specific overrides wildcard)
+/// - If only wildcard exists: return wildcard
+/// - If only specific key exists: return specific key
+/// - If neither exists: return None
+///
+/// The merge creates a new LanguageSettings where specific values override wildcard values.
+/// This is used by get_bridge_config_for_language to look up host language settings.
+pub fn resolve_language_settings_with_wildcard(
+    map: &HashMap<String, LanguageSettings>,
+    key: &str,
+) -> Option<LanguageSettings> {
+    let wildcard = map.get("_");
+    let specific = map.get(key);
+
+    match (wildcard, specific) {
+        (Some(w), Some(s)) => {
+            // Merge: start with wildcard, override with specific
+            Some(LanguageSettings {
+                library: s.library.clone().or_else(|| w.library.clone()),
+                // For Vec fields: use specific if non-empty, else wildcard
+                highlights: if s.highlights.is_empty() {
+                    w.highlights.clone()
+                } else {
+                    s.highlights.clone()
+                },
+                locals: s.locals.clone().or_else(|| w.locals.clone()),
+                injections: s.injections.clone().or_else(|| w.injections.clone()),
+                // For bridge: specific overrides wildcard entirely (no deep merge)
+                bridge: s.bridge.clone().or_else(|| w.bridge.clone()),
+            })
+        }
+        (Some(w), None) => Some(w.clone()),
+        (None, Some(s)) => Some(s.clone()),
+        (None, None) => None,
+    }
+}
+
 /// Returns the default search paths for parsers and queries.
 /// Uses the platform-specific data directory (via `dirs` crate):
 /// - Linux: ~/.local/share/treesitter-ls
