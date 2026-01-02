@@ -171,7 +171,7 @@ const scrum: ScrumDashboard = {
           verification: "Run `make test` and `make test_nvim` - all tests pass",
         },
       ],
-      status: "ready",
+      status: "in_progress",
     },
     {
       id: "PBI-159",
@@ -336,7 +336,54 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 129,
+    pbi_id: "PBI-158",
+    goal: "Implement per-document virtual URIs to prevent concurrent request interference",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "Write test verifying virtual_uris keyed by (host_uri, server_name) instead of server_name only",
+        implementation: "Change virtual_uris from DashMap<String, String> to DashMap<(String, String), String> where key is (host_uri, server_name)",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Write test verifying get_virtual_uri accepts host_uri parameter and returns host-specific virtual URI",
+        implementation: "Update get_virtual_uri signature to accept host_uri parameter and look up virtual URI using (host_uri, key) tuple",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Write test verifying spawn_and_initialize creates per-host virtual URIs with unique file paths",
+        implementation: "Update spawn_and_initialize to accept host_uri parameter and generate unique virtual file path per host document",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Write test verifying get_connection creates separate virtual URIs for different host documents",
+        implementation: "Update get_connection to accept host_uri and ensure different hosts get different virtual URIs even for same server",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Write E2E test verifying concurrent hover requests for different injections get correct isolated results",
+        implementation: "Update all bridge methods (hover, completion, definition, signature_help) to pass host_uri to get_virtual_uri",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
