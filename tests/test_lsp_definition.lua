@@ -72,4 +72,46 @@ T["markdown"]["definition"] = function()
 	)
 end
 
+-- Test Lua code block to verify async definition path (PBI-141 AC3)
+T["markdown_lua"] = create_file_test_set(".md", {
+	"Example Lua code:",
+	"",
+	"```lua",
+	"local function greet(name)", -- line 4
+	'  return "Hello, " .. name',
+	"end",
+	"",
+	"local message = greet('World')", -- line 8
+	"```",
+})
+
+T["markdown_lua"]["definition_through_async_path"] = function()
+	-- Position cursor on "greet" call on line 8, column 18 (on the 'g' of greet)
+	child.cmd([[normal! 8G18|]])
+
+	-- Verify cursor is on line 8 before definition jump
+	local before = child.api.nvim_win_get_cursor(0)
+	MiniTest.expect.equality(before[1], 8, "Cursor should start on line 8")
+
+	-- Call definition in child vim
+	child.lua([[vim.lsp.buf.definition()]])
+
+	-- Poll child's cursor position until it moves to line 4 or timeout
+	-- This verifies async path returns valid responses through lua-language-server
+	local jumped = helper.wait(10000, function()
+		local line = child.api.nvim_win_get_cursor(0)[1]
+		return line == 4
+	end, 100)
+
+	-- Get final cursor position for error message
+	local after = child.api.nvim_win_get_cursor(0)
+
+	-- Assert the jump occurred
+	MiniTest.expect.equality(
+		after[1],
+		4,
+		("Definition jump failed: cursor at line %d, expected line 4"):format(after[1])
+	)
+end
+
 return T
