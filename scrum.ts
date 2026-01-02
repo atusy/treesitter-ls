@@ -110,7 +110,7 @@ const scrum: ScrumDashboard = {
     number: 120,
     pbi_id: "PBI-151",
     goal: "Migrate critical Neovim E2E tests (hover, completion, references) to Rust with snapshot verification, establishing reusable patterns and helpers for future migrations",
-    status: "in_progress",
+    status: "done",
     subtasks: [
       {
         test: "Extract poll_until helper from e2e_definition.rs retry logic into test helper module",
