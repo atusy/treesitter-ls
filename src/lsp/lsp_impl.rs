@@ -606,13 +606,14 @@ impl TreeSitterLs {
     ) {
         // Check if language is supported by nvim-treesitter before attempting install
         // Use cached metadata to avoid repeated HTTP requests
-        let data_dir = crate::install::default_data_dir();
-        let fetch_options = data_dir
-            .as_ref()
-            .map(|dir| crate::install::metadata::FetchOptions {
-                data_dir: Some(dir.as_path()),
-                use_cache: true,
-            });
+        let default_data_dir = crate::install::default_data_dir();
+        let fetch_options =
+            default_data_dir
+                .as_ref()
+                .map(|dir| crate::install::metadata::FetchOptions {
+                    data_dir: Some(dir.as_path()),
+                    use_cache: true,
+                });
         let (should_skip, reason) =
             super::auto_install::should_skip_unsupported_language(language, fetch_options.as_ref());
         if should_skip {
@@ -639,7 +640,7 @@ impl TreeSitterLs {
             .await;
 
         // Get data directory
-        let data_dir = match crate::install::default_data_dir() {
+        let data_dir = match default_data_dir {
             Some(dir) => dir,
             None => {
                 self.client
