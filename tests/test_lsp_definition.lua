@@ -50,21 +50,34 @@ T["markdown"]["definition"] = function()
 	local before = child.api.nvim_win_get_cursor(0)
 	MiniTest.expect.equality(before[1], 9, "Cursor should start on line 9")
 
-	-- Call definition in child vim
-	child.lua([[vim.lsp.buf.definition()]])
+	-- Retry definition jump - rust-analyzer may need time to index
+	local jumped = false
+	for _ = 1, 20 do
+		-- Call definition in child vim
+		child.lua([[vim.lsp.buf.definition()]])
 
-	-- Poll child's cursor position until it moves to line 4 or timeout
-	-- This properly waits for the async LSP response in the child
-	local jumped = helper.wait(10000, function()
-		local line = child.api.nvim_win_get_cursor(0)[1]
-		return line == 4
-	end, 100)
+		-- Poll child's cursor position until it moves to line 4 or timeout
+		-- This properly waits for the async LSP response in the child
+		jumped = helper.wait(3000, function()
+			local line = child.api.nvim_win_get_cursor(0)[1]
+			return line == 4
+		end, 100)
+
+		if jumped then
+			break
+		end
+
+		-- Return to starting position for retry
+		child.cmd([[normal! 9G5|]])
+
+		-- Wait before retry (rust-analyzer may still be indexing)
+		vim.wait(500)
+	end
 
 	-- Get final cursor position for error message
 	local after = child.api.nvim_win_get_cursor(0)
 
 	-- Assert the jump occurred
-
 	MiniTest.expect.equality(
 		after[1],
 		4,
@@ -93,15 +106,29 @@ T["markdown_lua"]["definition_through_async_path"] = function()
 	local before = child.api.nvim_win_get_cursor(0)
 	MiniTest.expect.equality(before[1], 8, "Cursor should start on line 8")
 
-	-- Call definition in child vim
-	child.lua([[vim.lsp.buf.definition()]])
+	-- Retry definition jump - lua-language-server may need time to index
+	local jumped = false
+	for _ = 1, 20 do
+		-- Call definition in child vim
+		child.lua([[vim.lsp.buf.definition()]])
 
-	-- Poll child's cursor position until it moves to line 4 or timeout
-	-- This verifies async path returns valid responses through lua-language-server
-	local jumped = helper.wait(10000, function()
-		local line = child.api.nvim_win_get_cursor(0)[1]
-		return line == 4
-	end, 100)
+		-- Poll child's cursor position until it moves to line 4 or timeout
+		-- This verifies async path returns valid responses through lua-language-server
+		jumped = helper.wait(3000, function()
+			local line = child.api.nvim_win_get_cursor(0)[1]
+			return line == 4
+		end, 100)
+
+		if jumped then
+			break
+		end
+
+		-- Return to starting position for retry
+		child.cmd([[normal! 8G18|]])
+
+		-- Wait before retry (lua-language-server may still be indexing)
+		vim.wait(500)
+	end
 
 	-- Get final cursor position for error message
 	local after = child.api.nvim_win_get_cursor(0)

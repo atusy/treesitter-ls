@@ -53,97 +53,110 @@ T["markdown"]["completion returns items with adjusted textEdit ranges"] = functi
 	-- Line 11 is the "p." line inside the code block
 	child.cmd([[normal! 11G$]])
 
-	-- Wait for rust-analyzer to index (this can take a while)
-	vim.uv.sleep(3000)
-
-	-- Use vim.lsp.buf_request_sync to directly test the LSP completion handler
-	-- This bypasses the popup mechanism and directly tests the LSP response
-	child.lua([[
-		_G.completion_result = nil
-		local bufnr = vim.api.nvim_get_current_buf()
-		local clients = vim.lsp.get_clients({ bufnr = bufnr, name = "treesitter-ls" })
-		if #clients == 0 then
-			_G.completion_result = { error = "No LSP client found" }
-			return
-		end
-
-		local client = clients[1]
-		local params = vim.lsp.util.make_position_params(0, client.offset_encoding or "utf-16")
-		local results = vim.lsp.buf_request_sync(bufnr, "textDocument/completion", params, 15000)
-
-		if not results then
-			_G.completion_result = { error = "No completion response" }
-			return
-		end
-
-		for client_id, response in pairs(results) do
-			if response.result then
-				local items = response.result.items or response.result
-				if type(items) == "table" then
-					local item_info = {}
-					for i, item in ipairs(items) do
-						if i <= 5 then
-							table.insert(item_info, {
-								label = item.label,
-								textEdit = item.textEdit,
-							})
-						end
-					end
-					_G.completion_result = {
-						count = #items,
-						items = item_info,
-						first_item_range = items[1] and items[1].textEdit and items[1].textEdit.range,
-					}
-					return
-				end
-			elseif response.err then
-				_G.completion_result = { error = vim.inspect(response.err) }
+	-- Retry completion request - rust-analyzer may need time to index
+	local got_completion = false
+	for _ = 1, 20 do
+		-- Use vim.lsp.buf_request_sync to directly test the LSP completion handler
+		-- This bypasses the popup mechanism and directly tests the LSP response
+		child.lua([[
+			_G.completion_result = nil
+			local bufnr = vim.api.nvim_get_current_buf()
+			local clients = vim.lsp.get_clients({ bufnr = bufnr, name = "treesitter-ls" })
+			if #clients == 0 then
+				_G.completion_result = { error = "No LSP client found" }
 				return
 			end
-		end
 
-		_G.completion_result = { error = "No valid completion items found" }
-	]])
+			local client = clients[1]
+			local params = vim.lsp.util.make_position_params(0, client.offset_encoding or "utf-16")
+			local results = vim.lsp.buf_request_sync(bufnr, "textDocument/completion", params, 3000)
 
-	local result = child.lua_get([[_G.completion_result]])
-
-	-- Verify we got a response
-	MiniTest.expect.equality(result.error, nil, "Should not have error: " .. tostring(result.error))
-
-	-- Verify we got completion items
-	MiniTest.expect.equality(type(result.count), "number", "Should have item count")
-
-	if result.count > 0 then
-		-- Check that at least one completion item has 'x' or 'y' label
-		local found_field = false
-		for _, item in ipairs(result.items or {}) do
-			if item.label == "x" or item.label == "y" then
-				found_field = true
-				-- Verify textEdit range is in host document coordinates
-				-- The "p." is on line 11 in Markdown (0-indexed: line 10)
-				-- In virtual document it would be around line 7 (0-indexed)
-				if item.textEdit and item.textEdit.range then
-					local range = item.textEdit.range
-					-- The range start line should be 10 (host) not 7 (virtual)
-					MiniTest.expect.equality(
-						range.start.line >= 10,
-						true,
-						("textEdit range should be in host coordinates (got line %d, expected >= 10)"):format(
-							range.start.line
-						)
-					)
-				end
-				break
+			if not results then
+				_G.completion_result = { error = "No completion response" }
+				return
 			end
+
+			for client_id, response in pairs(results) do
+				if response.result then
+					local items = response.result.items or response.result
+					if type(items) == "table" and #items > 0 then
+						local item_info = {}
+						for i, item in ipairs(items) do
+							if i <= 5 then
+								table.insert(item_info, {
+									label = item.label,
+									textEdit = item.textEdit,
+								})
+							end
+						end
+						_G.completion_result = {
+							count = #items,
+							items = item_info,
+							first_item_range = items[1] and items[1].textEdit and items[1].textEdit.range,
+						}
+						return
+					end
+				elseif response.err then
+					_G.completion_result = { error = vim.inspect(response.err) }
+					return
+				end
+			end
+
+			_G.completion_result = { error = "No valid completion items found" }
+		]])
+
+		local result = child.lua_get([[_G.completion_result]])
+
+		-- Check if we got completion items
+		if result and not result.error and result.count and result.count > 0 then
+			got_completion = true
+
+			-- Verify we got completion items
+			MiniTest.expect.equality(type(result.count), "number", "Should have item count")
+
+			-- Check that at least one completion item has 'x' or 'y' label
+			local found_field = false
+			for _, item in ipairs(result.items or {}) do
+				if item.label == "x" or item.label == "y" then
+					found_field = true
+					-- Verify textEdit range is in host document coordinates
+					-- The "p." is on line 11 in Markdown (0-indexed: line 10)
+					-- In virtual document it would be around line 7 (0-indexed)
+					if item.textEdit and item.textEdit.range then
+						local range = item.textEdit.range
+						-- The range start line should be 10 (host) not 7 (virtual)
+						MiniTest.expect.equality(
+							range.start.line >= 10,
+							true,
+							("textEdit range should be in host coordinates (got line %d, expected >= 10)"):format(
+								range.start.line
+							)
+						)
+					end
+					break
+				end
+			end
+
+			-- If we found rust-analyzer fields, great. If not, at least verify we got items.
+			-- rust-analyzer might return other items depending on indexing state.
+			if not found_field and result.count > 0 then
+				-- Just verify we have items with proper structure
+				MiniTest.expect.equality(type(result.items), "table", "Should have items array")
+			end
+
+			break
 		end
 
-		-- If we found rust-analyzer fields, great. If not, at least verify we got items.
-		-- rust-analyzer might return other items depending on indexing state.
-		if not found_field and result.count > 0 then
-			-- Just verify we have items with proper structure
-			MiniTest.expect.equality(type(result.items), "table", "Should have items array")
-		end
+		-- Wait before retry (rust-analyzer may still be indexing)
+		vim.uv.sleep(500)
 	end
+
+	-- Assert that we eventually got completion
+	MiniTest.expect.equality(
+		got_completion,
+		true,
+		"Should eventually get completion items (rust-analyzer may need time to index)"
+	)
 end
 
 -- Test Rust completion with retry mechanism to verify async path resilience (PBI-142 AC3)
@@ -225,7 +238,7 @@ T["markdown_rust_async"]["completion_through_async_path_with_retry"] = function(
 		end
 
 		-- Wait before retry (rust-analyzer may still be indexing)
-		vim.wait(500)
+		vim.uv.sleep(500)
 	end
 
 	-- Assert that we eventually got completion

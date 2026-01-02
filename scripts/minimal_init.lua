@@ -88,6 +88,36 @@ function _G.helper.wait(timeout_ms, callback, interval_ms)
 	end
 end
 
+---Retry LSP operation with indexing delays
+---Language servers need time to index after document open/change
+---@param opts table Options: {child: child_neovim, lsp_request: function, check: function, max_retries: number?, wait_ms: number?, retry_delay_ms: number?}
+---@return boolean success true if check passed, false if all retries exhausted
+function _G.helper.retry_for_lsp_indexing(opts)
+	local child = opts.child
+	local lsp_request = opts.lsp_request
+	local check = opts.check
+	local max_retries = opts.max_retries or 20
+	local wait_ms = opts.wait_ms or 3000
+	local retry_delay_ms = opts.retry_delay_ms or 500
+
+	for _ = 1, max_retries do
+		-- Execute LSP request
+		lsp_request()
+
+		-- Wait for result to meet check condition
+		local success = _G.helper.wait(wait_ms, check, 100)
+
+		if success then
+			return true
+		end
+
+		-- Wait before retry (language server may still be indexing)
+		vim.wait(retry_delay_ms)
+	end
+
+	return false
+end
+
 if #vim.api.nvim_list_uis() == 0 then
 	vim.cmd("set rtp+=deps/nvim/mini.nvim")
 	vim.cmd("set rtp+=deps/nvim/nvim-treesitter")
