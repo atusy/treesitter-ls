@@ -202,8 +202,14 @@ const scrum: ScrumDashboard = {
         test: "Extract LspClient into shared test helper module for reuse across E2E test files",
         implementation: "Move LspClient struct and implementation from e2e_definition.rs to tests/helpers_lsp_client.rs, export as pub",
         type: "structural",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "d0e500c",
+            message: "refactor(test): extract LspClient into shared test helper module",
+            phase: "refactoring",
+          },
+        ],
         notes: [
           "Addresses PBI-151 acceptance criterion: LspClient helper in reusable module",
           "Enables upcoming completion and references tests to reuse LspClient",
