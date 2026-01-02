@@ -228,25 +228,23 @@ impl TreeSitterLs {
     /// Called BEFORE parse_document to use pre-edit byte offsets against pre-edit
     /// injection regions. This implements AC4/AC5 (PBI-083): edits outside injections
     /// preserve caches, edits inside invalidate only affected regions.
+    ///
+    /// PBI-167: Uses O(log n) interval tree query instead of O(n) iteration.
     fn invalidate_overlapping_injection_caches(&self, uri: &Url, edits: &[InputEdit]) {
-        // Get pre-edit injection regions
-        let Some(regions) = self.injection_map.get(uri) else {
-            return; // No injection regions tracked for this document
-        };
-
-        if regions.is_empty() || edits.is_empty() {
+        if edits.is_empty() {
             return;
         }
 
-        // Find all regions that overlap with any edit
+        // Find all regions that overlap with any edit using O(log n) queries
         for edit in edits {
             let edit_start = edit.start_byte;
             let edit_end = edit.old_end_byte;
 
-            for region in &regions {
-                // Check if edit overlaps with region's byte range
-                // Overlap: edit_start < region_end AND edit_end > region_start
-                if edit_start < region.byte_range.end && edit_end > region.byte_range.start {
+            // Query interval tree for overlapping regions (O(log n) instead of O(n))
+            if let Some(overlapping_regions) =
+                self.injection_map.find_overlapping(uri, edit_start, edit_end)
+            {
+                for region in overlapping_regions {
                     // This region is affected - invalidate its cache
                     self.injection_token_cache.remove(uri, &region.result_id);
                     log::debug!(

@@ -9,6 +9,7 @@
 //!    Each `CacheableInjectionRegion` stores language, byte/line ranges, and a result_id.
 //!    Enables targeted invalidation: when an edit occurs, only regions overlapping
 //!    the edit need re-tokenization (see PBI-083).
+//!    Uses interval tree (rust_lapper) for O(log n) overlap queries (PBI-167).
 //!
 //! 3. **InjectionTokenCache** - Per-injection token caching by (URI, region_id).
 //!    Stores tokens for individual code blocks, allowing cache reuse when
@@ -20,10 +21,10 @@
 //! Document edit arrives
 //!        |
 //!        v
-//! InjectionMap.get(uri) -> Vec<CacheableInjectionRegion>
+//! InjectionMap.find_overlapping(uri, start, end) -> Vec<CacheableInjectionRegion>
 //!        |
 //!        v
-//! Find regions overlapping edit (byte_range intersection)
+//! O(log n) interval tree query for overlapping regions
 //!        |
 //!   +----+----+
 //!   |         |
@@ -37,6 +38,7 @@
 
 use crate::language::injection::CacheableInjectionRegion;
 use dashmap::DashMap;
+use rust_lapper::{Interval, Lapper};
 use tower_lsp::lsp_types::SemanticTokens;
 use url::Url;
 
@@ -94,31 +96,56 @@ impl Default for SemanticTokenCache {
 ///
 /// Tracks all `CacheableInjectionRegion`s for each document URI,
 /// enabling targeted cache invalidation when only specific injections change.
+/// Uses interval tree (rust_lapper) for O(log n) overlap queries (PBI-167).
 pub struct InjectionMap {
-    regions: DashMap<Url, Vec<CacheableInjectionRegion>>,
+    /// Stores interval trees per document URI
+    /// Each Interval contains the byte range and the full CacheableInjectionRegion as data
+    lappers: DashMap<Url, Lapper<usize, CacheableInjectionRegion>>,
 }
 
 impl InjectionMap {
     /// Create a new empty injection map.
     pub fn new() -> Self {
         Self {
-            regions: DashMap::new(),
+            lappers: DashMap::new(),
         }
     }
 
     /// Store injection regions for a document, replacing any existing regions.
+    /// Builds an interval tree from the regions for efficient overlap queries.
     pub fn insert(&self, uri: Url, regions: Vec<CacheableInjectionRegion>) {
-        self.regions.insert(uri, regions);
+        // Convert regions to intervals for the Lapper
+        let intervals: Vec<Interval<usize, CacheableInjectionRegion>> = regions
+            .into_iter()
+            .map(|region| {
+                let start = region.byte_range.start;
+                let stop = region.byte_range.end;
+                Interval {
+                    start,
+                    stop,
+                    val: region,
+                }
+            })
+            .collect();
+
+        // Create Lapper from intervals (builds interval tree)
+        let lapper = Lapper::new(intervals);
+        self.lappers.insert(uri, lapper);
     }
 
-    /// Retrieve injection regions for a document.
+    /// Retrieve all injection regions for a document.
     pub fn get(&self, uri: &Url) -> Option<Vec<CacheableInjectionRegion>> {
-        self.regions.get(uri).map(|entry| entry.clone())
+        self.lappers.get(uri).map(|entry| {
+            entry
+                .iter()
+                .map(|interval| interval.val.clone())
+                .collect()
+        })
     }
 
     /// Remove all injection regions for a document (e.g., on document close).
     pub fn clear(&self, uri: &Url) {
-        self.regions.remove(uri);
+        self.lappers.remove(uri);
     }
 
     /// Find the injection region containing the given byte position.
@@ -130,11 +157,32 @@ impl InjectionMap {
         uri: &Url,
         byte_position: usize,
     ) -> Option<CacheableInjectionRegion> {
-        self.regions.get(uri).and_then(|regions| {
-            regions
-                .iter()
-                .find(|r| r.byte_range.contains(&byte_position))
-                .cloned()
+        self.lappers.get(uri).and_then(|lapper| {
+            // Find intervals that overlap the single byte position
+            lapper
+                .find(byte_position, byte_position + 1)
+                .next()
+                .map(|interval| interval.val.clone())
+        })
+    }
+
+    /// Find all injection regions that overlap with the given byte range.
+    ///
+    /// This is the key optimization (PBI-167): uses O(log n) interval tree query
+    /// instead of O(n) iteration through all regions.
+    ///
+    /// Returns `Some(Vec)` with overlapping regions (may be empty), or `None` if URI unknown.
+    pub fn find_overlapping(
+        &self,
+        uri: &Url,
+        start: usize,
+        end: usize,
+    ) -> Option<Vec<CacheableInjectionRegion>> {
+        self.lappers.get(uri).map(|lapper| {
+            lapper
+                .find(start, end)
+                .map(|interval| interval.val.clone())
+                .collect()
         })
     }
 }
@@ -545,5 +593,63 @@ mod tests {
         let other_uri = Url::parse("file:///other.md").unwrap();
         let found = map.find_at_position(&other_uri, 30);
         assert!(found.is_none(), "Non-existent URI should return None");
+    }
+
+    #[test]
+    fn test_injection_map_find_overlapping_efficiently() {
+        use crate::language::injection::CacheableInjectionRegion;
+
+        // PBI-167: Test that overlap query is efficient (O(log n) instead of O(n))
+        // This test verifies the API exists and works correctly.
+        // Performance characteristics are validated by the interval tree implementation.
+
+        let map = InjectionMap::new();
+        let uri = Url::parse("file:///test_large.md").unwrap();
+
+        // Create many non-overlapping regions to simulate large document
+        let regions: Vec<CacheableInjectionRegion> = (0..100)
+            .map(|i| {
+                let start = i * 100;
+                let end = start + 50;
+                CacheableInjectionRegion {
+                    language: "lua".to_string(),
+                    byte_range: start..end,
+                    line_range: (i as u32)..(i as u32 + 1),
+                    result_id: format!("region-{}", i),
+                    content_hash: i as u64,
+                }
+            })
+            .collect();
+
+        map.insert(uri.clone(), regions);
+
+        // Query for overlapping regions in byte range 225..350
+        // Regions are at: [0..50, 100..150, 200..250, 300..350, 400..450, ...]
+        // Query [225..350] should overlap:
+        //   - region-2 at [200..250] (overlaps [225..250])
+        //   - region-3 at [300..350] (overlaps [300..350])
+        let overlapping = map.find_overlapping(&uri, 225, 350);
+
+        assert!(overlapping.is_some(), "Should find overlapping regions");
+        let overlapping = overlapping.unwrap();
+
+        // Should find regions 2 (200..250) and 3 (300..350)
+        assert_eq!(overlapping.len(), 2, "Should find exactly 2 overlapping regions");
+
+        let region_ids: Vec<&str> = overlapping.iter()
+            .map(|r| r.result_id.as_str())
+            .collect();
+        assert!(region_ids.contains(&"region-2"), "Should include region-2");
+        assert!(region_ids.contains(&"region-3"), "Should include region-3");
+
+        // Query with no overlaps
+        let no_overlap = map.find_overlapping(&uri, 60, 80);
+        assert!(no_overlap.is_some(), "Should return empty vec for no overlaps");
+        assert_eq!(no_overlap.unwrap().len(), 0, "Should have no overlapping regions");
+
+        // Query on non-existent URI
+        let other_uri = Url::parse("file:///other.md").unwrap();
+        let not_found = map.find_overlapping(&other_uri, 0, 100);
+        assert!(not_found.is_none(), "Non-existent URI should return None");
     }
 }
