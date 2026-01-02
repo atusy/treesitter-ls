@@ -382,7 +382,30 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 136,
+    pbi_id: "PBI-166",
+    goal: "Implement async fallback parsing in semantic_tokens_full",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "Verify fallback parse path uses spawn_blocking",
+        implementation: "Refactor semantic_tokens_full_impl's fallback parse (lines 66-103) to match parse_document pattern: checkout parser under async lock, release lock, spawn_blocking for parse, return parser",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "All tests pass with async-aware fallback parsing",
+        implementation: "Run make test and make test_nvim to verify no behavioral changes",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
