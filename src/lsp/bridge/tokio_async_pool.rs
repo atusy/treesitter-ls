@@ -261,6 +261,59 @@ impl TokioAsyncLanguageServerPool {
             .and_then(|r| serde_json::from_value(r).ok())
     }
 
+    /// Send a goto definition request asynchronously.
+    ///
+    /// # Arguments
+    /// * `key` - Connection pool key
+    /// * `config` - Server configuration
+    /// * `_uri` - Document URI (unused, we use virtual URI)
+    /// * `language_id` - Language ID for the document
+    /// * `content` - Document content
+    /// * `position` - Definition position
+    pub async fn goto_definition(
+        &self,
+        key: &str,
+        config: &BridgeServerConfig,
+        _uri: &str,
+        language_id: &str,
+        content: &str,
+        position: tower_lsp::lsp_types::Position,
+    ) -> Option<tower_lsp::lsp_types::GotoDefinitionResponse> {
+        let conn = self.get_connection(key, config).await?;
+
+        // Get virtual file URI
+        let virtual_uri = self.get_virtual_uri(key)?;
+
+        // Sync document (didOpen on first access, didChange on subsequent)
+        self.sync_document(&conn, &virtual_uri, language_id, content)
+            .await?;
+
+        // Send goto definition request
+        let params = serde_json::json!({
+            "textDocument": { "uri": virtual_uri },
+            "position": { "line": position.line, "character": position.character },
+        });
+
+        let (_, receiver) = conn
+            .send_request("textDocument/definition", params)
+            .await
+            .ok()?;
+
+        // Await response asynchronously with timeout
+        let result = tokio::time::timeout(std::time::Duration::from_secs(30), receiver)
+            .await
+            .ok()?
+            .ok()?;
+
+        // Parse response
+        result
+            .response?
+            .get("result")
+            .cloned()
+            .filter(|r| !r.is_null())
+            .and_then(|r| serde_json::from_value(r).ok())
+    }
+
     /// Sync document content with the language server.
     ///
     /// On first access for a URI: sends didOpen with version 1.
@@ -829,6 +882,51 @@ mod tests {
         assert!(
             pool.get_document_version(uri).is_none(),
             "Version should remain unset when notification fails"
+        );
+    }
+
+    /// Test that goto_definition() returns Some(GotoDefinitionResponse) from rust-analyzer.
+    ///
+    /// This verifies PBI-141 AC1: TokioAsyncLanguageServerPool.goto_definition() method
+    /// implemented with async request/response pattern.
+    #[tokio::test]
+    async fn goto_definition_returns_response_from_rust_analyzer() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Code with a simple function definition
+        let content = "fn get_value() -> i32 { 42 }\nfn main() { get_value(); }";
+        let position = tower_lsp::lsp_types::Position {
+            line: 1,
+            character: 13, // Position on 'get_value' call
+        };
+
+        let definition = pool
+            .goto_definition(
+                "rust-analyzer",
+                &config,
+                "file:///test.rs",
+                "rust",
+                content,
+                position,
+            )
+            .await;
+
+        assert!(
+            definition.is_some(),
+            "goto_definition() should return Some(GotoDefinitionResponse) for 'get_value' call"
         );
     }
 }
