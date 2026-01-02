@@ -289,7 +289,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
     #[test]
     fn should_track_installing_languages() {
