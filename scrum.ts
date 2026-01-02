@@ -29,11 +29,12 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113) | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-151 (Sprint 1-120) | History: git log -- scrum.yaml, scrum.ts
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   product_backlog: [
     // ADR-0009 Implementation: Vertical slices with user-facing value
-    // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117), PBI-147 (Sprint 118)
+    // Completed: PBI-144 (S114), PBI-145 (S115), PBI-148 (S116), PBI-146 (S117), PBI-149 (S118), PBI-150 (S119), PBI-151 (S120)
+    // Rejected: PBI-147 (wait for indexing) - replaced by PBI-149 (informative message approach)
     {
       id: "PBI-141",
       story: {
@@ -103,33 +104,6 @@ const scrum: ScrumDashboard = {
       ],
       status: "ready",
     },
-    {
-      id: "PBI-150",
-      story: {
-        role: "documentation author with Rust code blocks",
-        capability: "not see noisy error notifications for unsupported languages during auto-install",
-        benefit: "I get a cleaner experience without failed installation attempts for languages that treesitter-ls cannot support",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "maybe_auto_install_language checks if language exists in nvim-treesitter metadata before attempting installation",
-          verification: "Unit test: calling maybe_auto_install_language with unsupported language (e.g., 'fake_lang') skips installation without error notification",
-        },
-        {
-          criterion: "Supported languages list is cached to avoid repeated HTTP requests during a session",
-          verification: "Unit test: multiple is_language_supported checks reuse cached metadata (verify single HTTP fetch via mock or cache hit count)",
-        },
-        {
-          criterion: "User receives informative log message when language is skipped due to being unsupported",
-          verification: "Unit test: verify log message contains language name and reason (not supported by nvim-treesitter)",
-        },
-        {
-          criterion: "Existing auto-install flow continues to work for supported languages",
-          verification: "Integration test: auto-install for 'lua' proceeds normally (existing tests pass)",
-        },
-      ],
-      status: "done",
-    },
   ],
 
   sprint: null,
@@ -142,25 +116,26 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-117: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-120: git log -- scrum.yaml, scrum.ts
   completed: [
-    { number: 119, pbi_id: "PBI-150", goal: "Skip unsupported languages during auto-install by checking nvim-treesitter metadata before attempting installation, with cached metadata to avoid repeated HTTP requests", status: "done", subtasks: [] },
-    { number: 118, pbi_id: "PBI-147", goal: "Return an informative 'No result or indexing' message when bridged hover has no result, ensuring users understand the reason instead of seeing silent empty responses", status: "done", subtasks: [] },
+    { number: 120, pbi_id: "PBI-151", goal: "Migrate critical Neovim E2E tests (hover, completion, references) to Rust with snapshot verification, establishing reusable patterns and helpers for future migrations", status: "done", subtasks: [] },
+    { number: 119, pbi_id: "PBI-150", goal: "Implement Rust-based E2E testing infrastructure for go-to-definition with snapshot testing, enabling faster and more reliable tests without Neovim dependency", status: "done", subtasks: [] },
   ],
 
-  // Recent 2 retrospectives | Sprint 1-117: modular refactoring pattern, E2E indexing waits, vertical slice validation
+  // Recent 2 retrospectives | Sprint 1-120: ADR-driven development, reusable patterns, E2E test timing
   retrospectives: [
-    { sprint: 119, improvements: [
-      { action: "Reuse existing caching and metadata infrastructure patterns for new features - FetchOptions with TTL proved effective for nvim-treesitter metadata", timing: "immediate", status: "active", outcome: null },
-      { action: "Pre-existing E2E test failures should block sprint planning - 12 failing bridge tests indicate deferred technical debt", timing: "sprint", status: "active", outcome: null },
-      { action: "Design integration test acceptance criteria with specific verification targets - 'existing tests pass' led to no-op subtask", timing: "sprint", status: "active", outcome: null },
-      { action: "User experience issues (noisy errors) should trigger immediate investigation - waiting until PBI-150 suggests reactive rather than proactive approach", timing: "product", status: "active", outcome: null },
+    { sprint: 120, improvements: [
+      { action: "Plan helper module architecture during sprint planning - identify reusable abstractions (LspClient, test fixtures, initialization patterns) before implementation starts to avoid mid-sprint extraction", timing: "sprint", status: "active", outcome: null },
+      { action: "Document snapshot testing sanitization patterns - create testing guide explaining URI replacement, range normalization, non-deterministic data handling with examples from hover/completion/references tests", timing: "sprint", status: "active", outcome: null },
+      { action: "Apply LSP spec study to test design - even for test migrations, studying textDocument/hover, textDocument/completion, textDocument/references spec helps identify edge cases and sanitization needs upfront", timing: "immediate", status: "active", outcome: null },
+      { action: "Consider extracting E2E test helpers into shared testing library - tests/helpers_*.rs modules (lsp_client, lsp_polling, sanitization, fixtures) could become reusable crate if more LSP features will be tested", timing: "product", status: "active", outcome: null },
     ] },
-    { sprint: 118, improvements: [
-      { action: "Prefer simple user-facing feedback over complex state management - 'No result or indexing' message vs $/progress tracking", timing: "sprint", status: "active", outcome: null },
-      { action: "When reverting features, analyze root cause before re-attempting - previous async approach was 'too buggy' due to state complexity", timing: "sprint", status: "active", outcome: null },
-      { action: "Helper functions enable testability - create_no_result_hover() testable in isolation", timing: "immediate", status: "completed", outcome: "pub(crate) fn create_no_result_hover() with unit test verification" },
-      { action: "Course corrections are valid sprint outcomes - simpler approach after revert delivered user value", timing: "immediate", status: "completed", outcome: "PBI-147 completed with informative message instead of complex indexing state" },
+    { sprint: 119, improvements: [
+      { action: "Study LSP specification sections before implementing new LSP features - JSON-RPC 2.0, notification vs request semantics, server-initiated requests", timing: "immediate", status: "active", outcome: null },
+      { action: "Extract retry-with-timeout pattern into reusable test helper - poll_until or wait_for_lsp_response with configurable attempts/delay", timing: "immediate", status: "completed", outcome: "poll_until(max_attempts, delay_ms, predicate) helper created in tests/helpers_lsp_polling.rs (Sprint 120 subtask 1-2)" },
+      { action: "Document snapshot testing best practices - sanitization strategies for non-deterministic data (temp paths, timestamps, PIDs)", timing: "sprint", status: "active", outcome: null },
+      { action: "Establish E2E testing strategy guidelines - when to use Rust E2E (protocol verification, CI speed) vs Neovim E2E (editor integration, user workflow)", timing: "sprint", status: "active", outcome: null },
+      { action: "Consider migrating critical Neovim E2E tests to Rust - evaluate hover, completion for snapshot testing benefits", timing: "product", status: "completed", outcome: "Sprint 120 successfully migrated hover, completion, references with snapshot verification - pattern proven effective" },
     ] },
   ],
 };

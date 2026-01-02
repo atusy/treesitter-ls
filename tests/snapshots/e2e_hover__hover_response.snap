@@ -1,0 +1,20 @@
+---
+source: tests/e2e_hover.rs
+expression: sanitized
+---
+{
+  "contents": {
+    "kind": "plaintext",
+    "value": "virtual\n\nfn main()"
+  },
+  "range": {
+    "end": {
+      "character": 7,
+      "line": 3
+    },
+    "start": {
+      "character": 3,
+      "line": 3
+    }
+  }
+}
