@@ -227,7 +227,21 @@ impl LspClient {
 
     /// Kill the server process.
     fn kill(&mut self) {
-        let _ = self.child.kill();
+        // If the child has already exited, nothing to do.
+        match self.child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => {
+                // Child is still running; try to terminate it.
+                let _ = self.child.kill();
+            }
+            Err(_) => {
+                // If we can't query status, still attempt to kill as best effort.
+                let _ = self.child.kill();
+            }
+        }
+
+        // Reap the process to avoid leaving a zombie. Ignore errors in Drop path.
+        let _ = self.child.wait();
     }
 
     /// Close stdin to signal EOF (for shutdown testing).
