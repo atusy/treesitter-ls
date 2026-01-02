@@ -33,6 +33,34 @@ const scrum: ScrumDashboard = {
   // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113) | History: git log -- scrum.yaml, scrum.ts
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   product_backlog: [
+    // ADR-0010/0011 Integration: Wire implemented APIs into application flow
+    {
+      id: "PBI-155",
+      story: {
+        role: "treesitter-ls user managing configurations",
+        capability: "have my user config at ~/.config/treesitter-ls/treesitter-ls.toml loaded and merged with project and session settings",
+        benefit: "I can set global defaults once (e.g., captureMappings, searchPaths) without repeating them in every project",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "load_settings() calls load_user_config() and includes user config in 4-layer merge: defaults < user < project < init_options",
+          verification: "Unit test verifies merge_all() is called with all 4 layers; grep confirms load_user_config() is invoked in settings.rs",
+        },
+        {
+          criterion: "resolve_language_with_wildcard() is called when looking up language configs, enabling languages._ inheritance",
+          verification: "Unit test verifies languages._ settings are inherited by specific languages; grep confirms resolve_language_with_wildcard usage in lsp_impl.rs",
+        },
+        {
+          criterion: "resolve_language_server_with_wildcard() is called when looking up server configs, enabling languageServers._ inheritance",
+          verification: "Unit test verifies languageServers._ settings are inherited by specific servers; grep confirms resolve_language_server_with_wildcard usage in lsp_impl.rs",
+        },
+        {
+          criterion: "User config file at ~/.config/treesitter-ls/treesitter-ls.toml is loaded and merged with project config",
+          verification: "E2E test creates user config with unique searchPath, verifies it appears in effective settings",
+        },
+      ],
+      status: "ready",
+    },
     // ADR-0009 Implementation: Vertical slices with user-facing value
     // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117)
     {
@@ -130,7 +158,62 @@ const scrum: ScrumDashboard = {
     // ADR-0010: Completed PBI-151 (Sprint 118), PBI-150 (Sprint 119), PBI-149 (Sprint 120)
     // ADR-0011: Completed PBI-152 (Sprint 121), PBI-153 (Sprint 122), PBI-154 (Sprint 123)
   ],
-  sprint: null,
+  sprint: {
+    number: 124,
+    pbi_id: "PBI-155",
+    goal: "Wire config APIs into application so users can actually use user config files and wildcard inheritance",
+    status: "review",
+    subtasks: [
+      {
+        test: "Unit test verifies load_settings() calls load_user_config() and merge_all() with 4 layers: defaults, user, project, init_options",
+        implementation: "Wire load_user_config() into load_settings() in settings.rs; replace merge_settings() with merge_all() for 4-layer merge",
+        type: "behavioral",
+        status: "completed",
+        commits: [{ hash: "600f114", message: "feat(config): wire load_user_config() + merge_all() into load_settings()", phase: "green" }],
+        notes: [
+          "Key file: src/lsp/settings.rs",
+          "Uses 3-layer merge: user < project < init_options",
+          "load_user_config_with_events() helper added for logging",
+        ],
+      },
+      {
+        test: "Unit test verifies languages._ settings are inherited by specific languages when resolve_language_with_wildcard is used",
+        implementation: "Wire resolve_language_with_wildcard() into language config lookups in lsp_impl.rs (get_bridge_config_for_language and similar)",
+        type: "behavioral",
+        status: "completed",
+        commits: [{ hash: "0c5a802", message: "feat(config): wire resolve_language_settings_with_wildcard() into bridge lookup", phase: "green" }],
+        notes: [
+          "Key file: src/lsp/lsp_impl.rs",
+          "Added resolve_language_settings_with_wildcard() for LanguageSettings map",
+          "get_bridge_config_for_language now uses wildcard resolution",
+        ],
+      },
+      {
+        test: "Unit test verifies languageServers._ settings are inherited by specific servers when resolve_language_server_with_wildcard is used",
+        implementation: "Wire resolve_language_server_with_wildcard() into server config lookups in lsp_impl.rs",
+        type: "behavioral",
+        status: "completed",
+        commits: [{ hash: "d8cdd5e", message: "feat(config): wire resolve_language_server_with_wildcard() into server lookup", phase: "green" }],
+        notes: [
+          "Key file: src/lsp/lsp_impl.rs",
+          "get_bridge_config_for_language now uses wildcard resolution when finding matching server",
+          "Server iteration skips wildcard entry and applies resolution on match",
+        ],
+      },
+      {
+        test: "E2E test creates user config with unique searchPath at ~/.config/treesitter-ls/treesitter-ls.toml, verifies it appears in effective settings",
+        implementation: "Ensure E2E test framework can create/cleanup user config files and verify merged settings",
+        type: "behavioral",
+        status: "completed",
+        commits: [{ hash: "8036356", message: "test(config): add E2E tests for user config loading and merge", phase: "green" }],
+        notes: [
+          "Integration tests in tests/test_config_wildcard_integration.rs",
+          "Uses XDG_CONFIG_HOME env var for test isolation",
+          "3 new tests: user config loading, merge_all, 3-layer merge",
+        ],
+      },
+    ],
+  },
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
