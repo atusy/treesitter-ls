@@ -321,11 +321,11 @@ const scrum: ScrumDashboard = {
       acceptance_criteria: [
         {
           criterion: "Parser pool uses tokio::sync::Mutex instead of std::sync::Mutex",
-          verification: "Verify parser pool lock is async-aware and doesn't block tokio worker threads",
+          verification: "Verify TreeSitterLs.parser_pool is tokio::sync::Mutex instead of std::sync::Mutex (src/lsp/lsp_impl.rs:395-416)",
         },
         {
           criterion: "Heavy parsing work offloaded to spawn_blocking",
-          verification: "Verify Parser::parse executes in blocking thread pool, only holding async lock for checkout/return",
+          verification: "Verify Parser::parse in parse_document executes in spawn_blocking, only holding async lock for checkout/return",
         },
         {
           criterion: "All tests pass with async-aware parser pool",
@@ -334,9 +334,102 @@ const scrum: ScrumDashboard = {
       ],
       status: "ready",
     },
+    {
+      id: "PBI-166",
+      story: {
+        role: "developer editing Lua files",
+        capability: "have responsive LSP features while semantic tokens are computed",
+        benefit: "avoid blocking tokio workers when fallback parsing happens in semantic token handler",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Fallback parse in semantic_tokens_full offloaded to spawn_blocking",
+          verification: "Verify semantic_tokens_full_impl's fallback parse path (lines 66-103) uses spawn_blocking to avoid synchronous parse on tokio thread",
+        },
+        {
+          criterion: "Parser pool checkout/return happens on async thread, parse on blocking thread",
+          verification: "Verify async code only holds lock to acquire/release parser, actual Parser::parse runs in spawn_blocking",
+        },
+        {
+          criterion: "All tests pass with async-aware fallback parsing",
+          verification: "Run `make test` and `make test_nvim` - all tests pass",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-167",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "have fast cache invalidation when editing documents with many injections",
+        benefit: "avoid O(n) overlap checks slowing down every keystroke in large files",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Injection regions indexed by byte interval (interval tree or similar)",
+          verification: "Verify InjectionMap uses spatial data structure to query overlapping regions efficiently",
+        },
+        {
+          criterion: "invalidate_overlapping_injection_caches performs O(log n) lookups instead of O(n) iteration",
+          verification: "Verify implementation queries interval tree for edit range instead of iterating all regions (src/lsp/lsp_impl.rs:227-258)",
+        },
+        {
+          criterion: "All tests pass with optimized cache invalidation",
+          verification: "Run `make test` and `make test_nvim` - all tests pass",
+        },
+      ],
+      status: "ready",
+    },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 130,
+    pbi_id: "PBI-165",
+    goal: "Make parser pool async-aware with spawn_blocking for parse operations",
+    status: "planning",
+    subtasks: [
+      {
+        test: "Write test verifying tokio::sync::Mutex is used for parser_pool",
+        implementation: "Change TreeSitterLs.parser_pool from std::sync::Mutex to tokio::sync::Mutex",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Write test verifying parse_document uses spawn_blocking for Parser::parse",
+        implementation: "Refactor parse_document to checkout parser, spawn_blocking for parse, then return parser",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Write test verifying semantic_tokens_full fallback parse uses spawn_blocking",
+        implementation: "Refactor semantic_tokens_full_impl fallback parse path to use spawn_blocking",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Write test verifying semantic_tokens_full_delta uses spawn_blocking",
+        implementation: "Refactor semantic_tokens_full_delta_impl to use spawn_blocking for parse operations",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Write test verifying semantic_tokens_range uses spawn_blocking",
+        implementation: "Refactor semantic_tokens_range_impl to use spawn_blocking for parse operations",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
@@ -484,6 +577,7 @@ const scrum: ScrumDashboard = {
     ] },
     { sprint: 127, improvements: [
       { action: "Stability review findings captured as PBI-156 through PBI-165", timing: "product", status: "completed", outcome: "All issues tracked in product backlog" },
+      { action: "Performance review findings captured as PBI-164 through PBI-167", timing: "product", status: "completed", outcome: "Parser pool, disk I/O, and cache invalidation issues tracked" },
     ] },
     { sprint: 124, improvements: [
       { action: "Continue with PBI-152 to address robustness issues (backpressure, notification overflow, resource cleanup, initialization timeout)", timing: "product", status: "completed", outcome: "PBI-152 completed in Sprint 125 with all 4 robustness improvements implemented" },
