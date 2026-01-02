@@ -74,7 +74,9 @@ fn example() {
     println!("Hello, world!");
 }
 
-example();
+fn main() {
+    example();
+}
 ```
 "#;
 

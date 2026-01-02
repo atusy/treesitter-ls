@@ -10,7 +10,10 @@
 mod helpers;
 
 use helpers::lsp_client::LspClient;
+use helpers::lsp_init::initialize_with_rust_bridge;
 use helpers::lsp_polling::poll_until;
+use helpers::sanitization::sanitize_definition_response;
+use helpers::test_fixtures::create_definition_fixture;
 use serde_json::{Value, json};
 use std::process::{Child, Command, Stdio};
 
@@ -89,34 +92,6 @@ fn test_initialize_returns_capabilities() {
     );
 }
 
-/// Create a temporary markdown file with Rust code block for testing.
-/// Returns the file URI and the content for reference.
-fn create_test_markdown_file() -> (String, String, tempfile::NamedTempFile) {
-    let content = r#"Here is a function definition:
-
-```rust
-fn example() {
-    println!("Hello, world!");
-}
-
-fn main() {
-    example();
-}
-```
-"#;
-
-    let temp_file = tempfile::Builder::new()
-        .suffix(".md")
-        .tempfile()
-        .expect("Failed to create temp file");
-
-    std::fs::write(temp_file.path(), content).expect("Failed to write temp file");
-
-    let uri = format!("file://{}", temp_file.path().display());
-
-    (uri, content.to_string(), temp_file)
-}
-
 #[test]
 fn test_did_open_after_initialize() {
     let mut client = LspClient::new();
@@ -135,7 +110,7 @@ fn test_did_open_after_initialize() {
     client.send_notification("initialized", json!({}));
 
     // Create test file
-    let (uri, content, _temp_file) = create_test_markdown_file();
+    let (uri, content, _temp_file) = create_definition_fixture();
 
     // Send didOpen notification
     client.send_notification(
@@ -167,37 +142,10 @@ fn test_did_open_after_initialize() {
 #[test]
 fn test_definition_returns_location() {
     let mut client = LspClient::new();
-
-    // Initialize handshake with bridge configuration
-    // This matches the minimal_init.lua setup used by Neovim E2E tests
-    let _init_response = client.send_request(
-        "initialize",
-        json!({
-            "processId": std::process::id(),
-            "rootUri": null,
-            "capabilities": {},
-            "initializationOptions": {
-                "languages": {
-                    "markdown": {
-                        "bridge": {
-                            "rust": { "enabled": true }
-                        }
-                    }
-                },
-                "languageServers": {
-                    "rust-analyzer": {
-                        "cmd": ["rust-analyzer"],
-                        "languages": ["rust"],
-                        "workspaceType": "cargo"
-                    }
-                }
-            }
-        }),
-    );
-    client.send_notification("initialized", json!({}));
+    initialize_with_rust_bridge(&mut client);
 
     // Create and open test file
-    let (uri, content, _temp_file) = create_test_markdown_file();
+    let (uri, content, _temp_file) = create_definition_fixture();
     client.send_notification(
         "textDocument/didOpen",
         json!({
@@ -254,75 +202,13 @@ fn test_definition_returns_location() {
     );
 }
 
-/// Sanitize definition response by replacing temp file URIs with a stable placeholder.
-fn sanitize_definition_response(result: &Value) -> Value {
-    match result {
-        Value::Array(locations) => {
-            Value::Array(
-                locations
-                    .iter()
-                    .map(|loc| {
-                        let mut loc = loc.clone();
-                        // For LocationLink, sanitize targetUri
-                        if let Some(uri) = loc.get_mut("targetUri") {
-                            *uri = Value::String("<TEST_FILE_URI>".to_string());
-                        }
-                        // For Location, sanitize uri
-                        if let Some(uri) = loc.get_mut("uri") {
-                            *uri = Value::String("<TEST_FILE_URI>".to_string());
-                        }
-                        loc
-                    })
-                    .collect(),
-            )
-        }
-        Value::Object(loc) => {
-            let mut loc = loc.clone();
-            if let Some(uri) = loc.get_mut("targetUri") {
-                *uri = Value::String("<TEST_FILE_URI>".to_string());
-            }
-            if let Some(uri) = loc.get_mut("uri") {
-                *uri = Value::String("<TEST_FILE_URI>".to_string());
-            }
-            Value::Object(loc)
-        }
-        _ => result.clone(),
-    }
-}
-
 #[test]
 fn test_definition_snapshot() {
     let mut client = LspClient::new();
-
-    // Initialize handshake with bridge configuration
-    let _init_response = client.send_request(
-        "initialize",
-        json!({
-            "processId": std::process::id(),
-            "rootUri": null,
-            "capabilities": {},
-            "initializationOptions": {
-                "languages": {
-                    "markdown": {
-                        "bridge": {
-                            "rust": { "enabled": true }
-                        }
-                    }
-                },
-                "languageServers": {
-                    "rust-analyzer": {
-                        "cmd": ["rust-analyzer"],
-                        "languages": ["rust"],
-                        "workspaceType": "cargo"
-                    }
-                }
-            }
-        }),
-    );
-    client.send_notification("initialized", json!({}));
+    initialize_with_rust_bridge(&mut client);
 
     // Create and open test file
-    let (uri, content, _temp_file) = create_test_markdown_file();
+    let (uri, content, _temp_file) = create_definition_fixture();
     client.send_notification(
         "textDocument/didOpen",
         json!({
@@ -376,36 +262,10 @@ fn test_definition_snapshot() {
 #[test]
 fn test_definition_matches_neovim_behavior() {
     let mut client = LspClient::new();
-
-    // Initialize with bridge configuration
-    let _init_response = client.send_request(
-        "initialize",
-        json!({
-            "processId": std::process::id(),
-            "rootUri": null,
-            "capabilities": {},
-            "initializationOptions": {
-                "languages": {
-                    "markdown": {
-                        "bridge": {
-                            "rust": { "enabled": true }
-                        }
-                    }
-                },
-                "languageServers": {
-                    "rust-analyzer": {
-                        "cmd": ["rust-analyzer"],
-                        "languages": ["rust"],
-                        "workspaceType": "cargo"
-                    }
-                }
-            }
-        }),
-    );
-    client.send_notification("initialized", json!({}));
+    initialize_with_rust_bridge(&mut client);
 
     // Create and open test file (same content structure as Neovim test)
-    let (uri, content, _temp_file) = create_test_markdown_file();
+    let (uri, content, _temp_file) = create_definition_fixture();
     client.send_notification(
         "textDocument/didOpen",
         json!({
@@ -440,17 +300,13 @@ fn test_definition_matches_neovim_behavior() {
         if let Some(result) = response.get("result") {
             if !result.is_null() {
                 // Extract line from first location in array
-                if let Some(locations) = result.as_array() {
-                    if let Some(first) = locations.first() {
-                        if let Some(range) = first.get("range") {
-                            if let Some(start) = range.get("start") {
-                                if let Some(line) = start.get("line").and_then(|l| l.as_u64()) {
-                                    return Some(line);
-                                }
-                            }
-                        }
-                    }
-                }
+                return result
+                    .as_array()
+                    .and_then(|locations| locations.first())
+                    .and_then(|first| first.get("range"))
+                    .and_then(|range| range.get("start"))
+                    .and_then(|start| start.get("line"))
+                    .and_then(|line| line.as_u64());
             }
         }
         None

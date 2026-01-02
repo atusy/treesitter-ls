@@ -88,15 +88,11 @@ fn test_completion_returns_items() {
     let completion = completion_result.unwrap();
 
     // Extract items from CompletionList or array
-    let items = if let Some(items_array) = completion.get("items") {
-        // CompletionList format
-        items_array.as_array().expect("items should be array")
-    } else if completion.is_array() {
-        // Array format
-        completion.as_array().expect("result should be array")
-    } else {
-        panic!("Unexpected completion result format: {:?}", completion);
-    };
+    let items = completion
+        .get("items")
+        .or(Some(&completion))
+        .and_then(|v| v.as_array())
+        .expect("completion result should be an array or contain an 'items' array");
 
     assert!(
         !items.is_empty(),

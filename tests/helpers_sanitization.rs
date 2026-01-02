@@ -70,8 +70,99 @@ fn sanitize_text(text: &str) -> String {
 
     let sanitized = re_macos.replace_all(text, "<TEMP_PATH>");
     let sanitized = re_linux.replace_all(&sanitized, "<TEMP_PATH>");
-
     sanitized.to_string()
+}
+
+/// Sanitize completion response for snapshot testing.
+///
+/// Removes volatile `data` fields and temp paths from completion responses before snapshotting.
+pub fn sanitize_completion_response(completion: &Value) -> Value {
+    sanitize_recursive(completion, true)
+}
+
+/// Sanitize references response for snapshot testing.
+///
+/// Normalizes URIs and any embedded temp paths for deterministic snapshots.
+pub fn sanitize_references_response(references: &Value) -> Value {
+    sanitize_recursive(references, false)
+}
+
+/// Sanitize definition response by normalizing URIs in Location/LocationLink objects.
+pub fn sanitize_definition_response(result: &Value) -> Value {
+    match result {
+        Value::Array(locations) => Value::Array(
+            locations
+                .iter()
+                .map(|loc| sanitize_definition_object(loc))
+                .collect(),
+        ),
+        Value::Object(_) => sanitize_definition_object(result),
+        _ => result.clone(),
+    }
+}
+
+fn sanitize_definition_object(value: &Value) -> Value {
+    let mut map = value.clone();
+    if let Value::Object(obj) = &mut map {
+        if let Some(uri) = obj.get_mut("targetUri") {
+            *uri = Value::String("<TEST_FILE_URI>".to_string());
+        }
+        if let Some(uri) = obj.get_mut("uri") {
+            *uri = Value::String("<TEST_FILE_URI>".to_string());
+        }
+        if let Some(range) = obj.get_mut("range") {
+            *range = sanitize_definition_range(range);
+        }
+        if let Some(range) = obj.get_mut("targetSelectionRange") {
+            *range = sanitize_definition_range(range);
+        }
+    }
+    map
+}
+
+fn sanitize_definition_range(value: &Value) -> Value {
+    match value {
+        Value::Object(obj) => {
+            let mut sanitized = obj.clone();
+            for v in sanitized.values_mut() {
+                *v = sanitize_recursive(v, false);
+            }
+            Value::Object(sanitized)
+        }
+        _ => sanitize_recursive(value, false),
+    }
+}
+
+fn sanitize_recursive(value: &Value, drop_data_field: bool) -> Value {
+    match value {
+        Value::String(s) => Value::String(sanitize_text(s)),
+        Value::Array(arr) => Value::Array(arr.iter().map(|v| sanitize_recursive(v, drop_data_field)).collect()),
+        Value::Object(obj) => {
+            let mut map = serde_json::Map::new();
+            for (key, val) in obj {
+                if drop_data_field && key == "data" {
+                    continue;
+                }
+                if key == "uri" {
+                    if let Some(uri) = val.as_str() {
+                        map.insert(key.clone(), Value::String(sanitize_uri(uri)));
+                        continue;
+                    }
+                }
+                map.insert(key.clone(), sanitize_recursive(val, drop_data_field));
+            }
+            Value::Object(map)
+        }
+        _ => value.clone(),
+    }
+}
+
+fn sanitize_uri(uri: &str) -> String {
+    if uri.starts_with("file://") {
+        "file://<TEMP_PATH>/test.md".to_string()
+    } else {
+        sanitize_text(uri)
+    }
 }
 
 #[cfg(test)]
@@ -134,5 +225,75 @@ mod tests {
         let sanitized = sanitize_text(text);
 
         assert_eq!(sanitized, text);
+    }
+
+    #[test]
+    fn test_sanitize_completion_response_removes_temp_paths() {
+        let completion = json!({
+            "items": [{
+                "label": "example",
+                "detail": "Defined at /tmp/test.file:4"
+            }]
+        });
+
+        let sanitized = sanitize_completion_response(&completion);
+        let detail = sanitized["items"][0]["detail"].as_str().unwrap();
+
+        assert!(detail.contains("<TEMP_PATH>"));
+        assert!(!detail.contains("/tmp/"));
+    }
+
+    #[test]
+    fn test_sanitize_completion_response_removes_data_field() {
+        let completion = json!([
+            {
+                "label": "example",
+                "data": {
+                    "something": "secret"
+                }
+            }
+        ]);
+
+        let sanitized = sanitize_completion_response(&completion);
+
+        assert!(sanitized[0].get("data").is_none());
+    }
+
+    #[test]
+    fn test_sanitize_references_response_normalizes_uri() {
+        let references = json!([
+            {
+                "uri": "file:///tmp/tmpfile.md",
+                "range": {
+                    "start": {"line": 1, "character": 2},
+                    "end": {"line": 1, "character": 3}
+                }
+            }
+        ]);
+
+        let sanitized = sanitize_references_response(&references);
+        let uri = sanitized[0]["uri"].as_str().unwrap();
+
+        assert_eq!(uri, "file://<TEMP_PATH>/test.md");
+        assert!(sanitized[0]["range"]["start"]["line"].is_number());
+    }
+
+    #[test]
+    fn test_sanitize_definition_response_replaces_uris() {
+        let response = json!([
+            {
+                "targetUri": "file:///tmp/tmpfile.md",
+                "targetSelectionRange": {
+                    "start": { "line": 1, "character": 2 },
+                    "end": { "line": 1, "character": 10 }
+                }
+            }
+        ]);
+
+        let sanitized = sanitize_definition_response(&response);
+        let uri = sanitized[0]["targetUri"].as_str().unwrap();
+
+        assert_eq!(uri, "<TEST_FILE_URI>");
+        assert!(sanitized[0]["targetSelectionRange"]["start"]["line"].is_number());
     }
 }
