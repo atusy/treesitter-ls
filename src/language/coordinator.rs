@@ -6,7 +6,7 @@ use super::parser_pool::{DocumentParserPool, ParserFactory};
 use super::query_loader::QueryLoader;
 use super::query_store::QueryStore;
 use super::registry::LanguageRegistry;
-use crate::config::settings::LanguageConfig;
+use crate::config::settings::{infer_query_kind, LanguageConfig, QueryKind};
 use crate::config::{CaptureMappings, TreeSitterSettings, WorkspaceSettings};
 use std::sync::{Arc, RwLock};
 use tree_sitter::Language;
@@ -336,6 +336,13 @@ impl LanguageCoordinator {
     ) -> Vec<LanguageEvent> {
         let mut events = Vec::new();
 
+        // Process unified queries field first (new format)
+        if let Some(queries) = &config.queries {
+            events.extend(self.load_unified_queries(lang_name, queries, language));
+            return events; // If queries field is present, don't fall back to legacy fields
+        }
+
+        // Fall back to legacy fields (highlights, locals, injections)
         if let Some(highlights) = &config.highlights {
             if !highlights.is_empty() {
                 match QueryLoader::load_highlight_query(language, highlights) {
@@ -436,6 +443,98 @@ impl LanguageCoordinator {
                 LanguageLogLevel::Info,
                 format!("Injection query loaded from search paths for {lang_name}"),
             ));
+        }
+
+        events
+    }
+
+    /// Load queries from the unified queries field (new format).
+    ///
+    /// Processes each QueryItem, using explicit kind or inferring from filename.
+    /// Unknown patterns (where kind is None and cannot be inferred) are skipped.
+    fn load_unified_queries(
+        &self,
+        lang_name: &str,
+        queries: &[crate::config::settings::QueryItem],
+        language: &Language,
+    ) -> Vec<LanguageEvent> {
+        let mut events = Vec::new();
+
+        // Group query paths by their effective kind
+        let mut highlights: Vec<String> = Vec::new();
+        let mut locals: Vec<String> = Vec::new();
+        let mut injections: Vec<String> = Vec::new();
+
+        for query in queries {
+            let effective_kind = query.kind.or_else(|| infer_query_kind(&query.path));
+            match effective_kind {
+                Some(QueryKind::Highlights) => highlights.push(query.path.clone()),
+                Some(QueryKind::Locals) => locals.push(query.path.clone()),
+                Some(QueryKind::Injections) => injections.push(query.path.clone()),
+                None => {
+                    // Skip unrecognized patterns silently
+                }
+            }
+        }
+
+        // Load highlights
+        if !highlights.is_empty() {
+            match QueryLoader::load_highlight_query(language, &highlights) {
+                Ok(query) => {
+                    self.query_store
+                        .insert_highlight_query(lang_name.to_string(), Arc::new(query));
+                    events.push(LanguageEvent::log(
+                        LanguageLogLevel::Info,
+                        format!("Highlight query loaded for {lang_name}"),
+                    ));
+                }
+                Err(err) => {
+                    events.push(LanguageEvent::log(
+                        LanguageLogLevel::Error,
+                        format!("Failed to load highlight query for {lang_name}: {err}"),
+                    ));
+                }
+            }
+        }
+
+        // Load locals
+        if !locals.is_empty() {
+            match QueryLoader::load_highlight_query(language, &locals) {
+                Ok(query) => {
+                    self.query_store
+                        .insert_locals_query(lang_name.to_string(), Arc::new(query));
+                    events.push(LanguageEvent::log(
+                        LanguageLogLevel::Info,
+                        format!("Locals query loaded for {lang_name}"),
+                    ));
+                }
+                Err(err) => {
+                    events.push(LanguageEvent::log(
+                        LanguageLogLevel::Error,
+                        format!("Failed to load locals query for {lang_name}: {err}"),
+                    ));
+                }
+            }
+        }
+
+        // Load injections
+        if !injections.is_empty() {
+            match QueryLoader::load_highlight_query(language, &injections) {
+                Ok(query) => {
+                    self.query_store
+                        .insert_injection_query(lang_name.to_string(), Arc::new(query));
+                    events.push(LanguageEvent::log(
+                        LanguageLogLevel::Info,
+                        format!("Injection query loaded for {lang_name}"),
+                    ));
+                }
+                Err(err) => {
+                    events.push(LanguageEvent::log(
+                        LanguageLogLevel::Error,
+                        format!("Failed to load injection query for {lang_name}: {err}"),
+                    ));
+                }
+            }
         }
 
         events
