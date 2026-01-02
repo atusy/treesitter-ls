@@ -1042,6 +1042,15 @@ impl LanguageServer for TreeSitterLs {
     }
 
     async fn shutdown(&self) -> Result<()> {
+        // Persist crash detection state before shutdown
+        // This enables crash recovery to detect if parsing was in progress
+        if let Err(e) = self.failed_parsers.persist_state() {
+            log::warn!(
+                target: "treesitter_ls::crash_recovery",
+                "Failed to persist crash detection state on shutdown: {}",
+                e
+            );
+        }
         Ok(())
     }
 
