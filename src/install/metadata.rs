@@ -266,8 +266,8 @@ pub fn list_supported_languages(
 /// Returns `true` if the language is supported, `false` otherwise.
 /// Network errors or parse errors also result in `false` being returned.
 pub fn is_language_supported(language: &str, options: Option<&FetchOptions>) -> bool {
-    match list_supported_languages(options) {
-        Ok(languages) => languages.iter().any(|l| l == language),
+    match fetch_parsers_lua_with_options(options) {
+        Ok(parsers) => parsers.contains_key(language),
         Err(_) => false, // Network error or parse error - treat as unsupported
     }
 }
