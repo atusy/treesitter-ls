@@ -496,15 +496,24 @@ impl TreeSitterLs {
         // Check if language servers exist
         if let Some(ref servers) = settings.language_servers {
             // Look for a server that handles this language
-            for (server_name, config) in servers.iter() {
+            // ADR-0011: Resolve each server with wildcard BEFORE checking languages,
+            // because languages list may be inherited from languageServers._
+            for server_name in servers.keys() {
                 // Skip wildcard entry - we use it for inheritance, not direct lookup
                 if server_name == "_" {
                     continue;
                 }
 
-                if config.languages.iter().any(|l| l == injection_language) {
-                    // Use wildcard resolution to merge with languageServers._ defaults (ADR-0011)
-                    return resolve_language_server_with_wildcard(servers, server_name);
+                if let Some(resolved_config) =
+                    resolve_language_server_with_wildcard(servers, server_name)
+                {
+                    if resolved_config
+                        .languages
+                        .iter()
+                        .any(|l| l == injection_language)
+                    {
+                        return Some(resolved_config);
+                    }
                 }
             }
         }
@@ -2196,6 +2205,84 @@ mod tests {
         assert_eq!(
             ra.workspace_type,
             Some(crate::config::settings::WorkspaceType::Generic)
+        );
+    }
+
+    /// Test that server lookup finds servers when languages list is inherited from wildcard.
+    ///
+    /// ADR-0011: When languageServers.rust-analyzer has empty languages but
+    /// languageServers._ specifies languages = ["rust"], the lookup should still
+    /// find rust-analyzer for Rust injections because the languages list is
+    /// inherited from the wildcard during resolution.
+    ///
+    /// This tests the fix for a bug where get_bridge_config_for_language checked
+    /// the unresolved config.languages before applying wildcard resolution.
+    #[test]
+    fn test_language_server_lookup_uses_resolved_languages_from_wildcard() {
+        use crate::config::{resolve_language_server_with_wildcard, settings::BridgeServerConfig};
+
+        let mut servers: HashMap<String, BridgeServerConfig> = HashMap::new();
+
+        // Wildcard server: specifies languages = ["rust", "python"]
+        servers.insert(
+            "_".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["default-lsp".to_string()],
+                languages: vec!["rust".to_string(), "python".to_string()],
+                initialization_options: None,
+                workspace_type: None,
+            },
+        );
+
+        // rust-analyzer: specifies only cmd, inherits languages from wildcard
+        servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["rust-analyzer".to_string()],
+                languages: vec![], // Empty - should inherit from wildcard
+                initialization_options: None,
+                workspace_type: None,
+            },
+        );
+
+        // Simulate the lookup logic from get_bridge_config_for_language:
+        // For each server (excluding "_"), resolve it and check if it handles "rust"
+        let injection_language = "rust";
+        let mut found_server: Option<BridgeServerConfig> = None;
+
+        for server_name in servers.keys() {
+            if server_name == "_" {
+                continue;
+            }
+
+            if let Some(resolved_config) =
+                resolve_language_server_with_wildcard(&servers, server_name)
+            {
+                if resolved_config
+                    .languages
+                    .iter()
+                    .any(|l| l == injection_language)
+                {
+                    found_server = Some(resolved_config);
+                    break;
+                }
+            }
+        }
+
+        // Should find rust-analyzer because after resolution it has languages = ["rust", "python"]
+        assert!(
+            found_server.is_some(),
+            "Should find a server for 'rust' when languages is inherited from wildcard"
+        );
+        let server = found_server.unwrap();
+        assert_eq!(
+            server.cmd,
+            vec!["rust-analyzer".to_string()],
+            "Should find rust-analyzer server"
+        );
+        assert!(
+            server.languages.contains(&"rust".to_string()),
+            "Resolved server should have 'rust' in languages (inherited from wildcard)"
         );
     }
 
