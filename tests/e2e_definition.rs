@@ -2,6 +2,10 @@
 //!
 //! These tests spawn the treesitter-ls binary and communicate via LSP protocol,
 //! enabling faster and more reliable E2E testing without Neovim dependency.
+//!
+//! Run with: `cargo test --features e2e`
+
+#![cfg(feature = "e2e")]
 
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};

@@ -29,10 +29,20 @@ debug:
 clean:
 	$(CARGO) clean
 
-# Run tests
+# Run tests (unit tests only, excludes E2E tests)
 .PHONY: test
 test:
-	$(CARGO) test
+	$(CARGO) test --lib
+
+# Run E2E tests (Rust-based)
+.PHONY: test_e2e
+test_e2e:
+	$(CARGO) test --features e2e --test e2e_definition
+
+# Run all tests (unit + E2E)
+.PHONY: test_all
+test_all:
+	$(CARGO) test --lib && $(CARGO) test --features e2e --test e2e_definition
 
 # Check code formatting and linting
 .PHONY: check
@@ -101,13 +111,15 @@ help:
 	@echo "  build         - Build the project in release mode (default)"
 	@echo "  debug         - Build the project in debug mode"
 	@echo "  clean         - Clean build artifacts"
-	@echo "  test          - Run tests"
+	@echo "  test          - Run unit tests only (excludes E2E)"
+	@echo "  test_e2e      - Run Rust-based E2E tests"
+	@echo "  test_all      - Run all tests (unit + E2E)"
+	@echo "  test_nvim     - Run all Neovim test files"
+	@echo "  test_nvim_file - Run test from file at \$$FILE environment variable"
 	@echo "  check         - Run code checks (clippy, fmt)"
 	@echo "  format        - Format code with rustfmt"
 	@echo "  lint          - Run clippy linter"
 	@echo "  install       - Install binary to ~/.cargo/bin"
-	@echo "  test_nvim     - Run all Neovim test files"
-	@echo "  test_nvim_file - Run test from file at \$$FILE environment variable"
 	@echo "  deps          - Download dependencies for Neovim testing"
 	@echo "  verify        - Check if the binary exists"
 	@echo "  help          - Show this help message"
