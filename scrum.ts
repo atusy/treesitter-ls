@@ -237,8 +237,14 @@ const scrum: ScrumDashboard = {
         test: "Refactor completion test to extract common initialization pattern into helper function",
         implementation: "Create initialize_with_bridge helper that encapsulates initialize + initialized + bridge config setup",
         type: "structural",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "12e2c80",
+            message: "refactor(test): extract initialization helper for E2E tests",
+            phase: "refactoring",
+          },
+        ],
         notes: [
           "Reduces duplication across definition, hover, and completion tests",
           "Prepares clean foundation for references test",
