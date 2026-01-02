@@ -5,7 +5,7 @@
 
 use crate::document::DocumentStore;
 use crate::error::LockResultExt;
-use crate::install::metadata::{FetchOptions, is_language_supported};
+use crate::install::metadata::{FetchOptions, MetadataError, is_language_supported};
 use crate::language::LanguageCoordinator;
 use crate::language::injection::collect_all_injections;
 use std::collections::HashSet;
@@ -142,18 +142,49 @@ pub fn get_injected_languages(
 pub fn should_skip_unsupported_language(
     language: &str,
     options: Option<&FetchOptions>,
-) -> (bool, Option<String>) {
-    if is_language_supported(language, options) {
-        // Language is supported - don't skip
-        return (false, None);
+) -> (bool, Option<SkipReason>) {
+    match is_language_supported(language, options) {
+        Ok(true) => (false, None),
+        Ok(false) => (
+            true,
+            Some(SkipReason::UnsupportedLanguage {
+                language: language.to_string(),
+            }),
+        ),
+        Err(err) => (
+            true,
+            Some(SkipReason::MetadataUnavailable {
+                language: language.to_string(),
+                error: err,
+            }),
+        ),
     }
+}
 
-    // Language is not supported - skip with reason
-    let reason = format!(
-        "Language '{}' is not supported by nvim-treesitter. Skipping auto-install.",
-        language
-    );
-    (true, Some(reason))
+#[derive(Debug)]
+pub enum SkipReason {
+    UnsupportedLanguage {
+        language: String,
+    },
+    MetadataUnavailable {
+        language: String,
+        error: MetadataError,
+    },
+}
+
+impl SkipReason {
+    pub fn message(&self) -> String {
+        match self {
+            SkipReason::UnsupportedLanguage { language } => format!(
+                "Language '{}' is not supported by nvim-treesitter. Skipping auto-install.",
+                language
+            ),
+            SkipReason::MetadataUnavailable { language, error } => format!(
+                "Could not verify support for '{}' due to metadata error: {}. Skipping auto-install.",
+                language, error
+            ),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -288,11 +319,13 @@ return {
             "Expected to skip unsupported language 'fake_lang_xyz'"
         );
         assert!(reason.is_some(), "Expected a reason for skipping");
-        let reason_str = reason.unwrap();
         assert!(
-            reason_str.contains("not supported") || reason_str.contains("nvim-treesitter"),
-            "Reason should mention nvim-treesitter support: {}",
-            reason_str
+            matches!(
+                reason.unwrap(),
+                SkipReason::UnsupportedLanguage { language }
+                    if language == "fake_lang_xyz"
+            ),
+            "Expected UnsupportedLanguage reason"
         );
     }
 
@@ -331,5 +364,27 @@ return {
             "Expected NOT to skip supported language 'lua'"
         );
         assert!(reason.is_none(), "Expected no reason when not skipping");
+    }
+
+    #[test]
+    fn test_should_skip_unsupported_language_reports_metadata_error() {
+        use crate::install::metadata::FetchOptions;
+        use crate::install::test_helpers::setup_mock_metadata_cache;
+        use tempfile::tempdir;
+
+        let temp = tempdir().expect("Failed to create temp dir");
+        setup_mock_metadata_cache(temp.path(), "return {}");
+
+        let options = FetchOptions {
+            data_dir: Some(temp.path()),
+            use_cache: true,
+        };
+
+        let (should_skip, reason) = should_skip_unsupported_language("lua", Some(&options));
+        assert!(should_skip, "Expected to skip when metadata is invalid");
+        assert!(
+            matches!(reason, Some(SkipReason::MetadataUnavailable { .. })),
+            "Expected MetadataUnavailable reason"
+        );
     }
 }
