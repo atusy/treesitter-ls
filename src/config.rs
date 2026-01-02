@@ -391,31 +391,31 @@ fn merge_languages(
         fallback
             .entry(key)
             .and_modify(|fallback_config| {
-                // primary.or(fallback) for each Option field
+                // primary.or_else(|| fallback) for each Option field
                 fallback_config.library = primary_config
                     .library
                     .clone()
-                    .or(fallback_config.library.take());
+                    .or_else(|| fallback_config.library.clone());
                 fallback_config.queries = primary_config
                     .queries
                     .clone()
-                    .or(fallback_config.queries.take());
+                    .or_else(|| fallback_config.queries.clone());
                 fallback_config.highlights = primary_config
                     .highlights
                     .clone()
-                    .or(fallback_config.highlights.take());
+                    .or_else(|| fallback_config.highlights.clone());
                 fallback_config.locals = primary_config
                     .locals
                     .clone()
-                    .or(fallback_config.locals.take());
+                    .or_else(|| fallback_config.locals.clone());
                 fallback_config.injections = primary_config
                     .injections
                     .clone()
-                    .or(fallback_config.injections.take());
+                    .or_else(|| fallback_config.injections.clone());
                 fallback_config.bridge = primary_config
                     .bridge
                     .clone()
-                    .or(fallback_config.bridge.take());
+                    .or_else(|| fallback_config.bridge.clone());
             })
             .or_insert(primary_config);
     }
@@ -442,14 +442,14 @@ fn merge_language_servers(
                         if !primary_config.languages.is_empty() {
                             fallback_config.languages = primary_config.languages.clone();
                         }
-                        // For Option fields: primary.or(fallback)
+                        // For Option fields: primary.or_else(|| fallback)
                         fallback_config.initialization_options = primary_config
                             .initialization_options
                             .clone()
-                            .or(fallback_config.initialization_options.take());
+                            .or_else(|| fallback_config.initialization_options.clone());
                         fallback_config.workspace_type = primary_config
                             .workspace_type
-                            .or(fallback_config.workspace_type.take());
+                            .or(fallback_config.workspace_type);
                     })
                     .or_insert(primary_config);
             }
