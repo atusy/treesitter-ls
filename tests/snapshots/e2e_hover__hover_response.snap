@@ -1,0 +1,10 @@
+---
+source: tests/e2e_hover.rs
+expression: sanitized
+---
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "⏳ indexing (rust-analyzer)"
+  }
+}

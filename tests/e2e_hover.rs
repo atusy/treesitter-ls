@@ -10,6 +10,7 @@
 mod helpers;
 
 use helpers::lsp_polling::poll_until;
+use helpers::sanitization::sanitize_hover_response;
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -310,4 +311,93 @@ fn test_hover_returns_content() {
         "Hover contents should contain function info or indexing status, got: {}",
         contents_str
     );
+}
+
+/// Test that hover response is deterministic and can be snapshot tested.
+///
+/// This test verifies:
+/// - Hover content is stable across runs
+/// - Sanitization removes non-deterministic data (temp paths)
+/// - Snapshot captures expected response structure
+#[test]
+fn test_hover_snapshot() {
+    let mut client = LspClient::new();
+
+    // Initialize with bridge configuration
+    let _init_response = client.send_request(
+        "initialize",
+        json!({
+            "processId": std::process::id(),
+            "rootUri": null,
+            "capabilities": {},
+            "initializationOptions": {
+                "languages": {
+                    "markdown": {
+                        "bridge": {
+                            "rust": { "enabled": true }
+                        }
+                    }
+                },
+                "languageServers": {
+                    "rust-analyzer": {
+                        "cmd": ["rust-analyzer"],
+                        "languages": ["rust"],
+                        "workspaceType": "cargo"
+                    }
+                }
+            }
+        }),
+    );
+    client.send_notification("initialized", json!({}));
+
+    // Create and open test file
+    let (uri, content, _temp_file) = create_hover_test_markdown_file();
+    client.send_notification(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": uri,
+                "languageId": "markdown",
+                "version": 1,
+                "text": content
+            }
+        }),
+    );
+
+    // Request hover at position of "main" on line 3, column 3 (0-indexed)
+    // Retry to wait for rust-analyzer indexing
+    let hover_result = poll_until(20, 500, || {
+        let response = client.send_request(
+            "textDocument/hover",
+            json!({
+                "textDocument": {
+                    "uri": uri
+                },
+                "position": {
+                    "line": 3,
+                    "character": 3
+                }
+            }),
+        );
+
+        let result = response.get("result").cloned().unwrap_or(Value::Null);
+        if !result.is_null() {
+            Some(result)
+        } else {
+            None
+        }
+    });
+
+    assert!(
+        hover_result.is_some(),
+        "Expected hover result for snapshot testing"
+    );
+
+    let hover = hover_result.unwrap();
+
+    // Sanitize the hover response for deterministic snapshot
+    let sanitized = sanitize_hover_response(&hover);
+
+    // Capture snapshot
+    insta::assert_json_snapshot!("hover_response", sanitized);
 }
