@@ -400,9 +400,9 @@ const scrum: ScrumDashboard = {
         test: "Verify reader_forwards_progress_notifications_to_channel still passes",
         implementation: "Extract lines 204-222 into static handle_notification() method",
         type: "structural",
-        status: "pending",
-        commits: [],
-        notes: [],
+        status: "completed",
+        commits: [{ hash: "96c3179", message: "refactor(bridge): extract handle_notification() from reader_loop", phase: "green" }],
+        notes: ["Baseline test passes - verified notification forwarding works correctly", "Extracted handle_notification() - test still passes"],
       },
       {
         test: "Verify shutdown tests still pass",
