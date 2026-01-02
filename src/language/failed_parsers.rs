@@ -130,7 +130,8 @@ impl FailedParserRegistry {
     /// this state on restart (via init()).
     pub fn begin_parsing(&self, language: &str) -> io::Result<()> {
         // Update in-memory state atomically (no disk I/O)
-        self.current_parsing.store(Arc::new(Some(language.to_string())));
+        self.current_parsing
+            .store(Arc::new(Some(language.to_string())));
         Ok(())
     }
 
@@ -364,7 +365,10 @@ mod tests {
 
         // Start parsing
         registry.begin_parsing("rust").unwrap();
-        assert_eq!(registry.current_parsing_language(), Some("rust".to_string()));
+        assert_eq!(
+            registry.current_parsing_language(),
+            Some("rust".to_string())
+        );
 
         // End parsing
         registry.end_parsing().unwrap();
