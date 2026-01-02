@@ -219,8 +219,14 @@ const scrum: ScrumDashboard = {
         test: "Write test_completion_returns_items Rust E2E test that requests completion after 'p.' and validates struct field items",
         implementation: "Implement completion E2E test using shared LspClient, poll_until, verify completion items include 'x' and 'y' fields",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "2cf5f0e",
+            message: "test(e2e): migrate completion test from Lua to Rust",
+            phase: "green",
+          },
+        ],
         notes: [
           "Migrates from tests/test_lsp_completion.lua",
           "Cursor after 'p.' on line 11 inside Rust code block",
