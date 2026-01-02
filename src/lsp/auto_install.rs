@@ -135,7 +135,8 @@ pub fn get_injected_languages(
 /// Returns a tuple of (should_skip, reason) where:
 /// - should_skip: true if the language is NOT supported by nvim-treesitter and should be skipped
 ///   or when metadata could not be fetched within the timeout
-/// - reason: Some(message) explaining why installation was skipped or why metadata was unavailable
+/// - reason: Optional reason explaining why installation was skipped or why metadata was unavailable
+///   (`None` when the language is supported and installation should proceed)
 ///
 /// This function uses cached metadata from nvim-treesitter to avoid repeated HTTP requests.
 ///
