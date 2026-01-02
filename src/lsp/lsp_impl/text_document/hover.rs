@@ -8,6 +8,24 @@ use crate::text::PositionMapper;
 
 use super::super::TreeSitterLs;
 
+/// Message shown when hover returns no result (e.g., during indexing or no info available).
+pub(crate) const NO_RESULT_MESSAGE: &str = "No result or indexing";
+
+/// Create an informative hover message for when no result is available.
+///
+/// This is shown to users when the bridged language server returns no hover
+/// result, which can happen during indexing or when no information is available
+/// for the current position.
+pub(crate) fn create_no_result_hover() -> Hover {
+    Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::PlainText,
+            value: NO_RESULT_MESSAGE.to_string(),
+        }),
+        range: None,
+    }
+}
+
 impl TreeSitterLs {
     pub(crate) async fn hover_impl(&self, params: HoverParams) -> Result<Option<Hover>> {
         let uri = params.text_document_position_params.text_document.uri;
@@ -140,8 +158,9 @@ impl TreeSitterLs {
             .await;
 
         // Translate hover response range back to host document (if present)
+        // If no hover result, return informative message instead of None (PBI-147)
         let Some(mut hover_response) = hover else {
-            return Ok(None);
+            return Ok(Some(create_no_result_hover()));
         };
 
         // Translate the range if present
@@ -155,5 +174,44 @@ impl TreeSitterLs {
         }
 
         Ok(Some(hover_response))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test that create_no_result_hover returns Hover with informative message.
+    ///
+    /// PBI-147 Subtask 1: When bridged LSP returns None for hover,
+    /// hover_impl should return an informative message instead of None.
+    #[test]
+    fn create_no_result_hover_returns_informative_message() {
+        let hover = create_no_result_hover();
+
+        // Verify the message contains "No result or indexing"
+        match hover.contents {
+            HoverContents::Markup(markup) => {
+                assert!(
+                    markup.value.contains("No result or indexing"),
+                    "Hover message should contain 'No result or indexing', got: {}",
+                    markup.value
+                );
+                assert_eq!(markup.kind, MarkupKind::PlainText);
+            }
+            _ => panic!("Expected MarkupContent, got different variant"),
+        }
+
+        // Verify no range is set
+        assert!(
+            hover.range.is_none(),
+            "No range should be set for fallback hover"
+        );
+    }
+
+    /// Test that NO_RESULT_MESSAGE constant has the expected value.
+    #[test]
+    fn no_result_message_constant_is_correct() {
+        assert_eq!(NO_RESULT_MESSAGE, "No result or indexing");
     }
 }

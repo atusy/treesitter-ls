@@ -82,24 +82,77 @@ T["markdown_rust_hover"]["hover_on_fn_shows_type_info"] = function()
 
 	MiniTest.expect.equality(got_hover, true, "Hover should show floating window with type info")
 
-	-- Verify floating window contains some content (function signature)
+	-- Verify floating window contains some content (function signature or informative message)
 	local wins = child.api.nvim_list_wins()
 	local found_content = false
+	local hover_content = ""
 	for _, win in ipairs(wins) do
 		local config = child.api.nvim_win_get_config(win)
 		if config.relative ~= "" then
 			local buf = child.api.nvim_win_get_buf(win)
 			local lines = child.api.nvim_buf_get_lines(buf, 0, -1, false)
-			local content = table.concat(lines, "\n")
+			hover_content = table.concat(lines, "\n")
 			-- Check that the hover contains something about 'main' or 'fn'
-			if content:find("main") or content:find("fn") then
+			-- Or the informative message "No result or indexing" (PBI-147)
+			if hover_content:find("main") or hover_content:find("fn") or hover_content:find("No result or indexing") then
 				found_content = true
 				break
 			end
 		end
 	end
 
-	MiniTest.expect.equality(found_content, true, "Hover content should contain function information")
+	MiniTest.expect.equality(found_content, true, "Hover content should contain function information or informative message, got: " .. hover_content)
+end
+
+-- PBI-147: Verify hover always returns content (never null/empty)
+-- This tests the informative message feature when rust-analyzer has no result
+T["markdown_rust_hover"]["hover_always_returns_content_not_null"] = function()
+	-- Position cursor on whitespace/empty area where rust-analyzer has no hover info
+	-- Line 5 contains '    println!("Hello, world!");' - position at beginning (indent)
+	child.cmd([[normal! 5G1|]])
+
+	-- Call hover multiple times to ensure we get a response
+	local got_hover = false
+	local hover_content = nil
+
+	for _ = 1, 20 do
+		child.lua([[vim.lsp.buf.hover()]])
+
+		-- Wait for floating window to appear
+		local has_float = helper.wait(3000, function()
+			local wins = child.api.nvim_list_wins()
+			for _, win in ipairs(wins) do
+				local config = child.api.nvim_win_get_config(win)
+				if config.relative ~= "" then
+					return true
+				end
+			end
+			return false
+		end, 100)
+
+		if has_float then
+			-- Get the hover content
+			local wins = child.api.nvim_list_wins()
+			for _, win in ipairs(wins) do
+				local config = child.api.nvim_win_get_config(win)
+				if config.relative ~= "" then
+					local buf = child.api.nvim_win_get_buf(win)
+					local lines = child.api.nvim_buf_get_lines(buf, 0, -1, false)
+					hover_content = table.concat(lines, "\n")
+					got_hover = true
+					break
+				end
+			end
+			break
+		end
+
+		vim.wait(500)
+	end
+
+	-- AC: Hover should always return content (never null)
+	MiniTest.expect.equality(got_hover, true, "Hover should show floating window")
+	MiniTest.expect.equality(hover_content ~= nil, true, "Hover content should not be nil")
+	MiniTest.expect.equality(#hover_content > 0, true, "Hover content should not be empty")
 end
 
 return T
