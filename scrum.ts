@@ -106,55 +106,7 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: {
-    number: 119,
-    pbi_id: "PBI-141",
-    goal: "Implement async go-to-definition for Markdown code blocks, enabling definition requests to use fully async I/O without blocking other LSP requests",
-    status: "done",
-    subtasks: [
-      {
-        test: "Unit test verifies pool.goto_definition() returns Some(GotoDefinitionResponse) from rust-analyzer",
-        implementation: "Add goto_definition() method to TokioAsyncLanguageServerPool following the hover() pattern: get connection, get virtual_uri, sync_document, send textDocument/definition request, parse and return response",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "e1ad0f2",
-            message: "feat(bridge): add async goto_definition to TokioAsyncLanguageServerPool",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Unit test goto_definition_returns_response_from_rust_analyzer passes",
-          "Method follows hover() pattern with async request/response",
-        ],
-      },
-      {
-        test: "E2E test with Lua code block in Markdown verifies definition response through async path",
-        implementation: "Update definition_impl in lsp_impl/text_document/definition.rs to use async pool.goto_definition() instead of spawn_blocking pattern, remove manual connection management",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "6ed3b86",
-            message: "feat(definition): use async goto_definition from TokioAsyncLanguageServerPool",
-            phase: "green",
-          },
-          {
-            hash: "a16dc7b",
-            message: "test(e2e): add retry mechanism to definition E2E tests for indexing delays",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "grep confirms no spawn_blocking in definition.rs",
-          "Implementation uses tokio_async_pool.goto_definition()",
-          "E2E tests pass with retry mechanism for language server indexing",
-          "Both Rust and Lua definition tests verify async path works correctly",
-        ],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
