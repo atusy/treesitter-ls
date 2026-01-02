@@ -133,8 +133,14 @@ const scrum: ScrumDashboard = {
         test: "Refactor e2e_definition.rs tests to use poll_until helper instead of manual retry loops",
         implementation: "Replace the 20-attempt retry loops in e2e_definition.rs with calls to poll_until helper",
         type: "structural",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "5196299",
+            message: "refactor(test): use poll_until helper in e2e_definition tests",
+            phase: "refactoring",
+          },
+        ],
         notes: [
           "Validates the poll_until abstraction works for existing definition tests",
           "This refactoring proves the helper is reusable before writing new tests",
