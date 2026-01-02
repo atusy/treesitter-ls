@@ -170,6 +170,32 @@ impl TokioAsyncBridgeConnection {
         }
     }
 
+    /// Handle a notification message by forwarding $/progress to the notification channel.
+    ///
+    /// # Arguments
+    /// * `message` - The LSP notification message with a "method" field
+    /// * `notification_sender` - Optional channel for forwarding $/progress notifications
+    fn handle_notification(message: Value, notification_sender: &Option<mpsc::Sender<Value>>) {
+        if let Some(method) = message.get("method").and_then(|m| m.as_str()) {
+            // Check for $/progress notification and forward it
+            if method == "$/progress" {
+                if let Some(sender) = notification_sender {
+                    log::debug!(
+                        target: "treesitter_ls::bridge::tokio",
+                        "[READER] Forwarding $/progress notification"
+                    );
+                    if let Err(e) = sender.try_send(message) {
+                        log::warn!(
+                            target: "treesitter_ls::bridge",
+                            "Notification channel full, dropped message: {}",
+                            e
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// Background reader loop that reads responses and routes them to callers.
     ///
     /// Uses tokio::select! to handle:
@@ -212,24 +238,9 @@ impl TokioAsyncBridgeConnection {
                             // Check if this is a response (has "id" field)
                             if message.get("id").is_some() {
                                 Self::handle_response(message, &pending);
-                            } else if let Some(method) = message.get("method").and_then(|m| m.as_str()) {
+                            } else {
                                 // This is a notification (method without id)
-                                // Check for $/progress notification and forward it
-                                if method == "$/progress"
-                                    && let Some(ref sender) = notification_sender
-                                {
-                                    log::debug!(
-                                        target: "treesitter_ls::bridge::tokio",
-                                        "[READER] Forwarding $/progress notification"
-                                    );
-                                    if let Err(e) = sender.try_send(message) {
-                                        log::warn!(
-                                            target: "treesitter_ls::bridge",
-                                            "Notification channel full, dropped message: {}",
-                                            e
-                                        );
-                                    }
-                                }
+                                Self::handle_notification(message, &notification_sender);
                             }
                         }
                         Ok(None) => {
