@@ -290,7 +290,72 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 128,
+    pbi_id: "PBI-156",
+    goal: "Fix close_all_documents to only close relevant bridge documents",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "Add test: TokioAsyncLanguageServerPool tracks host-to-bridge URI mapping",
+        implementation: "Add DashMap<String, HashSet<String>> field host_to_bridge_uris to track which host URIs use which virtual URIs. Update sync_document to record the mapping when opening bridge documents.",
+        type: "behavioral",
+        status: "completed",
+        commits: [
+          {
+            hash: "b3be582",
+            message: "feat(bridge): add host-to-bridge URI mapping tracking",
+            phase: "green",
+          },
+        ],
+        notes: [
+          "TDD Red: Write unit test verifying that sync_document updates host_to_bridge_uris mapping",
+          "TDD Green: Add host_to_bridge_uris field and update sync_document to record host->virtual mapping",
+          "Key insight: Multiple host documents may share the same bridge connection (e.g., rust-analyzer)",
+          "Architecture: virtual_uris is keyed by connection key (e.g., 'rust-analyzer'), but we need to track which host URIs contributed to each virtual URI",
+          "Implementation: Created sync_document_with_host() to track mappings while keeping existing sync_document() for backward compatibility",
+        ],
+      },
+      {
+        test: "Add test: close_documents_for_host only closes bridge documents for specified host URI",
+        implementation: "Rename close_all_documents to close_documents_for_host, accept host_uri parameter. Look up associated virtual URIs from host_to_bridge_uris, send didClose only for those URIs, and remove the host URI from the mapping.",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "TDD Red: Write test opening two files with code blocks, close one, verify other's bridge state remains",
+          "TDD Green: Implement scoped cleanup using host_to_bridge_uris lookup",
+          "Cleanup: Remove host URI from mapping after closing its bridge documents",
+          "Edge case: If virtual URI has no more host URIs, remove it from document_versions"
+        ],
+      },
+      {
+        test: "Add test: did_close handler passes host URI to close_documents_for_host",
+        implementation: "Update lsp_impl.rs did_close handler to call close_documents_for_host with the closing host document's URI instead of close_all_documents().",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "TDD Red: Write integration test verifying correct host URI is passed to pool method",
+          "TDD Green: Update did_close call site to pass host URI parameter",
+          "This is the final integration point connecting host document lifecycle to scoped bridge cleanup"
+        ],
+      },
+      {
+        test: "Verify all acceptance criteria with make test and make test_nvim",
+        implementation: "Run full test suite to ensure no behavioral regressions. Verify that existing bridge feature tests still pass with the new scoped cleanup.",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "TDD: Verify all existing tests pass (regression check)",
+          "AC1 verification: Host-to-bridge URI mapping tracks relationships",
+          "AC2 verification: didClose only closes relevant bridge documents",
+          "AC3 verification: All tests pass with scoped cleanup"
+        ],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
