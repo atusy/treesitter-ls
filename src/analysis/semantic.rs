@@ -687,16 +687,19 @@ fn calculate_semantic_tokens_delta(
     };
 
     // --- Step 3: Calculate the edit ---
-    let start = common_prefix_len;
-    let delete_count = prev_suffix.len() - common_suffix_len;
-    let insert_count = curr_suffix.len() - common_suffix_len;
-    let data = current.data[start..start + insert_count].to_vec();
+    // LSP spec requires start and deleteCount to be integer indices into the
+    // flattened token array, not token indices. Each SemanticToken serializes
+    // to 5 u32 values, so we must multiply by 5.
+    let start_token = common_prefix_len;
+    let delete_token_count = prev_suffix.len() - common_suffix_len;
+    let insert_token_count = curr_suffix.len() - common_suffix_len;
+    let data = current.data[start_token..start_token + insert_token_count].to_vec();
 
     Some(SemanticTokensDelta {
         result_id: current.result_id.clone(),
         edits: vec![SemanticTokensEdit {
-            start: start as u32,
-            delete_count: delete_count as u32,
+            start: (start_token * 5) as u32,
+            delete_count: (delete_token_count * 5) as u32,
             data: Some(data),
         }],
     })
@@ -800,10 +803,11 @@ mod tests {
         let delta = delta.unwrap();
         assert_eq!(delta.result_id, Some("v2".to_string()));
         assert_eq!(delta.edits.len(), 1);
+        // LSP spec: start and deleteCount are integer indices (each token = 5 integers)
         assert_eq!(delta.edits[0].start, 0);
         // With suffix matching: only the first token (comment) changed
         // The last two tokens (keyword, variable) are suffix matched
-        assert_eq!(delta.edits[0].delete_count, 1);
+        assert_eq!(delta.edits[0].delete_count, 5); // 1 token * 5 integers
         let edits_data = delta.edits[0]
             .data
             .as_ref()
@@ -1010,10 +1014,14 @@ mod tests {
         // With suffix matching: start=2 (skip 2 prefix tokens), delete_count=1, data=1 token
         // Without suffix matching: start=2, delete_count=3, data=3 tokens
         let edit = &delta.edits[0];
-        assert_eq!(edit.start, 2, "Should skip 2 prefix tokens");
+        // LSP spec: start and deleteCount are integer indices (each token = 5 integers)
         assert_eq!(
-            edit.delete_count, 1,
-            "Should only delete 1 token (with suffix matching)"
+            edit.start, 10,
+            "Should skip 2 prefix tokens (2 * 5 integers)"
+        );
+        assert_eq!(
+            edit.delete_count, 5,
+            "Should only delete 1 token (with suffix matching) = 5 integers"
         );
         assert_eq!(
             edit.data.as_ref().unwrap().len(),
@@ -1101,12 +1109,16 @@ mod tests {
         // but they're at DIFFERENT absolute positions (line 2,3 vs line 1,2).
         // Suffix optimization MUST be disabled.
         let edit = &delta.edits[0];
-        assert_eq!(edit.start, 1, "Should skip 1 prefix token (line 0)");
+        // LSP spec: start and deleteCount are integer indices (each token = 5 integers)
+        assert_eq!(
+            edit.start, 5,
+            "Should skip 1 prefix token (line 0) = 5 integers"
+        );
         // Without suffix: delete_count=2 (tokens at line 1,2), data=3 tokens
         // With incorrect suffix: would wrongly match last token
         assert_eq!(
-            edit.delete_count, 2,
-            "Should delete 2 original tokens after prefix"
+            edit.delete_count, 10,
+            "Should delete 2 original tokens after prefix = 10 integers"
         );
         assert_eq!(
             edit.data.as_ref().unwrap().len(),
@@ -1198,10 +1210,11 @@ mod tests {
 
         // Same line count, so suffix matching should work
         let edit = &delta.edits[0];
-        assert_eq!(edit.start, 1, "Should skip 1 prefix token");
+        // LSP spec: start and deleteCount are integer indices (each token = 5 integers)
+        assert_eq!(edit.start, 5, "Should skip 1 prefix token = 5 integers");
         assert_eq!(
-            edit.delete_count, 1,
-            "Should only delete 1 token (suffix matched 2)"
+            edit.delete_count, 5,
+            "Should only delete 1 token (suffix matched 2) = 5 integers"
         );
         assert_eq!(
             edit.data.as_ref().unwrap().len(),
