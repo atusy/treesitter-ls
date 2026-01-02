@@ -355,16 +355,12 @@ impl TokioAsyncLanguageServerPool {
             if !still_in_use {
                 // No other host uses this bridge URI, safe to close
                 // Find the connection for this bridge URI
-                if let Some((conn, _)) = self
-                    .connections
-                    .iter()
-                    .find_map(|entry| {
-                        self.virtual_uris
-                            .get(entry.key())
-                            .filter(|uri| **uri == bridge_uri)
-                            .map(|_| (entry.value().clone(), entry.key().clone()))
-                    })
-                {
+                if let Some((conn, _)) = self.connections.iter().find_map(|entry| {
+                    self.virtual_uris
+                        .get(entry.key())
+                        .filter(|uri| **uri == bridge_uri)
+                        .map(|_| (entry.value().clone(), entry.key().clone()))
+                }) {
                     self.close_document_async(&conn, &bridge_uri).await;
                 }
             }
