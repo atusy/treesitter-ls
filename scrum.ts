@@ -33,6 +33,30 @@ const scrum: ScrumDashboard = {
   // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113), PBI-155 (Sprint 124) | History: git log -- scrum.yaml, scrum.ts
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   product_backlog: [
+    // Schema migration: library→parser, highlights/locals/injections→queries
+    {
+      id: "PBI-156",
+      story: {
+        role: "treesitter-ls user managing configurations",
+        capability: "configure languages using `parser` and unified `queries` fields",
+        benefit: "configuration schema is consistent and simpler with fewer redundant fields",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "LanguageSettings uses `parser` field instead of `library`",
+          verification: "grep confirms no `library` field in LanguageSettings struct",
+        },
+        {
+          criterion: "LanguageSettings uses unified `queries: Vec<QueryItem>` instead of separate highlights/locals/injections",
+          verification: "grep confirms no highlights/locals/injections fields in LanguageSettings struct",
+        },
+        {
+          criterion: "resolve_language_settings_with_wildcard merges the new schema correctly",
+          verification: "Unit tests verify parser and queries fields merge with wildcard inheritance",
+        },
+      ],
+      status: "ready",
+    },
     // ADR-0009 Implementation: Vertical slices with user-facing value
     // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117)
     {
@@ -130,7 +154,46 @@ const scrum: ScrumDashboard = {
     // ADR-0010: Completed PBI-151 (Sprint 118), PBI-150 (Sprint 119), PBI-149 (Sprint 120)
     // ADR-0011: Completed PBI-152 (Sprint 121), PBI-153 (Sprint 122), PBI-154 (Sprint 123), PBI-155 (Sprint 124)
   ],
-  sprint: null,
+  sprint: {
+    number: 125,
+    pbi_id: "PBI-156",
+    goal: "Migrate LanguageSettings to use parser and unified queries fields",
+    status: "review",
+    subtasks: [
+      {
+        test: "Test LanguageSettings struct has parser field instead of library",
+        implementation: "Rename library to parser in LanguageSettings struct",
+        type: "behavioral",
+        status: "completed",
+        commits: ["d7c430f"],
+        notes: ["Verified: LanguageSettings has parser field at src/config/settings.rs:131, no library field exists in LanguageSettings"],
+      },
+      {
+        test: "Test LanguageSettings struct has queries: Vec<QueryItem> instead of highlights/locals/injections",
+        implementation: "Replace highlights/locals/injections with unified queries field",
+        type: "behavioral",
+        status: "completed",
+        commits: ["d7c430f"],
+        notes: ["Verified: LanguageSettings has queries: Vec<QueryItem> at src/config/settings.rs:133, no highlights/locals/injections fields in LanguageSettings"],
+      },
+      {
+        test: "Test resolve_language_settings_with_wildcard merges parser and queries correctly",
+        implementation: "Update resolve_language_settings_with_wildcard for new schema",
+        type: "behavioral",
+        status: "completed",
+        commits: ["0c5a802"],
+        notes: ["Verified: resolve_language_settings_with_wildcard at src/config.rs:85-111 correctly merges parser (Option semantics) and queries (Vec semantics) with wildcard inheritance"],
+      },
+      {
+        test: "Test all dependent code compiles with new schema",
+        implementation: "Update all code that references old LanguageSettings fields",
+        type: "behavioral",
+        status: "completed",
+        commits: ["d7c430f", "0c5a802"],
+        notes: ["Verified: All 394 tests pass, make check passes, make lint passes, make format passes"],
+      },
+    ],
+  },
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
