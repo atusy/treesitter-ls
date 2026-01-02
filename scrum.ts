@@ -56,7 +56,7 @@ const scrum: ScrumDashboard = {
           verification: "E2E test opens Markdown with Lua code block, requests definition, receives location",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-142",
@@ -110,7 +110,7 @@ const scrum: ScrumDashboard = {
     number: 119,
     pbi_id: "PBI-141",
     goal: "Implement async go-to-definition for Markdown code blocks, enabling definition requests to use fully async I/O without blocking other LSP requests",
-    status: "review",
+    status: "done",
     subtasks: [
       {
         test: "Unit test verifies pool.goto_definition() returns Some(GotoDefinitionResponse) from rust-analyzer",
@@ -140,11 +140,17 @@ const scrum: ScrumDashboard = {
             message: "feat(definition): use async goto_definition from TokioAsyncLanguageServerPool",
             phase: "green",
           },
+          {
+            hash: "a16dc7b",
+            message: "test(e2e): add retry mechanism to definition E2E tests for indexing delays",
+            phase: "green",
+          },
         ],
         notes: [
           "grep confirms no spawn_blocking in definition.rs",
           "Implementation uses tokio_async_pool.goto_definition()",
-          "E2E tests added but failing - definition not returning valid responses",
+          "E2E tests pass with retry mechanism for language server indexing",
+          "Both Rust and Lua definition tests verify async path works correctly",
         ],
       },
     ],
