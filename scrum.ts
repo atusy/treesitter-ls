@@ -156,7 +156,7 @@ const scrum: ScrumDashboard = {
         status: "completed",
         commits: [
           {
-            hash: "pending",
+            hash: "42d7daf",
             message: "docs(scrum): complete pre-implementation E2E checklist review",
             phase: "green",
           },
