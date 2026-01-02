@@ -254,8 +254,14 @@ const scrum: ScrumDashboard = {
         test: "Write test_completion_snapshot test that captures sanitized completion items in snapshot",
         implementation: "Add snapshot test for completion response with sanitized textEdit ranges",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "1b1f30e",
+            message: "test(e2e): add completion snapshot test with deterministic verification",
+            phase: "green",
+          },
+        ],
         notes: [
           "Verifies completion items are stable and deterministic",
           "Validates range adjustment from virtual to host coordinates",
