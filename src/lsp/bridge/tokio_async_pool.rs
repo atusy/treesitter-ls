@@ -323,6 +323,54 @@ impl TokioAsyncLanguageServerPool {
         self.document_versions.len()
     }
 
+    /// Close bridge documents associated with a specific host document URI.
+    ///
+    /// This performs scoped cleanup:
+    /// 1. Looks up the bridge virtual URIs associated with the host URI
+    /// 2. Removes the host URI from the mapping
+    /// 3. For each virtual URI that has no more host URIs using it:
+    ///    - Sends didClose to the bridge server
+    ///    - Removes version tracking
+    ///
+    /// This ensures that closing one host document doesn't affect bridge state
+    /// for other host documents that may be using the same bridge connection.
+    ///
+    /// # Arguments
+    /// * `host_uri` - The host document URI being closed
+    pub async fn close_documents_for_host(&self, host_uri: &str) {
+        // Get the bridge URIs for this host and remove the mapping atomically
+        let bridge_uris = match self.host_to_bridge_uris.remove(host_uri) {
+            Some((_, uris)) => uris,
+            None => return, // No bridge documents for this host
+        };
+
+        // For each bridge URI, check if any other host still uses it
+        for bridge_uri in bridge_uris {
+            // Check if any other host URI still references this bridge URI
+            let still_in_use = self
+                .host_to_bridge_uris
+                .iter()
+                .any(|entry| entry.value().contains(&bridge_uri));
+
+            if !still_in_use {
+                // No other host uses this bridge URI, safe to close
+                // Find the connection for this bridge URI
+                if let Some((conn, _)) = self
+                    .connections
+                    .iter()
+                    .find_map(|entry| {
+                        self.virtual_uris
+                            .get(entry.key())
+                            .filter(|uri| **uri == bridge_uri)
+                            .map(|_| (entry.value().clone(), entry.key().clone()))
+                    })
+                {
+                    self.close_document_async(&conn, &bridge_uri).await;
+                }
+            }
+        }
+    }
+
     /// Close all documents in all active connections.
     ///
     /// This sends textDocument/didClose for each virtual URI and clears all version tracking.
@@ -1490,6 +1538,77 @@ mod tests {
                 "All concurrent get_connection calls should return the same Arc instance"
             );
         }
+    }
+
+    /// Test that close_documents_for_host only closes bridge documents for specified host URI.
+    ///
+    /// PBI-156 Subtask 2: When close_documents_for_host is called for a specific host URI,
+    /// it should only close the bridge documents associated with that host, not all bridge documents.
+    #[tokio::test]
+    async fn close_documents_for_host_only_closes_relevant_bridge_documents() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Get a connection
+        let conn = pool.get_connection("rust-analyzer", &config).await;
+        assert!(conn.is_some(), "Should get a connection");
+        let conn = conn.unwrap();
+
+        let virtual_uri = pool.get_virtual_uri("rust-analyzer").unwrap();
+        let host_uri_1 = "file:///test/document1.md";
+        let host_uri_2 = "file:///test/document2.md";
+
+        // Open documents from two different host URIs using the same virtual URI
+        let content1 = "fn main() {}";
+        pool.sync_document_with_host(&conn, &virtual_uri, "rust", content1, host_uri_1)
+            .await;
+
+        let content2 = "fn other() {}";
+        pool.sync_document_with_host(&conn, &virtual_uri, "rust", content2, host_uri_2)
+            .await;
+
+        // Both host URIs should be mapped
+        assert!(
+            pool.get_bridge_uris_for_host(host_uri_1).is_some(),
+            "Host URI 1 should be mapped"
+        );
+        assert!(
+            pool.get_bridge_uris_for_host(host_uri_2).is_some(),
+            "Host URI 2 should be mapped"
+        );
+
+        // Close documents for host_uri_1 only
+        pool.close_documents_for_host(host_uri_1).await;
+
+        // Host URI 1 mapping should be removed
+        assert!(
+            pool.get_bridge_uris_for_host(host_uri_1).is_none(),
+            "Host URI 1 mapping should be removed after close"
+        );
+
+        // Host URI 2 mapping should still exist
+        assert!(
+            pool.get_bridge_uris_for_host(host_uri_2).is_some(),
+            "Host URI 2 mapping should still exist"
+        );
+
+        // Document version should still exist (because host_uri_2 still uses it)
+        assert!(
+            pool.get_document_version(&virtual_uri).is_some(),
+            "Document version should still exist because host_uri_2 still uses it"
+        );
     }
 
     /// Test that sync_document tracks host-to-bridge URI mapping.
