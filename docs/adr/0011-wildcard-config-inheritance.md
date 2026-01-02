@@ -142,6 +142,7 @@ enabled = false
 - **Complexity**: Users must understand both cross-layer and wildcard merging
 - **Nested wildcards add depth**: `languages._.bridge._` requires recursive resolution
 - **Order matters**: `_` must be processed before specific keys during resolution
+- **Infrastructure-integration gap**: Phases 1-3 (Sprints 121-123) built wildcard resolution APIs but delivered ZERO user value until Sprint 124 wired them into application lookups. Lesson: infrastructure sprints must be followed by integration sprints within 1-2 sprints to realize value.
 
 ### Neutral
 
