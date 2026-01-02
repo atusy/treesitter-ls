@@ -9,11 +9,14 @@
 use regex::Regex;
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Duration;
 
 use super::cache::MetadataCache;
 
 /// URL for nvim-treesitter parsers.lua on GitHub (main branch).
 const PARSERS_LUA_URL: &str = "https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/main/lua/nvim-treesitter/parsers.lua";
+/// Timeout for fetching parser metadata; keeps metadata lookups bounded.
+const PARSERS_LUA_HTTP_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Options for fetching metadata.
 #[derive(Debug, Clone)]
@@ -99,8 +102,18 @@ fn fetch_parsers_lua_with_options(
     }
 
     // Cache miss or no cache - fetch from network
-    let response = reqwest::blocking::get(PARSERS_LUA_URL)
+    let client = reqwest::blocking::Client::builder()
+        .timeout(PARSERS_LUA_HTTP_TIMEOUT)
+        .build()
         .map_err(|e| MetadataError::HttpError(e.to_string()))?;
+
+    let response = client.get(PARSERS_LUA_URL).send().map_err(|e| {
+        if e.is_timeout() {
+            MetadataError::Timeout
+        } else {
+            MetadataError::HttpError(e.to_string())
+        }
+    })?;
 
     if !response.status().is_success() {
         return Err(MetadataError::HttpError(format!(
