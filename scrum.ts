@@ -386,14 +386,20 @@ const scrum: ScrumDashboard = {
     number: 131,
     pbi_id: "PBI-164",
     goal: "Remove blocking I/O from parse hot path by buffering crash detection state in memory",
-    status: "planning",
+    status: "in_progress",
     subtasks: [
       {
         test: "Test that begin_parsing does not write to disk",
         implementation: "Change begin_parsing to only update in-memory state (Arc<AtomicOption<String>>)",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "green",
+        commits: [
+          {
+            hash: "3723ef6",
+            message: "feat: remove blocking I/O from parse hot path - in-memory crash detection",
+            phase: "green",
+          },
+        ],
         notes: [
           "Current: writes parsing_in_progress file on every parse (fs::write)",
           "New: store current parser in Arc<ArcSwap<Option<String>>> for atomic updates",
@@ -404,8 +410,14 @@ const scrum: ScrumDashboard = {
         test: "Test that end_parsing only clears in-memory state",
         implementation: "Change end_parsing to only clear in-memory atomic state",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "3723ef6",
+            message: "feat: remove blocking I/O from parse hot path - in-memory crash detection",
+            phase: "green",
+          },
+        ],
         notes: [
           "Current: removes parsing_in_progress file (fs::remove_file)",
           "New: clear Arc<ArcSwap<Option<String>>> atomically",
@@ -416,8 +428,14 @@ const scrum: ScrumDashboard = {
         test: "Test that init() still detects crashes from previous session via persistent state",
         implementation: "Add shutdown handler to persist crash state on graceful exit; init checks for unexpected state",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "3723ef6",
+            message: "feat: remove blocking I/O from parse hot path - in-memory crash detection",
+            phase: "green",
+          },
+        ],
         notes: [
           "On init: check parsing_in_progress file (one-time on startup)",
           "On shutdown: write current in-memory state to disk if exists (graceful exit)",
@@ -428,24 +446,37 @@ const scrum: ScrumDashboard = {
         test: "Test that parse_document no longer performs I/O on hot path",
         implementation: "Verify parse_document calls only update in-memory state",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "3723ef6",
+            message: "feat: remove blocking I/O from parse hot path - in-memory crash detection",
+            phase: "green",
+          },
+        ],
         notes: [
-          "Profile: no fs::write/remove in didChange -> parse_document path",
-          "Only memory operations (atomic swap) in begin/end_parsing",
-          "Disk I/O deferred to init/shutdown lifecycle hooks",
+          "parse_document (lsp_impl.rs:416, 421) calls begin_parsing/end_parsing",
+          "These methods now only update Arc<ArcSwap<Option<String>>> (atomic memory ops)",
+          "No fs::write/remove in hot path - verified by implementation and tests",
         ],
       },
       {
         test: "Test all existing crash detection tests still pass",
         implementation: "Run existing failed_parsers tests and verify no behavioral regression",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "3723ef6",
+            message: "feat: remove blocking I/O from parse hot path - in-memory crash detection",
+            phase: "green",
+          },
+        ],
         notes: [
-          "9 existing tests must continue passing",
-          "test_crash_detection_marks_parser_failed",
-          "test_init_detects_crash_and_marks_failed",
+          "All 11 failed_parsers tests pass (was 9, added 2 new tests)",
+          "test_crash_detection_marks_parser_failed - PASS",
+          "test_init_detects_crash_and_marks_failed - PASS",
+          "360/362 lib tests passing (2 flaky rust-analyzer tests from PBI-163)",
         ],
       },
     ],
