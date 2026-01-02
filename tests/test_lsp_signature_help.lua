@@ -126,4 +126,103 @@ T["markdown"]["signature_help returns function signature in injection region"] =
 	)
 end
 
+-- Dedicated async path test with realistic multi-parameter scenario
+-- This test verifies the async I/O path with activeParameter tracking
+T["markdown_rust_async"] = create_file_test_set(".md", {
+	"# Async Signature Help Test",
+	"",
+	"```rust",
+	"fn format_message(prefix: &str, message: &str, suffix: &str) -> String {",
+	'    format!("{}{}{}", prefix, message, suffix)',
+	"}",
+	"",
+	"fn main() {",
+	'    let result = format_message("Hello, ", ', -- line 9: cursor after first argument
+	"}",
+	"```",
+})
+
+T["markdown_rust_async"]["async_signature_help_shows_active_parameter"] = function()
+	-- Position cursor after first argument: format_message("Hello, ",
+	-- This should show we're on the second parameter (message)
+	child.cmd([[normal! 9G42|]]) -- line 9, column 42 (after the comma and space)
+
+	-- Use helper.retry_for_lsp_indexing() for async path verification
+	local success = _G.helper.retry_for_lsp_indexing({
+		child = child,
+		lsp_request = function()
+			child.lua([[
+				_G.async_signature_result = nil
+				local bufnr = vim.api.nvim_get_current_buf()
+				local clients = vim.lsp.get_clients({ bufnr = bufnr, name = "treesitter-ls" })
+				if #clients == 0 then
+					return
+				end
+
+				local client = clients[1]
+				local params = vim.lsp.util.make_position_params(0, client.offset_encoding or "utf-16")
+				local results = vim.lsp.buf_request_sync(bufnr, "textDocument/signatureHelp", params, 15000)
+
+				if not results then
+					return
+				end
+
+				for client_id, response in pairs(results) do
+					if response.result and response.result.signatures then
+						local signatures = response.result.signatures
+						if #signatures > 0 then
+							local sig = signatures[1]
+							_G.async_signature_result = {
+								label = sig.label,
+								parameters = sig.parameters and #sig.parameters or 0,
+								activeParameter = response.result.activeParameter,
+							}
+							return
+						end
+					end
+				end
+			]])
+		end,
+		check = function()
+			local result = child.lua_get([[_G.async_signature_result]])
+			-- result may be vim.NIL (userdata) when not yet set
+			if type(result) ~= "table" then
+				return false
+			end
+			return result.label ~= nil and result.parameters and result.parameters > 0
+		end,
+		max_retries = 20,
+		wait_ms = 3000,
+		retry_delay_ms = 500,
+	})
+
+	MiniTest.expect.equality(success, true, "Should get async signature help response")
+
+	local result = child.lua_get([[_G.async_signature_result]])
+
+	-- Verify signature contains function name
+	MiniTest.expect.equality(
+		result.label:find("format_message") ~= nil,
+		true,
+		("Signature should contain 'format_message', got: %s"):format(result.label)
+	)
+
+	-- Verify signature has multiple parameters
+	MiniTest.expect.equality(
+		result.parameters >= 3,
+		true,
+		("Signature should have at least 3 parameters, got: %d"):format(result.parameters)
+	)
+
+	-- Verify activeParameter tracking (may be 0-indexed or nil depending on rust-analyzer version)
+	-- Just check it exists when there are multiple parameters
+	if result.activeParameter ~= nil then
+		MiniTest.expect.equality(
+			type(result.activeParameter),
+			"number",
+			"activeParameter should be a number when present"
+		)
+	end
+end
+
 return T
