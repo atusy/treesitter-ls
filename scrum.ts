@@ -240,7 +240,7 @@ const scrum: ScrumDashboard = {
           verification: "Run `make test` and `make test_nvim` - all tests pass",
         },
       ],
-      status: "ready",
+      status: "in_progress",
     },
     {
       id: "PBI-162",
@@ -383,83 +383,74 @@ const scrum: ScrumDashboard = {
   ],
 
   sprint: {
-    number: 138,
-    pbi_id: "PBI-167",
-    goal: "Optimize cache invalidation with interval tree for O(log n) performance",
+    number: 139,
+    pbi_id: "PBI-161",
+    goal: "Fix parser auto-install race causing server crashes on rapid edits",
     status: "review",
     subtasks: [
       {
-        test: "Add test for find_overlapping() API that queries interval tree efficiently",
-        implementation: "Add test_injection_map_find_overlapping_efficiently test that verifies O(log n) overlap query API exists and returns correct overlapping regions",
+        test: "Investigate root cause of parser auto-install race condition",
+        implementation: "Trace didOpen → maybe_auto_install_language → install_language_async → parse_document flow to identify where concurrent file write and load happens",
         type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "d263382",
-            message: "feat(perf): optimize cache invalidation with interval tree (PBI-167)",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Added rust-lapper dependency for interval tree implementation",
-          "Test creates 100 non-overlapping regions to simulate large document",
-          "Verifies query [225..350] correctly finds regions 2 and 3",
-          "Verifies empty result for non-overlapping query [60..80]",
-          "Verifies None result for non-existent URI",
-        ],
-      },
-      {
-        test: "Refactor InjectionMap to use Lapper instead of Vec",
-        implementation: "Replace Vec storage with Lapper<usize, CacheableInjectionRegion>, update all methods to use interval tree API",
-        type: "structural",
-        status: "completed",
-        commits: [
-          {
-            hash: "d263382",
-            message: "feat(perf): optimize cache invalidation with interval tree (PBI-167)",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Changed InjectionMap.regions from Vec to Lapper interval tree",
-          "insert() builds interval tree from regions",
-          "get() extracts all regions by iterating intervals",
-          "find_at_position() uses lapper.find() for point query",
-          "Added find_overlapping() for efficient range queries",
-          "All existing tests pass with new implementation",
-        ],
-      },
-      {
-        test: "Update invalidate_overlapping_injection_caches to use O(log n) queries",
-        implementation: "Replace O(n) iteration with find_overlapping() interval tree query in invalidate_overlapping_injection_caches",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "d263382",
-            message: "feat(perf): optimize cache invalidation with interval tree (PBI-167)",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Removed nested loop that iterated through all regions (O(n))",
-          "Replaced with find_overlapping() call (O(log n))",
-          "Simplified logic - no need to check empty regions upfront",
-          "Performance: 100 regions → ~7 comparisons instead of 100",
-          "All injection cache invalidation tests pass",
-        ],
-      },
-      {
-        test: "All tests pass with optimized implementation",
-        implementation: "Run make test to verify no behavioral changes with interval tree",
-        type: "structural",
         status: "completed",
         commits: [],
         notes: [
-          "All 373 unit tests pass",
-          "cargo check passes with expected warnings from PBI-162",
-          "No behavioral changes - interval tree is drop-in replacement",
-          "Existing injection map tests verify backward compatibility",
+          "Race condition occurs between install_language_async (writing .dylib) and parse_document (loading .dylib)",
+          "didOpen at line 1060 calls maybe_auto_install_language (line 1101) which spawns background install",
+          "Then didOpen calls parse_document (line 1110) which tries to load the parser",
+          "parse_document → ensure_language_loaded → try_load_language_by_id → parser_loader.load_language",
+          "If install is still writing, libloading::Library::new panics on partial binary",
+          "InstallingLanguages tracker exists but only prevents duplicate installs, not concurrent load during install",
+        ],
+      },
+      {
+        test: "Design coordination solution to prevent concurrent install/parse",
+        implementation: "Analyze flow and design fix: make maybe_auto_install_language return bool, skip parse_document in didOpen if install was triggered",
+        type: "behavioral",
+        status: "completed",
+        commits: [],
+        notes: [
+          "Solution: make maybe_auto_install_language return bool indicating if install was triggered",
+          "If true, skip parse_document in didOpen - let reload_language_after_install handle it",
+          "reload_language_after_install (line 848) already calls parse_document after install completes",
+          "This prevents the race: parse_document only runs after install writes the complete .dylib file",
+          "Preserves async background install behavior - no blocking waits in didOpen",
+          "Simple change with minimal code impact - just add return value and conditional check",
+        ],
+      },
+      {
+        test: "Implement fix to skip parse_document when auto-install is triggered",
+        implementation: "Add bool return to maybe_auto_install_language, check in didOpen to skip parse if true, update check_injected_languages_auto_install call site",
+        type: "behavioral",
+        status: "completed",
+        commits: [
+          {
+            hash: "1f60582",
+            message: "fix(auto-install): prevent race between parser install and load (PBI-161)",
+            phase: "green",
+          },
+        ],
+        notes: [
+          "Updated maybe_auto_install_language signature to return bool",
+          "Returns true if install triggered (already installing, parser exists, or new install started)",
+          "Returns false if install skipped (unsupported language, no data dir, etc)",
+          "didOpen now tracks skip_parse flag and conditionally skips parse_document call",
+          "check_injected_languages_auto_install ignores return value (injections never skip parse)",
+          "372/373 tests pass (1 flaky rust-analyzer test - pre-existing in PBI-163)",
+        ],
+      },
+      {
+        test: "Verify all tests pass with race condition fix",
+        implementation: "Run make test to verify fix doesn't break existing functionality",
+        type: "behavioral",
+        status: "completed",
+        commits: [],
+        notes: [
+          "372/373 unit tests pass consistently",
+          "1 flaky test varies (completion, signature_help, or concurrent_first_access)",
+          "These are known flaky rust-analyzer tests tracked in PBI-163",
+          "cargo check passes with no warnings",
+          "Core functionality (parse_document, auto-install coordination) works correctly",
         ],
       },
     ],
@@ -473,7 +464,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 2) | Sprint 1-136: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 3) | Sprint 1-135: git log -- scrum.yaml, scrum.ts
   completed: [
     {
       number: 128,
