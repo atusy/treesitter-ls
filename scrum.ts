@@ -153,13 +153,20 @@ const scrum: ScrumDashboard = {
         test: "Checklist review documented in commit message (Pre-implementation step from Sprint 120 Retrospective)",
         implementation: "Review E2E_TEST_CHECKLIST.md and existing test helpers before writing test code",
         type: "structural",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "pending",
+            message: "docs(scrum): complete pre-implementation E2E checklist review",
+            phase: "green",
+          },
+        ],
         notes: [
           "CRITICAL: This is the Sprint 120 Retrospective action - must be done BEFORE Subtask 4",
           "Review scripts/minimal_init.lua for helper.retry_for_lsp_indexing() usage",
           "Review test_lsp_hover.lua and test_lsp_completion.lua for established patterns",
           "Identify violations in current test_lsp_signature_help.lua (manual sleep, weak assertions)",
+          "FINDINGS: 1) helper.retry_for_lsp_indexing() exists (lines 91-119 minimal_init.lua) but NO tests use it yet, 2) test_lsp_hover.lua has manual retry loop (lines 59-81), 3) test_lsp_signature_help.lua has vim.uv.sleep(3000) manual wait (line 55) and weak assertions (lines 98-121), 4) E2E_TEST_CHECKLIST.md lines 15-38 specify REQUIRED use of helper, DO NOT use manual loops",
         ],
       },
       {
