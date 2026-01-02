@@ -3,8 +3,21 @@
 //! Provides helpers to normalize LSP responses by replacing non-deterministic
 //! data (file URIs, timestamps, etc.) with stable placeholders.
 
-use regex;
+use regex::Regex;
 use serde_json::Value;
+use std::sync::OnceLock;
+
+// Compiled regex patterns for temp path sanitization
+// These are compiled once at first use and cached for efficiency
+fn macos_temp_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| Regex::new(r"/var/folders/[^/]+/[^/]+/[TP]/[^\s\):]+").unwrap())
+}
+
+fn linux_temp_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| Regex::new(r"/tmp/[^\s\):]+").unwrap())
+}
 
 /// Sanitize hover response for snapshot testing.
 ///
@@ -66,11 +79,8 @@ fn sanitize_hover_contents(contents: &Value) -> Value {
 fn sanitize_text(text: &str) -> String {
     // Replace /var/folders/... (macOS temp) and /tmp/... (Linux temp) paths
     // Match the path but stop before : (line number separator)
-    let re_macos = regex::Regex::new(r"/var/folders/[^/]+/[^/]+/[TP]/[^\s\):]+").unwrap();
-    let re_linux = regex::Regex::new(r"/tmp/[^\s\):]+").unwrap();
-
-    let sanitized = re_macos.replace_all(text, "<TEMP_PATH>");
-    let sanitized = re_linux.replace_all(&sanitized, "<TEMP_PATH>");
+    let sanitized = macos_temp_regex().replace_all(text, "<TEMP_PATH>");
+    let sanitized = linux_temp_regex().replace_all(&sanitized, "<TEMP_PATH>");
     sanitized.to_string()
 }
 
