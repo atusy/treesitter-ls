@@ -505,14 +505,55 @@ mod tests {
         );
     }
 
-    /// Test that hover() returns Hover from rust-analyzer.
+    /// Retry hover request until success or max attempts reached.
     ///
-    /// This is the key test for Subtask 4: hover() must:
-    /// 1. Get or create connection
-    /// 2. Call ensure_document_open (didOpen)
-    /// 3. Send textDocument/hover request
-    /// 4. Await response
-    /// 5. Parse and return Hover
+    /// rust-analyzer may return None while indexing. This helper retries
+    /// up to 10 times with 500ms delay between attempts.
+    async fn hover_with_retry(
+        pool: &super::TokioAsyncLanguageServerPool,
+        config: &BridgeServerConfig,
+        content: &str,
+        position: tower_lsp::lsp_types::Position,
+    ) -> Option<tower_lsp::lsp_types::Hover> {
+        for _ in 0..10 {
+            if let Some(hover) = pool
+                .hover(
+                    "rust-analyzer",
+                    config,
+                    "file:///test.rs",
+                    "rust",
+                    content,
+                    position,
+                )
+                .await
+            {
+                return Some(hover);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        None
+    }
+
+    /// Extract string content from HoverContents.
+    fn hover_content_to_string(contents: tower_lsp::lsp_types::HoverContents) -> String {
+        match contents {
+            tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
+            tower_lsp::lsp_types::HoverContents::Scalar(s) => match s {
+                tower_lsp::lsp_types::MarkedString::String(s) => s,
+                tower_lsp::lsp_types::MarkedString::LanguageString(ls) => ls.value,
+            },
+            tower_lsp::lsp_types::HoverContents::Array(arr) => arr
+                .into_iter()
+                .map(|s| match s {
+                    tower_lsp::lsp_types::MarkedString::String(s) => s,
+                    tower_lsp::lsp_types::MarkedString::LanguageString(ls) => ls.value,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
+    }
+
+    /// Test that hover() returns Hover from rust-analyzer.
     #[tokio::test]
     async fn hover_returns_hover_from_rust_analyzer() {
         if !check_rust_analyzer_available() {
@@ -530,66 +571,24 @@ mod tests {
             workspace_type: Some(WorkspaceType::Cargo),
         };
 
-        // Simple Rust code with a function
         let content = "fn main() { let x = 42; }";
-
-        // Request hover at position of 'main' function (line 0, character 3)
         let position = tower_lsp::lsp_types::Position {
             line: 0,
             character: 3,
         };
 
-        // Call hover() method with retry for rust-analyzer indexing
-        // rust-analyzer may return "content modified" error while indexing
-        let mut hover_result = None;
-        for _attempt in 0..10 {
-            hover_result = pool
-                .hover(
-                    "rust-analyzer",
-                    &config,
-                    "file:///test.rs", // host URI (not used by tokio pool)
-                    "rust",
-                    content,
-                    position,
-                )
-                .await;
+        let hover = hover_with_retry(&pool, &config, content, position).await;
 
-            if hover_result.is_some() {
-                break;
-            }
-
-            // rust-analyzer may return "content modified" or null while indexing
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        }
-
-        // Should return Some(Hover) with type information
         assert!(
-            hover_result.is_some(),
+            hover.is_some(),
             "hover() should return Some(Hover) for 'main' function"
         );
 
-        let hover = hover_result.unwrap();
-        // Verify hover contains content (the exact format depends on rust-analyzer)
-        match hover.contents {
-            tower_lsp::lsp_types::HoverContents::Markup(markup) => {
-                assert!(
-                    !markup.value.is_empty(),
-                    "Hover should contain markup content"
-                );
-            }
-            tower_lsp::lsp_types::HoverContents::Scalar(_) => {
-                // Also acceptable
-            }
-            tower_lsp::lsp_types::HoverContents::Array(arr) => {
-                assert!(!arr.is_empty(), "Hover array should not be empty");
-            }
-        }
+        let content_str = hover_content_to_string(hover.unwrap().contents);
+        assert!(!content_str.is_empty(), "Hover should contain content");
     }
 
     /// E2E test: hover returns updated content after document edit.
-    ///
-    /// Subtask 4: Verify that when content is changed via sync_document,
-    /// subsequent hover requests return information from the updated content.
     #[tokio::test]
     async fn hover_returns_updated_content_after_edit() {
         if !check_rust_analyzer_available() {
@@ -607,94 +606,32 @@ mod tests {
             workspace_type: Some(WorkspaceType::Cargo),
         };
 
-        // First content: function returns i32
-        let content1 = "fn get_value() -> i32 { 42 }";
         let position = tower_lsp::lsp_types::Position {
             line: 0,
             character: 3,
         };
 
-        // First hover request (with initial content)
-        let mut hover1 = None;
-        for _attempt in 0..10 {
-            hover1 = pool
-                .hover(
-                    "rust-analyzer",
-                    &config,
-                    "file:///test.rs",
-                    "rust",
-                    content1,
-                    position,
-                )
-                .await;
-
-            if hover1.is_some() {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        }
-
+        // First hover: function returns i32
+        let hover1 =
+            hover_with_retry(&pool, &config, "fn get_value() -> i32 { 42 }", position).await;
         assert!(hover1.is_some(), "First hover should return result");
-        let hover1_content = match hover1.unwrap().contents {
-            tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
-            tower_lsp::lsp_types::HoverContents::Scalar(s) => match s {
-                tower_lsp::lsp_types::MarkedString::String(s) => s,
-                tower_lsp::lsp_types::MarkedString::LanguageString(ls) => ls.value,
-            },
-            tower_lsp::lsp_types::HoverContents::Array(arr) => arr
-                .into_iter()
-                .map(|s| match s {
-                    tower_lsp::lsp_types::MarkedString::String(s) => s,
-                    tower_lsp::lsp_types::MarkedString::LanguageString(ls) => ls.value,
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
-        };
+        let hover1_content = hover_content_to_string(hover1.unwrap().contents);
         assert!(
             hover1_content.contains("i32"),
             "First hover should show i32 return type, got: {}",
             hover1_content
         );
 
-        // Second content: function returns String
-        let content2 = "fn get_value() -> String { String::new() }";
-
-        // Second hover request (with updated content)
-        let mut hover2 = None;
-        for _attempt in 0..10 {
-            hover2 = pool
-                .hover(
-                    "rust-analyzer",
-                    &config,
-                    "file:///test.rs",
-                    "rust",
-                    content2,
-                    position,
-                )
-                .await;
-
-            if hover2.is_some() {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        }
-
+        // Second hover: function returns String
+        let hover2 = hover_with_retry(
+            &pool,
+            &config,
+            "fn get_value() -> String { String::new() }",
+            position,
+        )
+        .await;
         assert!(hover2.is_some(), "Second hover should return result");
-        let hover2_content = match hover2.unwrap().contents {
-            tower_lsp::lsp_types::HoverContents::Markup(m) => m.value,
-            tower_lsp::lsp_types::HoverContents::Scalar(s) => match s {
-                tower_lsp::lsp_types::MarkedString::String(s) => s,
-                tower_lsp::lsp_types::MarkedString::LanguageString(ls) => ls.value,
-            },
-            tower_lsp::lsp_types::HoverContents::Array(arr) => arr
-                .into_iter()
-                .map(|s| match s {
-                    tower_lsp::lsp_types::MarkedString::String(s) => s,
-                    tower_lsp::lsp_types::MarkedString::LanguageString(ls) => ls.value,
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
-        };
+        let hover2_content = hover_content_to_string(hover2.unwrap().contents);
         assert!(
             hover2_content.contains("String"),
             "Second hover should show String return type (not i32), got: {}",
