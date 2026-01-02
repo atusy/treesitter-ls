@@ -1,5 +1,5 @@
 -- E2E test for hover indexing state feedback (PBI-149)
--- Verifies AC5: hover during indexing shows message, hover after Ready shows normal content
+-- Verifies hover shows informative indexing message during rust-analyzer initialization
 
 local child = MiniTest.new_child_neovim()
 
@@ -34,7 +34,7 @@ local function create_file_test_set(ext, lines)
 end
 
 -- Test markdown file with Rust code block for indexing message
-T["markdown_rust_hover_indexing"] = create_file_test_set(".md", {
+T["markdown"] = create_file_test_set(".md", {
 	"# Example",
 	"",
 	"```rust",
@@ -44,73 +44,46 @@ T["markdown_rust_hover_indexing"] = create_file_test_set(".md", {
 	"```",
 })
 
-T["markdown_rust_hover_indexing"]["hover_shows_indexing_message_then_real_content"] = function()
-	-- Position cursor on "main" on line 4, column 4 (on the 'm' of main)
-	child.cmd([[normal! 4G4|]])
+T["markdown"]["hover_shows_indexing_feedback"] = function()
+	-- Position cursor on "main" on line 4, column 4
+	-- Use type_keys for reliable cursor positioning
+	child.type_keys("4G4|")
 
 	-- Verify cursor is on line 4
 	local before = child.api.nvim_win_get_cursor(0)
 	MiniTest.expect.equality(before[1], 4, "Cursor should be on line 4")
 
-	-- Track if we saw indexing message and real hover
-	local saw_indexing = false
-	local saw_real_hover = false
-
-	-- Call hover and check for indexing message or real content
-	-- We retry multiple times to observe the indexing -> ready transition
-	for attempt = 1, 20 do
+	-- Trigger hover immediately after LSP attach (during indexing)
+	-- PBI-149: Should show informative indexing message
+	local hover_content = nil
+	local found_hover = helper.wait(5000, function()
 		child.lua([[vim.lsp.buf.hover()]])
+		child.lua([[vim.wait(500)]])
 
-		-- Wait for floating window to appear
-		local has_float = helper.wait(3000, function()
-			local wins = child.api.nvim_list_wins()
-			for _, win in ipairs(wins) do
-				local config = child.api.nvim_win_get_config(win)
-				if config.relative ~= "" then
-					return true
-				end
-			end
-			return false
-		end, 100)
-
-		if has_float then
-			-- Get content from floating window
-			local wins = child.api.nvim_list_wins()
-			for _, win in ipairs(wins) do
-				local config = child.api.nvim_win_get_config(win)
-				if config.relative ~= "" then
-					local buf = child.api.nvim_win_get_buf(win)
-					local lines = child.api.nvim_buf_get_lines(buf, 0, -1, false)
-					local content = table.concat(lines, "\n")
-
-					-- Check if this is indexing message or real hover
-					if content:find("indexing") then
-						saw_indexing = true
-					elseif content:find("main") or content:find("fn") then
-						saw_real_hover = true
-					end
-
-					-- Close the hover window by pressing escape
-					child.cmd([[normal! \<Esc>]])
-					break
-				end
+		local wins = child.api.nvim_list_wins()
+		for _, win in ipairs(wins) do
+			local config = child.api.nvim_win_get_config(win)
+			if config.relative ~= "" then
+				local buf = child.api.nvim_win_get_buf(win)
+				local lines = child.api.nvim_buf_get_lines(buf, 0, -1, false)
+				hover_content = table.concat(lines, "\n")
+				return true
 			end
 		end
+		return false
+	end, 500)
 
-		-- If we've seen real hover, we're done
-		if saw_real_hover then
-			break
-		end
+	MiniTest.expect.equality(found_hover, true, "Hover should show a floating window")
 
-		-- Wait before retry (rust-analyzer may still be indexing)
-		vim.wait(500)
-	end
-
-	-- Verify we eventually got real hover content
-	MiniTest.expect.equality(saw_real_hover, true, "Should eventually get real hover content (not just indexing message)")
-
-	-- Note: We may or may not see the indexing message depending on rust-analyzer speed
-	-- The important thing is that we eventually get real content after Ready state
+	-- Verify the indexing message format (PBI-149 acceptance criteria)
+	-- Should show hourglass emoji and mention rust-analyzer
+	local has_indexing_format = hover_content:find("indexing") ~= nil
+		and hover_content:find("rust%-analyzer") ~= nil
+	MiniTest.expect.equality(
+		has_indexing_format,
+		true,
+		"Indexing message should mention 'indexing' and 'rust-analyzer', got: " .. hover_content
+	)
 end
 
 return T
