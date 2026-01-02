@@ -188,7 +188,8 @@ impl SkipReason {
     }
 }
 
-const METADATA_CHECK_TIMEOUT: Duration = Duration::from_secs(1);
+// Default timeout for metadata support checks; keeps the LSP path responsive
+const METADATA_CHECK_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
 struct FetchOptionsOwned {
@@ -219,9 +220,8 @@ async fn default_support_check(
     options: Option<FetchOptionsOwned>,
 ) -> Result<bool, MetadataError> {
     tokio::task::spawn_blocking(move || {
-        let borrowed_options = options.as_ref().map(FetchOptionsOwned::as_borrowed);
-        let borrowed_ref = borrowed_options.as_ref();
-        is_language_supported(&language, borrowed_ref)
+        let options = options.as_ref().map(FetchOptionsOwned::as_borrowed);
+        is_language_supported(&language, options.as_ref())
     })
     .await
     .map_err(|err| {
@@ -436,7 +436,10 @@ return {
 
         // should_skip_unsupported_language should return false for 'lua'
         let (should_skip, reason) = should_skip_unsupported_language("lua", Some(&options)).await;
-        assert!(!should_skip, "Expected NOT to skip supported language 'lua'");
+        assert!(
+            !should_skip,
+            "Expected NOT to skip supported language 'lua'"
+        );
         assert!(reason.is_none(), "Expected no reason when not skipping");
     }
 
