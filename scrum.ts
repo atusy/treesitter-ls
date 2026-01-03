@@ -48,8 +48,10 @@ const scrum: ScrumDashboard = {
         test: "Write unit test reproducing signatureHelp hang with concurrent operations",
         implementation: "Create tokio_async_pool test simulating concurrent signatureHelp + completion requests that trigger deadlock scenario",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "red",
+        commits: [
+          { hash: "5a95bb3", message: "test(bridge): add test for concurrent signatureHelp deadlock", phase: "green" },
+        ],
         notes: [
           "Test should spawn 2+ concurrent tasks calling signature_help()",
           "Expected: All tasks complete within 30s timeout (currently hangs)",
