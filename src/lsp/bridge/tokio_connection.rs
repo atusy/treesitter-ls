@@ -301,6 +301,11 @@ impl TokioAsyncBridgeConnection {
         method: &str,
         params: Value,
     ) -> Result<(i64, oneshot::Receiver<ResponseResult>), String> {
+        // Guard: return error if not initialized to prevent protocol errors
+        if !self.initialized.load(Ordering::SeqCst) {
+            return Err("Cannot send request: language server not initialized".to_string());
+        }
+
         // Check backpressure limit
         if self.pending_requests.len() >= MAX_PENDING_REQUESTS {
             return Err("Too many pending requests (backpressure limit reached)".to_string());
@@ -1213,6 +1218,38 @@ mod tests {
         assert!(
             !conn.initialized.load(std::sync::atomic::Ordering::SeqCst),
             "initialized flag should default to false after spawn"
+        );
+    }
+
+    #[tokio::test]
+    async fn tokio_async_bridge_connection_send_request_returns_error_when_not_initialized() {
+        // PBI-162 Subtask 4: send_request must return an error when initialized=false
+        // to prevent protocol errors during the initialization window.
+
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None, None).await;
+        assert!(result.is_ok(), "spawn() should succeed");
+
+        let conn = result.unwrap();
+
+        // Manually set initialized=false to test the guard logic
+        // (In production, this will be the state between spawn and sending initialized notification)
+        conn.initialized.store(false, std::sync::atomic::Ordering::SeqCst);
+
+        // Attempt to send a request - should return an error
+        let params = serde_json::json!({"test": "value"});
+        let send_result = conn.send_request("test/method", params).await;
+
+        assert!(
+            send_result.is_err(),
+            "send_request should return Err when not initialized"
+        );
+
+        // Verify error message mentions initialization
+        let err_msg = send_result.unwrap_err();
+        assert!(
+            err_msg.contains("initialized") || err_msg.contains("initialization"),
+            "Error message should mention initialization, got: {}",
+            err_msg
         );
     }
 }
