@@ -52,8 +52,14 @@ const scrum: ScrumDashboard = {
         test: "Test that get_connection() returns None after timeout when spawn/initialize hangs",
         implementation: "Wrap spawn_and_initialize future with tokio::time::timeout in get_connection()",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "d7a8253",
+            message: "feat(bridge): reduce get_connection() timeout from 60s to 30s",
+            phase: "green",
+          },
+        ],
         notes: [
           "Medium scope: get_connection() slow path (connection spawn)",
           "Current: spawn_and_initialize().await blocks indefinitely if server hangs",
