@@ -800,6 +800,9 @@ mod tests {
 
         let conn = result.unwrap();
 
+        // Set initialized=true to allow sending requests (PBI-162)
+        conn.initialized.store(true, std::sync::atomic::Ordering::SeqCst);
+
         // Send a request using the send_request method
         let params = serde_json::json!({"test": "value"});
         let receiver = conn.send_request("test/method", params).await;
