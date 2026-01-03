@@ -2354,7 +2354,10 @@ mod tests {
         for i in 0..5 {
             let pool_clone = pool.clone();
             let config_clone = config.clone();
-            let content = format!("fn add(a: i32, b: i32) -> i32 {{ a + b }}\nfn main() {{ add({} }}", i);
+            let content = format!(
+                "fn add(a: i32, b: i32) -> i32 {{ a + b }}\nfn main() {{ add({} }}",
+                i
+            );
 
             let handle = tokio::spawn(async move {
                 let position = tower_lsp::lsp_types::Position {
@@ -2362,28 +2365,28 @@ mod tests {
                     character: 17,
                 };
 
-                pool_clone.signature_help(
-                    "rust-analyzer",
-                    &config_clone,
-                    "file:///test.rs",
-                    "rust",
-                    &content,
-                    position,
-                ).await
+                pool_clone
+                    .signature_help(
+                        "rust-analyzer",
+                        &config_clone,
+                        "file:///test.rs",
+                        "rust",
+                        &content,
+                        position,
+                    )
+                    .await
             });
             handles.push(handle);
         }
 
         // Wait for all tasks with a 30-second timeout
         // If there's a deadlock, this will timeout
-        let timeout_result = tokio::time::timeout(
-            Duration::from_secs(30),
-            async {
-                for handle in handles {
-                    handle.await.ok();
-                }
+        let timeout_result = tokio::time::timeout(Duration::from_secs(30), async {
+            for handle in handles {
+                handle.await.ok();
             }
-        ).await;
+        })
+        .await;
 
         assert!(
             timeout_result.is_ok(),

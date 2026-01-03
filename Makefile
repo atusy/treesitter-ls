@@ -16,9 +16,6 @@ all: build
 build:
 	$(CARGO) build --release
 
-build-debug:
-	$(CARGO) build
-
 # Build the project in debug mode
 .PHONY: debug
 debug:
