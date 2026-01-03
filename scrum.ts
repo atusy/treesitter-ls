@@ -30,7 +30,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113), PBI-155-159 (Sprint 124-128) | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113), PBI-155-160 (Sprint 124-129) | History: git log -- scrum.yaml, scrum.ts
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   product_backlog: [
     {
@@ -56,29 +56,6 @@ const scrum: ScrumDashboard = {
       ],
       status: "draft",
     },
-    {
-      id: "PBI-160",
-      story: {
-        role: "treesitter-ls user managing configurations",
-        capability: "use a named constant for wildcard key instead of magic string",
-        benefit: "wildcard key is defined in one place preventing typos and making refactoring easier",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "Wildcard constant defined in config module (pub const WILDCARD_KEY: &str = \"_\")",
-          verification: "grep finds constant definition in src/config.rs or src/config/settings.rs",
-        },
-        {
-          criterion: "All map.get(\"_\") calls replaced with map.get(WILDCARD_KEY)",
-          verification: "grep confirms no remaining literal \"_\" string in wildcard resolution functions",
-        },
-        {
-          criterion: "All existing tests continue to pass",
-          verification: "make test passes",
-        },
-      ],
-      status: "ready",
-    },
     // Future: PBI-147 (hover wait), PBI-141/142/143 (async bridge methods)
     // ADR-0010: PBI-151 (118), PBI-150 (119), PBI-149 (120) | ADR-0011: PBI-152-155 (121-124)
   ],
@@ -90,22 +67,22 @@ const scrum: ScrumDashboard = {
       { name: "E2E tests pass", run: "make test_nvim" },
     ],
   },
-  // Historical sprints (recent 2) | Sprint 1-127: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-128: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 129, pbi_id: "PBI-160", goal: "Extract wildcard key to named constant for maintainability", status: "done", subtasks: [] },
     { number: 128, pbi_id: "PBI-159", goal: "Add comprehensive tests for coordinator unified query loading", status: "done", subtasks: [] },
-    { number: 127, pbi_id: "PBI-158", goal: "Validate XDG_CONFIG_HOME to prevent path traversal attacks", status: "done", subtasks: [] },
   ],
   // Retrospectives (recent 2)
   retrospectives: [
+    { sprint: 129, improvements: [
+      { action: "Consider creating dedicated wildcard module for related constants to improve organization", timing: "product", status: "active", outcome: null },
+      { action: "Add similar named constants for other magic strings in codebase to prevent typos", timing: "product", status: "active", outcome: null },
+      { action: "Document structural refactoring pattern: pub(crate) visibility follows YAGNI principle when no external usage exists", timing: "immediate", status: "active", outcome: null },
+    ] },
     { sprint: 128, improvements: [
       { action: "Add error path tests for invalid query files to verify graceful failure handling", timing: "sprint", status: "active", outcome: null },
       { action: "Consider property-based testing for query loading edge cases to improve test coverage", timing: "product", status: "active", outcome: null },
       { action: "Document test helper pattern: register_language_for_test enables clean, realistic test setup", timing: "immediate", status: "active", outcome: null },
-    ] },
-    { sprint: 127, improvements: [
-      { action: "Add edge case tests for symlinks and empty paths in security-sensitive path validation", timing: "sprint", status: "active", outcome: null },
-      { action: "Add integration test for full config loading with invalid XDG_CONFIG_HOME", timing: "sprint", status: "active", outcome: null },
-      { action: "Document security testing pattern: Component::ParentDir check is more robust than string-based '..' detection", timing: "immediate", status: "active", outcome: null },
     ] },
   ],
 };
