@@ -42,6 +42,8 @@ const scrum: ScrumDashboard = {
       { name: "All unit tests pass", run: "make test" },
       { name: "Code quality checks pass", run: "make check" },
       { name: "E2E tests pass", run: "make test_nvim" },
+      { name: "Documentation updated alongside implementation", run: "git diff --name-only | grep -E '(README|docs/|adr/)' || echo 'No docs updated - verify if needed'" },
+      { name: "ADR verification for architectural changes", run: "git diff --name-only | grep -E 'adr/' || echo 'No ADR updated - verify if architectural change'" },
     ],
   },
   // Historical sprints (recent 2) | Sprint 1-129: git log -- scrum.yaml, scrum.ts
@@ -51,15 +53,14 @@ const scrum: ScrumDashboard = {
   ],
   // Retrospectives (recent 2)
   retrospectives: [
+    { sprint: 130, improvements: [
+      { action: "Update documentation alongside implementation, not as separate PBI - add to Definition of Done", timing: "immediate", status: "completed", outcome: "Added documentation update check to Definition of Done" },
+      { action: "Add ADR verification to Definition of Done to ensure architectural decisions are documented", timing: "immediate", status: "completed", outcome: "Added ADR verification check to Definition of Done" },
+    ] },
     { sprint: 129, improvements: [
       { action: "Consider creating dedicated wildcard module for related constants to improve organization", timing: "product", status: "active", outcome: null },
       { action: "Add similar named constants for other magic strings in codebase to prevent typos", timing: "product", status: "active", outcome: null },
       { action: "Document structural refactoring pattern: pub(crate) visibility follows YAGNI principle when no external usage exists", timing: "immediate", status: "active", outcome: null },
-    ] },
-    { sprint: 128, improvements: [
-      { action: "Add error path tests for invalid query files to verify graceful failure handling", timing: "sprint", status: "active", outcome: null },
-      { action: "Consider property-based testing for query loading edge cases to improve test coverage", timing: "product", status: "active", outcome: null },
-      { action: "Document test helper pattern: register_language_for_test enables clean, realistic test setup", timing: "immediate", status: "active", outcome: null },
     ] },
   ],
 };
