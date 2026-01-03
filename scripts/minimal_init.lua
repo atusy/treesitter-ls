@@ -119,9 +119,17 @@ function _G.helper.retry_for_lsp_indexing(opts)
 end
 
 if #vim.api.nvim_list_uis() == 0 then
-	vim.cmd("set rtp+=deps/nvim/mini.nvim")
-	vim.cmd("set rtp+=deps/nvim/nvim-treesitter")
-	vim.cmd("set rtp+=deps/treesitter")
+	-- Use Nix-provided paths if available, otherwise fall back to deps/
+	local mini_nvim = vim.env.MINI_NVIM or "deps/nvim/mini.nvim"
+	local treesitter_grammars = vim.env.TREESITTER_GRAMMARS or "deps/treesitter"
+
+	vim.cmd("set rtp+=" .. mini_nvim)
+	vim.cmd("set rtp+=" .. treesitter_grammars)
+
+	-- Only add nvim-treesitter if not using Nix (Nix grammars include queries)
+	if not vim.env.TREESITTER_GRAMMARS then
+		vim.cmd("set rtp+=deps/nvim/nvim-treesitter")
+	end
 
 	require("mini.test").setup()
 else

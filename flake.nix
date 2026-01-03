@@ -22,7 +22,7 @@
           extensions = [ "rust-src" "rust-analyzer" "clippy" ];
         };
 
-        # Tree-sitter grammars for testing
+        # Tree-sitter grammars for testing (each includes parser + queries)
         treesitterGrammars = with pkgs.tree-sitter-grammars; [
           tree-sitter-bash
           tree-sitter-c
@@ -38,6 +38,34 @@
           tree-sitter-typescript
           tree-sitter-yaml
         ];
+
+        # Combined tree-sitter directory with all grammars
+        # Structure: parser/<lang>.so, queries/<lang>/*.scm
+        treesitterCombined = pkgs.runCommand "treesitter-grammars-combined" {} ''
+          mkdir -p $out/parser $out/queries
+          ${pkgs.lib.concatMapStringsSep "\n" (grammar:
+            let
+              # Extract language name from package name (e.g., tree-sitter-lua-0.0.19... -> lua)
+              name = grammar.pname or (builtins.baseNameOf grammar);
+              lang = builtins.replaceStrings ["tree-sitter-"] [""] (
+                pkgs.lib.removeSuffix "-grammar" name
+              );
+              # Handle special case: markdown_inline -> markdown-inline
+              normalizedLang = builtins.replaceStrings ["-"] ["_"] lang;
+            in ''
+              # ${lang}
+              if [ -f "${grammar}/parser" ]; then
+                ln -sf "${grammar}/parser" "$out/parser/${normalizedLang}.so"
+              fi
+              if [ -d "${grammar}/queries" ]; then
+                mkdir -p "$out/queries/${normalizedLang}"
+                for f in "${grammar}/queries"/*; do
+                  ln -sf "$f" "$out/queries/${normalizedLang}/"
+                done
+              fi
+            ''
+          ) treesitterGrammars}
+        '';
       in
       {
         devShells.default = pkgs.mkShell {
@@ -58,9 +86,9 @@
 
             # For Neovim integration testing
             neovim
-            vimPlugins.nvim-treesitter  # Provides bundled queries (highlights.scm, etc.)
+            vimPlugins.mini-nvim  # Test framework
             git
-          ] ++ treesitterGrammars
+          ]
             ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
             # macOS-specific dependencies
             pkgs.apple-sdk_15
@@ -77,12 +105,16 @@
             echo "  make           - Build the project (release)"
             echo "  cargo test     - Run tests"
             echo "  cargo clippy   - Run linter"
-            echo "  make test_nvim - Run Neovim tests"
+            echo "  make test_nvim - Run Neovim tests (no 'make deps' needed!)"
           '';
 
           # Environment variables
           RUST_BACKTRACE = "1";
           RUST_LOG = "info";
+
+          # Tree-sitter paths for testing
+          TREESITTER_GRAMMARS = "${treesitterCombined}";
+          MINI_NVIM = "${pkgs.vimPlugins.mini-nvim}";
         };
 
         packages.default = pkgs.rustPlatform.buildRustPackage {
