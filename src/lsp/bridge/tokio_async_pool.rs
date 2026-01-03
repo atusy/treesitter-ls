@@ -504,7 +504,7 @@ impl TokioAsyncLanguageServerPool {
             if !still_in_use {
                 // No other host uses this bridge URI, safe to close and clean up
                 // Find the connection for this bridge URI by iterating through virtual_uris
-                if let Some((conn, server_key)) = self.virtual_uris.iter().find_map(|entry| {
+                if let Some((conn, _server_key)) = self.virtual_uris.iter().find_map(|entry| {
                     let (_host_key, server_key) = entry.key();
                     let uri = entry.value();
                     if uri == &bridge_uri {
@@ -519,7 +519,8 @@ impl TokioAsyncLanguageServerPool {
                     self.close_document_async(&conn, &bridge_uri).await;
 
                     // Clean up virtual_uris entry (PBI-169 AC2)
-                    self.virtual_uris.retain(|(_host, _server), uri| uri != &bridge_uri);
+                    self.virtual_uris
+                        .retain(|(_host, _server), uri| uri != &bridge_uri);
 
                     // Clean up document_open_locks entry (PBI-169 AC2)
                     let mut locks = self.document_open_locks.lock().await;
@@ -558,7 +559,8 @@ impl TokioAsyncLanguageServerPool {
             .collect();
 
         // Remove virtual_uris entries for this connection
-        self.virtual_uris.retain(|(_host, server_key), _uri| server_key != key);
+        self.virtual_uris
+            .retain(|(_host, server_key), _uri| server_key != key);
 
         // Remove document_versions for virtual URIs used by this connection
         for virtual_uri in &virtual_uris_to_remove {
@@ -2262,30 +2264,62 @@ mod tests {
         let virtual_uri_2 = "file:///tmp/virtual2.rs";
 
         // Simulate state created by get_connection and sync_document
-        pool.virtual_uris.insert((host_uri_1.to_string(), key.to_string()), virtual_uri_1.to_string());
-        pool.virtual_uris.insert((host_uri_2.to_string(), key.to_string()), virtual_uri_2.to_string());
+        pool.virtual_uris.insert(
+            (host_uri_1.to_string(), key.to_string()),
+            virtual_uri_1.to_string(),
+        );
+        pool.virtual_uris.insert(
+            (host_uri_2.to_string(), key.to_string()),
+            virtual_uri_2.to_string(),
+        );
         pool.document_versions.insert(virtual_uri_1.to_string(), 5);
         pool.document_versions.insert(virtual_uri_2.to_string(), 3);
 
         let mut bridge_uris_1 = HashSet::new();
         bridge_uris_1.insert(virtual_uri_1.to_string());
-        pool.host_to_bridge_uris.insert(host_uri_1.to_string(), bridge_uris_1);
+        pool.host_to_bridge_uris
+            .insert(host_uri_1.to_string(), bridge_uris_1);
 
         let mut bridge_uris_2 = HashSet::new();
         bridge_uris_2.insert(virtual_uri_2.to_string());
-        pool.host_to_bridge_uris.insert(host_uri_2.to_string(), bridge_uris_2);
+        pool.host_to_bridge_uris
+            .insert(host_uri_2.to_string(), bridge_uris_2);
 
         // Verify state exists before cleanup
-        assert_eq!(pool.virtual_uris.len(), 2, "Should have 2 virtual_uris entries");
-        assert_eq!(pool.document_versions.len(), 2, "Should have 2 document_versions entries");
-        assert_eq!(pool.host_to_bridge_uris.len(), 2, "Should have 2 host_to_bridge_uris entries");
+        assert_eq!(
+            pool.virtual_uris.len(),
+            2,
+            "Should have 2 virtual_uris entries"
+        );
+        assert_eq!(
+            pool.document_versions.len(),
+            2,
+            "Should have 2 document_versions entries"
+        );
+        assert_eq!(
+            pool.host_to_bridge_uris.len(),
+            2,
+            "Should have 2 host_to_bridge_uris entries"
+        );
 
         // Call cleanup_connection_state (method doesn't exist yet - this is RED phase)
         pool.cleanup_connection_state(key).await;
 
         // Verify all state for this connection is purged
-        assert_eq!(pool.virtual_uris.len(), 0, "virtual_uris should be empty after cleanup");
-        assert_eq!(pool.document_versions.len(), 0, "document_versions should be empty after cleanup");
-        assert_eq!(pool.host_to_bridge_uris.len(), 0, "host_to_bridge_uris should be empty after cleanup");
+        assert_eq!(
+            pool.virtual_uris.len(),
+            0,
+            "virtual_uris should be empty after cleanup"
+        );
+        assert_eq!(
+            pool.document_versions.len(),
+            0,
+            "document_versions should be empty after cleanup"
+        );
+        assert_eq!(
+            pool.host_to_bridge_uris.len(),
+            0,
+            "host_to_bridge_uris should be empty after cleanup"
+        );
     }
 }

@@ -99,9 +99,8 @@ impl SemanticRequestTracker {
 
         // Clean up LSP request ID mapping
         // We don't know the LSP request ID here, so we need to scan and remove
-        self.lsp_request_map.retain(|_, (u, rid)| {
-            !(u == uri && *rid == request_id)
-        });
+        self.lsp_request_map
+            .retain(|_, (u, rid)| !(u == uri && *rid == request_id));
     }
 
     /// Registers an LSP request ID for a semantic token request.
@@ -119,8 +118,15 @@ impl SemanticRequestTracker {
     /// * `lsp_request_id` - The JSON-RPC request ID from the client
     /// * `uri` - The document URI for this request
     /// * `internal_request_id` - Our internal tracking ID from `start_request()`
-    pub fn register_lsp_request_id(&self, lsp_request_id: i64, uri: &Url, internal_request_id: u64) {
-        self.lsp_request_map.insert(lsp_request_id, (uri.clone(), internal_request_id));
+    #[allow(dead_code)] // Infrastructure ready for when tower-lsp exposes $/cancelRequest
+    pub fn register_lsp_request_id(
+        &self,
+        lsp_request_id: i64,
+        uri: &Url,
+        internal_request_id: u64,
+    ) {
+        self.lsp_request_map
+            .insert(lsp_request_id, (uri.clone(), internal_request_id));
     }
 
     /// Cancels a request by its LSP request ID (from `$/cancelRequest` notification).
@@ -138,10 +144,13 @@ impl SemanticRequestTracker {
     /// # Arguments
     ///
     /// * `lsp_request_id` - The JSON-RPC request ID to cancel
+    #[allow(dead_code)] // Infrastructure ready for when tower-lsp exposes $/cancelRequest
     pub fn cancel_by_lsp_request_id(&self, lsp_request_id: i64) {
-        if let Some((_, (uri, internal_request_id))) = self.lsp_request_map.remove(&lsp_request_id) {
+        if let Some((_, (uri, internal_request_id))) = self.lsp_request_map.remove(&lsp_request_id)
+        {
             // Mark the request as inactive by removing it from active_requests
-            self.active_requests.remove_if(&uri, |_, info| info.id == internal_request_id);
+            self.active_requests
+                .remove_if(&uri, |_, info| info.id == internal_request_id);
         }
     }
 

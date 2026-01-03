@@ -20,7 +20,7 @@ use helpers::lsp_client::LspClient;
 use helpers::test_fixtures::{
     create_selection_range_lua_fixture, create_selection_range_md_fixture,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::time::Duration;
 
 /// Represents a decoded semantic token with absolute positions.
@@ -177,10 +177,7 @@ fn test_semantic_tokens_lua_keyword() {
         .as_array()
         .expect("Data should be array");
 
-    let data_u32: Vec<u32> = data
-        .iter()
-        .map(|v| v.as_u64().unwrap() as u32)
-        .collect();
+    let data_u32: Vec<u32> = data.iter().map(|v| v.as_u64().unwrap() as u32).collect();
 
     // Decode tokens
     let tokens = decode_semantic_tokens(&data_u32);
@@ -276,10 +273,7 @@ fn test_semantic_tokens_markdown_injection() {
         .as_array()
         .expect("Data should be array");
 
-    let data_u32: Vec<u32> = data
-        .iter()
-        .map(|v| v.as_u64().unwrap() as u32)
-        .collect();
+    let data_u32: Vec<u32> = data.iter().map(|v| v.as_u64().unwrap() as u32).collect();
 
     // Decode tokens
     let tokens = decode_semantic_tokens(&data_u32);
