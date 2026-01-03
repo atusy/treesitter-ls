@@ -470,10 +470,8 @@ impl TokioAsyncBridgeConnection {
     pub async fn is_alive(&self) -> bool {
         if let Some(ref child_mutex) = self.child {
             // Wrap lock acquisition with timeout to prevent indefinite hangs
-            let lock_result = tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                child_mutex.lock()
-            ).await;
+            let lock_result =
+                tokio::time::timeout(std::time::Duration::from_secs(5), child_mutex.lock()).await;
 
             match lock_result {
                 Ok(mut child) => {

@@ -2615,7 +2615,9 @@ mod tests {
 
         // Measure how long sync_document takes
         let start = std::time::Instant::now();
-        let result = pool.sync_document(&conn, uri, "plaintext", "test content").await;
+        let result = pool
+            .sync_document(&conn, uri, "plaintext", "test content")
+            .await;
         let elapsed = start.elapsed();
 
         // Should return None (timeout)
@@ -2686,14 +2688,18 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         // First request: should timeout on uri1
-        let result1 = pool.sync_document(&conn, uri1, "plaintext", "test content 1").await;
+        let result1 = pool
+            .sync_document(&conn, uri1, "plaintext", "test content 1")
+            .await;
         assert!(
             result1.is_none(),
             "First request should timeout and return None"
         );
 
         // Second request: should succeed on uri2 (different URI, different lock)
-        let result2 = pool.sync_document(&conn, uri2, "plaintext", "test content 2").await;
+        let result2 = pool
+            .sync_document(&conn, uri2, "plaintext", "test content 2")
+            .await;
         assert!(
             result2.is_some(),
             "Second request should succeed after first request timeout"
