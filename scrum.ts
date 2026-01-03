@@ -74,8 +74,14 @@ const scrum: ScrumDashboard = {
         test: "Add unit test verifying LanguageServerConnection request methods return None when initialized=false",
         implementation: "Add initialized flag guards to goto_definition, hover, completion, signature_help methods in LanguageServerConnection",
         type: "behavioral" as SubtaskType,
-        status: "pending" as SubtaskStatus,
-        commits: [],
+        status: "completed" as SubtaskStatus,
+        commits: [
+          {
+            hash: "ff1fe70",
+            message: "feat(bridge): guard LanguageServerConnection requests when not initialized",
+            phase: "green" as CommitPhase,
+          },
+        ],
         notes: ["AC2: Guard request methods to return None when not initialized - sync implementation"],
       },
       {
