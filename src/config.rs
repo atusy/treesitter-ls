@@ -27,6 +27,36 @@ fn merge_bridge_maps(
     }
 }
 
+/// Deep merge two JSON values (ADR-0010).
+///
+/// For objects: recursively merge keys, with `overlay` values taking precedence.
+/// For non-objects: `overlay` completely replaces `base`.
+///
+/// This implements the deep merge semantics required for initialization_options:
+/// - If both are objects, merge their keys recursively
+/// - If either is not an object, overlay wins
+/// - Null values in overlay remove the key from base
+fn deep_merge_json(base: &serde_json::Value, overlay: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+
+    match (base, overlay) {
+        (Value::Object(base_map), Value::Object(overlay_map)) => {
+            let mut merged = base_map.clone();
+            for (key, overlay_value) in overlay_map {
+                merged
+                    .entry(key.clone())
+                    .and_modify(|base_value| {
+                        *base_value = deep_merge_json(base_value, overlay_value);
+                    })
+                    .or_insert_with(|| overlay_value.clone());
+            }
+            Value::Object(merged)
+        }
+        // For non-objects, overlay completely replaces base
+        _ => overlay.clone(),
+    }
+}
+
 /// Resolve a language server key from a map with wildcard fallback and merging.
 ///
 /// Implements ADR-0011 wildcard config inheritance for languageServers HashMap:
@@ -58,11 +88,14 @@ pub(crate) fn resolve_language_server_with_wildcard(
                 } else {
                     s.languages.clone()
                 },
-                // For Option fields: specific.or(wildcard)
-                initialization_options: s
-                    .initialization_options
-                    .clone()
-                    .or_else(|| w.initialization_options.clone()),
+                // For JSON Option fields: deep merge (ADR-0010)
+                initialization_options: match (&w.initialization_options, &s.initialization_options)
+                {
+                    (Some(w_opts), Some(s_opts)) => Some(deep_merge_json(w_opts, s_opts)),
+                    (Some(w_opts), None) => Some(w_opts.clone()),
+                    (None, Some(s_opts)) => Some(s_opts.clone()),
+                    (None, None) => None,
+                },
                 workspace_type: s.workspace_type.or(w.workspace_type),
             })
         }
@@ -411,11 +444,18 @@ fn merge_language_servers(
                         if !overlay_config.languages.is_empty() {
                             base_config.languages = overlay_config.languages.clone();
                         }
-                        // For Option fields: use overlay if Some, otherwise keep base
-                        base_config.initialization_options = overlay_config
-                            .initialization_options
-                            .clone()
-                            .or_else(|| base_config.initialization_options.clone());
+                        // For JSON Option fields: deep merge (ADR-0010)
+                        base_config.initialization_options = match (
+                            &base_config.initialization_options,
+                            &overlay_config.initialization_options,
+                        ) {
+                            (Some(base_opts), Some(overlay_opts)) => {
+                                Some(deep_merge_json(base_opts, overlay_opts))
+                            }
+                            (Some(base_opts), None) => Some(base_opts.clone()),
+                            (None, Some(overlay_opts)) => Some(overlay_opts.clone()),
+                            (None, None) => None,
+                        };
                         base_config.workspace_type =
                             overlay_config.workspace_type.or(base_config.workspace_type);
                     })
@@ -2204,15 +2244,17 @@ mod tests {
             "Should use rust-analyzer's workspace_type"
         );
 
-        // initialization_options: overridden by specific
+        // initialization_options: deep merged (ADR-0010)
         let init_opts = resolved.initialization_options.unwrap();
-        assert!(
-            init_opts.get("linkedProjects").is_some(),
-            "Should use rust-analyzer's initialization_options"
+        assert_eq!(
+            init_opts.get("linkedProjects"),
+            Some(&json!(["./Cargo.toml"])),
+            "Should have rust-analyzer's linkedProjects"
         );
-        assert!(
-            init_opts.get("defaultOption").is_none(),
-            "Should NOT inherit wildcard's initialization_options"
+        assert_eq!(
+            init_opts.get("defaultOption"),
+            Some(&json!(true)),
+            "Should inherit defaultOption from wildcard (deep merge per ADR-0010)"
         );
     }
 
@@ -2273,6 +2315,199 @@ mod tests {
             resolved.cmd,
             vec!["rust-analyzer".to_string()],
             "Should return specific config"
+        );
+    }
+
+    // PBI-157: Deep merge for initialization_options (ADR-0010)
+
+    #[test]
+    fn test_resolve_language_server_deep_merges_initialization_options() {
+        // ADR-0010: initialization_options should be deep merged, not replaced
+        // Wildcard provides {feature1: true}, specific provides {feature2: true}
+        // Result should be {feature1: true, feature2: true}
+        use serde_json::json;
+        use settings::BridgeServerConfig;
+
+        let mut servers: HashMap<String, BridgeServerConfig> = HashMap::new();
+
+        // Wildcard has feature1
+        servers.insert(
+            "_".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["default-lsp".to_string()],
+                languages: vec![],
+                initialization_options: Some(json!({ "feature1": true })),
+                workspace_type: None,
+            },
+        );
+
+        // rust-analyzer adds feature2
+        servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["rust-analyzer".to_string()],
+                languages: vec!["rust".to_string()],
+                initialization_options: Some(json!({ "feature2": true })),
+                workspace_type: None,
+            },
+        );
+
+        let result = resolve_language_server_with_wildcard(&servers, "rust-analyzer");
+        assert!(result.is_some());
+        let resolved = result.unwrap();
+
+        // Should deep merge both features
+        let init_opts = resolved.initialization_options.unwrap();
+        assert_eq!(
+            init_opts.get("feature1"),
+            Some(&json!(true)),
+            "Should inherit feature1 from wildcard (deep merge)"
+        );
+        assert_eq!(
+            init_opts.get("feature2"),
+            Some(&json!(true)),
+            "Should have feature2 from specific"
+        );
+    }
+
+    #[test]
+    fn test_merge_language_servers_deep_merges_initialization_options() {
+        // ADR-0010: merge_language_servers should deep merge initialization_options
+        // Base layer has {baseOpt: 1}, overlay has {overlayOpt: 2}
+        // Result should have both options
+        use serde_json::json;
+        use settings::BridgeServerConfig;
+
+        let mut base_servers = HashMap::new();
+        base_servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["rust-analyzer".to_string()],
+                languages: vec!["rust".to_string()],
+                initialization_options: Some(json!({ "baseOpt": 1 })),
+                workspace_type: None,
+            },
+        );
+
+        let mut overlay_servers = HashMap::new();
+        overlay_servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec![],
+                languages: vec![],
+                initialization_options: Some(json!({ "overlayOpt": 2 })),
+                workspace_type: None,
+            },
+        );
+
+        let result = merge_language_servers(Some(base_servers), Some(overlay_servers));
+        assert!(result.is_some());
+        let merged = result.unwrap();
+        assert!(merged.contains_key("rust-analyzer"));
+
+        let ra = &merged["rust-analyzer"];
+        let init_opts = ra.initialization_options.as_ref().unwrap();
+
+        // Should have both options (deep merge)
+        assert_eq!(
+            init_opts.get("baseOpt"),
+            Some(&json!(1)),
+            "Should preserve baseOpt from base layer"
+        );
+        assert_eq!(
+            init_opts.get("overlayOpt"),
+            Some(&json!(2)),
+            "Should have overlayOpt from overlay layer"
+        );
+    }
+
+    #[test]
+    fn test_resolve_language_server_specific_overrides_wildcard_same_key() {
+        // ADR-0010: Specific values override wildcard for same keys
+        // Wildcard has {opt: 1}, specific has {opt: 2}
+        // Result should be {opt: 2}
+        use serde_json::json;
+        use settings::BridgeServerConfig;
+
+        let mut servers: HashMap<String, BridgeServerConfig> = HashMap::new();
+
+        servers.insert(
+            "_".to_string(),
+            BridgeServerConfig {
+                cmd: vec![],
+                languages: vec![],
+                initialization_options: Some(json!({ "opt": 1 })),
+                workspace_type: None,
+            },
+        );
+
+        servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["rust-analyzer".to_string()],
+                languages: vec![],
+                initialization_options: Some(json!({ "opt": 2 })),
+                workspace_type: None,
+            },
+        );
+
+        let result = resolve_language_server_with_wildcard(&servers, "rust-analyzer");
+        let resolved = result.unwrap();
+        let init_opts = resolved.initialization_options.unwrap();
+
+        // Specific value should override wildcard
+        assert_eq!(
+            init_opts.get("opt"),
+            Some(&json!(2)),
+            "Specific value should override wildcard for same key"
+        );
+    }
+
+    #[test]
+    fn test_resolve_language_server_nested_objects_deep_merge() {
+        // ADR-0010: Nested JSON objects should merge recursively
+        // Wildcard has {a: {b: 1}}, specific has {a: {c: 2}}
+        // Result should be {a: {b: 1, c: 2}}
+        use serde_json::json;
+        use settings::BridgeServerConfig;
+
+        let mut servers: HashMap<String, BridgeServerConfig> = HashMap::new();
+
+        servers.insert(
+            "_".to_string(),
+            BridgeServerConfig {
+                cmd: vec![],
+                languages: vec![],
+                initialization_options: Some(json!({ "a": { "b": 1 } })),
+                workspace_type: None,
+            },
+        );
+
+        servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["rust-analyzer".to_string()],
+                languages: vec![],
+                initialization_options: Some(json!({ "a": { "c": 2 } })),
+                workspace_type: None,
+            },
+        );
+
+        let result = resolve_language_server_with_wildcard(&servers, "rust-analyzer");
+        let resolved = result.unwrap();
+        let init_opts = resolved.initialization_options.unwrap();
+
+        // Should deep merge nested objects
+        let a_obj = init_opts.get("a").unwrap().as_object().unwrap();
+        assert_eq!(
+            a_obj.get("b"),
+            Some(&json!(1)),
+            "Should preserve b from wildcard"
+        );
+        assert_eq!(
+            a_obj.get("c"),
+            Some(&json!(2)),
+            "Should have c from specific"
         );
     }
 }
