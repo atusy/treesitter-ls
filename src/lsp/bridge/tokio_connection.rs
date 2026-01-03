@@ -462,20 +462,38 @@ impl TokioAsyncBridgeConnection {
     /// It is used for health monitoring to detect crashed or killed processes.
     ///
     /// This is an async method because it needs to acquire the Mutex lock on the child process.
+    /// To prevent indefinite hangs, this method has a 5-second timeout when acquiring the lock.
     ///
     /// # Returns
     /// * `true` if the child process is still running
-    /// * `false` if the child process has exited or was never spawned
+    /// * `false` if the child process has exited, was never spawned, or lock acquisition timed out
     pub async fn is_alive(&self) -> bool {
         if let Some(ref child_mutex) = self.child {
-            let mut child = child_mutex.lock().await;
-            // try_wait returns Ok(None) if the process is still running
-            // try_wait returns Ok(Some(status)) if the process has exited
-            // try_wait returns Err if there was an error checking the status
-            match child.try_wait() {
-                Ok(None) => true,     // Process is still running
-                Ok(Some(_)) => false, // Process has exited
-                Err(_) => false,      // Error checking status - assume dead
+            // Wrap lock acquisition with timeout to prevent indefinite hangs
+            let lock_result = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                child_mutex.lock()
+            ).await;
+
+            match lock_result {
+                Ok(mut child) => {
+                    // try_wait returns Ok(None) if the process is still running
+                    // try_wait returns Ok(Some(status)) if the process has exited
+                    // try_wait returns Err if there was an error checking the status
+                    match child.try_wait() {
+                        Ok(None) => true,     // Process is still running
+                        Ok(Some(_)) => false, // Process has exited
+                        Err(_) => false,      // Error checking status - assume dead
+                    }
+                }
+                Err(_) => {
+                    // Timeout acquiring lock - assume dead
+                    log::warn!(
+                        target: "treesitter_ls::bridge::tokio",
+                        "[CONN] is_alive() timeout acquiring child lock"
+                    );
+                    false
+                }
             }
         } else {
             false // No child process - connection was never properly initialized
@@ -1192,6 +1210,59 @@ mod tests {
         assert!(
             !conn.is_alive().await,
             "is_alive() should return false for dead process"
+        );
+    }
+
+    /// PBI-176 Subtask 1: Test that is_alive() returns false after timeout when child lock is held indefinitely.
+    ///
+    /// This test simulates a scenario where the child lock is held indefinitely by another task,
+    /// preventing is_alive() from acquiring the lock. Without timeout protection, is_alive() would
+    /// hang forever. With timeout, it should return false after 5 seconds.
+    #[tokio::test]
+    async fn is_alive_returns_false_after_timeout_when_lock_held() {
+        use std::sync::Arc;
+
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None, None).await;
+        assert!(result.is_ok(), "spawn() should succeed");
+
+        let conn = Arc::new(result.unwrap());
+        let conn_clone = conn.clone();
+
+        // Hold the child lock indefinitely in a background task
+        let _guard = tokio::spawn(async move {
+            if let Some(ref child_mutex) = conn_clone.child {
+                let _lock = child_mutex.lock().await;
+                // Hold lock forever
+                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            }
+        });
+
+        // Give the background task time to acquire the lock
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Measure how long is_alive() takes
+        let start = std::time::Instant::now();
+        let alive = conn.is_alive().await;
+        let elapsed = start.elapsed();
+
+        // is_alive() should return false (timeout)
+        assert!(
+            !alive,
+            "is_alive() should return false when lock acquisition times out"
+        );
+
+        // Should complete within 6 seconds (5s timeout + 1s buffer)
+        assert!(
+            elapsed < std::time::Duration::from_secs(6),
+            "is_alive() should timeout within 6 seconds, took {:?}",
+            elapsed
+        );
+
+        // Should NOT complete too quickly (at least 4.5s to verify timeout actually occurred)
+        assert!(
+            elapsed >= std::time::Duration::from_millis(4500),
+            "is_alive() should take at least 4.5s (timeout occurred), took {:?}",
+            elapsed
         );
     }
 }
