@@ -2638,4 +2638,65 @@ mod tests {
             elapsed
         );
     }
+
+    /// PBI-176 Subtask 5: E2E test that subsequent requests are processed after a timeout.
+    ///
+    /// This test verifies that timeout errors don't block the request queue and that
+    /// tower-lsp continues processing requests after a timeout occurs.
+    #[tokio::test]
+    async fn subsequent_requests_processed_after_timeout() {
+        use std::sync::Arc;
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = Arc::new(super::TokioAsyncLanguageServerPool::new(tx));
+        let pool_clone = pool.clone();
+
+        // Spawn a connection
+        let result = super::super::tokio_connection::TokioAsyncBridgeConnection::spawn(
+            "cat",
+            &[],
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert!(result.is_ok(), "spawn() should succeed");
+        let conn = Arc::new(result.unwrap());
+
+        let uri1 = "file:///test1.txt";
+        let uri2 = "file:///test2.txt";
+
+        // Hold the lock for uri1 indefinitely in a background task
+        let uri1_clone = uri1.to_string();
+        let _guard = tokio::spawn(async move {
+            use tokio::sync::Mutex;
+            let lock = {
+                let mut locks = pool_clone.document_open_locks.lock().await;
+                locks
+                    .entry(uri1_clone.clone())
+                    .or_insert_with(|| Arc::new(Mutex::new(())))
+                    .clone()
+            };
+            let _lock = lock.lock().await;
+            // Hold lock forever
+            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+        });
+
+        // Give the background task time to acquire the lock
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // First request: should timeout on uri1
+        let result1 = pool.sync_document(&conn, uri1, "plaintext", "test content 1").await;
+        assert!(
+            result1.is_none(),
+            "First request should timeout and return None"
+        );
+
+        // Second request: should succeed on uri2 (different URI, different lock)
+        let result2 = pool.sync_document(&conn, uri2, "plaintext", "test content 2").await;
+        assert!(
+            result2.is_some(),
+            "Second request should succeed after first request timeout"
+        );
+    }
 }
