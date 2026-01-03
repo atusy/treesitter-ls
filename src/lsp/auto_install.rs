@@ -488,7 +488,8 @@ return {
 
     #[tokio::test]
     async fn test_should_skip_unsupported_language_times_out_and_skips() {
-        // A slow metadata lookup should time out and skip auto-install to avoid duplicate work
+        // A slow metadata lookup should time out and skip auto-install to keep the LSP responsive
+        // and avoid blocking the async runtime for too long
         let (should_skip, reason) = should_skip_unsupported_language_with_checker(
             "lua",
             None,
