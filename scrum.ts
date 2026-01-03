@@ -19,7 +19,23 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  product_backlog: [],
+  // Deferred: PBI-091 (idle cleanup), PBI-107 (WorkspaceType)
+  product_backlog: [
+    {
+      id: "PBI-171",
+      story: {
+        role: "developer editing Lua files",
+        capability: "have semantic token computation stop when client sends $/cancelRequest",
+        benefit: "save CPU cycles and reduce latency for subsequent requests",
+      },
+      acceptance_criteria: [
+        { criterion: "LspServiceBuilder.custom_method intercepts $/cancelRequest", verification: "Test: send $/cancelRequest, verify custom handler is called (not swallowed by tower-lsp)" },
+        { criterion: "Cancel handler marks semantic request as inactive", verification: "After $/cancelRequest, verify is_active() returns false for that request ID" },
+        { criterion: "Semantic token handler exits early after cancellation", verification: "Log shows early exit at is_active() checkpoint after $/cancelRequest" },
+      ],
+      status: "draft",
+    },
+  ],
 
   sprint: null,
 
@@ -37,7 +53,6 @@ const scrum: ScrumDashboard = {
     { number: 141, pbi_id: "PBI-168", goal: "Fix concurrent parse crash recovery to correctly identify failing parsers", status: "done", subtasks: [] },
   ],
 
-  // Deferred: PBI-091 (idle cleanup), PBI-107 (WorkspaceType), PBI-170 ($/cancelRequest - blocked if tower-lsp ever exposes it)
   retrospectives: [
     { sprint: 143, improvements: [
       { action: "Review-codex3 findings: PBI-168, PBI-169 fixed; PBI-170 deferred (tower-lsp limitation, YAGNI)", timing: "product", status: "completed", outcome: "2/3 issues resolved, 1 deferred" },
