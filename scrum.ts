@@ -36,112 +36,7 @@ const scrum: ScrumDashboard = {
     // Future: PBI-147 (hover wait), PBI-141/142/143 (async bridge methods)
     // ADR-0010: PBI-151 (118), PBI-150 (119), PBI-149 (120) | ADR-0011: PBI-152-155 (121-124)
   ],
-  sprint: {
-    number: 131,
-    pbi_id: "PBI-162",
-    goal: "Track initialization state per bridged language server to prevent protocol errors during initialization window",
-    status: "review" as SprintStatus,
-    subtasks: [
-      {
-        test: "Add unit test verifying LanguageServerConnection has initialized flag field",
-        implementation: "Add initialized: bool field to LanguageServerConnection struct, initialize to false in new()",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [
-          {
-            hash: "540c165",
-            message: "feat(bridge): add initialized flag to LanguageServerConnection",
-            phase: "green" as CommitPhase,
-          },
-        ],
-        notes: ["AC1: Add initialized flag to connection structs - sync implementation"],
-      },
-      {
-        test: "Add unit test verifying TokioAsyncBridgeConnection has initialized flag field",
-        implementation: "Add initialized: AtomicBool field to TokioAsyncBridgeConnection struct, initialize to false in new()",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [
-          {
-            hash: "a5a58a3",
-            message: "feat(bridge): add initialized flag to TokioAsyncBridgeConnection",
-            phase: "green" as CommitPhase,
-          },
-        ],
-        notes: ["AC1: Add initialized flag to connection structs - async implementation"],
-      },
-      {
-        test: "Add unit test verifying LanguageServerConnection request methods return None when initialized=false",
-        implementation: "Add initialized flag guards to goto_definition, hover, completion, signature_help methods in LanguageServerConnection",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [
-          {
-            hash: "ff1fe70",
-            message: "feat(bridge): guard LanguageServerConnection requests when not initialized",
-            phase: "green" as CommitPhase,
-          },
-        ],
-        notes: ["AC2: Guard request methods to return None when not initialized - sync implementation"],
-      },
-      {
-        test: "Add unit test verifying TokioAsyncBridgeConnection send_request method returns error when initialized=false",
-        implementation: "Add initialized flag guard to send_request method in TokioAsyncBridgeConnection to return error when not initialized",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [
-          {
-            hash: "45c2448",
-            message: "feat(bridge): guard TokioAsyncBridgeConnection send_request when not initialized",
-            phase: "green" as CommitPhase,
-          },
-        ],
-        notes: ["AC2: Guard request methods to return error when not initialized - async implementation"],
-      },
-      {
-        test: "Add unit test verifying LanguageServerConnection sets initialized=true after initialized notification sent",
-        implementation: "Set initialized flag to true in spawn_with_notifications after sending initialized notification",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [
-          {
-            hash: "543b475",
-            message: "feat(bridge): set initialized flag after sending initialized notification",
-            phase: "green" as CommitPhase,
-          },
-        ],
-        notes: ["AC3: Set flag after initialized notification sent - sync implementation"],
-      },
-      {
-        test: "Add unit test verifying TokioAsyncBridgeConnection sets initialized=true after initialized notification sent",
-        implementation: "Set initialized flag to true in tokio_async_pool spawn_and_initialize after sending initialized notification using AtomicBool::store, and allow initialize request in send_request guard",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [
-          {
-            hash: "6d7d14f",
-            message: "feat(bridge): set initialized flag in async pool after initialized notification",
-            phase: "green" as CommitPhase,
-          },
-        ],
-        notes: ["AC3: Set flag after initialized notification sent - async implementation"],
-      },
-      {
-        test: "Add integration test spawning 2 separate connections, verifying each has independent initialized flag state",
-        implementation: "Verify both sync and async connections maintain per-instance state correctly",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [
-          {
-            hash: "ce25ed4",
-            message: "test(bridge): add integration test for independent initialized flag state",
-            phase: "green" as CommitPhase,
-          },
-        ],
-        notes: ["AC4: Verify consistent behavior across both sync and async implementations"],
-      },
-    ],
-  },
+  sprint: null,
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
@@ -151,10 +46,10 @@ const scrum: ScrumDashboard = {
       { name: "ADR verification for architectural changes", run: "git diff --name-only | grep -E 'adr/' || echo 'No ADR updated - verify if architectural change'" },
     ],
   },
-  // Historical sprints (recent 2) | Sprint 1-129: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-130: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 131, pbi_id: "PBI-162", goal: "Track initialization state per bridged language server to prevent protocol errors during initialization window", status: "done", subtasks: [] },
     { number: 130, pbi_id: "PBI-161", goal: "Update ADR-0010 and ADR-0011 to match implementation", status: "done", subtasks: [] },
-    { number: 129, pbi_id: "PBI-160", goal: "Extract wildcard key to named constant for maintainability", status: "done", subtasks: [] },
   ],
   // Retrospectives (recent 2)
   retrospectives: [
