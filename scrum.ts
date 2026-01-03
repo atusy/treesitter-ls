@@ -286,7 +286,7 @@ const scrum: ScrumDashboard = {
           verification: "Verify tests use separate temp directories or sequential execution to avoid conflicts",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "PBI-164",
@@ -382,7 +382,84 @@ const scrum: ScrumDashboard = {
     },
   ],
 
-  sprint: null,
+  sprint: {
+    number: 140,
+    pbi_id: "PBI-163",
+    goal: "Eliminate flaky rust-analyzer tests with serial execution",
+    status: "review",
+    subtasks: [
+      {
+        test: "Investigate which rust-analyzer tests are flaky and identify failure patterns",
+        implementation: "Run tests multiple times to observe flakiness, identify that 3-4 random failures occur per run from rust-analyzer tests",
+        type: "behavioral",
+        status: "completed",
+        commits: [],
+        notes: [
+          "Initial test run showed 370/373 pass (3 failures)",
+          "Subsequent runs showed 369-370/373 pass (3-4 failures, varying which tests fail)",
+          "Identified 19 rust-analyzer tests that use check_rust_analyzer_available()",
+          "All failing tests were from tokio_async_pool module",
+          "Failures were: completion_returns_response_from_rust_analyzer, first_access_sends_did_open_with_version_1, get_connection_returns_arc_tokio_connection_after_initialize (and variants)",
+        ],
+      },
+      {
+        test: "Identify root cause of flakiness (resource contention, timing, shared resources)",
+        implementation: "Analyze test structure, check for concurrent execution, identify resource contention from 19 concurrent rust-analyzer instances",
+        type: "behavioral",
+        status: "completed",
+        commits: [],
+        notes: [
+          "Root cause: 19 rust-analyzer tests run concurrently by default in Rust test harness",
+          "Each test spawns full rust-analyzer process (resource-intensive LSP)",
+          "Multiple rust-analyzer instances compete for CPU (indexing/parsing), memory (symbol tables), and disk I/O (temp dirs/workspace metadata)",
+          "When resource contention is high, initialization can timeout (60s limit) or requests fail",
+          "This causes 3-4 random failures depending on which tests get starved of resources",
+          "No issues with test isolation (unique temp directories per test)",
+        ],
+      },
+      {
+        test: "Design and implement fix for flaky tests",
+        implementation: "Add serial_test dependency, apply #[serial] attribute to all 19 rust-analyzer tests to force sequential execution",
+        type: "behavioral",
+        status: "completed",
+        commits: [
+          {
+            hash: "e6de0de",
+            message: "fix(test): eliminate rust-analyzer test flakiness with serial execution (PBI-163)",
+            phase: "green",
+          },
+        ],
+        notes: [
+          "Added serial_test = \"3\" to dev-dependencies in Cargo.toml",
+          "Imported serial_test::serial in tokio_async_pool tests module",
+          "Applied #[serial] attribute to all 19 rust-analyzer tests",
+          "Solution allows concurrent execution of non-rust-analyzer tests while serializing expensive rust-analyzer tests",
+          "Test time per run: ~6.7 seconds (acceptable overhead for reliability)",
+        ],
+      },
+      {
+        test: "Verify tests pass consistently with 10 consecutive runs",
+        implementation: "Run cargo test --lib 10 times to verify no flaky failures",
+        type: "behavioral",
+        status: "completed",
+        commits: [],
+        notes: [
+          "Run 1: 373/373 passed",
+          "Run 2: 373/373 passed",
+          "Run 3: 373/373 passed",
+          "Run 4: 373/373 passed",
+          "Run 5: 373/373 passed",
+          "Run 6: 373/373 passed",
+          "Run 7: 373/373 passed",
+          "Run 8: 373/373 passed",
+          "Run 9: 373/373 passed",
+          "Run 10: 373/373 passed",
+          "All 10 consecutive runs passed with 373/373 tests (0 failures)",
+          "Flakiness completely eliminated",
+        ],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
@@ -392,7 +469,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Historical sprints (recent 3) | Sprint 1-136: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 3) | Sprint 1-137: git log -- scrum.yaml, scrum.ts
   completed: [
     {
       number: 128,
