@@ -21,7 +21,23 @@ const scrum: ScrumDashboard = {
   },
 
   // Deferred: PBI-091 (idle cleanup), PBI-107 (WorkspaceType), PBI-171 ($/cancelRequest - tower-lsp internals)
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "PBI-177",
+      story: {
+        role: "developer editing Markdown with code blocks",
+        capability: "have virtual documents properly synced before LSP requests",
+        benefit: "signatureHelp/completion work in markdown code blocks without 'Document not found' errors",
+      },
+      acceptance_criteria: [
+        { criterion: "didOpen sent and acknowledged before signatureHelp request", verification: "Log shows didOpen response before signatureHelp START" },
+        { criterion: "Virtual document URI matches what language server expects", verification: "No 'Document for URI could not be found' errors in logs" },
+        { criterion: "async bridge logs DONE even when LS returns error", verification: "All START messages have corresponding DONE messages" },
+        { criterion: "Error responses from LS are properly handled and logged", verification: "Error code -32602 is logged with context" },
+      ],
+      status: "ready",
+    },
+  ],
 
   sprint: null,
 
@@ -46,6 +62,9 @@ const scrum: ScrumDashboard = {
   ],
 
   retrospectives: [
+    { sprint: 149, improvements: [
+      { action: "Timeout protection added but issue persists - deeper root cause: 'Document for URI could not be found' error from LS", timing: "immediate", status: "completed", outcome: "Timeout protection is valuable but doesn't fix root cause. Created PBI-177 for virtual document sync issue. See __ignored/prompt.md for investigation details" },
+    ] },
     { sprint: 148, improvements: [
       { action: "TDD investigation disproved deadlock hypothesis. Added defensive logging/test/docs", timing: "immediate", status: "completed", outcome: "No deadlock exists - locks acquired sequentially. Created PBI-176 for timeout protection (actual root cause)" },
     ] },
