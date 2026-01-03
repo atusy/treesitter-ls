@@ -941,12 +941,24 @@ impl TokioAsyncLanguageServerPool {
         };
 
         // Acquire the per-URI lock to serialize first-access check and didOpen sending
+        // Wrap lock acquisition with timeout to prevent indefinite hangs (PBI-176)
         log::debug!(
             target: "treesitter_ls::bridge::tokio_async_pool",
             "[LOCK] sync_document attempting per-URI document lock for uri={}",
             uri
         );
-        let _guard = lock.lock().await;
+        let lock_result = timeout(Duration::from_secs(10), lock.lock()).await;
+        let _guard = match lock_result {
+            Ok(guard) => guard,
+            Err(_) => {
+                log::warn!(
+                    target: "treesitter_ls::bridge::tokio_async_pool",
+                    "[LOCK] sync_document timeout acquiring per-URI document lock for uri={}",
+                    uri
+                );
+                return None;
+            }
+        };
         log::debug!(
             target: "treesitter_ls::bridge::tokio_async_pool",
             "[LOCK] sync_document acquired per-URI document lock for uri={}",
@@ -2517,6 +2529,79 @@ mod tests {
         assert!(
             elapsed >= std::time::Duration::from_secs(28),
             "get_connection() should take at least 28s (timeout occurred), took {:?}",
+            elapsed
+        );
+    }
+
+    /// PBI-176 Subtask 3: Test that sync_document() returns None after timeout when document lock is held indefinitely.
+    ///
+    /// This test simulates a scenario where the per-URI document lock is held indefinitely by another task,
+    /// preventing sync_document() from acquiring the lock. Without timeout protection, sync_document() would
+    /// hang forever. With timeout, it should return None after 10 seconds.
+    #[tokio::test]
+    async fn sync_document_returns_none_after_timeout_when_lock_held() {
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = Arc::new(super::TokioAsyncLanguageServerPool::new(tx));
+        let pool_clone = pool.clone();
+
+        // Spawn a connection
+        let result = super::super::tokio_connection::TokioAsyncBridgeConnection::spawn(
+            "cat",
+            &[],
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert!(result.is_ok(), "spawn() should succeed");
+        let conn = result.unwrap();
+
+        let uri = "file:///test.txt";
+
+        // Hold the per-URI document lock indefinitely in a background task
+        let uri_clone = uri.to_string();
+        let _guard = tokio::spawn(async move {
+            // Acquire the per-URI lock and hold it forever
+            let lock = {
+                let mut locks = pool_clone.document_open_locks.lock().await;
+                locks
+                    .entry(uri_clone.clone())
+                    .or_insert_with(|| Arc::new(Mutex::new(())))
+                    .clone()
+            };
+            let _lock = lock.lock().await;
+            // Hold lock forever
+            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+        });
+
+        // Give the background task time to acquire the lock
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Measure how long sync_document takes
+        let start = std::time::Instant::now();
+        let result = pool.sync_document(&conn, uri, "plaintext", "test content").await;
+        let elapsed = start.elapsed();
+
+        // Should return None (timeout)
+        assert!(
+            result.is_none(),
+            "sync_document() should return None when lock acquisition times out"
+        );
+
+        // Should complete within 12 seconds (10s timeout + 2s buffer)
+        assert!(
+            elapsed < std::time::Duration::from_secs(12),
+            "sync_document() should timeout within 12 seconds, took {:?}",
+            elapsed
+        );
+
+        // Should NOT complete too quickly (at least 9s to verify timeout actually occurred)
+        assert!(
+            elapsed >= std::time::Duration::from_secs(9),
+            "sync_document() should take at least 9s (timeout occurred), took {:?}",
             elapsed
         );
     }
