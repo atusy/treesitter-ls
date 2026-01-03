@@ -127,7 +127,7 @@ const scrum: ScrumDashboard = {
           verification: "Unit test verifies warning is logged and fallback path is used",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     // Future: PBI-147 (hover wait), PBI-141/142/143 (async bridge methods)
     // ADR-0010: PBI-151 (118), PBI-150 (119), PBI-149 (120) | ADR-0011: PBI-152-155 (121-124)
@@ -142,8 +142,8 @@ const scrum: ScrumDashboard = {
   },
   // Historical sprints (recent 2) | Sprint 1-125: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 127, pbi_id: "PBI-158", goal: "Validate XDG_CONFIG_HOME to prevent path traversal attacks", status: "done", subtasks: [], commit: "cd7f4ec" },
     { number: 126, pbi_id: "PBI-157", goal: "Fix initialization_options shallow merge bug (ADR-0010 compliance)", status: "done", subtasks: [] },
-    { number: 125, pbi_id: "PBI-156", goal: "Migrate LanguageSettings to use parser and unified queries fields", status: "done", subtasks: [] },
   ],
   // Retrospectives (recent 2)
   retrospectives: [
