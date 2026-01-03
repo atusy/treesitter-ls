@@ -149,8 +149,18 @@ impl TokioAsyncLanguageServerPool {
         }
 
         // Get or create a lock for this key
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio_async_pool",
+            "[LOCK] get_connection attempting spawn_locks acquisition for key={}",
+            key
+        );
         let lock = {
             let mut locks = self.spawn_locks.lock().await;
+            log::debug!(
+                target: "treesitter_ls::bridge::tokio_async_pool",
+                "[LOCK] get_connection acquired spawn_locks outer mutex for key={}",
+                key
+            );
             locks
                 .entry(key.to_string())
                 .or_insert_with(|| Arc::new(Mutex::new(())))
@@ -158,7 +168,17 @@ impl TokioAsyncLanguageServerPool {
         };
 
         // Acquire the per-key lock
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio_async_pool",
+            "[LOCK] get_connection attempting per-key spawn lock for key={}",
+            key
+        );
         let _guard = lock.lock().await;
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio_async_pool",
+            "[LOCK] get_connection acquired per-key spawn lock for key={}",
+            key
+        );
 
         // Double-check: another task might have created the connection while we waited for the lock
         if let Some(conn) = self.connections.get(key) {
@@ -801,14 +821,34 @@ impl TokioAsyncLanguageServerPool {
         content: &str,
         position: tower_lsp::lsp_types::Position,
     ) -> Option<tower_lsp::lsp_types::SignatureHelp> {
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio_async_pool",
+            "[REQUEST] signature_help START for key={}, host_uri={}",
+            key, host_uri
+        );
         let conn = self.get_connection(key, config, host_uri).await?;
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio_async_pool",
+            "[REQUEST] signature_help got connection for key={}",
+            key
+        );
 
         // Get virtual file URI for this specific host document
         let virtual_uri = self.get_virtual_uri(key, host_uri)?;
 
         // Sync document with host URI tracking (didOpen on first access, didChange on subsequent)
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio_async_pool",
+            "[REQUEST] signature_help calling sync_document_with_host for key={}, virtual_uri={}",
+            key, virtual_uri
+        );
         self.sync_document_with_host(&conn, &virtual_uri, language_id, content, host_uri)
             .await?;
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio_async_pool",
+            "[REQUEST] signature_help sync_document_with_host completed for key={}",
+            key
+        );
 
         // Send signature help request
         let params = serde_json::json!({
@@ -833,12 +873,18 @@ impl TokioAsyncLanguageServerPool {
         };
 
         // Parse response
-        result
+        let response = result
             .response?
             .get("result")
             .cloned()
             .filter(|r| !r.is_null())
-            .and_then(|r| serde_json::from_value(r).ok())
+            .and_then(|r| serde_json::from_value(r).ok());
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio_async_pool",
+            "[REQUEST] signature_help DONE for key={}",
+            key
+        );
+        response
     }
 
     /// Sync document content with the language server.
@@ -861,8 +907,18 @@ impl TokioAsyncLanguageServerPool {
         content: &str,
     ) -> Option<()> {
         // Get or create a lock for this URI (PBI-159)
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio_async_pool",
+            "[LOCK] sync_document attempting document_open_locks acquisition for uri={}",
+            uri
+        );
         let lock = {
             let mut locks = self.document_open_locks.lock().await;
+            log::debug!(
+                target: "treesitter_ls::bridge::tokio_async_pool",
+                "[LOCK] sync_document acquired document_open_locks outer mutex for uri={}",
+                uri
+            );
             locks
                 .entry(uri.to_string())
                 .or_insert_with(|| Arc::new(Mutex::new(())))
@@ -870,7 +926,17 @@ impl TokioAsyncLanguageServerPool {
         };
 
         // Acquire the per-URI lock to serialize first-access check and didOpen sending
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio_async_pool",
+            "[LOCK] sync_document attempting per-URI document lock for uri={}",
+            uri
+        );
         let _guard = lock.lock().await;
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio_async_pool",
+            "[LOCK] sync_document acquired per-URI document lock for uri={}",
+            uri
+        );
 
         // Check if document has been opened (version exists)
         // This check is now protected by the per-URI lock
