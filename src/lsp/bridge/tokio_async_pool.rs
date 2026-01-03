@@ -887,6 +887,7 @@ impl TokioAsyncLanguageServerPool {
 mod tests {
     use crate::config::settings::{BridgeServerConfig, WorkspaceType};
     use crate::lsp::bridge::tokio_connection::TokioAsyncBridgeConnection;
+    use serial_test::serial;
     use std::time::Duration;
     use tokio::sync::mpsc;
 
@@ -918,6 +919,7 @@ mod tests {
     /// 5. Store virtual_uri
     /// 6. Return Arc<TokioAsyncBridgeConnection>
     #[tokio::test]
+    #[serial]
     async fn get_connection_returns_arc_tokio_connection_after_initialize() {
         if !check_rust_analyzer_available() {
             eprintln!("Skipping: rust-analyzer not installed");
@@ -949,6 +951,7 @@ mod tests {
 
     /// Test that pool stores virtual_uri after connection is established.
     #[tokio::test]
+    #[serial]
     async fn pool_stores_virtual_uri_after_connection() {
         if !check_rust_analyzer_available() {
             eprintln!("Skipping: rust-analyzer not installed");
@@ -994,6 +997,7 @@ mod tests {
 
     /// Test that concurrent gets share the same connection.
     #[tokio::test]
+    #[serial]
     async fn concurrent_gets_share_same_connection() {
         if !check_rust_analyzer_available() {
             eprintln!("Skipping: rust-analyzer not installed");
@@ -1189,6 +1193,7 @@ mod tests {
 
     /// Test that hover() returns Hover from rust-analyzer.
     #[tokio::test]
+    #[serial]
     async fn hover_returns_hover_from_rust_analyzer() {
         if !check_rust_analyzer_available() {
             eprintln!("Skipping: rust-analyzer not installed");
@@ -1224,6 +1229,7 @@ mod tests {
 
     /// E2E test: hover returns updated content after document edit.
     #[tokio::test]
+    #[serial]
     async fn hover_returns_updated_content_after_edit() {
         if !check_rust_analyzer_available() {
             eprintln!("Skipping: rust-analyzer not installed");
@@ -1294,6 +1300,7 @@ mod tests {
     /// Subtask 3: When sync_document is called for a URI that has already been
     /// opened, it should send didChange with incremented version.
     #[tokio::test]
+    #[serial]
     async fn subsequent_access_sends_did_change_with_incremented_version() {
         if !check_rust_analyzer_available() {
             eprintln!("Skipping: rust-analyzer not installed");
@@ -1356,6 +1363,7 @@ mod tests {
     /// Subtask 2: When ensure_document_open is called for a URI that hasn't been
     /// opened yet, it should send didOpen with version 1 and store version 1.
     #[tokio::test]
+    #[serial]
     async fn first_access_sends_did_open_with_version_1() {
         if !check_rust_analyzer_available() {
             eprintln!("Skipping: rust-analyzer not installed");
@@ -1479,6 +1487,7 @@ mod tests {
     /// This verifies PBI-141 AC1: TokioAsyncLanguageServerPool.goto_definition() method
     /// implemented with async request/response pattern.
     #[tokio::test]
+    #[serial]
     async fn goto_definition_returns_response_from_rust_analyzer() {
         if !check_rust_analyzer_available() {
             eprintln!("Skipping: rust-analyzer not installed");
@@ -1524,6 +1533,7 @@ mod tests {
     /// This verifies PBI-142 AC1: TokioAsyncLanguageServerPool.completion() method
     /// implemented with async request/response pattern.
     #[tokio::test]
+    #[serial]
     async fn completion_returns_response_from_rust_analyzer() {
         if !check_rust_analyzer_available() {
             eprintln!("Skipping: rust-analyzer not installed");
@@ -1561,6 +1571,7 @@ mod tests {
     /// This verifies PBI-143 AC1: TokioAsyncLanguageServerPool.signature_help() method
     /// implemented with async request/response pattern.
     #[tokio::test]
+    #[serial]
     async fn signature_help_returns_response_from_rust_analyzer() {
         if !check_rust_analyzer_available() {
             eprintln!("Skipping: rust-analyzer not installed");
@@ -1598,6 +1609,7 @@ mod tests {
     /// This verifies PBI-151 AC1: Version atomicity - concurrent calls must produce unique sequential versions.
     /// With the old implementation using separate get/set, concurrent calls could read the same version.
     #[tokio::test]
+    #[serial]
     async fn concurrent_sync_document_produces_unique_sequential_versions() {
         if !check_rust_analyzer_available() {
             eprintln!("Skipping: rust-analyzer not installed");
@@ -1670,6 +1682,7 @@ mod tests {
     /// This verifies PBI-151 AC2: Single spawn - concurrent calls must share a single connection.
     /// With the old implementation using separate check/spawn/insert, concurrent calls could both spawn.
     #[tokio::test]
+    #[serial]
     async fn concurrent_get_connection_spawns_single_process() {
         if !check_rust_analyzer_available() {
             eprintln!("Skipping: rust-analyzer not installed");
@@ -1726,6 +1739,7 @@ mod tests {
     /// PBI-156 Subtask 2: When close_documents_for_host is called for a specific host URI,
     /// it should only close the bridge documents associated with that host, not all bridge documents.
     #[tokio::test]
+    #[serial]
     async fn close_documents_for_host_only_closes_relevant_bridge_documents() {
         if !check_rust_analyzer_available() {
             eprintln!("Skipping: rust-analyzer not installed");
@@ -1800,6 +1814,7 @@ mod tests {
     /// PBI-156 Subtask 1: When sync_document is called with a host URI,
     /// it should record the mapping from host URI to virtual URI.
     #[tokio::test]
+    #[serial]
     async fn sync_document_tracks_host_to_bridge_uri_mapping() {
         if !check_rust_analyzer_available() {
             eprintln!("Skipping: rust-analyzer not installed");
@@ -1850,6 +1865,7 @@ mod tests {
     /// - textDocument/didClose notification is sent to bridge server
     /// - document_versions entry is removed
     #[tokio::test]
+    #[serial]
     async fn close_document_async_sends_did_close_and_removes_version() {
         if !check_rust_analyzer_available() {
             eprintln!("Skipping: rust-analyzer not installed");
@@ -1914,6 +1930,7 @@ mod tests {
     /// The real symptom would be seen in language server logs showing duplicate didOpen.
     /// This test verifies version atomicity as a proxy for the locking behavior.
     #[tokio::test]
+    #[serial]
     async fn concurrent_first_access_sends_single_did_open() {
         if !check_rust_analyzer_available() {
             eprintln!("Skipping: rust-analyzer not installed");
@@ -2047,6 +2064,7 @@ mod tests {
     /// PBI-158 Subtask 1: virtual_uris should be keyed by (host_uri, server_name) instead
     /// of just server_name, so that each host document gets its own virtual file.
     #[tokio::test]
+    #[serial]
     async fn different_host_documents_get_different_virtual_uris() {
         if !check_rust_analyzer_available() {
             eprintln!("Skipping: rust-analyzer not installed");
@@ -2109,6 +2127,7 @@ mod tests {
     /// Since we can't easily kill a process from within an Arc, this test verifies
     /// that the health check logic exists by checking the fast-path code.
     #[tokio::test]
+    #[serial]
     async fn get_connection_has_health_check_logic() {
         if !check_rust_analyzer_available() {
             eprintln!("Skipping: rust-analyzer not installed");
