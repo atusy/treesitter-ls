@@ -280,7 +280,7 @@ fn load_configuration(cli_config_path: Option<&Path>) -> Option<TreeSitterSettin
 - [x] Add `QueryItem` struct with `path` (required) and `kind` (optional) fields
 - [x] Add `queries: Option<Vec<QueryItem>>` field to `LanguageConfig`
 - [x] Implement `QueryKind` enum (`Highlights`, `Locals`, `Injections`) with default `Highlights`
-- [x] Implement type inference from filename (e.g., `*highlights*.scm` → `Highlights`)
+- [x] Implement type inference from exact filename (`highlights.scm`, `locals.scm`, `injections.scm`)
 - [x] Normalize `queries` + legacy fields into unified internal representation
 - [x] Emit deprecation warning when legacy `highlights`/`locals`/`injections` fields are used
 
@@ -369,7 +369,7 @@ queries = [
 **Migration steps:**
 1. Replace each legacy array with `queries` entries
 2. Add explicit `kind` for `locals` and `injections` (highlights is the default)
-3. If filenames follow the `*highlights*.scm`, `*locals*.scm` pattern, `kind` can be omitted
+3. If filenames are exactly `highlights.scm`, `locals.scm`, or `injections.scm`, `kind` can be omitted
 4. Test configuration with `treesitter-ls --check-config` (future feature)
 5. Remove legacy fields once satisfied
 
