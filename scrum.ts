@@ -72,8 +72,14 @@ const scrum: ScrumDashboard = {
         test: "Test that sync_document() returns None after timeout when document lock acquisition hangs",
         implementation: "Wrap document_open_locks per-URI lock acquisition with tokio::time::timeout",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "811811a",
+            message: "feat(bridge): add 10s timeout to sync_document() lock acquisition",
+            phase: "green",
+          },
+        ],
         notes: [
           "Per-URI lock scope: sync_document() document opening serialization",
           "Current: document_open_locks.entry().or_default().lock().await blocks indefinitely",
