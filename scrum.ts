@@ -100,10 +100,16 @@ const scrum: ScrumDashboard = {
       },
       {
         test: "Add unit test verifying LanguageServerConnection sets initialized=true after initialized notification sent",
-        implementation: "Set initialized flag to true in spawn_and_initialize after sending initialized notification",
+        implementation: "Set initialized flag to true in spawn_with_notifications after sending initialized notification",
         type: "behavioral" as SubtaskType,
-        status: "pending" as SubtaskStatus,
-        commits: [],
+        status: "completed" as SubtaskStatus,
+        commits: [
+          {
+            hash: "543b475",
+            message: "feat(bridge): set initialized flag after sending initialized notification",
+            phase: "green" as CommitPhase,
+          },
+        ],
         notes: ["AC3: Set flag after initialized notification sent - sync implementation"],
       },
       {
