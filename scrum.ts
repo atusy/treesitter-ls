@@ -28,7 +28,7 @@ const scrum: ScrumDashboard = {
     checks: [
       { name: "All unit tests pass", run: "make test" },
       { name: "Code quality checks pass", run: "make check" },
-      { name: "E2E tests pass", run: "make test_nvim" },
+      { name: "E2E tests pass", run: "make test_e2e" },
     ],
   },
 
@@ -130,6 +130,9 @@ const scrum: ScrumDashboard = {
   ],
 
   retrospectives: [
+    { sprint: 148, improvements: [
+      { action: "Sprint Review: All DoD checks passed (386 unit tests, code quality, 146 E2E tests). Updated DoD to use make test_e2e (Rust tests) instead of make test_nvim (removed Lua tests)", timing: "immediate", status: "completed", outcome: "PBI-175 ACCEPTED - No deadlock exists in current implementation. Locks acquired sequentially (spawn_locks → release → document_open_locks), never simultaneously. Added debug logging, concurrent test (5 parallel calls), and lock ordering documentation" },
+    ] },
     { sprint: 147, improvements: [
       { action: "Test review findings (review-tests.md) addressed: smoke tests relocated, tests parameterized, API visibility audited", timing: "immediate", status: "completed", outcome: "3 PBIs completed (172-174), test pyramid improved, rstest adopted for parameterization" },
     ] },
