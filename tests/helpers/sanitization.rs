@@ -112,6 +112,100 @@ pub fn sanitize_definition_response(result: &Value) -> Value {
     }
 }
 
+/// Sanitize signature help response for snapshot testing.
+///
+/// Removes temp paths from documentation and labels while preserving signature structure.
+pub fn sanitize_signature_help_response(signature_help: &Value) -> Value {
+    let mut sanitized = signature_help.clone();
+
+    // Sanitize signatures array
+    if let Some(signatures) = sanitized.get_mut("signatures") {
+        if let Value::Array(sigs) = signatures {
+            for sig in sigs {
+                if let Value::Object(sig_obj) = sig {
+                    // Sanitize label
+                    if let Some(label) = sig_obj.get_mut("label") {
+                        if let Some(s) = label.as_str() {
+                            *label = Value::String(sanitize_text(s));
+                        }
+                    }
+                    // Sanitize documentation
+                    if let Some(doc) = sig_obj.get_mut("documentation") {
+                        *doc = sanitize_signature_documentation(doc);
+                    }
+                    // Sanitize parameters
+                    if let Some(params) = sig_obj.get_mut("parameters") {
+                        if let Value::Array(param_arr) = params {
+                            for param in param_arr {
+                                if let Value::Object(param_obj) = param {
+                                    if let Some(label) = param_obj.get_mut("label") {
+                                        if let Some(s) = label.as_str() {
+                                            *label = Value::String(sanitize_text(s));
+                                        }
+                                    }
+                                    if let Some(doc) = param_obj.get_mut("documentation") {
+                                        *doc = sanitize_signature_documentation(doc);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    sanitized
+}
+
+/// Sanitize signature documentation (string or MarkupContent).
+fn sanitize_signature_documentation(doc: &Value) -> Value {
+    match doc {
+        Value::String(s) => Value::String(sanitize_text(s)),
+        Value::Object(obj) => {
+            let mut sanitized = obj.clone();
+            if let Some(value) = sanitized.get_mut("value") {
+                if let Some(s) = value.as_str() {
+                    *value = Value::String(sanitize_text(s));
+                }
+            }
+            Value::Object(sanitized)
+        }
+        _ => doc.clone(),
+    }
+}
+
+/// Sanitize selection range response for snapshot testing.
+///
+/// SelectionRange is a recursive structure with ranges and optional parent pointers.
+/// This sanitizes all ranges in the tree structure.
+pub fn sanitize_selection_range_response(selection_ranges: &Value) -> Value {
+    match selection_ranges {
+        Value::Array(arr) => {
+            Value::Array(arr.iter().map(sanitize_single_selection_range).collect())
+        }
+        _ => selection_ranges.clone(),
+    }
+}
+
+/// Sanitize a single SelectionRange (may have parent chain).
+fn sanitize_single_selection_range(selection_range: &Value) -> Value {
+    match selection_range {
+        Value::Object(obj) => {
+            let mut sanitized = obj.clone();
+            // Recursively sanitize parent if present
+            if let Some(parent) = sanitized.get("parent") {
+                sanitized.insert(
+                    "parent".to_string(),
+                    sanitize_single_selection_range(parent),
+                );
+            }
+            Value::Object(sanitized)
+        }
+        _ => selection_range.clone(),
+    }
+}
+
 fn sanitize_definition_object(value: &Value) -> Value {
     let mut map = value.clone();
     if let Value::Object(obj) = &mut map {

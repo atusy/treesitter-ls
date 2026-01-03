@@ -37,6 +37,10 @@ impl LanguageCoordinator {
         }
     }
 
+    /// Ensure a language parser is loaded, attempting dynamic load if needed.
+    ///
+    /// Visibility: Public - called by LSP layer (semantic_tokens, selection_range)
+    /// and analysis modules to ensure parsers are available before use.
     pub fn ensure_language_loaded(&self, language_id: &str) -> LanguageLoadResult {
         if self.language_registry.contains(language_id) {
             LanguageLoadResult::success_with(Vec::new())
@@ -45,7 +49,10 @@ impl LanguageCoordinator {
         }
     }
 
-    /// Initialize from workspace-level settings and return coordination events
+    /// Initialize from workspace-level settings and return coordination events.
+    ///
+    /// Visibility: Public - called by LSP layer during initialization and
+    /// settings updates to configure language support.
     pub fn load_settings(&self, settings: WorkspaceSettings) -> LanguageLoadSummary {
         let config_settings: TreeSitterSettings = settings.into();
         self.load_settings_from_config(&config_settings)
@@ -64,7 +71,10 @@ impl LanguageCoordinator {
     }
 
     /// Try to dynamically load a language by ID from configured search paths
-    pub fn try_load_language_by_id(&self, language_id: &str) -> LanguageLoadResult {
+    ///
+    /// Visibility: Internal only - called by ensure_language_loaded.
+    /// Not exposed as public API to keep interface minimal (YAGNI).
+    fn try_load_language_by_id(&self, language_id: &str) -> LanguageLoadResult {
         if self.language_registry.contains(language_id) {
             return LanguageLoadResult::success_with(Vec::new());
         }
@@ -161,35 +171,52 @@ impl LanguageCoordinator {
         LanguageLoadResult::success_with(events)
     }
 
-    /// Get language for a document path
+    /// Get language for a document path.
+    ///
+    /// Visibility: Public - called by LSP layer (auto_install, lsp_impl)
+    /// for document language detection.
     pub fn get_language_for_path(&self, path: &str) -> Option<String> {
         self.filetype_resolver.get_language_for_path(path)
     }
 
-    /// Get language for a file extension
+    /// Get language for a file extension.
+    ///
+    /// Visibility: Public - used in integration tests (test_poison_recovery)
+    /// and internally for extension-based detection.
     pub fn get_language_for_extension(&self, extension: &str) -> Option<String> {
         self.filetype_resolver.get_language_for_extension(extension)
     }
 
     /// Get configured search paths (primarily for testing and diagnostics).
+    ///
+    /// Visibility: Public - used in integration tests (test_dynamic_lua_load)
+    /// to verify settings configuration.
     pub fn get_search_paths(&self) -> Option<Vec<String>> {
         self.config_store.get_search_paths()
     }
 
     /// Check if a parser is available for a given language name.
+    ///
     /// Used by the detection fallback chain (ADR-0005) to determine whether
     /// to accept a detection result or continue to the next method.
+    ///
+    /// Visibility: Public - called by LSP layer (lsp_impl) to check parser
+    /// availability before attempting language operations.
     pub fn has_parser_available(&self, language_name: &str) -> bool {
         self.language_registry.has_parser_available(language_name)
     }
 
-    /// ADR-0005: Detection fallback chain
+    /// ADR-0005: Detection fallback chain.
+    ///
     /// Returns the first language for which a parser is available.
     ///
     /// Priority order:
     /// 1. languageId (if parser available and not "plaintext")
     /// 2. Shebang detection from content
     /// 3. Extension-based detection from path
+    ///
+    /// Visibility: Public - called by LSP layer (lsp_impl) for document
+    /// language detection during text_document/didOpen.
     pub fn detect_language(
         &self,
         path: &str,
@@ -221,7 +248,7 @@ impl LanguageCoordinator {
         None
     }
 
-    /// ADR-0005: Resolve injection language with alias fallback
+    /// ADR-0005: Resolve injection language with alias fallback.
     ///
     /// For injection regions, try direct identifier first, then normalize.
     /// Returns the resolved language name and load result.
@@ -229,6 +256,9 @@ impl LanguageCoordinator {
     /// Priority order:
     /// 1. Direct identifier (try to load as-is)
     /// 2. Normalized alias (py -> python, js -> javascript, sh -> bash)
+    ///
+    /// Visibility: Public - called by analysis layer (semantic.rs) for
+    /// nested language injection support.
     pub fn resolve_injection_language(
         &self,
         identifier: &str,
@@ -250,32 +280,51 @@ impl LanguageCoordinator {
         None
     }
 
-    /// Create a document parser pool
+    /// Create a document parser pool.
+    ///
+    /// Visibility: Public - called by LSP layer (lsp_impl) and analysis modules
+    /// to obtain parser instances for document processing.
     pub fn create_document_parser_pool(&self) -> DocumentParserPool {
         let parser_factory = ParserFactory::new(self.language_registry.clone());
         DocumentParserPool::new(parser_factory)
     }
 
-    /// Check if queries exist for a language
+    /// Check if queries exist for a language.
+    ///
+    /// Visibility: Public - called by LSP layer (lsp_impl) to determine if
+    /// semantic tokens should be refreshed after language load.
     pub fn has_queries(&self, lang_name: &str) -> bool {
         self.query_store.has_highlight_query(lang_name)
     }
 
-    /// Get highlight query for a language
+    /// Get highlight query for a language.
+    ///
+    /// Visibility: Public - called by LSP layer (semantic_tokens) and analysis
+    /// layer (refactor, semantic) for syntax highlighting and token analysis.
     pub fn get_highlight_query(&self, lang_name: &str) -> Option<Arc<tree_sitter::Query>> {
         self.query_store.get_highlight_query(lang_name)
     }
 
-    /// Get locals query for a language
+    /// Get locals query for a language.
+    ///
+    /// Visibility: Public - called by analysis layer (refactor) for scope
+    /// and local variable analysis in injected languages.
     pub fn get_locals_query(&self, lang_name: &str) -> Option<Arc<tree_sitter::Query>> {
         self.query_store.get_locals_query(lang_name)
     }
 
+    /// Get injection query for a language.
+    ///
+    /// Visibility: Public - called by LSP layer (multiple handlers) and analysis
+    /// layer (refactor, semantic, selection) for nested language support.
     pub fn get_injection_query(&self, lang_name: &str) -> Option<Arc<tree_sitter::Query>> {
         self.query_store.get_injection_query(lang_name)
     }
 
-    /// Get capture mappings
+    /// Get capture mappings.
+    ///
+    /// Visibility: Public - called by LSP layer (semantic_tokens) and analysis
+    /// layer (refactor) for custom capture-to-token-type mapping.
     pub fn get_capture_mappings(&self) -> CaptureMappings {
         let config_mappings = self.config_store.get_capture_mappings();
         config_mappings
@@ -559,5 +608,122 @@ mod tests {
             !coordinator.has_parser_available("rust"),
             "Parser should not be available after load_settings alone - ensure_language_loaded must be called"
         );
+    }
+
+    // Smoke tests for coordinator API (moved from integration tests)
+    // These verify the API surface exists and basic functionality works
+
+    #[test]
+    fn coordinator_should_resolve_filetype() {
+        let coordinator = LanguageCoordinator::new();
+        let _lang = coordinator.get_language_for_extension("rs");
+    }
+
+    #[test]
+    fn coordinator_should_expose_query_state_checks() {
+        let coordinator = LanguageCoordinator::new();
+        let _has_queries: bool = coordinator.has_queries("rust");
+    }
+
+    #[test]
+    fn coordinator_should_expose_highlight_queries() {
+        let coordinator = LanguageCoordinator::new();
+        let _query = coordinator.get_highlight_query("rust");
+    }
+
+    #[test]
+    fn coordinator_should_expose_locals_queries() {
+        let coordinator = LanguageCoordinator::new();
+        let _query = coordinator.get_locals_query("rust");
+    }
+
+    #[test]
+    fn coordinator_should_provide_capture_mappings() {
+        let coordinator = LanguageCoordinator::new();
+        let _mappings = coordinator.get_capture_mappings();
+    }
+
+    #[test]
+    fn test_coordinator_has_parser_available() {
+        let coordinator = LanguageCoordinator::new();
+
+        // No languages loaded initially - should return false
+        assert!(!coordinator.has_parser_available("rust"));
+
+        // This test verifies the API is exposed on LanguageCoordinator.
+        // The full behavior (true when loaded) is tested in unit tests
+        // via register_language_for_test which is only available there.
+    }
+
+    #[test]
+    fn test_shebang_used_when_language_id_plaintext() {
+        let coordinator = LanguageCoordinator::new();
+
+        // When languageId is "plaintext", fallback to shebang detection
+        // Note: No parser loaded, so will return None (graceful degradation)
+        // But the shebang detection path is still exercised
+        let content = "#!/usr/bin/env python\nprint('hello')";
+        let result = coordinator.detect_language("/script", Some("plaintext"), content);
+
+        // No python parser loaded, so result is None
+        // The important thing is that "plaintext" didn't short-circuit
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_shebang_skipped_when_language_id_has_parser() {
+        let coordinator = LanguageCoordinator::new();
+
+        // When languageId has an available parser, don't run shebang detection
+        // This tests lazy I/O - shebang parsing is skipped entirely
+
+        // Scenario: languageId is "rust" but no rust parser loaded
+        // So it falls through to shebang, but no python parser either
+        let content = "#!/usr/bin/env python\nprint('hello')";
+        let result = coordinator.detect_language("/script", Some("rust"), content);
+
+        // Neither rust nor python parser loaded
+        assert_eq!(result, None);
+
+        // Full behavior with loaded parser is tested in unit tests
+    }
+
+    #[test]
+    fn test_extension_fallback_after_shebang() {
+        let coordinator = LanguageCoordinator::new();
+
+        // When shebang detection fails (no parser), extension fallback runs
+        // File has .rs extension but content has python shebang
+        let content = "#!/usr/bin/env python\nprint('hello')";
+        let result = coordinator.detect_language("/path/to/file.rs", None, content);
+
+        // No parsers loaded, so result is None
+        // But the chain tried: languageId (None) -> shebang (python, no parser) -> extension (rs, no parser)
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_full_detection_chain() {
+        let coordinator = LanguageCoordinator::new();
+
+        // Full chain test: languageId -> shebang -> extension
+        // All methods tried, none have parsers available
+
+        // languageId = "plaintext" (skipped), shebang = python (no parser), extension = rs (no parser)
+        let content = "#!/usr/bin/env python\nprint('hello')";
+        let result = coordinator.detect_language("/path/to/file.rs", Some("plaintext"), content);
+
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_detection_chain_returns_none_when_all_fail() {
+        let coordinator = LanguageCoordinator::new();
+
+        // No languageId, no shebang, no extension -> None
+        let result =
+            coordinator.detect_language("/Makefile", None, "all: build\n\nbuild:\n\techo hello");
+
+        assert_eq!(result, None);
     }
 }

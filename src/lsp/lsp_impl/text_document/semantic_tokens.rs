@@ -8,7 +8,6 @@ use crate::analysis::{
     decode_semantic_tokens, encode_semantic_tokens, handle_semantic_tokens_full_delta,
     next_result_id,
 };
-use crate::error::LockResultExt;
 
 use super::super::TreeSitterLs;
 
@@ -19,14 +18,33 @@ impl TreeSitterLs {
     ) -> Result<Option<SemanticTokensResult>> {
         let uri = params.text_document.uri;
 
+        // Start tracking this request - supersedes any previous request for this URI
+        let request_id = self.semantic_request_tracker.start_request(&uri);
+
         self.client
             .log_message(
                 MessageType::LOG,
-                format!("[SEMANTIC_TOKENS] START uri={}", uri),
+                format!("[SEMANTIC_TOKENS] START uri={} req={}", uri, request_id),
             )
             .await;
 
+        // Early exit if request was superseded
+        if !self.semantic_request_tracker.is_active(&uri, request_id) {
+            self.client
+                .log_message(
+                    MessageType::LOG,
+                    format!("[SEMANTIC_TOKENS] CANCELLED uri={} req={}", uri, request_id),
+                )
+                .await;
+            return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+                result_id: None,
+                data: vec![],
+            })));
+        }
+
         let Some(language_name) = self.get_language_for_document(&uri) else {
+            self.semantic_request_tracker
+                .finish_request(&uri, request_id);
             return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                 result_id: None,
                 data: vec![],
@@ -38,6 +56,25 @@ impl TreeSitterLs {
         // before didOpen finishes loading the language.
         let load_result = self.language.ensure_language_loaded(&language_name);
         if !load_result.success {
+            self.semantic_request_tracker
+                .finish_request(&uri, request_id);
+            return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+                result_id: None,
+                data: vec![],
+            })));
+        }
+
+        // Early exit check after loading language
+        if !self.semantic_request_tracker.is_active(&uri, request_id) {
+            self.client
+                .log_message(
+                    MessageType::LOG,
+                    format!(
+                        "[SEMANTIC_TOKENS] CANCELLED uri={} req={} (after language load)",
+                        uri, request_id
+                    ),
+                )
+                .await;
             return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                 result_id: None,
                 data: vec![],
@@ -45,15 +82,36 @@ impl TreeSitterLs {
         }
 
         let Some(query) = self.language.get_highlight_query(&language_name) else {
+            self.semantic_request_tracker
+                .finish_request(&uri, request_id);
             return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                 result_id: None,
                 data: vec![],
             })));
         };
 
+        // Early exit check before expensive computation
+        if !self.semantic_request_tracker.is_active(&uri, request_id) {
+            self.client
+                .log_message(
+                    MessageType::LOG,
+                    format!(
+                        "[SEMANTIC_TOKENS] CANCELLED uri={} req={} (before compute)",
+                        uri, request_id
+                    ),
+                )
+                .await;
+            return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+                result_id: None,
+                data: vec![],
+            })));
+        }
+
         // Get document data and compute tokens, then drop the reference
         let result = {
             let Some(doc) = self.documents.get(&uri) else {
+                self.semantic_request_tracker
+                    .finish_request(&uri, request_id);
                 return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                     result_id: None,
                     data: vec![],
@@ -67,20 +125,36 @@ impl TreeSitterLs {
                     // This handles the race condition where semantic tokens are
                     // requested before didOpen finishes parsing.
                     drop(doc); // Release lock before acquiring parser pool
-                    let sync_parse_result = {
-                        let mut pool = self
-                            .parser_pool
-                            .lock()
-                            .recover_poison("semantic_tokens_full sync_parse")
-                            .unwrap();
-                        if let Some(mut parser) = pool.acquire(&language_name) {
-                            let result = parser.parse(&text, None);
-                            pool.release(language_name.clone(), parser);
-                            result
+
+                    // Checkout parser (brief lock)
+                    let parser = {
+                        let mut pool = self.parser_pool.lock().await;
+                        pool.acquire(&language_name)
+                    };
+
+                    let sync_parse_result = if let Some(mut parser) = parser {
+                        let text_clone = text.clone();
+                        let language_name_clone = language_name.clone();
+
+                        // Parse in spawn_blocking to avoid blocking tokio worker thread
+                        let result = tokio::task::spawn_blocking(move || {
+                            let parse_result = parser.parse(&text_clone, None);
+                            (parser, parse_result)
+                        })
+                        .await
+                        .ok();
+
+                        if let Some((parser, parse_result)) = result {
+                            // Return parser to pool (brief lock)
+                            let mut pool = self.parser_pool.lock().await;
+                            pool.release(language_name_clone, parser);
+                            parse_result
                         } else {
                             None
                         }
-                    }; // pool lock released here
+                    } else {
+                        None
+                    };
 
                     match sync_parse_result {
                         Some(tree) => {
@@ -93,6 +167,8 @@ impl TreeSitterLs {
                             tree
                         }
                         None => {
+                            self.semantic_request_tracker
+                                .finish_request(&uri, request_id);
                             return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                                 result_id: None,
                                 data: vec![],
@@ -106,11 +182,7 @@ impl TreeSitterLs {
             let capture_mappings = self.language.get_capture_mappings();
 
             // Use injection-aware handler (works with or without injection support)
-            let mut pool = self
-                .parser_pool
-                .lock()
-                .recover_poison("semantic_tokens_full parser_pool")
-                .unwrap();
+            let mut pool = self.parser_pool.lock().await;
             crate::analysis::handle_semantic_tokens_full(
                 &text,
                 &tree,
@@ -145,12 +217,17 @@ impl TreeSitterLs {
         // Store in dedicated cache for delta requests with result_id validation
         self.semantic_cache.store(uri.clone(), stored_tokens);
 
+        // Finish tracking this request
+        self.semantic_request_tracker
+            .finish_request(&uri, request_id);
+
         self.client
             .log_message(
                 MessageType::LOG,
                 format!(
-                    "[SEMANTIC_TOKENS] DONE uri={} tokens={}",
+                    "[SEMANTIC_TOKENS] DONE uri={} req={} tokens={}",
                     uri,
+                    request_id,
                     lsp_tokens.data.len()
                 ),
             )
@@ -166,7 +243,41 @@ impl TreeSitterLs {
         let uri = params.text_document.uri;
         let previous_result_id = params.previous_result_id;
 
+        // Start tracking this request - supersedes any previous request for this URI
+        let request_id = self.semantic_request_tracker.start_request(&uri);
+
+        self.client
+            .log_message(
+                MessageType::LOG,
+                format!(
+                    "[SEMANTIC_TOKENS_DELTA] START uri={} req={}",
+                    uri, request_id
+                ),
+            )
+            .await;
+
+        // Early exit if request was superseded
+        if !self.semantic_request_tracker.is_active(&uri, request_id) {
+            self.client
+                .log_message(
+                    MessageType::LOG,
+                    format!(
+                        "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={}",
+                        uri, request_id
+                    ),
+                )
+                .await;
+            return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
+                SemanticTokens {
+                    result_id: None,
+                    data: vec![],
+                },
+            )));
+        }
+
         let Some(language_name) = self.get_language_for_document(&uri) else {
+            self.semantic_request_tracker
+                .finish_request(&uri, request_id);
             return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
                 SemanticTokens {
                     result_id: None,
@@ -176,6 +287,8 @@ impl TreeSitterLs {
         };
 
         let Some(query) = self.language.get_highlight_query(&language_name) else {
+            self.semantic_request_tracker
+                .finish_request(&uri, request_id);
             return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
                 SemanticTokens {
                     result_id: None,
@@ -184,9 +297,30 @@ impl TreeSitterLs {
             )));
         };
 
+        // Early exit check before expensive computation
+        if !self.semantic_request_tracker.is_active(&uri, request_id) {
+            self.client
+                .log_message(
+                    MessageType::LOG,
+                    format!(
+                        "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={} (before compute)",
+                        uri, request_id
+                    ),
+                )
+                .await;
+            return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
+                SemanticTokens {
+                    result_id: None,
+                    data: vec![],
+                },
+            )));
+        }
+
         // Get document data and compute delta, then drop the reference
         let result = {
             let Some(doc) = self.documents.get(&uri) else {
+                self.semantic_request_tracker
+                    .finish_request(&uri, request_id);
                 return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
                     SemanticTokens {
                         result_id: None,
@@ -197,6 +331,8 @@ impl TreeSitterLs {
 
             let text = doc.text();
             let Some(tree) = doc.tree() else {
+                self.semantic_request_tracker
+                    .finish_request(&uri, request_id);
                 return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
                     SemanticTokens {
                         result_id: None,
@@ -218,11 +354,7 @@ impl TreeSitterLs {
             let capture_mappings = self.language.get_capture_mappings();
 
             // Use injection-aware handler (works with or without injection support)
-            let mut pool = self
-                .parser_pool
-                .lock()
-                .recover_poison("semantic_tokens_full_delta parser_pool")
-                .unwrap();
+            let mut pool = self.parser_pool.lock().await;
 
             // Incremental Tokenization Path
             // ==============================
@@ -352,6 +484,20 @@ impl TreeSitterLs {
             )
         });
 
+        // Finish tracking this request
+        self.semantic_request_tracker
+            .finish_request(&uri, request_id);
+
+        self.client
+            .log_message(
+                MessageType::LOG,
+                format!(
+                    "[SEMANTIC_TOKENS_DELTA] DONE uri={} req={}",
+                    uri, request_id
+                ),
+            )
+            .await;
+
         match domain_result {
             tower_lsp::lsp_types::SemanticTokensFullDeltaResult::Tokens(tokens) => {
                 let mut tokens_with_id = tokens;
@@ -408,11 +554,7 @@ impl TreeSitterLs {
         let capture_mappings = self.language.get_capture_mappings();
 
         // Use injection-aware handler (works with or without injection support)
-        let mut pool = self
-            .parser_pool
-            .lock()
-            .recover_poison("semantic_tokens_range parser_pool")
-            .unwrap();
+        let mut pool = self.parser_pool.lock().await;
         let result = crate::analysis::handle_semantic_tokens_range(
             text,
             tree,
