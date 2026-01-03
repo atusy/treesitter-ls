@@ -75,6 +75,8 @@ pub struct LanguageServerConnection {
     document_version: Option<i32>,
     /// Connection info with virtual file path for workspace operations
     pub connection_info: Option<ConnectionInfo>,
+    /// Track whether the language server has been initialized (received initialized notification)
+    pub(crate) initialized: bool,
 }
 
 impl LanguageServerConnection {
@@ -154,6 +156,7 @@ impl LanguageServerConnection {
             temp_dir: Some(temp_dir),
             document_version: None,
             connection_info: Some(connection_info),
+            initialized: false,
         };
 
         // Build initialize params, including initializationOptions from config if provided
@@ -1374,6 +1377,30 @@ fn main() {
 
         assert_eq!(result_with_notifs.notifications.len(), 1);
         assert_eq!(result_with_notifs.notifications[0], notification);
+    }
+
+    #[test]
+    fn language_server_connection_has_initialized_flag_defaulting_to_false() {
+        // PBI-162 Subtask 1: LanguageServerConnection must have an initialized flag
+        // that defaults to false before the initialized notification is sent.
+
+        if !check_rust_analyzer_available() {
+            return;
+        }
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // After spawning, the connection should have initialized=false
+        // since we haven't sent the initialized notification yet
+        let conn = LanguageServerConnection::spawn(&config).unwrap();
+
+        // The initialized field should be accessible and false by default
+        assert!(!conn.initialized, "initialized flag should default to false after spawn");
     }
 
     #[test]
