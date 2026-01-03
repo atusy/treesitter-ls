@@ -40,7 +40,7 @@ const scrum: ScrumDashboard = {
     number: 131,
     pbi_id: "PBI-162",
     goal: "Track initialization state per bridged language server to prevent protocol errors during initialization window",
-    status: "in_progress" as SprintStatus,
+    status: "review" as SprintStatus,
     subtasks: [
       {
         test: "Add unit test verifying LanguageServerConnection has initialized flag field",
