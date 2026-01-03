@@ -114,10 +114,16 @@ const scrum: ScrumDashboard = {
       },
       {
         test: "Add unit test verifying TokioAsyncBridgeConnection sets initialized=true after initialized notification sent",
-        implementation: "Set initialized flag to true in spawn_and_initialize after sending initialized notification using AtomicBool::store",
+        implementation: "Set initialized flag to true in tokio_async_pool spawn_and_initialize after sending initialized notification using AtomicBool::store, and allow initialize request in send_request guard",
         type: "behavioral" as SubtaskType,
-        status: "pending" as SubtaskStatus,
-        commits: [],
+        status: "completed" as SubtaskStatus,
+        commits: [
+          {
+            hash: "6d7d14f",
+            message: "feat(bridge): set initialized flag in async pool after initialized notification",
+            phase: "green" as CommitPhase,
+          },
+        ],
         notes: ["AC3: Set flag after initialized notification sent - async implementation"],
       },
       {
