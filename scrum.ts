@@ -46,8 +46,14 @@ const scrum: ScrumDashboard = {
         test: "Add unit test verifying LanguageServerConnection has initialized flag field",
         implementation: "Add initialized: bool field to LanguageServerConnection struct, initialize to false in new()",
         type: "behavioral" as SubtaskType,
-        status: "pending" as SubtaskStatus,
-        commits: [],
+        status: "completed" as SubtaskStatus,
+        commits: [
+          {
+            hash: "540c165",
+            message: "feat(bridge): add initialized flag to LanguageServerConnection",
+            phase: "green" as CommitPhase,
+          },
+        ],
         notes: ["AC1: Add initialized flag to connection structs - sync implementation"],
       },
       {
