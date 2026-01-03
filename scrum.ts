@@ -85,12 +85,18 @@ const scrum: ScrumDashboard = {
         notes: ["AC2: Guard request methods to return None when not initialized - sync implementation"],
       },
       {
-        test: "Add unit test verifying TokioAsyncBridgeConnection request methods return None when initialized=false",
-        implementation: "Add initialized flag guards to goto_definition, hover, completion, signature_help methods in TokioAsyncBridgeConnection",
+        test: "Add unit test verifying TokioAsyncBridgeConnection send_request method returns error when initialized=false",
+        implementation: "Add initialized flag guard to send_request method in TokioAsyncBridgeConnection to return error when not initialized",
         type: "behavioral" as SubtaskType,
-        status: "pending" as SubtaskStatus,
-        commits: [],
-        notes: ["AC2: Guard request methods to return None when not initialized - async implementation"],
+        status: "completed" as SubtaskStatus,
+        commits: [
+          {
+            hash: "45c2448",
+            message: "feat(bridge): guard TokioAsyncBridgeConnection send_request when not initialized",
+            phase: "green" as CommitPhase,
+          },
+        ],
+        notes: ["AC2: Guard request methods to return error when not initialized - async implementation"],
       },
       {
         test: "Add unit test verifying LanguageServerConnection sets initialized=true after initialized notification sent",
