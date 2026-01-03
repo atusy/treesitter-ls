@@ -825,4 +825,232 @@ mod tests {
 
         assert_eq!(result, None);
     }
+
+    // Tests for load_unified_queries
+
+    #[test]
+    fn test_load_unified_queries_with_explicit_kind() {
+        use crate::config::settings::QueryItem;
+        use std::fs;
+        use std::io::Write;
+        use tempfile::TempDir;
+
+        let coordinator = LanguageCoordinator::new();
+        coordinator.register_language_for_test("rust", tree_sitter_rust::LANGUAGE.into());
+
+        // Create a temporary query file with valid highlights content
+        let temp_dir = TempDir::new().unwrap();
+        let query_path = temp_dir.path().join("my_highlights.scm");
+        let mut file = fs::File::create(&query_path).unwrap();
+        writeln!(file, "(identifier) @variable").unwrap();
+
+        // Create QueryItem with explicit kind
+        let queries = vec![QueryItem {
+            path: query_path.to_str().unwrap().to_string(),
+            kind: Some(QueryKind::Highlights),
+        }];
+
+        // Get the language
+        let language = coordinator
+            .language_registry
+            .get("rust")
+            .expect("Language should be registered");
+
+        // Load queries
+        let events = coordinator.load_unified_queries("rust", &queries, &language);
+
+        // Should have one info event for successful load
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0],
+            LanguageEvent::Log {
+                level: LanguageLogLevel::Info,
+                ..
+            }
+        ));
+
+        // Verify the query was actually loaded
+        assert!(
+            coordinator.get_highlight_query("rust").is_some(),
+            "Highlight query should be loaded"
+        );
+    }
+
+    #[test]
+    fn test_load_unified_queries_with_filename_inference() {
+        use crate::config::settings::QueryItem;
+        use std::fs;
+        use std::io::Write;
+        use tempfile::TempDir;
+
+        let coordinator = LanguageCoordinator::new();
+        coordinator.register_language_for_test("rust", tree_sitter_rust::LANGUAGE.into());
+
+        // Create a temporary query file with the exact filename "highlights.scm"
+        let temp_dir = TempDir::new().unwrap();
+        let query_path = temp_dir.path().join("highlights.scm");
+        let mut file = fs::File::create(&query_path).unwrap();
+        writeln!(file, "(identifier) @variable").unwrap();
+
+        // Create QueryItem WITHOUT explicit kind - should infer from filename
+        let queries = vec![QueryItem {
+            path: query_path.to_str().unwrap().to_string(),
+            kind: None, // No explicit kind - will be inferred
+        }];
+
+        // Get the language
+        let language = coordinator
+            .language_registry
+            .get("rust")
+            .expect("Language should be registered");
+
+        // Load queries
+        let events = coordinator.load_unified_queries("rust", &queries, &language);
+
+        // Should have one info event for successful load
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0],
+            LanguageEvent::Log {
+                level: LanguageLogLevel::Info,
+                ..
+            }
+        ));
+
+        // Verify the query was actually loaded via inference
+        assert!(
+            coordinator.get_highlight_query("rust").is_some(),
+            "Highlight query should be loaded via filename inference"
+        );
+    }
+
+    #[test]
+    fn test_load_unified_queries_unknown_patterns_skipped() {
+        use crate::config::settings::QueryItem;
+        use std::fs;
+        use std::io::Write;
+        use tempfile::TempDir;
+
+        let coordinator = LanguageCoordinator::new();
+        coordinator.register_language_for_test("rust", tree_sitter_rust::LANGUAGE.into());
+
+        // Create a temporary query file with a non-standard filename
+        let temp_dir = TempDir::new().unwrap();
+        let query_path = temp_dir.path().join("custom.scm");
+        let mut file = fs::File::create(&query_path).unwrap();
+        writeln!(file, "(identifier) @variable").unwrap();
+
+        // Create QueryItem with unknown pattern (no explicit kind, non-standard filename)
+        let queries = vec![QueryItem {
+            path: query_path.to_str().unwrap().to_string(),
+            kind: None, // No explicit kind and filename won't match inference patterns
+        }];
+
+        // Get the language
+        let language = coordinator
+            .language_registry
+            .get("rust")
+            .expect("Language should be registered");
+
+        // Load queries - should silently skip the unknown pattern
+        let events = coordinator.load_unified_queries("rust", &queries, &language);
+
+        // Should have NO events because the unknown pattern was silently skipped
+        assert_eq!(
+            events.len(),
+            0,
+            "Unknown patterns should be silently skipped with no events"
+        );
+
+        // Verify no queries were loaded
+        assert!(
+            coordinator.get_highlight_query("rust").is_none(),
+            "No highlight query should be loaded for unknown pattern"
+        );
+        assert!(
+            coordinator.get_locals_query("rust").is_none(),
+            "No locals query should be loaded for unknown pattern"
+        );
+    }
+
+    #[test]
+    fn test_load_unified_queries_grouped_by_type() {
+        use crate::config::settings::QueryItem;
+        use std::fs;
+        use std::io::Write;
+        use tempfile::TempDir;
+
+        let coordinator = LanguageCoordinator::new();
+        coordinator.register_language_for_test("rust", tree_sitter_rust::LANGUAGE.into());
+
+        // Create temporary query files for different types
+        let temp_dir = TempDir::new().unwrap();
+
+        // Highlights query
+        let highlights_path = temp_dir.path().join("highlights.scm");
+        let mut highlights_file = fs::File::create(&highlights_path).unwrap();
+        writeln!(highlights_file, "(identifier) @variable").unwrap();
+
+        // Locals query
+        let locals_path = temp_dir.path().join("locals.scm");
+        let mut locals_file = fs::File::create(&locals_path).unwrap();
+        writeln!(locals_file, "(identifier) @local.definition").unwrap();
+
+        // Injections query
+        let injections_path = temp_dir.path().join("injections.scm");
+        let mut injections_file = fs::File::create(&injections_path).unwrap();
+        writeln!(injections_file, "; empty injection query").unwrap();
+
+        // Create mixed QueryItems - some with explicit kind, some with inference
+        let queries = vec![
+            QueryItem {
+                path: highlights_path.to_str().unwrap().to_string(),
+                kind: None, // Will be inferred as Highlights
+            },
+            QueryItem {
+                path: locals_path.to_str().unwrap().to_string(),
+                kind: Some(QueryKind::Locals), // Explicit kind
+            },
+            QueryItem {
+                path: injections_path.to_str().unwrap().to_string(),
+                kind: None, // Will be inferred as Injections
+            },
+        ];
+
+        // Get the language
+        let language = coordinator
+            .language_registry
+            .get("rust")
+            .expect("Language should be registered");
+
+        // Load queries
+        let events = coordinator.load_unified_queries("rust", &queries, &language);
+
+        // Should have 3 info events (one for each query type)
+        assert_eq!(events.len(), 3, "Should have 3 events for 3 query types");
+        for event in &events {
+            assert!(
+                matches!(
+                    event,
+                    LanguageEvent::Log {
+                        level: LanguageLogLevel::Info,
+                        ..
+                    }
+                ),
+                "All events should be Info level"
+            );
+        }
+
+        // Verify each query type was loaded separately
+        assert!(
+            coordinator.get_highlight_query("rust").is_some(),
+            "Highlight query should be loaded"
+        );
+        assert!(
+            coordinator.get_locals_query("rust").is_some(),
+            "Locals query should be loaded"
+        );
+        // Note: We can't directly check injection queries through the coordinator API
+        // but the events confirm they were processed
+    }
 }
