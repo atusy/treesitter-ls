@@ -53,14 +53,16 @@ const scrum: ScrumDashboard = {
   ],
   // Retrospectives (recent 2)
   retrospectives: [
+    { sprint: 131, improvements: [
+      { action: "Document LSP initialization protocol pattern in ADR-0006 to prevent future spec violations", timing: "immediate", status: "completed", outcome: "Added LSP initialization sequence documentation to ADR-0006 explaining guard pattern for requests and notifications" },
+      { action: "Add LSP spec review checklist to Backlog Refinement process for bridge features", timing: "sprint", status: "active", outcome: null },
+      { action: "Create acceptance criteria template for bridge features: 'Guard ALL LSP communication (requests + notifications)'", timing: "sprint", status: "active", outcome: null },
+      { action: "Build comprehensive LSP specification compliance test suite validating initialization sequence", timing: "product", status: "active", outcome: null },
+      { action: "Add automated LSP protocol validator to catch spec violations during development", timing: "product", status: "active", outcome: null },
+    ] },
     { sprint: 130, improvements: [
       { action: "Update documentation alongside implementation, not as separate PBI - add to Definition of Done", timing: "immediate", status: "completed", outcome: "Added documentation update check to Definition of Done" },
       { action: "Add ADR verification to Definition of Done to ensure architectural decisions are documented", timing: "immediate", status: "completed", outcome: "Added ADR verification check to Definition of Done" },
-    ] },
-    { sprint: 129, improvements: [
-      { action: "Consider creating dedicated wildcard module for related constants to improve organization", timing: "product", status: "active", outcome: null },
-      { action: "Add similar named constants for other magic strings in codebase to prevent typos", timing: "product", status: "active", outcome: null },
-      { action: "Document structural refactoring pattern: pub(crate) visibility follows YAGNI principle when no external usage exists", timing: "immediate", status: "active", outcome: null },
     ] },
   ],
 };
