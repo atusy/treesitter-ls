@@ -91,8 +91,14 @@ const scrum: ScrumDashboard = {
         test: "Code review: all async bridge methods (hover, completion, signature_help, definition) have paired START/DONE logging",
         implementation: "Add START/DONE logging to hover, completion, definition (signature_help already has it)",
         type: "structural",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "54105cd",
+            message: "feat(bridge): add START/DONE logging to hover, completion, goto_definition",
+            phase: "green",
+          },
+        ],
         notes: [
           "Current: Only signature_help has START/DONE logging",
           "Target: All 4 methods log [REQUEST] method_name START/DONE with key and host_uri",
