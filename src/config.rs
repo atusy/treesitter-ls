@@ -1,11 +1,147 @@
 pub mod defaults;
 pub mod settings;
+pub(crate) mod user;
 
 pub use settings::{
-    CaptureMapping, CaptureMappings, LanguageConfig, LanguageSettings, QueryTypeMappings,
-    TreeSitterSettings, WorkspaceSettings,
+    BridgeServerConfig, CaptureMapping, CaptureMappings, LanguageConfig, LanguageSettings,
+    QueryItem, QueryKind, QueryTypeMappings, TreeSitterSettings, WorkspaceSettings,
 };
 use std::collections::HashMap;
+pub(crate) use user::load_user_config;
+
+/// Wildcard key for default configurations in HashMap-based settings.
+/// Used in capture_mappings, languages, and language_servers for fallback values.
+pub(crate) const WILDCARD_KEY: &str = "_";
+
+/// Deep merge two optional bridge HashMaps.
+/// Specific values override wildcard values for the same key.
+fn merge_bridge_maps(
+    wildcard: &Option<HashMap<String, settings::BridgeLanguageConfig>>,
+    specific: &Option<HashMap<String, settings::BridgeLanguageConfig>>,
+) -> Option<HashMap<String, settings::BridgeLanguageConfig>> {
+    match (wildcard, specific) {
+        (None, None) => None,
+        (Some(wb), None) => Some(wb.clone()),
+        (None, Some(sb)) => Some(sb.clone()),
+        (Some(wb), Some(sb)) => {
+            let mut merged = wb.clone();
+            merged.extend(sb.clone());
+            Some(merged)
+        }
+    }
+}
+
+/// Deep merge two JSON values (ADR-0010).
+///
+/// For objects: recursively merge keys, with `overlay` values taking precedence.
+/// For non-objects: `overlay` completely replaces `base`.
+///
+/// This implements the deep merge semantics required for initialization_options:
+/// - If both are objects, merge their keys recursively
+/// - If either is not an object, overlay wins (including null values)
+fn deep_merge_json(base: &serde_json::Value, overlay: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+
+    match (base, overlay) {
+        (Value::Object(base_map), Value::Object(overlay_map)) => {
+            let mut merged = base_map.clone();
+            for (key, overlay_value) in overlay_map {
+                merged
+                    .entry(key.clone())
+                    .and_modify(|base_value| {
+                        *base_value = deep_merge_json(base_value, overlay_value);
+                    })
+                    .or_insert_with(|| overlay_value.clone());
+            }
+            Value::Object(merged)
+        }
+        // For non-objects, overlay completely replaces base
+        _ => overlay.clone(),
+    }
+}
+
+/// Resolve a language server key from a map with wildcard fallback and merging.
+///
+/// Implements ADR-0011 wildcard config inheritance for languageServers HashMap:
+/// - If both wildcard ("_") and specific key exist: merge them (specific overrides wildcard)
+/// - If only wildcard exists: return wildcard
+/// - If only specific key exists: return specific key
+/// - If neither exists: return None
+///
+/// The merge creates a new BridgeServerConfig where specific values override wildcard values.
+pub(crate) fn resolve_language_server_with_wildcard(
+    map: &HashMap<String, settings::BridgeServerConfig>,
+    key: &str,
+) -> Option<settings::BridgeServerConfig> {
+    let wildcard = map.get(WILDCARD_KEY);
+    let specific = map.get(key);
+
+    match (wildcard, specific) {
+        (Some(w), Some(s)) => {
+            // Merge: start with wildcard, override with specific
+            Some(settings::BridgeServerConfig {
+                // For Vec fields: use specific if non-empty, else wildcard
+                cmd: if s.cmd.is_empty() {
+                    w.cmd.clone()
+                } else {
+                    s.cmd.clone()
+                },
+                languages: if s.languages.is_empty() {
+                    w.languages.clone()
+                } else {
+                    s.languages.clone()
+                },
+                // For JSON Option fields: deep merge (ADR-0010)
+                initialization_options: match (&w.initialization_options, &s.initialization_options)
+                {
+                    (Some(w_opts), Some(s_opts)) => Some(deep_merge_json(w_opts, s_opts)),
+                    (Some(w_opts), None) => Some(w_opts.clone()),
+                    (None, Some(s_opts)) => Some(s_opts.clone()),
+                    (None, None) => None,
+                },
+                workspace_type: s.workspace_type.or(w.workspace_type),
+            })
+        }
+        (Some(w), None) => Some(w.clone()),
+        (None, Some(s)) => Some(s.clone()),
+        (None, None) => None,
+    }
+}
+
+/// Resolve a LanguageSettings key from a map with wildcard fallback and merging.
+///
+/// Implements ADR-0011 wildcard config inheritance for WorkspaceSettings.languages HashMap:
+/// - If both wildcard ("_") and specific key exist: merge them (specific overrides wildcard)
+/// - If only wildcard exists: return wildcard
+/// - If only specific key exists: return specific key
+/// - If neither exists: return None
+///
+/// The merge creates a new LanguageSettings where specific values override wildcard values.
+/// This is used by get_bridge_config_for_language to look up host language settings.
+pub(crate) fn resolve_language_settings_with_wildcard(
+    map: &HashMap<String, LanguageSettings>,
+    key: &str,
+) -> Option<LanguageSettings> {
+    let wildcard = map.get(WILDCARD_KEY);
+    let specific = map.get(key);
+
+    match (wildcard, specific) {
+        (Some(w), Some(s)) => {
+            // Merge: start with wildcard, override with specific
+            Some(LanguageSettings {
+                parser: s.parser.clone().or_else(|| w.parser.clone()),
+                // For Option<Vec> fields: use specific if Some, else wildcard
+                // This allows specific to override wildcard with Some([]) (explicitly empty)
+                queries: s.queries.clone().or_else(|| w.queries.clone()),
+                // Deep merge bridge HashMaps: wildcard + specific
+                bridge: merge_bridge_maps(&w.bridge, &s.bridge),
+            })
+        }
+        (Some(w), None) => Some(w.clone()),
+        (None, Some(s)) => Some(s.clone()),
+        (None, None) => None,
+    }
+}
 
 /// Returns the default search paths for parsers and queries.
 /// Uses the platform-specific data directory (via `dirs` crate):
@@ -15,10 +151,17 @@ use std::collections::HashMap;
 ///
 /// Note: Returns the base directory only. The resolver functions append
 /// "parser/" or "queries/" subdirectories as needed.
-pub fn default_search_paths() -> Vec<String> {
+pub(crate) fn default_search_paths() -> Vec<String> {
     crate::install::default_data_dir()
         .map(|d| vec![d.to_string_lossy().to_string()])
         .unwrap_or_default()
+}
+
+/// Merge multiple TreeSitterSettings configs in order.
+/// Later configs in the slice have higher precedence (override earlier ones).
+/// Use this for layered config: `merge_all(&[defaults, user, project, session])`
+pub(crate) fn merge_all(configs: &[Option<TreeSitterSettings>]) -> Option<TreeSitterSettings> {
+    configs.iter().cloned().reduce(merge_settings).flatten()
 }
 
 /// Merge two TreeSitterSettings, preferring values from `primary` over `fallback`
@@ -47,8 +190,11 @@ pub fn merge_settings(
                 // Prefer primary auto_install, fall back to fallback
                 auto_install: primary.auto_install.or(fallback.auto_install),
 
-                // Prefer primary language_servers, fall back to fallback
-                language_servers: primary.language_servers.or(fallback.language_servers),
+                // Deep merge language_servers HashMap
+                language_servers: merge_language_servers(
+                    fallback.language_servers,
+                    primary.language_servers,
+                ),
             };
             Some(merged)
         }
@@ -57,37 +203,98 @@ pub fn merge_settings(
 
 impl From<&LanguageConfig> for LanguageSettings {
     fn from(config: &LanguageConfig) -> Self {
-        let highlights = config.highlights.clone().unwrap_or_default();
-        let locals = config.locals.clone();
-        let injections = config.injections.clone();
-        let bridge = config.bridge.clone();
+        // Convert from LanguageConfig to LanguageSettings
+        // Priority: unified queries field > legacy separate fields
+        let queries = if let Some(ref q) = config.queries {
+            Some(q.clone())
+        } else if config.highlights.is_some()
+            || config.locals.is_some()
+            || config.injections.is_some()
+        {
+            // Convert legacy fields to unified queries format
+            let mut queries = Vec::new();
+            if let Some(ref highlights) = config.highlights {
+                for path in highlights {
+                    queries.push(settings::QueryItem {
+                        path: path.clone(),
+                        kind: Some(settings::QueryKind::Highlights),
+                    });
+                }
+            }
+            if let Some(ref locals) = config.locals {
+                for path in locals {
+                    queries.push(settings::QueryItem {
+                        path: path.clone(),
+                        kind: Some(settings::QueryKind::Locals),
+                    });
+                }
+            }
+            if let Some(ref injections) = config.injections {
+                for path in injections {
+                    queries.push(settings::QueryItem {
+                        path: path.clone(),
+                        kind: Some(settings::QueryKind::Injections),
+                    });
+                }
+            }
+            Some(queries)
+        } else {
+            None
+        };
 
-        LanguageSettings::with_bridge(
-            config.library.clone(),
-            highlights,
-            locals,
-            injections,
-            bridge,
-        )
+        LanguageSettings::with_bridge(config.library.clone(), queries, config.bridge.clone())
     }
 }
 
 impl From<&LanguageSettings> for LanguageConfig {
     fn from(settings: &LanguageSettings) -> Self {
-        let highlights = if settings.highlights.is_empty() {
-            None
-        } else {
-            Some(settings.highlights.clone())
-        };
-        let locals = settings.locals.clone();
-        let injections = settings.injections.clone();
+        // Convert unified queries to separate fields for LanguageConfig
+        let mut highlights: Vec<String> = Vec::new();
+        let mut locals: Vec<String> = Vec::new();
+        let mut injections: Vec<String> = Vec::new();
+
+        if let Some(ref queries) = settings.queries {
+            for query in queries {
+                // Use explicit kind, or infer from filename, or skip if unrecognized
+                let effective_kind = query
+                    .kind
+                    .or_else(|| settings::infer_query_kind(&query.path));
+
+                match effective_kind {
+                    Some(settings::QueryKind::Highlights) => {
+                        highlights.push(query.path.clone());
+                    }
+                    Some(settings::QueryKind::Locals) => {
+                        locals.push(query.path.clone());
+                    }
+                    Some(settings::QueryKind::Injections) => {
+                        injections.push(query.path.clone());
+                    }
+                    None => {
+                        // Skip files with unrecognized patterns (no kind specified and cannot infer)
+                    }
+                }
+            }
+        }
 
         LanguageConfig {
-            library: settings.library.clone(),
-            // filetypes removed from LanguageConfig (PBI-061)
-            highlights,
-            locals,
-            injections,
+            library: settings.parser.clone(),
+            queries: settings.queries.clone(),
+            highlights: if highlights.is_empty() {
+                None
+            } else {
+                Some(highlights)
+            },
+            locals: if locals.is_empty() {
+                None
+            } else {
+                Some(locals)
+            },
+            injections: if injections.is_empty() {
+                None
+            } else {
+                Some(injections)
+            },
             bridge: settings.bridge.clone(),
         }
     }
@@ -182,40 +389,211 @@ impl From<WorkspaceSettings> for TreeSitterSettings {
 }
 
 fn merge_languages(
-    mut fallback: HashMap<String, LanguageConfig>,
-    primary: HashMap<String, LanguageConfig>,
+    mut base: HashMap<String, LanguageConfig>,
+    overlay: HashMap<String, LanguageConfig>,
 ) -> HashMap<String, LanguageConfig> {
-    // Override fallback entries with primary entries
-    for (key, value) in primary {
-        fallback.insert(key, value);
+    // Deep merge: overlay values override base values for the same key
+    for (key, overlay_config) in overlay {
+        base.entry(key)
+            .and_modify(|base_config| {
+                // For each field: use overlay if Some, otherwise keep base
+                base_config.library = overlay_config
+                    .library
+                    .clone()
+                    .or_else(|| base_config.library.clone());
+                base_config.queries = overlay_config
+                    .queries
+                    .clone()
+                    .or_else(|| base_config.queries.clone());
+                base_config.highlights = overlay_config
+                    .highlights
+                    .clone()
+                    .or_else(|| base_config.highlights.clone());
+                base_config.locals = overlay_config
+                    .locals
+                    .clone()
+                    .or_else(|| base_config.locals.clone());
+                base_config.injections = overlay_config
+                    .injections
+                    .clone()
+                    .or_else(|| base_config.injections.clone());
+                base_config.bridge = overlay_config
+                    .bridge
+                    .clone()
+                    .or_else(|| base_config.bridge.clone());
+            })
+            .or_insert(overlay_config);
     }
-    fallback
+    base
 }
 
-fn merge_capture_mappings(
-    mut fallback: CaptureMappings,
-    primary: CaptureMappings,
-) -> CaptureMappings {
-    for (lang, primary_mappings) in primary {
-        fallback
-            .entry(lang)
-            .and_modify(|fallback_mappings| {
-                // Merge highlights
-                for (k, v) in primary_mappings.highlights.clone() {
-                    fallback_mappings.highlights.insert(k, v);
+fn merge_language_servers(
+    base: Option<HashMap<String, settings::BridgeServerConfig>>,
+    overlay: Option<HashMap<String, settings::BridgeServerConfig>>,
+) -> Option<HashMap<String, settings::BridgeServerConfig>> {
+    match (base, overlay) {
+        (None, None) => None,
+        (Some(servers), None) | (None, Some(servers)) => Some(servers),
+        (Some(mut base_servers), Some(overlay_servers)) => {
+            // Deep merge: overlay values override base values for the same key
+            for (key, overlay_config) in overlay_servers {
+                base_servers
+                    .entry(key)
+                    .and_modify(|base_config| {
+                        // For Vec fields: use overlay if non-empty, otherwise keep base
+                        if !overlay_config.cmd.is_empty() {
+                            base_config.cmd = overlay_config.cmd.clone();
+                        }
+                        if !overlay_config.languages.is_empty() {
+                            base_config.languages = overlay_config.languages.clone();
+                        }
+                        // For JSON Option fields: deep merge (ADR-0010)
+                        base_config.initialization_options = match (
+                            &base_config.initialization_options,
+                            &overlay_config.initialization_options,
+                        ) {
+                            (Some(base_opts), Some(overlay_opts)) => {
+                                Some(deep_merge_json(base_opts, overlay_opts))
+                            }
+                            (Some(base_opts), None) => Some(base_opts.clone()),
+                            (None, Some(overlay_opts)) => Some(overlay_opts.clone()),
+                            (None, None) => None,
+                        };
+                        base_config.workspace_type =
+                            overlay_config.workspace_type.or(base_config.workspace_type);
+                    })
+                    .or_insert(overlay_config);
+            }
+            Some(base_servers)
+        }
+    }
+}
+
+fn merge_capture_mappings(mut base: CaptureMappings, overlay: CaptureMappings) -> CaptureMappings {
+    // Deep merge: overlay values override base values for the same key
+    for (lang, overlay_mappings) in overlay {
+        base.entry(lang)
+            .and_modify(|base_mappings| {
+                // Merge each mapping type: overlay entries override base entries
+                for (k, v) in overlay_mappings.highlights.clone() {
+                    base_mappings.highlights.insert(k, v);
                 }
-                // Merge locals
-                for (k, v) in primary_mappings.locals.clone() {
-                    fallback_mappings.locals.insert(k, v);
+                for (k, v) in overlay_mappings.locals.clone() {
+                    base_mappings.locals.insert(k, v);
                 }
-                // Merge folds
-                for (k, v) in primary_mappings.folds.clone() {
-                    fallback_mappings.folds.insert(k, v);
+                for (k, v) in overlay_mappings.folds.clone() {
+                    base_mappings.folds.insert(k, v);
                 }
             })
-            .or_insert(primary_mappings);
+            .or_insert(overlay_mappings);
     }
-    fallback
+    base
+}
+
+/// Resolve a key from a map with wildcard fallback and merging (test helper).
+///
+/// Implements ADR-0011 wildcard config inheritance:
+/// - If both wildcard ("_") and specific key exist: merge them (specific overrides wildcard)
+/// - If only wildcard exists: return wildcard
+/// - If only specific key exists: return specific key
+/// - If neither exists: return None
+///
+/// The merge creates a new QueryTypeMappings where specific values override wildcard values.
+#[cfg(test)]
+pub(crate) fn resolve_with_wildcard(map: &CaptureMappings, key: &str) -> Option<QueryTypeMappings> {
+    let wildcard = map.get(WILDCARD_KEY);
+    let specific = map.get(key);
+
+    match (wildcard, specific) {
+        (Some(w), Some(s)) => {
+            // Merge: start with wildcard, override with specific
+            let mut merged_highlights = w.highlights.clone();
+            for (k, v) in &s.highlights {
+                merged_highlights.insert(k.clone(), v.clone());
+            }
+
+            let mut merged_locals = w.locals.clone();
+            for (k, v) in &s.locals {
+                merged_locals.insert(k.clone(), v.clone());
+            }
+
+            let mut merged_folds = w.folds.clone();
+            for (k, v) in &s.folds {
+                merged_folds.insert(k.clone(), v.clone());
+            }
+
+            Some(QueryTypeMappings {
+                highlights: merged_highlights,
+                locals: merged_locals,
+                folds: merged_folds,
+            })
+        }
+        (Some(w), None) => Some(w.clone()),
+        (None, Some(s)) => Some(s.clone()),
+        (None, None) => None,
+    }
+}
+
+/// Resolve a language key from a map with wildcard fallback and merging (test helper).
+///
+/// Implements ADR-0011 wildcard config inheritance for languages HashMap:
+/// - If both wildcard ("_") and specific key exist: merge them (specific overrides wildcard)
+/// - If only wildcard exists: return wildcard
+/// - If only specific key exists: return specific key
+/// - If neither exists: return None
+///
+/// The merge creates a new LanguageConfig where specific values override wildcard values.
+#[cfg(test)]
+pub(crate) fn resolve_language_with_wildcard(
+    map: &HashMap<String, LanguageConfig>,
+    key: &str,
+) -> Option<LanguageConfig> {
+    let wildcard = map.get(WILDCARD_KEY);
+    let specific = map.get(key);
+
+    match (wildcard, specific) {
+        (Some(w), Some(s)) => {
+            // Merge: start with wildcard, override with specific
+            Some(LanguageConfig {
+                library: s.library.clone().or_else(|| w.library.clone()),
+                queries: s.queries.clone().or_else(|| w.queries.clone()),
+                highlights: s.highlights.clone().or_else(|| w.highlights.clone()),
+                locals: s.locals.clone().or_else(|| w.locals.clone()),
+                injections: s.injections.clone().or_else(|| w.injections.clone()),
+                // Deep merge bridge HashMaps: wildcard + specific
+                bridge: merge_bridge_maps(&w.bridge, &s.bridge),
+            })
+        }
+        (Some(w), None) => Some(w.clone()),
+        (None, Some(s)) => Some(s.clone()),
+        (None, None) => None,
+    }
+}
+
+/// Resolve a bridge language key from a map with wildcard fallback (test helper).
+///
+/// Implements ADR-0011 wildcard config inheritance for bridge HashMap:
+/// - If both wildcard ("_") and specific key exist: return specific (no merge needed for single-field struct)
+/// - If only wildcard exists: return wildcard
+/// - If only specific key exists: return specific key
+/// - If neither exists: return None
+///
+/// Note: BridgeLanguageConfig only has `enabled` field, so no merging is needed.
+#[cfg(test)]
+pub(crate) fn resolve_bridge_with_wildcard(
+    map: &HashMap<String, settings::BridgeLanguageConfig>,
+    key: &str,
+) -> Option<settings::BridgeLanguageConfig> {
+    let wildcard = map.get(WILDCARD_KEY);
+    let specific = map.get(key);
+
+    match (wildcard, specific) {
+        // Specific overrides wildcard entirely (no merge for single-field struct)
+        (Some(_), Some(s)) => Some(s.clone()),
+        (Some(w), None) => Some(w.clone()),
+        (None, Some(s)) => Some(s.clone()),
+        (None, None) => None,
+    }
 }
 
 #[cfg(test)]
@@ -267,6 +645,7 @@ mod tests {
             "rust".to_string(),
             LanguageConfig {
                 library: Some("/fallback/rust.so".to_string()),
+                queries: None,
                 highlights: None,
                 locals: None,
                 injections: None,
@@ -287,6 +666,7 @@ mod tests {
             "rust".to_string(),
             LanguageConfig {
                 library: Some("/primary/rust.so".to_string()),
+                queries: None,
                 highlights: None,
                 locals: None,
                 injections: None,
@@ -376,19 +756,19 @@ mod tests {
 
         // Primary should override fallback for same keys
         assert_eq!(
-            result.capture_mappings["_"].highlights["variable.builtin"],
+            result.capture_mappings[WILDCARD_KEY].highlights["variable.builtin"],
             "primary.variable"
         );
 
         // Primary adds new keys
         assert_eq!(
-            result.capture_mappings["_"].highlights["type.builtin"],
+            result.capture_mappings[WILDCARD_KEY].highlights["type.builtin"],
             "primary.type"
         );
 
         // Fallback keys not in primary should remain
         assert_eq!(
-            result.capture_mappings["_"].highlights["function.builtin"],
+            result.capture_mappings[WILDCARD_KEY].highlights["function.builtin"],
             "fallback.function"
         );
     }
@@ -411,11 +791,11 @@ mod tests {
             folds: HashMap::new(),
         };
 
-        capture_mappings.insert("_".to_string(), query_type_mappings);
+        capture_mappings.insert(WILDCARD_KEY.to_string(), query_type_mappings);
 
         // Verify the mapping exists and contains expected values
-        assert!(capture_mappings.contains_key("_"));
-        let wildcard_mappings = capture_mappings.get("_").unwrap();
+        assert!(capture_mappings.contains_key(WILDCARD_KEY));
+        let wildcard_mappings = capture_mappings.get(WILDCARD_KEY).unwrap();
         assert_eq!(
             wildcard_mappings.highlights.get("@module"),
             Some(&"@namespace".to_string())
@@ -590,10 +970,130 @@ mod tests {
         );
     }
 
+    // PBI-150: merge_all() tests for multi-layer config merging
+
+    #[test]
+    fn test_merge_all_empty_slice_returns_none() {
+        // Empty config slice should return None
+        let result = merge_all(&[]);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_merge_all_single_some_returns_it() {
+        // Single Some config should return that config
+        let config = TreeSitterSettings {
+            search_paths: Some(vec!["/path/one".to_string()]),
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: Some(true),
+            language_servers: None,
+        };
+        let result = merge_all(&[Some(config.clone())]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_eq!(result.search_paths, Some(vec!["/path/one".to_string()]));
+        assert_eq!(result.auto_install, Some(true));
+    }
+
+    #[test]
+    fn test_merge_all_scalar_later_wins() {
+        // Later config's scalar values should override earlier ones
+        // Simulates: user config has autoInstall=true, project has autoInstall=false
+        let user_config = TreeSitterSettings {
+            search_paths: Some(vec!["/user/path".to_string()]),
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: Some(true),
+            language_servers: None,
+        };
+        let project_config = TreeSitterSettings {
+            search_paths: Some(vec!["/project/path".to_string()]),
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: Some(false),
+            language_servers: None,
+        };
+
+        let result = merge_all(&[Some(user_config), Some(project_config)]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        // Project's values should win (later overrides earlier)
+        assert_eq!(result.search_paths, Some(vec!["/project/path".to_string()]));
+        assert_eq!(result.auto_install, Some(false));
+    }
+
+    #[test]
+    fn test_merge_all_four_layers() {
+        // Test the full 4-layer merge: defaults < user < project < session
+        let defaults = TreeSitterSettings {
+            search_paths: Some(vec!["/default/path".to_string()]),
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: Some(true),
+            language_servers: None,
+        };
+        let user_config = TreeSitterSettings {
+            search_paths: None, // Not overriding, should inherit from defaults
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: Some(true),
+            language_servers: None,
+        };
+        let project_config = TreeSitterSettings {
+            search_paths: Some(vec!["/project/path".to_string()]),
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: None, // Not overriding, should inherit
+            language_servers: None,
+        };
+        let session_config = TreeSitterSettings {
+            search_paths: None, // Not overriding
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: Some(false), // Session wins
+            language_servers: None,
+        };
+
+        let result = merge_all(&[
+            Some(defaults),
+            Some(user_config),
+            Some(project_config),
+            Some(session_config),
+        ]);
+
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        // search_paths: project wins (later non-None override)
+        assert_eq!(result.search_paths, Some(vec!["/project/path".to_string()]));
+        // auto_install: session wins
+        assert_eq!(result.auto_install, Some(false));
+    }
+
+    #[test]
+    fn test_merge_all_skips_none_configs() {
+        // None configs in the slice should be skipped
+        let config = TreeSitterSettings {
+            search_paths: Some(vec!["/path".to_string()]),
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: Some(true),
+            language_servers: None,
+        };
+
+        let result = merge_all(&[None, Some(config.clone()), None]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_eq!(result.search_paths, Some(vec!["/path".to_string()]));
+    }
+
     #[test]
     fn test_language_settings_from_config_preserves_injections() {
         let config = LanguageConfig {
             library: Some("/path/to/parser.so".to_string()),
+            queries: None,
             highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
             locals: None,
             injections: Some(vec!["/path/to/injections.scm".to_string()]),
@@ -602,13 +1102,1415 @@ mod tests {
 
         let settings: LanguageSettings = LanguageSettings::from(&config);
 
-        // Verify injections is preserved in conversion
-        assert!(
-            settings.injections.is_some(),
-            "Injections should be preserved in conversion"
+        // Verify queries is populated with both highlights and injections
+        assert!(settings.queries.is_some());
+        let queries = settings.queries.as_ref().unwrap();
+        assert_eq!(queries.len(), 2);
+        // First query should be highlights (converted from legacy field)
+        assert_eq!(queries[0].path, "/path/to/highlights.scm");
+        assert_eq!(queries[0].kind, Some(settings::QueryKind::Highlights));
+        // Second query should be injections (converted from legacy field)
+        assert_eq!(queries[1].path, "/path/to/injections.scm");
+        assert_eq!(queries[1].kind, Some(settings::QueryKind::Injections));
+    }
+
+    // PBI-150 Subtask 2: Deep merge for languages HashMap
+
+    #[test]
+    fn test_merge_all_languages_deep_merge() {
+        // Project sets queries field, inherits parser and bridge from user config
+        // This is the key behavior change from shallow to deep merge
+        use settings::BridgeLanguageConfig;
+
+        let mut user_languages = HashMap::new();
+        let mut user_bridge = HashMap::new();
+        user_bridge.insert("rust".to_string(), BridgeLanguageConfig { enabled: true });
+
+        user_languages.insert(
+            "python".to_string(),
+            LanguageConfig {
+                library: Some("/usr/lib/python.so".to_string()),
+                queries: None,
+                highlights: Some(vec!["/usr/share/python/highlights.scm".to_string()]),
+                locals: Some(vec!["/usr/share/python/locals.scm".to_string()]),
+                injections: None,
+                bridge: Some(user_bridge),
+            },
         );
-        let injections = settings.injections.as_ref().unwrap();
-        assert_eq!(injections.len(), 1);
-        assert_eq!(injections[0], "/path/to/injections.scm");
+
+        let user_config = TreeSitterSettings {
+            search_paths: None,
+            languages: user_languages,
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: None,
+        };
+
+        // Project only overrides highlights for python
+        let mut project_languages = HashMap::new();
+        project_languages.insert(
+            "python".to_string(),
+            LanguageConfig {
+                library: None, // Not specified - should inherit from user
+                queries: None,
+                highlights: Some(vec!["./queries/python-highlights.scm".to_string()]),
+                locals: None, // Not specified - should inherit from user
+                injections: None,
+                bridge: None, // Not specified - should inherit from user
+            },
+        );
+
+        let project_config = TreeSitterSettings {
+            search_paths: None,
+            languages: project_languages,
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: None,
+        };
+
+        let result = merge_all(&[Some(user_config), Some(project_config)]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        // Python should exist
+        assert!(result.languages.contains_key("python"));
+        let python = &result.languages["python"];
+
+        // Library: inherited from user (project was None)
+        assert_eq!(python.library, Some("/usr/lib/python.so".to_string()));
+
+        // Highlights: overridden by project
+        assert_eq!(
+            python.highlights,
+            Some(vec!["./queries/python-highlights.scm".to_string()])
+        );
+
+        // Locals: inherited from user (project was None)
+        assert_eq!(
+            python.locals,
+            Some(vec!["/usr/share/python/locals.scm".to_string()])
+        );
+
+        // Bridge: inherited from user (project was None)
+        assert!(python.bridge.is_some());
+        let bridge = python.bridge.as_ref().unwrap();
+        assert!(bridge.get("rust").unwrap().enabled);
+    }
+
+    #[test]
+    fn test_merge_all_languages_adds_new_keys() {
+        // User has python, project adds rust - both should exist
+        let mut user_languages = HashMap::new();
+        user_languages.insert(
+            "python".to_string(),
+            LanguageConfig {
+                library: Some("/usr/lib/python.so".to_string()),
+                queries: None,
+                highlights: None,
+                locals: None,
+                injections: None,
+                bridge: None,
+            },
+        );
+
+        let user_config = TreeSitterSettings {
+            search_paths: None,
+            languages: user_languages,
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: None,
+        };
+
+        let mut project_languages = HashMap::new();
+        project_languages.insert(
+            "rust".to_string(),
+            LanguageConfig {
+                library: Some("/project/rust.so".to_string()),
+                queries: None,
+                highlights: None,
+                locals: None,
+                injections: None,
+                bridge: None,
+            },
+        );
+
+        let project_config = TreeSitterSettings {
+            search_paths: None,
+            languages: project_languages,
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: None,
+        };
+
+        let result = merge_all(&[Some(user_config), Some(project_config)]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        // Both languages should exist
+        assert!(result.languages.contains_key("python"));
+        assert!(result.languages.contains_key("rust"));
+
+        // Python from user
+        assert_eq!(
+            result.languages["python"].library,
+            Some("/usr/lib/python.so".to_string())
+        );
+
+        // Rust from project
+        assert_eq!(
+            result.languages["rust"].library,
+            Some("/project/rust.so".to_string())
+        );
+    }
+
+    // PBI-150 Subtask 3: Deep merge for languageServers HashMap
+
+    #[test]
+    fn test_merge_all_language_servers_deep_merge() {
+        // Project adds initializationOptions to rust-analyzer, inherits cmd and languages from user
+        use serde_json::json;
+        use settings::{BridgeServerConfig, WorkspaceType};
+
+        let mut user_servers = HashMap::new();
+        user_servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["rust-analyzer".to_string()],
+                languages: vec!["rust".to_string()],
+                initialization_options: None,
+                workspace_type: Some(WorkspaceType::Cargo),
+            },
+        );
+
+        let user_config = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: Some(user_servers),
+        };
+
+        // Project only adds initializationOptions
+        let mut project_servers = HashMap::new();
+        project_servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec![],       // Empty, should inherit from user
+                languages: vec![], // Empty, should inherit from user
+                initialization_options: Some(json!({ "linkedProjects": ["./Cargo.toml"] })),
+                workspace_type: None, // Should inherit from user
+            },
+        );
+
+        let project_config = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: Some(project_servers),
+        };
+
+        let result = merge_all(&[Some(user_config), Some(project_config)]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        assert!(result.language_servers.is_some());
+        let servers = result.language_servers.as_ref().unwrap();
+        assert!(servers.contains_key("rust-analyzer"));
+
+        let ra = &servers["rust-analyzer"];
+
+        // cmd: inherited from user (project was empty)
+        assert_eq!(ra.cmd, vec!["rust-analyzer".to_string()]);
+
+        // languages: inherited from user (project was empty)
+        assert_eq!(ra.languages, vec!["rust".to_string()]);
+
+        // initializationOptions: added by project
+        assert!(ra.initialization_options.is_some());
+        let init_opts = ra.initialization_options.as_ref().unwrap();
+        assert!(init_opts.get("linkedProjects").is_some());
+
+        // workspaceType: inherited from user
+        assert_eq!(ra.workspace_type, Some(WorkspaceType::Cargo));
+    }
+
+    #[test]
+    fn test_merge_all_language_servers_adds_new_server() {
+        // User has rust-analyzer, project adds pyright - both should exist
+        use settings::BridgeServerConfig;
+
+        let mut user_servers = HashMap::new();
+        user_servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["rust-analyzer".to_string()],
+                languages: vec!["rust".to_string()],
+                initialization_options: None,
+                workspace_type: None,
+            },
+        );
+
+        let user_config = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: Some(user_servers),
+        };
+
+        let mut project_servers = HashMap::new();
+        project_servers.insert(
+            "pyright".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["pyright-langserver".to_string(), "--stdio".to_string()],
+                languages: vec!["python".to_string()],
+                initialization_options: None,
+                workspace_type: None,
+            },
+        );
+
+        let project_config = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: Some(project_servers),
+        };
+
+        let result = merge_all(&[Some(user_config), Some(project_config)]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        assert!(result.language_servers.is_some());
+        let servers = result.language_servers.as_ref().unwrap();
+
+        // Both servers should exist
+        assert!(servers.contains_key("rust-analyzer"));
+        assert!(servers.contains_key("pyright"));
+
+        // rust-analyzer from user
+        assert_eq!(
+            servers["rust-analyzer"].cmd,
+            vec!["rust-analyzer".to_string()]
+        );
+
+        // pyright from project
+        assert_eq!(
+            servers["pyright"].cmd,
+            vec!["pyright-langserver".to_string(), "--stdio".to_string()]
+        );
+    }
+
+    // PBI-150 Subtask 4: Deep merge for captureMappings (already implemented, verify via merge_all)
+
+    #[test]
+    fn test_merge_all_capture_mappings_deep_merge() {
+        // Project overrides variable.builtin, inherits function.builtin from user config
+        let mut user_mappings = HashMap::new();
+        let mut user_highlights = HashMap::new();
+        user_highlights.insert(
+            "variable.builtin".to_string(),
+            "variable.defaultLibrary".to_string(),
+        );
+        user_highlights.insert(
+            "function.builtin".to_string(),
+            "function.defaultLibrary".to_string(),
+        );
+
+        user_mappings.insert(
+            "_".to_string(),
+            QueryTypeMappings {
+                highlights: user_highlights,
+                locals: HashMap::new(),
+                folds: HashMap::new(),
+            },
+        );
+
+        let user_config = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: user_mappings,
+            auto_install: None,
+            language_servers: None,
+        };
+
+        // Project only overrides variable.builtin
+        let mut project_mappings = HashMap::new();
+        let mut project_highlights = HashMap::new();
+        project_highlights.insert(
+            "variable.builtin".to_string(),
+            "project.variable".to_string(),
+        );
+
+        project_mappings.insert(
+            "_".to_string(),
+            QueryTypeMappings {
+                highlights: project_highlights,
+                locals: HashMap::new(),
+                folds: HashMap::new(),
+            },
+        );
+
+        let project_config = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: project_mappings,
+            auto_install: None,
+            language_servers: None,
+        };
+
+        let result = merge_all(&[Some(user_config), Some(project_config)]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        // variable.builtin: overridden by project
+        assert_eq!(
+            result.capture_mappings[WILDCARD_KEY].highlights["variable.builtin"],
+            "project.variable"
+        );
+
+        // function.builtin: inherited from user
+        assert_eq!(
+            result.capture_mappings[WILDCARD_KEY].highlights["function.builtin"],
+            "function.defaultLibrary"
+        );
+    }
+
+    #[test]
+    fn test_merge_all_capture_mappings_adds_new_language() {
+        // User has wildcard "_", project adds "rust" - both should exist
+        let mut user_mappings = HashMap::new();
+        let mut user_highlights = HashMap::new();
+        user_highlights.insert("variable.builtin".to_string(), "user.variable".to_string());
+
+        user_mappings.insert(
+            "_".to_string(),
+            QueryTypeMappings {
+                highlights: user_highlights,
+                locals: HashMap::new(),
+                folds: HashMap::new(),
+            },
+        );
+
+        let user_config = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: user_mappings,
+            auto_install: None,
+            language_servers: None,
+        };
+
+        let mut project_mappings = HashMap::new();
+        let mut rust_highlights = HashMap::new();
+        rust_highlights.insert("type.builtin".to_string(), "rust.type".to_string());
+
+        project_mappings.insert(
+            "rust".to_string(),
+            QueryTypeMappings {
+                highlights: rust_highlights,
+                locals: HashMap::new(),
+                folds: HashMap::new(),
+            },
+        );
+
+        let project_config = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: project_mappings,
+            auto_install: None,
+            language_servers: None,
+        };
+
+        let result = merge_all(&[Some(user_config), Some(project_config)]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        // Both language keys should exist
+        assert!(result.capture_mappings.contains_key(WILDCARD_KEY));
+        assert!(result.capture_mappings.contains_key("rust"));
+
+        // Wildcard from user
+        assert_eq!(
+            result.capture_mappings[WILDCARD_KEY].highlights["variable.builtin"],
+            "user.variable"
+        );
+
+        // Rust from project
+        assert_eq!(
+            result.capture_mappings["rust"].highlights["type.builtin"],
+            "rust.type"
+        );
+    }
+
+    #[test]
+    fn test_merge_all_capture_mappings_locals_and_folds() {
+        // Verify deep merge works for locals and folds, not just highlights
+        let mut user_mappings = HashMap::new();
+        let mut user_locals = HashMap::new();
+        user_locals.insert(
+            "definition.var".to_string(),
+            "definition.variable".to_string(),
+        );
+        let mut user_folds = HashMap::new();
+        user_folds.insert("fold.comment".to_string(), "comment".to_string());
+
+        user_mappings.insert(
+            "_".to_string(),
+            QueryTypeMappings {
+                highlights: HashMap::new(),
+                locals: user_locals,
+                folds: user_folds,
+            },
+        );
+
+        let user_config = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: user_mappings,
+            auto_install: None,
+            language_servers: None,
+        };
+
+        // Project overrides one locals, adds one folds
+        let mut project_mappings = HashMap::new();
+        let mut project_locals = HashMap::new();
+        project_locals.insert(
+            "definition.var".to_string(),
+            "project.definition".to_string(),
+        );
+        let mut project_folds = HashMap::new();
+        project_folds.insert("fold.function".to_string(), "function".to_string());
+
+        project_mappings.insert(
+            "_".to_string(),
+            QueryTypeMappings {
+                highlights: HashMap::new(),
+                locals: project_locals,
+                folds: project_folds,
+            },
+        );
+
+        let project_config = TreeSitterSettings {
+            search_paths: None,
+            languages: HashMap::new(),
+            capture_mappings: project_mappings,
+            auto_install: None,
+            language_servers: None,
+        };
+
+        let result = merge_all(&[Some(user_config), Some(project_config)]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        // locals.definition.var: overridden by project
+        assert_eq!(
+            result.capture_mappings[WILDCARD_KEY].locals["definition.var"],
+            "project.definition"
+        );
+
+        // folds.fold.comment: inherited from user
+        assert_eq!(
+            result.capture_mappings[WILDCARD_KEY].folds["fold.comment"],
+            "comment"
+        );
+
+        // folds.fold.function: added by project
+        assert_eq!(
+            result.capture_mappings[WILDCARD_KEY].folds["fold.function"],
+            "function"
+        );
+    }
+
+    // PBI-152: Wildcard Config Inheritance (ADR-0011)
+
+    #[test]
+    fn test_resolve_with_wildcard_returns_wildcard_when_specific_absent() {
+        // ADR-0011: Missing specific key -> use wildcard entirely
+        // When captureMappings only has "_" and we ask for "python",
+        // we should get the wildcard's mappings
+        let mut mappings = CaptureMappings::new();
+
+        let mut wildcard_highlights = HashMap::new();
+        wildcard_highlights.insert("variable".to_string(), "variable".to_string());
+        wildcard_highlights.insert(
+            "variable.builtin".to_string(),
+            "variable.defaultLibrary".to_string(),
+        );
+
+        mappings.insert(
+            "_".to_string(),
+            QueryTypeMappings {
+                highlights: wildcard_highlights,
+                locals: HashMap::new(),
+                folds: HashMap::new(),
+            },
+        );
+
+        // Resolve for "python" which doesn't exist - should return wildcard
+        let result = resolve_with_wildcard(&mappings, "python");
+
+        assert!(result.is_some(), "Should return Some when wildcard exists");
+        let resolved = result.unwrap();
+        assert_eq!(
+            resolved.highlights.get("variable"),
+            Some(&"variable".to_string())
+        );
+        assert_eq!(
+            resolved.highlights.get("variable.builtin"),
+            Some(&"variable.defaultLibrary".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_with_wildcard_merges_wildcard_with_specific_key() {
+        // ADR-0011: When both wildcard and specific key exist, merge them
+        // Rust-specific adds type.builtin, inherits variable.* from wildcard
+        let mut mappings = CaptureMappings::new();
+
+        // Wildcard has variable mappings
+        let mut wildcard_highlights = HashMap::new();
+        wildcard_highlights.insert("variable".to_string(), "variable".to_string());
+        wildcard_highlights.insert(
+            "variable.builtin".to_string(),
+            "variable.defaultLibrary".to_string(),
+        );
+        wildcard_highlights.insert("function".to_string(), "function".to_string());
+
+        mappings.insert(
+            "_".to_string(),
+            QueryTypeMappings {
+                highlights: wildcard_highlights,
+                locals: HashMap::new(),
+                folds: HashMap::new(),
+            },
+        );
+
+        // Rust-specific adds type.builtin
+        let mut rust_highlights = HashMap::new();
+        rust_highlights.insert(
+            "type.builtin".to_string(),
+            "type.defaultLibrary".to_string(),
+        );
+
+        mappings.insert(
+            "rust".to_string(),
+            QueryTypeMappings {
+                highlights: rust_highlights,
+                locals: HashMap::new(),
+                folds: HashMap::new(),
+            },
+        );
+
+        // Resolve for "rust" - should merge wildcard + rust-specific
+        let result = resolve_with_wildcard(&mappings, "rust");
+
+        assert!(result.is_some(), "Should return merged mappings");
+        let resolved = result.unwrap();
+
+        // Inherited from wildcard
+        assert_eq!(
+            resolved.highlights.get("variable"),
+            Some(&"variable".to_string()),
+            "Should inherit 'variable' from wildcard"
+        );
+        assert_eq!(
+            resolved.highlights.get("variable.builtin"),
+            Some(&"variable.defaultLibrary".to_string()),
+            "Should inherit 'variable.builtin' from wildcard"
+        );
+        assert_eq!(
+            resolved.highlights.get("function"),
+            Some(&"function".to_string()),
+            "Should inherit 'function' from wildcard"
+        );
+
+        // Added by rust-specific
+        assert_eq!(
+            resolved.highlights.get("type.builtin"),
+            Some(&"type.defaultLibrary".to_string()),
+            "Should include rust-specific 'type.builtin'"
+        );
+    }
+
+    // PBI-153: Languages Wildcard Inheritance (ADR-0011)
+
+    #[test]
+    fn test_resolve_language_with_wildcard_returns_wildcard_when_specific_absent() {
+        // ADR-0011: languages['rust'] inherits from languages['_']
+        // When languages only has "_" and we ask for "rust",
+        // we should get the wildcard's settings
+        let mut languages: HashMap<String, LanguageConfig> = HashMap::new();
+
+        // Wildcard has library and bridge settings
+        let mut wildcard_bridge = HashMap::new();
+        wildcard_bridge.insert(
+            "rust".to_string(),
+            settings::BridgeLanguageConfig { enabled: true },
+        );
+
+        languages.insert(
+            "_".to_string(),
+            LanguageConfig {
+                library: Some("/default/path.so".to_string()),
+                queries: None,
+                highlights: Some(vec!["/default/highlights.scm".to_string()]),
+                locals: None,
+                injections: None,
+                bridge: Some(wildcard_bridge),
+            },
+        );
+
+        // Resolve for "rust" which doesn't exist - should return wildcard
+        let result = resolve_language_with_wildcard(&languages, "rust");
+
+        assert!(result.is_some(), "Should return Some when wildcard exists");
+        let resolved = result.unwrap();
+        assert_eq!(
+            resolved.library,
+            Some("/default/path.so".to_string()),
+            "Should inherit library from wildcard"
+        );
+        assert!(
+            resolved.bridge.is_some(),
+            "Should inherit bridge from wildcard"
+        );
+        let bridge = resolved.bridge.as_ref().unwrap();
+        assert!(
+            bridge.get("rust").is_some_and(|c| c.enabled),
+            "Should inherit bridge settings from wildcard"
+        );
+    }
+
+    #[test]
+    fn test_specific_values_override_wildcards_at_both_levels() {
+        // ADR-0011: python.bridge.javascript overrides _.bridge._ settings
+        // Setup:
+        // - languages._ has bridge._ with enabled = true (default)
+        // - languages.python has bridge.javascript with enabled = false (override)
+        // - We ask for bridge setting for "javascript" in "python" -> should get enabled = false
+        // - We ask for bridge setting for "rust" in "python" -> should get enabled = true (from _)
+        let mut languages: HashMap<String, LanguageConfig> = HashMap::new();
+
+        // Wildcard language with wildcard bridge (default enabled = true)
+        let mut wildcard_bridge = HashMap::new();
+        wildcard_bridge.insert(
+            "_".to_string(),
+            settings::BridgeLanguageConfig { enabled: true },
+        );
+
+        languages.insert(
+            "_".to_string(),
+            LanguageConfig {
+                library: Some("/default/path.so".to_string()),
+                queries: None,
+                highlights: Some(vec!["/default/highlights.scm".to_string()]),
+                locals: None,
+                injections: None,
+                bridge: Some(wildcard_bridge),
+            },
+        );
+
+        // Python-specific: disable bridging to JavaScript, but inherit _ for library
+        let mut python_bridge = HashMap::new();
+        python_bridge.insert(
+            "javascript".to_string(),
+            settings::BridgeLanguageConfig { enabled: false },
+        );
+
+        languages.insert(
+            "python".to_string(),
+            LanguageConfig {
+                library: None, // Should inherit from _
+                queries: None,
+                highlights: None, // Should inherit from _
+                locals: None,
+                injections: None,
+                bridge: Some(python_bridge),
+            },
+        );
+
+        // Resolve for "python" - should merge with wildcard
+        let resolved_lang = resolve_language_with_wildcard(&languages, "python");
+        assert!(resolved_lang.is_some(), "Should resolve python language");
+        let lang_config = resolved_lang.unwrap();
+
+        // Library should be inherited from wildcard
+        assert_eq!(
+            lang_config.library,
+            Some("/default/path.so".to_string()),
+            "Python should inherit library from wildcard"
+        );
+
+        // Bridge should be deep merged: wildcard + python-specific
+        assert!(lang_config.bridge.is_some(), "Python should have bridge");
+        let bridge = lang_config.bridge.as_ref().unwrap();
+
+        // JavaScript: python-specific override (enabled = false)
+        let js_resolved = resolve_bridge_with_wildcard(bridge, "javascript");
+        assert!(js_resolved.is_some(), "Should resolve javascript bridge");
+        assert!(
+            !js_resolved.unwrap().enabled,
+            "Python's javascript bridge should be disabled (override)"
+        );
+
+        // Rust: inherited from _.bridge._ through deep merge
+        // ADR-0011: bridge maps are deep merged, so python gets wildcard's bridge._
+        let rust_resolved = resolve_bridge_with_wildcard(bridge, "rust");
+        assert!(
+            rust_resolved.is_some(),
+            "Python's rust bridge should resolve (inherited from wildcard's bridge._)"
+        );
+        assert!(
+            rust_resolved.unwrap().enabled,
+            "Python's rust bridge should be enabled (from wildcard's bridge._)"
+        );
+    }
+
+    #[test]
+    fn test_specific_bridge_with_nested_wildcard() {
+        // ADR-0011: Test case where python.bridge includes _ wildcard
+        // - languages.python.bridge._ = enabled: true (python-specific default)
+        // - languages.python.bridge.javascript = enabled: false (override)
+        // - rust should inherit from python.bridge._ (enabled = true)
+        let mut languages: HashMap<String, LanguageConfig> = HashMap::new();
+
+        // Python with its own wildcard bridge
+        let mut python_bridge = HashMap::new();
+        python_bridge.insert(
+            "_".to_string(),
+            settings::BridgeLanguageConfig { enabled: true }, // Python's own default
+        );
+        python_bridge.insert(
+            "javascript".to_string(),
+            settings::BridgeLanguageConfig { enabled: false }, // Override for JS
+        );
+
+        languages.insert(
+            "python".to_string(),
+            LanguageConfig {
+                library: Some("/python/path.so".to_string()),
+                queries: None,
+                highlights: None,
+                locals: None,
+                injections: None,
+                bridge: Some(python_bridge),
+            },
+        );
+
+        let resolved_lang = resolve_language_with_wildcard(&languages, "python");
+        assert!(resolved_lang.is_some());
+        let lang_config = resolved_lang.unwrap();
+        let bridge = lang_config.bridge.as_ref().unwrap();
+
+        // JavaScript: specific override
+        let js_resolved = resolve_bridge_with_wildcard(bridge, "javascript");
+        assert!(js_resolved.is_some());
+        assert!(
+            !js_resolved.unwrap().enabled,
+            "JavaScript should be disabled"
+        );
+
+        // Rust: inherits from python's bridge._
+        let rust_resolved = resolve_bridge_with_wildcard(bridge, "rust");
+        assert!(rust_resolved.is_some());
+        assert!(
+            rust_resolved.unwrap().enabled,
+            "Rust should inherit from python.bridge._"
+        );
+    }
+
+    #[test]
+    fn test_nested_wildcard_resolution_outer_then_inner() {
+        // ADR-0011: Nested wildcard resolution applies outer then inner
+        // Resolution order:
+        // 1. Resolve outer: languages._ -> languages.python
+        // 2. Resolve inner: bridge._ -> bridge.rust
+        //
+        // Setup:
+        // languages._ has bridge._ with enabled = true
+        // languages.python is NOT defined (should inherit from _)
+        // We ask for bridge setting for "rust" in "python" -> should get enabled = true
+        let mut languages: HashMap<String, LanguageConfig> = HashMap::new();
+
+        // Wildcard language with wildcard bridge
+        let mut wildcard_bridge = HashMap::new();
+        wildcard_bridge.insert(
+            "_".to_string(),
+            settings::BridgeLanguageConfig { enabled: true },
+        );
+
+        languages.insert(
+            "_".to_string(),
+            LanguageConfig {
+                library: Some("/default/path.so".to_string()),
+                queries: None,
+                highlights: None,
+                locals: None,
+                injections: None,
+                bridge: Some(wildcard_bridge),
+            },
+        );
+
+        // Resolve for "python" which doesn't exist - should get wildcard language
+        let resolved_lang = resolve_language_with_wildcard(&languages, "python");
+        assert!(
+            resolved_lang.is_some(),
+            "Should resolve to wildcard language"
+        );
+
+        // Then resolve bridge for "rust" within the resolved language
+        let lang_config = resolved_lang.unwrap();
+        assert!(
+            lang_config.bridge.is_some(),
+            "Resolved language should have bridge"
+        );
+        let bridge = lang_config.bridge.as_ref().unwrap();
+
+        let resolved_bridge = resolve_bridge_with_wildcard(bridge, "rust");
+        assert!(
+            resolved_bridge.is_some(),
+            "Should resolve to wildcard bridge"
+        );
+        assert!(
+            resolved_bridge.unwrap().enabled,
+            "Nested wildcard resolution: languages._.bridge._ should apply to python.bridge.rust"
+        );
+    }
+
+    #[test]
+    fn test_resolve_language_with_wildcard_deep_merges_bridge_maps() {
+        // ADR-0011: Bridge maps should be deep merged, not overridden
+        //
+        // Setup:
+        // - languages._.bridge = { rust: enabled=true, go: enabled=true }
+        // - languages.python.bridge = { javascript: enabled=false }
+        //
+        // Expected after merge:
+        // - languages.python.bridge = { rust: true, go: true, javascript: false }
+        //
+        // This tests that python inherits rust/go from wildcard while adding
+        // its own javascript setting.
+        let mut languages: HashMap<String, LanguageConfig> = HashMap::new();
+
+        // Wildcard has default bridge settings for rust and go
+        let mut wildcard_bridge = HashMap::new();
+        wildcard_bridge.insert(
+            "rust".to_string(),
+            settings::BridgeLanguageConfig { enabled: true },
+        );
+        wildcard_bridge.insert(
+            "go".to_string(),
+            settings::BridgeLanguageConfig { enabled: true },
+        );
+
+        languages.insert(
+            "_".to_string(),
+            LanguageConfig {
+                library: Some("/default/path.so".to_string()),
+                queries: None,
+                highlights: None,
+                locals: None,
+                injections: None,
+                bridge: Some(wildcard_bridge),
+            },
+        );
+
+        // Python adds javascript bridge but should inherit rust/go from wildcard
+        let mut python_bridge = HashMap::new();
+        python_bridge.insert(
+            "javascript".to_string(),
+            settings::BridgeLanguageConfig { enabled: false },
+        );
+
+        languages.insert(
+            "python".to_string(),
+            LanguageConfig {
+                library: None, // Inherits from wildcard
+                queries: None,
+                highlights: None,
+                locals: None,
+                injections: None,
+                bridge: Some(python_bridge),
+            },
+        );
+
+        // Resolve for "python" - bridge should be deep merged with wildcard
+        let resolved = resolve_language_with_wildcard(&languages, "python");
+        assert!(resolved.is_some());
+        let lang_config = resolved.unwrap();
+
+        // Library should be inherited from wildcard
+        assert_eq!(
+            lang_config.library,
+            Some("/default/path.so".to_string()),
+            "Python should inherit library from wildcard"
+        );
+
+        // Bridge should be deep merged
+        assert!(lang_config.bridge.is_some(), "Python should have bridge");
+        let bridge = lang_config.bridge.as_ref().unwrap();
+
+        // rust: inherited from wildcard
+        assert!(
+            bridge.get("rust").is_some_and(|c| c.enabled),
+            "Python should inherit rust bridge from wildcard (deep merge)"
+        );
+
+        // go: inherited from wildcard
+        assert!(
+            bridge.get("go").is_some_and(|c| c.enabled),
+            "Python should inherit go bridge from wildcard (deep merge)"
+        );
+
+        // javascript: python-specific
+        assert!(
+            bridge.get("javascript").is_some_and(|c| !c.enabled),
+            "Python should have its own javascript bridge setting"
+        );
+    }
+
+    #[test]
+    fn test_resolve_bridge_with_wildcard_returns_wildcard_when_specific_absent() {
+        // ADR-0011: bridge['javascript'] inherits from bridge['_']
+        // When bridge only has "_" and we ask for "javascript",
+        // we should get the wildcard's enabled setting
+        let mut bridge: HashMap<String, settings::BridgeLanguageConfig> = HashMap::new();
+
+        // Wildcard has enabled = true
+        bridge.insert(
+            "_".to_string(),
+            settings::BridgeLanguageConfig { enabled: true },
+        );
+
+        // Resolve for "javascript" which doesn't exist - should return wildcard
+        let result = resolve_bridge_with_wildcard(&bridge, "javascript");
+
+        assert!(result.is_some(), "Should return Some when wildcard exists");
+        let resolved = result.unwrap();
+        assert!(resolved.enabled, "Should inherit enabled from wildcard");
+    }
+
+    #[test]
+    fn test_resolve_with_wildcard_specific_overrides_same_capture_name() {
+        // ADR-0011: Specific key values override wildcard values for same capture name
+        // Example: rust has different "function" mapping than wildcard
+        let mut mappings = CaptureMappings::new();
+
+        // Wildcard has function -> function
+        let mut wildcard_highlights = HashMap::new();
+        wildcard_highlights.insert("function".to_string(), "function".to_string());
+        wildcard_highlights.insert("variable".to_string(), "variable".to_string());
+
+        mappings.insert(
+            "_".to_string(),
+            QueryTypeMappings {
+                highlights: wildcard_highlights,
+                locals: HashMap::new(),
+                folds: HashMap::new(),
+            },
+        );
+
+        // Rust overrides function mapping to suppress it (empty string)
+        let mut rust_highlights = HashMap::new();
+        rust_highlights.insert("function".to_string(), "".to_string());
+
+        mappings.insert(
+            "rust".to_string(),
+            QueryTypeMappings {
+                highlights: rust_highlights,
+                locals: HashMap::new(),
+                folds: HashMap::new(),
+            },
+        );
+
+        // Resolve for "rust" - rust's "function" should override wildcard's "function"
+        let result = resolve_with_wildcard(&mappings, "rust");
+
+        assert!(result.is_some(), "Should return merged mappings");
+        let resolved = result.unwrap();
+
+        // Overridden by rust-specific (empty string suppresses the token)
+        assert_eq!(
+            resolved.highlights.get("function"),
+            Some(&"".to_string()),
+            "Rust-specific 'function' should override wildcard 'function'"
+        );
+
+        // Still inherited from wildcard
+        assert_eq!(
+            resolved.highlights.get("variable"),
+            Some(&"variable".to_string()),
+            "Should still inherit 'variable' from wildcard"
+        );
+    }
+
+    // PBI-154: languageServers Wildcard Inheritance (ADR-0011)
+
+    #[test]
+    fn test_resolve_language_server_with_wildcard_returns_wildcard_when_specific_absent() {
+        // ADR-0011: languageServers['rust-analyzer'] inherits from languageServers['_']
+        // When languageServers only has "_" and we ask for "rust-analyzer",
+        // we should get the wildcard's settings
+        use settings::BridgeServerConfig;
+
+        let mut servers: HashMap<String, BridgeServerConfig> = HashMap::new();
+
+        // Wildcard has default settings
+        servers.insert(
+            "_".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["default-lsp".to_string()],
+                languages: vec!["any".to_string()],
+                initialization_options: None,
+                workspace_type: Some(settings::WorkspaceType::Generic),
+            },
+        );
+
+        // Resolve for "rust-analyzer" which doesn't exist - should return wildcard
+        let result = resolve_language_server_with_wildcard(&servers, "rust-analyzer");
+
+        assert!(result.is_some(), "Should return Some when wildcard exists");
+        let resolved = result.unwrap();
+        assert_eq!(
+            resolved.cmd,
+            vec!["default-lsp".to_string()],
+            "Should inherit cmd from wildcard"
+        );
+        assert_eq!(
+            resolved.languages,
+            vec!["any".to_string()],
+            "Should inherit languages from wildcard"
+        );
+        assert_eq!(
+            resolved.workspace_type,
+            Some(settings::WorkspaceType::Generic),
+            "Should inherit workspace_type from wildcard"
+        );
+    }
+
+    #[test]
+    fn test_resolve_language_server_with_wildcard_specific_overrides_wildcard() {
+        // ADR-0011: Server-specific values override wildcard values
+        // When both wildcard and specific server exist, specific values take precedence
+        use serde_json::json;
+        use settings::{BridgeServerConfig, WorkspaceType};
+
+        let mut servers: HashMap<String, BridgeServerConfig> = HashMap::new();
+
+        // Wildcard has default settings
+        servers.insert(
+            "_".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["default-lsp".to_string()],
+                languages: vec!["any".to_string()],
+                initialization_options: Some(json!({ "defaultOption": true })),
+                workspace_type: Some(WorkspaceType::Generic),
+            },
+        );
+
+        // rust-analyzer overrides cmd and workspace_type, but not languages
+        servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["rust-analyzer".to_string()],
+                languages: vec![], // Empty means inherit from wildcard
+                initialization_options: Some(json!({ "linkedProjects": ["./Cargo.toml"] })),
+                workspace_type: Some(WorkspaceType::Cargo),
+            },
+        );
+
+        // Resolve for "rust-analyzer" - should merge with wildcard
+        let result = resolve_language_server_with_wildcard(&servers, "rust-analyzer");
+
+        assert!(result.is_some(), "Should return merged config");
+        let resolved = result.unwrap();
+
+        // cmd: overridden by specific
+        assert_eq!(
+            resolved.cmd,
+            vec!["rust-analyzer".to_string()],
+            "Should use rust-analyzer's cmd"
+        );
+
+        // languages: inherited from wildcard (specific was empty)
+        assert_eq!(
+            resolved.languages,
+            vec!["any".to_string()],
+            "Should inherit languages from wildcard since specific is empty"
+        );
+
+        // workspace_type: overridden by specific
+        assert_eq!(
+            resolved.workspace_type,
+            Some(WorkspaceType::Cargo),
+            "Should use rust-analyzer's workspace_type"
+        );
+
+        // initialization_options: deep merged (ADR-0010)
+        let init_opts = resolved.initialization_options.unwrap();
+        assert_eq!(
+            init_opts.get("linkedProjects"),
+            Some(&json!(["./Cargo.toml"])),
+            "Should have rust-analyzer's linkedProjects"
+        );
+        assert_eq!(
+            init_opts.get("defaultOption"),
+            Some(&json!(true)),
+            "Should inherit defaultOption from wildcard (deep merge per ADR-0010)"
+        );
+    }
+
+    #[test]
+    fn test_resolve_language_server_with_wildcard_returns_none_when_neither_exists() {
+        // ADR-0011: Neither wildcard nor specific key -> return None
+        use settings::BridgeServerConfig;
+
+        let mut servers: HashMap<String, BridgeServerConfig> = HashMap::new();
+
+        // Only pyright exists, no wildcard
+        servers.insert(
+            "pyright".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["pyright-langserver".to_string()],
+                languages: vec!["python".to_string()],
+                initialization_options: None,
+                workspace_type: None,
+            },
+        );
+
+        // Resolve for "rust-analyzer" which doesn't exist and no wildcard
+        let result = resolve_language_server_with_wildcard(&servers, "rust-analyzer");
+
+        assert!(
+            result.is_none(),
+            "Should return None when neither wildcard nor specific key exists"
+        );
+    }
+
+    #[test]
+    fn test_resolve_language_server_with_wildcard_specific_only() {
+        // ADR-0011: No wildcard, only specific key -> return specific
+        use settings::BridgeServerConfig;
+
+        let mut servers: HashMap<String, BridgeServerConfig> = HashMap::new();
+
+        // Only rust-analyzer exists, no wildcard
+        servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["rust-analyzer".to_string()],
+                languages: vec!["rust".to_string()],
+                initialization_options: None,
+                workspace_type: Some(settings::WorkspaceType::Cargo),
+            },
+        );
+
+        // Resolve for "rust-analyzer" - should return it directly
+        let result = resolve_language_server_with_wildcard(&servers, "rust-analyzer");
+
+        assert!(
+            result.is_some(),
+            "Should return Some when specific key exists"
+        );
+        let resolved = result.unwrap();
+        assert_eq!(
+            resolved.cmd,
+            vec!["rust-analyzer".to_string()],
+            "Should return specific config"
+        );
+    }
+
+    // PBI-157: Deep merge for initialization_options (ADR-0010)
+
+    #[test]
+    fn test_resolve_language_server_deep_merges_initialization_options() {
+        // ADR-0010: initialization_options should be deep merged, not replaced
+        // Wildcard provides {feature1: true}, specific provides {feature2: true}
+        // Result should be {feature1: true, feature2: true}
+        use serde_json::json;
+        use settings::BridgeServerConfig;
+
+        let mut servers: HashMap<String, BridgeServerConfig> = HashMap::new();
+
+        // Wildcard has feature1
+        servers.insert(
+            "_".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["default-lsp".to_string()],
+                languages: vec![],
+                initialization_options: Some(json!({ "feature1": true })),
+                workspace_type: None,
+            },
+        );
+
+        // rust-analyzer adds feature2
+        servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["rust-analyzer".to_string()],
+                languages: vec!["rust".to_string()],
+                initialization_options: Some(json!({ "feature2": true })),
+                workspace_type: None,
+            },
+        );
+
+        let result = resolve_language_server_with_wildcard(&servers, "rust-analyzer");
+        assert!(result.is_some());
+        let resolved = result.unwrap();
+
+        // Should deep merge both features
+        let init_opts = resolved.initialization_options.unwrap();
+        assert_eq!(
+            init_opts.get("feature1"),
+            Some(&json!(true)),
+            "Should inherit feature1 from wildcard (deep merge)"
+        );
+        assert_eq!(
+            init_opts.get("feature2"),
+            Some(&json!(true)),
+            "Should have feature2 from specific"
+        );
+    }
+
+    #[test]
+    fn test_merge_language_servers_deep_merges_initialization_options() {
+        // ADR-0010: merge_language_servers should deep merge initialization_options
+        // Base layer has {baseOpt: 1}, overlay has {overlayOpt: 2}
+        // Result should have both options
+        use serde_json::json;
+        use settings::BridgeServerConfig;
+
+        let mut base_servers = HashMap::new();
+        base_servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["rust-analyzer".to_string()],
+                languages: vec!["rust".to_string()],
+                initialization_options: Some(json!({ "baseOpt": 1 })),
+                workspace_type: None,
+            },
+        );
+
+        let mut overlay_servers = HashMap::new();
+        overlay_servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec![],
+                languages: vec![],
+                initialization_options: Some(json!({ "overlayOpt": 2 })),
+                workspace_type: None,
+            },
+        );
+
+        let result = merge_language_servers(Some(base_servers), Some(overlay_servers));
+        assert!(result.is_some());
+        let merged = result.unwrap();
+        assert!(merged.contains_key("rust-analyzer"));
+
+        let ra = &merged["rust-analyzer"];
+        let init_opts = ra.initialization_options.as_ref().unwrap();
+
+        // Should have both options (deep merge)
+        assert_eq!(
+            init_opts.get("baseOpt"),
+            Some(&json!(1)),
+            "Should preserve baseOpt from base layer"
+        );
+        assert_eq!(
+            init_opts.get("overlayOpt"),
+            Some(&json!(2)),
+            "Should have overlayOpt from overlay layer"
+        );
+    }
+
+    #[test]
+    fn test_resolve_language_server_specific_overrides_wildcard_same_key() {
+        // ADR-0010: Specific values override wildcard for same keys
+        // Wildcard has {opt: 1}, specific has {opt: 2}
+        // Result should be {opt: 2}
+        use serde_json::json;
+        use settings::BridgeServerConfig;
+
+        let mut servers: HashMap<String, BridgeServerConfig> = HashMap::new();
+
+        servers.insert(
+            "_".to_string(),
+            BridgeServerConfig {
+                cmd: vec![],
+                languages: vec![],
+                initialization_options: Some(json!({ "opt": 1 })),
+                workspace_type: None,
+            },
+        );
+
+        servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["rust-analyzer".to_string()],
+                languages: vec![],
+                initialization_options: Some(json!({ "opt": 2 })),
+                workspace_type: None,
+            },
+        );
+
+        let result = resolve_language_server_with_wildcard(&servers, "rust-analyzer");
+        let resolved = result.unwrap();
+        let init_opts = resolved.initialization_options.unwrap();
+
+        // Specific value should override wildcard
+        assert_eq!(
+            init_opts.get("opt"),
+            Some(&json!(2)),
+            "Specific value should override wildcard for same key"
+        );
+    }
+
+    #[test]
+    fn test_resolve_language_server_nested_objects_deep_merge() {
+        // ADR-0010: Nested JSON objects should merge recursively
+        // Wildcard has {a: {b: 1}}, specific has {a: {c: 2}}
+        // Result should be {a: {b: 1, c: 2}}
+        use serde_json::json;
+        use settings::BridgeServerConfig;
+
+        let mut servers: HashMap<String, BridgeServerConfig> = HashMap::new();
+
+        servers.insert(
+            "_".to_string(),
+            BridgeServerConfig {
+                cmd: vec![],
+                languages: vec![],
+                initialization_options: Some(json!({ "a": { "b": 1 } })),
+                workspace_type: None,
+            },
+        );
+
+        servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["rust-analyzer".to_string()],
+                languages: vec![],
+                initialization_options: Some(json!({ "a": { "c": 2 } })),
+                workspace_type: None,
+            },
+        );
+
+        let result = resolve_language_server_with_wildcard(&servers, "rust-analyzer");
+        let resolved = result.unwrap();
+        let init_opts = resolved.initialization_options.unwrap();
+
+        // Should deep merge nested objects
+        let a_obj = init_opts.get("a").unwrap().as_object().unwrap();
+        assert_eq!(
+            a_obj.get("b"),
+            Some(&json!(1)),
+            "Should preserve b from wildcard"
+        );
+        assert_eq!(
+            a_obj.get("c"),
+            Some(&json!(2)),
+            "Should have c from specific"
+        );
     }
 }

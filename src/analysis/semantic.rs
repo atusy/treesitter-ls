@@ -1,4 +1,4 @@
-use crate::config::CaptureMappings;
+use crate::config::{CaptureMappings, WILDCARD_KEY};
 use crate::text::convert_byte_to_utf16_in_line;
 use tower_lsp::lsp_types::{
     Range, SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens,
@@ -92,7 +92,7 @@ fn apply_capture_mapping(
         }
 
         // Try wildcard mapping
-        if let Some(wildcard_mappings) = mappings.get("_")
+        if let Some(wildcard_mappings) = mappings.get(WILDCARD_KEY)
             && let Some(mapped) = wildcard_mappings.highlights.get(capture_name)
         {
             return mapped.clone();
@@ -1809,6 +1809,70 @@ let z = 42"#;
         assert!(
             found_local_keyword,
             "Delta handler should return `local` keyword token at line 6, col 0 from injected Lua code"
+        );
+    }
+
+    // PBI-152: Wildcard Config Inheritance for captureMappings
+
+    #[test]
+    fn test_apply_capture_mapping_uses_wildcard_merge() {
+        // ADR-0011: When both wildcard and specific key exist, merge them
+        // This test verifies that apply_capture_mapping correctly inherits
+        // mappings from wildcard when the specific key doesn't have them
+        use crate::config::{CaptureMappings, QueryTypeMappings};
+        use std::collections::HashMap;
+
+        let mut mappings = CaptureMappings::new();
+
+        // Wildcard has "variable" and "function" mappings
+        let mut wildcard_highlights = HashMap::new();
+        wildcard_highlights.insert("variable".to_string(), "variable".to_string());
+        wildcard_highlights.insert("function".to_string(), "function".to_string());
+
+        mappings.insert(
+            WILDCARD_KEY.to_string(),
+            QueryTypeMappings {
+                highlights: wildcard_highlights,
+                locals: HashMap::new(),
+                folds: HashMap::new(),
+            },
+        );
+
+        // Rust only has "type.builtin" - should inherit "variable" and "function" from wildcard
+        let mut rust_highlights = HashMap::new();
+        rust_highlights.insert(
+            "type.builtin".to_string(),
+            "type.defaultLibrary".to_string(),
+        );
+
+        mappings.insert(
+            "rust".to_string(),
+            QueryTypeMappings {
+                highlights: rust_highlights,
+                locals: HashMap::new(),
+                folds: HashMap::new(),
+            },
+        );
+
+        // Test: "variable" should be inherited from wildcard for "rust"
+        let result = apply_capture_mapping("variable", Some("rust"), Some(&mappings));
+        assert_eq!(
+            result, "variable",
+            "Should inherit 'variable' mapping from wildcard for 'rust'"
+        );
+
+        // Test: "type.builtin" should use rust-specific mapping
+        let result = apply_capture_mapping("type.builtin", Some("rust"), Some(&mappings));
+        assert_eq!(
+            result, "type.defaultLibrary",
+            "Should use rust-specific 'type.builtin' mapping"
+        );
+
+        // Test: "function" should be inherited from wildcard for "rust"
+        let result = apply_capture_mapping("function", Some("rust"), Some(&mappings));
+        assert_eq!(
+            result, "function",
+            "Should inherit 'function' mapping from wildcard for 'rust'"
         );
     }
 }

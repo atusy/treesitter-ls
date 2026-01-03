@@ -1,10 +1,15 @@
 //! Tests for poison lock recovery mechanisms
+//!
+//! These tests intentionally poison locks and must run serially to avoid
+//! interference between tests.
 
+use serial_test::serial;
 use std::sync::Arc;
 use std::thread;
 use treesitter_ls::language::{ConfigStore, FiletypeResolver, LanguageRegistry, QueryStore};
 
 #[test]
+#[serial(poison)]
 fn test_registry_recovers_from_poisoned_lock() {
     let registry = Arc::new(LanguageRegistry::new());
     let registry_clone = registry.clone();
@@ -44,6 +49,7 @@ fn test_registry_recovers_from_poisoned_lock() {
 }
 
 #[test]
+#[serial(poison)]
 fn test_query_store_recovers_from_poisoned_read_lock() {
     let store = Arc::new(QueryStore::new());
     let store_clone = store.clone();
@@ -66,6 +72,7 @@ fn test_query_store_recovers_from_poisoned_read_lock() {
 }
 
 #[test]
+#[serial(poison)]
 fn test_query_store_recovers_from_poisoned_write_lock() {
     let store = Arc::new(QueryStore::new());
     let store_clone = store.clone();
@@ -96,6 +103,7 @@ fn test_query_store_recovers_from_poisoned_write_lock() {
 }
 
 #[test]
+#[serial(poison)]
 fn test_config_store_recovers_from_poisoned_lock() {
     use treesitter_ls::config::settings::LanguageConfig;
 
@@ -116,6 +124,7 @@ fn test_config_store_recovers_from_poisoned_lock() {
         "rust".to_string(),
         LanguageConfig {
             library: Some("/path/to/rust.so".to_string()),
+            queries: None,
             highlights: None,
             locals: None,
             injections: None,
@@ -132,6 +141,7 @@ fn test_config_store_recovers_from_poisoned_lock() {
 }
 
 #[test]
+#[serial(poison)]
 fn test_filetype_resolver_recovers_from_poisoned_lock() {
     let resolver = Arc::new(FiletypeResolver::new());
     let resolver_clone = resolver.clone();
@@ -161,6 +171,7 @@ fn test_filetype_resolver_recovers_from_poisoned_lock() {
 }
 
 #[test]
+#[serial(poison)]
 fn test_concurrent_access_after_poison_recovery() {
     let registry = Arc::new(LanguageRegistry::new());
 

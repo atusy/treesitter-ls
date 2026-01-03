@@ -1,7 +1,7 @@
 use crate::analysis::offset_calculator::{
     ByteRange, calculate_effective_range, format_offset, get_offset_label,
 };
-use crate::config::CaptureMappings;
+use crate::config::{CaptureMappings, WILDCARD_KEY};
 use crate::language::injection;
 use crate::text::PositionMapper;
 use std::str::FromStr;
@@ -231,7 +231,7 @@ pub fn create_inspect_token_action(params: InspectTokenParams) -> CodeActionOrCo
                             return format!("{}->{}", capture, mapped);
                         }
 
-                        if let Some(wildcard_mappings) = mappings.get("_")
+                        if let Some(wildcard_mappings) = mappings.get(WILDCARD_KEY)
                             && let Some(mapped) = wildcard_mappings.highlights.get(lookup_name)
                             && capture != mapped
                         {
@@ -264,7 +264,7 @@ pub fn create_inspect_token_action(params: InspectTokenParams) -> CodeActionOrCo
                             return format!("{}->{}", capture, mapped);
                         }
 
-                        if let Some(wildcard_mappings) = mappings.get("_")
+                        if let Some(wildcard_mappings) = mappings.get(WILDCARD_KEY)
                             && let Some(mapped) = wildcard_mappings.locals.get(lookup_name)
                             && capture != mapped
                         {

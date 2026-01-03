@@ -6,63 +6,66 @@ const userStoryRoles = [
   "Rustacean editing Markdown",
   "developer editing Lua files",
   "documentation author with Rust code blocks",
-] as const satisfies readonly string[];
+  "treesitter-ls user managing configurations",
+] as const satisfies readonly string[]; // Must have at least one role. Avoid generic roles like "user" or "admin". Remove obsolete roles freely.
 
 const scrum: ScrumDashboard = {
   product_goal: {
     statement:
-      "Maintain stable async LSP bridge for core features using single-pool architecture (ADR-0006, 0007, 0008)",
+      "Expand LSP bridge to support most language server features indirectly through bridging (ADR-0006, 0007, 0008)",
     success_metrics: [
-      { metric: "Bridge coverage", target: "Support hover, completion, signatureHelp, definition with fully async implementations" },
-      { metric: "Modular architecture", target: "Bridge module organized with text_document/ subdirectory, single TokioAsyncLanguageServerPool" },
-      { metric: "E2E test coverage", target: "Each bridged feature has E2E test verifying end-to-end async flow" },
+      {
+        metric: "Bridge coverage",
+        target:
+          "Support completion, signatureHelp, references, rename, codeAction, formatting, typeDefinition, implementation, documentHighlight, declaration, inlayHint, callHierarchy, typeHierarchy, documentLink, foldingRange",
+      },
+      {
+        metric: "Modular architecture",
+        target: "Bridge module organized with text_document/ subdirectory matching lsp_impl structure",
+      },
+      {
+        metric: "E2E test coverage",
+        target: "Each bridged feature has E2E test verifying end-to-end flow",
+      },
     ],
   },
 
-  // Deferred: PBI-091 (idle cleanup), PBI-107 (WorkspaceType), PBI-171 ($/cancelRequest - tower-lsp internals)
-  product_backlog: [],
-
+  // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113), PBI-155-161 (Sprint 124-130) | History: git log -- scrum.yaml, scrum.ts
+  // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
+  product_backlog: [
+    // Future: PBI-147 (hover wait), PBI-141/142/143 (async bridge methods)
+    // ADR-0010: PBI-151 (118), PBI-150 (119), PBI-149 (120) | ADR-0011: PBI-152-155 (121-124)
+  ],
   sprint: null,
-
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
       { name: "Code quality checks pass", run: "make check" },
       { name: "E2E tests pass", run: "make test_nvim" },
+      { name: "Documentation updated alongside implementation", run: "git diff --name-only | grep -E '(README|docs/|adr/)' || echo 'No docs updated - verify if needed'" },
+      { name: "ADR verification for architectural changes", run: "git diff --name-only | grep -E 'adr/' || echo 'No ADR updated - verify if architectural change'" },
     ],
   },
-
+  // Historical sprints (recent 2) | Sprint 1-129: git log -- scrum.yaml, scrum.ts
   completed: [
-    { number: 147, pbi_id: "PBI-174", goal: "Audit API visibility in LanguageCoordinator - 1 method made private", status: "done", subtasks: [] },
-    { number: 146, pbi_id: "PBI-173", goal: "Parameterize offset clamping tests with rstest (3→1 test)", status: "done", subtasks: [] },
-    { number: 145, pbi_id: "PBI-172", goal: "Relocate smoke tests from integration to unit test location", status: "done", subtasks: [] },
-    { number: 144, pbi_id: "PBI-171", goal: "Investigate $/cancelRequest handling via custom_method - blocked by tower-lsp architecture", status: "cancelled", subtasks: [] },
-    { number: 143, pbi_id: "PBI-170", goal: "Investigate $/cancelRequest - deferred (tower-lsp limitation, YAGNI)", status: "cancelled", subtasks: [] },
-    { number: 142, pbi_id: "PBI-169", goal: "Fix bridge bookkeeping memory leak after crashes/restarts", status: "done", subtasks: [] },
-    { number: 141, pbi_id: "PBI-168", goal: "Fix concurrent parse crash recovery to correctly identify failing parsers", status: "done", subtasks: [] },
+    { number: 130, pbi_id: "PBI-161", goal: "Update ADR-0010 and ADR-0011 to match implementation", status: "done", subtasks: [] },
+    { number: 129, pbi_id: "PBI-160", goal: "Extract wildcard key to named constant for maintainability", status: "done", subtasks: [] },
   ],
-
+  // Retrospectives (recent 2)
   retrospectives: [
-    { sprint: 147, improvements: [
-      { action: "Test review findings (review-tests.md) addressed: smoke tests relocated, tests parameterized, API visibility audited", timing: "immediate", status: "completed", outcome: "3 PBIs completed (172-174), test pyramid improved, rstest adopted for parameterization" },
+    { sprint: 130, improvements: [
+      { action: "Update documentation alongside implementation, not as separate PBI - add to Definition of Done", timing: "immediate", status: "completed", outcome: "Added documentation update check to Definition of Done" },
+      { action: "Add ADR verification to Definition of Done to ensure architectural decisions are documented", timing: "immediate", status: "completed", outcome: "Added ADR verification check to Definition of Done" },
     ] },
-    { sprint: 144, improvements: [
-      { action: "Investigation: LspServiceBuilder.custom_method cannot intercept $/cancelRequest because tower-lsp registers it first in generated code before custom methods", timing: "product", status: "completed", outcome: "PBI-171 deferred - tower-lsp's Router uses HashMap with first-registration-wins, blocking custom interception" },
-      { action: "Current architecture already supports request superseding: new semantic token requests automatically cancel previous ones via SemanticRequestTracker", timing: "product", status: "completed", outcome: "Explicit $/cancelRequest handling deemed unnecessary (YAGNI) - existing superseding mechanism sufficient for user typing scenarios" },
-    ] },
-    { sprint: 143, improvements: [
-      { action: "Review-codex3 findings: PBI-168, PBI-169 fixed; PBI-170 deferred (tower-lsp limitation, YAGNI)", timing: "product", status: "completed", outcome: "2/3 issues resolved, 1 deferred" },
-    ] },
-    { sprint: 140, improvements: [
-      { action: "Flaky tests eliminated with serial_test for rust-analyzer tests", timing: "immediate", status: "completed", outcome: "373/373 tests pass consistently (10 consecutive runs verified)" },
+    { sprint: 129, improvements: [
+      { action: "Consider creating dedicated wildcard module for related constants to improve organization", timing: "product", status: "active", outcome: null },
+      { action: "Add similar named constants for other magic strings in codebase to prevent typos", timing: "product", status: "active", outcome: null },
+      { action: "Document structural refactoring pattern: pub(crate) visibility follows YAGNI principle when no external usage exists", timing: "immediate", status: "active", outcome: null },
     ] },
   ],
 };
 
-// ============================================================
-// Type Definitions (DO NOT MODIFY - request human review for schema changes)
-// ============================================================
-
+// Type Definitions (DO NOT MODIFY) =============================================
 // PBI lifecycle: draft (idea) -> refining (gathering info) -> ready (can start) -> done
 type PBIStatus = "draft" | "refining" | "ready" | "done";
 

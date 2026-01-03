@@ -59,14 +59,72 @@ pub struct QueryTypeMappings {
 
 pub type CaptureMappings = HashMap<String, QueryTypeMappings>;
 
+/// Query type for treesitter query files.
+///
+/// Used in the unified `queries` field to specify what kind of query a file contains.
+/// When not specified, the kind is inferred from the filename pattern.
+#[derive(Debug, Clone, Copy, Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum QueryKind {
+    /// Syntax highlighting queries
+    Highlights,
+    /// Local definitions/references queries (for scope analysis)
+    Locals,
+    /// Language injection queries (for embedded languages)
+    Injections,
+}
+
+/// A single query file configuration entry.
+///
+/// Used in the unified `queries` array to specify query files with optional type.
+/// Example: `{ path = "./highlights.scm", kind = "highlights" }`
+#[derive(Debug, Clone, Deserialize, serde::Serialize, PartialEq, Eq)]
+pub struct QueryItem {
+    /// Path to the query file (required)
+    pub path: String,
+    /// Query type: highlights, locals, or injections (optional - inferred from filename if omitted)
+    pub kind: Option<QueryKind>,
+}
+
+/// Infer the query kind from a file path based on filename patterns.
+///
+/// Rules:
+/// - Exact match `highlights.scm` -> `Some(Highlights)`
+/// - Exact match `locals.scm` -> `Some(Locals)`
+/// - Exact match `injections.scm` -> `Some(Injections)`
+/// - Otherwise -> `None` (unknown patterns are skipped by callers)
+///
+/// Examples:
+/// - `injections.scm` -> matches
+/// - `rust-injections.scm` -> does NOT match (only exact filename matches)
+/// - `local-injections.scm` -> does NOT match (only exact filename matches)
+pub fn infer_query_kind(path: &str) -> Option<QueryKind> {
+    // Extract filename from path using std::path for cross-platform support
+    let filename = std::path::Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(path);
+
+    // Only match exact filenames
+    match filename {
+        "injections.scm" => Some(QueryKind::Injections),
+        "locals.scm" => Some(QueryKind::Locals),
+        "highlights.scm" => Some(QueryKind::Highlights),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct LanguageConfig {
     pub library: Option<String>,
-    /// Query file paths for syntax highlighting
+    /// Unified query file configuration (new format)
+    /// Each entry has a path and optional kind (inferred from filename if omitted)
+    pub queries: Option<Vec<QueryItem>>,
+    /// Query file paths for syntax highlighting (legacy field)
     pub highlights: Option<Vec<String>>,
-    /// Query file paths for locals/definitions
+    /// Query file paths for locals/definitions (legacy field)
     pub locals: Option<Vec<String>>,
-    /// Query file paths for language injections
+    /// Query file paths for language injections (legacy field)
     pub injections: Option<Vec<String>>,
     /// Languages to bridge for this host filetype (map format).
     /// - None (omitted): Bridge ALL configured languages (default behavior)
@@ -97,10 +155,13 @@ pub struct TreeSitterSettings {
 /// Per-language Tree-sitter language configuration surfaced to the domain.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LanguageSettings {
-    pub library: Option<String>,
-    pub highlights: Vec<String>,
-    pub locals: Option<Vec<String>>,
-    pub injections: Option<Vec<String>>,
+    /// Path to the parser library (renamed from `library` for clarity)
+    pub parser: Option<String>,
+    /// Unified query file configuration
+    /// - None: Not specified (inherit from wildcard/defaults)
+    /// - Some([]): Explicitly empty (override wildcard with no queries)
+    /// - Some([...]): Specified queries
+    pub queries: Option<Vec<QueryItem>>,
     /// Languages to bridge for this host filetype (map format).
     /// - None (omitted): Bridge ALL configured languages (default behavior)
     /// - Some({}): Bridge NOTHING (disable bridging for this host)
@@ -109,34 +170,23 @@ pub struct LanguageSettings {
 }
 
 impl LanguageSettings {
-    pub fn new(
-        library: Option<String>,
-        highlights: Vec<String>,
-        locals: Option<Vec<String>>,
-        injections: Option<Vec<String>>,
-    ) -> Self {
+    pub fn new(parser: Option<String>, queries: Option<Vec<QueryItem>>) -> Self {
         Self {
-            library,
-            highlights,
-            locals,
-            injections,
+            parser,
+            queries,
             bridge: None,
         }
     }
 
     /// Create LanguageSettings with bridge filter configuration.
     pub fn with_bridge(
-        library: Option<String>,
-        highlights: Vec<String>,
-        locals: Option<Vec<String>>,
-        injections: Option<Vec<String>>,
+        parser: Option<String>,
+        queries: Option<Vec<QueryItem>>,
         bridge: Option<HashMap<String, BridgeLanguageConfig>>,
     ) -> Self {
         Self {
-            library,
-            highlights,
-            locals,
-            injections,
+            parser,
+            queries,
             bridge,
         }
     }
@@ -219,6 +269,45 @@ impl WorkspaceSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::WILDCARD_KEY;
+
+    #[test]
+    fn should_distinguish_between_unspecified_and_empty_queries() {
+        // This test demonstrates the need for Option<Vec<QueryItem>>
+        // to distinguish between "not specified" and "explicitly empty"
+        // which is critical for merging logic in resolve_language_settings_with_wildcard
+
+        // Case 1: queries not specified (should be None)
+        // User didn't specify queries - should inherit from wildcard/defaults
+        let unspecified = LanguageSettings::new(None, None);
+        assert!(
+            unspecified.queries.is_none(),
+            "Unspecified queries should be None"
+        );
+
+        // Case 2: queries explicitly empty (should be Some([]))
+        // User explicitly set queries to empty - should override wildcard with empty list
+        let explicitly_empty = LanguageSettings::new(None, Some(vec![]));
+        assert!(
+            explicitly_empty.queries.is_some(),
+            "Explicitly empty should be Some"
+        );
+        assert!(
+            explicitly_empty.queries.as_ref().unwrap().is_empty(),
+            "Should be empty vec"
+        );
+
+        // Case 3: queries with items
+        let with_items = LanguageSettings::new(
+            None,
+            Some(vec![QueryItem {
+                path: "/path/to/highlights.scm".to_string(),
+                kind: Some(QueryKind::Highlights),
+            }]),
+        );
+        assert!(with_items.queries.is_some());
+        assert_eq!(with_items.queries.as_ref().unwrap().len(), 1);
+    }
 
     #[test]
     fn should_parse_valid_configuration() {
@@ -473,10 +562,10 @@ mod tests {
         let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
 
         // Check capture mappings are parsed correctly
-        assert!(settings.capture_mappings.contains_key("_"));
+        assert!(settings.capture_mappings.contains_key(WILDCARD_KEY));
         assert!(settings.capture_mappings.contains_key("rust"));
 
-        let wildcard_mappings = &settings.capture_mappings["_"].highlights;
+        let wildcard_mappings = &settings.capture_mappings[WILDCARD_KEY].highlights;
         assert_eq!(
             wildcard_mappings.get("variable.builtin"),
             Some(&"variable.defaultLibrary".to_string())
@@ -572,6 +661,7 @@ mod tests {
                 lang.to_string(),
                 LanguageConfig {
                     library: Some(format!("/usr/lib/libtree-sitter-{}.so", lang)),
+                    queries: None,
                     highlights: Some(vec![format!("/etc/treesitter/{}/highlights.scm", lang)]),
                     locals: None,
                     injections: None,
@@ -594,6 +684,7 @@ mod tests {
         // Language detection now relies entirely on languageId from DidOpen
         let config = LanguageConfig {
             library: Some("/path/to/parser.so".to_string()),
+            queries: None,
             highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
             locals: None,
             injections: None,
@@ -610,19 +701,26 @@ mod tests {
     }
 
     #[test]
-    fn should_not_have_filetypes_field_in_language_settings() {
-        // PBI-061 S48.3: filetypes field should be removed from LanguageSettings
-        // Language detection relies on languageId from DidOpen, not config filetypes
+    fn should_create_language_settings_with_parser_and_queries() {
+        // PBI-156: LanguageSettings uses parser (not library) and unified queries
         let settings = LanguageSettings::new(
             Some("/path/to/parser.so".to_string()),
-            // No filetypes parameter - constructor should only take 4 args
-            vec!["/path/to/highlights.scm".to_string()],
-            None,
-            None,
+            Some(vec![QueryItem {
+                path: "/path/to/highlights.scm".to_string(),
+                kind: Some(QueryKind::Highlights),
+            }]),
         );
 
-        assert_eq!(settings.library, Some("/path/to/parser.so".to_string()));
-        assert_eq!(settings.highlights, vec!["/path/to/highlights.scm"]);
+        assert_eq!(settings.parser, Some("/path/to/parser.so".to_string()));
+        assert_eq!(settings.queries.as_ref().unwrap().len(), 1);
+        assert_eq!(
+            settings.queries.as_ref().unwrap()[0].path,
+            "/path/to/highlights.scm"
+        );
+        assert_eq!(
+            settings.queries.as_ref().unwrap()[0].kind,
+            Some(QueryKind::Highlights)
+        );
     }
 
     #[test]
@@ -812,12 +910,7 @@ mod tests {
     fn test_bridge_filter_null_bridges_all_languages() {
         // PBI-108 AC3: bridge omitted or null bridges all configured languages
         // When bridge is None (default), all languages should be bridgeable
-        let settings = LanguageSettings::new(
-            None,
-            vec!["/path/to/highlights.scm".to_string()],
-            None,
-            None,
-        );
+        let settings = LanguageSettings::new(None, None);
 
         // Default (None) should bridge all languages
         assert!(
@@ -842,8 +935,6 @@ mod tests {
     fn test_bridge_filter_empty_disables_bridging() {
         // PBI-120: Empty bridge map disables all bridging for that host filetype
         let settings = LanguageSettings::with_bridge(
-            None,
-            vec!["/path/to/highlights.scm".to_string()],
             None,
             None,
             Some(HashMap::new()), // Empty map disables all bridging
@@ -871,13 +962,7 @@ mod tests {
         bridge.insert("python".to_string(), BridgeLanguageConfig { enabled: true });
         bridge.insert("r".to_string(), BridgeLanguageConfig { enabled: true });
 
-        let settings = LanguageSettings::with_bridge(
-            None,
-            vec!["/path/to/highlights.scm".to_string()],
-            None,
-            None,
-            Some(bridge),
-        );
+        let settings = LanguageSettings::with_bridge(None, None, Some(bridge));
 
         // Enabled languages should be allowed
         assert!(
@@ -907,13 +992,7 @@ mod tests {
         bridge.insert("python".to_string(), BridgeLanguageConfig { enabled: true });
         bridge.insert("r".to_string(), BridgeLanguageConfig { enabled: false });
 
-        let settings = LanguageSettings::with_bridge(
-            None,
-            vec!["/path/to/highlights.scm".to_string()],
-            None,
-            None,
-            Some(bridge),
-        );
+        let settings = LanguageSettings::with_bridge(None, None, Some(bridge));
 
         // python with enabled: true should be allowed
         assert!(
@@ -1033,5 +1112,165 @@ mod tests {
         assert_eq!(bridge.len(), 2);
         assert!(bridge.get("python").unwrap().enabled);
         assert!(!bridge.get("r").unwrap().enabled);
+    }
+
+    // PBI-151: Unified query configuration with QueryItem struct
+    #[test]
+    fn should_parse_query_item_with_path_and_kind() {
+        // QueryItem should have path (required) and kind (optional) fields
+        // kind can be "highlights", "locals", or "injections"
+        let toml_str = r#"
+            path = "/path/to/highlights.scm"
+            kind = "highlights"
+        "#;
+
+        let item: QueryItem = toml::from_str(toml_str).unwrap();
+        assert_eq!(item.path, "/path/to/highlights.scm");
+        assert_eq!(item.kind, Some(QueryKind::Highlights));
+    }
+
+    #[test]
+    fn should_parse_query_item_without_kind() {
+        // kind is optional - defaults to None (type inference happens later)
+        let toml_str = r#"
+            path = "/path/to/custom.scm"
+        "#;
+
+        let item: QueryItem = toml::from_str(toml_str).unwrap();
+        assert_eq!(item.path, "/path/to/custom.scm");
+        assert!(item.kind.is_none());
+    }
+
+    #[test]
+    fn should_parse_query_kind_enum_variants() {
+        // QueryKind enum should have Highlights, Locals, Injections variants
+        let highlights_toml = r#"path = "/a.scm"
+kind = "highlights""#;
+        let locals_toml = r#"path = "/b.scm"
+kind = "locals""#;
+        let injections_toml = r#"path = "/c.scm"
+kind = "injections""#;
+
+        let h: QueryItem = toml::from_str(highlights_toml).unwrap();
+        let l: QueryItem = toml::from_str(locals_toml).unwrap();
+        let i: QueryItem = toml::from_str(injections_toml).unwrap();
+
+        assert_eq!(h.kind, Some(QueryKind::Highlights));
+        assert_eq!(l.kind, Some(QueryKind::Locals));
+        assert_eq!(i.kind, Some(QueryKind::Injections));
+    }
+
+    #[test]
+    fn should_parse_queries_array_in_language_config() {
+        // LanguageConfig should have queries: Option<Vec<QueryItem>>
+        let config_toml = r#"
+            library = "/path/to/parser.so"
+            [[queries]]
+            path = "/path/to/highlights.scm"
+
+            [[queries]]
+            path = "/path/to/locals.scm"
+            kind = "locals"
+        "#;
+
+        let config: LanguageConfig = toml::from_str(config_toml).unwrap();
+        assert!(config.queries.is_some());
+        let queries = config.queries.unwrap();
+        assert_eq!(queries.len(), 2);
+        assert_eq!(queries[0].path, "/path/to/highlights.scm");
+        assert!(queries[0].kind.is_none());
+        assert_eq!(queries[1].path, "/path/to/locals.scm");
+        assert_eq!(queries[1].kind, Some(QueryKind::Locals));
+    }
+
+    // PBI-151 Subtask 2: Type inference for query kinds
+    #[test]
+    fn should_infer_highlights_from_filename_pattern() {
+        // Only exact match "highlights.scm" -> Some(Highlights)
+        assert_eq!(
+            infer_query_kind("highlights.scm"),
+            Some(QueryKind::Highlights)
+        );
+        assert_eq!(
+            infer_query_kind("/path/to/highlights.scm"),
+            Some(QueryKind::Highlights)
+        );
+        assert_eq!(
+            infer_query_kind("/usr/share/python/highlights.scm"),
+            Some(QueryKind::Highlights)
+        );
+        // Prefixed variants should NOT match (only exact filename)
+        assert_eq!(infer_query_kind("./queries/python-highlights.scm"), None);
+        assert_eq!(infer_query_kind("rust-highlights.scm"), None);
+    }
+
+    #[test]
+    fn should_infer_locals_from_filename_pattern() {
+        // Only exact match "locals.scm" -> Some(Locals)
+        assert_eq!(infer_query_kind("locals.scm"), Some(QueryKind::Locals));
+        assert_eq!(
+            infer_query_kind("/path/to/locals.scm"),
+            Some(QueryKind::Locals)
+        );
+        // Prefixed variants should NOT match (only exact filename)
+        assert_eq!(infer_query_kind("./queries/rust-locals.scm"), None);
+        assert_eq!(infer_query_kind("/usr/share/python-locals.scm"), None);
+        assert_eq!(infer_query_kind("javascript-locals.scm"), None);
+    }
+
+    #[test]
+    fn should_infer_injections_from_filename_pattern() {
+        // Only exact match "injections.scm" -> Some(Injections)
+        assert_eq!(
+            infer_query_kind("injections.scm"),
+            Some(QueryKind::Injections)
+        );
+        assert_eq!(
+            infer_query_kind("/path/to/injections.scm"),
+            Some(QueryKind::Injections)
+        );
+        // Prefixed variants should NOT match (only exact filename)
+        assert_eq!(infer_query_kind("./markdown-injections.scm"), None);
+        assert_eq!(infer_query_kind("/usr/share/markdown-injections.scm"), None);
+        assert_eq!(infer_query_kind("rust-injections.scm"), None);
+    }
+
+    #[test]
+    fn should_return_none_for_unrecognized_patterns() {
+        // Files without highlights/locals/injections in the name should return None
+        // (callers skip these files silently)
+        assert_eq!(infer_query_kind("custom.scm"), None);
+        assert_eq!(infer_query_kind("python.scm"), None);
+        assert_eq!(infer_query_kind("/path/to/queries.scm"), None);
+        assert_eq!(infer_query_kind("./custom-queries.scm"), None);
+        assert_eq!(infer_query_kind("/usr/share/rust.scm"), None);
+    }
+
+    #[test]
+    fn should_not_match_files_with_prefixes_before_pattern() {
+        // Files like "local-injections.scm" should NOT match because they have
+        // additional text before the pattern. Only exact matches like "injections.scm"
+        // or suffix matches like "rust-injections.scm" should match.
+        assert_eq!(
+            infer_query_kind("local-injections.scm"),
+            None,
+            "local-injections.scm should not match injections pattern"
+        );
+        assert_eq!(
+            infer_query_kind("global-locals.scm"),
+            None,
+            "global-locals.scm should not match locals pattern"
+        );
+        assert_eq!(
+            infer_query_kind("custom-highlights.scm"),
+            None,
+            "custom-highlights.scm should not match highlights pattern"
+        );
+        // Files with multiple dashes before the pattern should also not match
+        assert_eq!(
+            infer_query_kind("very-local-injections.scm"),
+            None,
+            "very-local-injections.scm should not match"
+        );
     }
 }
