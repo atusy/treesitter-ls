@@ -6,6 +6,7 @@ const userStoryRoles = [
   "Rustacean editing Markdown",
   "developer editing Lua files",
   "documentation author with Rust code blocks",
+  "developer editing Markdown with code blocks",
 ] as const satisfies readonly string[];
 
 const scrum: ScrumDashboard = {
@@ -77,9 +78,7 @@ const scrum: ScrumDashboard = {
 
   retrospectives: [
     { sprint: 148, improvements: [
-      { action: "What went well: Thorough TDD investigation disproved the deadlock hypothesis, preventing wasted effort on wrong solution. Debug logging, concurrent stress test (5 parallel calls), and lock ordering documentation added defensively", timing: "immediate", status: "completed", outcome: "No deadlock exists - locks acquired sequentially (spawn_locks → release → document_open_locks), never simultaneously. Defensive measures in place prevent future deadlock introduction" },
-      { action: "What could improve: Root cause of signatureHelp hang remains unknown despite eliminating deadlock hypothesis. Investigation scope may have been too narrow - should expand to pyright initialization/response and connection management layers", timing: "product", status: "active", outcome: null },
-      { action: "Action item: Create follow-up PBI to investigate pyright-specific issues - initialization timing, request/response handling, connection layer behavior during signatureHelp", timing: "product", status: "active", outcome: null },
+      { action: "TDD investigation disproved deadlock hypothesis. Added defensive logging/test/docs", timing: "immediate", status: "completed", outcome: "No deadlock exists - locks acquired sequentially. Created PBI-176 for timeout protection (actual root cause)" },
     ] },
     { sprint: 147, improvements: [
       { action: "Test review findings (review-tests.md) addressed: smoke tests relocated, tests parameterized, API visibility audited", timing: "immediate", status: "completed", outcome: "3 PBIs completed (172-174), test pyramid improved, rstest adopted for parameterization" },
