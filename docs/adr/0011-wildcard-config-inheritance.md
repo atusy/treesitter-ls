@@ -54,9 +54,9 @@ This means:
 | HashMap | Wildcard Key | Use Case |
 |---------|--------------|----------|
 | `captureMappings` | `_` | Default capture-to-token mappings for all languages |
-| `languages` | `_` (future) | Default language settings (see nested wildcards below) |
-| `languages.{lang}.bridge` | `_` (future) | Default bridge settings for all injection targets |
-| `languageServers` | `_` (future) | Default server settings |
+| `languages` | `_` | Default language settings (see nested wildcards below) |
+| `languages.{lang}.bridge` | `_` | Default bridge settings for all injection targets |
+| `languageServers` | `_` | Default server settings |
 
 ### Nested Wildcards
 

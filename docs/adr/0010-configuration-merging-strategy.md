@@ -47,22 +47,19 @@ queries = [
 
 **Type inference rules (when `kind` is omitted):**
 
-1. If the filename contains a recognized query type, use it:
-   - `*highlights*.scm` → `"highlights"`
-   - `*locals*.scm` → `"locals"`
-   - `*injections*.scm` → `"injections"`
-2. Otherwise, skip the query item
+1. If the filename is exactly `highlights.scm`, `locals.scm`, or `injections.scm`, use the corresponding type
+2. Otherwise, return `None` and the query item is skipped
 
 **Examples of type inference:**
 
 | Path                              | Inferred `kind` |
 |-----------------------------------|-----------------|
 | `/usr/share/python/highlights.scm` | `highlights`    |
-| `./queries/python-highlights.scm`  | `highlights`    |
-| `/usr/share/python-locals.scm`     | `locals`        |
-| `./my-custom-injections.scm`       | `injections`    |
-| `./python.scm`                     | `highlights`    |
-| `./custom-queries.scm`             | `highlights`    |
+| `./queries/highlights.scm`         | `highlights`    |
+| `/usr/share/python/locals.scm`     | `locals`        |
+| `./my-custom/injections.scm`       | `injections`    |
+| `./python-highlights.scm`          | (skipped)       |
+| `./custom-queries.scm`             | (skipped)       |
 
 **Relationship with legacy fields:**
 
@@ -86,7 +83,7 @@ The `queries` field coexists with the legacy `highlights`, `locals`, and `inject
   ]
   ```
 
-- **Merge behavior**: When both formats are present, `queries` entries are processed first, then legacy fields append to their respective types
+- **Merge behavior**: When both formats are present, the `queries` field takes complete precedence and legacy fields are ignored (see `src/coordinator.rs:388-395`)
 
 ### Configuration Sources (Lowest to Highest Precedence)
 
