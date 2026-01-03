@@ -45,6 +45,7 @@ streaming-iterator = "0.1"
 criterion = { version = "0.5", features = ["html_reports"] }
 filetime = "0.2"
 insta = { version = "1", features = ["json"] }
+serial_test = "3"
 
 [[bench]]
 name = "injection_tokens"

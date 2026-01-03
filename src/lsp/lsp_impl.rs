@@ -420,8 +420,8 @@ impl TreeSitterLs {
 
                         let parse_result = parser.parse(&text_clone, old_tree.as_ref());
 
-                        // Parsing succeeded without crash - clear the state
-                        let _ = failed_parsers.end_parsing();
+                        // Parsing succeeded without crash - clear the state for this language
+                        let _ = failed_parsers.end_parsing_language(&language_name_clone);
 
                         (parser, parse_result)
                     })
@@ -915,13 +915,14 @@ impl TreeSitterLs {
                         // maybe_auto_install_language uses InstallingLanguages to prevent duplicates
                         // is_injection=true: Don't re-parse the document with injection language
                         // Return value ignored - for injections we never skip parsing (host document already parsed)
-                        let _ = self.maybe_auto_install_language(
-                            &resolved_lang,
-                            uri.clone(),
-                            text.clone(),
-                            true,
-                        )
-                        .await;
+                        let _ = self
+                            .maybe_auto_install_language(
+                                &resolved_lang,
+                                uri.clone(),
+                                text.clone(),
+                                true,
+                            )
+                            .await;
                     }
                 } else {
                     // Notify user that parser is missing and needs manual installation
@@ -1110,7 +1111,8 @@ impl LanguageServer for TreeSitterLs {
                     // Language failed to load and auto-install is enabled
                     // is_injection=false: This is the document's main language
                     // If install is triggered, skip parse_document here - reload_language_after_install will handle it
-                    skip_parse = self.maybe_auto_install_language(lang, uri.clone(), text.clone(), false)
+                    skip_parse = self
+                        .maybe_auto_install_language(lang, uri.clone(), text.clone(), false)
                         .await;
                 } else {
                     // Notify user that parser is missing and needs manual installation
