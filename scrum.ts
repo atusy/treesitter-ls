@@ -20,7 +20,39 @@ const scrum: ScrumDashboard = {
   },
 
   // Deferred: PBI-091 (idle cleanup), PBI-107 (WorkspaceType), PBI-171 ($/cancelRequest - tower-lsp internals)
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "PBI-176",
+      story: {
+        role: "developer editing Markdown with code blocks",
+        capability: "have LSP requests complete or timeout within a reasonable time",
+        benefit: "the editor remains responsive even when language servers are slow or unresponsive",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "get_connection() has timeout protection to prevent indefinite blocking",
+          verification: "Unit test shows get_connection() returns error after timeout when connection acquisition hangs",
+        },
+        {
+          criterion: "is_alive() has timeout around child process lock acquisition",
+          verification: "Unit test shows is_alive() returns error/false after timeout when lock is held indefinitely",
+        },
+        {
+          criterion: "sync_document() has timeout around per-URI lock acquisition",
+          verification: "Unit test shows sync_document() returns error after timeout when document lock is held indefinitely",
+        },
+        {
+          criterion: "All async bridge methods log both START and DONE to enable hang diagnosis",
+          verification: "Code review confirms all async bridge entry points (hover, completion, signatureHelp, definition) have paired START/DONE logging",
+        },
+        {
+          criterion: "Timeout errors are propagated to tower-lsp to prevent request queue blocking",
+          verification: "E2E test shows subsequent LSP requests are processed even after a request times out",
+        },
+      ],
+      status: "ready",
+    },
+  ],
 
   sprint: null,
 
@@ -33,93 +65,7 @@ const scrum: ScrumDashboard = {
   },
 
   completed: [
-    {
-      number: 148,
-      pbi_id: "PBI-175",
-      goal: "Fix signatureHelp deadlock in pyright bridge - prevent infinite hangs on signature help requests",
-      status: "done",
-      subtasks: [
-      {
-        test: "Add debug logging test to verify lock acquisition order in signature_help flow",
-        implementation: "Instrument get_connection() and sync_document() with log::debug! statements showing lock acquisition attempts and completions for spawn_locks and document_open_locks",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "73dc8d1", message: "feat(bridge): add debug logging for lock acquisition in signature_help flow", phase: "green" },
-        ],
-        notes: [
-          "Goal: Understand actual lock acquisition patterns during signatureHelp",
-          "Log before/after spawn_locks.lock().await (get_connection L153)",
-          "Log before/after document_open_locks.lock().await (sync_document L865)",
-          "Log entry/exit of signature_help, get_connection, sync_document_with_host",
-          "This establishes observable behavior for diagnosing the hang",
-        ],
-      },
-      {
-        test: "Write unit test reproducing signatureHelp hang with concurrent operations",
-        implementation: "Create tokio_async_pool test simulating concurrent signatureHelp + completion requests that trigger deadlock scenario",
-        type: "behavioral",
-        status: "red",
-        commits: [
-          { hash: "5a95bb3", message: "test(bridge): add test for concurrent signatureHelp deadlock", phase: "green" },
-        ],
-        notes: [
-          "Test should spawn 2+ concurrent tasks calling signature_help()",
-          "Expected: All tasks complete within 30s timeout (currently hangs)",
-          "Use tokio::time::timeout to fail test if deadlock occurs",
-          "Model after existing concurrent tests (e.g., connection_eviction tests)",
-        ],
-      },
-      {
-        test: "Verify test reproduces hang by running with instrumentation",
-        implementation: "Run new test with debug logs enabled, confirm it hangs and shows lock acquisition pattern",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: [
-          "Test analysis: concurrent_signature_help_does_not_deadlock PASSED",
-          "No deadlock detected in current implementation with rust-analyzer",
-          "Lock acquisition pattern: spawn_locks -> release -> document_open_locks",
-          "Conclusion: No circular dependency exists in current code",
-          "Original issue may have been in different code path or already fixed",
-          "Proceeding with defensive improvements to lock scoping",
-        ],
-      },
-      {
-        test: "Fix deadlock by refactoring lock scoping",
-        implementation: "Restructure get_connection() or sync_document() to avoid holding spawn_locks when acquiring document_open_locks (or vice versa)",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "2ed2bf0", message: "docs(bridge): document lock ordering to prevent deadlocks", phase: "green" },
-        ],
-        notes: [
-          "Analysis: Current code already has correct lock ordering",
-          "spawn_locks is released before sync_document() acquires document_open_locks",
-          "No circular dependency exists - locks are never held simultaneously",
-          "Added comprehensive documentation explaining lock ordering invariant",
-          "This defensive documentation prevents future deadlock introduction",
-        ],
-      },
-      {
-        test: "Verify all acceptance criteria pass",
-        implementation: "Run unit test (should complete), run make test, check logs for START/DONE pairing",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          { hash: "38ddaa8", message: "style(bridge): run cargo fmt on test code", phase: "green" },
-        ],
-        notes: [
-          "AC1: signatureHelp completes within 30s timeout - PASS (concurrent_signature_help test passes)",
-          "AC2: Subsequent completion requests receive responses - PASS (existing tests verify this)",
-          "AC3: Logs show paired START/DONE for all requests - PASS (debug logging added)",
-          "AC4: Instrumentation confirms no deadlock in lock acquisition - PASS (lock ordering documented)",
-          "make test: 386 tests passed",
-          "make check: all checks passed",
-        ],
-      },
-    ],
-    },
+    { number: 148, pbi_id: "PBI-175", goal: "Investigate signatureHelp deadlock - no deadlock found, added defensive logging/tests/docs", status: "done", subtasks: [] },
     { number: 147, pbi_id: "PBI-174", goal: "Audit API visibility in LanguageCoordinator - 1 method made private", status: "done", subtasks: [] },
     { number: 146, pbi_id: "PBI-173", goal: "Parameterize offset clamping tests with rstest (3→1 test)", status: "done", subtasks: [] },
     { number: 145, pbi_id: "PBI-172", goal: "Relocate smoke tests from integration to unit test location", status: "done", subtasks: [] },
@@ -131,7 +77,9 @@ const scrum: ScrumDashboard = {
 
   retrospectives: [
     { sprint: 148, improvements: [
-      { action: "Sprint Review: All DoD checks passed (386 unit tests, code quality, 146 E2E tests). Updated DoD to use make test_e2e (Rust tests) instead of make test_nvim (removed Lua tests)", timing: "immediate", status: "completed", outcome: "PBI-175 ACCEPTED - No deadlock exists in current implementation. Locks acquired sequentially (spawn_locks → release → document_open_locks), never simultaneously. Added debug logging, concurrent test (5 parallel calls), and lock ordering documentation" },
+      { action: "What went well: Thorough TDD investigation disproved the deadlock hypothesis, preventing wasted effort on wrong solution. Debug logging, concurrent stress test (5 parallel calls), and lock ordering documentation added defensively", timing: "immediate", status: "completed", outcome: "No deadlock exists - locks acquired sequentially (spawn_locks → release → document_open_locks), never simultaneously. Defensive measures in place prevent future deadlock introduction" },
+      { action: "What could improve: Root cause of signatureHelp hang remains unknown despite eliminating deadlock hypothesis. Investigation scope may have been too narrow - should expand to pyright initialization/response and connection management layers", timing: "product", status: "active", outcome: null },
+      { action: "Action item: Create follow-up PBI to investigate pyright-specific issues - initialization timing, request/response handling, connection layer behavior during signatureHelp", timing: "product", status: "active", outcome: null },
     ] },
     { sprint: 147, improvements: [
       { action: "Test review findings (review-tests.md) addressed: smoke tests relocated, tests parameterized, API visibility audited", timing: "immediate", status: "completed", outcome: "3 PBIs completed (172-174), test pyramid improved, rstest adopted for parameterization" },
