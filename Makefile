@@ -68,12 +68,19 @@ lint:
 install: build
 	$(CARGO) install --path .
 
+# Determine if running in Nix environment (skip deps if so)
+ifdef TREESITTER_GRAMMARS
+  NVIM_DEPS =
+else
+  NVIM_DEPS = deps
+endif
+
 # Run all test files
-test_nvim: deps build-debug
+test_nvim: $(NVIM_DEPS) build-debug
 	nvim -es --headless --noplugin -u ./scripts/minimal_init.lua -c "lua MiniTest.run()"
 
 # Run test from file at `$FILE` environment variable
-test_nvim_file: deps build-debug
+test_nvim_file: $(NVIM_DEPS) build-debug
 	nvim --headless --noplugin -u ./scripts/minimal_init.lua -c "lua MiniTest.run_file('$(FILE)')"
 
 # Download 'mini.nvim' to use its 'mini.test' testing module
