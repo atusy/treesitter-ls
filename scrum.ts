@@ -35,35 +35,71 @@ const scrum: ScrumDashboard = {
   product_backlog: [
     // Future: PBI-147 (hover wait), PBI-141/142/143 (async bridge methods)
     // ADR-0010: PBI-151 (118), PBI-150 (119), PBI-149 (120) | ADR-0011: PBI-152-155 (121-124)
-    {
-      id: "PBI-162",
-      story: {
-        role: "developer editing Lua files",
-        capability: "receive empty responses from bridged language servers immediately after spawn but before initialized notification is sent",
-        benefit: "requests don't fail or cause protocol errors while the connection is establishing, ensuring a robust editing experience during initialization window",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "Each bridged language server connection instance tracks its own initialized flag as per-connection state",
-          verification: "Unit test spawns 2 separate connections, verifies each has independent initialized_complete/initialized flag (one true, one false)",
-        },
-        {
-          criterion: "Request methods (goto_definition, hover, completion, signature_help) return None immediately when initialized flag is false",
-          verification: "Unit test with mock connection sets initialized=false, calls request methods, verifies all return None without sending LSP messages",
-        },
-        {
-          criterion: "After initialized notification is sent, initialized flag becomes true and requests are forwarded normally",
-          verification: "Unit test verifies flag transitions from false to true after spawn_and_initialize sends initialized notification, subsequent requests are forwarded to LSP server",
-        },
-        {
-          criterion: "Both LanguageServerConnection (sync) and TokioAsyncBridgeConnection (async) implement initialization state tracking with consistent behavior",
-          verification: "Tests for both connection types verify: (1) initialized flag exists, (2) guards work correctly in request methods, (3) flag lifecycle matches spawn->initialize->initialized flow",
-        },
-      ],
-      status: "ready" as PBIStatus,
-    },
   ],
-  sprint: null,
+  sprint: {
+    number: 131,
+    pbi_id: "PBI-162",
+    goal: "Track initialization state per bridged language server to prevent protocol errors during initialization window",
+    status: "in_progress" as SprintStatus,
+    subtasks: [
+      {
+        test: "Add unit test verifying LanguageServerConnection has initialized flag field",
+        implementation: "Add initialized: bool field to LanguageServerConnection struct, initialize to false in new()",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: ["AC1: Add initialized flag to connection structs - sync implementation"],
+      },
+      {
+        test: "Add unit test verifying TokioAsyncBridgeConnection has initialized flag field",
+        implementation: "Add initialized: AtomicBool field to TokioAsyncBridgeConnection struct, initialize to false in new()",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: ["AC1: Add initialized flag to connection structs - async implementation"],
+      },
+      {
+        test: "Add unit test verifying LanguageServerConnection request methods return None when initialized=false",
+        implementation: "Add initialized flag guards to goto_definition, hover, completion, signature_help methods in LanguageServerConnection",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: ["AC2: Guard request methods to return None when not initialized - sync implementation"],
+      },
+      {
+        test: "Add unit test verifying TokioAsyncBridgeConnection request methods return None when initialized=false",
+        implementation: "Add initialized flag guards to goto_definition, hover, completion, signature_help methods in TokioAsyncBridgeConnection",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: ["AC2: Guard request methods to return None when not initialized - async implementation"],
+      },
+      {
+        test: "Add unit test verifying LanguageServerConnection sets initialized=true after initialized notification sent",
+        implementation: "Set initialized flag to true in spawn_and_initialize after sending initialized notification",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: ["AC3: Set flag after initialized notification sent - sync implementation"],
+      },
+      {
+        test: "Add unit test verifying TokioAsyncBridgeConnection sets initialized=true after initialized notification sent",
+        implementation: "Set initialized flag to true in spawn_and_initialize after sending initialized notification using AtomicBool::store",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: ["AC3: Set flag after initialized notification sent - async implementation"],
+      },
+      {
+        test: "Add integration test spawning 2 separate connections, verifying each has independent initialized flag state",
+        implementation: "Verify both sync and async connections maintain per-instance state correctly",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: ["AC4: Verify consistent behavior across both sync and async implementations"],
+      },
+    ],
+  },
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
