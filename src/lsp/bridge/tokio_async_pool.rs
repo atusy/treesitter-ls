@@ -52,12 +52,27 @@ pub struct TokioAsyncLanguageServerPool {
     /// The double-mutex pattern (Mutex<HashMap<..., Arc<Mutex<()>>>>) allows:
     /// - Quick lookup of per-key lock (outer sync Mutex, held briefly)
     /// - Per-key async locking (inner tokio Mutex, held across spawn)
+    ///
+    /// # Lock Ordering (PBI-175)
+    ///
+    /// To prevent deadlocks, locks must be acquired in a consistent order:
+    /// 1. spawn_locks (held only during connection spawn/initialization)
+    /// 2. document_open_locks (held only during didOpen/didChange)
+    ///
+    /// These locks are NEVER held simultaneously - spawn_locks is released before
+    /// sync_document() is called, ensuring no circular wait condition exists.
     spawn_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     /// Per-URI document opening locks to prevent duplicate didOpen notifications (PBI-159).
     ///
     /// Similar to spawn_locks, this uses the double-mutex pattern to ensure only one
     /// thread sends didOpen for a given URI, preventing protocol errors from duplicate
     /// open notifications under concurrent load.
+    ///
+    /// # Lock Ordering (PBI-175)
+    ///
+    /// document_open_locks is acquired AFTER spawn_locks has been released (see spawn_locks
+    /// documentation above). This lock is held briefly only during the didOpen/didChange
+    /// notification sending to prevent race conditions in version tracking.
     document_open_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     /// Instance-level counter for generating unique temporary directory names
     spawn_counter: AtomicU64,
