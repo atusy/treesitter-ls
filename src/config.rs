@@ -9,6 +9,10 @@ pub use settings::{
 use std::collections::HashMap;
 pub(crate) use user::load_user_config;
 
+/// Wildcard key for default configurations in HashMap-based settings.
+/// Used in capture_mappings, languages, and language_servers for fallback values.
+pub(crate) const WILDCARD_KEY: &str = "_";
+
 /// Deep merge two optional bridge HashMaps.
 /// Specific values override wildcard values for the same key.
 fn merge_bridge_maps(
@@ -70,7 +74,7 @@ pub(crate) fn resolve_language_server_with_wildcard(
     map: &HashMap<String, settings::BridgeServerConfig>,
     key: &str,
 ) -> Option<settings::BridgeServerConfig> {
-    let wildcard = map.get("_");
+    let wildcard = map.get(WILDCARD_KEY);
     let specific = map.get(key);
 
     match (wildcard, specific) {
@@ -119,7 +123,7 @@ pub(crate) fn resolve_language_settings_with_wildcard(
     map: &HashMap<String, LanguageSettings>,
     key: &str,
 ) -> Option<LanguageSettings> {
-    let wildcard = map.get("_");
+    let wildcard = map.get(WILDCARD_KEY);
     let specific = map.get(key);
 
     match (wildcard, specific) {
@@ -498,7 +502,7 @@ fn merge_capture_mappings(mut base: CaptureMappings, overlay: CaptureMappings) -
 /// The merge creates a new QueryTypeMappings where specific values override wildcard values.
 #[cfg(test)]
 pub(crate) fn resolve_with_wildcard(map: &CaptureMappings, key: &str) -> Option<QueryTypeMappings> {
-    let wildcard = map.get("_");
+    let wildcard = map.get(WILDCARD_KEY);
     let specific = map.get(key);
 
     match (wildcard, specific) {
@@ -545,7 +549,7 @@ pub(crate) fn resolve_language_with_wildcard(
     map: &HashMap<String, LanguageConfig>,
     key: &str,
 ) -> Option<LanguageConfig> {
-    let wildcard = map.get("_");
+    let wildcard = map.get(WILDCARD_KEY);
     let specific = map.get(key);
 
     match (wildcard, specific) {
@@ -581,7 +585,7 @@ pub(crate) fn resolve_bridge_with_wildcard(
     map: &HashMap<String, settings::BridgeLanguageConfig>,
     key: &str,
 ) -> Option<settings::BridgeLanguageConfig> {
-    let wildcard = map.get("_");
+    let wildcard = map.get(WILDCARD_KEY);
     let specific = map.get(key);
 
     match (wildcard, specific) {
@@ -753,19 +757,19 @@ mod tests {
 
         // Primary should override fallback for same keys
         assert_eq!(
-            result.capture_mappings["_"].highlights["variable.builtin"],
+            result.capture_mappings[WILDCARD_KEY].highlights["variable.builtin"],
             "primary.variable"
         );
 
         // Primary adds new keys
         assert_eq!(
-            result.capture_mappings["_"].highlights["type.builtin"],
+            result.capture_mappings[WILDCARD_KEY].highlights["type.builtin"],
             "primary.type"
         );
 
         // Fallback keys not in primary should remain
         assert_eq!(
-            result.capture_mappings["_"].highlights["function.builtin"],
+            result.capture_mappings[WILDCARD_KEY].highlights["function.builtin"],
             "fallback.function"
         );
     }
@@ -788,11 +792,11 @@ mod tests {
             folds: HashMap::new(),
         };
 
-        capture_mappings.insert("_".to_string(), query_type_mappings);
+        capture_mappings.insert(WILDCARD_KEY.to_string(), query_type_mappings);
 
         // Verify the mapping exists and contains expected values
-        assert!(capture_mappings.contains_key("_"));
-        let wildcard_mappings = capture_mappings.get("_").unwrap();
+        assert!(capture_mappings.contains_key(WILDCARD_KEY));
+        let wildcard_mappings = capture_mappings.get(WILDCARD_KEY).unwrap();
         assert_eq!(
             wildcard_mappings.highlights.get("@module"),
             Some(&"@namespace".to_string())
@@ -1463,13 +1467,13 @@ mod tests {
 
         // variable.builtin: overridden by project
         assert_eq!(
-            result.capture_mappings["_"].highlights["variable.builtin"],
+            result.capture_mappings[WILDCARD_KEY].highlights["variable.builtin"],
             "project.variable"
         );
 
         // function.builtin: inherited from user
         assert_eq!(
-            result.capture_mappings["_"].highlights["function.builtin"],
+            result.capture_mappings[WILDCARD_KEY].highlights["function.builtin"],
             "function.defaultLibrary"
         );
     }
@@ -1524,12 +1528,12 @@ mod tests {
         let result = result.unwrap();
 
         // Both language keys should exist
-        assert!(result.capture_mappings.contains_key("_"));
+        assert!(result.capture_mappings.contains_key(WILDCARD_KEY));
         assert!(result.capture_mappings.contains_key("rust"));
 
         // Wildcard from user
         assert_eq!(
-            result.capture_mappings["_"].highlights["variable.builtin"],
+            result.capture_mappings[WILDCARD_KEY].highlights["variable.builtin"],
             "user.variable"
         );
 
@@ -1602,19 +1606,19 @@ mod tests {
 
         // locals.definition.var: overridden by project
         assert_eq!(
-            result.capture_mappings["_"].locals["definition.var"],
+            result.capture_mappings[WILDCARD_KEY].locals["definition.var"],
             "project.definition"
         );
 
         // folds.fold.comment: inherited from user
         assert_eq!(
-            result.capture_mappings["_"].folds["fold.comment"],
+            result.capture_mappings[WILDCARD_KEY].folds["fold.comment"],
             "comment"
         );
 
         // folds.fold.function: added by project
         assert_eq!(
-            result.capture_mappings["_"].folds["fold.function"],
+            result.capture_mappings[WILDCARD_KEY].folds["fold.function"],
             "function"
         );
     }

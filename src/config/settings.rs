@@ -269,6 +269,7 @@ impl WorkspaceSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::WILDCARD_KEY;
 
     #[test]
     fn should_distinguish_between_unspecified_and_empty_queries() {
@@ -561,10 +562,10 @@ mod tests {
         let settings: TreeSitterSettings = serde_json::from_str(config_json).unwrap();
 
         // Check capture mappings are parsed correctly
-        assert!(settings.capture_mappings.contains_key("_"));
+        assert!(settings.capture_mappings.contains_key(WILDCARD_KEY));
         assert!(settings.capture_mappings.contains_key("rust"));
 
-        let wildcard_mappings = &settings.capture_mappings["_"].highlights;
+        let wildcard_mappings = &settings.capture_mappings[WILDCARD_KEY].highlights;
         assert_eq!(
             wildcard_mappings.get("variable.builtin"),
             Some(&"variable.defaultLibrary".to_string())

@@ -1,4 +1,4 @@
-use crate::config::CaptureMappings;
+use crate::config::{CaptureMappings, WILDCARD_KEY};
 use crate::text::convert_byte_to_utf16_in_line;
 use tower_lsp::lsp_types::{
     Range, SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens,
@@ -92,7 +92,7 @@ fn apply_capture_mapping(
         }
 
         // Try wildcard mapping
-        if let Some(wildcard_mappings) = mappings.get("_")
+        if let Some(wildcard_mappings) = mappings.get(WILDCARD_KEY)
             && let Some(mapped) = wildcard_mappings.highlights.get(capture_name)
         {
             return mapped.clone();

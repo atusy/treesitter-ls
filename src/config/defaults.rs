@@ -3,6 +3,7 @@
 //! This module provides type-safe default values that are used by `config init`
 //! to generate configuration templates.
 
+use super::WILDCARD_KEY;
 use super::settings::{CaptureMapping, CaptureMappings, QueryTypeMappings, TreeSitterSettings};
 use std::collections::HashMap;
 
@@ -33,7 +34,7 @@ pub fn default_capture_mappings() -> CaptureMappings {
         folds: CaptureMapping::new(),
     };
 
-    mappings.insert("_".to_string(), wildcard);
+    mappings.insert(WILDCARD_KEY.to_string(), wildcard);
     mappings
 }
 
@@ -162,7 +163,9 @@ mod tests {
         let mappings = default_capture_mappings();
 
         // The wildcard "_" key should exist with highlights mappings
-        let wildcard = mappings.get("_").expect("should have wildcard '_' key");
+        let wildcard = mappings
+            .get(WILDCARD_KEY)
+            .expect("should have wildcard '_' key");
 
         // "variable" should map to "variable" (identity mapping)
         assert_eq!(
@@ -196,7 +199,7 @@ mod tests {
 
         // Should contain the wildcard "_" key
         assert!(
-            settings.capture_mappings.contains_key("_"),
+            settings.capture_mappings.contains_key(WILDCARD_KEY),
             "capture_mappings should contain wildcard '_' key"
         );
     }
