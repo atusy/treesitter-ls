@@ -665,6 +665,11 @@ impl TokioAsyncLanguageServerPool {
         content: &str,
         position: tower_lsp::lsp_types::Position,
     ) -> Option<tower_lsp::lsp_types::Hover> {
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio_async_pool",
+            "[REQUEST] hover START for key={}, host_uri={}",
+            key, host_uri
+        );
         let conn = self.get_connection(key, config, host_uri).await?;
 
         // Get virtual file URI for this specific host document
@@ -694,12 +699,18 @@ impl TokioAsyncLanguageServerPool {
         };
 
         // Parse response
-        result
+        let response = result
             .response?
             .get("result")
             .cloned()
             .filter(|r| !r.is_null())
-            .and_then(|r| serde_json::from_value(r).ok())
+            .and_then(|r| serde_json::from_value(r).ok());
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio_async_pool",
+            "[REQUEST] hover DONE for key={}",
+            key
+        );
+        response
     }
 
     /// Send a goto definition request asynchronously.
@@ -720,6 +731,11 @@ impl TokioAsyncLanguageServerPool {
         content: &str,
         position: tower_lsp::lsp_types::Position,
     ) -> Option<tower_lsp::lsp_types::GotoDefinitionResponse> {
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio_async_pool",
+            "[REQUEST] goto_definition START for key={}, host_uri={}",
+            key, host_uri
+        );
         let conn = self.get_connection(key, config, host_uri).await?;
 
         // Get virtual file URI for this specific host document
@@ -752,12 +768,18 @@ impl TokioAsyncLanguageServerPool {
         };
 
         // Parse response
-        result
+        let response = result
             .response?
             .get("result")
             .cloned()
             .filter(|r| !r.is_null())
-            .and_then(|r| serde_json::from_value(r).ok())
+            .and_then(|r| serde_json::from_value(r).ok());
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio_async_pool",
+            "[REQUEST] goto_definition DONE for key={}",
+            key
+        );
+        response
     }
 
     /// Send a completion request asynchronously.
@@ -778,6 +800,11 @@ impl TokioAsyncLanguageServerPool {
         content: &str,
         position: tower_lsp::lsp_types::Position,
     ) -> Option<tower_lsp::lsp_types::CompletionResponse> {
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio_async_pool",
+            "[REQUEST] completion START for key={}, host_uri={}",
+            key, host_uri
+        );
         let conn = self.get_connection(key, config, host_uri).await?;
 
         // Get virtual file URI for this specific host document
@@ -810,12 +837,18 @@ impl TokioAsyncLanguageServerPool {
         };
 
         // Parse response
-        result
+        let response = result
             .response?
             .get("result")
             .cloned()
             .filter(|r| !r.is_null())
-            .and_then(|r| serde_json::from_value(r).ok())
+            .and_then(|r| serde_json::from_value(r).ok());
+        log::debug!(
+            target: "treesitter_ls::bridge::tokio_async_pool",
+            "[REQUEST] completion DONE for key={}",
+            key
+        );
+        response
     }
 
     /// Send a signature help request asynchronously.
