@@ -60,8 +60,14 @@ const scrum: ScrumDashboard = {
         test: "Add unit test verifying TokioAsyncBridgeConnection has initialized flag field",
         implementation: "Add initialized: AtomicBool field to TokioAsyncBridgeConnection struct, initialize to false in new()",
         type: "behavioral" as SubtaskType,
-        status: "pending" as SubtaskStatus,
-        commits: [],
+        status: "completed" as SubtaskStatus,
+        commits: [
+          {
+            hash: "a5a58a3",
+            message: "feat(bridge): add initialized flag to TokioAsyncBridgeConnection",
+            phase: "green" as CommitPhase,
+          },
+        ],
         notes: ["AC1: Add initialized flag to connection structs - async implementation"],
       },
       {
