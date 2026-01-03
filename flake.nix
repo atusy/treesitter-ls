@@ -21,6 +21,23 @@
         rustToolchain = pkgs.rust-bin.stable.latest.default.override {
           extensions = [ "rust-src" "rust-analyzer" "clippy" ];
         };
+
+        # Tree-sitter grammars for testing
+        treesitterGrammars = with pkgs.tree-sitter-grammars; [
+          tree-sitter-bash
+          tree-sitter-c
+          tree-sitter-go
+          tree-sitter-javascript
+          tree-sitter-json
+          tree-sitter-lua
+          tree-sitter-markdown
+          tree-sitter-markdown-inline
+          tree-sitter-python
+          tree-sitter-rust
+          tree-sitter-toml
+          tree-sitter-typescript
+          tree-sitter-yaml
+        ];
       in
       {
         devShells.default = pkgs.mkShell {
@@ -42,10 +59,10 @@
             # For Neovim integration testing
             neovim
             git
-          ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
+          ] ++ treesitterGrammars
+            ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
             # macOS-specific dependencies
-            pkgs.darwin.apple_sdk.frameworks.Security
-            pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
+            pkgs.apple-sdk_15
             pkgs.libiconv
           ];
 
@@ -54,11 +71,11 @@
             echo "Rust: $(rustc --version)"
             echo "Cargo: $(cargo --version)"
             echo ""
-            echo "Available commands:"
-            echo "  cargo build    - Build the project"
+            echo "Available commands: (run 'make help' for more)"
+            echo "  cargo build    - Build the project (debug)"
+            echo "  make           - Build the project (release)"
             echo "  cargo test     - Run tests"
             echo "  cargo clippy   - Run linter"
-            echo "  make           - Build release"
             echo "  make test_nvim - Run Neovim tests"
           '';
 
@@ -69,8 +86,8 @@
 
         packages.default = pkgs.rustPlatform.buildRustPackage {
           pname = "treesitter-ls";
-          version = "0.1.0";
-          src = ./.;
+          version = (pkgs.lib.importTOML ./Cargo.toml).package.version;
+          src = self;
 
           cargoLock = {
             lockFile = ./Cargo.lock;
@@ -83,8 +100,7 @@
           buildInputs = with pkgs; [
             openssl
           ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-            pkgs.darwin.apple_sdk.frameworks.Security
-            pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
+            pkgs.apple-sdk_15
             pkgs.libiconv
           ];
 
@@ -92,7 +108,7 @@
             description = "A Tree-sitter Language Server";
             homepage = "https://github.com/atusy/treesitter-ls";
             license = licenses.mit;
-            maintainers = [ ];
+            maintainers = with maintainers; [ atusy ];
           };
         };
       }
