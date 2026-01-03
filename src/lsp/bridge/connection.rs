@@ -597,6 +597,14 @@ impl LanguageServerConnection {
         _uri: &str,
         position: Position,
     ) -> GotoDefinitionWithNotifications {
+        // Guard: return None if not initialized to prevent protocol errors
+        if !self.initialized {
+            return GotoDefinitionWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        }
+
         // Use the virtual file URI from the temp workspace
         let Some(real_uri) = self.virtual_file_uri() else {
             return GotoDefinitionWithNotifications {
@@ -642,6 +650,14 @@ impl LanguageServerConnection {
         _uri: &str,
         position: Position,
     ) -> HoverWithNotifications {
+        // Guard: return None if not initialized to prevent protocol errors
+        if !self.initialized {
+            return HoverWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        }
+
         // Use the virtual file URI from the temp workspace
         let Some(real_uri) = self.virtual_file_uri() else {
             return HoverWithNotifications {
@@ -688,6 +704,14 @@ impl LanguageServerConnection {
         _uri: &str,
         position: Position,
     ) -> CompletionWithNotifications {
+        // Guard: return None if not initialized to prevent protocol errors
+        if !self.initialized {
+            return CompletionWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        }
+
         // Use the virtual file URI from the temp workspace
         let Some(real_uri) = self.virtual_file_uri() else {
             return CompletionWithNotifications {
@@ -734,6 +758,14 @@ impl LanguageServerConnection {
         _uri: &str,
         position: Position,
     ) -> SignatureHelpWithNotifications {
+        // Guard: return None if not initialized to prevent protocol errors
+        if !self.initialized {
+            return SignatureHelpWithNotifications {
+                response: None,
+                notifications: vec![],
+            };
+        }
+
         // Use the virtual file URI from the temp workspace
         let Some(real_uri) = self.virtual_file_uri() else {
             return SignatureHelpWithNotifications {
@@ -1401,6 +1433,63 @@ fn main() {
 
         // The initialized field should be accessible and false by default
         assert!(!conn.initialized, "initialized flag should default to false after spawn");
+    }
+
+    #[test]
+    fn language_server_connection_request_methods_return_none_when_not_initialized() {
+        // PBI-162 Subtask 3: Request methods must return None when initialized=false
+        // to prevent protocol errors during the initialization window.
+        //
+        // This test verifies the guard logic by spawning a connection and manually
+        // setting initialized=false to simulate the pre-initialization state.
+
+        if !check_rust_analyzer_available() {
+            return;
+        }
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        let mut conn = LanguageServerConnection::spawn(&config).unwrap();
+
+        // Manually set initialized=false to test the guard logic
+        // (In production, this will be the state between spawn and sending initialized notification)
+        conn.initialized = false;
+
+        // Open a document to ensure we have content
+        let content = "fn main() { let x = 42; }";
+        conn.did_open("file:///test.rs", "rust", content);
+
+        let position = Position { line: 0, character: 15 };
+
+        // All request methods should return None when not initialized
+        let goto_def_result = conn.goto_definition_with_notifications("file:///test.rs", position);
+        assert!(
+            goto_def_result.response.is_none(),
+            "goto_definition should return None when not initialized"
+        );
+
+        let hover_result = conn.hover_with_notifications("file:///test.rs", position);
+        assert!(
+            hover_result.response.is_none(),
+            "hover should return None when not initialized"
+        );
+
+        let completion_result = conn.completion_with_notifications("file:///test.rs", position);
+        assert!(
+            completion_result.response.is_none(),
+            "completion should return None when not initialized"
+        );
+
+        let sig_help_result = conn.signature_help_with_notifications("file:///test.rs", position);
+        assert!(
+            sig_help_result.response.is_none(),
+            "signature_help should return None when not initialized"
+        );
     }
 
     #[test]
