@@ -104,7 +104,7 @@ const scrum: ScrumDashboard = {
           verification: "Unit test with mixed QueryItems verifies highlights, locals, and injections are loaded separately",
         },
       ],
-      status: "ready",
+      status: "done",
     },
     // Future: PBI-147 (hover wait), PBI-141/142/143 (async bridge methods)
     // ADR-0010: PBI-151 (118), PBI-150 (119), PBI-149 (120) | ADR-0011: PBI-152-155 (121-124)
@@ -117,10 +117,15 @@ const scrum: ScrumDashboard = {
       { name: "E2E tests pass", run: "make test_nvim" },
     ],
   },
-  // Historical sprints (recent 2) | Sprint 1-125: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-126: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 128, pbi_id: "PBI-159", goal: "Add comprehensive tests for coordinator unified query loading", status: "done", subtasks: [
+      { id: "1", description: "Test QueryItem with explicit kind", type: "behavioral", status: "completed", commits: [] },
+      { id: "2", description: "Test QueryItem with filename inference", type: "behavioral", status: "completed", commits: [] },
+      { id: "3", description: "Test unknown patterns silently skipped", type: "behavioral", status: "completed", commits: [] },
+      { id: "4", description: "Test queries grouped by type", type: "behavioral", status: "completed", commits: [] },
+    ] },
     { number: 127, pbi_id: "PBI-158", goal: "Validate XDG_CONFIG_HOME to prevent path traversal attacks", status: "done", subtasks: [], commit: "cd7f4ec" },
-    { number: 126, pbi_id: "PBI-157", goal: "Fix initialization_options shallow merge bug (ADR-0010 compliance)", status: "done", subtasks: [] },
   ],
   // Retrospectives (recent 2)
   retrospectives: [
