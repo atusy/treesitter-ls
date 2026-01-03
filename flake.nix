@@ -50,7 +50,7 @@
               lang = builtins.replaceStrings ["tree-sitter-"] [""] (
                 pkgs.lib.removeSuffix "-grammar" name
               );
-              # Handle special case: markdown_inline -> markdown-inline
+              # Normalize: markdown-inline -> markdown_inline (underscores for file names)
               normalizedLang = builtins.replaceStrings ["-"] ["_"] lang;
             in ''
               # ${lang}
