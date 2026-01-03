@@ -18,14 +18,24 @@ jobs:
       - run: cargo check
 
   test:
-    name: Test
+    name: Test (Unit)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - run: cargo install tree-sitter-cli
       - run: rustup component add rust-analyzer
       - run: make deps/treesitter
-      - run: cargo test
+      - run: make test
+
+  test-e2e:
+    name: Test (E2E)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: cargo install tree-sitter-cli
+      - run: rustup component add rust-analyzer
+      - run: make deps/treesitter
+      - run: make test_e2e
 
   fmt:
     name: Format

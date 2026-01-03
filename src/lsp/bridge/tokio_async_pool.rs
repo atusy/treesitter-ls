@@ -2308,6 +2308,74 @@ mod tests {
         // even when the connection is shared across multiple references
     }
 
+    /// Test that concurrent signature_help calls don't deadlock.
+    ///
+    /// PBI-175 Subtask 2: This test reproduces the deadlock scenario where concurrent
+    /// signatureHelp requests can hang indefinitely. The test spawns multiple concurrent
+    /// signature_help() calls and verifies they all complete within a reasonable timeout.
+    ///
+    /// Expected behavior (after fix): All tasks complete within 30s.
+    /// Actual behavior (before fix): Tasks hang indefinitely due to lock acquisition deadlock.
+    #[tokio::test]
+    #[serial]
+    async fn concurrent_signature_help_does_not_deadlock() {
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = std::sync::Arc::new(super::TokioAsyncLanguageServerPool::new(tx));
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Spawn multiple concurrent signature_help requests
+        let mut handles = vec![];
+        for i in 0..5 {
+            let pool_clone = pool.clone();
+            let config_clone = config.clone();
+            let content = format!("fn add(a: i32, b: i32) -> i32 {{ a + b }}\nfn main() {{ add({} }}", i);
+
+            let handle = tokio::spawn(async move {
+                let position = tower_lsp::lsp_types::Position {
+                    line: 1,
+                    character: 17,
+                };
+
+                pool_clone.signature_help(
+                    "rust-analyzer",
+                    &config_clone,
+                    "file:///test.rs",
+                    "rust",
+                    &content,
+                    position,
+                ).await
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all tasks with a 30-second timeout
+        // If there's a deadlock, this will timeout
+        let timeout_result = tokio::time::timeout(
+            Duration::from_secs(30),
+            async {
+                for handle in handles {
+                    handle.await.ok();
+                }
+            }
+        ).await;
+
+        assert!(
+            timeout_result.is_ok(),
+            "Concurrent signature_help calls should complete within 30s (deadlock detected if timeout)"
+        );
+    }
+
     /// Test that connection eviction cleans up all associated bookkeeping state.
     ///
     /// PBI-169 AC1: When get_connection() evicts a dead connection, it should purge:
