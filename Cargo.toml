@@ -14,20 +14,20 @@ clap = { version = "4", features = ["derive"] }
 dashmap = "6"
 dirs = "6"
 env_logger = "0.11"
-libloading = "0.8"
+libloading = "0.9"
 line-index = "0.1"
 log = "0.4"
 lua-pattern = { version = "0.1", features = ["to-regex"] }
 path-clean = "1"
 regex = "1"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
 rust-lapper = "1.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util", "time", "process", "fs"] }
-toml = "0.8"
+toml = "0.9"
 tower-lsp = "0.20"
 tree-sitter = "0.26"
 url = "2"
@@ -38,15 +38,15 @@ e2e = []
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3"
-tree-sitter-rust = "0.23"
-tree-sitter-md = "0.3"
+tree-sitter-rust = "0.24"
+tree-sitter-md = "0.5"
 tree-sitter-yaml = "0.7"
 streaming-iterator = "0.1"
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 filetime = "0.2"
 insta = { version = "1", features = ["json"] }
 serial_test = "3"
-rstest = "0.23"
+rstest = "0.26"
 
 [[bench]]
 name = "injection_tokens"
