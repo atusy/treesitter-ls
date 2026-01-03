@@ -20,7 +20,77 @@ const scrum: ScrumDashboard = {
   },
 
   // Deferred: PBI-091 (idle cleanup), PBI-107 (WorkspaceType), PBI-171 ($/cancelRequest - tower-lsp internals)
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "PBI-172",
+      story: {
+        role: "developer editing Lua files",
+        capability: "relocate smoke tests from integration to unit test location",
+        benefit: "improve test pyramid distribution and reduce integration test execution time",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "11 smoke tests from test_runtime_coordinator_api.rs moved to src/language/coordinator.rs as inline unit tests",
+          verification: "run make test && verify test_runtime_coordinator_api.rs no longer exists",
+        },
+        {
+          criterion: "All moved tests continue to pass with same verification behavior",
+          verification: "make test shows all coordinator API tests passing",
+        },
+        {
+          criterion: "Integration test count reduced by ~9%, unit test count increased",
+          verification: "cargo test --lib reports increased unit test count",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-173",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "parameterize duplicated offset clamping tests using rstest",
+        benefit: "reduce test maintenance burden and improve test clarity",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "3+ clamping tests in src/analysis/offset_calculator.rs consolidated into 1 parameterized test",
+          verification: "grep -c '#\\[test\\]' src/analysis/offset_calculator.rs shows reduced test function count",
+        },
+        {
+          criterion: "Parameterized test uses rstest with named test cases (past_eof, start_past_end, row_past_eof)",
+          verification: "cargo test offset_clamping shows 3+ test cases executed",
+        },
+        {
+          criterion: "All original edge cases preserved with identical assertions",
+          verification: "make test passes with no regression in coverage",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-174",
+      story: {
+        role: "documentation author with Rust code blocks",
+        capability: "audit and restrict public API visibility in LanguageCoordinator following YAGNI",
+        benefit: "prevent unnecessary public API surface expansion and improve encapsulation",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Review all pub methods in src/language/coordinator.rs and change to pub(crate) where not used externally",
+          verification: "grep 'pub fn' src/language/coordinator.rs shows reduced public methods",
+        },
+        {
+          criterion: "Add #[cfg(test)] helper methods for test-only accessors if needed",
+          verification: "Tests continue to pass with make test",
+        },
+        {
+          criterion: "Document visibility decisions in code comments or ADR",
+          verification: "Each method has clear visibility justification",
+        },
+      ],
+      status: "ready",
+    },
+  ],
 
   sprint: null,
 
