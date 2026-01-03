@@ -181,6 +181,9 @@ impl LanguageServerConnection {
         // Send initialized notification
         conn.send_notification("initialized", serde_json::json!({}));
 
+        // Set the initialized flag to true after sending initialized notification
+        conn.initialized = true;
+
         Some((conn, result.notifications))
     }
 
@@ -1489,6 +1492,32 @@ fn main() {
         assert!(
             sig_help_result.response.is_none(),
             "signature_help should return None when not initialized"
+        );
+    }
+
+    #[test]
+    fn language_server_connection_sets_initialized_flag_after_initialized_notification() {
+        // PBI-162 Subtask 5: After sending the initialized notification,
+        // the initialized flag should be set to true.
+
+        if !check_rust_analyzer_available() {
+            return;
+        }
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // spawn_with_notifications sends the initialized notification internally
+        let (conn, _notifications) = LanguageServerConnection::spawn_with_notifications(&config).unwrap();
+
+        // After spawn completes, initialized should be true
+        assert!(
+            conn.initialized,
+            "initialized flag should be true after sending initialized notification"
         );
     }
 
