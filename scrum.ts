@@ -30,7 +30,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113), PBI-155 (Sprint 124), PBI-156 (Sprint 125), PBI-157 (Sprint 126) | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113), PBI-155-158 (Sprint 124-127) | History: git log -- scrum.yaml, scrum.ts
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   product_backlog: [
     {
@@ -106,29 +106,6 @@ const scrum: ScrumDashboard = {
       ],
       status: "ready",
     },
-    {
-      id: "PBI-158",
-      story: {
-        role: "treesitter-ls user managing configurations",
-        capability: "have XDG_CONFIG_HOME path validated before use",
-        benefit: "malicious environment variables cannot cause path traversal attacks",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "user_config_path validates XDG_CONFIG_HOME is absolute",
-          verification: "Unit test with relative path XDG_CONFIG_HOME returns None instead of using invalid path",
-        },
-        {
-          criterion: "user_config_path canonicalizes XDG_CONFIG_HOME to prevent traversal",
-          verification: "Unit test verifies symlinks are resolved and .. components are eliminated",
-        },
-        {
-          criterion: "Invalid XDG_CONFIG_HOME logs warning and falls back to ~/.config",
-          verification: "Unit test verifies warning is logged and fallback path is used",
-        },
-      ],
-      status: "done",
-    },
     // Future: PBI-147 (hover wait), PBI-141/142/143 (async bridge methods)
     // ADR-0010: PBI-151 (118), PBI-150 (119), PBI-149 (120) | ADR-0011: PBI-152-155 (121-124)
   ],
@@ -147,14 +124,15 @@ const scrum: ScrumDashboard = {
   ],
   // Retrospectives (recent 2)
   retrospectives: [
+    { sprint: 127, improvements: [
+      { action: "Add edge case tests for symlinks and empty paths in security-sensitive path validation", timing: "sprint", status: "active", outcome: null },
+      { action: "Add integration test for full config loading with invalid XDG_CONFIG_HOME", timing: "sprint", status: "active", outcome: null },
+      { action: "Document security testing pattern: Component::ParentDir check is more robust than string-based '..' detection", timing: "immediate", status: "active", outcome: null },
+    ] },
     { sprint: 126, improvements: [
       { action: "Clarify CI/setup documentation for deps/treesitter requirement to prevent initial test failures", timing: "immediate", status: "active", outcome: null },
       { action: "Integrate code review feedback earlier in development cycle (before implementation completion)", timing: "sprint", status: "active", outcome: null },
       { action: "Extract and document reusable deep_merge_json pattern for other JSON merge use cases in codebase", timing: "product", status: "active", outcome: null },
-    ] },
-    { sprint: 125, improvements: [
-      { action: "Document domain vs serialization type distinction in ADR: LanguageSettings (domain) vs LanguageConfig (serialization) separation rationale", timing: "immediate", status: "active", outcome: null },
-      { action: "Consider introducing explicit conversion trait between domain and serialization types for type safety", timing: "product", status: "active", outcome: null },
     ] },
   ],
 };
