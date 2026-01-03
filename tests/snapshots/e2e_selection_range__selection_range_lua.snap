@@ -1,0 +1,42 @@
+---
+source: tests/e2e_selection_range.rs
+expression: sanitized
+---
+[
+  {
+    "parent": {
+      "parent": {
+        "range": {
+          "end": {
+            "character": 0,
+            "line": 7
+          },
+          "start": {
+            "character": 0,
+            "line": 0
+          }
+        }
+      },
+      "range": {
+        "end": {
+          "character": 12,
+          "line": 0
+        },
+        "start": {
+          "character": 0,
+          "line": 0
+        }
+      }
+    },
+    "range": {
+      "end": {
+        "character": 5,
+        "line": 0
+      },
+      "start": {
+        "character": 0,
+        "line": 0
+      }
+    }
+  }
+]

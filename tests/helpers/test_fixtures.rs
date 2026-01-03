@@ -83,6 +83,103 @@ fn main() {
     create_markdown_file(content)
 }
 
+/// Create a temporary markdown file with Rust code block for signature help testing.
+///
+/// Content: fn greet(name: &str, age: u32) { ... }
+/// Cursor target: inside 'greet(' call at line 8, column 10 (after opening paren)
+pub(crate) fn create_signature_help_fixture() -> (String, String, tempfile::NamedTempFile) {
+    let content = r#"# Signature Help Example
+
+```rust
+fn greet(name: &str, age: u32) {
+    println!("Hello, {}! You are {} years old.", name, age);
+}
+
+fn main() {
+    greet(
+}
+```
+"#;
+
+    create_markdown_file(content)
+}
+
+/// Create a temporary Lua file for selection range testing (no injection).
+///
+/// Content: Simple Lua module with function definition
+/// Test positions: line 0 col 0 for "local" keyword
+pub(crate) fn create_selection_range_lua_fixture() -> (String, String, tempfile::NamedTempFile) {
+    let content = r#"local M = {}
+
+function M.f()
+	return
+end
+
+return M
+"#;
+
+    create_lua_file(content)
+}
+
+/// Create a temporary markdown file for selection range testing (with injections).
+///
+/// Content: Markdown with YAML frontmatter, Lua code blocks, nested injections
+/// Based on tests/assets/example.md
+pub(crate) fn create_selection_range_md_fixture() -> (String, String, tempfile::NamedTempFile) {
+    let content = r#"---
+title: "awesome"
+array: ["xxxx"]
+---
+
+```lua
+local xyz = 12345
+```
+
+# nested injection
+
+`````markdown
+```lua
+local injection = true
+```
+`````
+
+# indented injection
+
+* item
+
+    ```lua
+    local indent = true
+    ```
+
+# section
+
+paragraph
+
+```py
+def f():
+    return 1
+```
+"#;
+
+    create_markdown_file(content)
+}
+
+/// Helper to create a temporary Lua file with given content.
+fn create_lua_file(content: &str) -> (String, String, tempfile::NamedTempFile) {
+    let temp_file = tempfile::Builder::new()
+        .suffix(".lua")
+        .tempfile()
+        .expect("Failed to create temp file");
+
+    std::fs::write(temp_file.path(), content).expect("Failed to write temp file");
+
+    let uri = url::Url::from_file_path(temp_file.path())
+        .expect("Failed to construct file URI from temp file path")
+        .to_string();
+
+    (uri, content.to_string(), temp_file)
+}
+
 /// Helper to create a temporary markdown file with given content.
 fn create_markdown_file(content: &str) -> (String, String, tempfile::NamedTempFile) {
     let temp_file = tempfile::Builder::new()
