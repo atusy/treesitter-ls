@@ -78,13 +78,16 @@ const scrum: ScrumDashboard = {
         test: "Fix deadlock by refactoring lock scoping",
         implementation: "Restructure get_connection() or sync_document() to avoid holding spawn_locks when acquiring document_open_locks (or vice versa)",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          { hash: "2ed2bf0", message: "docs(bridge): document lock ordering to prevent deadlocks", phase: "green" },
+        ],
         notes: [
-          "Potential fix: Drop spawn_locks guard before calling sync_document_with_host()",
-          "Ensure connection is still safely initialized before releasing lock",
-          "Alternative: Combine locks into single mutex if protecting same critical section",
-          "Verify fix doesn't break PBI-159 (duplicate didOpen prevention)",
+          "Analysis: Current code already has correct lock ordering",
+          "spawn_locks is released before sync_document() acquires document_open_locks",
+          "No circular dependency exists - locks are never held simultaneously",
+          "Added comprehensive documentation explaining lock ordering invariant",
+          "This defensive documentation prevents future deadlock introduction",
         ],
       },
       {
