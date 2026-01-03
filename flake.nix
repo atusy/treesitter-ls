@@ -58,6 +58,7 @@
 
             # For Neovim integration testing
             neovim
+            vimPlugins.nvim-treesitter  # Provides bundled queries (highlights.scm, etc.)
             git
           ] ++ treesitterGrammars
             ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
