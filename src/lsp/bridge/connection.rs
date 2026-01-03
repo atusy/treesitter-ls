@@ -423,6 +423,13 @@ impl LanguageServerConnection {
         language_id: &str,
         content: &str,
     ) -> Option<Vec<Value>> {
+        // Guard: return None if not initialized to prevent protocol errors
+        // LSP spec requires that textDocument/* notifications are only sent
+        // after the initialized notification is sent.
+        if !self.initialized {
+            return None;
+        }
+
         log::debug!(
             target: "treesitter_ls::bridge::conn",
             "[CONN] did_open_with_notifications START lang={} content_len={}",
@@ -1608,5 +1615,45 @@ fn main() {
                 );
             }
         }
+    }
+
+    #[test]
+    fn did_open_with_notifications_returns_none_when_not_initialized() {
+        // Sprint 131 Subtask 8: did_open_with_notifications must return None
+        // when initialized=false to prevent LSP spec violation.
+        //
+        // LSP spec requires that textDocument/* notifications are only sent
+        // after the initialized notification is sent. This test verifies that
+        // the guard prevents didOpen when the connection is not yet initialized.
+
+        if !check_rust_analyzer_available() {
+            return;
+        }
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        let mut conn = LanguageServerConnection::spawn(&config).unwrap();
+
+        // Manually set initialized=false to simulate pre-initialization state
+        // (In production, this is the state between spawn and sending initialized notification)
+        conn.initialized = false;
+
+        // Attempt to call did_open_with_notifications when not initialized
+        let result = conn.did_open_with_notifications(
+            "file:///test.rs",
+            "rust",
+            "fn main() { let x = 42; }",
+        );
+
+        // Should return None because initialized=false
+        assert!(
+            result.is_none(),
+            "did_open_with_notifications should return None when initialized=false (prevents LSP spec violation)"
+        );
     }
 }

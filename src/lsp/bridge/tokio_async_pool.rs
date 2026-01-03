@@ -864,6 +864,13 @@ impl TokioAsyncLanguageServerPool {
         language_id: &str,
         content: &str,
     ) -> Option<()> {
+        // Guard: return None if not initialized to prevent protocol errors
+        // LSP spec requires that textDocument/* notifications are only sent
+        // after the initialized notification is sent.
+        if !conn.initialized.load(std::sync::atomic::Ordering::SeqCst) {
+            return None;
+        }
+
         // Get or create a lock for this URI (PBI-159)
         let lock = {
             let mut locks = self.document_open_locks.lock().await;
@@ -2358,6 +2365,47 @@ mod tests {
         assert!(
             conn.initialized.load(std::sync::atomic::Ordering::SeqCst),
             "initialized flag should be true after spawn_and_initialize sends initialized notification"
+        );
+    }
+
+    #[tokio::test]
+    async fn sync_document_returns_none_when_not_initialized() {
+        // Sprint 131 Subtask 8: sync_document must return None when initialized=false
+        // to prevent LSP spec violation.
+        //
+        // LSP spec requires that textDocument/* notifications are only sent
+        // after the initialized notification is sent. This test verifies that
+        // the guard prevents didOpen when the connection is not yet initialized.
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let (cmd, args) = short_lived_command();
+        let conn = TokioAsyncBridgeConnection::spawn(cmd, args, None, None, None)
+            .await
+            .expect("short-lived command should spawn");
+
+        // The connection's initialized flag defaults to false
+        assert!(
+            !conn.initialized.load(std::sync::atomic::Ordering::SeqCst),
+            "initialized flag should be false by default"
+        );
+
+        let uri = "file:///test.rs";
+        let result = pool
+            .sync_document(&conn, uri, "rust", "fn main() {}")
+            .await;
+
+        // Should return None because initialized=false
+        assert!(
+            result.is_none(),
+            "sync_document should return None when initialized=false (prevents LSP spec violation)"
+        );
+
+        // No version should be set when the notification fails
+        assert!(
+            pool.get_document_version(uri).is_none(),
+            "Document version should not be set when initialized=false"
         );
     }
 }
