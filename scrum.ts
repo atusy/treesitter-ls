@@ -22,7 +22,83 @@ const scrum: ScrumDashboard = {
   // Deferred: PBI-091 (idle cleanup), PBI-107 (WorkspaceType), PBI-171 ($/cancelRequest - tower-lsp internals)
   product_backlog: [],
 
-  sprint: null,
+  sprint: {
+    number: 148,
+    pbi_id: "PBI-175",
+    goal: "Fix signatureHelp deadlock in pyright bridge - prevent infinite hangs on signature help requests",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "Add debug logging test to verify lock acquisition order in signature_help flow",
+        implementation: "Instrument get_connection() and sync_document() with log::debug! statements showing lock acquisition attempts and completions for spawn_locks and document_open_locks",
+        type: "behavioral",
+        status: "completed",
+        commits: [
+          { hash: "73dc8d1", message: "feat(bridge): add debug logging for lock acquisition in signature_help flow", phase: "green" },
+        ],
+        notes: [
+          "Goal: Understand actual lock acquisition patterns during signatureHelp",
+          "Log before/after spawn_locks.lock().await (get_connection L153)",
+          "Log before/after document_open_locks.lock().await (sync_document L865)",
+          "Log entry/exit of signature_help, get_connection, sync_document_with_host",
+          "This establishes observable behavior for diagnosing the hang",
+        ],
+      },
+      {
+        test: "Write unit test reproducing signatureHelp hang with concurrent operations",
+        implementation: "Create tokio_async_pool test simulating concurrent signatureHelp + completion requests that trigger deadlock scenario",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Test should spawn 2+ concurrent tasks calling signature_help()",
+          "Expected: All tasks complete within 30s timeout (currently hangs)",
+          "Use tokio::time::timeout to fail test if deadlock occurs",
+          "Model after existing concurrent tests (e.g., connection_eviction tests)",
+        ],
+      },
+      {
+        test: "Verify test reproduces hang by running with instrumentation",
+        implementation: "Run new test with debug logs enabled, confirm it hangs and shows lock acquisition pattern",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "This is the RED phase - test should fail/hang",
+          "Analyze debug logs to identify exact deadlock sequence",
+          "Document findings: which locks are held, which are awaited",
+          "Hypothesis: spawn_locks held while awaiting document_open_locks creates circular wait",
+        ],
+      },
+      {
+        test: "Fix deadlock by refactoring lock scoping",
+        implementation: "Restructure get_connection() or sync_document() to avoid holding spawn_locks when acquiring document_open_locks (or vice versa)",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Potential fix: Drop spawn_locks guard before calling sync_document_with_host()",
+          "Ensure connection is still safely initialized before releasing lock",
+          "Alternative: Combine locks into single mutex if protecting same critical section",
+          "Verify fix doesn't break PBI-159 (duplicate didOpen prevention)",
+        ],
+      },
+      {
+        test: "Verify all acceptance criteria pass",
+        implementation: "Run unit test (should complete), run make test, check logs for START/DONE pairing",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "AC1: signatureHelp completes within 30s timeout",
+          "AC2: Subsequent completion requests receive responses",
+          "AC3: Logs show paired START/DONE for all requests",
+          "AC4: Instrumentation confirms no deadlock in lock acquisition",
+          "Run make test_nvim for E2E validation if possible",
+        ],
+      },
+    ],
+  },
 
   definition_of_done: {
     checks: [
