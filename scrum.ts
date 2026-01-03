@@ -130,8 +130,14 @@ const scrum: ScrumDashboard = {
         test: "Add integration test spawning 2 separate connections, verifying each has independent initialized flag state",
         implementation: "Verify both sync and async connections maintain per-instance state correctly",
         type: "behavioral" as SubtaskType,
-        status: "pending" as SubtaskStatus,
-        commits: [],
+        status: "completed" as SubtaskStatus,
+        commits: [
+          {
+            hash: "ce25ed4",
+            message: "test(bridge): add integration test for independent initialized flag state",
+            phase: "green" as CommitPhase,
+          },
+        ],
         notes: ["AC4: Verify consistent behavior across both sync and async implementations"],
       },
     ],
