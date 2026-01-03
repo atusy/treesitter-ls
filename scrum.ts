@@ -23,110 +23,7 @@ const scrum: ScrumDashboard = {
   // Deferred: PBI-091 (idle cleanup), PBI-107 (WorkspaceType), PBI-171 ($/cancelRequest - tower-lsp internals)
   product_backlog: [],
 
-  sprint: {
-    number: 149,
-    pbi_id: "PBI-176",
-    goal: "Add timeout protection to prevent LSP request hangs",
-    status: "done",
-    subtasks: [
-      {
-        test: "Test that is_alive() returns false after timeout when child lock is held indefinitely",
-        implementation: "Wrap is_alive() child lock acquisition with tokio::time::timeout, return false on timeout",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "84721b4",
-            message: "feat(bridge): add 5s timeout to is_alive() to prevent indefinite hangs",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Smallest scope: single method with existing Mutex",
-          "Current: child_mutex.lock().await blocks indefinitely if lock held",
-          "Target: tokio::time::timeout(Duration, child_mutex.lock()).await returns Err on timeout",
-          "Timeout duration: 5 seconds (matches shutdown timeout pattern)",
-        ],
-      },
-      {
-        test: "Test that get_connection() returns None after timeout when spawn/initialize hangs",
-        implementation: "Wrap spawn_and_initialize future with tokio::time::timeout in get_connection()",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "d7a8253",
-            message: "feat(bridge): reduce get_connection() timeout from 60s to 30s",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Medium scope: get_connection() slow path (connection spawn)",
-          "Current: spawn_and_initialize().await blocks indefinitely if server hangs",
-          "Target: tokio::time::timeout(Duration, spawn_and_initialize()).await returns Err on timeout",
-          "Timeout duration: 30 seconds (initialization can be slow)",
-          "Fast path (cached connection) already has is_alive() timeout from Subtask 1",
-        ],
-      },
-      {
-        test: "Test that sync_document() returns None after timeout when document lock acquisition hangs",
-        implementation: "Wrap document_open_locks per-URI lock acquisition with tokio::time::timeout",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "811811a",
-            message: "feat(bridge): add 10s timeout to sync_document() lock acquisition",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Per-URI lock scope: sync_document() document opening serialization",
-          "Current: document_open_locks.entry().or_default().lock().await blocks indefinitely",
-          "Target: tokio::time::timeout(Duration, lock.lock()).await returns Err on timeout",
-          "Timeout duration: 10 seconds (document sync should be quick)",
-        ],
-      },
-      {
-        test: "Code review: all async bridge methods (hover, completion, signature_help, definition) have paired START/DONE logging",
-        implementation: "Add START/DONE logging to hover, completion, definition (signature_help already has it)",
-        type: "structural",
-        status: "completed",
-        commits: [
-          {
-            hash: "54105cd",
-            message: "feat(bridge): add START/DONE logging to hover, completion, goto_definition",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Current: Only signature_help has START/DONE logging",
-          "Target: All 4 methods log [REQUEST] method_name START/DONE with key and host_uri",
-          "Pattern: log::debug at entry and before return",
-          "Enables hang diagnosis: if START logged but no DONE, request is stuck",
-        ],
-      },
-      {
-        test: "E2E test: subsequent LSP requests processed after a request times out",
-        implementation: "Create E2E test that triggers timeout in one request, verifies next request succeeds",
-        type: "behavioral",
-        status: "completed",
-        commits: [
-          {
-            hash: "5996c0a",
-            message: "test(bridge): add E2E test for timeout propagation",
-            phase: "green",
-          },
-        ],
-        notes: [
-          "Integration verification: timeout errors don't block request queue",
-          "Test approach: Mock slow server, send request that times out, send fast request that succeeds",
-          "Verifies AC5: tower-lsp continues processing after timeout",
-          "Location: tests/e2e_tests/ or src/lsp/bridge/tokio_async_pool.rs #[tokio::test]",
-        ],
-      },
-    ],
-  },
+  sprint: null,
 
   definition_of_done: {
     checks: [
@@ -137,6 +34,7 @@ const scrum: ScrumDashboard = {
   },
 
   completed: [
+    { number: 149, pbi_id: "PBI-176", goal: "Add timeout protection to prevent LSP request hangs", status: "done", subtasks: [] },
     { number: 148, pbi_id: "PBI-175", goal: "Investigate signatureHelp deadlock - no deadlock found, added defensive logging/tests/docs", status: "done", subtasks: [] },
     { number: 147, pbi_id: "PBI-174", goal: "Audit API visibility in LanguageCoordinator - 1 method made private", status: "done", subtasks: [] },
     { number: 146, pbi_id: "PBI-173", goal: "Parameterize offset clamping tests with rstest (3→1 test)", status: "done", subtasks: [] },
