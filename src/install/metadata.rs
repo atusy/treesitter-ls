@@ -16,7 +16,7 @@ use super::cache::MetadataCache;
 /// URL for nvim-treesitter parsers.lua on GitHub (main branch).
 const PARSERS_LUA_URL: &str = "https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/main/lua/nvim-treesitter/parsers.lua";
 /// Timeout for fetching parser metadata; keeps metadata lookups bounded.
-/// 
+///
 /// 60 seconds is chosen as a conservative upper bound for downloading a single
 /// small Lua file from GitHub over typical Internet connections. This avoids
 /// hanging indefinitely in CI or interactive use while still tolerating
