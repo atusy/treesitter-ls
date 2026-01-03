@@ -9,11 +9,20 @@
 use regex::Regex;
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Duration;
 
 use super::cache::MetadataCache;
 
 /// URL for nvim-treesitter parsers.lua on GitHub (main branch).
 const PARSERS_LUA_URL: &str = "https://raw.githubusercontent.com/nvim-treesitter/nvim-treesitter/main/lua/nvim-treesitter/parsers.lua";
+/// Timeout for fetching parser metadata; keeps metadata lookups bounded.
+///
+/// 60 seconds is chosen as a conservative upper bound for downloading a single
+/// small Lua file from GitHub over typical Internet connections. This avoids
+/// hanging indefinitely in CI or interactive use while still tolerating
+/// transient network slowness. Adjust if real-world latency characteristics
+/// change significantly.
+const PARSERS_LUA_HTTP_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Options for fetching metadata.
 #[derive(Debug, Clone)]
@@ -46,6 +55,10 @@ pub enum MetadataError {
     ParseError(String),
     /// Metadata existed but contained no languages.
     EmptyMetadata,
+    /// Metadata fetch exceeded the allowed time.
+    Timeout,
+    /// Internal task or processing failure.
+    TaskFailure(String),
 }
 
 impl std::fmt::Display for MetadataError {
@@ -64,6 +77,8 @@ impl std::fmt::Display for MetadataError {
                 f,
                 "Metadata did not contain any languages; cache may be empty or outdated"
             ),
+            Self::Timeout => write!(f, "Metadata fetch timed out"),
+            Self::TaskFailure(msg) => write!(f, "Task failure: {}", msg),
         }
     }
 }
@@ -96,8 +111,18 @@ fn fetch_parsers_lua_with_options(
     }
 
     // Cache miss or no cache - fetch from network
-    let response = reqwest::blocking::get(PARSERS_LUA_URL)
+    let client = reqwest::blocking::Client::builder()
+        .timeout(PARSERS_LUA_HTTP_TIMEOUT)
+        .build()
         .map_err(|e| MetadataError::HttpError(e.to_string()))?;
+
+    let response = client.get(PARSERS_LUA_URL).send().map_err(|e| {
+        if e.is_timeout() {
+            MetadataError::Timeout
+        } else {
+            MetadataError::HttpError(e.to_string())
+        }
+    })?;
 
     if !response.status().is_success() {
         return Err(MetadataError::HttpError(format!(
