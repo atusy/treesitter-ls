@@ -16,7 +16,7 @@ use dashmap::DashMap;
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, oneshot};
@@ -59,6 +59,8 @@ pub struct TokioAsyncBridgeConnection {
     child: Option<tokio::sync::Mutex<Child>>,
     /// Temporary directory path (for cleanup on drop)
     temp_dir: Option<PathBuf>,
+    /// Track whether the language server has been initialized (received initialized notification)
+    pub(crate) initialized: AtomicBool,
 }
 
 impl TokioAsyncBridgeConnection {
@@ -137,6 +139,7 @@ impl TokioAsyncBridgeConnection {
             shutdown_tx: Some(shutdown_tx),
             child: Some(tokio::sync::Mutex::new(child)),
             temp_dir,
+            initialized: AtomicBool::new(false),
         })
     }
 
@@ -1192,6 +1195,24 @@ mod tests {
         assert!(
             !conn.is_alive().await,
             "is_alive() should return false for dead process"
+        );
+    }
+
+    #[tokio::test]
+    async fn tokio_async_bridge_connection_has_initialized_flag_defaulting_to_false() {
+        // PBI-162 Subtask 2: TokioAsyncBridgeConnection must have an initialized flag
+        // using AtomicBool that defaults to false before the initialized notification is sent.
+
+        let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None, None).await;
+        assert!(result.is_ok(), "spawn() should succeed");
+
+        let conn = result.unwrap();
+
+        // The initialized field should be accessible and false by default
+        // Using AtomicBool, we need to load it with Ordering::SeqCst
+        assert!(
+            !conn.initialized.load(std::sync::atomic::Ordering::SeqCst),
+            "initialized flag should default to false after spawn"
         );
     }
 }
