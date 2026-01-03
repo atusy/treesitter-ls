@@ -21,7 +21,7 @@ use tokio::sync::{Mutex, mpsc};
 use tokio::time::{Duration, timeout};
 
 /// Timeout for language server initialization
-const INIT_TIMEOUT_SECS: u64 = 60;
+const INIT_TIMEOUT_SECS: u64 = 30;
 
 /// Pool of tokio-based async language server connections.
 ///
@@ -105,9 +105,9 @@ impl TokioAsyncLanguageServerPool {
     /// spawn multiple processes for the same key. The mutex is held across the spawn
     /// operation to ensure only one process is spawned.
     ///
-    /// # Timeout and Cleanup (PBI-160)
+    /// # Timeout and Cleanup (PBI-160, PBI-176)
     ///
-    /// If initialization times out (after 60 seconds), this method:
+    /// If initialization times out (after 30 seconds), this method:
     /// 1. Returns `None` to indicate failure
     /// 2. Automatically cleans up the partially spawned connection via Drop implementation:
     ///    - Kills the child process (if spawned)
@@ -2472,6 +2472,52 @@ mod tests {
             pool.host_to_bridge_uris.len(),
             0,
             "host_to_bridge_uris should be empty after cleanup"
+        );
+    }
+
+    /// PBI-176 Subtask 2: Test that get_connection() returns None after timeout when spawn/initialize hangs.
+    ///
+    /// This test verifies that get_connection() has timeout protection to prevent indefinite blocking
+    /// when the language server spawn or initialization process hangs. The timeout should be 30 seconds.
+    #[tokio::test]
+    async fn get_connection_returns_none_after_timeout_when_spawn_hangs() {
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        // Use a command that will hang during initialization (cat with no input will wait forever)
+        // We'll use a sleep command that sleeps longer than the timeout
+        let config = BridgeServerConfig {
+            cmd: vec!["sleep".to_string(), "120".to_string()],
+            languages: vec!["test".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        // Measure how long get_connection takes
+        let start = std::time::Instant::now();
+        let conn = pool
+            .get_connection("test-server", &config, "file:///test.txt")
+            .await;
+        let elapsed = start.elapsed();
+
+        // Should return None (timeout)
+        assert!(
+            conn.is_none(),
+            "get_connection() should return None when initialization times out"
+        );
+
+        // Should complete within 35 seconds (30s timeout + 5s buffer)
+        assert!(
+            elapsed < std::time::Duration::from_secs(35),
+            "get_connection() should timeout within 35 seconds, took {:?}",
+            elapsed
+        );
+
+        // Should NOT complete too quickly (at least 28s to verify timeout actually occurred)
+        assert!(
+            elapsed >= std::time::Duration::from_secs(28),
+            "get_connection() should take at least 28s (timeout occurred), took {:?}",
+            elapsed
         );
     }
 }
