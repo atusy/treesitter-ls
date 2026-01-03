@@ -709,6 +709,12 @@ fn calculate_semantic_tokens_delta(
 mod tests {
     use super::*;
 
+    /// Returns the search path for tree-sitter grammars.
+    /// Uses TREESITTER_GRAMMARS env var if set (Nix), otherwise falls back to deps/treesitter.
+    fn test_search_path() -> String {
+        std::env::var("TREESITTER_GRAMMARS").unwrap_or_else(|_| "deps/treesitter".to_string())
+    }
+
     #[test]
     fn test_map_capture_to_token_type_and_modifiers() {
         // Test basic token types without modifiers
@@ -1318,9 +1324,9 @@ let y = "hello""#;
         // Set up coordinator and parser pool with search paths
         let coordinator = LanguageCoordinator::new();
 
-        // Configure with search paths (deps/treesitter is where parsers are)
+        // Configure with search paths
         let settings = WorkspaceSettings {
-            search_paths: vec!["deps/treesitter".to_string()],
+            search_paths: vec![test_search_path()],
             ..Default::default()
         };
         let _summary = coordinator.load_settings(settings);
@@ -1415,9 +1421,9 @@ let y = "hello""#;
         // Set up coordinator and parser pool with search paths
         let coordinator = LanguageCoordinator::new();
 
-        // Configure with search paths (deps/treesitter is where parsers are)
+        // Configure with search paths
         let settings = WorkspaceSettings {
-            search_paths: vec!["deps/treesitter".to_string()],
+            search_paths: vec![test_search_path()],
             ..Default::default()
         };
         let _summary = coordinator.load_settings(settings);
@@ -1514,9 +1520,9 @@ let y = "hello""#;
         // Set up coordinator and parser pool with search paths
         let coordinator = LanguageCoordinator::new();
 
-        // Configure with search paths (deps/treesitter is where parsers are)
+        // Configure with search paths
         let settings = WorkspaceSettings {
-            search_paths: vec!["deps/treesitter".to_string()],
+            search_paths: vec![test_search_path()],
             ..Default::default()
         };
         let _summary = coordinator.load_settings(settings);
@@ -1732,7 +1738,7 @@ let z = 42"#;
         // Set up coordinator and parser pool
         let coordinator = LanguageCoordinator::new();
         let settings = WorkspaceSettings {
-            search_paths: vec!["deps/treesitter".to_string()],
+            search_paths: vec![test_search_path()],
             ..Default::default()
         };
         let _summary = coordinator.load_settings(settings);
