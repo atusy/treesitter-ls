@@ -1830,7 +1830,7 @@ let z = 42"#;
         wildcard_highlights.insert("function".to_string(), "function".to_string());
 
         mappings.insert(
-            "_".to_string(),
+            WILDCARD_KEY.to_string(),
             QueryTypeMappings {
                 highlights: wildcard_highlights,
                 locals: HashMap::new(),
