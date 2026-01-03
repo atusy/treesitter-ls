@@ -380,6 +380,75 @@ const scrum: ScrumDashboard = {
       ],
       status: "done",
     },
+    {
+      id: "PBI-168",
+      story: {
+        role: "developer editing Lua files",
+        capability: "have crash recovery correctly identify failing parsers under concurrent parses",
+        benefit: "avoid blacklisting healthy parsers and leaving crashing parsers enabled",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "FailedParserRegistry tracks concurrent parsing operations per language",
+          verification: "Verify FailedParserRegistry uses per-language tracking instead of single current_parsing field (src/language/failed_parsers.rs:31-144)",
+        },
+        {
+          criterion: "Parser crashes correctly identify the crashing language even with concurrent parses",
+          verification: "Unit test: start concurrent parses for two languages, crash one, verify only the crashing parser is blacklisted",
+        },
+        {
+          criterion: "All tests pass with concurrent-safe crash recovery",
+          verification: "Run `make test` and `make test_nvim` - all tests pass",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-169",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "have bridge bookkeeping cleaned up after crashes and restarts",
+        benefit: "prevent memory leaks from orphaned virtual URIs and version counters",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Connection eviction purges all associated state (virtual_uris, document_versions, host_to_bridge_uris, document_open_locks)",
+          verification: "Verify get_connection cleanup removes all per-server entries when evicting dead connection (src/lsp/bridge/tokio_async_pool.rs:117-189)",
+        },
+        {
+          criterion: "Host document close purges virtual_uris and locks for orphaned bridge documents",
+          verification: "Verify close_documents_for_host removes virtual_uris and document_open_locks entries when no hosts reference them (src/lsp/bridge/tokio_async_pool.rs:469-515)",
+        },
+        {
+          criterion: "All tests pass with complete bookkeeping cleanup",
+          verification: "Run `make test` and `make test_nvim` - all tests pass",
+        },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-170",
+      story: {
+        role: "documentation author with Rust code blocks",
+        capability: "have semantic token computation stop when I explicitly cancel the request",
+        benefit: "save CPU cycles and get faster response when I no longer need syntax highlighting",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "$/cancelRequest handler marks semantic token requests as inactive",
+          verification: "Verify $/cancelRequest updates SemanticRequestTracker to mark request as cancelled (src/lsp/semantic_request_tracker.rs:21-120)",
+        },
+        {
+          criterion: "Semantic token handlers check cancellation and exit early",
+          verification: "Verify semantic_tokens_full checks if request is cancelled and returns early before heavy computation (src/lsp/lsp_impl/text_document/semantic_tokens.rs:15-205)",
+        },
+        {
+          criterion: "All tests pass with cancellation support",
+          verification: "Run `make test` and `make test_nvim` - all tests pass",
+        },
+      ],
+      status: "ready",
+    },
   ],
 
   sprint: {
