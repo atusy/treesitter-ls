@@ -38,8 +38,7 @@ fn merge_bridge_maps(
 ///
 /// This implements the deep merge semantics required for initialization_options:
 /// - If both are objects, merge their keys recursively
-/// - If either is not an object, overlay wins
-/// - Null values in overlay remove the key from base
+/// - If either is not an object, overlay wins (including null values)
 fn deep_merge_json(base: &serde_json::Value, overlay: &serde_json::Value) -> serde_json::Value {
     use serde_json::Value;
 
