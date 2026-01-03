@@ -5,6 +5,7 @@
 //! Fallback: ~/.config/treesitter-ls/treesitter-ls.toml
 
 use crate::config::TreeSitterSettings;
+use log::warn;
 use std::path::PathBuf;
 
 /// Result type for user config loading operations.
@@ -89,18 +90,43 @@ pub fn load_user_config() -> UserConfigResult<Option<TreeSitterSettings>> {
 /// Returns the path to the user configuration file.
 ///
 /// The path is determined by:
-/// 1. If $XDG_CONFIG_HOME is set: $XDG_CONFIG_HOME/treesitter-ls/treesitter-ls.toml
+/// 1. If $XDG_CONFIG_HOME is set and valid: $XDG_CONFIG_HOME/treesitter-ls/treesitter-ls.toml
 /// 2. Otherwise: ~/.config/treesitter-ls/treesitter-ls.toml
+///
+/// Security: XDG_CONFIG_HOME is validated to prevent path traversal attacks:
+/// - Must be an absolute path (not relative)
+/// - Must not contain .. components (path traversal)
+/// - Invalid paths trigger a warning and fall back to ~/.config
 ///
 /// Returns None if the home directory cannot be determined.
 pub fn user_config_path() -> Option<PathBuf> {
+    use std::path::{Component, Path};
+
     // Check XDG_CONFIG_HOME first
     if let Ok(xdg_config) = std::env::var("XDG_CONFIG_HOME") {
-        return Some(
-            PathBuf::from(xdg_config)
-                .join("treesitter-ls")
-                .join("treesitter-ls.toml"),
-        );
+        let xdg_path = Path::new(&xdg_config);
+
+        // Security check: XDG_CONFIG_HOME must be an absolute path
+        if !xdg_path.is_absolute() {
+            warn!(
+                "XDG_CONFIG_HOME is not an absolute path: '{}'. Falling back to ~/.config",
+                xdg_config
+            );
+            // Fall through to use ~/.config
+        } else {
+            // Security check: Reject paths with .. components (traversal attempts)
+            let has_parent_component = xdg_path.components().any(|c| c == Component::ParentDir);
+            if has_parent_component {
+                warn!(
+                    "XDG_CONFIG_HOME contains path traversal (..) components: '{}'. Falling back to ~/.config",
+                    xdg_config
+                );
+                // Fall through to use ~/.config
+            } else {
+                // Path is absolute and doesn't contain .. components
+                return Some(xdg_path.join("treesitter-ls").join("treesitter-ls.toml"));
+            }
+        }
     }
 
     // Fallback to ~/.config/treesitter-ls/treesitter-ls.toml
@@ -353,6 +379,104 @@ mod tests {
             error_message.contains("Failed to parse") || error_message.contains("parse"),
             "error should describe the parse failure, got: {}",
             error_message
+        );
+    }
+
+    #[test]
+    #[serial(xdg_env)]
+    fn user_config_path_rejects_relative_xdg_config_home() {
+        // Save original value
+        let original = env::var("XDG_CONFIG_HOME").ok();
+
+        // Set XDG_CONFIG_HOME to a relative path (security vulnerability)
+        // SAFETY: #[serial(xdg_env)] prevents concurrent modification of XDG_CONFIG_HOME
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", "relative/path");
+        }
+
+        let path = user_config_path();
+
+        // Restore original value
+        // SAFETY: #[serial(xdg_env)] prevents concurrent modification of XDG_CONFIG_HOME
+        unsafe {
+            match original {
+                Some(val) => env::set_var("XDG_CONFIG_HOME", val),
+                None => env::remove_var("XDG_CONFIG_HOME"),
+            }
+        }
+
+        // Should return None (falls back to ~/.config) for relative paths
+        assert!(
+            path.is_some(),
+            "user_config_path should fall back to ~/.config for relative XDG_CONFIG_HOME"
+        );
+        let path = path.unwrap();
+        let path_str = path.to_string_lossy();
+        // Should fall back to ~/.config, not use the relative path
+        assert!(
+            path_str.contains(".config"),
+            "should fall back to ~/.config for relative XDG_CONFIG_HOME, got: {}",
+            path_str
+        );
+        assert!(
+            !path_str.contains("relative/path"),
+            "should not use relative path from XDG_CONFIG_HOME, got: {}",
+            path_str
+        );
+    }
+
+    #[test]
+    #[serial(xdg_env)]
+    fn user_config_path_rejects_path_traversal_in_xdg_config_home() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        // Save original value
+        let original = env::var("XDG_CONFIG_HOME").ok();
+
+        // Create a temp directory to use as a "safe" base
+        let temp_dir = TempDir::new().expect("failed to create temp dir");
+        let safe_path = temp_dir.path().join("safe");
+        fs::create_dir_all(&safe_path).expect("failed to create safe dir");
+
+        // Set XDG_CONFIG_HOME to a path with traversal (security vulnerability)
+        // This attempts to escape to /etc or similar
+        let traversal_path = format!("{}/../../../etc", safe_path.display());
+
+        // SAFETY: #[serial(xdg_env)] prevents concurrent modification of XDG_CONFIG_HOME
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", &traversal_path);
+        }
+
+        let path = user_config_path();
+
+        // Restore original value
+        // SAFETY: #[serial(xdg_env)] prevents concurrent modification of XDG_CONFIG_HOME
+        unsafe {
+            match original {
+                Some(val) => env::set_var("XDG_CONFIG_HOME", val),
+                None => env::remove_var("XDG_CONFIG_HOME"),
+            }
+        }
+
+        // Should fall back to ~/.config and NOT resolve to /etc
+        assert!(
+            path.is_some(),
+            "user_config_path should fall back to ~/.config for traversal XDG_CONFIG_HOME"
+        );
+        let path = path.unwrap();
+        let path_str = path.to_string_lossy();
+        // Should fall back to ~/.config
+        assert!(
+            path_str.contains(".config"),
+            "should fall back to ~/.config for traversal XDG_CONFIG_HOME, got: {}",
+            path_str
+        );
+        // Should NOT contain /etc
+        assert!(
+            !path_str.contains("/etc/"),
+            "should not resolve to /etc for traversal XDG_CONFIG_HOME, got: {}",
+            path_str
         );
     }
 }
