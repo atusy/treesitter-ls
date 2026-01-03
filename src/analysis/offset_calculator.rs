@@ -159,78 +159,68 @@ pub fn get_offset_label(from_query: bool) -> &'static str {
 mod tests {
     use super::*;
     use crate::language::injection::DEFAULT_OFFSET;
+    use rstest::rstest;
 
-    #[test]
-    fn test_offset_extending_past_eof_should_be_clamped() {
-        // This test verifies that offsets extending past EOF don't cause panics
-        // A malformed query might specify #offset! @injection.content 0 0 0 1
-        // which extends the end past the buffer
-        let text = "hello";
-        let byte_range = ByteRange::new(0, 5); // Entire text
-        let offset = InjectionOffset::new(0, 0, 0, 5); // End column +5 (past EOF)
-
+    /// Parameterized test for offset clamping edge cases
+    ///
+    /// This test consolidates three duplicate clamping tests:
+    /// - Column offset extending past EOF
+    /// - Start offset past end position
+    /// - Row offset extending beyond last line
+    ///
+    /// All tests verify the safety invariants:
+    /// 1. effective.start <= effective.end (no reversed ranges)
+    /// 2. effective.end <= text.len() (no out-of-bounds)
+    /// 3. Slicing text[start..end] doesn't panic
+    #[rstest]
+    #[case::end_column_past_eof(
+        "hello",
+        ByteRange::new(0, 5),
+        InjectionOffset::new(0, 0, 0, 5),
+        "offsets extending past EOF don't cause panics - \
+         a malformed query might specify #offset! @injection.content 0 0 0 1 \
+         which extends the end past the buffer"
+    )]
+    #[case::start_past_end(
+        "hello",
+        ByteRange::new(0, 5),
+        InjectionOffset::new(0, 10, 0, 0),
+        "offset makes start > end - should normalize to empty range"
+    )]
+    #[case::end_row_past_eof(
+        "line 1\nline 2",
+        ByteRange::new(0, 6),
+        InjectionOffset::new(0, 0, 5, 0),
+        "row offset moving end beyond last line"
+    )]
+    fn test_offset_clamping_edge_cases(
+        #[case] text: &str,
+        #[case] byte_range: ByteRange,
+        #[case] offset: InjectionOffset,
+        #[case] description: &str,
+    ) {
         let effective = calculate_effective_range(text, byte_range, offset);
 
-        // End should be clamped to text.len() = 5
-        assert!(
-            effective.end <= text.len(),
-            "End {} should be clamped to text len {}",
-            effective.end,
-            text.len()
-        );
-        // start <= end invariant should hold
+        // Invariant 1: start <= end (no reversed ranges)
         assert!(
             effective.start <= effective.end,
-            "Start {} should be <= end {}",
+            "{}: Start {} should be <= end {}",
+            description,
             effective.start,
             effective.end
         );
-        // Slicing should not panic
-        let _ = &text[effective.start..effective.end];
-    }
 
-    #[test]
-    fn test_offset_with_start_past_end_should_be_normalized() {
-        // Edge case: offset makes start > end
-        let text = "hello";
-        let byte_range = ByteRange::new(0, 5);
-        let offset = InjectionOffset::new(0, 10, 0, 0); // Start offset +10, end +0
-
-        let effective = calculate_effective_range(text, byte_range, offset);
-
-        // start <= end invariant should hold
-        assert!(
-            effective.start <= effective.end,
-            "Start {} should be <= end {}",
-            effective.start,
-            effective.end
-        );
-        // Both should be clamped to text.len()
+        // Invariant 2: Both positions within bounds
         assert!(
             effective.start <= text.len() && effective.end <= text.len(),
-            "Both start {} and end {} should be <= text len {}",
+            "{}: Both start {} and end {} should be <= text len {}",
+            description,
             effective.start,
             effective.end,
             text.len()
         );
-    }
 
-    #[test]
-    fn test_row_offset_past_eof_should_be_clamped() {
-        // Row offset moving end beyond last line
-        let text = "line 1\nline 2";
-        let byte_range = ByteRange::new(0, 6); // "line 1"
-        let offset = InjectionOffset::new(0, 0, 5, 0); // End row +5 (way past last line)
-
-        let effective = calculate_effective_range(text, byte_range, offset);
-
-        assert!(
-            effective.end <= text.len(),
-            "End {} should be clamped to text len {}",
-            effective.end,
-            text.len()
-        );
-        // Slicing should not panic
+        // Invariant 3: Slicing should not panic
         let _ = &text[effective.start..effective.end];
     }
 
