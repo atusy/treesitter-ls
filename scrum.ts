@@ -32,14 +32,15 @@ const scrum: ScrumDashboard = {
   },
 
   completed: [
-    { number: 143, pbi_id: "PBI-170", goal: "Add explicit $/cancelRequest infrastructure for semantic tokens", status: "done", subtasks: [] },
+    { number: 143, pbi_id: "PBI-170", goal: "Investigate $/cancelRequest - deferred (tower-lsp limitation, YAGNI)", status: "cancelled", subtasks: [] },
     { number: 142, pbi_id: "PBI-169", goal: "Fix bridge bookkeeping memory leak after crashes/restarts", status: "done", subtasks: [] },
     { number: 141, pbi_id: "PBI-168", goal: "Fix concurrent parse crash recovery to correctly identify failing parsers", status: "done", subtasks: [] },
   ],
 
+  // Deferred: PBI-091 (idle cleanup), PBI-107 (WorkspaceType), PBI-170 ($/cancelRequest - blocked if tower-lsp ever exposes it)
   retrospectives: [
     { sprint: 143, improvements: [
-      { action: "Review-codex3 findings addressed: PBI-168 (crash recovery), PBI-169 (memory leak), PBI-170 (cancellation)", timing: "product", status: "completed", outcome: "All 3 issues from review-codex3.md resolved" },
+      { action: "Review-codex3 findings: PBI-168, PBI-169 fixed; PBI-170 deferred (tower-lsp limitation, YAGNI)", timing: "product", status: "completed", outcome: "2/3 issues resolved, 1 deferred" },
     ] },
     { sprint: 140, improvements: [
       { action: "Flaky tests eliminated with serial_test for rust-analyzer tests", timing: "immediate", status: "completed", outcome: "373/373 tests pass consistently (10 consecutive runs verified)" },
