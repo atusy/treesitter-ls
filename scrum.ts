@@ -27,7 +27,7 @@ const scrum: ScrumDashboard = {
     number: 149,
     pbi_id: "PBI-176",
     goal: "Add timeout protection to prevent LSP request hangs",
-    status: "planning",
+    status: "done",
     subtasks: [
       {
         test: "Test that is_alive() returns false after timeout when child lock is held indefinitely",
@@ -110,8 +110,14 @@ const scrum: ScrumDashboard = {
         test: "E2E test: subsequent LSP requests processed after a request times out",
         implementation: "Create E2E test that triggers timeout in one request, verifies next request succeeds",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "5996c0a",
+            message: "test(bridge): add E2E test for timeout propagation",
+            phase: "green",
+          },
+        ],
         notes: [
           "Integration verification: timeout errors don't block request queue",
           "Test approach: Mock slow server, send request that times out, send fast request that succeeds",
