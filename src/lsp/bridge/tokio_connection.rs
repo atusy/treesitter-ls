@@ -302,7 +302,8 @@ impl TokioAsyncBridgeConnection {
         params: Value,
     ) -> Result<(i64, oneshot::Receiver<ResponseResult>), String> {
         // Guard: return error if not initialized to prevent protocol errors
-        if !self.initialized.load(Ordering::SeqCst) {
+        // Exception: allow "initialize" request during initialization handshake
+        if !self.initialized.load(Ordering::SeqCst) && method != "initialize" {
             return Err("Cannot send request: language server not initialized".to_string());
         }
 
@@ -1225,6 +1226,7 @@ mod tests {
     async fn tokio_async_bridge_connection_send_request_returns_error_when_not_initialized() {
         // PBI-162 Subtask 4: send_request must return an error when initialized=false
         // to prevent protocol errors during the initialization window.
+        // Exception: "initialize" request is allowed during initialization.
 
         let result = TokioAsyncBridgeConnection::spawn("cat", &[], None, None, None).await;
         assert!(result.is_ok(), "spawn() should succeed");
@@ -1235,13 +1237,13 @@ mod tests {
         // (In production, this will be the state between spawn and sending initialized notification)
         conn.initialized.store(false, std::sync::atomic::Ordering::SeqCst);
 
-        // Attempt to send a request - should return an error
+        // Attempt to send a normal request (not "initialize") - should return an error
         let params = serde_json::json!({"test": "value"});
-        let send_result = conn.send_request("test/method", params).await;
+        let send_result = conn.send_request("textDocument/definition", params).await;
 
         assert!(
             send_result.is_err(),
-            "send_request should return Err when not initialized"
+            "send_request should return Err when not initialized (except for initialize request)"
         );
 
         // Verify error message mentions initialization
@@ -1250,6 +1252,14 @@ mod tests {
             err_msg.contains("initialized") || err_msg.contains("initialization"),
             "Error message should mention initialization, got: {}",
             err_msg
+        );
+
+        // Verify that "initialize" request is still allowed
+        let init_params = serde_json::json!({"processId": 123, "capabilities": {}});
+        let init_result = conn.send_request("initialize", init_params).await;
+        assert!(
+            init_result.is_ok(),
+            "initialize request should be allowed even when not initialized"
         );
     }
 }

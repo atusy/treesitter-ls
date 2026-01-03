@@ -317,6 +317,9 @@ impl TokioAsyncLanguageServerPool {
             .await
             .ok()?;
 
+        // Set the initialized flag to true after sending initialized notification
+        conn.initialized.store(true, std::sync::atomic::Ordering::SeqCst);
+
         log::info!(
             target: "treesitter_ls::bridge::tokio_async_pool",
             "[POOL] Connection spawned for {}",
@@ -2320,6 +2323,40 @@ mod tests {
             pool.host_to_bridge_uris.len(),
             0,
             "host_to_bridge_uris should be empty after cleanup"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn tokio_async_pool_sets_initialized_flag_after_initialized_notification() {
+        // PBI-162 Subtask 6: After spawn_and_initialize sends the initialized notification,
+        // the connection's initialized flag should be set to true.
+
+        if !check_rust_analyzer_available() {
+            eprintln!("Skipping: rust-analyzer not installed");
+            return;
+        }
+
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Get connection (which calls spawn_and_initialize internally)
+        let conn = pool
+            .get_connection("rust-analyzer", &config, "file:///test.rs")
+            .await
+            .expect("get_connection should succeed");
+
+        // After initialization, the initialized flag should be true
+        assert!(
+            conn.initialized.load(std::sync::atomic::Ordering::SeqCst),
+            "initialized flag should be true after spawn_and_initialize sends initialized notification"
         );
     }
 }
