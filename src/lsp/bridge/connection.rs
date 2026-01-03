@@ -1435,7 +1435,10 @@ fn main() {
 
         // After spawn completes, initialized should be true
         // (The flag starts as false in the constructor but is set to true during spawn)
-        assert!(conn.initialized, "initialized flag should be true after spawn completes");
+        assert!(
+            conn.initialized,
+            "initialized flag should be true after spawn completes"
+        );
     }
 
     #[test]
@@ -1467,7 +1470,10 @@ fn main() {
         let content = "fn main() { let x = 42; }";
         conn.did_open("file:///test.rs", "rust", content);
 
-        let position = Position { line: 0, character: 15 };
+        let position = Position {
+            line: 0,
+            character: 15,
+        };
 
         // All request methods should return None when not initialized
         let goto_def_result = conn.goto_definition_with_notifications("file:///test.rs", position);
@@ -1512,7 +1518,8 @@ fn main() {
         };
 
         // spawn_with_notifications sends the initialized notification internally
-        let (conn, _notifications) = LanguageServerConnection::spawn_with_notifications(&config).unwrap();
+        let (conn, _notifications) =
+            LanguageServerConnection::spawn_with_notifications(&config).unwrap();
 
         // After spawn completes, initialized should be true
         assert!(

@@ -318,7 +318,8 @@ impl TokioAsyncLanguageServerPool {
             .ok()?;
 
         // Set the initialized flag to true after sending initialized notification
-        conn.initialized.store(true, std::sync::atomic::Ordering::SeqCst);
+        conn.initialized
+            .store(true, std::sync::atomic::Ordering::SeqCst);
 
         log::info!(
             target: "treesitter_ls::bridge::tokio_async_pool",

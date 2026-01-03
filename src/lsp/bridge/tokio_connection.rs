@@ -801,7 +801,8 @@ mod tests {
         let conn = result.unwrap();
 
         // Set initialized=true to allow sending requests (PBI-162)
-        conn.initialized.store(true, std::sync::atomic::Ordering::SeqCst);
+        conn.initialized
+            .store(true, std::sync::atomic::Ordering::SeqCst);
 
         // Send a request using the send_request method
         let params = serde_json::json!({"test": "value"});
@@ -1238,7 +1239,8 @@ mod tests {
 
         // Manually set initialized=false to test the guard logic
         // (In production, this will be the state between spawn and sending initialized notification)
-        conn.initialized.store(false, std::sync::atomic::Ordering::SeqCst);
+        conn.initialized
+            .store(false, std::sync::atomic::Ordering::SeqCst);
 
         // Attempt to send a normal request (not "initialize") - should return an error
         let params = serde_json::json!({"test": "value"});
