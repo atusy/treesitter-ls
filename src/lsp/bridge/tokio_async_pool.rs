@@ -126,6 +126,8 @@ impl TokioAsyncLanguageServerPool {
                 drop(conn);
                 // Evict the dead connection (PBI-157 AC2)
                 self.connections.remove(key);
+                // Clean up all bookkeeping state for this connection (PBI-169 AC1)
+                self.cleanup_connection_state(key).await;
                 // Fall through to spawn a new connection
             } else {
                 // Connection is alive, but we may need to create a new virtual URI for this host
@@ -171,6 +173,8 @@ impl TokioAsyncLanguageServerPool {
                 drop(conn);
                 // Evict the dead connection (PBI-157 AC2)
                 self.connections.remove(key);
+                // Clean up all bookkeeping state for this connection (PBI-169 AC1)
+                self.cleanup_connection_state(key).await;
                 // Fall through to spawn a new connection
             } else {
                 // Connection exists and is alive, but we may need to create a new virtual URI for this host
@@ -474,6 +478,8 @@ impl TokioAsyncLanguageServerPool {
     /// 3. For each virtual URI that has no more host URIs using it:
     ///    - Sends didClose to the bridge server
     ///    - Removes version tracking
+    ///    - Removes virtual_uris entry
+    ///    - Removes document_open_locks entry
     ///
     /// This ensures that closing one host document doesn't affect bridge state
     /// for other host documents that may be using the same bridge connection.
@@ -496,9 +502,9 @@ impl TokioAsyncLanguageServerPool {
                 .any(|entry| entry.value().contains(&bridge_uri));
 
             if !still_in_use {
-                // No other host uses this bridge URI, safe to close
+                // No other host uses this bridge URI, safe to close and clean up
                 // Find the connection for this bridge URI by iterating through virtual_uris
-                if let Some((conn, _)) = self.virtual_uris.iter().find_map(|entry| {
+                if let Some((conn, server_key)) = self.virtual_uris.iter().find_map(|entry| {
                     let (_host_key, server_key) = entry.key();
                     let uri = entry.value();
                     if uri == &bridge_uri {
@@ -509,9 +515,68 @@ impl TokioAsyncLanguageServerPool {
                         None
                     }
                 }) {
+                    // Send didClose notification
                     self.close_document_async(&conn, &bridge_uri).await;
+
+                    // Clean up virtual_uris entry (PBI-169 AC2)
+                    self.virtual_uris.retain(|(_host, _server), uri| uri != &bridge_uri);
+
+                    // Clean up document_open_locks entry (PBI-169 AC2)
+                    let mut locks = self.document_open_locks.lock().await;
+                    locks.remove(&bridge_uri);
                 }
             }
+        }
+    }
+
+    /// Clean up all bookkeeping state associated with a connection key.
+    ///
+    /// PBI-169 AC1: When a connection is evicted (due to crash/restart), this method
+    /// purges all associated state to prevent memory leaks:
+    /// - virtual_uris entries for this connection key
+    /// - document_versions for virtual URIs used by this connection
+    /// - host_to_bridge_uris entries referencing these virtual URIs
+    /// - document_open_locks for these virtual URIs
+    ///
+    /// This method should be called from get_connection when evicting a dead connection.
+    ///
+    /// # Arguments
+    /// * `key` - Connection key (e.g., "rust-analyzer") being evicted
+    pub async fn cleanup_connection_state(&self, key: &str) {
+        // Collect all virtual URIs for this connection key
+        let virtual_uris_to_remove: Vec<String> = self
+            .virtual_uris
+            .iter()
+            .filter_map(|entry| {
+                let (_host_uri, server_key) = entry.key();
+                if server_key == key {
+                    Some(entry.value().clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Remove virtual_uris entries for this connection
+        self.virtual_uris.retain(|(_host, server_key), _uri| server_key != key);
+
+        // Remove document_versions for virtual URIs used by this connection
+        for virtual_uri in &virtual_uris_to_remove {
+            self.document_versions.remove(virtual_uri);
+        }
+
+        // Remove host_to_bridge_uris entries that reference these virtual URIs
+        self.host_to_bridge_uris.retain(|_host_uri, bridge_uris| {
+            // Remove any bridge URIs that belong to the evicted connection
+            bridge_uris.retain(|uri| !virtual_uris_to_remove.contains(uri));
+            // Keep the host entry only if it still has bridge URIs
+            !bridge_uris.is_empty()
+        });
+
+        // Remove document_open_locks for these virtual URIs
+        let mut locks = self.document_open_locks.lock().await;
+        for virtual_uri in &virtual_uris_to_remove {
+            locks.remove(virtual_uri);
         }
     }
 
@@ -888,6 +953,7 @@ mod tests {
     use crate::config::settings::{BridgeServerConfig, WorkspaceType};
     use crate::lsp::bridge::tokio_connection::TokioAsyncBridgeConnection;
     use serial_test::serial;
+    use std::collections::HashSet;
     use std::time::Duration;
     use tokio::sync::mpsc;
 
@@ -2172,5 +2238,54 @@ mod tests {
         // With our implementation using interior mutability (Mutex<Child>),
         // is_alive() can be called on &self (Arc<Connection>), enabling health checks
         // even when the connection is shared across multiple references
+    }
+
+    /// Test that connection eviction cleans up all associated bookkeeping state.
+    ///
+    /// PBI-169 AC1: When get_connection() evicts a dead connection, it should purge:
+    /// - virtual_uris entries for this connection
+    /// - document_versions for virtual URIs used by this connection
+    /// - host_to_bridge_uris entries referencing these virtual URIs
+    /// - document_open_locks for these virtual URIs
+    ///
+    /// This test simulates the eviction scenario and verifies all state is cleaned.
+    #[tokio::test]
+    async fn connection_eviction_purges_all_bookkeeping_state() {
+        let (tx, _rx) = mpsc::channel(16);
+        let pool = super::TokioAsyncLanguageServerPool::new(tx);
+
+        // Manually insert mock connection state to simulate a connection that will be evicted
+        let key = "mock-server";
+        let host_uri_1 = "file:///test/doc1.md";
+        let host_uri_2 = "file:///test/doc2.md";
+        let virtual_uri_1 = "file:///tmp/virtual1.rs";
+        let virtual_uri_2 = "file:///tmp/virtual2.rs";
+
+        // Simulate state created by get_connection and sync_document
+        pool.virtual_uris.insert((host_uri_1.to_string(), key.to_string()), virtual_uri_1.to_string());
+        pool.virtual_uris.insert((host_uri_2.to_string(), key.to_string()), virtual_uri_2.to_string());
+        pool.document_versions.insert(virtual_uri_1.to_string(), 5);
+        pool.document_versions.insert(virtual_uri_2.to_string(), 3);
+
+        let mut bridge_uris_1 = HashSet::new();
+        bridge_uris_1.insert(virtual_uri_1.to_string());
+        pool.host_to_bridge_uris.insert(host_uri_1.to_string(), bridge_uris_1);
+
+        let mut bridge_uris_2 = HashSet::new();
+        bridge_uris_2.insert(virtual_uri_2.to_string());
+        pool.host_to_bridge_uris.insert(host_uri_2.to_string(), bridge_uris_2);
+
+        // Verify state exists before cleanup
+        assert_eq!(pool.virtual_uris.len(), 2, "Should have 2 virtual_uris entries");
+        assert_eq!(pool.document_versions.len(), 2, "Should have 2 document_versions entries");
+        assert_eq!(pool.host_to_bridge_uris.len(), 2, "Should have 2 host_to_bridge_uris entries");
+
+        // Call cleanup_connection_state (method doesn't exist yet - this is RED phase)
+        pool.cleanup_connection_state(key).await;
+
+        // Verify all state for this connection is purged
+        assert_eq!(pool.virtual_uris.len(), 0, "virtual_uris should be empty after cleanup");
+        assert_eq!(pool.document_versions.len(), 0, "document_versions should be empty after cleanup");
+        assert_eq!(pool.host_to_bridge_uris.len(), 0, "host_to_bridge_uris should be empty after cleanup");
     }
 }
