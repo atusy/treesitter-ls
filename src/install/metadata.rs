@@ -57,6 +57,8 @@ pub enum MetadataError {
     EmptyMetadata,
     /// Metadata fetch exceeded the allowed time.
     Timeout,
+    /// Internal task or processing failure.
+    TaskFailure(String),
 }
 
 impl std::fmt::Display for MetadataError {
@@ -76,6 +78,7 @@ impl std::fmt::Display for MetadataError {
                 "Metadata did not contain any languages; cache may be empty or outdated"
             ),
             Self::Timeout => write!(f, "Metadata fetch timed out"),
+            Self::TaskFailure(msg) => write!(f, "Task failure: {}", msg),
         }
     }
 }

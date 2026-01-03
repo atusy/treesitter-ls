@@ -262,7 +262,7 @@ where
                     true,
                     Some(SkipReason::MetadataUnavailable {
                         language: owned_language,
-                        error: MetadataError::HttpError(format!(
+                        error: MetadataError::TaskFailure(format!(
                             "Metadata support check task failed: {}",
                             err
                         )),
