@@ -1522,6 +1522,44 @@ fn main() {
     }
 
     #[test]
+    fn multiple_connections_maintain_independent_initialized_flag_state() {
+        // PBI-162 Subtask 7: Integration test verifying that multiple connections
+        // maintain independent initialized flag state (per-instance state).
+
+        if !check_rust_analyzer_available() {
+            return;
+        }
+
+        let config = BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(WorkspaceType::Cargo),
+        };
+
+        // Spawn two separate connections
+        let (conn1, _) = LanguageServerConnection::spawn_with_notifications(&config).unwrap();
+        let (mut conn2, _) = LanguageServerConnection::spawn_with_notifications(&config).unwrap();
+
+        // Both should start as initialized=true after spawn completes
+        assert!(conn1.initialized, "conn1 should be initialized after spawn");
+        assert!(conn2.initialized, "conn2 should be initialized after spawn");
+
+        // Manually set conn2.initialized to false to simulate different state
+        conn2.initialized = false;
+
+        // Verify that conn1's state is unaffected (independent per-instance state)
+        assert!(
+            conn1.initialized,
+            "conn1 should still be initialized (independent from conn2)"
+        );
+        assert!(
+            !conn2.initialized,
+            "conn2 should be not initialized after manual reset"
+        );
+    }
+
+    #[test]
     fn spawn_with_notifications_returns_connection_and_progress_notifications() {
         // RED phase: Test that spawn_with_notifications returns a tuple of
         // (LanguageServerConnection, Vec<Value>) containing connection and
