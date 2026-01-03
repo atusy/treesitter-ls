@@ -30,128 +30,107 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113), PBI-155 (Sprint 124), PBI-156 (Sprint 125) | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113), PBI-155 (Sprint 124), PBI-156 (Sprint 125), PBI-157 (Sprint 126) | History: git log -- scrum.yaml, scrum.ts
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   product_backlog: [
     {
-      id: "PBI-156",
+      id: "PBI-161",
       story: {
         role: "treesitter-ls user managing configurations",
-        capability: "configure languages using `parser` and unified `queries` fields",
-        benefit: "configuration schema is consistent and simpler with fewer redundant fields",
+        capability: "update ADR-0010 and ADR-0011 to match actual implementation behavior",
+        benefit: "documentation accurately reflects how the system works and prevents user confusion",
       },
       acceptance_criteria: [
         {
-          criterion: "LanguageSettings uses `parser` field instead of `library`",
-          verification: "grep confirms no `library` field in LanguageSettings struct",
+          criterion: "ADR-0010 query type inference examples updated to show exact filename matching only (highlights.scm, locals.scm, injections.scm)",
+          verification: "ADR-0010 examples no longer show pattern matching like *highlights*.scm",
         },
         {
-          criterion: "LanguageSettings uses unified `queries: Vec<QueryItem>` instead of separate highlights/locals/injections",
-          verification: "grep confirms no highlights/locals/injections fields in LanguageSettings struct",
+          criterion: "ADR-0010 legacy field merge behavior documented as prioritization not append",
+          verification: "ADR-0010 states that queries field takes complete precedence when present, legacy fields ignored",
         },
         {
-          criterion: "resolve_language_settings_with_wildcard merges the new schema correctly",
-          verification: "Unit tests verify parser and queries fields merge with wildcard inheritance",
+          criterion: "ADR-0011 removes outdated (future) tags from implemented features",
+          verification: "languages, languages.{lang}.bridge, and languageServers no longer marked as (future)",
         },
       ],
-      status: "done",
+      status: "draft",
     },
-    // ADR-0009 Implementation: Vertical slices with user-facing value
-    // Completed: PBI-144 (Sprint 114), PBI-145 (Sprint 115), PBI-148 (Sprint 116), PBI-146 (Sprint 117)
     {
-      id: "PBI-147",
+      id: "PBI-160",
       story: {
-        role: "Rustacean editing Markdown",
-        capability: "get hover results on first request without needing to retry",
-        benefit: "hover works reliably the first time I trigger it on a new code block",
+        role: "treesitter-ls user managing configurations",
+        capability: "use a named constant for wildcard key instead of magic string",
+        benefit: "wildcard key is defined in one place preventing typos and making refactoring easier",
       },
       acceptance_criteria: [
         {
-          criterion: "spawn_and_initialize waits for rust-analyzer to complete initial indexing",
-          verification: "Unit test verifies hover is not called until indexing is complete",
+          criterion: "Wildcard constant defined in config module (pub const WILDCARD_KEY: &str = \"_\")",
+          verification: "grep finds constant definition in src/config.rs or src/config/settings.rs",
         },
         {
-          criterion: "Wait uses $/progress notifications to detect indexing completion",
-          verification: "Unit test verifies $/progress notifications are monitored and indexing end is detected",
+          criterion: "All map.get(\"_\") calls replaced with map.get(WILDCARD_KEY)",
+          verification: "grep confirms no remaining literal \"_\" string in wildcard resolution functions",
         },
         {
-          criterion: "Single hover request returns result without retry loop",
-          verification: "E2E test verifies single hover request returns result (no retry loop needed)",
+          criterion: "All existing tests continue to pass",
+          verification: "make test passes",
         },
       ],
       status: "ready",
     },
     {
-      id: "PBI-141",
+      id: "PBI-159",
       story: {
-        role: "developer editing Lua files",
-        capability: "have go-to-definition requests in Markdown code blocks use fully async I/O",
-        benefit: "definition responses are faster and don't block other LSP requests while waiting for lua-language-server",
+        role: "treesitter-ls user managing configurations",
+        capability: "have coordinator query loading tested with unit tests",
+        benefit: "the unified queries field integration is verified to work correctly",
       },
       acceptance_criteria: [
         {
-          criterion: "TokioAsyncLanguageServerPool.goto_definition() method implemented with async request/response pattern",
-          verification: "Unit test verifies goto_definition returns valid Location response",
+          criterion: "Test verifies QueryItem with explicit kind field loads correctly",
+          verification: "Unit test creates QueryItem with kind: Some(QueryKind::Highlights) and verifies it loads as highlights query",
         },
         {
-          criterion: "definition_impl uses async pool.goto_definition() instead of spawn_blocking",
-          verification: "grep confirms no spawn_blocking in definition.rs for bridged requests",
+          criterion: "Test verifies QueryItem without kind uses inference from filename",
+          verification: "Unit test creates QueryItem with path ending in highlights.scm and verifies kind is inferred",
         },
         {
-          criterion: "Go-to-definition requests to lua-language-server return valid responses through async path",
-          verification: "E2E test opens Markdown with Lua code block, requests definition, receives location",
+          criterion: "Test verifies unknown patterns are silently skipped",
+          verification: "Unit test creates QueryItem with path rust-custom.scm and verifies no error occurs",
+        },
+        {
+          criterion: "Test verifies queries are grouped correctly by type",
+          verification: "Unit test with mixed QueryItems verifies highlights, locals, and injections are loaded separately",
         },
       ],
       status: "ready",
     },
     {
-      id: "PBI-142",
+      id: "PBI-158",
       story: {
-        role: "Rustacean editing Markdown",
-        capability: "have completion requests in Markdown code blocks use fully async I/O",
-        benefit: "completion responses are faster and don't block other LSP requests while waiting for rust-analyzer",
+        role: "treesitter-ls user managing configurations",
+        capability: "have XDG_CONFIG_HOME path validated before use",
+        benefit: "malicious environment variables cannot cause path traversal attacks",
       },
       acceptance_criteria: [
         {
-          criterion: "TokioAsyncLanguageServerPool.completion() method implemented with async request/response pattern",
-          verification: "Unit test verifies completion returns valid CompletionList response",
+          criterion: "user_config_path validates XDG_CONFIG_HOME is absolute",
+          verification: "Unit test with relative path XDG_CONFIG_HOME returns None instead of using invalid path",
         },
         {
-          criterion: "completion handler uses async pool.completion() for bridged requests",
-          verification: "grep confirms async completion path in lsp_impl.rs",
+          criterion: "user_config_path canonicalizes XDG_CONFIG_HOME to prevent traversal",
+          verification: "Unit test verifies symlinks are resolved and .. components are eliminated",
         },
         {
-          criterion: "Completion requests to rust-analyzer return valid responses through async path",
-          verification: "E2E test opens Markdown with Rust code block, requests completion, receives items",
+          criterion: "Invalid XDG_CONFIG_HOME logs warning and falls back to ~/.config",
+          verification: "Unit test verifies warning is logged and fallback path is used",
         },
       ],
       status: "ready",
     },
-    {
-      id: "PBI-143",
-      story: {
-        role: "Rustacean editing Markdown",
-        capability: "have signatureHelp requests in Markdown code blocks use fully async I/O",
-        benefit: "signature help responses are faster and show parameter hints without blocking",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "TokioAsyncLanguageServerPool.signature_help() method implemented with async request/response pattern",
-          verification: "Unit test verifies signature_help returns valid SignatureHelp response",
-        },
-        {
-          criterion: "signatureHelp handler uses async pool.signature_help() for bridged requests",
-          verification: "grep confirms async signature_help path in lsp_impl.rs",
-        },
-        {
-          criterion: "SignatureHelp requests to rust-analyzer return valid responses through async path",
-          verification: "E2E test opens Markdown with Rust code block, requests signatureHelp, receives signatures",
-        },
-      ],
-      status: "ready",
-    },
-    // ADR-0010: Completed PBI-151 (Sprint 118), PBI-150 (Sprint 119), PBI-149 (Sprint 120)
-    // ADR-0011: Completed PBI-152 (Sprint 121), PBI-153 (Sprint 122), PBI-154 (Sprint 123), PBI-155 (Sprint 124)
+    // Future: PBI-147 (hover wait), PBI-141/142/143 (async bridge methods)
+    // ADR-0010: PBI-151 (118), PBI-150 (119), PBI-149 (120) | ADR-0011: PBI-152-155 (121-124)
   ],
   sprint: null,
   definition_of_done: {
@@ -161,21 +140,21 @@ const scrum: ScrumDashboard = {
       { name: "E2E tests pass", run: "make test_nvim" },
     ],
   },
-  // Historical sprints (recent 2) | Sprint 1-124: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-125: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 126, pbi_id: "PBI-157", goal: "Fix initialization_options shallow merge bug (ADR-0010 compliance)", status: "done", subtasks: [] },
     { number: 125, pbi_id: "PBI-156", goal: "Migrate LanguageSettings to use parser and unified queries fields", status: "done", subtasks: [] },
-    { number: 124, pbi_id: "PBI-155", goal: "Wire config APIs into app: user config loading, wildcard resolution", status: "done", subtasks: [] },
   ],
   // Retrospectives (recent 2)
   retrospectives: [
+    { sprint: 126, improvements: [
+      { action: "Clarify CI/setup documentation for deps/treesitter requirement to prevent initial test failures", timing: "immediate", status: "active", outcome: null },
+      { action: "Integrate code review feedback earlier in development cycle (before implementation completion)", timing: "sprint", status: "active", outcome: null },
+      { action: "Extract and document reusable deep_merge_json pattern for other JSON merge use cases in codebase", timing: "product", status: "active", outcome: null },
+    ] },
     { sprint: 125, improvements: [
       { action: "Document domain vs serialization type distinction in ADR: LanguageSettings (domain) vs LanguageConfig (serialization) separation rationale", timing: "immediate", status: "active", outcome: null },
       { action: "Consider introducing explicit conversion trait between domain and serialization types for type safety", timing: "product", status: "active", outcome: null },
-    ] },
-    { sprint: 124, improvements: [
-      { action: "Always plan integration sprint immediately after infrastructure work to deliver user value", timing: "sprint", status: "active", outcome: null },
-      { action: "Document infrastructure-integration pattern in ADR: APIs must be wired into application within 1-2 sprints of creation", timing: "immediate", status: "completed", outcome: "Added to ADR-0010 and ADR-0011 'Consequences' sections" },
-      { action: "Consider splitting large infrastructure work: alternate infrastructure + integration sprints for incremental value delivery", timing: "product", status: "active", outcome: null },
     ] },
   ],
 };
