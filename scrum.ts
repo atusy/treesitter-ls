@@ -30,32 +30,9 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113), PBI-155-160 (Sprint 124-129) | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113), PBI-155-161 (Sprint 124-130) | History: git log -- scrum.yaml, scrum.ts
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   product_backlog: [
-    {
-      id: "PBI-161",
-      story: {
-        role: "treesitter-ls user managing configurations",
-        capability: "update ADR-0010 and ADR-0011 to match actual implementation behavior",
-        benefit: "documentation accurately reflects how the system works and prevents user confusion",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "ADR-0010 lines 48-65: Update type inference rules and examples table to show exact filename matching only (highlights.scm, locals.scm, injections.scm), removing pattern-based examples like *highlights*.scm",
-          verification: "Table at lines 58-65 shows only exact filename matches; rule at line 50 states 'If the filename is exactly highlights.scm, locals.scm, or injections.scm'",
-        },
-        {
-          criterion: "ADR-0010 line 89: Update legacy field merge behavior from 'queries entries are processed first, then legacy fields append' to 'when queries field is present, legacy fields are ignored entirely'",
-          verification: "Line 89 states queries field takes complete precedence, with reference to coordinator.rs:388-395",
-        },
-        {
-          criterion: "ADR-0011 lines 58-59: Remove (future) tags from languages._, languages.{lang}.bridge._, and languageServers._ as these are implemented in Sprints 122-123",
-          verification: "Table shows all three wildcard patterns without (future) annotations",
-        },
-      ],
-      status: "ready",
-    },
     // Future: PBI-147 (hover wait), PBI-141/142/143 (async bridge methods)
     // ADR-0010: PBI-151 (118), PBI-150 (119), PBI-149 (120) | ADR-0011: PBI-152-155 (121-124)
   ],
@@ -67,10 +44,10 @@ const scrum: ScrumDashboard = {
       { name: "E2E tests pass", run: "make test_nvim" },
     ],
   },
-  // Historical sprints (recent 2) | Sprint 1-128: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-129: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 130, pbi_id: "PBI-161", goal: "Update ADR-0010 and ADR-0011 to match implementation", status: "done", subtasks: [] },
     { number: 129, pbi_id: "PBI-160", goal: "Extract wildcard key to named constant for maintainability", status: "done", subtasks: [] },
-    { number: 128, pbi_id: "PBI-159", goal: "Add comprehensive tests for coordinator unified query loading", status: "done", subtasks: [] },
   ],
   // Retrospectives (recent 2)
   retrospectives: [
