@@ -60,7 +60,7 @@
               if [ -d "${grammar}/queries" ]; then
                 mkdir -p "$out/queries/${normalizedLang}"
                 for f in "${grammar}/queries"/*; do
-                  ln -sf "$f" "$out/queries/${normalizedLang}/"
+                  [ -e "$f" ] && ln -sf "$f" "$out/queries/${normalizedLang}/"
                 done
               fi
             ''
