@@ -30,7 +30,7 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113), PBI-155-158 (Sprint 124-127) | History: git log -- scrum.yaml, scrum.ts
+  // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113), PBI-155-159 (Sprint 124-128) | History: git log -- scrum.yaml, scrum.ts
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   product_backlog: [
     {
@@ -79,33 +79,6 @@ const scrum: ScrumDashboard = {
       ],
       status: "ready",
     },
-    {
-      id: "PBI-159",
-      story: {
-        role: "treesitter-ls user managing configurations",
-        capability: "have coordinator query loading tested with unit tests",
-        benefit: "the unified queries field integration is verified to work correctly",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "Test verifies QueryItem with explicit kind field loads correctly",
-          verification: "Unit test creates QueryItem with kind: Some(QueryKind::Highlights) and verifies it loads as highlights query",
-        },
-        {
-          criterion: "Test verifies QueryItem without kind uses inference from filename",
-          verification: "Unit test creates QueryItem with path ending in highlights.scm and verifies kind is inferred",
-        },
-        {
-          criterion: "Test verifies unknown patterns are silently skipped",
-          verification: "Unit test creates QueryItem with path rust-custom.scm and verifies no error occurs",
-        },
-        {
-          criterion: "Test verifies queries are grouped correctly by type",
-          verification: "Unit test with mixed QueryItems verifies highlights, locals, and injections are loaded separately",
-        },
-      ],
-      status: "done",
-    },
     // Future: PBI-147 (hover wait), PBI-141/142/143 (async bridge methods)
     // ADR-0010: PBI-151 (118), PBI-150 (119), PBI-149 (120) | ADR-0011: PBI-152-155 (121-124)
   ],
@@ -117,27 +90,22 @@ const scrum: ScrumDashboard = {
       { name: "E2E tests pass", run: "make test_nvim" },
     ],
   },
-  // Historical sprints (recent 2) | Sprint 1-126: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-127: git log -- scrum.yaml, scrum.ts
   completed: [
-    { number: 128, pbi_id: "PBI-159", goal: "Add comprehensive tests for coordinator unified query loading", status: "done", subtasks: [
-      { id: "1", description: "Test QueryItem with explicit kind", type: "behavioral", status: "completed", commits: [] },
-      { id: "2", description: "Test QueryItem with filename inference", type: "behavioral", status: "completed", commits: [] },
-      { id: "3", description: "Test unknown patterns silently skipped", type: "behavioral", status: "completed", commits: [] },
-      { id: "4", description: "Test queries grouped by type", type: "behavioral", status: "completed", commits: [] },
-    ] },
-    { number: 127, pbi_id: "PBI-158", goal: "Validate XDG_CONFIG_HOME to prevent path traversal attacks", status: "done", subtasks: [], commit: "cd7f4ec" },
+    { number: 128, pbi_id: "PBI-159", goal: "Add comprehensive tests for coordinator unified query loading", status: "done", subtasks: [] },
+    { number: 127, pbi_id: "PBI-158", goal: "Validate XDG_CONFIG_HOME to prevent path traversal attacks", status: "done", subtasks: [] },
   ],
   // Retrospectives (recent 2)
   retrospectives: [
+    { sprint: 128, improvements: [
+      { action: "Add error path tests for invalid query files to verify graceful failure handling", timing: "sprint", status: "active", outcome: null },
+      { action: "Consider property-based testing for query loading edge cases to improve test coverage", timing: "product", status: "active", outcome: null },
+      { action: "Document test helper pattern: register_language_for_test enables clean, realistic test setup", timing: "immediate", status: "active", outcome: null },
+    ] },
     { sprint: 127, improvements: [
       { action: "Add edge case tests for symlinks and empty paths in security-sensitive path validation", timing: "sprint", status: "active", outcome: null },
       { action: "Add integration test for full config loading with invalid XDG_CONFIG_HOME", timing: "sprint", status: "active", outcome: null },
       { action: "Document security testing pattern: Component::ParentDir check is more robust than string-based '..' detection", timing: "immediate", status: "active", outcome: null },
-    ] },
-    { sprint: 126, improvements: [
-      { action: "Clarify CI/setup documentation for deps/treesitter requirement to prevent initial test failures", timing: "immediate", status: "active", outcome: null },
-      { action: "Integrate code review feedback earlier in development cycle (before implementation completion)", timing: "sprint", status: "active", outcome: null },
-      { action: "Extract and document reusable deep_merge_json pattern for other JSON merge use cases in codebase", timing: "product", status: "active", outcome: null },
     ] },
   ],
 };
