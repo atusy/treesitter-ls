@@ -40,7 +40,10 @@ impl std::fmt::Debug for BridgeConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Note: Can't easily access process.id() through Mutex without blocking
         f.debug_struct("BridgeConnection")
-            .field("next_request_id", &self.next_request_id.load(Ordering::SeqCst))
+            .field(
+                "next_request_id",
+                &self.next_request_id.load(Ordering::SeqCst),
+            )
             .field("initialized", &self.initialized.load(Ordering::SeqCst))
             .field("did_open_sent", &self.did_open_sent.load(Ordering::SeqCst))
             .finish()
@@ -101,10 +104,14 @@ impl BridgeConnection {
 
         let content = format!("Content-Length: {}\r\n\r\n{}", json_str.len(), json_str);
 
-        writer.write_all(content.as_bytes()).await
+        writer
+            .write_all(content.as_bytes())
+            .await
             .map_err(|e| format!("Failed to write message: {}", e))?;
 
-        writer.flush().await
+        writer
+            .flush()
+            .await
             .map_err(|e| format!("Failed to flush writer: {}", e))?;
 
         Ok(())
@@ -124,7 +131,9 @@ impl BridgeConnection {
 
         // Read header line: "Content-Length: N"
         let mut header_line = String::new();
-        reader.read_line(&mut header_line).await
+        reader
+            .read_line(&mut header_line)
+            .await
             .map_err(|e| format!("Failed to read header: {}", e))?;
 
         // Parse Content-Length
@@ -137,21 +146,28 @@ impl BridgeConnection {
 
         // Read separator line (should be empty "\r\n")
         let mut separator = String::new();
-        reader.read_line(&mut separator).await
+        reader
+            .read_line(&mut separator)
+            .await
             .map_err(|e| format!("Failed to read separator: {}", e))?;
 
         if separator.trim() != "" {
-            return Err(format!("Expected empty separator line, got: {:?}", separator));
+            return Err(format!(
+                "Expected empty separator line, got: {:?}",
+                separator
+            ));
         }
 
         // Read exactly content_length bytes for JSON body
         let mut body = vec![0u8; content_length];
-        reader.read_exact(&mut body).await
+        reader
+            .read_exact(&mut body)
+            .await
             .map_err(|e| format!("Failed to read message body: {}", e))?;
 
         // Parse JSON
-        let message = serde_json::from_slice(&body)
-            .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+        let message =
+            serde_json::from_slice(&body).map_err(|e| format!("Failed to parse JSON: {}", e))?;
 
         Ok(message)
     }
@@ -209,7 +225,8 @@ impl BridgeConnection {
         }
 
         // Return the result
-        response.get("result")
+        response
+            .get("result")
             .cloned()
             .ok_or_else(|| "Initialize response missing 'result' field".to_string())
     }
@@ -256,7 +273,9 @@ impl BridgeConnection {
     ) -> Result<(), String> {
         // Phase 1 guard: block notifications before initialized (except "initialized" itself)
         if !self.initialized.load(Ordering::SeqCst) && method != "initialized" {
-            return Err("SERVER_NOT_INITIALIZED (-32002): Connection not initialized yet".to_string());
+            return Err(
+                "SERVER_NOT_INITIALIZED (-32002): Connection not initialized yet".to_string(),
+            );
         }
 
         let notification = serde_json::json!({
@@ -306,6 +325,75 @@ impl BridgeConnection {
         }
     }
 
+    /// Sends a JSON-RPC request and waits for response
+    ///
+    /// # Arguments
+    /// * `method` - LSP method name (e.g., "textDocument/completion")
+    /// * `params` - Request parameters as JSON value
+    ///
+    /// # Returns
+    /// Response result on success, error string on failure
+    ///
+    /// # Errors
+    /// Returns error if:
+    /// - Failed to send request
+    /// - Response indicates error
+    /// - Timeout waiting for response
+    #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
+    pub(crate) async fn send_request(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        use tokio::time::{timeout, Duration};
+
+        // Get next request ID
+        let request_id = self.next_request_id.fetch_add(1, Ordering::SeqCst);
+
+        // Build JSON-RPC request
+        let request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": params
+        });
+
+        // Send request
+        {
+            let mut stdin = self.stdin.lock().await;
+            Self::write_message(&mut *stdin, &request).await?;
+        }
+
+        // Read response with timeout (skip non-matching messages like notifications)
+        let response = timeout(Duration::from_secs(5), async {
+            let mut stdout = self.stdout.lock().await;
+            loop {
+                let msg = Self::read_message(&mut *stdout).await?;
+
+                // If this message has an "id" field matching our request, it's the response
+                if msg.get("id").and_then(|v| v.as_u64()) == Some(request_id) {
+                    return Ok::<_, String>(msg);
+                }
+
+                // Otherwise, it's a server-initiated notification or request - skip it
+                // In a production implementation, we'd handle these properly
+            }
+        })
+        .await
+        .map_err(|_| "REQUEST_FAILED (-32803): Request timed out after 5s".to_string())??;
+
+        // Check for error response
+        if let Some(error) = response.get("error") {
+            return Err(format!("REQUEST_FAILED (-32803): {}", error));
+        }
+
+        // Return the result
+        response
+            .get("result")
+            .cloned()
+            .ok_or_else(|| "REQUEST_FAILED (-32803): Response missing 'result' field".to_string())
+    }
+
     pub_e2e! {
         /// Performs the full LSP initialization sequence with timeout
         ///
@@ -337,8 +425,22 @@ impl BridgeConnection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::Ordering;
     use serde_json::json;
+    use std::sync::atomic::Ordering;
+
+    #[tokio::test]
+    async fn test_send_request_tracks_request_id() {
+        // RED: Test that send_request tracks request IDs and correlates responses
+        let connection = BridgeConnection::new("cat").await.unwrap();
+
+        // First request ID should be 1 (next_request_id starts at 1)
+        let initial_id = connection.next_request_id.load(Ordering::SeqCst);
+        assert_eq!(initial_id, 1, "Initial request ID should be 1");
+
+        // Note: We can't actually test send_request with 'cat' because it doesn't speak LSP
+        // This test just verifies the field exists and is initialized correctly
+        // Real behavior will be tested in E2E test with lua-language-server
+    }
 
     #[tokio::test]
     async fn test_bridge_connection_spawns_process_with_valid_command() {
@@ -346,7 +448,11 @@ mod tests {
         // This verifies tokio::process::Command integration
         let result = BridgeConnection::new("cat").await;
 
-        assert!(result.is_ok(), "Failed to spawn process: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to spawn process: {:?}",
+            result.err()
+        );
         let connection = result.unwrap();
 
         // Verify process is alive (check atomic fields)
@@ -362,8 +468,16 @@ mod tests {
 
         assert!(result.is_err(), "Should fail for nonexistent command");
         let error = result.unwrap_err();
-        assert!(error.contains("Failed to spawn"), "Error should mention spawn failure: {}", error);
-        assert!(error.contains("nonexistent-binary-xyz123"), "Error should mention command: {}", error);
+        assert!(
+            error.contains("Failed to spawn"),
+            "Error should mention spawn failure: {}",
+            error
+        );
+        assert!(
+            error.contains("nonexistent-binary-xyz123"),
+            "Error should mention command: {}",
+            error
+        );
     }
 
     #[tokio::test]
@@ -377,15 +491,23 @@ mod tests {
         });
 
         let mut buffer = Vec::new();
-        BridgeConnection::write_message(&mut buffer, &message).await.unwrap();
+        BridgeConnection::write_message(&mut buffer, &message)
+            .await
+            .unwrap();
 
         let output = String::from_utf8(buffer).unwrap();
 
         // Should have Content-Length header
-        assert!(output.starts_with("Content-Length: "), "Should start with Content-Length header");
+        assert!(
+            output.starts_with("Content-Length: "),
+            "Should start with Content-Length header"
+        );
 
         // Should have \r\n\r\n separator
-        assert!(output.contains("\r\n\r\n"), "Should have \\r\\n\\r\\n separator");
+        assert!(
+            output.contains("\r\n\r\n"),
+            "Should have \\r\\n\\r\\n separator"
+        );
 
         // Should end with JSON body
         let parts: Vec<&str> = output.split("\r\n\r\n").collect();
@@ -395,13 +517,18 @@ mod tests {
         let body = parts[1];
 
         // Header should be Content-Length: N
-        let content_length: usize = header.strip_prefix("Content-Length: ")
+        let content_length: usize = header
+            .strip_prefix("Content-Length: ")
             .unwrap()
             .parse()
             .unwrap();
 
         // Body length should match Content-Length
-        assert_eq!(body.len(), content_length, "Body length should match Content-Length header");
+        assert_eq!(
+            body.len(),
+            content_length,
+            "Body length should match Content-Length header"
+        );
 
         // Body should be valid JSON
         let parsed: serde_json::Value = serde_json::from_str(body).unwrap();
@@ -432,7 +559,10 @@ mod tests {
         assert!(result.is_err(), "Should fail on invalid header");
 
         let error = result.unwrap_err();
-        assert!(error.contains("Content-Length"), "Error should mention Content-Length");
+        assert!(
+            error.contains("Content-Length"),
+            "Error should mention Content-Length"
+        );
     }
 
     #[tokio::test]
@@ -452,22 +582,35 @@ mod tests {
         assert!(!connection.initialized.load(Ordering::SeqCst));
 
         // Try to send a didOpen notification before initialized
-        let result = connection.send_notification(
-            "textDocument/didOpen",
-            json!({
-                "textDocument": {
-                    "uri": "file:///test.lua",
-                    "languageId": "lua",
-                    "version": 1,
-                    "text": "print('hello')"
-                }
-            })
-        ).await;
+        let result = connection
+            .send_notification(
+                "textDocument/didOpen",
+                json!({
+                    "textDocument": {
+                        "uri": "file:///test.lua",
+                        "languageId": "lua",
+                        "version": 1,
+                        "text": "print('hello')"
+                    }
+                }),
+            )
+            .await;
 
-        assert!(result.is_err(), "Should block notification before initialized");
+        assert!(
+            result.is_err(),
+            "Should block notification before initialized"
+        );
         let error = result.unwrap_err();
-        assert!(error.contains("SERVER_NOT_INITIALIZED"), "Error should mention SERVER_NOT_INITIALIZED: {}", error);
-        assert!(error.contains("-32002"), "Error should include error code -32002: {}", error);
+        assert!(
+            error.contains("SERVER_NOT_INITIALIZED"),
+            "Error should mention SERVER_NOT_INITIALIZED: {}",
+            error
+        );
+        assert!(
+            error.contains("-32002"),
+            "Error should include error code -32002: {}",
+            error
+        );
     }
 
     #[tokio::test]
@@ -482,7 +625,11 @@ mod tests {
         let result = connection.send_notification("initialized", json!({})).await;
 
         // Should succeed (cat will just echo or ignore, but no error from our guard)
-        assert!(result.is_ok(), "initialized notification should be allowed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "initialized notification should be allowed: {:?}",
+            result.err()
+        );
     }
 
     #[tokio::test]
@@ -494,19 +641,25 @@ mod tests {
         connection.initialized.store(true, Ordering::SeqCst);
 
         // Now didOpen should be allowed
-        let result = connection.send_notification(
-            "textDocument/didOpen",
-            json!({
-                "textDocument": {
-                    "uri": "file:///test.lua",
-                    "languageId": "lua",
-                    "version": 1,
-                    "text": "print('hello')"
-                }
-            })
-        ).await;
+        let result = connection
+            .send_notification(
+                "textDocument/didOpen",
+                json!({
+                    "textDocument": {
+                        "uri": "file:///test.lua",
+                        "languageId": "lua",
+                        "version": 1,
+                        "text": "print('hello')"
+                    }
+                }),
+            )
+            .await;
 
-        assert!(result.is_ok(), "Notification should be allowed after initialized: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Notification should be allowed after initialized: {:?}",
+            result.err()
+        );
     }
 
     #[tokio::test]
@@ -518,15 +671,20 @@ mod tests {
         assert!(!connection.initialized.load(Ordering::SeqCst));
 
         // Try to send didOpen
-        let result = connection.send_did_open(
-            "file:///test.lua",
-            "lua",
-            "print('hello')"
-        ).await;
+        let result = connection
+            .send_did_open("file:///test.lua", "lua", "print('hello')")
+            .await;
 
-        assert!(result.is_err(), "didOpen should be blocked before initialized");
+        assert!(
+            result.is_err(),
+            "didOpen should be blocked before initialized"
+        );
         let error = result.unwrap_err();
-        assert!(error.contains("SERVER_NOT_INITIALIZED"), "Error should mention SERVER_NOT_INITIALIZED: {}", error);
+        assert!(
+            error.contains("SERVER_NOT_INITIALIZED"),
+            "Error should mention SERVER_NOT_INITIALIZED: {}",
+            error
+        );
 
         // did_open_sent flag should still be false
         assert!(!connection.did_open_sent.load(Ordering::SeqCst));
@@ -544,11 +702,9 @@ mod tests {
         assert!(!connection.did_open_sent.load(Ordering::SeqCst));
 
         // Send didOpen
-        let result = connection.send_did_open(
-            "file:///test.lua",
-            "lua",
-            "print('hello')"
-        ).await;
+        let result = connection
+            .send_did_open("file:///test.lua", "lua", "print('hello')")
+            .await;
 
         assert!(result.is_ok(), "didOpen should succeed: {:?}", result.err());
 
