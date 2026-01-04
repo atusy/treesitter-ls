@@ -59,7 +59,7 @@ const scrum: ScrumDashboard = {
         { criterion: "E2E test verifies lua-ls process spawned and initialization completes within 5s", verification: "cargo test --test e2e_bridge_init --features e2e" },
         { criterion: "All unit tests pass including initialization timeout handling", verification: "make test" },
       ],
-      status: "ready" as PBIStatus,
+      status: "done" as PBIStatus,
     },
     {
       id: "PBI-180",
@@ -130,7 +130,7 @@ const scrum: ScrumDashboard = {
     number: 134,
     pbi_id: "PBI-179",
     goal: "Real LSP initialization: spawn lua-language-server, handle initialize protocol, and implement Phase 1 notification guard",
-    status: "in_progress" as SprintStatus,
+    status: "done" as SprintStatus,
     subtasks: [
       {
         test: "BridgeConnection spawns lua-language-server process with tokio::process::Command",
@@ -269,14 +269,20 @@ const scrum: ScrumDashboard = {
         test: "E2E test verifies real lua-language-server process spawned and initialization completes within 5s",
         implementation: "tests/e2e_bridge_init.rs: spawn real lua-ls, verify initialize → initialized → didOpen sequence completes, verify process alive",
         type: "behavioral" as SubtaskType,
-        status: "pending" as SubtaskStatus,
-        commits: [],
+        status: "completed" as SubtaskStatus,
+        commits: [
+          { hash: "85393d6", message: "feat(bridge): add E2E test for real lua-language-server initialization", phase: "green" as CommitPhase }
+        ],
         notes: [
           "Test: Real lua-language-server binary must be in PATH (skip test if not found)",
           "Test: Full initialize handshake with real process completes < 5s",
           "Test: After didOpen, process still alive and responsive",
           "Test: Cleanup: kill process on test end to avoid zombies",
-          "Critical: First real LSP communication, validates all protocol implementation"
+          "Critical: First real LSP communication, validates all protocol implementation",
+          "✓ Created tests/e2e_bridge_init.rs with 3 E2E tests",
+          "✓ Made bridge modules public with e2e feature gate",
+          "✓ Fixed send_initialize_request to skip server notifications",
+          "✓ All E2E tests pass with real lua-language-server"
         ]
       }
     ]
