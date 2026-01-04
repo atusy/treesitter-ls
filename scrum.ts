@@ -126,167 +126,7 @@ const scrum: ScrumDashboard = {
     },
     // Future: Phase 2 (circuit breaker, bulkhead, health monitoring), Phase 3 (multi-LS routing, aggregation)
   ],
-  sprint: {
-    number: 134,
-    pbi_id: "PBI-179",
-    goal: "Real LSP initialization: spawn lua-language-server, handle initialize protocol, and implement Phase 1 notification guard",
-    status: "done" as SprintStatus,
-    subtasks: [
-      {
-        test: "BridgeConnection spawns lua-language-server process with tokio::process::Command",
-        implementation: "Replace stubbed new() with tokio::process::Command::new(\"lua-language-server\").stdin/stdout/stderr(Stdio::piped()).spawn()",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [
-          { hash: "ddc4875", message: "feat(bridge): spawn real language server process with tokio", phase: "green" as CommitPhase }
-        ],
-        notes: [
-          "Test: Verify process spawns successfully and has valid stdin/stdout handles",
-          "Test: Verify spawned process is lua-language-server (check process name or kill signal)",
-          "Foundation for all real LSP communication",
-          "ADR-0012 §5.2: Parallel initialization starts here",
-          "✓ Implemented async new() with tokio::process::Command",
-          "✓ Added custom Debug impl for BridgeConnection (Child/stdin/stdout not Debug)",
-          "✓ Tests pass for valid command (cat) and invalid command error handling"
-        ]
-      },
-      {
-        test: "JSON-RPC message framing with Content-Length headers for stdio communication",
-        implementation: "Add read_message/write_message helpers parsing Content-Length header + \\r\\n\\r\\n + JSON body",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [
-          { hash: "707496d", message: "feat(bridge): implement JSON-RPC message framing for LSP", phase: "green" as CommitPhase }
-        ],
-        notes: [
-          "Test: write_message produces 'Content-Length: N\\r\\n\\r\\n{json}' format",
-          "Test: read_message parses header, reads exact N bytes, deserializes JSON",
-          "Test: Invalid header/JSON returns clear error",
-          "LSP 3.x Base Protocol: All messages use Content-Length framing",
-          "Required for initialize request/response and all future LSP communication",
-          "✓ Implemented write_message with AsyncWrite trait",
-          "✓ Implemented read_message with AsyncRead trait and BufReader",
-          "✓ All tests pass for valid framing and error cases"
-        ]
-      },
-      {
-        test: "Initialize request sent and InitializeResult received from lua-language-server",
-        implementation: "BridgeConnection::initialize() sends initialize request with clientInfo/capabilities, waits for InitializeResult response",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [
-          { hash: "2a5300e", message: "feat(bridge): implement LSP initialize request protocol", phase: "green" as CommitPhase }
-        ],
-        notes: [
-          "Test: Verify initialize request has valid id, method='initialize', params with processId/clientInfo/capabilities",
-          "Test: Verify response parsing into InitializeResult with server capabilities",
-          "Test: Handle timeout if lua-ls doesn't respond within 5s",
-          "ADR-0012 §5.1: First step of initialize → initialized → didOpen sequence",
-          "Sets initialized flag to false initially, true after initialized notification sent (next subtask)",
-          "✓ Implemented send_initialize_request() with request ID tracking",
-          "✓ Wrapped stdin/stdout/process in Mutex for async access",
-          "✓ Verifies response ID matches request ID",
-          "✓ Real E2E test will validate with lua-language-server"
-        ]
-      },
-      {
-        test: "Initialized notification sent to lua-language-server after receiving initialize response",
-        implementation: "After receiving InitializeResult, send initialized notification (no id, method='initialized', params={}), set initialized flag",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [
-          { hash: "5b9a516", message: "feat(bridge): implement initialized notification", phase: "green" as CommitPhase }
-        ],
-        notes: [
-          "Test: Verify initialized notification has no id field, method='initialized', params={}",
-          "Test: Verify initialized flag (AtomicBool) set to true after sending",
-          "Test: Verify initialized_notify (tokio::sync::Notify) triggered to wake waiting tasks",
-          "ADR-0012 §5.1: Second step - server now ready for notifications/requests",
-          "Critical: Phase 1 guard uses this flag",
-          "✓ Implemented send_initialized_notification()",
-          "✓ Added initialized_notify Notify field for wait pattern",
-          "✓ Sets initialized flag and triggers notify_waiters()"
-        ]
-      },
-      {
-        test: "Phase 1 notification guard blocks notifications before initialized with SERVER_NOT_INITIALIZED",
-        implementation: "BridgeConnection::send_notification checks initialized flag; return Err(SERVER_NOT_INITIALIZED) if false (except for 'initialized' method itself)",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [
-          { hash: "f276b53", message: "feat(bridge): implement Phase 1 notification guard", phase: "green" as CommitPhase }
-        ],
-        notes: [
-          "Test: send_notification('textDocument/didOpen', ...) before initialized returns Err(SERVER_NOT_INITIALIZED)",
-          "Test: send_notification('initialized', {}) allowed even when initialized=false",
-          "Test: After initialized=true, all notifications allowed",
-          "ADR-0012 §6.1 Phase 1: LSP requires initialized before other notifications",
-          "Error code: -32002 (SERVER_NOT_INITIALIZED per ADR-0012 §1)",
-          "✓ Implemented send_notification() with Phase 1 guard",
-          "✓ Tests verify guard blocks before init, allows after init",
-          "✓ Exception for 'initialized' method itself"
-        ]
-      },
-      {
-        test: "didOpen notification sent to lua-language-server with virtual document URI and content",
-        implementation: "Add send_did_open(uri, language_id, text) method sending textDocument/didOpen notification, set did_open_sent flag",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [
-          { hash: "844b40d", message: "feat(bridge): implement didOpen notification", phase: "green" as CommitPhase }
-        ],
-        notes: [
-          "Test: Verify didOpen has method='textDocument/didOpen', params.textDocument.uri/languageId/version/text",
-          "Test: Verify did_open_sent flag (AtomicBool) set to true after sending",
-          "Test: Verify didOpen blocked before initialized (Phase 1 guard)",
-          "ADR-0012 §5.1: Third step - document now open, server ready for requests",
-          "Phase 2 guard will use did_open_sent flag (future PBI)",
-          "✓ Implemented send_did_open(uri, language_id, text)",
-          "✓ Sets did_open_sent flag after successful send",
-          "✓ Tests verify Phase 1 guard works and flag set correctly"
-        ]
-      },
-      {
-        test: "Bounded timeout handling for initialization with tokio::select!",
-        implementation: "Wrap initialize request/response in tokio::select! with tokio::time::sleep(Duration::from_secs(5)) timeout arm",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [
-          { hash: "79125fb", message: "feat(bridge): add initialize() with 5s timeout", phase: "green" as CommitPhase }
-        ],
-        notes: [
-          "Test: Mock slow lua-ls response, verify timeout fires after 5s with REQUEST_FAILED error",
-          "Test: Normal initialization completes before timeout, no error",
-          "Test: Timeout error has code=-32803 (REQUEST_FAILED), clear message",
-          "ADR-0012 §7.3: Bounded wait prevents indefinite hangs during initialization",
-          "Default 5s, should be configurable in future",
-          "✓ Added initialize() convenience method with tokio::time::timeout",
-          "✓ 5s timeout wraps send_initialize_request()",
-          "✓ Auto-sends initialized notification after response"
-        ]
-      },
-      {
-        test: "E2E test verifies real lua-language-server process spawned and initialization completes within 5s",
-        implementation: "tests/e2e_bridge_init.rs: spawn real lua-ls, verify initialize → initialized → didOpen sequence completes, verify process alive",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [
-          { hash: "85393d6", message: "feat(bridge): add E2E test for real lua-language-server initialization", phase: "green" as CommitPhase }
-        ],
-        notes: [
-          "Test: Real lua-language-server binary must be in PATH (skip test if not found)",
-          "Test: Full initialize handshake with real process completes < 5s",
-          "Test: After didOpen, process still alive and responsive",
-          "Test: Cleanup: kill process on test end to avoid zombies",
-          "Critical: First real LSP communication, validates all protocol implementation",
-          "✓ Created tests/e2e_bridge_init.rs with 3 E2E tests",
-          "✓ Made bridge modules public with e2e feature gate",
-          "✓ Fixed send_initialize_request to skip server notifications",
-          "✓ All E2E tests pass with real lua-language-server"
-        ]
-      }
-    ]
-  },
+  sprint: null,
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
@@ -296,17 +136,24 @@ const scrum: ScrumDashboard = {
       { name: "ADR verification for architectural changes", run: "git diff --name-only | grep -E 'adr/' || echo 'No ADR updated - verify if architectural change'" },
     ],
   },
-  // Historical sprints (recent 2) | Sprint 1-132: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 2) | Sprint 1-133: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 134, pbi_id: "PBI-179", goal: "Real LSP initialization: spawn lua-language-server, handle initialize protocol, and implement Phase 1 notification guard", status: "done", subtasks: [
+      { test: "BridgeConnection spawns lua-language-server process with tokio::process::Command", implementation: "Replace stubbed new() with tokio::process::Command::new(\"lua-language-server\").stdin/stdout/stderr(Stdio::piped()).spawn()", type: "behavioral", status: "completed", commits: [{ hash: "ddc4875", message: "feat(bridge): spawn real language server process with tokio", phase: "green" }], notes: ["✓ Implemented async new() with tokio::process::Command", "✓ Added custom Debug impl for BridgeConnection", "✓ Tests pass for valid command and invalid command error handling"] },
+      { test: "JSON-RPC message framing with Content-Length headers for stdio communication", implementation: "Add read_message/write_message helpers parsing Content-Length header + \\r\\n\\r\\n + JSON body", type: "behavioral", status: "completed", commits: [{ hash: "707496d", message: "feat(bridge): implement JSON-RPC message framing for LSP", phase: "green" }], notes: ["✓ Implemented write_message with AsyncWrite trait", "✓ Implemented read_message with AsyncRead trait and BufReader", "✓ All tests pass for valid framing and error cases"] },
+      { test: "Initialize request sent and InitializeResult received from lua-language-server", implementation: "BridgeConnection::initialize() sends initialize request with clientInfo/capabilities, waits for InitializeResult response", type: "behavioral", status: "completed", commits: [{ hash: "2a5300e", message: "feat(bridge): implement LSP initialize request protocol", phase: "green" }], notes: ["✓ Implemented send_initialize_request() with request ID tracking", "✓ Wrapped stdin/stdout/process in Mutex for async access", "✓ Verifies response ID matches request ID"] },
+      { test: "Initialized notification sent to lua-language-server after receiving initialize response", implementation: "After receiving InitializeResult, send initialized notification (no id, method='initialized', params={}), set initialized flag", type: "behavioral", status: "completed", commits: [{ hash: "5b9a516", message: "feat(bridge): implement initialized notification", phase: "green" }], notes: ["✓ Implemented send_initialized_notification()", "✓ Added initialized_notify Notify field for wait pattern", "✓ Sets initialized flag and triggers notify_waiters()"] },
+      { test: "Phase 1 notification guard blocks notifications before initialized with SERVER_NOT_INITIALIZED", implementation: "BridgeConnection::send_notification checks initialized flag; return Err(SERVER_NOT_INITIALIZED) if false (except for 'initialized' method itself)", type: "behavioral", status: "completed", commits: [{ hash: "f276b53", message: "feat(bridge): implement Phase 1 notification guard", phase: "green" }], notes: ["✓ Implemented send_notification() with Phase 1 guard", "✓ Tests verify guard blocks before init, allows after init", "✓ Exception for 'initialized' method itself"] },
+      { test: "didOpen notification sent to lua-language-server with virtual document URI and content", implementation: "Add send_did_open(uri, language_id, text) method sending textDocument/didOpen notification, set did_open_sent flag", type: "behavioral", status: "completed", commits: [{ hash: "844b40d", message: "feat(bridge): implement didOpen notification", phase: "green" }], notes: ["✓ Implemented send_did_open(uri, language_id, text)", "✓ Sets did_open_sent flag after successful send", "✓ Tests verify Phase 1 guard works and flag set correctly"] },
+      { test: "Bounded timeout handling for initialization with tokio::select!", implementation: "Wrap initialize request/response in tokio::select! with tokio::time::sleep(Duration::from_secs(5)) timeout arm", type: "behavioral", status: "completed", commits: [{ hash: "79125fb", message: "feat(bridge): add initialize() with 5s timeout", phase: "green" }], notes: ["✓ Added initialize() convenience method with tokio::time::timeout", "✓ 5s timeout wraps send_initialize_request()", "✓ Auto-sends initialized notification after response"] },
+      { test: "E2E test verifies real lua-language-server process spawned and initialization completes within 5s", implementation: "tests/e2e_bridge_init.rs: spawn real lua-ls, verify initialize → initialized → didOpen sequence completes, verify process alive", type: "behavioral", status: "completed", commits: [{ hash: "85393d6", message: "feat(bridge): add E2E test for real lua-language-server initialization", phase: "green" }], notes: ["✓ Created tests/e2e_bridge_init.rs with 3 E2E tests", "✓ Made bridge modules public with e2e feature gate", "✓ All E2E tests pass with real lua-language-server", "384 unit tests pass", "3 E2E init tests pass", "Initialization handshake < 200ms (well under 5s timeout)"] },
+    ] },
     { number: 133, pbi_id: "PBI-178", goal: "Establish complete fakeit bridge infrastructure with E2E tests passing", status: "done", subtasks: [
       { test: "Create bridge module structure", implementation: "src/lsp/bridge/{mod,pool,connection}.rs with public exports", type: "structural", status: "completed", commits: [{ hash: "73a87f9", message: "feat(bridge): create bridge module structure", phase: "green" }], notes: [] },
       { test: "Implement BridgeConnection fakeit", implementation: "new() returns immediately, initialize() sets flag, no real process", type: "behavioral", status: "completed", commits: [{ hash: "03a556b", message: "feat(bridge): BridgeConnection::new() fakeit", phase: "green" }, { hash: "8287a06", message: "feat(bridge): BridgeConnection::initialize() stub", phase: "green" }], notes: [] },
       { test: "Implement LanguageServerPool fakeit methods", implementation: "completion/hover/definition/signature_help all return Ok(None)", type: "behavioral", status: "completed", commits: [{ hash: "0258b81", message: "feat(bridge): LanguageServerPool fakeit methods", phase: "green" }], notes: [] },
       { test: "Wire lsp_impl handlers to pool", implementation: "completion/hover/definition/signature_help.rs call pool methods", type: "behavioral", status: "completed", commits: [{ hash: "c995a9a", message: "feat(bridge): wire completion to pool", phase: "green" }, { hash: "d4868a7", message: "feat(bridge): wire hover/definition/signature_help", phase: "green" }], notes: [] },
       { test: "E2E test for fakeit bridge", implementation: "tests/e2e_bridge_fakeit.rs verifies no hangs", type: "behavioral", status: "completed", commits: [{ hash: "b4774b4", message: "test(e2e): add fakeit bridge tests", phase: "green" }], notes: ["377 unit tests pass", "39/40 E2E pass (1 pre-existing failure)"] },
-    ] },
-    { number: 132, pbi_id: "PBI-163", goal: "LSP-compliant error types foundation for bounded timeouts", status: "done", subtasks: [
-      { test: "ResponseError with LSP error codes", implementation: "error_types.rs with REQUEST_FAILED/SERVER_NOT_INITIALIZED/SERVER_CANCELLED", type: "behavioral", status: "completed", commits: [{ hash: "b0232e6", message: "feat(bridge): LSP-compliant error types", phase: "green" }, { hash: "c8a1520", message: "refactor(bridge): ResponseError helpers", phase: "refactoring" }], notes: ["Foundation for ADR-0012 Phase 1 rewrite"] },
     ] },
   ],
   // Retrospectives (recent 2) | Sprints 1-132: git log -- scrum.yaml, scrum.ts
