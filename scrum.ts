@@ -22,6 +22,7 @@ const scrum: ScrumDashboard = {
   // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113), PBI-155-161 (Sprint 124-130) | History: git log -- scrum.yaml, scrum.ts
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   // Removed: PBI-163-177 (obsolete - created before greenfield deletion per ASYNC_BRIDGE_REMOVAL.md)
+  // Superseded: PBI-183 (merged into PBI-180b during Sprint 136 refinement - duplicate superseding infrastructure)
   product_backlog: [
     // ADR-0012 Phase 1: Single-LS-per-Language Foundation
     // Strategy: Two-pass approach: (1) Fakeit pass - all components with dummy responses, (2) Real pass - replace with actual LSP
@@ -89,21 +90,28 @@ const scrum: ScrumDashboard = {
       id: "PBI-180b",
       story: {
         role: "developer editing Lua files",
-        capability: "have stale completion requests cancelled when typing rapidly",
+        capability: "have stale incremental requests cancelled when typing rapidly",
         benefit: "I only see relevant suggestions for current code, not outdated results from earlier positions",
       },
       acceptance_criteria: [
-        { criterion: "Phase 2 guard allows completion after initialized but before didOpen with wait pattern", verification: "grep -B5 -A5 'wait_for_initialized' src/lsp/bridge/connection.rs | grep 'send_request'" },
-        { criterion: "Request superseding: newer completion cancels older with REQUEST_FAILED during init window", verification: "grep -E 'PendingIncrementalRequests|superseded|REQUEST_FAILED' src/lsp/bridge/connection.rs" },
+        { criterion: "PendingIncrementalRequests struct tracks latest completion/hover/signatureHelp per connection", verification: "grep 'struct PendingIncrementalRequests' src/lsp/bridge/connection.rs" },
+        { criterion: "Request superseding: newer incremental request cancels older with REQUEST_FAILED and superseded reason", verification: "grep -E 'register_completion|register_hover|REQUEST_FAILED.*superseded' src/lsp/bridge/connection.rs" },
+        { criterion: "Phase 2 guard: requests wait for initialized with bounded timeout (5s default)", verification: "grep -B5 -A5 'wait_for_initialized' src/lsp/bridge/connection.rs" },
+        { criterion: "Phase 2 guard: document notifications (didChange, didSave) dropped before didOpen sent", verification: "grep -B5 -A5 'did_open_sent' src/lsp/bridge/connection.rs | grep 'didChange\\|didSave'" },
         { criterion: "E2E test verifies rapid completion requests trigger superseding with only latest processed", verification: "cargo test --test e2e_bridge_init_race --features e2e" },
+        { criterion: "All unit tests pass with superseding infrastructure", verification: "make test" },
       ],
-      status: "ready" as PBIStatus,
+      status: "refining" as PBIStatus,
       refinement_notes: [
-        "SPLIT FROM PBI-180: Focused on robustness patterns for edge cases",
-        "SCOPE: Handles rapid typing scenarios where requests arrive before previous ones complete",
-        "DEPENDENCY: Requires PBI-180a infrastructure (send_request, request ID tracking)",
-        "OVERLAP WITH PBI-183: PBI-183 covers general superseding; this PBI focuses on Phase 2 guard + completion-specific superseding",
-        "CONSIDERATION: May merge/consolidate with PBI-183 during future refinement",
+        "SPRINT 136 REFINEMENT: MERGED WITH PBI-183 to eliminate duplication",
+        "SCOPE: General request superseding infrastructure for all incremental requests (completion, hover, signatureHelp)",
+        "SCOPE: Phase 2 guard implementation (wait pattern + document notification dropping)",
+        "DEPENDENCY: Requires PBI-180a infrastructure (send_request, request ID tracking, timeout) ✓ DONE Sprint 135",
+        "CONSOLIDATION: Combined PBI-180b (Phase 2 guard) + PBI-183 (general superseding) into single infrastructure PBI",
+        "RATIONALE: Both PBIs had identical user stories; PBI-183 was the infrastructure layer that PBI-180b depended on",
+        "VALUE: Prevents stale results during rapid typing (initialization window) and normal operation",
+        "COMPLEXITY: Medium-High - introduces new patterns (PendingIncrementalRequests, Phase 2 guard)",
+        "NEXT STEPS: Review ADR-0012 Phase 1 §6.1 (Phase 2 guard) and §7.3 (request superseding) for implementation guidance",
       ],
     },
     {
@@ -114,20 +122,20 @@ const scrum: ScrumDashboard = {
         benefit: "I can understand Lua APIs and types without leaving the markdown document",
       },
       acceptance_criteria: [
-        { criterion: "LanguageServerPool.hover() wired to call BridgeConnection.send_request with textDocument/hover", verification: "grep 'send_request.*hover\\|hover.*send_request' src/lsp/bridge/pool.rs" },
-        { criterion: "Hover request uses virtual document URI and translated position from host coordinates", verification: "grep -E 'virtual.*uri|translate.*position' src/lsp/lsp_impl/text_document/hover.rs" },
+        { criterion: "Pool.hover() method calls BridgeConnection.send_request with textDocument/hover", verification: "grep 'send_request.*hover\\|hover.*send_request' src/lsp/bridge/pool.rs" },
+        { criterion: "Hover request uses virtual document URI and translated position from host coordinates", verification: "grep -E 'virtual.*uri|translate.*position' src/lsp/bridge/pool.rs" },
         { criterion: "Hover response (Hover with contents) returned to host without range translation (hover ranges are optional)", verification: "grep -E 'pool.hover|Hover' src/lsp/lsp_impl/text_document/hover.rs" },
-        { criterion: "Request superseding: newer hover cancels older with REQUEST_FAILED (reuses PendingIncrementalRequests from PBI-180)", verification: "grep -E 'register_hover|PendingIncrementalRequests' src/lsp/bridge/connection.rs" },
         { criterion: "E2E test receives real hover information from lua-ls for Lua built-in (e.g., print)", verification: "cargo test --test e2e_bridge_hover --features e2e" },
-        { criterion: "All unit tests pass with hover implementation", verification: "make test" },
       ],
       status: "ready" as PBIStatus,
       refinement_notes: [
-        "DEPENDENCY: Assumes PBI-180 (or PBI-180a if split) completes send_request and PendingIncrementalRequests infrastructure",
-        "LEVERAGE: Reuses request superseding pattern from PBI-180, only adds hover-specific wiring",
+        "SPRINT 136 REFINEMENT: Simplified from 6 ACs to 4 ACs - removed request superseding dependency",
+        "DEPENDENCY: Leverages PBI-180a infrastructure (send_request, position translation, timeout)",
         "SIMPLIFICATION: Hover ranges are optional in LSP spec; we can skip range translation for MVP",
-        "COMPLEXITY: Lower than PBI-180 because infrastructure exists; mainly method-specific logic",
-        "ESTIMATE: Should be smaller than PBI-180; could pair with another small PBI if needed",
+        "SIMPLIFICATION: Request superseding deferred to future sprint (PBI-180b or consolidated PBI)",
+        "COMPLEXITY: Low-Medium - directly reuses send_request infrastructure from Sprint 135",
+        "VALUE: Delivers new user-facing LSP method (hover info) without introducing new patterns",
+        "FOUNDATION: Pool not yet integrated with BridgeConnection; this PBI completes integration for hover method",
       ],
     },
     {
@@ -145,21 +153,10 @@ const scrum: ScrumDashboard = {
       ],
       status: "draft" as PBIStatus,
     },
-    {
-      id: "PBI-183",
-      story: {
-        role: "developer editing Lua files",
-        capability: "have stale completion requests cancelled when typing rapidly",
-        benefit: "I only see relevant suggestions for current code, not outdated results",
-      },
-      acceptance_criteria: [
-        { criterion: "PendingIncrementalRequests struct tracks latest completion/hover/signatureHelp per connection", verification: "grep 'struct PendingIncrementalRequests' src/lsp/bridge/connection.rs" },
-        { criterion: "Older incremental requests receive REQUEST_FAILED with superseded reason when newer arrives", verification: "grep -A5 'superseded\\|REQUEST_FAILED' src/lsp/bridge/connection.rs | grep 'incremental'" },
-        { criterion: "E2E test sends rapid completion requests and verifies only latest processed", verification: "cargo test --test e2e_bridge_superseding --features e2e" },
-        { criterion: "No request hangs indefinitely - all timeouts enforced with tokio::select!", verification: "grep 'tokio::select!' src/lsp/bridge/connection.rs" },
-      ],
-      status: "draft" as PBIStatus,
-    },
+    // PBI-183: SUPERSEDED BY PBI-180b (merged during Sprint 136 refinement)
+    // Rationale: PBI-183 and PBI-180b had identical user stories and overlapping ACs
+    // PBI-180b now covers both general superseding infrastructure (from PBI-183) and Phase 2 guard
+    // See PBI-180b refinement_notes for consolidation details
     // Future: Phase 2 (circuit breaker, bulkhead, health monitoring), Phase 3 (multi-LS routing, aggregation)
   ],
   sprint: null,
