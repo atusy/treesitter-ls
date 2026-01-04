@@ -231,14 +231,19 @@ const scrum: ScrumDashboard = {
         test: "didOpen notification sent to lua-language-server with virtual document URI and content",
         implementation: "Add send_did_open(uri, language_id, text) method sending textDocument/didOpen notification, set did_open_sent flag",
         type: "behavioral" as SubtaskType,
-        status: "pending" as SubtaskStatus,
-        commits: [],
+        status: "completed" as SubtaskStatus,
+        commits: [
+          { hash: "844b40d", message: "feat(bridge): implement didOpen notification", phase: "green" as CommitPhase }
+        ],
         notes: [
           "Test: Verify didOpen has method='textDocument/didOpen', params.textDocument.uri/languageId/version/text",
           "Test: Verify did_open_sent flag (AtomicBool) set to true after sending",
           "Test: Verify didOpen blocked before initialized (Phase 1 guard)",
           "ADR-0012 §5.1: Third step - document now open, server ready for requests",
-          "Phase 2 guard will use did_open_sent flag (future PBI)"
+          "Phase 2 guard will use did_open_sent flag (future PBI)",
+          "✓ Implemented send_did_open(uri, language_id, text)",
+          "✓ Sets did_open_sent flag after successful send",
+          "✓ Tests verify Phase 1 guard works and flag set correctly"
         ]
       },
       {
