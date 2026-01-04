@@ -1,0 +1,23 @@
+//! LSP Bridge infrastructure for async language server communication
+//!
+//! This module provides the bridge infrastructure for communicating with
+//! language servers asynchronously for injection regions.
+
+pub mod connection;
+pub mod pool;
+
+pub use connection::BridgeConnection;
+pub use pool::LanguageServerPool;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_module_structure_exists() {
+        // This test verifies that the module structure is correctly set up
+        // and that we can reference the key types
+        let _type_check: Option<BridgeConnection> = None;
+        let _pool_check: Option<LanguageServerPool> = None;
+    }
+}
