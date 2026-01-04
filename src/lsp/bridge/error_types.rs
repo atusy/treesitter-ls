@@ -36,10 +36,66 @@ pub struct ResponseError {
     pub data: Option<Value>,
 }
 
+impl ResponseError {
+    /// Create a REQUEST_FAILED error for timeout scenarios
+    pub fn timeout(message: impl Into<String>) -> Self {
+        Self {
+            code: ErrorCodes::REQUEST_FAILED,
+            message: message.into(),
+            data: Some(serde_json::json!({"reason": "timeout"})),
+        }
+    }
+
+    /// Create a SERVER_NOT_INITIALIZED error
+    pub fn not_initialized(message: impl Into<String>) -> Self {
+        Self {
+            code: ErrorCodes::SERVER_NOT_INITIALIZED,
+            message: message.into(),
+            data: None,
+        }
+    }
+
+    /// Create a REQUEST_FAILED error for general failures
+    pub fn request_failed(message: impl Into<String>) -> Self {
+        Self {
+            code: ErrorCodes::REQUEST_FAILED,
+            message: message.into(),
+            data: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn test_response_error_timeout_helper() {
+        let error = ResponseError::timeout("Initialization timeout after 5s");
+
+        assert_eq!(error.code, ErrorCodes::REQUEST_FAILED);
+        assert_eq!(error.message, "Initialization timeout after 5s");
+        assert_eq!(error.data.as_ref().unwrap()["reason"], "timeout");
+    }
+
+    #[test]
+    fn test_response_error_not_initialized_helper() {
+        let error = ResponseError::not_initialized("Server not ready");
+
+        assert_eq!(error.code, ErrorCodes::SERVER_NOT_INITIALIZED);
+        assert_eq!(error.message, "Server not ready");
+        assert!(error.data.is_none());
+    }
+
+    #[test]
+    fn test_response_error_request_failed_helper() {
+        let error = ResponseError::request_failed("Downstream server crashed");
+
+        assert_eq!(error.code, ErrorCodes::REQUEST_FAILED);
+        assert_eq!(error.message, "Downstream server crashed");
+        assert!(error.data.is_none());
+    }
 
     #[test]
     fn test_response_error_serialization() {
