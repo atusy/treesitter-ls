@@ -190,7 +190,46 @@ const scrum: ScrumDashboard = {
     // See PBI-180b refinement_notes for consolidation details
     // Future: Phase 2 (circuit breaker, bulkhead, health monitoring), Phase 3 (multi-LS routing, aggregation)
   ],
-  sprint: null,
+  sprint: {
+    number: 141,
+    pbi_id: "PBI-190",
+    goal: "Forward didChange notifications to downstream LS after didOpen sent so editing updates LSP state in real-time",
+    status: "in_progress" as SprintStatus,
+    subtasks: [
+      {
+        test: "Unit test: send_notification() forwards textDocument/didChange to downstream after didOpen sent (did_open_sent == true)",
+        implementation: "Add forwarding logic in send_notification() after Phase 1 guard - if method is textDocument/didChange and did_open_sent is true, forward to downstream via stdin",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Unit test: send_notification() drops textDocument/didChange before didOpen sent (did_open_sent == false)",
+        implementation: "Add guard check in send_notification() - if method is textDocument/didChange and did_open_sent is false, return Ok without forwarding (silent drop per ADR-0012 Phase 2 guard)",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "Unit test: subsequent didChange notifications are forwarded to downstream after first didChange",
+        implementation: "Verify forwarding logic works for multiple consecutive didChange notifications (no special state needed - just forward each one)",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [],
+      },
+      {
+        test: "E2E test: editing Lua code block triggers didChange to lua-ls and subsequent completion shows updated context",
+        implementation: "Create tests/e2e_lsp_didchange_updates_state.rs with LspClient verifying: didOpen → didChange(add code) → completion shows new symbols",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [],
+      },
+    ],
+  },
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
