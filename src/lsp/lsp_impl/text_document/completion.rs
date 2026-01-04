@@ -82,7 +82,7 @@ impl TreeSitterLs {
 
         // Get bridge server config for this language
         // The bridge filter is checked inside get_bridge_config_for_language
-        let Some(server_config) =
+        let Some(_server_config) =
             self.get_bridge_config_for_language(&language_name, &region.language)
         else {
             self.client
@@ -101,98 +101,15 @@ impl TreeSitterLs {
         let cacheable = CacheableInjectionRegion::from_region_info(region, "temp", text);
 
         // Extract virtual document content
-        let virtual_content = cacheable.extract_content(text).to_owned();
+        let _virtual_content = cacheable.extract_content(text).to_owned();
 
-        // Translate host position to virtual position
-        let virtual_position = cacheable.translate_host_to_virtual(position);
-
-        // Get pool key from config
-        let pool_key = server_config.cmd.first().cloned().unwrap_or_default();
-
-        self.client
-            .log_message(
-                MessageType::LOG,
-                format!("[COMPLETION] async bridge START pool_key={}", pool_key),
-            )
-            .await;
-
-        // Use fully async completion via TokioAsyncLanguageServerPool
-        // Pass the host document URI for tracking host-to-bridge mapping
-        let completion = self
-            .tokio_async_pool
-            .completion(
-                &pool_key,
-                &server_config,
-                uri.as_str(),
-                &region.language,
-                &virtual_content,
-                virtual_position,
-            )
-            .await;
-
-        self.client
-            .log_message(
-                MessageType::LOG,
-                format!(
-                    "[COMPLETION] async bridge DONE has_completion={}",
-                    completion.is_some()
-                ),
-            )
-            .await;
-
-        // Translate completion response ranges back to host document
-        let Some(completion_response) = completion else {
-            return Ok(None);
-        };
-
-        // Helper function to translate a CompletionTextEdit range
-        let translate_text_edit = |text_edit: &mut CompletionTextEdit| match text_edit {
-            CompletionTextEdit::Edit(edit) => {
-                edit.range.start = cacheable.translate_virtual_to_host(edit.range.start);
-                edit.range.end = cacheable.translate_virtual_to_host(edit.range.end);
-            }
-            CompletionTextEdit::InsertAndReplace(edit) => {
-                edit.insert.start = cacheable.translate_virtual_to_host(edit.insert.start);
-                edit.insert.end = cacheable.translate_virtual_to_host(edit.insert.end);
-                edit.replace.start = cacheable.translate_virtual_to_host(edit.replace.start);
-                edit.replace.end = cacheable.translate_virtual_to_host(edit.replace.end);
-            }
-        };
-
-        // Helper function to translate additional_text_edits
-        let translate_additional_edits = |edits: &mut Vec<TextEdit>| {
-            for edit in edits.iter_mut() {
-                edit.range.start = cacheable.translate_virtual_to_host(edit.range.start);
-                edit.range.end = cacheable.translate_virtual_to_host(edit.range.end);
-            }
-        };
-
-        // Translate all ranges in completion items
-        let translated_response = match completion_response {
-            CompletionResponse::Array(mut items) => {
-                for item in items.iter_mut() {
-                    if let Some(ref mut text_edit) = item.text_edit {
-                        translate_text_edit(text_edit);
-                    }
-                    if let Some(ref mut additional_edits) = item.additional_text_edits {
-                        translate_additional_edits(additional_edits);
-                    }
-                }
-                CompletionResponse::Array(items)
-            }
-            CompletionResponse::List(mut list) => {
-                for item in list.items.iter_mut() {
-                    if let Some(ref mut text_edit) = item.text_edit {
-                        translate_text_edit(text_edit);
-                    }
-                    if let Some(ref mut additional_edits) = item.additional_text_edits {
-                        translate_additional_edits(additional_edits);
-                    }
-                }
-                CompletionResponse::List(list)
-            }
-        };
-
-        Ok(Some(translated_response))
+        // TODO(ADR-0012): Re-implement async bridge completion
+        // When LanguageServerPool is implemented, the full implementation will:
+        // 1. Call language_server_pool.completion() with virtual_content and virtual_position
+        // 2. Translate completion response ranges back to host document using cacheable.translate_virtual_to_host()
+        // 3. Return the translated completion response
+        //
+        // For now, return None to indicate bridge functionality is disabled
+        Ok(None)
     }
 }

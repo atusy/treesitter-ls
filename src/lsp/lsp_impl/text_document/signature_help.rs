@@ -82,7 +82,7 @@ impl TreeSitterLs {
 
         // Get bridge server config for this language
         // The bridge filter is checked inside get_bridge_config_for_language
-        let Some(server_config) =
+        let Some(_server_config) =
             self.get_bridge_config_for_language(&language_name, &region.language)
         else {
             self.client
@@ -101,45 +101,13 @@ impl TreeSitterLs {
         let cacheable = CacheableInjectionRegion::from_region_info(region, "temp", text);
 
         // Extract virtual document content
-        let virtual_content = cacheable.extract_content(text).to_owned();
+        let _virtual_content = cacheable.extract_content(text).to_owned();
 
         // Translate host position to virtual position
-        let virtual_position = cacheable.translate_host_to_virtual(position);
+        let _virtual_position = cacheable.translate_host_to_virtual(position);
 
-        // Get pool key from config
-        let pool_key = server_config.cmd.first().cloned().unwrap_or_default();
-
-        self.client
-            .log_message(
-                MessageType::LOG,
-                format!("[SIGNATURE_HELP] async bridge START pool_key={}", pool_key),
-            )
-            .await;
-
-        // Use fully async signature_help via TokioAsyncLanguageServerPool
-        // Pass the host document URI for tracking host-to-bridge mapping
-        let signature_help = self
-            .tokio_async_pool
-            .signature_help(
-                &pool_key,
-                &server_config,
-                uri.as_str(),
-                &region.language,
-                &virtual_content,
-                virtual_position,
-            )
-            .await;
-
-        self.client
-            .log_message(
-                MessageType::LOG,
-                format!(
-                    "[SIGNATURE_HELP] async bridge DONE has_signature_help={}",
-                    signature_help.is_some()
-                ),
-            )
-            .await;
-
-        Ok(signature_help)
+        // TODO(ADR-0012): Re-implement async bridge
+        // Bridge functionality is currently disabled
+        Ok(None)
     }
 }

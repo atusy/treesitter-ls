@@ -97,7 +97,7 @@ impl TreeSitterLs {
 
         // Get bridge server config for this language
         // The bridge filter is checked inside get_bridge_config_for_language
-        let Some(server_config) =
+        let Some(_server_config) =
             self.get_bridge_config_for_language(&language_name, &region.language)
         else {
             self.client
@@ -116,97 +116,13 @@ impl TreeSitterLs {
         let cacheable = CacheableInjectionRegion::from_region_info(region, "temp", text);
 
         // Extract virtual document content
-        let virtual_content = cacheable.extract_content(text).to_owned();
+        let _virtual_content = cacheable.extract_content(text).to_owned();
 
         // Translate host position to virtual position
-        let virtual_position = cacheable.translate_host_to_virtual(position);
+        let _virtual_position = cacheable.translate_host_to_virtual(position);
 
-        // Get pool key from config
-        let pool_key = server_config.cmd.first().cloned().unwrap_or_default();
-
-        self.client
-            .log_message(
-                MessageType::LOG,
-                format!("[HOVER] async bridge START pool_key={}", pool_key),
-            )
-            .await;
-
-        // Use fully async hover via TokioAsyncLanguageServerPool
-        // Pass the host document URI for tracking host-to-bridge mapping
-        let hover = self
-            .tokio_async_pool
-            .hover(
-                &pool_key,
-                &server_config,
-                uri.as_str(),
-                &region.language,
-                &virtual_content,
-                virtual_position,
-            )
-            .await;
-
-        self.client
-            .log_message(
-                MessageType::LOG,
-                format!("[HOVER] async bridge DONE has_hover={}", hover.is_some()),
-            )
-            .await;
-
-        // Translate hover response range back to host document (if present)
-        // If no hover result, return informative message instead of None (PBI-147)
-        let Some(mut hover_response) = hover else {
-            return Ok(Some(create_no_result_hover()));
-        };
-
-        // Translate the range if present
-        if let Some(range) = hover_response.range {
-            let mapped_start = cacheable.translate_virtual_to_host(range.start);
-            let mapped_end = cacheable.translate_virtual_to_host(range.end);
-            hover_response.range = Some(Range {
-                start: mapped_start,
-                end: mapped_end,
-            });
-        }
-
-        Ok(Some(hover_response))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Test that create_no_result_hover returns Hover with informative message.
-    ///
-    /// PBI-147 Subtask 1: When bridged LSP returns None for hover,
-    /// hover_impl should return an informative message instead of None.
-    #[test]
-    fn create_no_result_hover_returns_informative_message() {
-        let hover = create_no_result_hover();
-
-        // Verify the message contains "No result or indexing"
-        match hover.contents {
-            HoverContents::Markup(markup) => {
-                assert!(
-                    markup.value.contains("No result or indexing"),
-                    "Hover message should contain 'No result or indexing', got: {}",
-                    markup.value
-                );
-                assert_eq!(markup.kind, MarkupKind::PlainText);
-            }
-            _ => panic!("Expected MarkupContent, got different variant"),
-        }
-
-        // Verify no range is set
-        assert!(
-            hover.range.is_none(),
-            "No range should be set for fallback hover"
-        );
-    }
-
-    /// Test that NO_RESULT_MESSAGE constant has the expected value.
-    #[test]
-    fn no_result_message_constant_is_correct() {
-        assert_eq!(NO_RESULT_MESSAGE, "No result or indexing");
+        // TODO(ADR-0012): Re-implement async bridge
+        // Bridge functionality is currently disabled
+        Ok(None)
     }
 }

@@ -26,7 +26,6 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use super::auto_install::{InstallingLanguages, get_injected_languages};
-use super::bridge::TokioAsyncLanguageServerPool;
 use super::progress::{create_progress_begin, create_progress_end};
 use super::semantic_request_tracker::SemanticRequestTracker;
 
@@ -79,9 +78,7 @@ pub struct TreeSitterLs {
     installing_languages: InstallingLanguages,
     /// Tracks parsers that have crashed
     failed_parsers: FailedParserRegistry,
-    /// Tokio-based async language server pool for fully async bridging
-    tokio_async_pool: TokioAsyncLanguageServerPool,
-    /// Receiver for progress notifications from tokio async pool.
+    /// Receiver for progress notifications from async bridge (when re-implemented).
     /// Wrapped in Option so it can be taken once when starting the forwarder task.
     tokio_notification_rx:
         tokio::sync::Mutex<Option<tokio::sync::mpsc::Receiver<serde_json::Value>>>,
@@ -103,7 +100,6 @@ impl std::fmt::Debug for TreeSitterLs {
             .field("settings", &"ArcSwap<WorkspaceSettings>")
             .field("installing_languages", &"InstallingLanguages")
             .field("failed_parsers", &"FailedParserRegistry")
-            .field("tokio_async_pool", &"TokioAsyncLanguageServerPool")
             .finish_non_exhaustive()
     }
 }
@@ -119,8 +115,8 @@ impl TreeSitterLs {
         // Clean up stale temp directories from previous sessions in the background
         std::thread::spawn(super::bridge::startup_cleanup);
 
-        // Create notification channel for tokio async pool
-        let (tokio_notification_tx, tokio_notification_rx) = tokio::sync::mpsc::channel(256);
+        // Create notification channel for async bridge (when re-implemented)
+        let (_tokio_notification_tx, tokio_notification_rx) = tokio::sync::mpsc::channel(256);
 
         Self {
             client,
@@ -134,7 +130,6 @@ impl TreeSitterLs {
             settings: ArcSwap::new(Arc::new(WorkspaceSettings::default())),
             installing_languages: InstallingLanguages::new(),
             failed_parsers,
-            tokio_async_pool: TokioAsyncLanguageServerPool::new(tokio_notification_tx),
             tokio_notification_rx: tokio::sync::Mutex::new(Some(tokio_notification_rx)),
             semantic_request_tracker: SemanticRequestTracker::new(),
         }
@@ -1218,11 +1213,8 @@ impl LanguageServer for TreeSitterLs {
         // Cancel any pending semantic token requests for this document
         self.semantic_request_tracker.cancel_all_for_uri(&uri);
 
-        // Clean up bridge documents for this specific host document only
-        // This ensures other open documents continue to have working bridge features
-        self.tokio_async_pool
-            .close_documents_for_host(uri.as_str())
-            .await;
+        // Note: When async bridge is re-implemented (ADR-0012), add cleanup call here:
+        // self.language_server_pool.close_documents_for_host(uri.as_str()).await;
 
         self.client
             .log_message(MessageType::INFO, "file closed!")

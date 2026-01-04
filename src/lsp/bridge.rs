@@ -7,8 +7,6 @@ mod cleanup;
 mod connection;
 mod error_types;
 mod text_document;
-mod tokio_async_pool;
-mod tokio_connection;
 mod workspace;
 
 // Re-export public types and functions
@@ -22,5 +20,4 @@ pub use text_document::{
     CompletionWithNotifications, GotoDefinitionWithNotifications, HoverWithNotifications,
     SignatureHelpWithNotifications,
 };
-pub use tokio_async_pool::TokioAsyncLanguageServerPool;
 pub use workspace::{setup_workspace, setup_workspace_with_option};
