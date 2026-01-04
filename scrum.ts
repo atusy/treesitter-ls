@@ -124,7 +124,115 @@ const scrum: ScrumDashboard = {
     },
     // Future: Phase 2 (circuit breaker, bulkhead, health monitoring), Phase 3 (multi-LS routing, aggregation)
   ],
-  sprint: null,
+  sprint: {
+    number: 133,
+    pbi_id: "PBI-178",
+    goal: "Establish complete fakeit bridge infrastructure with E2E tests passing, proving the new API structure works end-to-end before implementing real async LSP communication",
+    status: "in_progress" as SprintStatus,
+    subtasks: [
+      // Subtask 1: Create bridge module structure
+      {
+        test: "Write test verifying bridge module structure exists with mod.rs, pool.rs, connection.rs files and proper public exports",
+        implementation: "Create src/lsp/bridge/ directory with mod.rs (module declarations and re-exports), pool.rs (empty LanguageServerPool struct), connection.rs (empty BridgeConnection struct). Add 'pub mod bridge;' to src/lsp.rs",
+        type: "structural" as SubtaskType,
+        status: "completed" as SubtaskStatus,
+        commits: [
+          { hash: "73a87f9", message: "feat(bridge): create bridge module structure with pool and connection", phase: "green" }
+        ],
+        notes: [],
+      },
+      // Subtask 2: Implement BridgeConnection fakeit structure
+      {
+        test: "Write test verifying BridgeConnection::new() creates instance with stubbed spawn (no real process) and returns Ok without hanging",
+        implementation: "Implement BridgeConnection struct with constructor that returns immediately. Add fields: initialized: AtomicBool(false), did_open_sent: AtomicBool(false). No actual process spawning - pure fakeit",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [],
+      },
+      // Subtask 3: Implement BridgeConnection stubbed initialize
+      {
+        test: "Write test verifying BridgeConnection::initialize() sets initialized flag to true and returns Ok(()) without sending real LSP requests",
+        implementation: "Implement initialize() method that sets self.initialized.store(true, Ordering::SeqCst) and returns Ok(()). No real LSP communication - pure stub",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [],
+      },
+      // Subtask 4: Implement LanguageServerPool with fakeit methods returning Ok(None)
+      {
+        test: "Write test verifying LanguageServerPool methods (completion, hover, definition, signature_help) return Ok(None) without hanging",
+        implementation: "Implement LanguageServerPool struct with methods: completion(), hover(), definition(), signature_help(). Each method returns Ok(None) immediately. Add connection: Option<BridgeConnection> field (None for fakeit)",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [],
+      },
+      // Subtask 5: Wire completion.rs to call pool.completion()
+      {
+        test: "Write test verifying completion.rs calls pool.completion() for injection regions and returns Ok(None) without hanging",
+        implementation: "Update src/lsp/lsp_impl/text_document/completion.rs to create LanguageServerPool instance and call pool.completion() for detected injection regions. Replace TODO comment with actual integration. Add LanguageServerPool to TreeSitterLs struct",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [],
+      },
+      // Subtask 6: Wire hover.rs to call pool.hover()
+      {
+        test: "Write test verifying hover.rs calls pool.hover() for injection regions and returns Ok(None)",
+        implementation: "Update src/lsp/lsp_impl/text_document/hover.rs to call pool.hover() for injection regions. Follow same pattern as completion.rs",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [],
+      },
+      // Subtask 7: Wire definition.rs to call pool.definition()
+      {
+        test: "Write test verifying definition.rs calls pool.definition() for injection regions and returns Ok(None)",
+        implementation: "Update src/lsp/lsp_impl/text_document/definition.rs to call pool.definition() for injection regions",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [],
+      },
+      // Subtask 8: Wire signature_help.rs to call pool.signature_help()
+      {
+        test: "Write test verifying signature_help.rs calls pool.signature_help() for injection regions and returns Ok(None)",
+        implementation: "Update src/lsp/lsp_impl/text_document/signature_help.rs to call pool.signature_help() for injection regions",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [],
+      },
+      // Subtask 9: Create E2E test for fakeit bridge
+      {
+        test: "Write E2E test that sends completion request to Lua code block in markdown and receives Ok(None) without hanging within 5s timeout",
+        implementation: "Create tests/e2e_bridge_fakeit.rs with test using LspClient helper. Send didOpen with markdown containing Lua block, then send completion request targeting Lua block position. Assert response is Ok(None) and completes within timeout",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [],
+      },
+      // Subtask 10: Verify all unit tests pass
+      {
+        test: "Run 'make test' and verify all unit tests pass (expected: 461+ tests pass)",
+        implementation: "Execute make test, review output, fix any test failures. Document test counts and any issues in notes",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [],
+      },
+      // Subtask 11: Verify E2E tests pass
+      {
+        test: "Run 'make test_e2e' and verify E2E tests pass including new e2e_bridge_fakeit test",
+        implementation: "Execute make test_e2e, verify e2e_bridge_fakeit test passes along with existing E2E tests. Document any failures in notes",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [],
+      },
+    ],
+  },
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
