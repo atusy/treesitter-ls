@@ -250,14 +250,19 @@ const scrum: ScrumDashboard = {
         test: "Bounded timeout handling for initialization with tokio::select!",
         implementation: "Wrap initialize request/response in tokio::select! with tokio::time::sleep(Duration::from_secs(5)) timeout arm",
         type: "behavioral" as SubtaskType,
-        status: "pending" as SubtaskStatus,
-        commits: [],
+        status: "completed" as SubtaskStatus,
+        commits: [
+          { hash: "79125fb", message: "feat(bridge): add initialize() with 5s timeout", phase: "green" as CommitPhase }
+        ],
         notes: [
           "Test: Mock slow lua-ls response, verify timeout fires after 5s with REQUEST_FAILED error",
           "Test: Normal initialization completes before timeout, no error",
           "Test: Timeout error has code=-32803 (REQUEST_FAILED), clear message",
           "ADR-0012 §7.3: Bounded wait prevents indefinite hangs during initialization",
-          "Default 5s, should be configurable in future"
+          "Default 5s, should be configurable in future",
+          "✓ Added initialize() convenience method with tokio::time::timeout",
+          "✓ 5s timeout wraps send_initialize_request()",
+          "✓ Auto-sends initialized notification after response"
         ]
       },
       {
