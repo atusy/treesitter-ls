@@ -10,7 +10,7 @@ use tokio::sync::{Mutex, Notify};
 ///
 /// Used to track at most one pending request per incremental type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum IncrementalType {
+pub(crate) enum IncrementalType {
     Completion,
     Hover,
     SignatureHelp,
