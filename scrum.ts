@@ -422,7 +422,78 @@ const scrum: ScrumDashboard = {
       status: "draft",
     },
   ],
-  sprint: null,
+  sprint: {
+    number: 132,
+    pbi_id: "PBI-163",
+    goal: "Users never experience editor freezes from LSP request hangs, receiving either success or clear error responses within bounded time",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "Explore existing bridge structure: read tokio_async_pool.rs and tokio_connection.rs to understand current architecture",
+        implementation: "Document findings about current async patterns, waker usage, and hang triggers in notes",
+        type: "structural",
+        status: "completed",
+        commits: [],
+        notes: [
+          "TokioAsyncLanguageServerPool: Uses DashMap for connections, per-key spawn locks (double-mutex pattern), virtual URIs per (host_uri, connection_key) for document isolation",
+          "TokioAsyncBridgeConnection: Uses tokio::process::Command, oneshot channels for responses, background reader task with tokio::select!, AtomicBool for initialization tracking",
+          "Request flow: send_request() writes to stdin, reader_loop() reads from stdout and routes to oneshot senders via pending_requests DashMap",
+          "Current limitations: No bounded timeouts on requests (can hang indefinitely), no ResponseError struct for LSP-compliant errors, no request superseding for incremental requests",
+          "Initialization guard exists (line 306) but returns String error not ResponseError, and provides no bounded wait mechanism",
+          "No circuit breaker or bulkhead patterns, no health monitoring beyond is_alive() check",
+          "Decision per ADR-0012: Complete rewrite needed with simpler patterns - implement LanguageServerPool and BridgeConnection from scratch"
+        ]
+      },
+      {
+        test: "Write test verifying ResponseError serializes to LSP JSON-RPC error response structure with code, message, and optional data fields",
+        implementation: "Create src/lsp/bridge/error_types.rs module with ErrorCodes constants (REQUEST_FAILED: -32803, SERVER_NOT_INITIALIZED: -32002, SERVER_CANCELLED: -32802) and ResponseError struct",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: []
+      },
+      {
+        test: "Write test sending request during slow server initialization; verify timeout returns REQUEST_FAILED within 5s",
+        implementation: "Implement wait_for_initialized() using tokio::select! with timeout, replacing complex Notify wakeup patterns",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: []
+      },
+      {
+        test: "Write test sending multiple completion requests during initialization; verify older request receives REQUEST_FAILED with 'superseded' reason when newer request arrives",
+        implementation: "Implement request superseding pattern for incremental requests (completion, hover, signatureHelp) with PendingIncrementalRequests tracking",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: []
+      },
+      {
+        test: "Write test sending requests during server failure scenarios; verify all return ResponseError within timeout, none hang indefinitely",
+        implementation: "Update all request handling paths to use bounded timeouts with tokio::select! ensuring every request receives either success or ResponseError",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: []
+      },
+      {
+        test: "Write E2E test with markdown containing Python, Lua, and SQL blocks; send rapid requests during initialization; verify all complete successfully or with bounded timeouts (no indefinite hangs)",
+        implementation: "Update or create E2E test verifying multi-language initialization without hangs under concurrent request load",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: []
+      },
+      {
+        test: "Run full test suite with single-LS configurations 100 consecutive times; verify zero hangs",
+        implementation: "Execute make test_e2e repeatedly, document any failures, verify tokio::select! patterns prevent hangs",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: []
+      }
+    ]
+  },
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
