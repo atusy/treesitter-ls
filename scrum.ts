@@ -35,26 +35,35 @@ const scrum: ScrumDashboard = {
   product_backlog: [
     // Future: PBI-147 (hover wait), PBI-141/142/143 (async bridge methods)
     // ADR-0010: PBI-151 (118), PBI-150 (119), PBI-149 (120) | ADR-0011: PBI-152-155 (121-124)
-    // ADR-0012 Phase 1: Single-LS-per-Language Foundation (PBI-163 to PBI-169)
+    // ADR-0012 Phase 1: Single-LS-per-Language Foundation (PBI-163 to PBI-168)
+    // Note: PBI-169 merged into PBI-163 (both address hang prevention with bounded timeouts)
     {
       id: "PBI-163",
       story: {
         role: "Rustacean editing Markdown",
-        capability: "have LSP requests receive standard error responses during failures instead of hangs",
-        benefit: "I can continue working when a downstream language server is unhealthy without the entire bridge freezing",
+        capability: "have all LSP requests complete within bounded time with either success or clear error responses",
+        benefit: "I can continue working without editor freezes, even when downstream language servers are unhealthy or slow",
       },
       acceptance_criteria: [
         {
-          criterion: "Every request receives either a success response or ResponseError with LSP-compliant error codes (REQUEST_FAILED: -32803, SERVER_NOT_INITIALIZED: -32002, SERVER_CANCELLED: -32802)",
-          verification: "Write test sending requests during server failure scenarios; verify all return ResponseError, none hang or return None",
+          criterion: "Every request receives either a success response or ResponseError with LSP-compliant error codes (REQUEST_FAILED: -32803, SERVER_NOT_INITIALIZED: -32002, SERVER_CANCELLED: -32802) within bounded time",
+          verification: "Write test sending requests during server failure scenarios; verify all return ResponseError within timeout, none hang indefinitely or return None",
         },
         {
           criterion: "ResponseError structure includes code (i32), message (String), and optional data (Value) per LSP 3.x Response Message spec",
           verification: "Write test verifying ResponseError serializes to valid LSP JSON-RPC error response structure",
         },
         {
-          criterion: "Timeout scenarios (initialization wait, request processing) return REQUEST_FAILED with descriptive message",
-          verification: "Write test with artificially slow server initialization; verify timeout returns REQUEST_FAILED with 'timeout' in message",
+          criterion: "Timeout scenarios (initialization wait, request processing) return REQUEST_FAILED with descriptive message after bounded wait",
+          verification: "Write test with artificially slow server initialization; verify timeout returns REQUEST_FAILED with 'timeout' in message within configured timeout period",
+        },
+        {
+          criterion: "All existing single-LS tests pass without hangs using simpler tokio::select! patterns instead of complex Notify wakeup timing",
+          verification: "Run full test suite with single-LS configurations (pyright only, lua-ls only); verify zero hangs in 100 consecutive test runs; code review confirms tokio::select! with sleep for bounded waits",
+        },
+        {
+          criterion: "Can handle multiple embedded languages (Python, Lua, SQL) in markdown document simultaneously without initialization race failures under normal conditions",
+          verification: "Write E2E test with markdown containing all three language blocks; send rapid requests during initialization; verify all complete successfully or with bounded timeouts (no indefinite hangs)",
         },
       ],
       status: "ready",
@@ -171,8 +180,8 @@ const scrum: ScrumDashboard = {
       id: "PBI-168",
       story: {
         role: "treesitter-ls user managing configurations",
-        capability: "configure routing to single language server per language with clear errors for missing providers",
-        benefit: "I get helpful error messages when I forget to configure a language server instead of silent failures",
+        capability: "receive clear, actionable error messages when language server configuration is missing or incomplete",
+        benefit: "I can quickly diagnose and fix configuration issues instead of debugging silent failures",
       },
       acceptance_criteria: [
         {
@@ -181,34 +190,7 @@ const scrum: ScrumDashboard = {
         },
         {
           criterion: "Routing uses deterministic selection when single LS available (no aggregation needed)",
-          verification: "Write test with single pyright for Python; verify all Python requests route to pyright, no aggregation overhead",
-        },
-        {
-          criterion: "LanguageServerPool and BridgeConnection classes replace TokioAsyncLanguageServerPool and TokioAsyncBridgeConnection with clean domain names",
-          verification: "Code review verifying new class names in use, old classes removed or deprecated",
-        },
-      ],
-      status: "draft",
-    },
-    {
-      id: "PBI-169",
-      story: {
-        role: "Rustacean editing Markdown",
-        capability: "have the async bridge work reliably without hang issues from Phase 0 implementation",
-        benefit: "I can use language server features without worrying about the editor freezing indefinitely",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "All existing single-LS tests pass without hangs (no tokio waker/channel race conditions)",
-          verification: "Run full test suite with single-LS configurations (pyright only, lua-ls only); verify zero hangs in 100 consecutive test runs",
-        },
-        {
-          criterion: "Can handle Python, Lua, SQL blocks simultaneously in markdown document without initialization race failures under normal conditions",
-          verification: "Write E2E test with markdown containing all three language blocks; send rapid requests during initialization; verify all complete successfully or with bounded timeouts (no indefinite hangs)",
-        },
-        {
-          criterion: "Implementation uses simpler patterns than ADR-0009: no complex Notify wakeup timing, straightforward bounded waits with tokio::select!",
-          verification: "Code review verifying timeout handling uses tokio::select! with sleep for bounded waits, no complex waker coordination",
+          verification: "Write test with single pyright for Python; verify all Python requests route to pyright consistently, no aggregation overhead",
         },
       ],
       status: "draft",
