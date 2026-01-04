@@ -367,16 +367,16 @@ Three options were considered:
 
 **Request Superseding pattern for incremental requests (during Initialization Window):**
 
-Incremental requests (completion, signatureHelp, hover) should NOT immediately return empty. The user might be waiting for the result. Instead, use a **request superseding** pattern with **server-side cancellation**:
+Incremental requests (completion, signatureHelp, hover) should NOT immediately return empty. The user might be waiting for the result. Instead, use a **request superseding** pattern:
 
 1. If not initialized, keep the request pending
-2. If a **new request of the same type** arrives, send `SERVER_CANCELLED` error for the old request (LSP 3.17+)
+2. If a **new request of the same type** arrives, send `REQUEST_FAILED` error for the old request
 3. When initialization completes, process the most recent pending request
 
 **LSP compliance rationale:**
 - **Every request gets a response** (LSP requirement) - no dropped requests
-- Uses `SERVER_CANCELLED` (-32802) error code for superseded requests
-- Server-initiated cancellation is LSP-compliant when client state has changed (LSP spec: "The result could still be useful... by transforming it to a new result")
+- Uses `REQUEST_FAILED` (-32803) for superseded requests (LSP 3.17+)
+- The request failed due to changed client state (newer request arrived), making the result obsolete
 
 ```
 Scenario A: User is waiting
@@ -385,10 +385,10 @@ Scenario A: User is waiting
   (initialization complete)
   → Process completion①, return result ✓  User gets their result
 
-Scenario B: User continues typing (server-side cancellation)
+Scenario B: User continues typing (request superseding)
   "pri" → completion① (pending)
   "print" → completion② arrives
-  → Send SERVER_CANCELLED error for completion①
+  → Send REQUEST_FAILED error for completion①
   → Keep completion② pending
   (initialization complete)
   → Process completion②, return result ✓  Only latest result matters
@@ -397,16 +397,16 @@ Scenario B: User continues typing (server-side cancellation)
 **Error response for superseded requests:**
 ```rust
 ResponseError {
-    code: ErrorCodes::SERVER_CANCELLED,  // -32802 (LSP 3.17)
+    code: ErrorCodes::REQUEST_FAILED,  // -32803 (LSP 3.17)
     message: "Request superseded by newer request of same type".to_string(),
-    data: None,
+    data: Some(json!({"reason": "incremental_request_superseded"})),
 }
 ```
 
 This provides optimal UX while maintaining LSP compliance:
 - If user pauses typing, they get completion when server is ready
-- If user continues typing, stale requests receive proper cancellation errors
-- Clients can handle `SERVER_CANCELLED` appropriately (typically silently)
+- If user continues typing, stale requests receive proper failure errors
+- Clients can handle `REQUEST_FAILED` appropriately (typically silently for superseded requests)
 
 **Timeout considerations:**
 
@@ -458,16 +458,16 @@ struct PendingIncrementalRequests {
 }
 
 impl PendingIncrementalRequests {
-    /// Register new request, sending SERVER_CANCELLED to any existing one of the same type
+    /// Register new request, sending REQUEST_FAILED to any existing one of the same type
     fn register_completion(&mut self, id: i64, sender: oneshot::Sender<Result<Value, ResponseError>>) {
         if let Some((old_id, old_sender)) = self.completion.take() {
-            // Send SERVER_CANCELLED error to superseded request (LSP 3.17 compliant)
+            // Send REQUEST_FAILED error to superseded request (LSP 3.17 compliant)
             let _ = old_sender.send(Err(ResponseError {
-                code: ErrorCodes::SERVER_CANCELLED,
+                code: ErrorCodes::REQUEST_FAILED,
                 message: "Request superseded by newer request of same type".to_string(),
-                data: None,
+                data: Some(json!({"reason": "incremental_request_superseded"})),
             }));
-            log::debug!("Sent SERVER_CANCELLED for stale completion request {}", old_id);
+            log::debug!("Sent REQUEST_FAILED for stale completion request {}", old_id);
         }
         self.completion = Some((id, sender));
     }
@@ -477,9 +477,9 @@ pub async fn send_request(&self, method: &str, params: Value) -> Result<Value, R
     match method {
         // initialize: no wait needed
         "initialize" => {}
-        // Incremental: request superseding with server-side cancellation, no timeout
+        // Incremental: request superseding pattern, no timeout
         "textDocument/completion" | "textDocument/signatureHelp" | "textDocument/hover" => {
-            // Register this request (sends SERVER_CANCELLED to any pending one of same type)
+            // Register this request (sends REQUEST_FAILED to any pending one of same type)
             // Wait indefinitely - natural cleanup via request superseding pattern
             self.wait_for_initialized_no_timeout().await;
         }
@@ -729,9 +729,9 @@ languageServers:
 
 ### Positive
 
-- **LSP Compliance**: All error handling uses standard LSP error codes (REQUEST_FAILED, SERVER_CANCELLED, SERVER_NOT_INITIALIZED)
+- **LSP Compliance**: All error handling uses standard LSP error codes (REQUEST_FAILED, SERVER_NOT_INITIALIZED)
 - **No Dropped Requests**: Every request receives a response, even during failures (circuit breaker open, timeout, etc.)
-- **Server-Side Cancellation**: Request superseding pattern uses LSP-compliant SERVER_CANCELLED errors for superseded incremental requests
+- **Request Superseding**: Stale incremental requests receive LSP-compliant REQUEST_FAILED errors when superseded by newer requests
 - **Graceful Degradation**: Partial initialization failures allow working servers to continue serving requests
 - **Routing-First Simplicity**: Most requests go to a single LS — no aggregation overhead for common cases
 - **Minimal Configuration**: Default capability-based routing works without per-method config
