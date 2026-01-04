@@ -27,6 +27,51 @@ impl LanguageServerPool {
         }
     }
 
+    /// Gets or spawns a BridgeConnection for the specified language
+    ///
+    /// # Arguments
+    /// * `language` - Language name (e.g., "lua")
+    ///
+    /// # Returns
+    /// Arc<BridgeConnection> for the language
+    ///
+    /// # Errors
+    /// Returns error if:
+    /// - Language server command not found (e.g., "lua-language-server" not in PATH)
+    /// - Failed to spawn language server process
+    /// - Initialize handshake failed
+    async fn get_or_spawn_connection(
+        &self,
+        language: &str,
+    ) -> std::result::Result<Arc<BridgeConnection>, String> {
+        // Check if connection already exists
+        if let Some(conn) = self.connections.get(language) {
+            return Ok(conn.clone());
+        }
+
+        // Spawn new connection
+        // Map language name to language server command
+        // For MVP, hardcode lua -> lua-language-server
+        // TODO: Make this configurable via settings
+        let command = match language {
+            "lua" => "lua-language-server",
+            _ => return Err(format!("No language server configured for language: {}", language)),
+        };
+
+        // Spawn and initialize the language server
+        let connection = BridgeConnection::new(command).await?;
+        connection.initialize().await?;
+
+        let arc_conn = Arc::new(connection);
+
+        // Insert into map (use entry API to handle race condition)
+        self.connections
+            .entry(language.to_string())
+            .or_insert(arc_conn.clone());
+
+        Ok(arc_conn)
+    }
+
     /// Handles textDocument/completion request
     ///
     /// # Arguments
@@ -85,6 +130,91 @@ mod tests {
             pool.connections.len(),
             0,
             "New pool should have no connections"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_or_spawn_connection_spawns_new_connection_on_first_access() {
+        // This test requires lua-language-server in PATH
+        // Skip if not available
+        let check = tokio::process::Command::new("lua-language-server")
+            .arg("--version")
+            .output()
+            .await;
+
+        if check.is_err() {
+            eprintln!("SKIP: lua-language-server not found in PATH");
+            return;
+        }
+
+        let pool = LanguageServerPool::new();
+        assert_eq!(pool.connections.len(), 0, "Pool should start empty");
+
+        // First access should spawn connection
+        let result = pool.get_or_spawn_connection("lua").await;
+        assert!(
+            result.is_ok(),
+            "Should spawn lua-language-server: {:?}",
+            result.err()
+        );
+
+        assert_eq!(
+            pool.connections.len(),
+            1,
+            "Pool should have one connection after first access"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_or_spawn_connection_reuses_existing_connection() {
+        // This test requires lua-language-server in PATH
+        // Skip if not available
+        let check = tokio::process::Command::new("lua-language-server")
+            .arg("--version")
+            .output()
+            .await;
+
+        if check.is_err() {
+            eprintln!("SKIP: lua-language-server not found in PATH");
+            return;
+        }
+
+        let pool = LanguageServerPool::new();
+
+        // First access - spawns connection
+        let conn1 = pool.get_or_spawn_connection("lua").await.unwrap();
+
+        // Second access - should reuse connection
+        let conn2 = pool.get_or_spawn_connection("lua").await.unwrap();
+
+        // Both should point to same Arc (same memory address)
+        assert!(
+            Arc::ptr_eq(&conn1, &conn2),
+            "Second access should reuse existing connection"
+        );
+
+        assert_eq!(
+            pool.connections.len(),
+            1,
+            "Pool should still have one connection"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_or_spawn_connection_returns_error_for_unsupported_language() {
+        let pool = LanguageServerPool::new();
+
+        let result = pool.get_or_spawn_connection("python").await;
+        assert!(
+            result.is_err(),
+            "Should return error for unsupported language"
+        );
+
+        let error = result.unwrap_err();
+        assert!(
+            error.contains("No language server configured"),
+            "Error should mention language not configured: {}",
+            error
         );
     }
 
