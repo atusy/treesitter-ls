@@ -195,7 +195,87 @@ const scrum: ScrumDashboard = {
     // See PBI-180b refinement_notes for consolidation details
     // Future: Phase 2 (circuit breaker, bulkhead, health monitoring), Phase 3 (multi-LS routing, aggregation)
   ],
-  sprint: null,
+  sprint: {
+    number: 142,
+    pbi_id: "PBI-191",
+    goal: "Fix notification channel infrastructure so client notifications reach downstream language servers",
+    status: "planning" as SprintStatus,
+    subtasks: [
+      {
+        test: "Unit test: TreeSitterLs stores tokio_notification_tx sender field and keeps it alive",
+        implementation: "Add tokio_notification_tx: mpsc::UnboundedSender<Notification> field to TreeSitterLs struct, store sender in new() after creating channel",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "ROOT CAUSE FIX: Sender currently dropped at end of new() causing receiver to immediately close",
+          "SOLUTION: Add field to struct to keep sender alive for server lifetime",
+          "TEST STRATEGY: Unit test verifies sender can send after TreeSitterLs construction completes",
+        ],
+      },
+      {
+        test: "Unit test: handle_client_notification() sends notifications through tokio_notification_tx channel instead of dropping",
+        implementation: "Update handle_client_notification() to call self.tokio_notification_tx.send(notification) instead of returning Ok without action",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "CURRENT BEHAVIOR: handle_client_notification() returns Ok immediately, dropping all notifications",
+          "NEW BEHAVIOR: Forward notification to channel for notification_forwarder task to process",
+          "TEST STRATEGY: Unit test sends test notification via handle_client_notification, verifies channel receives it",
+        ],
+      },
+      {
+        test: "Unit test: notification forwarder task receives notifications via tokio_notification_rx channel and forwards to bridge",
+        implementation: "Verify notification_forwarder task loop receives from tokio_notification_rx and calls bridge.send_notification()",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "INFRASTRUCTURE VERIFICATION: Channel→forwarder→bridge pipeline working end-to-end",
+          "TEST STRATEGY: Send notification via channel, verify it reaches mock bridge layer",
+          "ARCHITECTURE: Completes client→handler→channel→forwarder→bridge pipeline per ADR-0012",
+        ],
+      },
+      {
+        test: "Unit test: channel infrastructure stays alive throughout server lifetime (no premature close)",
+        implementation: "Verify sender alive after TreeSitterLs::new() completes, receiver doesn't get channel-closed error during normal operation",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "REGRESSION PREVENTION: Ensure fix doesn't introduce lifecycle bugs",
+          "TEST STRATEGY: Construct TreeSitterLs, verify sender.is_closed() == false, send test message, verify received",
+          "COVERAGE: Tests both sender lifetime and receiver availability",
+        ],
+      },
+      {
+        test: "E2E test: didChange notification from client reaches bridge connection via channel (tests/e2e_notification_forwarding.rs)",
+        implementation: "Create E2E test with LspClient sending didChange notification, verify it reaches bridge layer and forwarded to downstream LS",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "END-TO-END VERIFICATION: Full client→server→bridge→downstream pipeline working",
+          "UNBLOCKS: PBI-190 E2E test (e2e_lsp_didchange_updates_state) can be un-ignored after this passes",
+          "TEST STRATEGY: Send didChange via LSP protocol, verify bridge receives and forwards to lua-ls",
+          "SUCCESS CRITERIA: Notification reaches downstream LS without channel-closed errors",
+        ],
+      },
+      {
+        test: "Enable PBI-190 E2E test after channel fix: un-ignore e2e_lsp_didchange_updates_state.rs",
+        implementation: "Remove #[ignore] attribute from test_didchange_updates_state_after_didopen test in tests/e2e_lsp_didchange_updates_state.rs",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "DEPENDENCY RESOLUTION: PBI-190 E2E blocked by this infrastructure - unblock after channel fix complete",
+          "VALIDATION: Running this test proves notification infrastructure working end-to-end",
+          "ACCEPTANCE: Test must pass without modification (infrastructure-only fix)",
+        ],
+      },
+    ],
+  },
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
