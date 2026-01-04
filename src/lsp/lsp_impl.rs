@@ -571,12 +571,17 @@ impl TreeSitterLs {
         self.handle_language_events(&summary.events).await;
     }
 
-    /// Start the background task that forwards $/progress notifications to the LSP client.
+    /// Start the background task that forwards notifications bidirectionally.
+    ///
+    /// PBI-191: This task forwards notifications in two directions:
+    /// 1. $/progress notifications from bridge → LSP client
+    /// 2. Client notifications (didChange/didSave/didClose) → bridge
     ///
     /// This takes ownership of the notification receiver and spawns a task that:
-    /// 1. Polls the receiver for notifications from the tokio async pool
-    /// 2. Parses each notification to extract ProgressParams
-    /// 3. Forwards valid progress notifications to the client
+    /// 1. Polls the receiver for notifications from handle_client_notification
+    /// 2. Routes based on notification method:
+    ///    - $/progress → forward to client
+    ///    - textDocument/* → forward to bridge (when bridge is available)
     ///
     /// This method is called once from `initialized()` after the LSP handshake completes.
     async fn start_notification_forwarder(&self) {
@@ -593,6 +598,8 @@ impl TreeSitterLs {
         drop(rx_guard); // Release the lock before spawning
 
         let client = self.client.clone();
+        // TODO PBI-192: Clone bridge_pool reference for forwarding client notifications to bridge
+        // let _bridge_pool = Arc::new(&self.language_server_pool);
 
         // Spawn the forwarder task
         tokio::spawn(async move {
@@ -602,12 +609,41 @@ impl TreeSitterLs {
             );
 
             while let Some(notification) = rx.recv().await {
-                if let Some(progress_params) = parse_progress_notification(&notification) {
-                    log::debug!(
-                        target: "treesitter_ls::notification_forwarder",
-                        "Forwarding $/progress notification"
-                    );
-                    client.send_notification::<Progress>(progress_params).await;
+                // Extract method to route notification
+                let method = notification
+                    .get("method")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("");
+
+                match method {
+                    "$/progress" => {
+                        // Progress notification from bridge → forward to client
+                        if let Some(progress_params) = parse_progress_notification(&notification) {
+                            log::debug!(
+                                target: "treesitter_ls::notification_forwarder",
+                                "Forwarding $/progress notification to client"
+                            );
+                            client.send_notification::<Progress>(progress_params).await;
+                        }
+                    }
+                    "textDocument/didChange" | "textDocument/didSave" | "textDocument/didClose" => {
+                        // Client notification → forward to bridge
+                        log::debug!(
+                            target: "treesitter_ls::notification_forwarder",
+                            "Received {} notification for bridge forwarding",
+                            method
+                        );
+                        // TODO PBI-192: Implement bridge forwarding logic
+                        // Extract language from URI, get bridge connection, forward notification
+                        // For now, just log that we received it (proves channel works)
+                    }
+                    _ => {
+                        log::warn!(
+                            target: "treesitter_ls::notification_forwarder",
+                            "Unknown notification method: {}",
+                            method
+                        );
+                    }
                 }
             }
 
@@ -1257,6 +1293,9 @@ impl LanguageServer for TreeSitterLs {
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        // PBI-191: Clone params early for bridge notification forwarding
+        let params_for_bridge = params.clone();
+
         let uri = params.text_document.uri;
 
         self.client
@@ -1367,6 +1406,28 @@ impl LanguageServer for TreeSitterLs {
         self.client
             .log_message(MessageType::INFO, "file changed!")
             .await;
+
+        // PBI-191: Forward didChange notification to bridge via channel
+        // Reconstruct JSON-RPC notification for bridge forwarding
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/didChange",
+            "params": {
+                "textDocument": {
+                    "uri": params_for_bridge.text_document.uri.to_string(),
+                    "version": params_for_bridge.text_document.version
+                },
+                "contentChanges": params_for_bridge.content_changes
+            }
+        });
+
+        if let Err(e) = self.handle_client_notification(notification).await {
+            log::warn!(
+                target: "treesitter_ls::notification",
+                "Failed to forward didChange notification to bridge: {:?}",
+                e
+            );
+        }
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
