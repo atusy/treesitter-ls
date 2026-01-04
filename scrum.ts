@@ -27,11 +27,107 @@ const scrum: ScrumDashboard = {
   // Sprint Review 140: All ACs PASSED, all DoD checks PASSED - PBI-180b DONE
   product_backlog: [
     // ADR-0012 Phase 1: Single-LS-per-Language Foundation (PBI-178-181, PBI-184-185, PBI-187, PBI-180b done, Sprint 133-140)
-    // Priority order: PBI-188 (multi-LS) > PBI-182 (features)
+    // Priority order: PBI-190 (MOST CRITICAL - didChange forwarding) > PBI-191 (notification channel) > PBI-189 (Phase 2 guard) > PBI-188 (multi-LS) > PBI-182 (features)
     // OBSOLETE: PBI-186 (lua-ls config) - lua-ls returns real results now, issue self-resolved
     // PBI-186: OBSOLETE - lua-ls returns real results (hover shows types, completion works)
     // User confirmed hover shows: (global) x: { [1]: string = "x" }
     // The null results issue from Sprint 138 was likely a timing issue that resolved itself
+    {
+      id: "PBI-190",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "see LSP features update in real-time as I edit Lua code blocks",
+        benefit: "I get accurate completions, hover info, and diagnostics that reflect my current edits, not stale state",
+      },
+      acceptance_criteria: [
+        { criterion: "send_notification() forwards didChange notifications to downstream LS after didOpen sent", verification: "grep -A 20 'fn send_notification' src/lsp/bridge/connection.rs | grep 'textDocument/didChange'" },
+        { criterion: "didChange forwarding only occurs after did_open_sent flag is true", verification: "grep -B 5 -A 10 'textDocument/didChange' src/lsp/bridge/connection.rs | grep 'did_open_sent.load'" },
+        { criterion: "Unit test: didChange sent after didOpen updates downstream document state", verification: "cargo test test_didchange_forwarding_after_didopen" },
+        { criterion: "Unit test: second didChange after first didChange forwards to downstream", verification: "cargo test test_subsequent_didchange_forwarding" },
+        { criterion: "E2E test: editing Lua code block triggers didChange to lua-ls and subsequent completion shows updated context", verification: "cargo test --test e2e_lsp_didchange_updates_state --features e2e" },
+        { criterion: "All unit tests pass", verification: "make test" },
+      ],
+      status: "ready" as PBIStatus,
+      refinement_notes: [
+        "CRITICAL ROOT CAUSE: Bridge never forwards didChange to downstream after initial didOpen - downstream LS has permanently stale state",
+        "IMPACT: Every edit after opening a file is invisible to lua-ls - completions/hover/diagnostics query stale state forever",
+        "SYMPTOM: Requests after edits return wrong/missing/stuck results because lua-ls doesn't know about changes",
+        "CURRENT BEHAVIOR: check_and_send_did_open() is idempotent (HashSet tracks sent URIs) - only sends didOpen once per URI",
+        "MISSING CODE PATH: No code path exists to forward subsequent didChange notifications after didOpen sent",
+        "ARCHITECTURE: send_notification() has Phase 2 guard logic location but currently missing didChange forwarding after guard passes",
+        "IMPLEMENTATION STRATEGY: After Phase 2 guard check passes (did_open_sent == true), forward didChange to downstream via stdin",
+        "RELATED: PBI-189 adds Phase 2 guard to DROP didChange BEFORE didOpen; this PBI adds FORWARDING of didChange AFTER didOpen",
+        "DEPENDENCY: None - can implement independently of PBI-189, but both needed for complete notification handling",
+        "TEST STRATEGY: Unit test verifies notification sent to stdin; E2E test verifies lua-ls state updates via changed completion results",
+        "SPRINT 141 REFINEMENT: Created as MOST CRITICAL fix - without this, bridge is fundamentally broken for any editing workflow",
+        "PRIORITY: HIGHEST - blocks all real-world usage where users edit after opening file",
+      ],
+    },
+    {
+      id: "PBI-191",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "have client notifications (didChange, didSave, didClose) properly forwarded to downstream language servers",
+        benefit: "I get reliable LSP behavior with proper document lifecycle management",
+      },
+      acceptance_criteria: [
+        { criterion: "TreeSitterLs stores tokio_notification_tx sender and keeps it alive for bridge lifetime", verification: "grep -A 10 'tokio_notification_tx.*Sender' src/server.rs | grep 'self\\|Arc\\|field'" },
+        { criterion: "Notification forwarder task receives notifications via tokio_notification_rx channel", verification: "grep -A 15 'notification_forwarder.*spawn' src/server.rs | grep 'tokio_notification_rx'" },
+        { criterion: "handle_client_notification() sends to tokio_notification_tx instead of dropping", verification: "grep -A 5 'handle_client_notification' src/server.rs | grep 'tokio_notification_tx.send'" },
+        { criterion: "Unit test: channel infrastructure stays alive and forwards test notification", verification: "cargo test test_notification_channel_lifecycle" },
+        { criterion: "E2E test: didChange notification from client reaches bridge via channel", verification: "cargo test --test e2e_notification_forwarding --features e2e" },
+        { criterion: "All unit tests pass", verification: "make test" },
+      ],
+      status: "ready" as PBIStatus,
+      refinement_notes: [
+        "CRITICAL INFRASTRUCTURE BUG: tokio_notification_tx sender created but immediately dropped in TreeSitterLs::new()",
+        "IMPACT: Notification forwarder task's receiver has no sender - exits immediately on startup",
+        "SYMPTOM: No notifications ever forwarded to bridge because channel infrastructure is broken",
+        "ROOT CAUSE: Sender not stored in TreeSitterLs struct - goes out of scope at end of new() function",
+        "CURRENT BEHAVIOR: Receiver loop exits immediately with channel closed error",
+        "FIX STRATEGY: Store sender in TreeSitterLs struct field (or Arc wrapper) to keep it alive for server lifetime",
+        "ARCHITECTURE: Completes notification pipeline: client → handle_client_notification → channel → forwarder task → bridge",
+        "RELATED: PBI-190 adds didChange forwarding logic; this PBI fixes infrastructure that delivers notifications to that logic",
+        "DEPENDENCY: Should be done before or together with PBI-190 for end-to-end notification flow",
+        "TEST STRATEGY: Unit test verifies channel stays open; E2E test verifies notification reaches bridge layer",
+        "SPRINT 141 REFINEMENT: Created as CRITICAL infrastructure fix - prerequisite for any notification forwarding",
+        "PRIORITY: VERY HIGH - infrastructure must work before didChange forwarding (PBI-190) can function",
+      ],
+    },
+    {
+      id: "PBI-189",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "edit immediately after opening a file without the editor hanging",
+        benefit: "I can start working without delays caused by initialization race conditions",
+      },
+      acceptance_criteria: [
+        { criterion: "send_notification() implements Phase 2 guard: drop didChange/didSave/didClose before didOpen sent", verification: "grep -A 15 'Phase 2 guard' src/lsp/bridge/connection.rs | grep 'textDocument/didChange.*DROP\\|didChange.*return Ok'" },
+        { criterion: "Phase 2 guard allows 'initialized' notification always", verification: "grep -A 15 'Phase 2 guard' src/lsp/bridge/connection.rs | grep '\"initialized\".*Always allow'" },
+        { criterion: "Phase 2 guard marks didOpen as sent using did_open_sent flag", verification: "grep 'did_open_sent.store.*true' src/lsp/bridge/connection.rs" },
+        { criterion: "Unit test verifies didChange is dropped before didOpen during init window", verification: "cargo test test_phase2_guard_drops_didchange" },
+        { criterion: "E2E test: rapid edits immediately after file open do not cause hang", verification: "cargo test --test e2e_bridge_no_hang --features e2e" },
+        { criterion: "All unit tests pass", verification: "make test" },
+      ],
+      status: "ready" as PBIStatus,
+      refinement_notes: [
+        "CRITICAL: Missing Phase 2 guard in send_notification() causes didChange to be forwarded before didOpen during initialization window",
+        "ROOT CAUSE: User-reported hang from Sprint 140 post-review testing - didChange forwarded during init window before didOpen sent",
+        "IMPACT: Without Phase 2 guard, language servers receive notifications out of order (didChange before didOpen), causing undefined behavior or hangs",
+        "SCOPE: Add Phase 2 guard logic to send_notification() per ADR-0012 §6.1 lines 300-322 - DROP didChange BEFORE didOpen",
+        "ARCHITECTURE: Completes ADR-0012 Phase 1 Two-Phase Notification Handling (Phase 1 guard exists, Phase 2 guard MISSING)",
+        "IMPLEMENTATION: Check did_open_sent flag; drop didChange/didSave/didClose; allow 'initialized' and 'textDocument/didOpen'",
+        "INFRASTRUCTURE: did_open_sent AtomicBool already exists; send_did_open() already sets flag at line 494",
+        "TEST STRATEGY: Unit test for notification drop logic; E2E test reuses existing e2e_bridge_no_hang.rs (already tests rapid edit scenario)",
+        "VERIFICATION: Fix eliminates hang when user edits immediately after opening file with slow-initializing lua-ls (>5s)",
+        "DEPENDENCY: No blockers - infrastructure complete from PBI-187, PBI-180b",
+        "RELATED: PBI-190 handles FORWARDING didChange AFTER didOpen; PBI-189 handles DROPPING didChange BEFORE didOpen - complementary fixes",
+        "CLARIFICATION: Issue #3 (lower priority) - prevents out-of-order notifications during init; PBI-190 (Issue #1) is more critical",
+        "SPRINT 141 REFINEMENT: Created as CRITICAL fix based on user hang analysis revealing missing ADR-0012 §6.1 implementation",
+        "SPRINT 141 REFINEMENT: Demoted from HIGHEST to HIGH priority - PBI-190/191 are more critical for basic editing functionality",
+        "PRIORITY: HIGH - prevents hangs during initialization, but PBI-190 blocks all editing workflows (more critical)",
+      ],
+    },
     {
       id: "PBI-188",
       story: {
@@ -50,11 +146,15 @@ const scrum: ScrumDashboard = {
       refinement_notes: [
         "SCOPE: Add configurable language-to-LS mapping (currently hardcoded lua-language-server)",
         "SCOPE: Support common LSes: pyright (Python), gopls (Go), typescript-language-server, etc.",
-        "DEPENDENCY: PBI-187 (non-blocking init) and PBI-180b (init window handling) should be done first",
+        "DEPENDENCY: PBI-190 (didChange forwarding) CRITICAL - must be done first or editing won't work with any LS",
+        "DEPENDENCY: PBI-191 (notification channel) CRITICAL - must be done first or notifications never reach bridge",
+        "DEPENDENCY: PBI-189 (Phase 2 guard) CRITICAL - must be done first to prevent hangs with multiple LSes",
+        "DEPENDENCY: PBI-187 (non-blocking init) and PBI-180b (init window handling) - DONE",
         "ARCHITECTURE: Aligns with ADR-0012 LanguageServerPool design for multiple LS connections",
         "CONFIGURATION: Could use TOML/JSON config file or environment variables",
         "VALUE: Makes bridge useful for polyglot markdown/documentation with multiple embedded languages",
-        "NEXT STEPS: Decide configuration format and location during refinement",
+        "SPRINT 141 REFINEMENT: Updated dependencies - PBI-190/191/189 must complete before adding more languages",
+        "NEXT STEPS: Promote to ready after PBI-190/191/189 complete and configuration format decided",
       ],
     },
     {
@@ -75,9 +175,13 @@ const scrum: ScrumDashboard = {
         "SPRINT 139 REFINEMENT: ACs corrected for ADR-0012 alignment (Pool layer, binary-first E2E naming)",
         "SPRINT 137 REFINEMENT: Kept as draft - ACs needed correction before ready",
         "CONSIDERATION: May split into PBI-182a (definition) and PBI-182b (signatureHelp) - two distinct features",
+        "DEPENDENCY: PBI-190 (didChange forwarding) CRITICAL - definition/signatureHelp results meaningless with stale document state",
+        "DEPENDENCY: PBI-191 (notification channel) CRITICAL - notifications must reach bridge for document sync",
+        "DEPENDENCY: PBI-189 (Phase 2 guard) RECOMMENDED - should be done first for stable notification ordering",
         "DEPENDENCY: Infrastructure exists (PBI-180a, PBI-184) - technical readiness confirmed",
-        "DEPENDENCY: PBI-186 (lua-ls config) should be resolved first for real semantic results",
-        "NEXT STEPS: Promote to ready after PBI-186 confirms lua-ls responds to requests",
+        "DEPENDENCY: PBI-186 (lua-ls config) OBSOLETE - lua-ls returns real results now",
+        "SPRINT 141 REFINEMENT: Updated dependencies - PBI-190/191 must complete first, then PBI-189 for stability",
+        "NEXT STEPS: Can promote to ready after PBI-190/191/189 complete",
       ],
     },
     // PBI-183: SUPERSEDED BY PBI-180b (merged during Sprint 136 refinement)
