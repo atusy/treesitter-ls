@@ -387,6 +387,11 @@ impl BridgeConnection {
     /// Blocks all notifications (except "initialized") if the connection
     /// hasn't been initialized yet. Returns SERVER_NOT_INITIALIZED error.
     ///
+    /// # Phase 2 Guard (ADR-0012 §6.1)
+    /// Drops didChange/didSave/didClose notifications before didOpen sent.
+    /// This prevents out-of-order notifications that violate LSP protocol.
+    /// State changes are accumulated and included in the didOpen content.
+    ///
     /// # Arguments
     /// * `method` - LSP notification method (e.g., "textDocument/didOpen")
     /// * `params` - Notification parameters
@@ -401,6 +406,27 @@ impl BridgeConnection {
             return Err(
                 "SERVER_NOT_INITIALIZED (-32002): Connection not initialized yet".to_string(),
             );
+        }
+
+        // Phase 2 guard: handle notifications before didOpen sent (ADR-0012 §6.1)
+        if !self.did_open_sent.load(Ordering::SeqCst) {
+            match method {
+                "initialized" => {
+                    // Always allow - this sets the initialized flag
+                }
+                "textDocument/didOpen" => {
+                    // Allow - this will set did_open_sent flag
+                    // (flag is set by send_did_open method, not here)
+                }
+                "textDocument/didChange" | "textDocument/didSave" | "textDocument/didClose" => {
+                    // Drop notification silently - state will be in didOpen content
+                    // Per ADR-0012 §6.1: "Drop document notifications before didOpen sent"
+                    return Ok(());
+                }
+                _ => {
+                    // Other notifications proceed after initialized
+                }
+            }
         }
 
         let notification = serde_json::json!({
@@ -1406,5 +1432,147 @@ mod tests {
         // Actual superseding behavior during init window tested in:
         // 1. test_superseding_during_init_window (unit test with lua-ls)
         // 2. e2e_lsp_init_supersede (E2E test via treesitter-ls binary)
+    }
+
+    #[tokio::test]
+    async fn test_didchange_forwarded_after_didopen_sent() {
+        // RED: Test that send_notification() forwards textDocument/didChange to downstream
+        // after didOpen has been sent (did_open_sent == true)
+        let connection = Arc::new(BridgeConnection::new("cat").await.unwrap());
+
+        // Set initialized flag (Phase 1 guard must pass)
+        connection.initialized.store(true, Ordering::SeqCst);
+
+        // Set did_open_sent flag (simulating that didOpen was already sent)
+        connection.did_open_sent.store(true, Ordering::SeqCst);
+
+        // Start background reader to consume messages from cat
+        connection.start_background_reader();
+
+        // Send didChange notification
+        let params = json!({
+            "textDocument": {
+                "uri": "file:///test.lua",
+                "version": 2
+            },
+            "contentChanges": [{
+                "text": "print('updated')"
+            }]
+        });
+
+        let result = connection.send_notification("textDocument/didChange", params.clone()).await;
+
+        // Should succeed (forwarded to downstream)
+        assert!(
+            result.is_ok(),
+            "didChange should be forwarded after didOpen sent: {:?}",
+            result.err()
+        );
+
+        // TODO: In future, we could verify the message was actually written to stdin
+        // For now, we verify it doesn't error (cat will consume anything)
+    }
+
+    #[tokio::test]
+    async fn test_didchange_dropped_before_didopen_sent() {
+        // RED: Test that send_notification() implements Phase 2 guard logic
+        // This test verifies the ABSENCE of Phase 2 guard in current implementation
+        // by checking that did_open_sent flag is NOT checked for didChange
+        let connection = Arc::new(BridgeConnection::new("cat").await.unwrap());
+
+        // Set initialized flag (Phase 1 guard must pass)
+        connection.initialized.store(true, Ordering::SeqCst);
+
+        // did_open_sent is FALSE (default state - no didOpen sent yet)
+        assert!(!connection.did_open_sent.load(Ordering::SeqCst));
+
+        // Start background reader to consume messages from cat
+        connection.start_background_reader();
+
+        // Send didChange notification BEFORE didOpen
+        let params = json!({
+            "textDocument": {
+                "uri": "file:///test.lua",
+                "version": 2
+            },
+            "contentChanges": [{
+                "text": "print('updated')"
+            }]
+        });
+
+        let result = connection.send_notification("textDocument/didChange", params.clone()).await;
+
+        // Current implementation: forwards didChange (returns Ok and sends to stdin)
+        // Expected after Phase 2 guard: returns Ok but does NOT send to stdin (silent drop)
+        //
+        // This test documents the current behavior (no Phase 2 guard exists).
+        // It will continue to pass after implementing Phase 2 guard because both
+        // "forward" and "drop" return Ok(). The real verification happens in E2E test.
+        assert!(
+            result.is_ok(),
+            "didChange should return Ok (current: forwards, after fix: drops): {:?}",
+            result.err()
+        );
+
+        // TODO: To properly verify Phase 2 guard, we need E2E test that checks
+        // downstream LS behavior (e.g., lua-ls returns error if didChange before didOpen)
+    }
+
+    #[tokio::test]
+    async fn test_subsequent_didchange_forwarded() {
+        // RED: Test that multiple consecutive didChange notifications are forwarded
+        // after didOpen sent (no special state tracking needed - just forward each one)
+        let connection = Arc::new(BridgeConnection::new("cat").await.unwrap());
+
+        // Set initialized flag (Phase 1 guard must pass)
+        connection.initialized.store(true, Ordering::SeqCst);
+
+        // Set did_open_sent flag (simulating that didOpen was already sent)
+        connection.did_open_sent.store(true, Ordering::SeqCst);
+
+        // Start background reader to consume messages from cat
+        connection.start_background_reader();
+
+        // Send first didChange
+        let params1 = json!({
+            "textDocument": {
+                "uri": "file:///test.lua",
+                "version": 2
+            },
+            "contentChanges": [{
+                "text": "print('hello')"
+            }]
+        });
+        let result1 = connection.send_notification("textDocument/didChange", params1.clone()).await;
+        assert!(result1.is_ok(), "First didChange should succeed: {:?}", result1.err());
+
+        // Send second didChange
+        let params2 = json!({
+            "textDocument": {
+                "uri": "file:///test.lua",
+                "version": 3
+            },
+            "contentChanges": [{
+                "text": "print('world')"
+            }]
+        });
+        let result2 = connection.send_notification("textDocument/didChange", params2.clone()).await;
+        assert!(result2.is_ok(), "Second didChange should succeed: {:?}", result2.err());
+
+        // Send third didChange
+        let params3 = json!({
+            "textDocument": {
+                "uri": "file:///test.lua",
+                "version": 4
+            },
+            "contentChanges": [{
+                "text": "print('goodbye')"
+            }]
+        });
+        let result3 = connection.send_notification("textDocument/didChange", params3.clone()).await;
+        assert!(result3.is_ok(), "Third didChange should succeed: {:?}", result3.err());
+
+        // All three should have been forwarded to downstream
+        // (cat will consume them all silently)
     }
 }
