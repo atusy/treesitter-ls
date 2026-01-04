@@ -117,7 +117,92 @@ const scrum: ScrumDashboard = {
     // See PBI-180b refinement_notes for consolidation details
     // Future: Phase 2 (circuit breaker, bulkhead, health monitoring), Phase 3 (multi-LS routing, aggregation)
   ],
-  sprint: null,
+  sprint: {
+    number: 138,
+    pbi_id: "PBI-185",
+    goal: "Enable real semantic results from lua-language-server by sending virtual document content via didOpen before LSP requests",
+    status: "in_progress" as SprintStatus,
+    subtasks: [
+      {
+        test: "BridgeConnection tracks opened virtual documents with HashSet<String>",
+        implementation: "Add opened_documents: Arc<Mutex<HashSet<String>>> field to BridgeConnection struct",
+        type: "behavioral" as SubtaskType,
+        status: "completed" as SubtaskStatus,
+        commits: [
+          { hash: "c1b2c2e", message: "feat(bridge): track opened virtual documents in BridgeConnection", phase: "green" as CommitPhase }
+        ],
+        notes: [
+          "Mutex needed for async modification during check_and_send_did_open",
+          "Arc enables sharing across tasks (connection is Arc-wrapped in Pool)",
+          "Stores virtual URI strings to avoid duplicate didOpen notifications"
+        ]
+      },
+      {
+        test: "BridgeConnection.check_and_send_did_open() sends didOpen only on first access per virtual URI",
+        implementation: "Async method checks HashSet, sends didOpen with content if not present, adds to set",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Parameters: uri: &str, language_id: &str, content: &str",
+          "Lock HashSet, check contains(uri), if false then send_did_open and insert",
+          "Reuses existing send_did_open infrastructure from Sprint 134"
+        ]
+      },
+      {
+        test: "Pool.completion() passes virtual content to check_and_send_did_open before send_request",
+        implementation: "Extract content in completion_impl via cacheable.extract_content(text), pass to Pool via new parameter",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Change Pool.completion signature: add content: String parameter",
+          "completion_impl extracts: let virtual_content = cacheable.extract_content(text).to_string()",
+          "Call connection.check_and_send_did_open(uri, language, content) before send_request",
+          "Language ID extracted from virtual URI path (already available)"
+        ]
+      },
+      {
+        test: "Pool.hover() passes virtual content to check_and_send_did_open before send_request",
+        implementation: "Extract content in hover_impl via cacheable.extract_content(text), pass to Pool via new parameter",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Change Pool.hover signature: add content: String parameter",
+          "hover_impl extracts: let virtual_content = cacheable.extract_content(text).to_string()",
+          "Call connection.check_and_send_did_open(uri, language, content) before send_request",
+          "Follows same pattern as completion for consistency"
+        ]
+      },
+      {
+        test: "E2E hover test receives real Hover contents (not null) from lua-ls for print built-in",
+        implementation: "Update e2e_lsp_lua_hover.rs assertions to expect non-null hover with contents",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Remove 'Note: lua-ls returned null' fallback logic",
+          "Assert hover result is not null",
+          "Assert contents field exists and is non-empty",
+          "Test demonstrates didOpen content enables real semantic analysis"
+        ]
+      },
+      {
+        test: "E2E completion test receives real CompletionItems (not null) from lua-ls",
+        implementation: "Update e2e_lsp_lua_completion.rs assertions to expect non-null completion with items",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Remove 'Note: lua-ls returned null' fallback logic",
+          "Assert completion result is not null",
+          "Assert items array exists and has at least one item",
+          "Test verifies end-to-end virtual document synchronization"
+        ]
+      }
+    ]
+  },
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
