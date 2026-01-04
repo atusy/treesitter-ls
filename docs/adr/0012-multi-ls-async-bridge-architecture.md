@@ -94,26 +94,26 @@ pub struct ResponseError {
 **Most requests should be routed to a single downstream LS based on capabilities.** Aggregation is only needed when multiple LSes provide overlapping functionality that must be combined.
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
+┌──────────────────────────────────────────────────────────────────────────┐
 │                           Request Routing                                │
 │                                                                          │
 │   Incoming Request                                                       │
 │         │                                                                │
 │         ▼                                                                │
-│   ┌─────────────────────────────────────────────────────────────────┐   │
-│   │ Which LSes have this capability for this languageId?            │   │
-│   └─────────────────────────────────────────────────────────────────┘   │
+│   ┌─────────────────────────────────────────────────────────────────┐    │
+│   │ Which LSes have this capability for this languageId?            │    │
+│   └─────────────────────────────────────────────────────────────────┘    │
 │         │                                                                │
-│         ├── 0 LSes → Return REQUEST_FAILED (-32803) w/ “no provider”    │
-│         ├── 1 LS   → Route to single LS (no aggregation needed)         │
-│         └── N LSes → Check routing strategy:                            │
+│         ├── 0 LSes → Return REQUEST_FAILED (-32803) w/ “no provider”     │
+│         ├── 1 LS   → Route to single LS (no aggregation needed)          │
+│         └── N LSes → Check routing strategy:                             │
 │                        ├── SingleByCapability → Pick alphabetically first│
-│                        └── FanOut → Send to all, aggregate responses    │
-└─────────────────────────────────────────────────────────────────────────┘
+│                        └── FanOut → Send to all, aggregate responses     │
+└──────────────────────────────────────────────────────────────────────────┘
 
-Priority order: Servers are sorted alphabetically by name.
-  - pyright vs ruff → pyright wins (p < r)
-  - lua-ls vs pyright → lua-ls wins (l < p)
+**Priority order:** Users can explicitly define a `priority` list in the bridge configuration. If not defined, the bridge falls back to a deterministic order based on server names (sorted alphabetically).
+  - Explicit: `priority: ["ruff", "pyright"]` → `ruff` is checked first.
+  - Default: `pyright` vs `ruff` → `pyright` wins (alphabetical).
 
 **No-provider handling:** Returning `REQUEST_FAILED` with a clear message (“no downstream language server provides hover for python”) keeps misconfiguration visible instead of silently returning `null`.
 ```
@@ -255,7 +255,7 @@ Notifications must navigate two critical phases before entering normal operation
 | Phase | Duration | Notification Handling |
 |-------|----------|----------------------|
 | **Phase 1: Before `initialized`** | spawn → `initialized` sent | Block all notifications except `initialized` itself with `SERVER_NOT_INITIALIZED` error |
-| **Phase 2: Before `didOpen`** | `initialized` sent → `didOpen` sent | Document notifications (`didChange`, `didSave`) dropped silently; other notifications proceed |
+| **Phase 2: Before `didOpen`** | `initialized` sent → `didOpen` sent | Document notifications (`didChange`, `didSave`) are not forwarded immediately. Their state changes are aggregated into the document version sent with `didOpen`. Other notifications proceed. |
 | **Normal Operation** | After `didOpen` sent | All notifications forwarded normally |
 
 **Rationale for dropping document notifications in Phase 2:**
@@ -310,8 +310,9 @@ pub async fn send_notification(&self, method: &str, params: Value) -> Result<(),
                 return Ok(());
             }
             "textDocument/didChange" | "textDocument/didSave" | "textDocument/didClose" => {
-                // Drop silently - changes already reflected in pending didOpen
-                log::debug!("Dropping {} notification during initialization window", method);
+                // Do not forward notification. The state change is accumulated
+                // and will be included in the content of the `didOpen` notification.
+                log::debug!("Not forwarding {} during init; state will be in didOpen", method);
                 return Ok(());
             }
             _ => {
@@ -529,9 +530,13 @@ enum AggregationStrategy {
     /// Return first successful response, cancel others
     FirstWins,
 
-    /// Wait for all, merge array results (completion items, code actions)
+    /// Wait for all, merge array results (e.g., completion items, code actions).
+    /// **Note**: Merging can be complex. Simple concatenation may lead to
+    /// duplicates (completions) or conflicting text edits (code actions).
+    /// The initial implementation should favor sophisticated deduplication where
+    /// possible and document the risks of conflicting edits.
     MergeAll {
-        dedup_key: Option<String>,  // field to deduplicate on
+        dedup_key: Option<String>,  // e.g., 'label' for completions
         max_items: Option<usize>,   // limit total items
     },
 
@@ -722,15 +727,15 @@ The current `MAX_PENDING_REQUESTS = 100` acts as a global backpressure limit. Bu
 # automatically used for that injection language. No explicit server list
 # needed in bridges config.
 #
-# Priority order: alphabetical by server name (languageServers is a map, not array)
-# Example: pyright comes before ruff alphabetically → pyright has higher priority
+# Priority order can be explicitly configured. If `priority` is omitted,
+# it defaults to alphabetical order of server names.
 
 languages:
   markdown:
     bridges:
       python:
         # Servers discovered from languageServers with languages: [python]
-        # Priority: pyright (alphabetically first) > ruff
+        priority: ["ruff", "pyright"] # Explicitly prioritize ruff
         # Default: single_by_capability routing (no aggregation config needed)
         #
         # Only configure methods that need non-default behavior:
@@ -772,6 +777,7 @@ languageServers:
 
 - **Complexity**: More state to manage (correlations, circuit breakers, aggregators)
 - **Configuration Surface**: Users need to understand aggregation strategies for overlapping capabilities
+- **Aggregation Risk**: Merging results from multiple servers (e.g., `codeAction`s) is inherently risky if they propose conflicting text edits. A naive merge can lead to corrupted document state.
 - **Latency**: Fan-out with `merge_all` waits up to per-server timeouts; partial results may surface instead of complete lists
 - **Memory**: Tracking pending correlations adds overhead
 
