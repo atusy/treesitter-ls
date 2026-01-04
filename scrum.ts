@@ -448,8 +448,14 @@ const scrum: ScrumDashboard = {
         test: "Write test verifying ResponseError serializes to LSP JSON-RPC error response structure with code, message, and optional data fields",
         implementation: "Create src/lsp/bridge/error_types.rs module with ErrorCodes constants (REQUEST_FAILED: -32803, SERVER_NOT_INITIALIZED: -32002, SERVER_CANCELLED: -32802) and ResponseError struct",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [
+          {
+            hash: "b0232e6",
+            message: "feat(bridge): add LSP-compliant error types",
+            phase: "green"
+          }
+        ],
         notes: []
       },
       {
