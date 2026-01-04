@@ -112,8 +112,8 @@ impl TreeSitterLs {
         // Initialize failed parser registry with crash detection
         let failed_parsers = Self::init_failed_parser_registry();
 
-        // Clean up stale temp directories from previous sessions in the background
-        std::thread::spawn(super::bridge::startup_cleanup);
+        // Note: Startup cleanup of bridge temp directories removed with bridge module.
+        // When bridge is re-implemented (ADR-0012), add cleanup here if needed.
 
         // Create notification channel for async bridge (when re-implemented)
         let (_tokio_notification_tx, tokio_notification_rx) = tokio::sync::mpsc::channel(256);
