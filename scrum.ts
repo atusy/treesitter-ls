@@ -173,14 +173,20 @@ const scrum: ScrumDashboard = {
         test: "Initialize request sent and InitializeResult received from lua-language-server",
         implementation: "BridgeConnection::initialize() sends initialize request with clientInfo/capabilities, waits for InitializeResult response",
         type: "behavioral" as SubtaskType,
-        status: "pending" as SubtaskStatus,
-        commits: [],
+        status: "completed" as SubtaskStatus,
+        commits: [
+          { hash: "2a5300e", message: "feat(bridge): implement LSP initialize request protocol", phase: "green" as CommitPhase }
+        ],
         notes: [
           "Test: Verify initialize request has valid id, method='initialize', params with processId/clientInfo/capabilities",
           "Test: Verify response parsing into InitializeResult with server capabilities",
           "Test: Handle timeout if lua-ls doesn't respond within 5s",
           "ADR-0012 §5.1: First step of initialize → initialized → didOpen sequence",
-          "Sets initialized flag to false initially, true after initialized notification sent (next subtask)"
+          "Sets initialized flag to false initially, true after initialized notification sent (next subtask)",
+          "✓ Implemented send_initialize_request() with request ID tracking",
+          "✓ Wrapped stdin/stdout/process in Mutex for async access",
+          "✓ Verifies response ID matches request ID",
+          "✓ Real E2E test will validate with lua-language-server"
         ]
       },
       {
