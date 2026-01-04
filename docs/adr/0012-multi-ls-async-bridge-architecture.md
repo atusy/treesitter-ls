@@ -104,7 +104,7 @@ pub struct ResponseError {
 │   │ Which LSes have this capability for this languageId?            │   │
 │   └─────────────────────────────────────────────────────────────────┘   │
 │         │                                                                │
-│         ├── 0 LSes → Return null/empty                                  │
+│         ├── 0 LSes → Return REQUEST_FAILED (-32803) w/ “no provider”    │
 │         ├── 1 LS   → Route to single LS (no aggregation needed)         │
 │         └── N LSes → Check routing strategy:                            │
 │                        ├── SingleByCapability → Pick alphabetically first│
@@ -114,6 +114,8 @@ pub struct ResponseError {
 Priority order: Servers are sorted alphabetically by name.
   - pyright vs ruff → pyright wins (p < r)
   - lua-ls vs pyright → lua-ls wins (l < p)
+
+**No-provider handling:** Returning `REQUEST_FAILED` with a clear message (“no downstream language server provides hover for python”) keeps misconfiguration visible instead of silently returning `null`.
 ```
 
 **Example: pyright + ruff for Python**
@@ -242,6 +244,7 @@ When initializing multiple downstream servers in parallel, some may succeed whil
 - Failed `initialize` requests trigger circuit breaker for that specific server
 - Requests routed to failed servers receive `REQUEST_FAILED` with circuit breaker message
 - Client sees degraded functionality (e.g., "pyright unavailable") rather than total failure
+- **Fan-out awareness:** If a method is configured for aggregation (e.g., completion merge_all) and one server is in circuit breaker/open or still uninitialized, the router skips it and proceeds with the available servers. The aggregator marks the response as partial in `data` so UX continues instead of blocking on an unhealthy peer.
 
 ### 6. Notification Handling
 
@@ -278,6 +281,8 @@ During the initialization window (after `initialized` but before treesitter-ls s
     │                 │                  │
     │──didChange(md)─▶│──didChange(virt)▶│  ← NOW forward normally
 ```
+
+**Per-downstream snapshotting:** Maintain the latest host-document snapshot (or aggregated pending edits) per downstream. When a slower server reaches its `didOpen`, send the full text as of “now”, not as of when the first downstream opened. Queue any later `didChange` for that downstream until its `didOpen` is sent, so every server starts from an accurate, synchronized state.
 
 **Implementation:**
 
@@ -328,6 +333,8 @@ struct BridgeConnection {
     did_open_sent: AtomicBool,       // true after first "didOpen" notification sent
     initialized_notify: Notify,      // wake tasks waiting for initialization
 }
+
+**Queue prioritization to avoid head-of-line blocking:** Per-connection send queues prioritize text synchronization (`didOpen`/`didChange`/`didClose`) ahead of long-running requests, preventing large requests from delaying document state updates. For finer isolation in the future, move to per-document queues within a connection while preserving in-order delivery per document.
 ```
 
 #### 6.2 Document Notification Order
@@ -397,7 +404,7 @@ treesitter-ls responds to client's `initialize` immediately, independent of down
 
 | Category | Requests | Behavior during Init Window | Rationale |
 |----------|----------|-------------------------------|-----------|
-| **Incremental** | completion, signatureHelp, hover | Request superseding (newer cancels older) | Stale results are useless, but user may be waiting |
+| **Incremental** | completion, signatureHelp, hover | Request superseding + bounded wait (default 5s) + timeout fail | Stale results are useless, but user may be waiting; bound wait prevents hangs |
 | **Explicit action** | definition, references, rename, codeAction, formatting | Wait with timeout (5s) | User explicitly requested, waiting is expected |
 
 **Note:** After `didOpen` is sent (Normal Operation), all requests are simply forwarded. No special handling needed.
@@ -406,14 +413,16 @@ treesitter-ls responds to client's `initialize` immediately, independent of down
 
 Incremental requests should NOT immediately return empty. The user might be waiting for the result. Instead, use a **request superseding** pattern:
 
-1. If not initialized, keep the request pending
-2. If a **new request of the same type** arrives, send `REQUEST_FAILED` error for the old request
-3. When initialization completes, process the most recent pending request
+1. If not initialized, keep the request pending but attach a **bounded wait** (default 5s; configurable per bridge) to avoid indefinite hangs.
+2. If a **new request of the same type** arrives before the previous one is processed, return `REQUEST_FAILED` for the older request with a `"superseded"` reason (no silent drop).
+3. When initialization completes (or the wait expires), process the most recent pending request; if initialization is still incomplete at the deadline, fail it with `REQUEST_FAILED` and a clear timeout message.
 
 **LSP compliance rationale:**
 - **Every request gets a response** (LSP 3.x § Request Message) - no dropped requests
 - Uses `REQUEST_FAILED` (-32803) for superseded requests (LSP 3.17+)
 - The request failed due to changed client state (newer request arrived), making the result obsolete
+
+**LSP note:** The spec encourages clients to cancel when their own state changes; this bridge-side superseding keeps UX responsive during the initialization window while still returning a standards-compliant error. Client-driven `$/cancelRequest` remains supported and should cancel any downstream request already in-flight.
 
 ```
 Scenario A: User is waiting
@@ -443,7 +452,7 @@ ResponseError {
 **Implementation:**
 
 ```rust
-/// Wait for initialization with timeout (for explicit actions only)
+/// Wait for initialization with timeout (explicit actions and incremental)
 async fn wait_for_initialized(&self, timeout: Duration) -> Result<(), ResponseError> {
     if self.initialized.load(Ordering::SeqCst) {
         return Ok(());
@@ -459,14 +468,6 @@ async fn wait_for_initialized(&self, timeout: Duration) -> Result<(), ResponseEr
             })
         }
     }
-}
-
-/// Wait indefinitely for initialization (for incremental requests with request superseding)
-async fn wait_for_initialized_no_timeout(&self) {
-    if self.initialized.load(Ordering::SeqCst) {
-        return;
-    }
-    self.initialized_notify.notified().await;
 }
 
 /// Track pending incremental requests (only latest is kept)
@@ -514,7 +515,7 @@ pub async fn send_request(&self, method: &str, params: Value) -> Result<Value, R
 
 | Category | Timeout needed? | Rationale |
 |----------|-----------------|-----------|
-| **Incremental** (request superseding) | No | Natural cleanup via newer requests canceling older ones; if initialization hangs, explicit actions will reveal it |
+| **Incremental** (request superseding) | Yes (default 5s, configurable) | Prevents indefinite waits during initialization; latest request still processed or explicitly failed |
 | **Explicit action** | Yes (5s) | User is explicitly waiting; need feedback if server is broken |
 
 ### 8. Response Aggregation Strategies
@@ -542,6 +543,11 @@ enum AggregationStrategy {
 **When aggregation IS needed:**
 - `completion`: Both LSes return completion items → merge into single list
 - `codeAction`: pyright refactorings + ruff lint fixes → merge into single list
+
+**Aggregation stability rules:**
+- **Per-LS deadlines**: Each downstream request has a configurable timeout (default: 5s explicit, 2s incremental). On timeout, aggregator returns whatever results are available and includes a `REQUEST_FAILED` error in the response `data` describing which servers missed the deadline.
+- **Cancel in spite of non-compliant servers**: Send `$/cancelRequest` to slow downstream servers, but do not wait indefinitely because servers may ignore `$` notifications per LSP. The aggregator’s timeout is the hard ceiling for the upstream response.
+- **Partial results are explicit**: When a merge is partial, include metadata in `data` (e.g., `{ "partial": true, "missing": ["ruff"] }`) so clients and telemetry can surface degraded behavior without blocking UX.
 
 **When aggregation is NOT needed:**
 - Single capable LS → route directly
@@ -592,6 +598,8 @@ async fn handle_cancel_request(&self, upstream_id: i64) {
     self.pending_correlations.remove(&upstream_id);
 }
 ```
+
+**Downstream non-compliance:** Servers may legally ignore `$/cancelRequest` (LSP § `$` notifications). Timeouts on fan-out aggregation remain the hard ceiling to guarantee the upstream request still completes.
 
 **Tracking Structure:**
 
@@ -745,6 +753,7 @@ languageServers:
 - **No Dropped Requests**: Every request receives a response, even during failures (circuit breaker open, timeout, etc.)
 - **Request Superseding**: Stale incremental requests receive LSP-compliant REQUEST_FAILED errors when superseded by newer requests
 - **Graceful Degradation**: Partial initialization failures allow working servers to continue serving requests
+- **Bounded Waits**: Timeouts on initialization and aggregation prevent hangs while still returning best-effort results
 - **Routing-First Simplicity**: Most requests go to a single LS — no aggregation overhead for common cases
 - **Minimal Configuration**: Default capability-based routing works without per-method config
 - **Multi-LS Support**: Python files can use pyright + ruff simultaneously
@@ -757,7 +766,7 @@ languageServers:
 
 - **Complexity**: More state to manage (correlations, circuit breakers, aggregators)
 - **Configuration Surface**: Users need to understand aggregation strategies for overlapping capabilities
-- **Latency**: Fan-out with `merge_all` waits for slowest server (mitigated by per-server timeout)
+- **Latency**: Fan-out with `merge_all` waits up to per-server timeouts; partial results may surface instead of complete lists
 - **Memory**: Tracking pending correlations adds overhead
 
 ### Neutral
@@ -785,8 +794,10 @@ treesitter-ls (host)
 **What works in Phase 1:**
 - Multiple embedded languages in same document (Python, Lua, SQL blocks in markdown)
 - Parallel initialization of multiple LSes (each LS initializes independently)
-- Initialization race handling (`initialized` flag, wait-with-timeout, request superseding pattern)
-- Notification ordering guarantees (serialized writes per connection)
+- Initialization race handling (`initialized` flag, **bounded wait** for incremental and explicit requests, request superseding pattern)
+- Per-downstream `didOpen` snapshotting so late initializers open with the latest document text, not a stale copy
+- Notification ordering guarantees (serialized writes per connection) with queue priority for text sync ahead of long-running requests
+- Routing errors are surfaced with `REQUEST_FAILED` when no provider exists (no silent `null`)
 - Simple routing: language → single LS (no aggregation needed)
 
 **What Phase 1 does NOT support:**
@@ -818,12 +829,14 @@ treesitter-ls (host)
   - Per-connection semaphore (max concurrent requests)
   - Queue size limits before rejection
   - Prevent one slow LS from blocking others
-- **Per-server timeout configuration**: Custom timeout per LS type
+- **Per-server timeout configuration**: Custom timeout per LS type, applied as hard ceilings for requests (including aggregation later)
 - **Health monitoring**: Track LS health metrics, log warnings for flaky servers
+- **Partial-result metadata**: When a timeout occurs, return available results and flag partial response in `data` (keeps UX responsive while making degradation visible)
 
 **Exit Criteria:**
 - Circuit breaker opens/closes correctly when LS crashes/recovers
 - Bulkhead prevents slow LS from blocking other languages
+- Timeouts fire and surface partial-result metadata without leaving requests hanging
 - System remains responsive even when one LS is unhealthy
 
 ### Phase 3: Multi-LS-per-Language with Aggregation
@@ -844,6 +857,7 @@ treesitter-ls (host)
 - Response aggregation (merge_all, first_wins, ranked)
 - Per-method aggregation configuration
 - Cancellation propagation to multiple downstream LSes
+- Fan-out skip/partial: unhealthy or uninitialized servers are skipped in aggregation; responses include partial metadata identifying missing servers
 - **Leverages Phase 2 resilience**: Each LS in multi-LS setup already has circuit breaker + bulkhead
 
 **Exit Criteria:**
