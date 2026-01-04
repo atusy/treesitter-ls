@@ -1,5 +1,7 @@
 //! LanguageServerPool for managing multiple language server connections
 
+use dashmap::DashMap;
+use std::sync::Arc;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 
@@ -7,20 +9,22 @@ use super::connection::BridgeConnection;
 
 /// Pool for managing language server connections
 ///
-/// This is a fakeit implementation that returns Ok(None) for all LSP requests
-/// to validate the API structure before adding async complexity.
+/// Manages one BridgeConnection per language, spawning on first access.
 pub(crate) struct LanguageServerPool {
-    /// Optional connection to a language server
-    /// None for fakeit implementation, Some for real implementation
-    _connection: Option<BridgeConnection>,
+    /// Map from language name (e.g., "lua") to BridgeConnection
+    /// Arc enables sharing connections across async tasks
+    /// DashMap provides concurrent access without explicit locking
+    connections: DashMap<String, Arc<BridgeConnection>>,
 }
 
 impl LanguageServerPool {
     /// Creates a new LanguageServerPool
     ///
-    /// This is a fakeit implementation with no real connection.
+    /// Starts with no connections; connections are spawned on first access.
     pub(crate) fn new() -> Self {
-        Self { _connection: None }
+        Self {
+            connections: DashMap::new(),
+        }
     }
 
     /// Handles textDocument/completion request
@@ -73,6 +77,16 @@ impl LanguageServerPool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn test_pool_new_creates_empty_connections_map() {
+        let pool = LanguageServerPool::new();
+        assert_eq!(
+            pool.connections.len(),
+            0,
+            "New pool should have no connections"
+        );
+    }
 
     #[tokio::test]
     async fn test_pool_completion_returns_ok_none() {
