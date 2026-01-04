@@ -47,12 +47,13 @@ fn test_lua_hover_in_markdown_code_block_via_binary() {
     client.send_notification("initialized", json!({}));
 
     // Open markdown document with Lua code block
-    // Use simple Lua code with built-in function "print"
+    // Use simple Lua code with a defined function
     let markdown_content = r#"# Test Document
 
 ```lua
-local x = 10
-print(x)
+function greet(name)
+    return "Hello, " .. name
+end
 ```
 
 More text.
@@ -72,9 +73,18 @@ More text.
         }),
     );
 
-    // Request hover over "print" built-in function
-    // Line 3 is "```lua", line 4 is "local x = 10", line 5 is "print(x)"
-    // Position at "print" (character 0-5)
+    // Give lua-ls some time to process the virtual document after didOpen
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // Request hover over "greet" function name
+    // Line 0: "# Test Document"
+    // Line 1: (empty)
+    // Line 2: "```lua"
+    // Line 3: "function greet(name)"
+    // Line 4: "    return \"Hello, \" .. name"
+    // Line 5: "end"
+    // Line 6: "```"
+    // Position at "greet" on line 3 (character 9-14)
     let hover_response = client.send_request(
         "textDocument/hover",
         json!({
@@ -82,8 +92,8 @@ More text.
                 "uri": markdown_uri
             },
             "position": {
-                "line": 5,
-                "character": 2
+                "line": 3,
+                "character": 11
             }
         }),
     );
@@ -102,12 +112,16 @@ More text.
         .get("result")
         .expect("Hover should have result field");
 
-    // Result can be null (no hover info) or Hover object
+    // TODO(PBI-185): Investigate why lua-ls still returns null despite didOpen being sent
+    // The didOpen synchronization infrastructure is in place, but lua-ls may need:
+    // - Different workspace configuration
+    // - More time to index (>500ms)
+    // - Different URI format for virtual documents
+    // For now, test verifies request succeeds (no error)
     if result.is_null() {
-        eprintln!("Note: lua-ls returned null for hover");
-        eprintln!("This may indicate lua-ls needs more time or different setup");
-        eprintln!("The test verifies that treesitter-ls successfully forwarded the request.");
-        println!("✓ Hover request succeeded (null is valid response)");
+        eprintln!("Note: lua-ls still returns null after didOpen synchronization");
+        eprintln!("This indicates further investigation needed for lua-ls configuration");
+        println!("✓ Hover request succeeded (infrastructure in place, lua-ls config TBD)");
         return;
     }
 
@@ -139,7 +153,7 @@ More text.
         contents
     );
 
-    println!("✓ Received hover information from lua-language-server via treesitter-ls binary");
+    println!("✓ Received real hover information from lua-language-server via treesitter-ls binary");
 
     // Clean shutdown
     let _shutdown_response = client.send_request("shutdown", json!(null));

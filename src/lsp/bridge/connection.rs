@@ -1,8 +1,8 @@
 //! BridgeConnection for managing connections to language servers
 
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::{Mutex, Notify};
 
@@ -793,8 +793,14 @@ mod tests {
 
         // Send didOpen for a different virtual URI
         let uri2 = "file:///virtual/lua/xyz789.lua";
-        let result2 = connection.send_did_open(uri2, "lua", "print('world')").await;
-        assert!(result2.is_ok(), "Second didOpen should succeed: {:?}", result2.err());
+        let result2 = connection
+            .send_did_open(uri2, "lua", "print('world')")
+            .await;
+        assert!(
+            result2.is_ok(),
+            "Second didOpen should succeed: {:?}",
+            result2.err()
+        );
 
         // Verify both URIs are tracked
         {

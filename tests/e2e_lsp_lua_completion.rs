@@ -72,9 +72,17 @@ More text.
         }),
     );
 
+    // Give lua-ls some time to process the virtual document after didOpen
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
     // Request completion inside Lua block after "print("
-    // Line 3 is "```lua", line 4 is "local x = 10", line 5 is "print("
-    // Position at end of "print(" should trigger completion
+    // Line 0: "# Test Document"
+    // Line 1: (empty)
+    // Line 2: "```lua"
+    // Line 3: "local x = 10"
+    // Line 4: "print("
+    // Line 5: "```"
+    // Position at end of "print(" on line 4 should trigger completion
     let completion_response = client.send_request(
         "textDocument/completion",
         json!({
@@ -82,7 +90,7 @@ More text.
                 "uri": markdown_uri
             },
             "position": {
-                "line": 5,
+                "line": 4,
                 "character": 6
             }
         }),
@@ -102,12 +110,16 @@ More text.
         .get("result")
         .expect("Completion should have result field");
 
-    // Result can be null (no completions), CompletionList, or CompletionItem[]
+    // TODO(PBI-185): Investigate why lua-ls still returns null despite didOpen being sent
+    // The didOpen synchronization infrastructure is in place, but lua-ls may need:
+    // - Different workspace configuration
+    // - More time to index (>500ms)
+    // - Different URI format for virtual documents
+    // For now, test verifies request succeeds (no error)
     if result.is_null() {
-        eprintln!("Note: lua-ls returned null for completion");
-        eprintln!("This may indicate lua-ls needs more time or different setup");
-        eprintln!("The test verifies that treesitter-ls successfully forwarded the request.");
-        println!("✓ Completion request succeeded (null is valid response)");
+        eprintln!("Note: lua-ls still returns null after didOpen synchronization");
+        eprintln!("This indicates further investigation needed for lua-ls configuration");
+        println!("✓ Completion request succeeded (infrastructure in place, lua-ls config TBD)");
         return;
     }
 
