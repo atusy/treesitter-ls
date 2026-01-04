@@ -25,7 +25,32 @@ const scrum: ScrumDashboard = {
   // Superseded: PBI-183 (merged into PBI-180b during Sprint 136 refinement)
   product_backlog: [
     // ADR-0012 Phase 1: Single-LS-per-Language Foundation (PBI-178-184 done, Sprint 133-136)
-    // Next: PBI-181 hover (ready after PBI-184), PBI-182 definition/signatureHelp, PBI-180b superseding
+    // Sprint 137 candidates: PBI-181 hover (ready, highest priority), PBI-180b superseding (ready)
+    // Future: PBI-182 definition/signatureHelp (draft - needs AC refinement)
+    {
+      id: "PBI-181",
+      story: {
+        role: "developer editing Lua files",
+        capability: "see hover information for Lua code in markdown code blocks",
+        benefit: "I can understand Lua APIs and types without leaving the markdown document",
+      },
+      acceptance_criteria: [
+        { criterion: "Pool.hover() method calls BridgeConnection.send_request with textDocument/hover", verification: "grep 'send_request.*hover\\|hover.*send_request' src/lsp/bridge/pool.rs" },
+        { criterion: "Hover request uses virtual document URI and translated position from host coordinates", verification: "grep -E 'virtual.*uri|translate.*position' src/lsp/bridge/pool.rs" },
+        { criterion: "Hover response (Hover with contents) returned to host without range translation (hover ranges are optional)", verification: "grep -E 'pool.hover|Hover' src/lsp/lsp_impl/text_document/hover.rs" },
+        { criterion: "E2E test using treesitter-ls binary receives real hover information from lua-ls for Lua built-in (e.g., print)", verification: "cargo test --test e2e_lsp_lua_hover --features e2e" },
+      ],
+      status: "ready" as PBIStatus,
+      refinement_notes: [
+        "SPRINT 137 REFINEMENT: Confirmed ready for sprint - all ACs testable with correct E2E pattern",
+        "SPRINT 137 REFINEMENT: Updated AC4 E2E verification to use binary-first pattern (LspClient, not BridgeConnection)",
+        "ALIGNED WITH SPRINT 136 LEARNING: E2E test must spawn treesitter-ls binary, following e2e_lsp_lua_completion.rs pattern",
+        "SIMPLIFIED: 4 ACs (hover ranges optional in LSP spec, superseding deferred to PBI-180b)",
+        "UNBLOCKED: PBI-184 done (Sprint 136) - pool now spawns/manages BridgeConnection per language",
+        "COMPLEXITY: Low-Medium - directly reuses send_request infrastructure from Sprint 135",
+        "PRIORITY: Highest in ADR-0012 Phase 1 backlog - direct user value for API documentation",
+      ],
+    },
     {
       id: "PBI-180b",
       story: {
@@ -41,8 +66,10 @@ const scrum: ScrumDashboard = {
         { criterion: "E2E test verifies rapid completion requests trigger superseding with only latest processed", verification: "cargo test --test e2e_bridge_init_race --features e2e" },
         { criterion: "All unit tests pass with superseding infrastructure", verification: "make test" },
       ],
-      status: "refining" as PBIStatus,
+      status: "ready" as PBIStatus,
       refinement_notes: [
+        "SPRINT 137 REFINEMENT: Promoted to ready - all dependencies met, ACs clear",
+        "SPRINT 137 REFINEMENT: 6 ACs at upper complexity threshold but keeping unified (user value: responsive UX)",
         "SPRINT 136 REFINEMENT: MERGED WITH PBI-183 to eliminate duplication",
         "SCOPE: General request superseding infrastructure for all incremental requests (completion, hover, signatureHelp)",
         "SCOPE: Phase 2 guard implementation (wait pattern + document notification dropping)",
@@ -52,26 +79,6 @@ const scrum: ScrumDashboard = {
         "VALUE: Prevents stale results during rapid typing (initialization window) and normal operation",
         "COMPLEXITY: Medium-High - introduces new patterns (PendingIncrementalRequests, Phase 2 guard)",
         "NEXT STEPS: Review ADR-0012 Phase 1 §6.1 (Phase 2 guard) and §7.3 (request superseding) for implementation guidance",
-      ],
-    },
-    {
-      id: "PBI-181",
-      story: {
-        role: "developer editing Lua files",
-        capability: "see hover information for Lua code in markdown code blocks",
-        benefit: "I can understand Lua APIs and types without leaving the markdown document",
-      },
-      acceptance_criteria: [
-        { criterion: "Pool.hover() method calls BridgeConnection.send_request with textDocument/hover", verification: "grep 'send_request.*hover\\|hover.*send_request' src/lsp/bridge/pool.rs" },
-        { criterion: "Hover request uses virtual document URI and translated position from host coordinates", verification: "grep -E 'virtual.*uri|translate.*position' src/lsp/bridge/pool.rs" },
-        { criterion: "Hover response (Hover with contents) returned to host without range translation (hover ranges are optional)", verification: "grep -E 'pool.hover|Hover' src/lsp/lsp_impl/text_document/hover.rs" },
-        { criterion: "E2E test receives real hover information from lua-ls for Lua built-in (e.g., print)", verification: "cargo test --test e2e_bridge_hover --features e2e" },
-      ],
-      status: "ready" as PBIStatus,
-      refinement_notes: [
-        "SIMPLIFIED: 4 ACs (hover ranges optional in LSP spec, superseding deferred to PBI-180b)",
-        "UNBLOCKED: PBI-184 done (Sprint 136) - pool now spawns/manages BridgeConnection per language",
-        "COMPLEXITY: Low-Medium - directly reuses send_request infrastructure from Sprint 135",
       ],
     },
     {
@@ -88,6 +95,16 @@ const scrum: ScrumDashboard = {
         { criterion: "E2E test verifies signature help shows real function signatures", verification: "cargo test --test e2e_bridge_signature --features e2e" },
       ],
       status: "draft" as PBIStatus,
+      refinement_notes: [
+        "SPRINT 137 REFINEMENT: Kept as draft - ACs need correction before ready",
+        "ISSUE: AC1-AC2 reference BridgeConnection layer instead of Pool methods (wrong layer per architecture)",
+        "ISSUE: AC3-AC4 use e2e_bridge_* naming (wrong pattern per docs/e2e-testing-checklist.md)",
+        "NEEDED: Rewrite ACs to specify Pool.definition() and Pool.signature_help() methods",
+        "NEEDED: Update E2E test names to e2e_lsp_lua_definition.rs and e2e_lsp_lua_signature.rs (binary-first pattern)",
+        "CONSIDERATION: May split into PBI-182a (definition) and PBI-182b (signatureHelp) - two distinct features",
+        "DEPENDENCY: Infrastructure exists (PBI-180a, PBI-184) - technical readiness confirmed",
+        "NEXT STEPS: Schedule dedicated refinement session to rewrite ACs with correct layer/pattern",
+      ],
     },
     // PBI-183: SUPERSEDED BY PBI-180b (merged during Sprint 136 refinement)
     // Rationale: PBI-183 and PBI-180b had identical user stories and overlapping ACs
