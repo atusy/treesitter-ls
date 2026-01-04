@@ -2,7 +2,11 @@
 
 ## Status
 
-Proposed (8 of 11 features implemented: definition, hover, signatureHelp, completion, references, rename, codeAction, formatting)
+Accepted (Partially superseded by [ADR-0012](0012-multi-ls-async-bridge-architecture.md) for multi-LS aspects)
+
+**Implementation**: 8 of 11 features implemented (definition, hover, signatureHelp, completion, references, rename, codeAction, formatting)
+
+**Note**: Single-LS per-method strategies remain valid. See ADR-0012 for multi-LS routing, aggregation, and initialization window handling.
 
 ## Context
 

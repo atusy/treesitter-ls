@@ -2,35 +2,50 @@
 
 ## Status
 
-Accepted (Supersedes [ADR-0009](_0009-async-bridge-architecture.md))
+Accepted
+
+**Supersedes**:
+- [ADR-0009](0009-async-bridge-architecture.md): Single-LS async architecture (**completely replaced** due to unfixable hang issues)
+- [ADR-0008](0008-language-server-bridge-request-strategies.md): Per-method strategies (**partially replaced** for multi-LS aspects; single-LS strategies remain valid)
 
 ## Context
 
-ADR-0009 established the tokio-based async bridge architecture for concurrent LSP request handling with a single downstream language server. However, real-world usage requires bridging to **multiple downstream language servers** simultaneously:
+ADR-0009 established the tokio-based async bridge architecture for concurrent LSP request handling with a single downstream language server. However, the current implementation suffers from **severe hang issues** due to waker/channel race conditions. Multiple fix attempts (yield_now, mpsc, Notify) have not resolved the root cause.
 
+Additionally, real-world usage requires bridging to **multiple downstream language servers** simultaneously:
 - Python code in markdown may need both **pyright** (type checking, completion) and **ruff** (linting, formatting)
 - Embedded SQL may need both a SQL language server and the host language server
 - Future polyglot scenarios (e.g., TypeScript + CSS in Vue files)
 
-The current 1:1 architecture needs extension to support 1:N communication patterns with proper:
+**Decision: Re-implement from scratch** with simpler, proven patterns and extend to support 1:N communication patterns with proper:
 
 1. **Fan-out/Scatter-Gather** — Send requests to multiple LSes, aggregate responses
 2. **Ordering Guarantees** — Notifications must maintain order per (downstream, document)
 3. **Cancellation Propagation** — `$/cancelRequest` from upstream flows to all downstream
 4. **Resilience** — Circuit breaker and bulkhead patterns for fault isolation
 
-### Problem Statement
+### Problems with Current Implementation (ADR-0009)
 
-When multiple downstream language servers handle the same request type (e.g., completion from pyright + ruff), the bridge must:
+The existing async bridge implementation has fundamental issues that cannot be resolved through incremental fixes:
 
-1. Route the request to all capable servers
-2. Await responses (with timeout per server)
-3. Merge/rank results before returning to upstream
-4. Handle partial failures gracefully (one server down shouldn't fail the entire request)
+**1. Waker/Channel Race Conditions:**
+- Async tasks occasionally hang indefinitely waiting for responses
+- Root cause: Complex interaction between tokio wakers and channel notification timing
+- Attempted fixes (yield_now, mpsc channels, Notify) provide partial relief but don't eliminate hangs
+
+**2. LSP Ordering Violations:**
+- Notifications and requests can arrive out of order at downstream servers
+- Can violate LSP spec requirement: `didOpen` must precede other document notifications
+- Current mutex-based serialization insufficient for multi-document scenarios
+
+**3. Limited to Single LS per Language:**
+- No support for multiple servers handling same language (e.g., pyright + ruff)
+- No aggregation or routing strategies for overlapping capabilities
+- Cannot leverage complementary strengths of different servers
 
 ## Decision
 
-Extend the async bridge architecture with a **routing-first, aggregation-optional** approach.
+Re-implement the async bridge architecture with a **routing-first, aggregation-optional** approach.
 
 ### Design Principle: Routing First
 
@@ -714,6 +729,20 @@ treesitter-ls (host)
 
 ## Related ADRs
 
-- [ADR-0006](0006-language-server-bridge.md): Core LSP bridge architecture
-- [ADR-0008](0008-language-server-bridge-request-strategies.md): Per-method bridge strategies
-- [ADR-0009](0009-async-bridge-architecture.md): Single-LS async architecture (superseded)
+- **[ADR-0006](0006-language-server-bridge.md)**: Core LSP bridge architecture
+  - Establishes the fundamental 1:1 bridge pattern (host document → single language server per language)
+  - Defines eager spawn strategy and position translation
+  - ADR-0012 extends this to 1:N (host document → multiple language servers per language)
+
+- **[ADR-0008](0008-language-server-bridge-request-strategies.md)**: Per-method bridge strategies
+  - Defines four strategies: Parallel Fetch, Full Delegation, Edit Filtering, Background Collection
+  - Specifies how different LSP methods should be handled (completion, hover, diagnostics, etc.)
+  - **Relationship to ADR-0012**: ADR-0008's per-method strategies remain valid for single-LS routing. However, ADR-0012 clarifies multi-LS aspects:
+    - **Diagnostics**: ADR-0008 suggested "merge & dedupe"; ADR-0012 specifies "pass-through" (client aggregates)
+    - **Initialization window**: ADR-0008 assumes servers are initialized; ADR-0012 adds "latest-wins" and "wait-with-timeout" patterns for requests during initialization
+    - **Multi-server merging**: ADR-0012 provides concrete routing strategies (SingleByCapability, FanOut) and aggregation options (merge_all, first_wins, ranked)
+
+- **[ADR-0009](0009-async-bridge-architecture.md)**: Single-LS async architecture **(Superseded)**
+  - Established tokio-based async I/O with request ID routing
+  - Identified the need for async concurrency (tower-lsp dispatches concurrently)
+  - **Why superseded**: Fundamental waker/channel race conditions proved unresolvable; ADR-0012 re-implements with simpler patterns
