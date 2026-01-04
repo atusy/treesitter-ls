@@ -129,11 +129,13 @@ Priority order: Servers are sorted alphabetically by name.
 
 ### 3. System Architecture
 
+**Implementation approach:** The existing `TokioAsyncLanguageServerPool` will be replaced with a new implementation that addresses the hang issues while adding multi-LS support. The class name will be reused, but the internal implementation will be completely rewritten following the patterns described below.
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                         treesitter-ls (Host LS)                          │
 │  ┌────────────────────────────────────────────────────────────────────┐ │
-│  │                    TokioAsyncLanguageServerPool                     │ │
+│  │              TokioAsyncLanguageServerPool (NEW impl)                │ │
 │  │                                                                     │ │
 │  │   ┌─────────────────┐                                              │ │
 │  │   │  RequestRouter  │ ─── routes by (method, languageId, caps)     │ │
@@ -155,6 +157,8 @@ Priority order: Servers are sorted alphabetically by name.
 ```
 
 **Key Design Points:**
+- **Complete Rewrite**: While reusing the `TokioAsyncLanguageServerPool` name for API compatibility, the internal implementation is rebuilt from scratch with simpler patterns to eliminate hang issues
+- **New Components**: `RequestRouter` and `ResponseAggregator` are new components not present in the current implementation
 - **ID Namespace Isolation**: Each downstream connection maintains its own `next_request_id`. The pool maps `(upstream_id, downstream_key)` → `downstream_id` for correlation.
 - **Per-Connection Send Queue**: Each `TokioAsyncBridgeConnection` serializes writes via `Mutex<ChildStdin>`, ensuring no byte-level corruption.
 - **Aggregation Strategies**: Configurable per method (see section 8).
