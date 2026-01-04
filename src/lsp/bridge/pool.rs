@@ -29,17 +29,19 @@ impl LanguageServerPool {
 
     /// Gets or spawns a BridgeConnection for the specified language
     ///
+    /// Returns immediately without blocking on initialization.
+    /// Initialization runs in a background task (tokio::spawn).
+    ///
     /// # Arguments
     /// * `language` - Language name (e.g., "lua")
     ///
     /// # Returns
-    /// Arc<BridgeConnection> for the language
+    /// Arc<BridgeConnection> for the language (may not be initialized yet)
     ///
     /// # Errors
     /// Returns error if:
     /// - Language server command not found (e.g., "lua-language-server" not in PATH)
     /// - Failed to spawn language server process
-    /// - Initialize handshake failed
     async fn get_or_spawn_connection(
         &self,
         language: &str,
@@ -63,16 +65,26 @@ impl LanguageServerPool {
             }
         };
 
-        // Spawn and initialize the language server
+        // Spawn the language server process (but don't initialize yet)
         let connection = BridgeConnection::new(command).await?;
-        connection.initialize().await?;
-
         let arc_conn = Arc::new(connection);
 
         // Insert into map (use entry API to handle race condition)
         self.connections
             .entry(language.to_string())
             .or_insert(arc_conn.clone());
+
+        // Spawn background task to run initialization
+        // This prevents blocking the caller
+        let conn_for_init = arc_conn.clone();
+        let language_owned = language.to_string();
+        tokio::spawn(async move {
+            // Run initialization in background
+            // Errors are logged but don't fail the spawn
+            if let Err(e) = conn_for_init.initialize().await {
+                eprintln!("Background initialization failed for {}: {}", language_owned, e);
+            }
+        });
 
         Ok(arc_conn)
     }
@@ -394,6 +406,50 @@ mod tests {
             error.contains("No language server configured"),
             "Error should mention language not configured: {}",
             error
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_or_spawn_connection_returns_immediately_without_blocking_on_init() {
+        // RED: Test that get_or_spawn_connection returns immediately
+        // without blocking on initialize()
+        // This test requires lua-language-server in PATH
+        let check = tokio::process::Command::new("lua-language-server")
+            .arg("--version")
+            .output()
+            .await;
+
+        if check.is_err() {
+            eprintln!("SKIP: lua-language-server not found in PATH");
+            return;
+        }
+
+        let pool = LanguageServerPool::new();
+
+        // Measure time to spawn connection
+        let start = std::time::Instant::now();
+        let result = pool.get_or_spawn_connection("lua").await;
+        let elapsed = start.elapsed();
+
+        assert!(
+            result.is_ok(),
+            "Should spawn connection successfully: {:?}",
+            result.err()
+        );
+
+        // Should return quickly (< 100ms) since init happens in background
+        // Initialize itself typically takes 100-500ms, so this proves we're not blocking
+        assert!(
+            elapsed < std::time::Duration::from_millis(100),
+            "get_or_spawn_connection should return quickly (< 100ms), took {:?}",
+            elapsed
+        );
+
+        // Connection should not be initialized immediately
+        let connection = result.unwrap();
+        assert!(
+            !connection.is_initialized(),
+            "Connection should not be initialized immediately after spawn"
         );
     }
 

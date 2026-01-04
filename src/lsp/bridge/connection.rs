@@ -501,6 +501,14 @@ impl BridgeConnection {
 
         Ok(())
     }
+
+    /// Returns whether the connection has been initialized
+    ///
+    /// Used for testing and diagnostics.
+    #[allow(dead_code)] // Used in tests
+    pub(crate) fn is_initialized(&self) -> bool {
+        self.initialized.load(Ordering::SeqCst)
+    }
 }
 
 #[cfg(test)]
