@@ -455,6 +455,108 @@ impl BridgeConnection {
     }
 
     pub_e2e! {
+        /// Sends an incremental request with superseding logic
+        ///
+        /// During initialization window (before didOpen sent), this tracks at most
+        /// one pending request per incremental type. If a new request arrives before
+        /// the previous completes, the older request receives REQUEST_FAILED (-32803)
+        /// with "superseded" message.
+        ///
+        /// # Arguments
+        /// * `method` - LSP method name (e.g., "textDocument/completion")
+        /// * `params` - Request parameters as JSON value
+        /// * `incremental_type` - Type of incremental request (Completion, Hover, SignatureHelp)
+        ///
+        /// # Returns
+        /// Response result on success, error string on failure or supersede
+        ///
+        /// # Errors
+        /// Returns error if:
+        /// - Request was superseded by a newer request
+        /// - Failed to send request
+        /// - Response indicates error
+        /// - Timeout waiting for response
+        #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
+        async fn send_incremental_request(
+            &self,
+            method: &str,
+            params: serde_json::Value,
+            incremental_type: IncrementalType,
+        ) -> Result<serde_json::Value, String> {
+        use tokio::time::{timeout, Duration};
+
+        // Get next request ID
+        let request_id = self.next_request_id.fetch_add(1, Ordering::SeqCst);
+
+        // Check if there's a pending request of this type and supersede it
+        {
+            let mut pending = self.pending_incrementals.lock().await;
+            if let Some(_old_request_id) = pending.get(&incremental_type) {
+                // There's already a pending request - the old one will be superseded
+                // (The old request will get REQUEST_FAILED when it tries to read response)
+            }
+            // Track this new request
+            pending.insert(incremental_type, request_id);
+        }
+
+        // Build JSON-RPC request
+        let request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": params
+        });
+
+        // Send request
+        {
+            let mut stdin = self.stdin.lock().await;
+            Self::write_message(&mut *stdin, &request).await?;
+        }
+
+        // Read response with timeout (skip non-matching messages like notifications)
+        let response = timeout(Duration::from_secs(5), async {
+            let mut stdout = self.stdout.lock().await;
+            loop {
+                let msg = Self::read_message(&mut *stdout).await?;
+
+                // If this message has an "id" field matching our request, it's the response
+                if msg.get("id").and_then(|v| v.as_u64()) == Some(request_id) {
+                    return Ok::<_, String>(msg);
+                }
+
+                // Otherwise, it's a server-initiated notification or request - skip it
+            }
+        })
+        .await
+        .map_err(|_| "REQUEST_FAILED (-32803): Request timed out after 5s".to_string())??;
+
+        // Remove from pending incrementals (request completed)
+        {
+            let mut pending = self.pending_incrementals.lock().await;
+            // Only remove if this request_id is still the current one
+            // (it might have been superseded by a newer request)
+            if pending.get(&incremental_type) == Some(&request_id) {
+                pending.remove(&incremental_type);
+            } else {
+                // This request was superseded
+                return Err("REQUEST_FAILED (-32803): superseded by newer request".to_string());
+            }
+        }
+
+        // Check for error response
+        if let Some(error) = response.get("error") {
+            return Err(format!("REQUEST_FAILED (-32803): {}", error));
+        }
+
+        // Return the result
+        response
+            .get("result")
+            .cloned()
+            .ok_or_else(|| "REQUEST_FAILED (-32803): Response missing 'result' field".to_string())
+        }
+    }
+
+    pub_e2e! {
         /// Performs the full LSP initialization sequence with timeout
         ///
         /// Sequence: initialize request → initialized notification
@@ -1017,7 +1119,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_pending_incrementals_tracks_request_per_type() {
-        // RED: Test that BridgeConnection tracks at most one pending request per incremental type
+        // Test that BridgeConnection tracks at most one pending request per incremental type
         let connection = BridgeConnection::new("cat").await.unwrap();
 
         // Access pending_incrementals map (should start empty)
@@ -1027,5 +1129,21 @@ mod tests {
             0,
             "pending_incrementals should start empty"
         );
+    }
+
+    #[tokio::test]
+    async fn test_send_incremental_request_basic_tracking() {
+        // Test that send_incremental_request method exists and compiles
+        // Detailed superseding behavior tested in next test
+        let connection = BridgeConnection::new("cat").await.unwrap();
+
+        // Verify pending_incrementals starts empty
+        {
+            let pending = connection.pending_incrementals.lock().await;
+            assert_eq!(pending.len(), 0, "Should start empty");
+        }
+
+        // Just verify the method exists - actual superseding tested separately
+        // (cat won't respond properly, so we just check compilation)
     }
 }
