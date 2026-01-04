@@ -19,42 +19,15 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113), PBI-155-161 (Sprint 124-130), PBI-178-180a (Sprint 133-135), PBI-184 (Sprint 136), PBI-181 (Sprint 137), PBI-185 (Sprint 138)
+  // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113), PBI-155-161 (Sprint 124-130), PBI-178-180a (Sprint 133-135), PBI-184 (Sprint 136), PBI-181 (Sprint 137), PBI-185 (Sprint 138), PBI-187 (Sprint 140)
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   // Removed: PBI-163-177 (obsolete - created before greenfield deletion per ASYNC_BRIDGE_REMOVAL.md)
   // Superseded: PBI-183 (merged into PBI-180b during Sprint 136 refinement)
   // Cancelled: Sprint 139 (PBI-180b) - infrastructure didn't fix actual hang, reverted
   product_backlog: [
-    // ADR-0012 Phase 1: Single-LS-per-Language Foundation (PBI-178-181, PBI-184-185 done, Sprint 133-138)
-    // CRITICAL: PBI-187 must be done FIRST - it fixes the actual hang by making init non-blocking
-    // Priority order: PBI-187 (hang fix) > PBI-180b (init window) > PBI-188 (multi-LS) > PBI-182 (features)
+    // ADR-0012 Phase 1: Single-LS-per-Language Foundation (PBI-178-181, PBI-184-185, PBI-187 done, Sprint 133-138, 140)
+    // Priority order: PBI-180b (init window) > PBI-188 (multi-LS) > PBI-182 (features)
     // OBSOLETE: PBI-186 (lua-ls config) - lua-ls returns real results now, issue self-resolved
-    {
-      id: "PBI-187",
-      story: {
-        role: "developer editing Lua files",
-        capability: "edit files immediately after opening without LSP hanging",
-        benefit: "I can work fluidly without waiting for bridge initialization to complete",
-      },
-      acceptance_criteria: [
-        { criterion: "get_or_spawn_connection() returns immediately without blocking on initialize()", verification: "grep -A10 'get_or_spawn_connection' src/lsp/bridge/pool.rs | grep -v 'initialize().await'" },
-        { criterion: "Connection initialization runs in background task (tokio::spawn)", verification: "grep -E 'tokio::spawn.*initialize|spawn.*init' src/lsp/bridge/pool.rs" },
-        { criterion: "Requests to uninitialized connections return REQUEST_FAILED with clear message", verification: "grep -E 'REQUEST_FAILED.*not.*initialized|initializing' src/lsp/bridge/" },
-        { criterion: "E2E test: typing immediately after file open does not hang", verification: "cargo test --test e2e_bridge_no_hang --features e2e" },
-        { criterion: "All unit tests pass", verification: "make test" },
-      ],
-      status: "ready" as PBIStatus,
-      refinement_notes: [
-        "SPRINT 139 CANCELLED: PBI-180b built infrastructure but didn't fix actual hang",
-        "ROOT CAUSE: get_or_spawn_connection() calls initialize().await synchronously",
-        "ROOT CAUSE: When user types immediately, completion triggers init which blocks tokio runtime",
-        "ROOT CAUSE: This starves other tasks (did_change) causing apparent hang",
-        "FIX: Move initialization to background task, return early for requests during init",
-        "SCOPE: Only make initialization non-blocking - request handling during init is PBI-180b",
-        "DEPENDENCY: None - this is the foundation that PBI-180b depends on",
-        "VALUE: Critical UX fix - users can edit immediately without waiting for bridge",
-      ],
-    },
     // PBI-186: OBSOLETE - lua-ls returns real results (hover shows types, completion works)
     // User confirmed hover shows: (global) x: { [1]: string = "x" }
     // The null results issue from Sprint 138 was likely a timing issue that resolved itself
@@ -73,10 +46,10 @@ const scrum: ScrumDashboard = {
         { criterion: "E2E test verifies rapid completion requests trigger superseding with only latest processed", verification: "cargo test --test e2e_bridge_init_supersede --features e2e" },
         { criterion: "All unit tests pass with superseding infrastructure", verification: "make test" },
       ],
-      status: "draft" as PBIStatus,
+      status: "ready" as PBIStatus,
       refinement_notes: [
         "SPRINT 139 CANCELLED: Built infrastructure without fixing root cause (blocking init)",
-        "DEPENDENCY: Requires PBI-187 (non-blocking initialization) - BLOCKED until PBI-187 done",
+        "DEPENDENCY: PBI-187 (non-blocking initialization) COMPLETED in Sprint 140 - now ready to implement",
         "SCOPE: Request superseding during initialization window only (ADR-0012 §7.3)",
         "SCOPE: Phase 2 guard implementation (wait pattern + document notification dropping)",
         "RATIONALE: PBI-187 makes init non-blocking; PBI-180b handles requests DURING that init window",
@@ -149,6 +122,12 @@ const scrum: ScrumDashboard = {
   },
   // Historical sprints (recent 3) | Sprint 1-135: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 140, pbi_id: "PBI-187", goal: "Enable non-blocking bridge connection initialization so users can edit immediately after opening files without LSP hangs", status: "done" as SprintStatus, subtasks: [
+      { test: "wait_for_initialized() waits for initialized flag with timeout", implementation: "Add wait_for_initialized(timeout: Duration) method using initialized_notify.notified() with tokio::timeout", type: "behavioral" as SubtaskType, status: "completed" as SubtaskStatus, commits: [{ hash: "39c463e", message: "feat(bridge): add wait_for_initialized() for non-blocking init", phase: "green" as CommitPhase }], notes: ["Infrastructure exists: initialized AtomicBool, initialized_notify Notify"] },
+      { test: "get_or_spawn_connection() returns immediately without waiting for initialize()", implementation: "Refactor get_or_spawn_connection() to spawn tokio::spawn task for initialize(), return Arc<BridgeConnection> immediately", type: "behavioral" as SubtaskType, status: "completed" as SubtaskStatus, commits: [{ hash: "845ac68", message: "feat(bridge): make connection initialization non-blocking", phase: "green" as CommitPhase }], notes: ["Background task handles initialize() + send_initialized_notification()"] },
+      { test: "completion() and hover() wait for initialization before sending request", implementation: "Call connection.wait_for_initialized(Duration::from_secs(5)).await before send_request in pool.rs", type: "behavioral" as SubtaskType, status: "completed" as SubtaskStatus, commits: [{ hash: "8367b24", message: "feat(bridge): wire wait_for_initialized into completion and hover", phase: "green" as CommitPhase }], notes: ["Return InternalError if timeout expires"] },
+      { test: "E2E test: typing immediately after file open does not hang", implementation: "Create tests/e2e_bridge_no_hang.rs with LspClient testing didOpen → didChange → completion sequence with no sleep delays", type: "behavioral" as SubtaskType, status: "completed" as SubtaskStatus, commits: [{ hash: "b578fd4", message: "test(e2e): add E2E test for non-blocking initialization", phase: "green" as CommitPhase }], notes: ["Test completes in ~65ms (< 2s timeout)", "Verifies no tokio runtime starvation"] },
+    ] },
     { number: 138, pbi_id: "PBI-185", goal: "Virtual document synchronization - send didOpen with content before LSP requests", status: "done", subtasks: [
       { test: "Track opened documents with HashSet", implementation: "opened_documents: Arc<Mutex<HashSet<String>>> in BridgeConnection", type: "behavioral", status: "completed", commits: [{ hash: "c1b2c2e", message: "feat(bridge): track opened virtual documents", phase: "green" }], notes: [] },
       { test: "Idempotent check_and_send_did_open()", implementation: "Check HashSet, send didOpen if not present, add to set", type: "behavioral", status: "completed", commits: [{ hash: "e1a1799", message: "feat(bridge): implement check_and_send_did_open", phase: "green" }], notes: [] },
@@ -167,27 +146,22 @@ const scrum: ScrumDashboard = {
       { test: "Deprecate wrong-layer e2e_bridge tests", implementation: "Add deprecation comments pointing to correct pattern", type: "structural", status: "completed", commits: [{ hash: "5c26c45", message: "docs: deprecate wrong-layer E2E tests", phase: "green" }], notes: [] },
     ] },
   ],
-  // Retrospectives (recent 3) | Sprints 1-135: git log -- scrum.yaml, scrum.ts
+  // Retrospectives (recent 3) | Sprints 1-136: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    { sprint: 140, improvements: [
+      { action: "Apply root cause analysis from Sprint 139 retrospective (trace full call stack before proposing solution)", timing: "immediate", status: "completed", outcome: "Sprint 140 successfully fixed actual hang by making initialization non-blocking - validated Sprint 139 root cause diagnosis" },
+      { action: "Continue TDD discipline with wait_for_initialized() (test-first for timeout behavior, immediate return, notification wait)", timing: "immediate", status: "completed", outcome: "All 3 wait_for_initialized tests written before implementation, caught edge cases early" },
+      { action: "Document E2E test completion time expectations (< 2s timeout proves no hang vs ~65ms actual)", timing: "immediate", status: "completed", outcome: "E2E test includes timing assertion and clear comments explaining before/after fix behavior" },
+    ] },
     { sprint: 139, improvements: [
       { action: "Identify root cause BEFORE building infrastructure (Sprint 139 built request superseding but actual hang was in blocking initialize())", timing: "immediate", status: "completed", outcome: "Created PBI-187 for non-blocking initialization; PBI-180b demoted to draft, blocked by PBI-187" },
       { action: "Add 'does this fix the actual problem?' checkpoint to Sprint Review (ACs passed but user problem persisted)", timing: "immediate", status: "completed", outcome: "Sprint 139 cancelled and reverted when review revealed infrastructure didn't fix hang" },
-      { action: "Trace hang through full call stack before proposing solution (completion→get_or_spawn→initialize→blocking loop)", timing: "sprint", status: "active", outcome: null },
+      { action: "Trace hang through full call stack before proposing solution (completion→get_or_spawn→initialize→blocking loop)", timing: "sprint", status: "completed", outcome: "Sprint 140 applied this learning - traced get_or_spawn→initialize→blocking await as root cause, fixed with tokio::spawn" },
     ] },
     { sprint: 138, improvements: [
       { action: "Document AC interpretation strategy (infrastructure vs end-user behavior - when to accept 'infrastructure complete' vs 'user value delivered')", timing: "immediate", status: "completed", outcome: "Added 'Acceptance Criteria Interpretation Strategy' section to docs/e2e-testing-checklist.md with decision framework and Sprint 138 learning" },
       { action: "Create lua-ls workspace configuration investigation PBI (PBI-186: why null results despite didOpen with content - URI format, workspace config, timing, indexing)", timing: "product", status: "completed", outcome: "Created PBI-186 with draft status - investigation PBI to unlock semantic results for all bridged features (hover, completion, future definition/signatureHelp)" },
       { action: "Add E2E test debugging checklist (sleep timing, fixture quality, TODO placement, infrastructure vs config separation)", timing: "immediate", status: "completed", outcome: "Added 'E2E Test Debugging Checklist' section to docs/e2e-testing-checklist.md with 4-step systematic approach" },
-    ] },
-    { sprint: 137, improvements: [
-      { action: "Create virtual document synchronization tracking system (track didOpen/didChange per connection, send virtual content on first access)", timing: "product", status: "completed", outcome: "Created PBI-185 with ready status - highest priority for Sprint 138 due to user-facing bug (hover/completion return null without didOpen content)" },
-      { action: "Consolidate granular subtasks in sprint planning (11 subtasks in Sprint 137 could be 5-6 higher-level tasks, apply ADR-0012 PBI splitting criteria)", timing: "sprint", status: "active", outcome: null },
-      { action: "Document pattern reuse strategy in ADR-0012 (completion→hover→definition progression validates incremental feature rollout)", timing: "sprint", status: "active", outcome: null },
-    ] },
-    { sprint: 136, improvements: [
-      { action: "Create E2E testing anti-pattern checklist (test through binary not library, must use LspClient, verification criteria for E2E tests)", timing: "immediate", status: "completed", outcome: "Created docs/e2e-testing-checklist.md documenting binary-first principle and verification criteria from Sprint 136 experience" },
-      { action: "Assess deprecated e2e_bridge tests for removal (e2e_bridge_completion.rs tests wrong layer, e2e_bridge_fakeit.rs tests obsolete phase)", timing: "immediate", status: "completed", outcome: "Kept deprecated tests with clear deprecation comments - provide historical documentation value; e2e_lsp_lua_completion.rs is now canonical E2E pattern" },
-      { action: "Add 'wire early' principle to ADR-0012 (wire infrastructure incrementally vs batch at end, reduces feedback delay)", timing: "sprint", status: "active", outcome: null },
     ] },
   ],
 };
