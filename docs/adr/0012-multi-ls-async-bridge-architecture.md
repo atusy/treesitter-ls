@@ -804,13 +804,20 @@ treesitter-ls (host)
 ```
 
 **What works in Phase 1:**
-- Multiple embedded languages in same document (Python, Lua, SQL blocks in markdown)
-- Parallel initialization of multiple LSes (each LS initializes independently)
-- Initialization race handling (`initialized` flag, **bounded wait** for incremental and explicit requests, request superseding pattern)
-- Per-downstream `didOpen` snapshotting so late initializers open with the latest document text, not a stale copy
-- Notification ordering guarantees (serialized writes per connection) with queue priority for text sync ahead of long-running requests
-- Routing errors are surfaced with `REQUEST_FAILED` when no provider exists (no silent `null`)
-- Simple routing: language → single LS (no aggregation needed)
+- **LSP Compliance** (§1): Every request receives a response using standard error codes (`REQUEST_FAILED`, `SERVER_NOT_INITIALIZED`)
+- **Multiple embedded languages** in same document (Python, Lua, SQL blocks in markdown)
+- **Parallel initialization** of multiple LSes (§5.2): Each LS initializes independently with no global barrier
+- **Two-Phase notification handling** (§6.1):
+  - Phase 1 guard: Block all notifications before `initialized` (except `initialized` itself) with `SERVER_NOT_INITIALIZED`
+  - Phase 2 guard: Drop document notifications (`didChange`, `didSave`) before `didOpen` sent; state accumulated in `didOpen`
+  - Per-downstream snapshotting: Late initializers receive latest document state, not stale snapshot
+- **Initialization race handling** (§7):
+  - Request superseding pattern for incremental requests (completion, hover, signatureHelp)
+  - Bounded wait with timeout (default 5s) for all requests during initialization window
+  - Superseded requests receive LSP-compliant `REQUEST_FAILED` error
+- **Notification ordering guarantees** (§6.2): Serialized writes per connection with queue prioritization (text sync before long requests)
+- **Routing errors surfaced** (§2): `REQUEST_FAILED` when no provider exists (no silent `null`)
+- **Simple routing**: language → single LS (no aggregation needed)
 
 **What Phase 1 does NOT support:**
 - Multiple LSes for same language (e.g., Python → pyright + ruff)
@@ -833,13 +840,15 @@ treesitter-ls (host)
 - Better to debug resilience issues without aggregation layer
 
 **What Phase 2 adds:**
-- **Circuit Breaker**: Prevent cascading failures when downstream LS is unhealthy
+- **Circuit Breaker** (§11): Prevent cascading failures when downstream LS is unhealthy
   - Open circuit after failure threshold (default: 5 failures)
   - Half-open state for recovery testing
-  - Fast-fail instead of waiting for timeouts
-- **Bulkhead Pattern**: Isolate downstream servers to prevent resource exhaustion
-  - Per-connection semaphore (max concurrent requests)
-  - Queue size limits before rejection
+  - Fast-fail with `REQUEST_FAILED` instead of waiting for timeouts
+  - LSP compliance: Every blocked request receives error response
+- **Bulkhead Pattern** (§12): Isolate downstream servers to prevent resource exhaustion
+  - Per-connection semaphore (max concurrent requests, default: 10)
+  - Queue size limits before rejection (default: 50)
+  - Overflow handling: Immediate failure with `REQUEST_FAILED` (or `SERVER_CANCELLED` for server-cancellable methods)
   - Prevent one slow LS from blocking others
 - **Per-server timeout configuration**: Custom timeout per LS type, applied as hard ceilings for requests (including aggregation later)
 - **Health monitoring**: Track LS health metrics, log warnings for flaky servers
@@ -865,18 +874,23 @@ treesitter-ls (host)
 ```
 
 **What Phase 3 adds:**
-- Routing strategies (single-by-capability, fan-out)
-- Response aggregation (merge_all, first_wins, ranked)
-- Per-method aggregation configuration
-- Cancellation propagation to multiple downstream LSes
-- Fan-out skip/partial: unhealthy or uninitialized servers are skipped in aggregation; responses include partial metadata identifying missing servers
+- **Routing strategies** (§4): single-by-capability (default) and fan-out
+- **Response aggregation** (§8): merge_all, first_wins, ranked strategies
+  - **Aggregation complexity**: Deduplication heuristics for candidate lists (completion, codeAction)
+  - Challenge: Different servers may propose similar items with subtle differences (labels, kinds, edit details)
+  - Safe by design: Users select one item from merged list; no conflicting edits applied simultaneously
+- **Per-method aggregation configuration** (§13): Configure only methods that need non-default behavior
+- **Cancellation propagation** (§10): Propagate `$/cancelRequest` to all downstream LSes with pending requests
+- **Fan-out skip/partial** (§5.3): Unhealthy or uninitialized servers skipped in aggregation; responses include partial metadata identifying missing servers
 - **Leverages Phase 2 resilience**: Each LS in multi-LS setup already has circuit breaker + bulkhead
 
 **Exit Criteria:**
 - Can use pyright + ruff simultaneously for Python
-- Completion results merged from both LSes
+- Completion results merged from both LSes with deduplication working correctly
+- CodeAction lists merged without duplicates or conflicting items in UI
 - Routing config works (single-by-capability default, fan-out for configured methods)
 - Resilience patterns work per-LS (pyright circuit breaker independent of ruff)
+- Partial results surfaced when one LS times out or is unhealthy
 
 **Rationale for phased approach:**
 - Phase 1 delivers immediate value (multi-language support) with minimal complexity
