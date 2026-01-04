@@ -258,9 +258,9 @@ impl LanguageServerPool {
             }
         });
 
-        // Send hover request
+        // Send hover request with superseding during init window
         let response = connection
-            .send_request("textDocument/hover", request_params)
+            .send_incremental_request("textDocument/hover", request_params, IncrementalType::Hover)
             .await
             .map_err(|e| tower_lsp::jsonrpc::Error {
                 code: tower_lsp::jsonrpc::ErrorCode::InternalError,
