@@ -777,7 +777,7 @@ languageServers:
 
 - **Complexity**: More state to manage (correlations, circuit breakers, aggregators)
 - **Configuration Surface**: Users need to understand aggregation strategies for overlapping capabilities
-- **Aggregation Risk**: Merging results from multiple servers (e.g., `codeAction`s) is inherently risky if they propose conflicting text edits. A naive merge can lead to corrupted document state.
+- **Aggregation Complexity**: Merging candidate lists (completion, codeAction) requires deduplication logic to handle cases where multiple servers propose similar items. The challenge is in deduplication heuristics - different servers may propose similar-looking candidates with subtle differences (different labels, kinds, or edit details), making it hard to decide what counts as a "duplicate". Note that merging candidate lists is safe since users select one item; conflicts only arise if the bridge were to automatically apply multiple edits simultaneously (which is not the design).
 - **Latency**: Fan-out with `merge_all` waits up to per-server timeouts; partial results may surface instead of complete lists
 - **Memory**: Tracking pending correlations adds overhead
 
