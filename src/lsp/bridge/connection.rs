@@ -319,6 +319,8 @@ impl BridgeConnection {
         /// This method is idempotent - it will only send didOpen once per URI.
         /// Subsequent calls with the same URI will return Ok without sending.
         ///
+        /// Waits for initialization to complete before sending didOpen.
+        ///
         /// # Arguments
         /// * `uri` - Virtual document URI (e.g., "file:///virtual/lua/abc123.lua")
         /// * `language_id` - Language ID (e.g., "lua")
@@ -333,6 +335,8 @@ impl BridgeConnection {
             language_id: &str,
             content: &str,
         ) -> Result<(), String> {
+        use tokio::time::Duration;
+
         // Check if this URI has already been opened
         {
             let opened = self.opened_documents.lock().await;
@@ -341,6 +345,9 @@ impl BridgeConnection {
                 return Ok(());
             }
         }
+
+        // Wait for initialization before sending didOpen
+        self.wait_for_initialized(Duration::from_secs(5)).await?;
 
         // Not opened yet - send didOpen
         self.send_did_open(uri, language_id, content).await
@@ -462,6 +469,8 @@ impl BridgeConnection {
         /// the previous completes, the older request receives REQUEST_FAILED (-32803)
         /// with "superseded" message.
         ///
+        /// Waits for initialization to complete before sending the request.
+        ///
         /// # Arguments
         /// * `method` - LSP method name (e.g., "textDocument/completion")
         /// * `params` - Request parameters as JSON value
@@ -475,7 +484,7 @@ impl BridgeConnection {
         /// - Request was superseded by a newer request
         /// - Failed to send request
         /// - Response indicates error
-        /// - Timeout waiting for response
+        /// - Timeout waiting for response or initialization
         #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
         async fn send_incremental_request(
             &self,
@@ -497,6 +506,20 @@ impl BridgeConnection {
             }
             // Track this new request
             pending.insert(incremental_type, request_id);
+        }
+
+        // Wait for initialization before sending request
+        // This allows multiple requests to queue up and supersede each other
+        // during the initialization window
+        self.wait_for_initialized(Duration::from_secs(5)).await?;
+
+        // Check if we were superseded while waiting for initialization
+        {
+            let pending = self.pending_incrementals.lock().await;
+            if pending.get(&incremental_type) != Some(&request_id) {
+                // We were superseded while waiting
+                return Err("REQUEST_FAILED (-32803): superseded by newer request".to_string());
+            }
         }
 
         // Build JSON-RPC request
@@ -1149,7 +1172,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_superseding_during_init_window() {
-        // RED: Test that second completion request supersedes first during init window
+        // Test that second completion request supersedes first during init window
         // This test requires lua-language-server in PATH
         let check = tokio::process::Command::new("lua-language-server")
             .arg("--version")
@@ -1163,11 +1186,13 @@ mod tests {
 
         let connection = Arc::new(BridgeConnection::new("lua-language-server").await.unwrap());
 
-        // Do NOT call initialize() - we want to test during init window
-        // Instead, manually set initialized to false (already default)
-        assert!(!connection.is_initialized());
+        // Start initialization in background
+        let conn_init = connection.clone();
+        tokio::spawn(async move {
+            let _ = conn_init.initialize().await;
+        });
 
-        // Send first completion request
+        // Send first completion request (will queue during init window)
         let params1 = json!({
             "textDocument": {"uri": "file:///test.lua"},
             "position": {"line": 0, "character": 0}
