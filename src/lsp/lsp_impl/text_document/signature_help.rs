@@ -98,16 +98,28 @@ impl TreeSitterLs {
         };
 
         // Create cacheable region for position translation
-        let cacheable = CacheableInjectionRegion::from_region_info(region, "temp", text);
+        let _cacheable = CacheableInjectionRegion::from_region_info(region, "temp", text);
 
-        // Extract virtual document content
-        let _virtual_content = cacheable.extract_content(text).to_owned();
+        // Call language_server_pool.signature_help() for the injection region
+        // This is a fakeit implementation that returns Ok(None) immediately
+        // TODO(ADR-0012 Phase 2): Implement real LSP communication with:
+        // 1. Virtual document URI and position translation
+        // 2. Actual LSP signatureHelp request to bridged language server
+        // 3. Response translation back to host document coordinates
 
-        // Translate host position to virtual position
-        let _virtual_position = cacheable.translate_host_to_virtual(position);
+        // For fakeit pass, create dummy params (real implementation will use translated position)
+        let dummy_params = SignatureHelpParams {
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier {
+                    uri: uri.clone(),
+                },
+                position,
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            context: None,
+        };
+        let signature_help_response = self.language_server_pool.signature_help(dummy_params)?;
 
-        // TODO(ADR-0012): Re-implement async bridge
-        // Bridge functionality is currently disabled
-        Ok(None)
+        Ok(signature_help_response)
     }
 }

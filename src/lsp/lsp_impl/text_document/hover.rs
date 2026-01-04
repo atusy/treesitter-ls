@@ -93,15 +93,25 @@ impl TreeSitterLs {
             return Ok(None);
         };
 
-        // TODO(ADR-0012): Re-implement async bridge hover
-        // When LanguageServerPool is implemented:
-        // 1. Create cacheable region for position translation
-        // 2. Extract virtual document content
-        // 3. Translate host position to virtual position
-        // 4. Call language_server_pool.hover(...)
-        // 5. Translate response range back to host document
-        //
-        // Bridge functionality is currently disabled
-        Ok(None)
+        // Call language_server_pool.hover() for the injection region
+        // This is a fakeit implementation that returns Ok(None) immediately
+        // TODO(ADR-0012 Phase 2): Implement real LSP communication with:
+        // 1. Virtual document URI and position translation
+        // 2. Actual LSP hover request to bridged language server
+        // 3. Response range translation back to host document coordinates
+
+        // For fakeit pass, create dummy params (real implementation will use translated position)
+        let dummy_params = HoverParams {
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier {
+                    uri: uri.clone(),
+                },
+                position,
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+        };
+        let hover_response = self.language_server_pool.hover(dummy_params)?;
+
+        Ok(hover_response)
     }
 }

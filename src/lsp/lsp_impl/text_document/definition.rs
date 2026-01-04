@@ -125,15 +125,26 @@ impl TreeSitterLs {
             )
             .await;
 
-        // Create cacheable region for position translation
-        // TODO(ADR-0012): Re-implement async bridge goto_definition
-        // When LanguageServerPool is implemented:
-        // 1. Extract virtual content: let virtual_content = cacheable.extract_content(text).to_owned();
-        // 2. Translate position: let virtual_position = cacheable.translate_host_to_virtual(position);
-        // 3. Call language_server_pool.goto_definition(...)
-        // 4. Translate response positions back to host document
-        //
-        // Bridge functionality is currently disabled
-        Ok(None)
+        // Call language_server_pool.definition() for the injection region
+        // This is a fakeit implementation that returns Ok(None) immediately
+        // TODO(ADR-0012 Phase 2): Implement real LSP communication with:
+        // 1. Virtual document URI and position translation
+        // 2. Actual LSP definition request to bridged language server
+        // 3. Response location translation back to host document coordinates
+
+        // For fakeit pass, create dummy params (real implementation will use translated position)
+        let dummy_params = GotoDefinitionParams {
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier {
+                    uri: uri.clone(),
+                },
+                position,
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+        let definition_response = self.language_server_pool.definition(dummy_params)?;
+
+        Ok(definition_response)
     }
 }
