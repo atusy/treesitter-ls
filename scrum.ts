@@ -26,6 +26,32 @@ const scrum: ScrumDashboard = {
   product_backlog: [
     // ADR-0012 Phase 1: Single-LS-per-Language Foundation
     // Strategy: Two-pass approach: (1) Fakeit pass - all components with dummy responses, (2) Real pass - replace with actual LSP
+    // CRITICAL: Sprint 133-135 built infrastructure but it's NOT WIRED to treesitter-ls binary!
+    // PBI-184 addresses this by spawning BridgeConnection when injection regions are detected
+    {
+      id: "PBI-184",
+      story: {
+        role: "developer editing Lua files",
+        capability: "have lua-language-server automatically started when I open a markdown file with Lua code blocks",
+        benefit: "bridge features work through treesitter-ls binary without manual configuration",
+      },
+      acceptance_criteria: [
+        { criterion: "LanguageServerPool spawns BridgeConnection when first Lua injection region detected", verification: "grep -A10 'get_or_spawn_connection' src/lsp/bridge/pool.rs" },
+        { criterion: "BridgeConnection lifecycle managed per language (spawn once, reuse for subsequent requests)", verification: "grep 'connections.*DashMap\\|HashMap' src/lsp/bridge/pool.rs" },
+        { criterion: "Pool.completion() calls real BridgeConnection.send_request for Lua regions", verification: "grep -B5 -A10 'fn completion' src/lsp/bridge/pool.rs | grep 'send_request'" },
+        { criterion: "E2E test using treesitter-ls binary receives real completion from lua-ls", verification: "cargo test --test e2e_lsp_protocol e2e_completion_lua --features e2e" },
+        { criterion: "E2E tests use treesitter-ls binary (LspClient), NOT Bridge library directly", verification: "grep -L 'BridgeConnection' tests/e2e_*.rs | grep -v e2e_bridge" },
+      ],
+      status: "ready" as PBIStatus,
+      refinement_notes: [
+        "CRITICAL: Sprints 133-135 built infrastructure but it's NOT WIRED to treesitter-ls binary",
+        "Root cause: LanguageServerPool::new() creates pool with _connection: None (always fakeit)",
+        "Missing: Logic to spawn BridgeConnection when treesitter-ls detects Lua injection regions",
+        "E2E tests must use treesitter-ls binary via LspClient (like e2e_lsp_protocol.rs)",
+        "PRIORITY: Must complete before PBI-181/182 can deliver user value",
+        "SCOPE: Connection lifecycle management + wiring completion method (others in follow-up)",
+      ],
+    },
     {
       id: "PBI-178",
       story: {
@@ -127,15 +153,16 @@ const scrum: ScrumDashboard = {
         { criterion: "Hover response (Hover with contents) returned to host without range translation (hover ranges are optional)", verification: "grep -E 'pool.hover|Hover' src/lsp/lsp_impl/text_document/hover.rs" },
         { criterion: "E2E test receives real hover information from lua-ls for Lua built-in (e.g., print)", verification: "cargo test --test e2e_bridge_hover --features e2e" },
       ],
-      status: "ready" as PBIStatus,
+      status: "refining" as PBIStatus,
       refinement_notes: [
         "SPRINT 136 REFINEMENT: Simplified from 6 ACs to 4 ACs - removed request superseding dependency",
-        "DEPENDENCY: Leverages PBI-180a infrastructure (send_request, position translation, timeout)",
+        "BLOCKED BY PBI-184: Requires connection wiring to be completed first",
+        "DEPENDENCY: PBI-184 must wire pool to spawn/manage BridgeConnection per language",
         "SIMPLIFICATION: Hover ranges are optional in LSP spec; we can skip range translation for MVP",
         "SIMPLIFICATION: Request superseding deferred to future sprint (PBI-180b or consolidated PBI)",
         "COMPLEXITY: Low-Medium - directly reuses send_request infrastructure from Sprint 135",
         "VALUE: Delivers new user-facing LSP method (hover info) without introducing new patterns",
-        "FOUNDATION: Pool not yet integrated with BridgeConnection; this PBI completes integration for hover method",
+        "STATUS CHANGE: ready -> refining (blocked by PBI-184)",
       ],
     },
     {
@@ -159,7 +186,77 @@ const scrum: ScrumDashboard = {
     // See PBI-180b refinement_notes for consolidation details
     // Future: Phase 2 (circuit breaker, bulkhead, health monitoring), Phase 3 (multi-LS routing, aggregation)
   ],
-  sprint: null,
+  sprint: {
+    number: 136,
+    pbi_id: "PBI-184",
+    goal: "Wire bridge infrastructure to treesitter-ls binary by implementing connection lifecycle management so lua-language-server spawns automatically when Lua code blocks are opened",
+    status: "planning" as SprintStatus,
+    subtasks: [
+      {
+        test: "LanguageServerPool stores DashMap<String, BridgeConnection> for per-language connections",
+        implementation: "Replace _connection: Option<BridgeConnection> with connections: DashMap<String, Arc<BridgeConnection>> in pool.rs",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Maps to AC2: BridgeConnection lifecycle managed per language",
+          "DashMap provides concurrent access without explicit locking",
+          "Arc<BridgeConnection> enables sharing across async tasks",
+        ],
+      },
+      {
+        test: "Pool.get_or_spawn_connection(language: &str) spawns BridgeConnection on first access",
+        implementation: "Implement async get_or_spawn_connection() using DashMap::entry() API to spawn once per language",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Maps to AC1: LanguageServerPool spawns BridgeConnection when first Lua injection region detected",
+          "Use language-to-server-command mapping (lua -> lua-language-server)",
+          "Initialize connection in spawn path (call connection.initialize())",
+        ],
+      },
+      {
+        test: "Pool.completion() calls get_or_spawn_connection and uses send_request for real responses",
+        implementation: "Replace Ok(None) in completion() with get_or_spawn_connection(\"lua\"), send_request(\"textDocument/completion\", params)",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Maps to AC3: Pool.completion() calls real BridgeConnection.send_request for Lua regions",
+          "Reuses send_request infrastructure from Sprint 135",
+          "Hardcode \"lua\" for MVP, generalize language detection in future",
+        ],
+      },
+      {
+        test: "E2E test using LspClient (treesitter-ls binary) receives real completion from lua-ls in Markdown Lua block",
+        implementation: "Create tests/e2e_lsp_lua_completion.rs: LspClient spawns treesitter-ls, open markdown with lua block, request completion, verify CompletionItems",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Maps to AC4: E2E test using treesitter-ls binary receives real completion from lua-ls",
+          "Maps to AC5: E2E tests use treesitter-ls binary (LspClient), NOT Bridge library directly",
+          "Follow e2e_lsp_protocol.rs pattern with LspClient helper",
+          "Test markdown document with lua code block: ```lua\\nprint(\\n```",
+          "Request completion at position after 'print(' to trigger parameter suggestions",
+        ],
+      },
+      {
+        test: "Deprecate e2e_bridge_*.rs tests that test Bridge library directly instead of treesitter-ls binary",
+        implementation: "Add deprecation comments to e2e_bridge_completion.rs, e2e_bridge_hover.rs explaining they test wrong layer; keep e2e_bridge_init.rs as unit-ish test",
+        type: "structural" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Maps to AC5: E2E tests use treesitter-ls binary, NOT Bridge library directly",
+          "e2e_bridge_init.rs is acceptable as it tests BridgeConnection initialization in isolation",
+          "e2e_bridge_completion.rs and e2e_bridge_hover.rs should be replaced by proper E2E via LspClient",
+          "Add TODO comments pointing to new e2e_lsp_lua_*.rs tests",
+        ],
+      },
+    ],
+  },
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
