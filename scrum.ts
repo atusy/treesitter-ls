@@ -154,14 +154,19 @@ const scrum: ScrumDashboard = {
         test: "JSON-RPC message framing with Content-Length headers for stdio communication",
         implementation: "Add read_message/write_message helpers parsing Content-Length header + \\r\\n\\r\\n + JSON body",
         type: "behavioral" as SubtaskType,
-        status: "pending" as SubtaskStatus,
-        commits: [],
+        status: "completed" as SubtaskStatus,
+        commits: [
+          { hash: "707496d", message: "feat(bridge): implement JSON-RPC message framing for LSP", phase: "green" as CommitPhase }
+        ],
         notes: [
           "Test: write_message produces 'Content-Length: N\\r\\n\\r\\n{json}' format",
           "Test: read_message parses header, reads exact N bytes, deserializes JSON",
           "Test: Invalid header/JSON returns clear error",
           "LSP 3.x Base Protocol: All messages use Content-Length framing",
-          "Required for initialize request/response and all future LSP communication"
+          "Required for initialize request/response and all future LSP communication",
+          "✓ Implemented write_message with AsyncWrite trait",
+          "✓ Implemented read_message with AsyncRead trait and BufReader",
+          "✓ All tests pass for valid framing and error cases"
         ]
       },
       {
