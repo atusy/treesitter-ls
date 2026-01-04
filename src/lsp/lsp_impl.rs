@@ -2142,4 +2142,72 @@ mod tests {
             "Forwarder should be able to extract notification method"
         );
     }
+
+    /// PBI-191 Subtask 4: Test that channel infrastructure stays alive throughout server lifetime.
+    ///
+    /// This is a regression prevention test: verifies the fix from Subtask 1 (storing sender)
+    /// prevents the channel from closing prematurely during normal operation.
+    ///
+    /// Test strategy: Create server, send multiple notifications, verify all are received.
+    #[tokio::test]
+    async fn test_channel_lifecycle_stays_alive() {
+        // Create a mock client for TreeSitterLs
+        let (service, _) = tower_lsp::LspService::new(|client| TreeSitterLs::new(client));
+        let server = service.inner();
+
+        // Verify sender is not closed immediately after construction
+        let sender = server.tokio_notification_tx.as_ref().unwrap();
+        assert!(
+            !sender.is_closed(),
+            "Sender should not be closed after TreeSitterLs construction"
+        );
+
+        // Take receiver to verify it can receive messages
+        let mut rx_guard = server.tokio_notification_rx.lock().await;
+        let mut rx = rx_guard.take().expect("Receiver should exist");
+        drop(rx_guard);
+
+        // Send multiple notifications to verify channel stays open
+        for i in 0..3 {
+            let notification = serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {
+                        "uri": format!("file:///test{}.lua", i),
+                        "version": i + 1
+                    },
+                    "contentChanges": [{
+                        "text": format!("local x = {}", i)
+                    }]
+                }
+            });
+
+            server
+                .handle_client_notification(notification.clone())
+                .await
+                .expect("handle_client_notification should succeed");
+
+            // Verify each notification is received
+            let received = tokio::time::timeout(
+                tokio::time::Duration::from_millis(100),
+                rx.recv()
+            )
+            .await
+            .expect("Should receive notification within timeout")
+            .expect("Channel should not be closed");
+
+            assert_eq!(
+                received, notification,
+                "Notification {} should be received correctly",
+                i
+            );
+        }
+
+        // Verify sender is still not closed after multiple sends
+        assert!(
+            !sender.is_closed(),
+            "Sender should still not be closed after sending multiple notifications"
+        );
+    }
 }
