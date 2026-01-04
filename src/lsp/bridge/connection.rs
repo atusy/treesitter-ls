@@ -466,6 +466,41 @@ impl BridgeConnection {
         Ok(result)
         }
     }
+
+    /// Waits for the connection to be initialized with bounded timeout
+    ///
+    /// This method allows callers to wait for initialization to complete
+    /// without blocking the spawn. Uses tokio::select! to implement timeout.
+    ///
+    /// # Arguments
+    /// * `timeout_duration` - Maximum time to wait for initialization
+    ///
+    /// # Returns
+    /// Ok(()) if initialized within timeout, Err if timeout expires
+    #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
+    pub(crate) async fn wait_for_initialized(
+        &self,
+        timeout_duration: std::time::Duration,
+    ) -> Result<(), String> {
+        use tokio::time::timeout;
+
+        // If already initialized, return immediately
+        if self.initialized.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+
+        // Wait for initialized_notify with timeout
+        timeout(timeout_duration, self.initialized_notify.notified())
+            .await
+            .map_err(|_| {
+                format!(
+                    "REQUEST_FAILED (-32803): Connection not initialized within {:?}",
+                    timeout_duration
+                )
+            })?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -872,5 +907,89 @@ mod tests {
                 "opened_documents should still have one entry"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_wait_for_initialized_returns_immediately_when_already_initialized() {
+        // Test that wait_for_initialized returns immediately if already initialized
+        let connection = BridgeConnection::new("cat").await.unwrap();
+
+        // Set initialized flag
+        connection.initialized.store(true, Ordering::SeqCst);
+
+        // Should return immediately without waiting
+        let result = connection
+            .wait_for_initialized(std::time::Duration::from_secs(5))
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "Should return Ok immediately when already initialized: {:?}",
+            result.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_wait_for_initialized_waits_for_notification() {
+        // Test that wait_for_initialized waits for initialized_notify signal
+        let connection = Arc::new(BridgeConnection::new("cat").await.unwrap());
+
+        // Initially not initialized
+        assert!(!connection.initialized.load(Ordering::SeqCst));
+
+        // Spawn a task that will set initialized after a delay
+        let conn_clone = connection.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            conn_clone.initialized.store(true, Ordering::SeqCst);
+            conn_clone.initialized_notify.notify_waiters();
+        });
+
+        // Wait for initialization (should succeed before 5s timeout)
+        let result = connection
+            .wait_for_initialized(std::time::Duration::from_secs(5))
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "Should succeed when notified within timeout: {:?}",
+            result.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_wait_for_initialized_times_out() {
+        // Test that wait_for_initialized returns error on timeout
+        let connection = BridgeConnection::new("cat").await.unwrap();
+
+        // Never set initialized flag (no notify)
+        assert!(!connection.initialized.load(Ordering::SeqCst));
+
+        // Wait with very short timeout (should timeout)
+        let result = connection
+            .wait_for_initialized(std::time::Duration::from_millis(50))
+            .await;
+
+        assert!(
+            result.is_err(),
+            "Should timeout when not initialized within duration"
+        );
+
+        let error = result.unwrap_err();
+        assert!(
+            error.contains("REQUEST_FAILED"),
+            "Error should contain REQUEST_FAILED: {}",
+            error
+        );
+        assert!(
+            error.contains("-32803"),
+            "Error should contain error code -32803: {}",
+            error
+        );
+        assert!(
+            error.contains("not initialized"),
+            "Error should mention not initialized: {}",
+            error
+        );
     }
 }
