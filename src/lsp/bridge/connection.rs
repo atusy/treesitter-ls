@@ -10,6 +10,7 @@ use tokio::sync::{Mutex, Notify};
 ///
 /// Used to track at most one pending request per incremental type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(dead_code)] // SignatureHelp will be used in future PBIs
 pub(crate) enum IncrementalType {
     Completion,
     Hover,
@@ -1147,11 +1148,7 @@ mod tests {
 
         // Access pending_incrementals map (should start empty)
         let pending = connection.pending_incrementals.lock().await;
-        assert_eq!(
-            pending.len(),
-            0,
-            "pending_incrementals should start empty"
-        );
+        assert_eq!(pending.len(), 0, "pending_incrementals should start empty");
     }
 
     #[tokio::test]
@@ -1200,7 +1197,11 @@ mod tests {
         let conn1 = connection.clone();
         let handle1 = tokio::spawn(async move {
             conn1
-                .send_incremental_request("textDocument/completion", params1, IncrementalType::Completion)
+                .send_incremental_request(
+                    "textDocument/completion",
+                    params1,
+                    IncrementalType::Completion,
+                )
                 .await
         });
 
@@ -1215,7 +1216,11 @@ mod tests {
         let conn2 = connection.clone();
         let handle2 = tokio::spawn(async move {
             conn2
-                .send_incremental_request("textDocument/completion", params2, IncrementalType::Completion)
+                .send_incremental_request(
+                    "textDocument/completion",
+                    params2,
+                    IncrementalType::Completion,
+                )
                 .await
         });
 

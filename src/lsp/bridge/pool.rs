@@ -166,7 +166,11 @@ impl LanguageServerPool {
 
         // Send completion request with superseding during init window
         let response = connection
-            .send_incremental_request("textDocument/completion", request_params, IncrementalType::Completion)
+            .send_incremental_request(
+                "textDocument/completion",
+                request_params,
+                IncrementalType::Completion,
+            )
             .await
             .map_err(|e| tower_lsp::jsonrpc::Error {
                 code: tower_lsp::jsonrpc::ErrorCode::InternalError,

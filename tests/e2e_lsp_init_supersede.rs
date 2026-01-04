@@ -121,19 +121,22 @@ More text.
 
     // Verify superseding behavior (timing dependent)
     // Count how many requests were superseded
-    let response1_superseded = response1.get("error")
+    let response1_superseded = response1
+        .get("error")
         .and_then(|e| e.get("message"))
         .and_then(|m| m.as_str())
         .map(|s| s.contains("superseded"))
         .unwrap_or(false);
 
-    let response2_superseded = response2.get("error")
+    let response2_superseded = response2
+        .get("error")
         .and_then(|e| e.get("message"))
         .and_then(|m| m.as_str())
         .map(|s| s.contains("superseded"))
         .unwrap_or(false);
 
-    let response3_superseded = response3.get("error")
+    let response3_superseded = response3
+        .get("error")
         .and_then(|e| e.get("message"))
         .and_then(|m| m.as_str())
         .map(|s| s.contains("superseded"))
@@ -141,7 +144,9 @@ More text.
 
     // Verify superseding error format if any superseding occurred
     if response1_superseded {
-        let error = response1.get("error").expect("Superseded response should have error");
+        let error = response1
+            .get("error")
+            .expect("Superseded response should have error");
         assert_eq!(
             error.get("code").and_then(|c| c.as_i64()),
             Some(-32803),
@@ -150,7 +155,9 @@ More text.
         println!("✓ Request 1 was correctly superseded");
     }
     if response2_superseded {
-        let error = response2.get("error").expect("Superseded response should have error");
+        let error = response2
+            .get("error")
+            .expect("Superseded response should have error");
         assert_eq!(
             error.get("code").and_then(|c| c.as_i64()),
             Some(-32803),
@@ -159,7 +166,9 @@ More text.
         println!("✓ Request 2 was correctly superseded");
     }
     if response3_superseded {
-        let error = response3.get("error").expect("Superseded response should have error");
+        let error = response3
+            .get("error")
+            .expect("Superseded response should have error");
         assert_eq!(
             error.get("code").and_then(|c| c.as_i64()),
             Some(-32803),
@@ -179,7 +188,9 @@ More text.
     if response1_superseded || response2_superseded {
         println!("✓ Request superseding during initialization window verified");
     } else {
-        println!("✓ All requests succeeded (initialization completed quickly - no superseding needed)");
+        println!(
+            "✓ All requests succeeded (initialization completed quickly - no superseding needed)"
+        );
         println!("  Note: Superseding behavior is still correct (verified in unit tests)");
     }
 
@@ -188,9 +199,7 @@ More text.
     // - All non-superseded requests should have valid responses
     for (i, response) in [(1, &response1), (2, &response2), (3, &response3)].iter() {
         if let Some(error) = response.get("error") {
-            let error_msg = error.get("message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("");
+            let error_msg = error.get("message").and_then(|m| m.as_str()).unwrap_or("");
             if !error_msg.contains("superseded") {
                 panic!("Request {} had unexpected error: {}", i, error_msg);
             }
