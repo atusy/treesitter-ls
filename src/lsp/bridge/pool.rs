@@ -72,6 +72,23 @@ impl LanguageServerPool {
         Ok(arc_conn)
     }
 
+    /// Extracts language from virtual document URI
+    ///
+    /// Expected format: file:///virtual/{language}/{hash}.{ext}
+    /// Example: file:///virtual/lua/abc123.lua -> "lua"
+    fn extract_language_from_uri(uri: &Url) -> Option<String> {
+        let path = uri.path();
+        let parts: Vec<&str> = path.split('/').collect();
+
+        // Path format: /virtual/{language}/{hash}.{ext}
+        // parts: ["", "virtual", "{language}", "{hash}.{ext}"]
+        if parts.len() >= 4 && parts[1] == "virtual" {
+            Some(parts[2].to_string())
+        } else {
+            None
+        }
+    }
+
     /// Handles textDocument/completion request
     ///
     /// # Arguments
@@ -81,14 +98,68 @@ impl LanguageServerPool {
     /// Completion response from language server, or None if no connection
     pub(crate) async fn completion(
         &self,
-        _params: CompletionParams,
+        params: CompletionParams,
     ) -> Result<Option<CompletionResponse>> {
-        // TODO(PBI-180a Phase 2): Implement real LSP completion request
-        // For now, return Ok(None) - real implementation will:
-        // 1. Get/create BridgeConnection for language
-        // 2. Call connection.send_request("textDocument/completion", params)
-        // 3. Deserialize response into CompletionResponse
-        Ok(None)
+        // Extract language from virtual URI
+        let uri = &params.text_document_position.text_document.uri;
+        let Some(language) = Self::extract_language_from_uri(uri) else {
+            // Not a virtual URI - return None
+            return Ok(None);
+        };
+
+        // Get or spawn connection for this language
+        let connection = self.get_or_spawn_connection(&language).await.map_err(|e| {
+            tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::InternalError,
+                message: format!("Failed to get language server for {}: {}", language, e).into(),
+                data: None,
+            }
+        })?;
+
+        // TODO(PBI-181): Send textDocument/didOpen with proper virtual document content
+        // For MVP, we skip didOpen to simplify - lua-ls can handle completion without didOpen
+        // Real implementation will:
+        // 1. Track which virtual documents have been opened per connection
+        // 2. Send didOpen on first access with actual virtual content
+        // 3. Send didChange when virtual content updates
+
+        // Build JSON params for LSP request
+        let virtual_uri_str = uri.to_string();
+        let request_params = serde_json::json!({
+            "textDocument": {
+                "uri": virtual_uri_str
+            },
+            "position": {
+                "line": params.text_document_position.position.line,
+                "character": params.text_document_position.position.character
+            },
+            "context": params.context
+        });
+
+        // Send completion request
+        let response = connection
+            .send_request("textDocument/completion", request_params)
+            .await
+            .map_err(|e| tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::InternalError,
+                message: format!("Completion request failed: {}", e).into(),
+                data: None,
+            })?;
+
+        // Deserialize response into CompletionResponse
+        // LSP spec allows null, CompletionList, or CompletionItem[]
+        if response.is_null() {
+            return Ok(None);
+        }
+
+        let completion_response: CompletionResponse =
+            serde_json::from_value(response).map_err(|e| tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+                message: format!("Failed to parse completion response: {}", e).into(),
+                data: None,
+            })?;
+
+        Ok(Some(completion_response))
     }
 
     /// Handles textDocument/hover request
@@ -131,6 +202,34 @@ mod tests {
             0,
             "New pool should have no connections"
         );
+    }
+
+    #[test]
+    fn test_extract_language_from_virtual_uri() {
+        let uri: Url = "file:///virtual/lua/abc123.lua".parse().unwrap();
+        let language = LanguageServerPool::extract_language_from_uri(&uri);
+        assert_eq!(language, Some("lua".to_string()));
+    }
+
+    #[test]
+    fn test_extract_language_from_virtual_uri_with_different_language() {
+        let uri: Url = "file:///virtual/python/xyz789.py".parse().unwrap();
+        let language = LanguageServerPool::extract_language_from_uri(&uri);
+        assert_eq!(language, Some("python".to_string()));
+    }
+
+    #[test]
+    fn test_extract_language_from_non_virtual_uri_returns_none() {
+        let uri: Url = "file:///real/document.lua".parse().unwrap();
+        let language = LanguageServerPool::extract_language_from_uri(&uri);
+        assert_eq!(language, None);
+    }
+
+    #[test]
+    fn test_extract_language_from_malformed_virtual_uri_returns_none() {
+        let uri: Url = "file:///virtual/".parse().unwrap();
+        let language = LanguageServerPool::extract_language_from_uri(&uri);
+        assert_eq!(language, None);
     }
 
     #[tokio::test]
@@ -219,7 +318,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_pool_completion_returns_ok_none() {
+    async fn test_pool_completion_returns_ok_none_for_non_virtual_uri() {
+        // Test that completion returns None for non-virtual URIs (not in injection regions)
         let pool = LanguageServerPool::new();
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
@@ -234,8 +334,8 @@ mod tests {
         };
 
         let result = pool.completion(params).await;
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
+        assert!(result.is_ok(), "Completion should succeed: {:?}", result.err());
+        assert!(result.unwrap().is_none(), "Non-virtual URI should return None");
     }
 
     #[tokio::test]
