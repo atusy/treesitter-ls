@@ -199,30 +199,46 @@ const scrum: ScrumDashboard = {
     number: 142,
     pbi_id: "PBI-191",
     goal: "Fix notification channel infrastructure so client notifications reach downstream language servers",
-    status: "planning" as SprintStatus,
+    status: "in_progress" as SprintStatus,
     subtasks: [
       {
         test: "Unit test: TreeSitterLs stores tokio_notification_tx sender field and keeps it alive",
         implementation: "Add tokio_notification_tx: mpsc::UnboundedSender<Notification> field to TreeSitterLs struct, store sender in new() after creating channel",
         type: "behavioral" as SubtaskType,
-        status: "pending" as SubtaskStatus,
-        commits: [],
+        status: "completed" as SubtaskStatus,
+        commits: [
+          {
+            hash: "bfc2958",
+            message: "feat(server): store tokio_notification_tx sender to keep channel alive",
+            phase: "green" as CommitPhase,
+          },
+        ],
         notes: [
           "ROOT CAUSE FIX: Sender currently dropped at end of new() causing receiver to immediately close",
           "SOLUTION: Add field to struct to keep sender alive for server lifetime",
           "TEST STRATEGY: Unit test verifies sender can send after TreeSitterLs construction completes",
+          "IMPLEMENTATION: Changed to unbounded_channel, stored as Option<UnboundedSender<serde_json::Value>>",
+          "TEST: test_notification_sender_kept_alive verifies sender.is_closed() == false after construction",
         ],
       },
       {
         test: "Unit test: handle_client_notification() sends notifications through tokio_notification_tx channel instead of dropping",
         implementation: "Update handle_client_notification() to call self.tokio_notification_tx.send(notification) instead of returning Ok without action",
         type: "behavioral" as SubtaskType,
-        status: "pending" as SubtaskStatus,
-        commits: [],
+        status: "completed" as SubtaskStatus,
+        commits: [
+          {
+            hash: "4803b7e",
+            message: "feat(server): add handle_client_notification to forward notifications",
+            phase: "green" as CommitPhase,
+          },
+        ],
         notes: [
           "CURRENT BEHAVIOR: handle_client_notification() returns Ok immediately, dropping all notifications",
           "NEW BEHAVIOR: Forward notification to channel for notification_forwarder task to process",
           "TEST STRATEGY: Unit test sends test notification via handle_client_notification, verifies channel receives it",
+          "IMPLEMENTATION: Added async fn handle_client_notification(&self, Value) -> Result<()>",
+          "TEST: test_handle_client_notification_sends_to_channel verifies receiver gets notification",
         ],
       },
       {
