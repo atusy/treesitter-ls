@@ -282,7 +282,7 @@ During the initialization window (after `initialized` but before treesitter-ls s
     │──didChange(md)─▶│──didChange(virt)▶│  ← NOW forward normally
 ```
 
-**Per-downstream snapshotting:** Maintain the latest host-document snapshot (or aggregated pending edits) per downstream. When a slower server reaches its `didOpen`, send the full text as of “now”, not as of when the first downstream opened. Queue any later `didChange` for that downstream until its `didOpen` is sent, so every server starts from an accurate, synchronized state.
+**Per-downstream snapshotting:** Maintain the latest host-document snapshot (or aggregated pending edits) per downstream. When a slower server reaches its `didOpen`, send the full text as of “now”, not as of when the first downstream opened. Queue any later `didChange` for that downstream until its `didOpen` is sent, so every server starts from an accurate, synchronized state. If the host sends `didClose` before a downstream receives `didOpen`, mark that downstream as “closed” and suppress the pending `didOpen` entirely (do **not** create a ghost open). If `didOpen` was already sent and `didClose` arrived during initialization, queue the `didClose` and flush it immediately after initialization completes to preserve open/close pairing.
 
 **Implementation:**
 
@@ -323,6 +323,8 @@ pub async fn send_notification(&self, method: &str, params: Value) -> Result<(),
     // ... normal send logic ...
 }
 ```
+
+Phase 1/2 guards are internal only. Notifications must not emit responses on the wire; upstream observes silence while the bridge logs or traces the dropped/blocked notification.
 
 **State tracking:**
 
@@ -545,9 +547,9 @@ enum AggregationStrategy {
 - `codeAction`: pyright refactorings + ruff lint fixes → merge into single list
 
 **Aggregation stability rules:**
-- **Per-LS deadlines**: Each downstream request has a configurable timeout (default: 5s explicit, 2s incremental). On timeout, aggregator returns whatever results are available and includes a `REQUEST_FAILED` error in the response `data` describing which servers missed the deadline.
+- **Per-LS deadlines**: Each downstream request has a configurable timeout (default: 5s explicit, 2s incremental). On timeout, aggregator returns whatever results are available. If at least one downstream succeeds, respond with a successful `result` that contains merged items plus partial metadata in-band (e.g., `{ "items": [...], "partial": true, "missing": ["ruff"] }`). If all downstreams fail or time out, respond with a single `ResponseError` (`REQUEST_FAILED`) describing the missing/unhealthy servers. Never send both `result` and `error` in the same response.
 - **Cancel in spite of non-compliant servers**: Send `$/cancelRequest` to slow downstream servers, but do not wait indefinitely because servers may ignore `$` notifications per LSP. The aggregator’s timeout is the hard ceiling for the upstream response.
-- **Partial results are explicit**: When a merge is partial, include metadata in `data` (e.g., `{ "partial": true, "missing": ["ruff"] }`) so clients and telemetry can surface degraded behavior without blocking UX.
+- **Partial results are explicit**: Partial metadata must live inside the successful `result` payload (not an `error` field) to keep the wire response LSP-compliant while still surfacing degradation.
 
 **When aggregation is NOT needed:**
 - Single capable LS → route directly
@@ -607,6 +609,8 @@ async fn handle_cancel_request(&self, upstream_id: i64) {
 /// Maps upstream request ID to downstream request IDs for cancellation
 pending_correlations: DashMap<i64, Vec<(String, i64)>>, // upstream_id → [(downstream_key, downstream_id)]
 ```
+
+**Upstream response to cancellation:** Always return a response to the client after propagating cancellation. Use the standard LSP `RequestCancelled` code (-32800) when the method is server-cancellable; otherwise use `REQUEST_FAILED` with a `"cancelled"` message. Never leave the upstream request pending—cancellation must still round-trip a response per LSP.
 
 ### 11. Circuit Breaker Pattern
 
@@ -706,6 +710,8 @@ struct BridgeConnection {
 **Integration with existing `MAX_PENDING_REQUESTS`:**
 
 The current `MAX_PENDING_REQUESTS = 100` acts as a global backpressure limit. Bulkhead adds per-connection limits for finer isolation.
+
+**Overflow handling:** If acquiring the semaphore or enqueueing would exceed `max_concurrent` + `queue_size`, fail immediately with `REQUEST_FAILED` (or `SERVER_CANCELLED` when the method is declared server-cancellable) and a clear message like “bulkhead limit reached for pyright”. Do not enqueue the request, and clean up any correlation tracking to avoid dangling cancellations.
 
 ### 13. Configuration Example
 
