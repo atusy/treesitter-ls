@@ -108,7 +108,7 @@ local my_new_var = 42
     // Line 3: "local x = 10"
     // Line 4: "local my_new_var = 42"
     // Line 5: "```"
-    
+
     // Add a new line requesting completion for 'my_'
     let content_with_request = r#"# Test Document
 

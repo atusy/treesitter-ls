@@ -1460,7 +1460,9 @@ mod tests {
             }]
         });
 
-        let result = connection.send_notification("textDocument/didChange", params.clone()).await;
+        let result = connection
+            .send_notification("textDocument/didChange", params.clone())
+            .await;
 
         // Should succeed (forwarded to downstream)
         assert!(
@@ -1500,7 +1502,9 @@ mod tests {
             }]
         });
 
-        let result = connection.send_notification("textDocument/didChange", params.clone()).await;
+        let result = connection
+            .send_notification("textDocument/didChange", params.clone())
+            .await;
 
         // Current implementation: forwards didChange (returns Ok and sends to stdin)
         // Expected after Phase 2 guard: returns Ok but does NOT send to stdin (silent drop)
@@ -1543,8 +1547,14 @@ mod tests {
                 "text": "print('hello')"
             }]
         });
-        let result1 = connection.send_notification("textDocument/didChange", params1.clone()).await;
-        assert!(result1.is_ok(), "First didChange should succeed: {:?}", result1.err());
+        let result1 = connection
+            .send_notification("textDocument/didChange", params1.clone())
+            .await;
+        assert!(
+            result1.is_ok(),
+            "First didChange should succeed: {:?}",
+            result1.err()
+        );
 
         // Send second didChange
         let params2 = json!({
@@ -1556,8 +1566,14 @@ mod tests {
                 "text": "print('world')"
             }]
         });
-        let result2 = connection.send_notification("textDocument/didChange", params2.clone()).await;
-        assert!(result2.is_ok(), "Second didChange should succeed: {:?}", result2.err());
+        let result2 = connection
+            .send_notification("textDocument/didChange", params2.clone())
+            .await;
+        assert!(
+            result2.is_ok(),
+            "Second didChange should succeed: {:?}",
+            result2.err()
+        );
 
         // Send third didChange
         let params3 = json!({
@@ -1569,8 +1585,14 @@ mod tests {
                 "text": "print('goodbye')"
             }]
         });
-        let result3 = connection.send_notification("textDocument/didChange", params3.clone()).await;
-        assert!(result3.is_ok(), "Third didChange should succeed: {:?}", result3.err());
+        let result3 = connection
+            .send_notification("textDocument/didChange", params3.clone())
+            .await;
+        assert!(
+            result3.is_ok(),
+            "Third didChange should succeed: {:?}",
+            result3.err()
+        );
 
         // All three should have been forwarded to downstream
         // (cat will consume them all silently)
