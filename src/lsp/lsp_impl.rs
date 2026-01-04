@@ -46,6 +46,34 @@ fn parse_progress_notification(notification: &serde_json::Value) -> Option<Progr
     serde_json::from_value::<ProgressParams>(params.clone()).ok()
 }
 
+/// Extract language from notification URI query parameter.
+///
+/// PBI-192: Client notifications (didChange, didSave, didClose) include URIs with query
+/// parameters that specify the injection language. For example:
+/// `file:///path/to/file.md?injection.language=lua&injection.content=...`
+///
+/// This function parses the URI and looks for the 'injection.language' query parameter.
+///
+/// # Arguments
+/// * `uri_str` - The URI string from the notification
+///
+/// # Returns
+/// * `Some(language_id)` if the injection.language query parameter is present
+/// * `None` if the query parameter is not present or the URI cannot be parsed
+fn extract_language_from_notification_uri(uri_str: &str) -> Option<String> {
+    // Parse the URI
+    let url = Url::parse(uri_str).ok()?;
+
+    // Extract query parameters
+    for (key, value) in url.query_pairs() {
+        if key == "injection.language" {
+            return Some(value.to_string());
+        }
+    }
+
+    None
+}
+
 fn lsp_legend_types() -> Vec<SemanticTokenType> {
     LEGEND_TYPES
         .iter()
@@ -1495,6 +1523,60 @@ mod tests {
     use super::*;
     use crate::config::settings::BridgeLanguageConfig;
     use std::collections::{HashMap, HashSet};
+
+    /// PBI-192 Subtask 1: Test extracting language from textDocument notification URI.
+    ///
+    /// Client notifications (didChange/didSave/didClose) include URIs with query parameters
+    /// that specify the injection language. For example:
+    /// file:///path/to/file.md?injection.language=lua&injection.content=...
+    ///
+    /// This test verifies extract_language_from_notification_uri() correctly parses
+    /// the URI query parameter to extract the language identifier.
+    #[test]
+    fn test_extract_language_from_notification_uri() {
+        // Test with lua language
+        let uri_lua = "file:///test.md?injection.language=lua&injection.content=local%20x%20%3D%201";
+        let language = extract_language_from_notification_uri(uri_lua);
+        assert_eq!(
+            language,
+            Some("lua".to_string()),
+            "Should extract 'lua' from URI query param"
+        );
+
+        // Test with python language
+        let uri_python = "file:///test.md?injection.language=python&injection.content=x%20%3D%201";
+        let language = extract_language_from_notification_uri(uri_python);
+        assert_eq!(
+            language,
+            Some("python".to_string()),
+            "Should extract 'python' from URI query param"
+        );
+
+        // Test with rust language
+        let uri_rust = "file:///test.md?injection.language=rust&injection.content=let%20x%20%3D%201";
+        let language = extract_language_from_notification_uri(uri_rust);
+        assert_eq!(
+            language,
+            Some("rust".to_string()),
+            "Should extract 'rust' from URI query param"
+        );
+
+        // Test URI without injection.language query param
+        let uri_no_lang = "file:///test.md";
+        let language = extract_language_from_notification_uri(uri_no_lang);
+        assert_eq!(
+            language, None,
+            "Should return None for URI without injection.language query param"
+        );
+
+        // Test URI with other query params but no injection.language
+        let uri_other_params = "file:///test.md?foo=bar&baz=qux";
+        let language = extract_language_from_notification_uri(uri_other_params);
+        assert_eq!(
+            language, None,
+            "Should return None for URI with other query params but no injection.language"
+        );
+    }
 
     #[test]
     fn should_create_valid_url_from_file_path() {
