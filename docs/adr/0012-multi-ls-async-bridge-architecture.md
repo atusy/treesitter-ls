@@ -625,8 +625,92 @@ The current async bridge has **hang issues** due to waker/channel race condition
 Multiple fix attempts (yield_now, mpsc, Notify) have not resolved the root cause.
 **Decision: Re-implement from scratch with simpler, proven patterns.**
 
-* Phase 1: Stability-focused Foundation (Re-implementation)
-* Phase 2: Feature Enhancements
+### Phase 1: Single-LS-per-Language Foundation
+
+**Scope**: Support **one language server per language** (multiple languages supported, but each language uses only one LS)
+
+```
+treesitter-ls (host)
+  ├─→ pyright  (Python only)
+  ├─→ lua-ls   (Lua only)
+  └─→ sqlls    (SQL only)
+```
+
+**What works in Phase 1:**
+- Multiple embedded languages in same document (Python, Lua, SQL blocks in markdown)
+- Parallel initialization of multiple LSes (each LS initializes independently)
+- Initialization race handling (`initialized` flag, wait-with-timeout, latest-wins pattern)
+- Notification ordering guarantees (serialized writes per connection)
+- Simple routing: language → single LS (no aggregation needed)
+
+**What Phase 1 does NOT support:**
+- Multiple LSes for same language (e.g., Python → pyright + ruff)
+- Fan-out / scatter-gather for requests
+- Response aggregation/merging
+
+**Exit Criteria:**
+- All existing single-LS tests pass without hangs
+- Can handle Python, Lua, SQL blocks simultaneously in markdown
+- No initialization race failures under normal conditions
+
+### Phase 2: Resilience Patterns (Stability Before Complexity)
+
+**Scope**: Add fault isolation and recovery patterns to **single-LS-per-language** setup before adding multi-LS complexity
+
+**Why Phase 2 before Multi-LS:**
+- Resilience patterns work with simple single-LS architecture
+- Stabilize foundation before adding aggregation complexity
+- Circuit breaker and bulkhead become MORE critical with multi-LS (Phase 3)
+- Better to debug resilience issues without aggregation layer
+
+**What Phase 2 adds:**
+- **Circuit Breaker**: Prevent cascading failures when downstream LS is unhealthy
+  - Open circuit after failure threshold (default: 5 failures)
+  - Half-open state for recovery testing
+  - Fast-fail instead of waiting for timeouts
+- **Bulkhead Pattern**: Isolate downstream servers to prevent resource exhaustion
+  - Per-connection semaphore (max concurrent requests)
+  - Queue size limits before rejection
+  - Prevent one slow LS from blocking others
+- **Per-server timeout configuration**: Custom timeout per LS type
+- **Health monitoring**: Track LS health metrics, log warnings for flaky servers
+
+**Exit Criteria:**
+- Circuit breaker opens/closes correctly when LS crashes/recovers
+- Bulkhead prevents slow LS from blocking other languages
+- System remains responsive even when one LS is unhealthy
+
+### Phase 3: Multi-LS-per-Language with Aggregation
+
+**Scope**: Extend to support **multiple language servers per language** with routing and aggregation
+
+```
+treesitter-ls (host)
+  └─→ Python blocks
+        ├─→ pyright  (type checking, completion) ← Circuit breaker from Phase 2
+        └─→ ruff     (linting, formatting)       ← Bulkhead from Phase 2
+             ↓
+        [RequestRouter + ResponseAggregator] ← New in Phase 3
+```
+
+**What Phase 3 adds:**
+- Routing strategies (single-by-capability, fan-out)
+- Response aggregation (merge_all, first_wins, ranked)
+- Per-method aggregation configuration
+- Cancellation propagation to multiple downstream LSes
+- **Leverages Phase 2 resilience**: Each LS in multi-LS setup already has circuit breaker + bulkhead
+
+**Exit Criteria:**
+- Can use pyright + ruff simultaneously for Python
+- Completion results merged from both LSes
+- Routing config works (single-by-capability default, fan-out for configured methods)
+- Resilience patterns work per-LS (pyright circuit breaker independent of ruff)
+
+**Rationale for phased approach:**
+- Phase 1 delivers immediate value (multi-language support) with minimal complexity
+- Phase 2 adds stability/resilience to simple architecture (easier to debug)
+- Phase 3 adds multi-LS complexity on top of stable, resilient foundation
+- Routing-first principle means most requests still use Phase 1 fast path (single LS)
 
 ## Related ADRs
 
