@@ -281,6 +281,31 @@ impl BridgeConnection {
 
         Ok(())
     }
+
+    /// Performs the full LSP initialization sequence with timeout
+    ///
+    /// Sequence: initialize request → initialized notification
+    /// This method has a 5 second timeout to prevent hangs.
+    ///
+    /// # Returns
+    /// InitializeResult from the language server
+    #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
+    pub(crate) async fn initialize(&self) -> Result<serde_json::Value, String> {
+        use tokio::time::{timeout, Duration};
+
+        // Initialize with 5s timeout
+        let result = timeout(
+            Duration::from_secs(5),
+            self.send_initialize_request()
+        ).await
+            .map_err(|_| "REQUEST_FAILED (-32803): Initialize request timed out after 5s".to_string())?
+            .map_err(|e| format!("REQUEST_FAILED (-32803): {}", e))?;
+
+        // Send initialized notification (no timeout - should be fast)
+        self.send_initialized_notification().await?;
+
+        Ok(result)
+    }
 }
 
 #[cfg(test)]
