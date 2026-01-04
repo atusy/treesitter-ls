@@ -141,8 +141,10 @@ const scrum: ScrumDashboard = {
         test: "BridgeConnection.check_and_send_did_open() sends didOpen only on first access per virtual URI",
         implementation: "Async method checks HashSet, sends didOpen with content if not present, adds to set",
         type: "behavioral" as SubtaskType,
-        status: "pending" as SubtaskStatus,
-        commits: [],
+        status: "completed" as SubtaskStatus,
+        commits: [
+          { hash: "e1a1799", message: "feat(bridge): implement check_and_send_did_open for idempotent didOpen", phase: "green" as CommitPhase }
+        ],
         notes: [
           "Parameters: uri: &str, language_id: &str, content: &str",
           "Lock HashSet, check contains(uri), if false then send_did_open and insert",
