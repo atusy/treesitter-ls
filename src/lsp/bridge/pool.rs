@@ -10,11 +10,13 @@ use super::connection::{BridgeConnection, IncrementalType};
 /// Pool for managing language server connections
 ///
 /// Manages one BridgeConnection per language, spawning on first access.
+/// Clone is cheap (Arc-based), enabling sharing across async tasks.
+#[derive(Clone)]
 pub(crate) struct LanguageServerPool {
     /// Map from language name (e.g., "lua") to BridgeConnection
     /// Arc enables sharing connections across async tasks
     /// DashMap provides concurrent access without explicit locking
-    connections: DashMap<String, Arc<BridgeConnection>>,
+    connections: Arc<DashMap<String, Arc<BridgeConnection>>>,
 }
 
 impl LanguageServerPool {
@@ -23,7 +25,7 @@ impl LanguageServerPool {
     /// Starts with no connections; connections are spawned on first access.
     pub(crate) fn new() -> Self {
         Self {
-            connections: DashMap::new(),
+            connections: Arc::new(DashMap::new()),
         }
     }
 
@@ -42,7 +44,10 @@ impl LanguageServerPool {
     /// Returns error if:
     /// - Language server command not found (e.g., "lua-language-server" not in PATH)
     /// - Failed to spawn language server process
-    async fn get_or_spawn_connection(
+    ///
+    /// # Visibility
+    /// PBI-192: Made pub(crate) to allow notification forwarder to route notifications
+    pub(crate) async fn get_or_spawn_connection(
         &self,
         language: &str,
     ) -> std::result::Result<Arc<BridgeConnection>, String> {
