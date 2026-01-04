@@ -135,6 +135,16 @@ impl LanguageServerPool {
             }
         })?;
 
+        // Wait for connection to be initialized (with 5s timeout)
+        connection
+            .wait_for_initialized(std::time::Duration::from_secs(5))
+            .await
+            .map_err(|e| tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::InternalError,
+                message: e.into(),
+                data: None,
+            })?;
+
         // Send didOpen with virtual document content on first access
         let virtual_uri_str = uri.to_string();
         connection
@@ -212,6 +222,16 @@ impl LanguageServerPool {
                 data: None,
             }
         })?;
+
+        // Wait for connection to be initialized (with 5s timeout)
+        connection
+            .wait_for_initialized(std::time::Duration::from_secs(5))
+            .await
+            .map_err(|e| tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::InternalError,
+                message: e.into(),
+                data: None,
+            })?;
 
         // Send didOpen with virtual document content on first access
         let virtual_uri_str = uri.to_string();
