@@ -122,8 +122,7 @@ impl TreeSitterLs {
 
         // Create notification channel for async bridge
         // Store sender to keep channel alive for server lifetime (PBI-191)
-        let (tokio_notification_tx, tokio_notification_rx) =
-            tokio::sync::mpsc::unbounded_channel();
+        let (tokio_notification_tx, tokio_notification_rx) = tokio::sync::mpsc::unbounded_channel();
 
         Self {
             client,
@@ -208,10 +207,7 @@ impl TreeSitterLs {
     /// # Returns
     /// * `Ok(())` if notification was sent successfully
     /// * `Err` if sender is None or channel is closed
-    async fn handle_client_notification(
-        &self,
-        notification: serde_json::Value,
-    ) -> Result<()> {
+    async fn handle_client_notification(&self, notification: serde_json::Value) -> Result<()> {
         if let Some(ref sender) = self.tokio_notification_tx {
             sender
                 .send(notification)
@@ -2127,13 +2123,10 @@ mod tests {
         let rx = rx_guard.as_mut().expect("Receiver should exist");
 
         // Try to receive with timeout to avoid hanging if nothing was sent
-        let received = tokio::time::timeout(
-            tokio::time::Duration::from_millis(100),
-            rx.recv()
-        )
-        .await
-        .expect("Should receive notification within timeout")
-        .expect("Channel should not be closed");
+        let received = tokio::time::timeout(tokio::time::Duration::from_millis(100), rx.recv())
+            .await
+            .expect("Should receive notification within timeout")
+            .expect("Channel should not be closed");
 
         assert_eq!(
             received, notification,
@@ -2183,13 +2176,10 @@ mod tests {
             .expect("handle_client_notification should succeed");
 
         // Simulate forwarder task receiving notification
-        let received = tokio::time::timeout(
-            tokio::time::Duration::from_millis(100),
-            rx.recv()
-        )
-        .await
-        .expect("Forwarder should receive notification within timeout")
-        .expect("Channel should not be closed");
+        let received = tokio::time::timeout(tokio::time::Duration::from_millis(100), rx.recv())
+            .await
+            .expect("Forwarder should receive notification within timeout")
+            .expect("Channel should not be closed");
 
         assert_eq!(
             received, notification,
@@ -2199,7 +2189,8 @@ mod tests {
         // Verify method is didChange (forwarder will route based on method)
         let method = received.get("method").and_then(|m| m.as_str());
         assert_eq!(
-            method, Some("textDocument/didChange"),
+            method,
+            Some("textDocument/didChange"),
             "Forwarder should be able to extract notification method"
         );
     }
@@ -2250,13 +2241,10 @@ mod tests {
                 .expect("handle_client_notification should succeed");
 
             // Verify each notification is received
-            let received = tokio::time::timeout(
-                tokio::time::Duration::from_millis(100),
-                rx.recv()
-            )
-            .await
-            .expect("Should receive notification within timeout")
-            .expect("Channel should not be closed");
+            let received = tokio::time::timeout(tokio::time::Duration::from_millis(100), rx.recv())
+                .await
+                .expect("Should receive notification within timeout")
+                .expect("Channel should not be closed");
 
             assert_eq!(
                 received, notification,
