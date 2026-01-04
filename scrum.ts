@@ -195,7 +195,12 @@ const scrum: ScrumDashboard = {
   ],
   // Retrospectives (recent 3) | Sprints 1-133: git log -- scrum.yaml, scrum.ts
   retrospectives: [
-    { sprint: 135, improvements: [] },
+    { sprint: 135, improvements: [
+      { action: "Create deferred work tracking checklist (issue templates, AC marking convention, follow-up PBI creation criteria)", timing: "immediate", status: "completed", outcome: "Created docs/deferred-work-tracking-checklist.md with marking conventions and follow-up criteria from Sprint 135 experience" },
+      { action: "Add Pool-to-BridgeConnection integration subtask to next sprint to complete range translation deferred from PBI-180a AC3", timing: "sprint", status: "active", outcome: null },
+      { action: "Document PBI splitting criteria in ADR-0012 (complexity threshold: 5-6 ACs triggers split consideration, dependency extraction patterns)", timing: "sprint", status: "active", outcome: null },
+      { action: "Add async boundary placement guidance to ADR-0012 Phase 2 (minimize ripple effects, prefer boundaries at module edges)", timing: "product", status: "active", outcome: null },
+    ] },
     { sprint: 134, improvements: [
       { action: "Document E2E testing patterns (feature-gated visibility, testability vs API surface trade-offs) in ADR-0012 or new ADR-0013", timing: "sprint", status: "active", outcome: null },
       { action: "Create JSON-RPC framing checklist (Content-Length, \\r\\n\\r\\n separator, UTF-8 byte length, async I/O patterns)", timing: "immediate", status: "completed", outcome: "Created docs/json-rpc-framing-checklist.md with implementation guidance from Sprint 134" },
