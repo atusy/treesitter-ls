@@ -26,7 +26,10 @@ impl LanguageServerPool {
     /// Handles textDocument/completion request
     ///
     /// Fakeit implementation: returns Ok(None) immediately.
-    pub(crate) fn completion(&self, _params: CompletionParams) -> Result<Option<CompletionResponse>> {
+    pub(crate) fn completion(
+        &self,
+        _params: CompletionParams,
+    ) -> Result<Option<CompletionResponse>> {
         Ok(None)
     }
 
@@ -40,14 +43,20 @@ impl LanguageServerPool {
     /// Handles textDocument/definition request
     ///
     /// Fakeit implementation: returns Ok(None) immediately.
-    pub(crate) fn definition(&self, _params: GotoDefinitionParams) -> Result<Option<GotoDefinitionResponse>> {
+    pub(crate) fn definition(
+        &self,
+        _params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
         Ok(None)
     }
 
     /// Handles textDocument/signatureHelp request
     ///
     /// Fakeit implementation: returns Ok(None) immediately.
-    pub(crate) fn signature_help(&self, _params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
+    pub(crate) fn signature_help(
+        &self,
+        _params: SignatureHelpParams,
+    ) -> Result<Option<SignatureHelp>> {
         Ok(None)
     }
 }

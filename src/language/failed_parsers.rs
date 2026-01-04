@@ -181,7 +181,6 @@ impl FailedParserRegistry {
             .map(|entry| entry.key().clone())
     }
 
-
     /// Persist current parsing state to disk.
     ///
     /// This should be called on graceful shutdown to enable crash detection

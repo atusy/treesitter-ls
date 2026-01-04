@@ -6,6 +6,7 @@
 pub(crate) mod connection;
 pub(crate) mod pool;
 
+#[allow(unused_imports)] // Used in Phase 2 (real LSP communication)
 pub(crate) use connection::BridgeConnection;
 pub(crate) use pool::LanguageServerPool;
 

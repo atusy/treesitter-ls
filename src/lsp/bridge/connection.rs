@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 ///
 /// This is a fakeit implementation that stubs out process spawning
 /// and LSP communication for API structure validation.
+#[allow(dead_code)] // Used in Phase 2 (real LSP communication)
 pub struct BridgeConnection {
     /// Tracks whether the connection has been initialized
     initialized: AtomicBool,
@@ -18,6 +19,7 @@ impl BridgeConnection {
     ///
     /// This is a fakeit implementation that does NOT spawn a real process.
     /// It returns immediately with an uninitialized connection stub.
+    #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
     pub(crate) fn new() -> Self {
         Self {
             initialized: AtomicBool::new(false),
@@ -29,6 +31,7 @@ impl BridgeConnection {
     ///
     /// This is a fakeit implementation that does NOT send real LSP initialize
     /// request. It simply sets the initialized flag to true and returns Ok(()).
+    #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
     pub(crate) fn initialize(&self) -> Result<(), String> {
         self.initialized.store(true, Ordering::SeqCst);
         Ok(())

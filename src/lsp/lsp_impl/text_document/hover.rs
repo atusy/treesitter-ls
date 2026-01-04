@@ -103,9 +103,7 @@ impl TreeSitterLs {
         // For fakeit pass, create dummy params (real implementation will use translated position)
         let dummy_params = HoverParams {
             text_document_position_params: TextDocumentPositionParams {
-                text_document: TextDocumentIdentifier {
-                    uri: uri.clone(),
-                },
+                text_document: TextDocumentIdentifier { uri: uri.clone() },
                 position,
             },
             work_done_progress_params: WorkDoneProgressParams::default(),
