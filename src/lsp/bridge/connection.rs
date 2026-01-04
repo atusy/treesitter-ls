@@ -216,6 +216,41 @@ impl BridgeConnection {
 
         Ok(())
     }
+
+    /// Sends a notification to the language server
+    ///
+    /// # Phase 1 Guard
+    /// Blocks all notifications (except "initialized") if the connection
+    /// hasn't been initialized yet. Returns SERVER_NOT_INITIALIZED error.
+    ///
+    /// # Arguments
+    /// * `method` - LSP notification method (e.g., "textDocument/didOpen")
+    /// * `params` - Notification parameters
+    #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
+    pub(crate) async fn send_notification(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<(), String> {
+        // Phase 1 guard: block notifications before initialized (except "initialized" itself)
+        if !self.initialized.load(Ordering::SeqCst) && method != "initialized" {
+            return Err("SERVER_NOT_INITIALIZED (-32002): Connection not initialized yet".to_string());
+        }
+
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params
+        });
+
+        // Write notification
+        {
+            let mut stdin = self.stdin.lock().await;
+            Self::write_message(&mut *stdin, &notification).await?;
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -325,5 +360,71 @@ mod tests {
         // We'll use 'cat' and mock the response by writing to its stdin won't work
         // Instead, let's just verify the request structure is correct
         // For now, skip this test - we'll verify in E2E test with real lua-ls
+    }
+
+    #[tokio::test]
+    async fn test_phase1_guard_blocks_notifications_before_initialized() {
+        // RED: Test Phase 1 guard blocks notifications before initialized
+        let connection = BridgeConnection::new("cat").await.unwrap();
+
+        // Should not be initialized initially
+        assert!(!connection.initialized.load(Ordering::SeqCst));
+
+        // Try to send a didOpen notification before initialized
+        let result = connection.send_notification(
+            "textDocument/didOpen",
+            json!({
+                "textDocument": {
+                    "uri": "file:///test.lua",
+                    "languageId": "lua",
+                    "version": 1,
+                    "text": "print('hello')"
+                }
+            })
+        ).await;
+
+        assert!(result.is_err(), "Should block notification before initialized");
+        let error = result.unwrap_err();
+        assert!(error.contains("SERVER_NOT_INITIALIZED"), "Error should mention SERVER_NOT_INITIALIZED: {}", error);
+        assert!(error.contains("-32002"), "Error should include error code -32002: {}", error);
+    }
+
+    #[tokio::test]
+    async fn test_phase1_guard_allows_initialized_notification() {
+        // Test that "initialized" notification is allowed even before flag is set
+        let connection = BridgeConnection::new("cat").await.unwrap();
+
+        // Should not be initialized initially
+        assert!(!connection.initialized.load(Ordering::SeqCst));
+
+        // "initialized" notification should be allowed (won't check response since cat doesn't speak LSP)
+        let result = connection.send_notification("initialized", json!({})).await;
+
+        // Should succeed (cat will just echo or ignore, but no error from our guard)
+        assert!(result.is_ok(), "initialized notification should be allowed: {:?}", result.err());
+    }
+
+    #[tokio::test]
+    async fn test_phase1_guard_allows_notifications_after_initialized() {
+        // Test that notifications are allowed after initialization
+        let connection = BridgeConnection::new("cat").await.unwrap();
+
+        // Manually set initialized flag (normally done by send_initialized_notification)
+        connection.initialized.store(true, Ordering::SeqCst);
+
+        // Now didOpen should be allowed
+        let result = connection.send_notification(
+            "textDocument/didOpen",
+            json!({
+                "textDocument": {
+                    "uri": "file:///test.lua",
+                    "languageId": "lua",
+                    "version": 1,
+                    "text": "print('hello')"
+                }
+            })
+        ).await;
+
+        assert!(result.is_ok(), "Notification should be allowed after initialized: {:?}", result.err());
     }
 }
