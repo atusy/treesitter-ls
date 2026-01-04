@@ -176,10 +176,15 @@ impl LanguageServerPool {
     ///
     /// # Arguments
     /// * `params` - Hover parameters including virtual document URI and translated position
+    /// * `content` - Virtual document content to send via didOpen on first access
     ///
     /// # Returns
     /// Hover response from language server, or None if no connection
-    pub(crate) async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+    pub(crate) async fn hover(
+        &self,
+        params: HoverParams,
+        content: String,
+    ) -> Result<Option<Hover>> {
         // Extract language from virtual URI
         let uri = &params.text_document_position_params.text_document.uri;
         let Some(language) = Self::extract_language_from_uri(uri) else {
@@ -196,8 +201,18 @@ impl LanguageServerPool {
             }
         })?;
 
-        // Build JSON params for LSP request
+        // Send didOpen with virtual document content on first access
         let virtual_uri_str = uri.to_string();
+        connection
+            .check_and_send_did_open(&virtual_uri_str, &language, &content)
+            .await
+            .map_err(|e| tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::InternalError,
+                message: format!("Failed to send didOpen for virtual document: {}", e).into(),
+                data: None,
+            })?;
+
+        // Build JSON params for LSP request
         let request_params = serde_json::json!({
             "textDocument": {
                 "uri": virtual_uri_str
@@ -424,7 +439,7 @@ mod tests {
             work_done_progress_params: WorkDoneProgressParams::default(),
         };
 
-        let result = pool.hover(params).await;
+        let result = pool.hover(params, String::new()).await;
         assert!(result.is_ok(), "Hover should succeed: {:?}", result.err());
         assert!(
             result.unwrap().is_none(),
