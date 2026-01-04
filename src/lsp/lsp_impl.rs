@@ -2079,4 +2079,67 @@ mod tests {
             "Received notification should match sent notification"
         );
     }
+
+    /// PBI-191 Subtask 3: Test that notification forwarder receives from channel.
+    ///
+    /// This test verifies that the notification channel infrastructure works end-to-end:
+    /// notifications sent via handle_client_notification() can be received by a forwarder task.
+    ///
+    /// Note: Full bridge forwarding is tested in E2E tests (Subtask 5) as it requires
+    /// real bridge connections. This test focuses on channel mechanics.
+    ///
+    /// Test strategy: Send notification, start forwarder-like task, verify it receives notification.
+    #[tokio::test]
+    async fn test_notification_forwarder_receives_from_channel() {
+        // Create a mock client for TreeSitterLs
+        let (service, _) = tower_lsp::LspService::new(|client| TreeSitterLs::new(client));
+        let server = service.inner();
+
+        // Create test notification (didChange)
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/didChange",
+            "params": {
+                "textDocument": {
+                    "uri": "file:///test.lua",
+                    "version": 2
+                },
+                "contentChanges": [{
+                    "text": "local x = 1"
+                }]
+            }
+        });
+
+        // Take receiver to simulate forwarder task
+        let mut rx_guard = server.tokio_notification_rx.lock().await;
+        let mut rx = rx_guard.take().expect("Receiver should exist");
+        drop(rx_guard);
+
+        // Send notification through handle_client_notification
+        server
+            .handle_client_notification(notification.clone())
+            .await
+            .expect("handle_client_notification should succeed");
+
+        // Simulate forwarder task receiving notification
+        let received = tokio::time::timeout(
+            tokio::time::Duration::from_millis(100),
+            rx.recv()
+        )
+        .await
+        .expect("Forwarder should receive notification within timeout")
+        .expect("Channel should not be closed");
+
+        assert_eq!(
+            received, notification,
+            "Forwarder should receive the exact notification that was sent"
+        );
+
+        // Verify method is didChange (forwarder will route based on method)
+        let method = received.get("method").and_then(|m| m.as_str());
+        assert_eq!(
+            method, Some("textDocument/didChange"),
+            "Forwarder should be able to extract notification method"
+        );
+    }
 }
