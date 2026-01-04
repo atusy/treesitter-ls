@@ -1146,4 +1146,90 @@ mod tests {
         // Just verify the method exists - actual superseding tested separately
         // (cat won't respond properly, so we just check compilation)
     }
+
+    #[tokio::test]
+    async fn test_superseding_during_init_window() {
+        // RED: Test that second completion request supersedes first during init window
+        // This test requires lua-language-server in PATH
+        let check = tokio::process::Command::new("lua-language-server")
+            .arg("--version")
+            .output()
+            .await;
+
+        if check.is_err() {
+            eprintln!("SKIP: lua-language-server not found in PATH");
+            return;
+        }
+
+        let connection = Arc::new(BridgeConnection::new("lua-language-server").await.unwrap());
+
+        // Do NOT call initialize() - we want to test during init window
+        // Instead, manually set initialized to false (already default)
+        assert!(!connection.is_initialized());
+
+        // Send first completion request
+        let params1 = json!({
+            "textDocument": {"uri": "file:///test.lua"},
+            "position": {"line": 0, "character": 0}
+        });
+        let conn1 = connection.clone();
+        let handle1 = tokio::spawn(async move {
+            conn1
+                .send_incremental_request("textDocument/completion", params1, IncrementalType::Completion)
+                .await
+        });
+
+        // Give first request time to be tracked
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        // Send second completion request (should supersede first)
+        let params2 = json!({
+            "textDocument": {"uri": "file:///test.lua"},
+            "position": {"line": 1, "character": 0}
+        });
+        let conn2 = connection.clone();
+        let handle2 = tokio::spawn(async move {
+            conn2
+                .send_incremental_request("textDocument/completion", params2, IncrementalType::Completion)
+                .await
+        });
+
+        // Wait for both to complete
+        let result1 = handle1.await.unwrap();
+        let result2 = handle2.await.unwrap();
+
+        // First request should be superseded
+        assert!(
+            result1.is_err(),
+            "First request should be superseded, got: {:?}",
+            result1
+        );
+        let error1 = result1.unwrap_err();
+        assert!(
+            error1.contains("superseded"),
+            "First request error should mention 'superseded': {}",
+            error1
+        );
+        assert!(
+            error1.contains("REQUEST_FAILED"),
+            "Error should contain REQUEST_FAILED: {}",
+            error1
+        );
+        assert!(
+            error1.contains("-32803"),
+            "Error should contain error code -32803: {}",
+            error1
+        );
+
+        // Second request might succeed or timeout (don't care - just verify it's not superseded)
+        if result2.is_err() {
+            let error2 = result2.unwrap_err();
+            // If it errors, it should NOT be superseded (might timeout or other error)
+            assert!(
+                !error2.contains("superseded"),
+                "Second request should not be superseded, got: {}",
+                error2
+            );
+        }
+    }
 }
