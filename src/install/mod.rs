@@ -24,7 +24,7 @@ pub mod test_helpers {
     }
 }
 
-pub use parser::parser_file_exists;
+pub(crate) use parser::parser_file_exists;
 
 use std::path::PathBuf;
 
@@ -40,28 +40,21 @@ pub fn default_data_dir() -> Option<PathBuf> {
 
 /// Result of installing a language (both parser and queries).
 #[derive(Debug)]
-pub struct InstallResult {
-    /// The language that was installed.
-    pub language: String,
+pub(crate) struct InstallResult {
     /// Path where the parser was installed, if successful.
-    pub parser_path: Option<PathBuf>,
+    pub(crate) parser_path: Option<PathBuf>,
     /// Path where queries were installed, if successful.
-    pub queries_path: Option<PathBuf>,
+    pub(crate) queries_path: Option<PathBuf>,
     /// Error message if parser install failed.
-    pub parser_error: Option<String>,
+    pub(crate) parser_error: Option<String>,
     /// Error message if queries install failed.
-    pub queries_error: Option<String>,
+    pub(crate) queries_error: Option<String>,
 }
 
 impl InstallResult {
     /// Check if the installation was fully successful.
-    pub fn is_success(&self) -> bool {
+    pub(crate) fn is_success(&self) -> bool {
         self.parser_error.is_none() && self.queries_error.is_none()
-    }
-
-    /// Check if at least one component was installed.
-    pub fn is_partial_success(&self) -> bool {
-        self.parser_path.is_some() || self.queries_path.is_some()
     }
 }
 
@@ -74,7 +67,7 @@ impl InstallResult {
 /// * `language` - The language to install (e.g., "lua", "rust")
 /// * `data_dir` - The base data directory for treesitter-ls
 /// * `force` - Whether to overwrite existing files
-pub async fn install_language_async(
+pub(crate) async fn install_language_async(
     language: String,
     data_dir: PathBuf,
     force: bool,
@@ -85,7 +78,6 @@ pub async fn install_language_async(
     // Run blocking install operations in a separate thread pool
     tokio::task::spawn_blocking(move || {
         let mut result = InstallResult {
-            language: lang.clone(),
             parser_path: None,
             queries_path: None,
             parser_error: None,
@@ -124,7 +116,6 @@ pub async fn install_language_async(
     })
     .await
     .unwrap_or_else(|e| InstallResult {
-        language,
         parser_path: None,
         queries_path: None,
         parser_error: Some(format!("Task panicked: {}", e)),
@@ -147,33 +138,19 @@ mod tests {
     #[test]
     fn test_install_result_success_check() {
         let success = InstallResult {
-            language: "lua".to_string(),
             parser_path: Some(PathBuf::from("/tmp/parser")),
             queries_path: Some(PathBuf::from("/tmp/queries")),
             parser_error: None,
             queries_error: None,
         };
         assert!(success.is_success());
-        assert!(success.is_partial_success());
-
-        let partial = InstallResult {
-            language: "lua".to_string(),
-            parser_path: None,
-            queries_path: Some(PathBuf::from("/tmp/queries")),
-            parser_error: Some("Parser failed".to_string()),
-            queries_error: None,
-        };
-        assert!(!partial.is_success());
-        assert!(partial.is_partial_success());
 
         let failure = InstallResult {
-            language: "lua".to_string(),
             parser_path: None,
             queries_path: None,
             parser_error: Some("Parser failed".to_string()),
             queries_error: Some("Queries failed".to_string()),
         };
         assert!(!failure.is_success());
-        assert!(!failure.is_partial_success());
     }
 }
