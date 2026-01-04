@@ -336,8 +336,6 @@ impl BridgeConnection {
             language_id: &str,
             content: &str,
         ) -> Result<(), String> {
-        use tokio::time::Duration;
-
         // Check if this URI has already been opened
         {
             let opened = self.opened_documents.lock().await;
@@ -347,10 +345,18 @@ impl BridgeConnection {
             }
         }
 
-        // Wait for initialization before sending didOpen
-        self.wait_for_initialized(Duration::from_secs(5)).await?;
+        // NOTE: This method assumes initialization is complete.
+        // Per ADR-0012 §6.1, didOpen should be sent AFTER initialized.
+        // The caller (send_incremental_request) ensures wait_for_initialized()
+        // is called before this method.
+        //
+        // IMPORTANT: Do NOT add wait_for_initialized() here!
+        // That creates a sequential bottleneck where:
+        // 1. check_and_send_did_open() waits 5s for init
+        // 2. send_incremental_request() waits another 5s for init
+        // If lua-ls takes >5s to initialize, the first wait times out.
 
-        // Not opened yet - send didOpen
+        // Send didOpen - initialization must already be complete
         self.send_did_open(uri, language_id, content).await
         }
     }
@@ -486,12 +492,27 @@ impl BridgeConnection {
         /// - Failed to send request
         /// - Response indicates error
         /// - Timeout waiting for response or initialization
+        /// Sends an incremental request with virtual document support.
+        ///
+        /// This method handles the complete lifecycle:
+        /// 1. Register request for superseding tracking
+        /// 2. Wait for initialization (with superseding during the window)
+        /// 3. Send didOpen for the virtual document (if not already sent)
+        /// 4. Send the actual LSP request
+        /// 5. Return response or supersede error
+        ///
+        /// # Arguments
+        /// * `method` - LSP method (e.g., "textDocument/completion")
+        /// * `params` - Request parameters
+        /// * `incremental_type` - Type of incremental request for superseding
+        /// * `did_open_info` - Optional (uri, language_id, content) for didOpen
         #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
         async fn send_incremental_request(
             &self,
             method: &str,
             params: serde_json::Value,
             incremental_type: IncrementalType,
+            did_open_info: Option<(&str, &str, &str)>,
         ) -> Result<serde_json::Value, String> {
         use tokio::time::{timeout, Duration};
 
@@ -521,6 +542,12 @@ impl BridgeConnection {
                 // We were superseded while waiting
                 return Err("REQUEST_FAILED (-32803): superseded by newer request".to_string());
             }
+        }
+
+        // Send didOpen AFTER initialization completes, BEFORE the LSP request
+        // Per ADR-0012 §6.1: didOpen must be sent after initialized notification
+        if let Some((uri, language_id, content)) = did_open_info {
+            self.check_and_send_did_open(uri, language_id, content).await?;
         }
 
         // Build JSON-RPC request
@@ -1201,6 +1228,7 @@ mod tests {
                     "textDocument/completion",
                     params1,
                     IncrementalType::Completion,
+                    None, // No didOpen in this test - testing superseding only
                 )
                 .await
         });
@@ -1220,6 +1248,7 @@ mod tests {
                     "textDocument/completion",
                     params2,
                     IncrementalType::Completion,
+                    None, // No didOpen in this test - testing superseding only
                 )
                 .await
         });

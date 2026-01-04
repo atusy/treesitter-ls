@@ -138,21 +138,8 @@ impl LanguageServerPool {
             }
         })?;
 
-        // Note: send_incremental_request() handles wait_for_initialized() internally
-        // to enable request superseding during the initialization window
-
-        // Send didOpen with virtual document content on first access
-        let virtual_uri_str = uri.to_string();
-        connection
-            .check_and_send_did_open(&virtual_uri_str, &language, &content)
-            .await
-            .map_err(|e| tower_lsp::jsonrpc::Error {
-                code: tower_lsp::jsonrpc::ErrorCode::InternalError,
-                message: format!("Failed to send didOpen for virtual document: {}", e).into(),
-                data: None,
-            })?;
-
         // Build JSON params for LSP request
+        let virtual_uri_str = uri.to_string();
         let request_params = serde_json::json!({
             "textDocument": {
                 "uri": virtual_uri_str
@@ -165,11 +152,17 @@ impl LanguageServerPool {
         });
 
         // Send completion request with superseding during init window
+        // Note: send_incremental_request() handles:
+        // 1. wait_for_initialized() - single wait point, no double-wait bottleneck
+        // 2. check_and_send_did_open() - sent AFTER init completes
+        // 3. The actual LSP request
+        // This order is critical per ADR-0012 §6.1 to prevent hangs.
         let response = connection
             .send_incremental_request(
                 "textDocument/completion",
                 request_params,
                 IncrementalType::Completion,
+                Some((&virtual_uri_str, &language, &content)),
             )
             .await
             .map_err(|e| tower_lsp::jsonrpc::Error {
@@ -223,21 +216,8 @@ impl LanguageServerPool {
             }
         })?;
 
-        // Note: send_incremental_request() handles wait_for_initialized() internally
-        // to enable request superseding during the initialization window
-
-        // Send didOpen with virtual document content on first access
-        let virtual_uri_str = uri.to_string();
-        connection
-            .check_and_send_did_open(&virtual_uri_str, &language, &content)
-            .await
-            .map_err(|e| tower_lsp::jsonrpc::Error {
-                code: tower_lsp::jsonrpc::ErrorCode::InternalError,
-                message: format!("Failed to send didOpen for virtual document: {}", e).into(),
-                data: None,
-            })?;
-
         // Build JSON params for LSP request
+        let virtual_uri_str = uri.to_string();
         let request_params = serde_json::json!({
             "textDocument": {
                 "uri": virtual_uri_str
@@ -249,8 +229,18 @@ impl LanguageServerPool {
         });
 
         // Send hover request with superseding during init window
+        // Note: send_incremental_request() handles:
+        // 1. wait_for_initialized() - single wait point, no double-wait bottleneck
+        // 2. check_and_send_did_open() - sent AFTER init completes
+        // 3. The actual LSP request
+        // This order is critical per ADR-0012 §6.1 to prevent hangs.
         let response = connection
-            .send_incremental_request("textDocument/hover", request_params, IncrementalType::Hover)
+            .send_incremental_request(
+                "textDocument/hover",
+                request_params,
+                IncrementalType::Hover,
+                Some((&virtual_uri_str, &language, &content)),
+            )
             .await
             .map_err(|e| tower_lsp::jsonrpc::Error {
                 code: tower_lsp::jsonrpc::ErrorCode::InternalError,
