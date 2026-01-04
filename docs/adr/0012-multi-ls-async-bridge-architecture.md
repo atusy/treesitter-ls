@@ -129,26 +129,31 @@ Priority order: Servers are sorted alphabetically by name.
 
 ### 3. System Architecture
 
-**Implementation approach:** The existing `TokioAsyncLanguageServerPool` will be replaced with a new implementation that addresses the hang issues while adding multi-LS support. The class name will be reused, but the internal implementation will be completely rewritten following the patterns described below.
+**Naming decision:** The existing `TokioAsyncLanguageServerPool` and `TokioAsyncBridgeConnection` mix domain with implementation technique. Since we're doing a complete rewrite, we'll use clean domain names:
+- **`LanguageServerPool`** (was `TokioAsyncLanguageServerPool`) - manages language server connections
+- **`BridgeConnection`** (was `TokioAsyncBridgeConnection`) - represents a single downstream server connection
+- **Rationale**: Implementation techniques (tokio, async) are internal details that shouldn't leak into class names. If we ever change async runtimes or patterns, names remain accurate. Implementation techniques belong in module documentation, not class names.
+
+**Implementation approach:** The new `LanguageServerPool` will be a complete rewrite addressing hang issues while adding multi-LS support. The old `TokioAsyncLanguageServerPool` and `TokioAsyncBridgeConnection` will be replaced.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         treesitter-ls (Host LS)                          │
+│                         treesitter-ls (Host LS)                         │
 │  ┌────────────────────────────────────────────────────────────────────┐ │
-│  │              TokioAsyncLanguageServerPool (NEW impl)                │ │
-│  │                                                                     │ │
+│  │                      LanguageServerPool                            │ │
+│  │                                                                    │ │
 │  │   ┌─────────────────┐                                              │ │
 │  │   │  RequestRouter  │ ─── routes by (method, languageId, caps)     │ │
 │  │   └────────┬────────┘                                              │ │
-│  │            │                                                        │ │
+│  │            │                                                       │ │
 │  │   ┌────────┴────────┐    Fan-out: scatter to multiple LSes         │ │
-│  │   │                 │                                               │ │
-│  │   ▼                 ▼                                               │ │
+│  │   │                 │                                              │ │
+│  │   ▼                 ▼                                              │ │
 │  │ ┌───────────┐  ┌───────────┐  ┌───────────┐                        │ │
 │  │ │  pyright  │  │   ruff    │  │ lua-ls    │  ... per-LS connection │ │
 │  │ │(conn + Q) │  │(conn + Q) │  │(conn + Q) │                        │ │
 │  │ └─────┬─────┘  └─────┬─────┘  └─────┬─────┘                        │ │
-│  │       │              │              │                               │ │
+│  │       │              │              │                              │ │
 │  │   ┌───┴──────────────┴──────────────┴───┐                          │ │
 │  │   │         ResponseAggregator          │  Fan-in: merge/rank      │ │
 │  │   └─────────────────────────────────────┘                          │ │
@@ -157,10 +162,11 @@ Priority order: Servers are sorted alphabetically by name.
 ```
 
 **Key Design Points:**
-- **Complete Rewrite**: While reusing the `TokioAsyncLanguageServerPool` name for API compatibility, the internal implementation is rebuilt from scratch with simpler patterns to eliminate hang issues
+- **Clean Separation**: Domain name (`LanguageServerPool`) independent of implementation technique (tokio/async)
+- **Complete Rewrite**: New implementation from scratch with simpler patterns to eliminate hang issues
 - **New Components**: `RequestRouter` and `ResponseAggregator` are new components not present in the current implementation
 - **ID Namespace Isolation**: Each downstream connection maintains its own `next_request_id`. The pool maps `(upstream_id, downstream_key)` → `downstream_id` for correlation.
-- **Per-Connection Send Queue**: Each `TokioAsyncBridgeConnection` serializes writes via `Mutex<ChildStdin>`, ensuring no byte-level corruption.
+- **Per-Connection Send Queue**: Each connection serializes writes via `Mutex<ChildStdin>`, ensuring no byte-level corruption.
 - **Aggregation Strategies**: Configurable per method (see section 8).
 
 ### 4. Routing Strategies
@@ -316,7 +322,7 @@ pub async fn send_notification(&self, method: &str, params: Value) -> Result<(),
 **State tracking:**
 
 ```rust
-struct TokioAsyncBridgeConnection {
+struct BridgeConnection {
     // ... existing fields ...
     initialized: AtomicBool,         // true after "initialized" notification sent
     did_open_sent: AtomicBool,       // true after first "didOpen" notification sent
@@ -339,7 +345,7 @@ didChange(v10) → completion  (in downstream read order)
 ```
 
 **Implementation:**
-- Each `TokioAsyncBridgeConnection` already serializes writes via `Mutex<ChildStdin>`
+- Each `BridgeConnection` serializes writes via `Mutex<ChildStdin>`
 - Notifications and requests share the same write path, preserving order
 - For document-level parallelism (future optimization): separate queues per `(downstream, document_uri)`
 
@@ -571,7 +577,7 @@ The client (e.g., VSCode) automatically aggregates diagnostics from multiple sou
 When upstream sends `$/cancelRequest` (LSP 3.x § Cancellation Support), propagate to all downstream servers that have pending requests for that `upstream_id`:
 
 ```rust
-// In TokioAsyncLanguageServerPool
+// In LanguageServerPool
 async fn handle_cancel_request(&self, upstream_id: i64) {
     // Find all pending downstream requests for this upstream_id
     for (downstream_key, downstream_id) in self.pending_correlations.get(&upstream_id) {
@@ -629,7 +635,7 @@ struct CircuitBreakerConfig {
 **Integration:**
 
 ```rust
-impl TokioAsyncLanguageServerPool {
+impl LanguageServerPool {
     async fn send_request_with_circuit_breaker(
         &self,
         key: &str,
@@ -683,7 +689,7 @@ struct BulkheadConfig {
 }
 
 // Per-connection semaphore
-struct TokioAsyncBridgeConnection {
+struct BridgeConnection {
     // ... existing fields ...
     request_semaphore: Semaphore,  // limits concurrent requests
 }
