@@ -46,7 +46,7 @@ The existing async bridge implementation has fundamental issues that cannot be r
 4. **Resilience** — Circuit breaker and bulkhead patterns for fault isolation
 5. **LSP Compliance** — All error handling uses standard LSP error codes and response structures
 
-### 0. LSP Error Codes
+### 1. LSP Error Codes and Response Structures
 
 All error responses must use standard LSP error codes to maintain protocol compliance:
 
@@ -85,7 +85,7 @@ pub struct ResponseError {
 - Include human-readable `message` describing the specific error context
 - Optional `data` field can provide additional debug information (e.g., which downstream server failed)
 
-### Design Principle: Routing First
+### 2. Design Principle: Routing First
 
 **Most requests should be routed to a single downstream LS based on capabilities.** Aggregation is only needed when multiple LSes provide overlapping functionality that must be combined.
 
@@ -132,7 +132,7 @@ Priority order: Servers are sorted alphabetically by name.
 - Diagnostics → notification pass-through (client aggregates)
 - Capabilities don't overlap → route to respective LS
 
-### 1. Routing Strategies
+### 3. Routing Strategies
 
 ```rust
 enum RoutingStrategy {
@@ -150,7 +150,7 @@ enum RoutingStrategy {
 }
 ```
 
-### 2. Multiplexed Request-Reply (when fan-out is needed)
+### 4. Multiplexed Request-Reply (when fan-out is needed)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -186,11 +186,11 @@ enum RoutingStrategy {
   - `merge_all`: Collect all responses, merge arrays (completion items)
   - `ranked`: Apply priority ranking, return highest-priority response
 
-### 3. Ordered Notification Stream
+### 5. Ordered Notification Stream
 
 Notifications (`didOpen`, `didChange`, `didClose`) have no response and no `id`. Order is critical:
 
-#### 3.1 Initialization Order
+#### 5.1 Initialization Order
 
 **LSP mandates that `didOpen` and other notifications must be sent AFTER `initialized` notification:**
 
@@ -284,7 +284,7 @@ When initializing multiple downstream servers in parallel, some may succeed whil
 
 This approach maximizes availability while maintaining LSP compliance.
 
-#### 3.1.1 Three-Layer Race Condition
+#### 5.1.1 Three-Layer Race Condition
 
 **Problem: Client sends requests before bridge downstream is ready**
 
@@ -334,7 +334,7 @@ treesitter-ls is responsible for sending `didOpen` to the bridge downstream. Thi
 
 | Phase | Duration | Request Handling |
 |-------|----------|-----------------|
-| **Initialization Window** | spawn → didOpen sent | Special handling required (Latest Wins, Wait) |
+| **Initialization Window** | spawn → didOpen sent | Special handling required (Request Superseding, Wait with Timeout) |
 | **Normal Operation** | after didOpen sent | Simple pass-through, no queuing needed |
 
 Once `didOpen` is sent to the downstream LS, the bridge enters "Normal Operation" mode where all client requests are simply forwarded without any special handling.
@@ -360,14 +360,14 @@ Three options were considered:
 
 | Category | Requests | Behavior during Init Window | Rationale |
 |----------|----------|----------------------------|-----------|
-| **Incremental** | completion, signatureHelp, hover | Latest wins (discard on new) | Stale results are useless, but user may be waiting |
+| **Incremental** | completion, signatureHelp, hover | Request superseding (newer cancels older) | Stale results are useless, but user may be waiting |
 | **Explicit action** | definition, references, rename, codeAction, formatting | Wait with timeout | User explicitly requested, waiting is expected |
 
 **Note:** After `didOpen` is sent (Normal Operation), all requests are simply forwarded. No special handling needed.
 
-**"Latest Wins" pattern for incremental requests (during Initialization Window):**
+**Request Superseding pattern for incremental requests (during Initialization Window):**
 
-Incremental requests (completion, signatureHelp, hover) should NOT immediately return empty. The user might be waiting for the result. Instead, use a "latest wins" pattern with **server-side cancellation**:
+Incremental requests (completion, signatureHelp, hover) should NOT immediately return empty. The user might be waiting for the result. Instead, use a **request superseding** pattern with **server-side cancellation**:
 
 1. If not initialized, keep the request pending
 2. If a **new request of the same type** arrives, send `SERVER_CANCELLED` error for the old request (LSP 3.17+)
@@ -412,10 +412,10 @@ This provides optimal UX while maintaining LSP compliance:
 
 | Category | Timeout needed? | Rationale |
 |----------|-----------------|-----------|
-| **Incremental** (latest wins) | No | Natural cleanup via "discard on new request"; if initialization hangs, explicit actions will reveal it |
+| **Incremental** (request superseding) | No | Natural cleanup via newer requests canceling older ones; if initialization hangs, explicit actions will reveal it |
 | **Explicit action** | Yes (5s) | User is explicitly waiting; need feedback if server is broken |
 
-For "latest wins" requests, timeout is unnecessary because:
+For incremental requests with superseding, timeout is unnecessary because:
 1. User behavior naturally triggers new requests (typing, cursor movement)
 2. New requests automatically discard stale pending ones
 3. Memory usage is bounded (only 1 pending request per type)
@@ -442,7 +442,7 @@ async fn wait_for_initialized(&self, timeout: Duration) -> Result<(), ResponseEr
     }
 }
 
-/// Wait indefinitely for initialization (for incremental requests with latest-wins)
+/// Wait indefinitely for initialization (for incremental requests with request superseding)
 async fn wait_for_initialized_no_timeout(&self) {
     if self.initialized.load(Ordering::SeqCst) {
         return;
@@ -477,10 +477,10 @@ pub async fn send_request(&self, method: &str, params: Value) -> Result<Value, R
     match method {
         // initialize: no wait needed
         "initialize" => {}
-        // Incremental: latest wins with server-side cancellation, no timeout
+        // Incremental: request superseding with server-side cancellation, no timeout
         "textDocument/completion" | "textDocument/signatureHelp" | "textDocument/hover" => {
             // Register this request (sends SERVER_CANCELLED to any pending one of same type)
-            // Wait indefinitely - natural cleanup via latest-wins pattern
+            // Wait indefinitely - natural cleanup via request superseding pattern
             self.wait_for_initialized_no_timeout().await;
         }
         // Explicit actions: wait with timeout
@@ -497,7 +497,7 @@ pub async fn send_request(&self, method: &str, params: Value) -> Result<Value, R
 - Short enough to fail fast if server is broken (returns `REQUEST_FAILED` error)
 - Configurable per-connection if needed in future
 
-#### 3.2 Document Notification Order
+#### 5.2 Document Notification Order
 
 ```
 Problem:
@@ -515,7 +515,7 @@ Solution:
 - Notifications and requests share the same write path, preserving order
 - For document-level parallelism (future optimization): separate queues per `(downstream, document_uri)`
 
-### 4. Cancellation Propagation
+### 6. Cancellation Propagation
 
 When upstream sends `$/cancelRequest`, propagate to all downstream servers that have pending requests for that `upstream_id`:
 
@@ -543,7 +543,7 @@ async fn handle_cancel_request(&self, upstream_id: i64) {
 pending_correlations: DashMap<i64, Vec<(String, i64)>>, // upstream_id → [(downstream_key, downstream_id)]
 ```
 
-### 5. Circuit Breaker Pattern
+### 7. Circuit Breaker Pattern
 
 Prevent cascading failures when a downstream server is unhealthy:
 
@@ -621,7 +621,7 @@ impl TokioAsyncLanguageServerPool {
 }
 ```
 
-### 6. Bulkhead Pattern
+### 8. Bulkhead Pattern
 
 Isolate downstream servers so one slow/broken server doesn't exhaust shared resources:
 
@@ -642,7 +642,7 @@ struct TokioAsyncBridgeConnection {
 
 The current `MAX_PENDING_REQUESTS = 100` acts as a global backpressure limit. Bulkhead adds per-connection limits for finer isolation.
 
-### 7. Notification Pass-through (No Aggregation)
+### 9. Notification Pass-through (No Aggregation)
 
 **Diagnostics and other server-initiated notifications do NOT require aggregation.**
 
@@ -666,7 +666,7 @@ The client (e.g., VSCode) automatically aggregates diagnostics from multiple sou
 - `window/logMessage` — Can be forwarded as-is
 - `window/showMessage` — Can be forwarded as-is
 
-### 8. Response Aggregation Strategies (Request/Response Only)
+### 10. Response Aggregation Strategies (Request/Response Only)
 
 For fan-out **requests** (with `id`), configure aggregation per method:
 
@@ -731,7 +731,7 @@ languageServers:
 
 - **LSP Compliance**: All error handling uses standard LSP error codes (REQUEST_FAILED, SERVER_CANCELLED, SERVER_NOT_INITIALIZED)
 - **No Dropped Requests**: Every request receives a response, even during failures (circuit breaker open, timeout, etc.)
-- **Server-Side Cancellation**: "Latest wins" pattern uses LSP-compliant SERVER_CANCELLED errors for superseded incremental requests
+- **Server-Side Cancellation**: Request superseding pattern uses LSP-compliant SERVER_CANCELLED errors for superseded incremental requests
 - **Graceful Degradation**: Partial initialization failures allow working servers to continue serving requests
 - **Routing-First Simplicity**: Most requests go to a single LS — no aggregation overhead for common cases
 - **Minimal Configuration**: Default capability-based routing works without per-method config
@@ -774,7 +774,7 @@ treesitter-ls (host)
 **What works in Phase 1:**
 - Multiple embedded languages in same document (Python, Lua, SQL blocks in markdown)
 - Parallel initialization of multiple LSes (each LS initializes independently)
-- Initialization race handling (`initialized` flag, wait-with-timeout, latest-wins pattern)
+- Initialization race handling (`initialized` flag, wait-with-timeout, request superseding pattern)
 - Notification ordering guarantees (serialized writes per connection)
 - Simple routing: language → single LS (no aggregation needed)
 
@@ -859,7 +859,7 @@ treesitter-ls (host)
   - Specifies how different LSP methods should be handled (completion, hover, diagnostics, etc.)
   - **Relationship to ADR-0012**: ADR-0008's per-method strategies remain valid for single-LS routing. However, ADR-0012 clarifies multi-LS aspects:
     - **Diagnostics**: ADR-0008 suggested "merge & dedupe"; ADR-0012 specifies "pass-through" (client aggregates)
-    - **Initialization window**: ADR-0008 assumes servers are initialized; ADR-0012 adds "latest-wins" and "wait-with-timeout" patterns for requests during initialization
+    - **Initialization window**: ADR-0008 assumes servers are initialized; ADR-0012 adds "request superseding" and "wait-with-timeout" patterns for requests during initialization
     - **Multi-server merging**: ADR-0012 provides concrete routing strategies (SingleByCapability, FanOut) and aggregation options (merge_all, first_wins, ranked)
 
 - **[ADR-0009](0009-async-bridge-architecture.md)**: Single-LS async architecture **(Superseded)**
