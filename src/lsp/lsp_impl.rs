@@ -46,32 +46,34 @@ fn parse_progress_notification(notification: &serde_json::Value) -> Option<Progr
     serde_json::from_value::<ProgressParams>(params.clone()).ok()
 }
 
-/// Extract language from notification URI query parameter.
+/// Extract language from virtual document URI path.
 ///
-/// PBI-192: Client notifications (didChange, didSave, didClose) include URIs with query
-/// parameters that specify the injection language. For example:
-/// `file:///path/to/file.md?injection.language=lua&injection.content=...`
+/// PBI-192: Virtual document URIs use path-based format to identify the injection language.
+/// Expected format: `file:///virtual/{language}/{hash}.{ext}`
+/// Example: `file:///virtual/lua/abc123.lua` → "lua"
 ///
-/// This function parses the URI and looks for the 'injection.language' query parameter.
+/// This is the same format used by completion requests (see completion.rs line 112).
 ///
 /// # Arguments
 /// * `uri_str` - The URI string from the notification
 ///
 /// # Returns
-/// * `Some(language_id)` if the injection.language query parameter is present
-/// * `None` if the query parameter is not present or the URI cannot be parsed
+/// * `Some(language_id)` if the URI matches the virtual document format
+/// * `None` if the URI is not a virtual document or cannot be parsed
 fn extract_language_from_notification_uri(uri_str: &str) -> Option<String> {
     // Parse the URI
     let url = Url::parse(uri_str).ok()?;
 
-    // Extract query parameters
-    for (key, value) in url.query_pairs() {
-        if key == "injection.language" {
-            return Some(value.to_string());
-        }
-    }
+    // Extract language from path: /virtual/{language}/{hash}.{ext}
+    let path = url.path();
+    let parts: Vec<&str> = path.split('/').collect();
 
-    None
+    // Path format: ["", "virtual", "{language}", "{hash}.{ext}"]
+    if parts.len() >= 4 && parts[1] == "virtual" {
+        Some(parts[2].to_string())
+    } else {
+        None
+    }
 }
 
 fn lsp_legend_types() -> Vec<SemanticTokenType> {
@@ -674,13 +676,13 @@ impl TreeSitterLs {
                             continue;
                         };
 
-                        // Extract language from URI query param
+                        // Extract language from virtual URI path
                         let Some(language) = extract_language_from_notification_uri(uri_str) else {
-                            // No injection.language query param - skip forwarding
-                            // This is normal for non-injection documents
+                            // Not a virtual URI (/virtual/{lang}/) - skip forwarding
+                            // This is normal for host document notifications
                             log::debug!(
                                 target: "treesitter_ls::notification_forwarder",
-                                "Skipping {} notification - no injection.language in URI: {}",
+                                "Skipping {} notification - not a virtual document URI: {}",
                                 method,
                                 uri_str
                             );
@@ -1597,13 +1599,13 @@ mod tests {
     /// verifies the logic structure. E2E tests will verify end-to-end behavior.
     #[tokio::test]
     async fn test_notification_forwarder_routes_to_bridge() {
-        // Create a notification with lua injection language
+        // Create a notification with lua injection language (virtual URI format)
         let notification = serde_json::json!({
             "jsonrpc": "2.0",
             "method": "textDocument/didChange",
             "params": {
                 "textDocument": {
-                    "uri": "file:///test.md?injection.language=lua&injection.content=local%20x%20%3D%201",
+                    "uri": "file:///virtual/lua/abc123.lua",
                     "version": 2
                 },
                 "contentChanges": [{
@@ -1622,7 +1624,7 @@ mod tests {
         assert_eq!(
             language,
             Some("lua".to_string()),
-            "Should extract lua from notification URI"
+            "Should extract lua from virtual URI path"
         );
 
         // Verify we can extract params for forwarding
@@ -1633,73 +1635,72 @@ mod tests {
 
     /// PBI-192 Subtask 6: Test handling notifications without language.
     ///
-    /// Notifications without injection.language query param should be handled gracefully
-    /// (silent skip, no error). This can occur for workspace-level notifications.
+    /// Notifications for non-virtual URIs should be handled gracefully
+    /// (silent skip, no error). This can occur for host document notifications.
     #[test]
     fn test_notification_without_language_returns_none() {
-        // Notification with URI but no injection.language query param
+        // Notification with regular file URI (not virtual format)
         let uri = "file:///test.md";
         let language = extract_language_from_notification_uri(uri);
         assert_eq!(
             language, None,
-            "Should return None for notification without injection.language"
+            "Should return None for non-virtual URI"
         );
 
         // This is correct behavior - notification forwarder will skip forwarding
         // when extract_language_from_notification_uri returns None
     }
 
-    /// PBI-192 Subtask 1: Test extracting language from textDocument notification URI.
+    /// PBI-192 Subtask 1: Test extracting language from virtual document URI.
     ///
-    /// Client notifications (didChange/didSave/didClose) include URIs with query parameters
-    /// that specify the injection language. For example:
-    /// file:///path/to/file.md?injection.language=lua&injection.content=...
+    /// Virtual document URIs use path-based format to identify the injection language.
+    /// Expected format: file:///virtual/{language}/{hash}.{ext}
     ///
     /// This test verifies extract_language_from_notification_uri() correctly parses
-    /// the URI query parameter to extract the language identifier.
+    /// the URI path to extract the language identifier.
     #[test]
     fn test_extract_language_from_notification_uri() {
         // Test with lua language
-        let uri_lua = "file:///test.md?injection.language=lua&injection.content=local%20x%20%3D%201";
+        let uri_lua = "file:///virtual/lua/abc123.lua";
         let language = extract_language_from_notification_uri(uri_lua);
         assert_eq!(
             language,
             Some("lua".to_string()),
-            "Should extract 'lua' from URI query param"
+            "Should extract 'lua' from virtual URI path"
         );
 
         // Test with python language
-        let uri_python = "file:///test.md?injection.language=python&injection.content=x%20%3D%201";
+        let uri_python = "file:///virtual/python/xyz789.py";
         let language = extract_language_from_notification_uri(uri_python);
         assert_eq!(
             language,
             Some("python".to_string()),
-            "Should extract 'python' from URI query param"
+            "Should extract 'python' from virtual URI path"
         );
 
         // Test with rust language
-        let uri_rust = "file:///test.md?injection.language=rust&injection.content=let%20x%20%3D%201";
+        let uri_rust = "file:///virtual/rust/def456.rs";
         let language = extract_language_from_notification_uri(uri_rust);
         assert_eq!(
             language,
             Some("rust".to_string()),
-            "Should extract 'rust' from URI query param"
+            "Should extract 'rust' from virtual URI path"
         );
 
-        // Test URI without injection.language query param
-        let uri_no_lang = "file:///test.md";
-        let language = extract_language_from_notification_uri(uri_no_lang);
+        // Test URI without virtual path format
+        let uri_no_virtual = "file:///test.md";
+        let language = extract_language_from_notification_uri(uri_no_virtual);
         assert_eq!(
             language, None,
-            "Should return None for URI without injection.language query param"
+            "Should return None for non-virtual URI"
         );
 
-        // Test URI with other query params but no injection.language
-        let uri_other_params = "file:///test.md?foo=bar&baz=qux";
-        let language = extract_language_from_notification_uri(uri_other_params);
+        // Test URI with wrong path format
+        let uri_wrong_format = "file:///real/document.lua";
+        let language = extract_language_from_notification_uri(uri_wrong_format);
         assert_eq!(
             language, None,
-            "Should return None for URI with other query params but no injection.language"
+            "Should return None for URI not matching /virtual/{{lang}}/ format"
         );
     }
 

@@ -1,15 +1,14 @@
 //! End-to-end test verifying didChange notifications update downstream LS state.
 //!
-//! This test verifies PBI-190 didChange forwarding:
+//! This test verifies PBI-190/191/192 didChange forwarding pipeline:
 //! - treesitter-ls binary spawned via LspClient
 //! - Markdown document with Lua code block opened via didOpen
 //! - didChange notification modifies Lua code (adds new variable)
 //! - Completion request returns results including the new symbol
 //! - Proves lua-ls received and processed the didChange notification
 //!
-//! **DEPENDENCY**: This test requires PBI-191 (notification channel fix) to be completed first.
-//! Currently the client→server notification path is broken (sender dropped).
-//! The test will fail until PBI-191 fixes the infrastructure.
+//! **COMPLETED**: PBI-191 (notification channel) + PBI-192 (bridge routing) implemented.
+//! The complete pipeline: client → handler → channel → forwarder → bridge → lua-ls
 //!
 //! Run with: `cargo test --test e2e_lsp_didchange_updates_state --features e2e`
 //!
@@ -23,7 +22,6 @@ use helpers::lsp_client::LspClient;
 use serde_json::json;
 
 #[test]
-#[ignore = "Requires PBI-191 (notification channel fix) - client notifications don't reach bridge yet"]
 fn test_didchange_updates_lua_ls_state() {
     // Check if lua-language-server is available
     let check = std::process::Command::new("lua-language-server")
