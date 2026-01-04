@@ -27,7 +27,7 @@ const scrum: ScrumDashboard = {
   product_backlog: [
     // ADR-0012 Phase 1: Single-LS-per-Language Foundation (PBI-178-181, PBI-184-185 done, Sprint 133-138)
     // CRITICAL: PBI-187 must be done FIRST - it fixes the actual hang by making init non-blocking
-    // Priority order: PBI-187 (hang fix) > PBI-180b (request handling during init) > PBI-182 (features)
+    // Priority order: PBI-187 (hang fix) > PBI-180b (init window) > PBI-188 (multi-LS) > PBI-182 (features)
     // OBSOLETE: PBI-186 (lua-ls config) - lua-ls returns real results now, issue self-resolved
     {
       id: "PBI-187",
@@ -83,6 +83,31 @@ const scrum: ScrumDashboard = {
         "VALUE: Prevents stale results during initialization window (§7.3: after didOpen, requests simply forward)",
         "COMPLEXITY: Medium - patterns are clear, just need PBI-187 foundation first",
         "LEARNING: Sprint 139 showed that request handling during init is useless if init itself blocks",
+      ],
+    },
+    {
+      id: "PBI-188",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "get LSP features for multiple embedded languages (Python, Go, TypeScript, etc.)",
+        benefit: "I can use treesitter-ls with any language that has an LSP server, not just Lua",
+      },
+      acceptance_criteria: [
+        { criterion: "Configuration maps language IDs to LS commands (e.g., python → pyright)", verification: "grep -E 'language.*command|LanguageServerConfig' src/lsp/bridge/" },
+        { criterion: "Pool spawns correct LS based on language from configuration", verification: "grep -E 'get_command|config.*language' src/lsp/bridge/pool.rs" },
+        { criterion: "Default configuration includes common language servers", verification: "grep -E 'lua.*language-server|python.*pyright|gopls' src/" },
+        { criterion: "E2E test verifies at least two different language servers work", verification: "cargo test --test e2e_lsp_multi_lang --features e2e" },
+        { criterion: "All unit tests pass", verification: "make test" },
+      ],
+      status: "draft" as PBIStatus,
+      refinement_notes: [
+        "SCOPE: Add configurable language-to-LS mapping (currently hardcoded lua-language-server)",
+        "SCOPE: Support common LSes: pyright (Python), gopls (Go), typescript-language-server, etc.",
+        "DEPENDENCY: PBI-187 (non-blocking init) and PBI-180b (init window handling) should be done first",
+        "ARCHITECTURE: Aligns with ADR-0012 LanguageServerPool design for multiple LS connections",
+        "CONFIGURATION: Could use TOML/JSON config file or environment variables",
+        "VALUE: Makes bridge useful for polyglot markdown/documentation with multiple embedded languages",
+        "NEXT STEPS: Decide configuration format and location during refinement",
       ],
     },
     {
