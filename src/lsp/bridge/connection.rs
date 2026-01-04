@@ -4,6 +4,19 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::{Mutex, Notify};
 
+// Macro to conditionally make methods public for e2e tests
+macro_rules! pub_e2e {
+    ($(#[$meta:meta])* async fn $name:ident $($rest:tt)*) => {
+        #[cfg(feature = "e2e")]
+        $(#[$meta])*
+        pub async fn $name $($rest)*
+
+        #[cfg(not(feature = "e2e"))]
+        $(#[$meta])*
+        pub(crate) async fn $name $($rest)*
+    };
+}
+
 /// Represents a connection to a bridged language server
 #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
 pub struct BridgeConnection {
@@ -35,17 +48,18 @@ impl std::fmt::Debug for BridgeConnection {
 }
 
 impl BridgeConnection {
-    /// Creates a new BridgeConnection by spawning a language server process
-    ///
-    /// # Arguments
-    /// * `command` - Command to spawn (e.g., "lua-language-server")
-    ///
-    /// # Errors
-    /// Returns error if:
-    /// - Process fails to spawn
-    /// - stdin/stdout handles cannot be obtained
-    #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
-    pub(crate) async fn new(command: &str) -> Result<Self, String> {
+    pub_e2e! {
+        /// Creates a new BridgeConnection by spawning a language server process
+        ///
+        /// # Arguments
+        /// * `command` - Command to spawn (e.g., "lua-language-server")
+        ///
+        /// # Errors
+        /// Returns error if:
+        /// - Process fails to spawn
+        /// - stdin/stdout handles cannot be obtained
+        #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
+        async fn new(command: &str) -> Result<Self, String> {
         use tokio::process::Command;
         use std::process::Stdio;
 
@@ -70,6 +84,7 @@ impl BridgeConnection {
             initialized_notify: Notify::new(),
             did_open_sent: AtomicBool::new(false),
         })
+        }
     }
 
     /// Writes a JSON-RPC message with LSP Base Protocol framing
@@ -169,17 +184,24 @@ impl BridgeConnection {
             Self::write_message(&mut *stdin, &request).await?;
         }
 
-        // Read response
+        // Read response (may need to skip server-initiated notifications/requests)
         let response = {
             let mut stdout = self.stdout.lock().await;
-            Self::read_message(&mut *stdout).await?
+            loop {
+                let msg = Self::read_message(&mut *stdout).await?;
+
+                // If this message has an "id" field matching our request, it's the response
+                if msg.get("id").and_then(|v| v.as_u64()) == Some(request_id) {
+                    break msg;
+                }
+
+                // Otherwise, it's a server-initiated notification or request - skip it
+                // (e.g., window/logMessage, $/progress, etc.)
+                // In a production implementation, we'd handle these properly
+            }
         };
 
-        // Verify it's a response to our request
-        if response.get("id").and_then(|v| v.as_u64()) != Some(request_id) {
-            return Err(format!("Response ID mismatch: expected {}, got {:?}",
-                request_id, response.get("id")));
-        }
+        // Response ID was already verified in the loop above
 
         // Check for error response
         if let Some(error) = response.get("error") {
@@ -252,19 +274,20 @@ impl BridgeConnection {
         Ok(())
     }
 
-    /// Sends a textDocument/didOpen notification to the language server
-    ///
-    /// # Arguments
-    /// * `uri` - Document URI (e.g., "file:///test.lua")
-    /// * `language_id` - Language ID (e.g., "lua")
-    /// * `text` - Document content
-    #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
-    pub(crate) async fn send_did_open(
-        &self,
-        uri: &str,
-        language_id: &str,
-        text: &str,
-    ) -> Result<(), String> {
+    pub_e2e! {
+        /// Sends a textDocument/didOpen notification to the language server
+        ///
+        /// # Arguments
+        /// * `uri` - Document URI (e.g., "file:///test.lua")
+        /// * `language_id` - Language ID (e.g., "lua")
+        /// * `text` - Document content
+        #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
+        async fn send_did_open(
+            &self,
+            uri: &str,
+            language_id: &str,
+            text: &str,
+        ) -> Result<(), String> {
         let params = serde_json::json!({
             "textDocument": {
                 "uri": uri,
@@ -280,17 +303,19 @@ impl BridgeConnection {
         self.did_open_sent.store(true, Ordering::SeqCst);
 
         Ok(())
+        }
     }
 
-    /// Performs the full LSP initialization sequence with timeout
-    ///
-    /// Sequence: initialize request → initialized notification
-    /// This method has a 5 second timeout to prevent hangs.
-    ///
-    /// # Returns
-    /// InitializeResult from the language server
-    #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
-    pub(crate) async fn initialize(&self) -> Result<serde_json::Value, String> {
+    pub_e2e! {
+        /// Performs the full LSP initialization sequence with timeout
+        ///
+        /// Sequence: initialize request → initialized notification
+        /// This method has a 5 second timeout to prevent hangs.
+        ///
+        /// # Returns
+        /// InitializeResult from the language server
+        #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
+        async fn initialize(&self) -> Result<serde_json::Value, String> {
         use tokio::time::{timeout, Duration};
 
         // Initialize with 5s timeout
@@ -305,6 +330,7 @@ impl BridgeConnection {
         self.send_initialized_notification().await?;
 
         Ok(result)
+        }
     }
 }
 

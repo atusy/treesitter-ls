@@ -3,7 +3,12 @@
 //! This module provides the bridge infrastructure for communicating with
 //! language servers asynchronously for injection regions.
 
+// Public for E2E tests (feature gated)
+#[cfg(feature = "e2e")]
+pub mod connection;
+#[cfg(not(feature = "e2e"))]
 pub(crate) mod connection;
+
 pub(crate) mod pool;
 
 #[allow(unused_imports)] // Used in Phase 2 (real LSP communication)
