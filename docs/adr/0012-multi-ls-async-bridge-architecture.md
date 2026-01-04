@@ -229,13 +229,45 @@ Key points:
 - **Independent lifecycle**: Each server's `initialized` → `didOpen` proceeds as soon as that server responds
 - **No global barrier**: Servers that initialize faster can start handling requests immediately
 
+**Two-phase notification handling during initialization:**
+
+Notifications must navigate two critical phases before entering normal operation:
+
+| Phase | Duration | Notification Handling |
+|-------|----------|----------------------|
+| **Phase 1: Before `initialized`** | spawn → `initialized` sent | Block all notifications except `initialized` itself with `SERVER_NOT_INITIALIZED` error |
+| **Phase 2: Before `didOpen`** | `initialized` sent → `didOpen` sent | Document notifications (`didChange`, `didSave`) dropped silently; other notifications proceed |
+| **Normal Operation** | After `didOpen` sent | All notifications forwarded normally |
+
+**Rationale for dropping document notifications in Phase 2:**
+
+During the initialization window (after `initialized` but before treesitter-ls sends `didOpen` to downstream), the client may send `didChange` notifications to treesitter-ls for the host document. These must be translated to the virtual document for downstream, but:
+
+1. **State accumulation**: Any changes before `didOpen` are already incorporated into the document state that will be sent
+2. **LSP semantics**: The LSP spec mandates `didOpen` must precede `didChange` for the same document
+3. **Bridge control**: treesitter-ls controls when to send `didOpen` downstream, thus also when to start forwarding `didChange`
+
+**Example scenario:**
+```
+┌────────┐     ┌──────────────┐     ┌──────────┐
+│ Client │     │ treesitter-ls│     │ pyright  │
+└───┬────┘     └──────┬───────┘     └────┬─────┘
+    │──didOpen(md)───▶│                  │
+    │                 │ (spawn pyright)  │
+    │──didChange(md)─▶│ ❌ DROP          │  ← Client edits during init
+    │                 │ (pyright initializing...)
+    │                 │◀──init result────│
+    │                 │──initialized────▶│
+    │                 │──didOpen(virt)──▶│  ← Includes ALL changes
+    │                 │                  │
+    │──didChange(md)─▶│──didChange(virt)▶│  ← NOW forward normally
+```
+
 **Implementation requirement:**
-- `send_notification` must check `initialized` flag (same as `send_request`)
-- Exception: `initialized` notification itself is allowed before flag is set
 
 ```rust
 pub async fn send_notification(&self, method: &str, params: Value) -> Result<(), ResponseError> {
-    // Guard: block notifications before initialization (except "initialized" itself)
+    // Phase 1 guard: block all notifications before initialized (except "initialized" itself)
     if !self.initialized.load(Ordering::SeqCst) && method != "initialized" {
         return Err(ResponseError {
             code: ErrorCodes::SERVER_NOT_INITIALIZED,
@@ -243,7 +275,42 @@ pub async fn send_notification(&self, method: &str, params: Value) -> Result<(),
             data: None,
         });
     }
-    // ...
+
+    // Phase 2 guard: handle notifications before didOpen sent
+    if !self.did_open_sent.load(Ordering::SeqCst) {
+        match method {
+            "initialized" => {
+                // Always allow - this sets the initialized flag
+            }
+            "textDocument/didOpen" => {
+                // Send and mark that didOpen has been sent
+                // ... send logic ...
+                self.did_open_sent.store(true, Ordering::SeqCst);
+                return Ok(());
+            }
+            "textDocument/didChange" | "textDocument/didSave" | "textDocument/didClose" => {
+                // Drop silently - changes already reflected in pending didOpen
+                log::debug!("Dropping {} notification during initialization window", method);
+                return Ok(());
+            }
+            _ => {
+                // Other notifications proceed after initialized
+            }
+        }
+    }
+
+    // ... normal send logic ...
+}
+```
+
+**State tracking:**
+
+```rust
+struct TokioAsyncBridgeConnection {
+    // ... existing fields ...
+    initialized: AtomicBool,         // true after "initialized" notification sent
+    did_open_sent: AtomicBool,       // true after first "didOpen" notification sent
+    initialized_notify: Notify,      // wake tasks waiting for initialization
 }
 ```
 
