@@ -19,14 +19,14 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113), PBI-155-161 (Sprint 124-130), PBI-178-180a (Sprint 133-135), PBI-184 (Sprint 136), PBI-181 (Sprint 137), PBI-185 (Sprint 138), PBI-187 (Sprint 140)
+  // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113), PBI-155-161 (Sprint 124-130), PBI-178-180a (Sprint 133-135), PBI-184 (Sprint 136), PBI-181 (Sprint 137), PBI-185 (Sprint 138), PBI-187 (Sprint 139)
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   // Removed: PBI-163-177 (obsolete - created before greenfield deletion per ASYNC_BRIDGE_REMOVAL.md)
   // Superseded: PBI-183 (merged into PBI-180b during Sprint 136 refinement)
-  // Cancelled: Sprint 139 (PBI-180b) - infrastructure didn't fix actual hang, reverted
-  // Sprint Review 140: All ACs PASSED, all DoD checks PASSED - PBI-187 DONE
+  // Cancelled: Aborted Sprint 139 attempt (PBI-180b) - infrastructure didn't fix actual hang, reverted
+  // Sprint Review 139: All ACs PASSED, all DoD checks PASSED - PBI-187 DONE
   product_backlog: [
-    // ADR-0012 Phase 1: Single-LS-per-Language Foundation (PBI-178-181, PBI-184-185, PBI-187 done, Sprint 133-138, 140)
+    // ADR-0012 Phase 1: Single-LS-per-Language Foundation (PBI-178-181, PBI-184-185, PBI-187 done, Sprint 133-139)
     // Priority order: PBI-180b (init window) > PBI-188 (multi-LS) > PBI-182 (features)
     // OBSOLETE: PBI-186 (lua-ls config) - lua-ls returns real results now, issue self-resolved
     // PBI-186: OBSOLETE - lua-ls returns real results (hover shows types, completion works)
@@ -50,7 +50,7 @@ const scrum: ScrumDashboard = {
       status: "ready" as PBIStatus,
       refinement_notes: [
         "SPRINT 139 CANCELLED: Built infrastructure without fixing root cause (blocking init)",
-        "DEPENDENCY: PBI-187 (non-blocking initialization) COMPLETED in Sprint 140 - now ready to implement",
+        "DEPENDENCY: PBI-187 (non-blocking initialization) COMPLETED in Sprint 139 - now ready to implement",
         "SCOPE: Request superseding during initialization window only (ADR-0012 §7.3)",
         "SCOPE: Phase 2 guard implementation (wait pattern + document notification dropping)",
         "RATIONALE: PBI-187 makes init non-blocking; PBI-180b handles requests DURING that init window",
@@ -123,10 +123,7 @@ const scrum: ScrumDashboard = {
   },
   // Historical sprints (recent 4) | Sprint 1-135: git log -- scrum.yaml, scrum.ts
   completed: [
-    { number: 139, pbi_id: "PBI-180b", goal: "CANCELLED - Built superseding infrastructure but root cause was blocking initialize() in get_or_spawn_connection() - fixed in Sprint 140 (PBI-187)", status: "cancelled" as SprintStatus, subtasks: [
-      { test: "Track pending incremental requests per connection", implementation: "PendingIncrementalRequests struct with latest request ID tracking", type: "structural" as SubtaskType, status: "completed" as SubtaskStatus, commits: [{ hash: "fe47e0a", message: "feat(bridge): add request superseding infrastructure (REVERTED)", phase: "green" as CommitPhase }], notes: ["Built infrastructure but didn't fix actual problem", "Sprint Review revealed infrastructure didn't prevent hang - reverted all changes", "Root cause: get_or_spawn_connection() blocked on initialize().await, starving tokio runtime", "Learning: Identify root cause BEFORE building infrastructure"] },
-    ] },
-    { number: 140, pbi_id: "PBI-187", goal: "Enable non-blocking bridge connection initialization so users can edit immediately after opening files without LSP hangs", status: "done" as SprintStatus, subtasks: [
+    { number: 139, pbi_id: "PBI-187", goal: "Enable non-blocking bridge connection initialization so users can edit immediately after opening files without LSP hangs", status: "done" as SprintStatus, subtasks: [
       { test: "wait_for_initialized() waits for initialized flag with timeout", implementation: "Add wait_for_initialized(timeout: Duration) method using initialized_notify.notified() with tokio::timeout", type: "behavioral" as SubtaskType, status: "completed" as SubtaskStatus, commits: [{ hash: "39c463e", message: "feat(bridge): add wait_for_initialized() for non-blocking init", phase: "green" as CommitPhase }], notes: ["Infrastructure exists: initialized AtomicBool, initialized_notify Notify"] },
       { test: "get_or_spawn_connection() returns immediately without waiting for initialize()", implementation: "Refactor get_or_spawn_connection() to spawn tokio::spawn task for initialize(), return Arc<BridgeConnection> immediately", type: "behavioral" as SubtaskType, status: "completed" as SubtaskStatus, commits: [{ hash: "845ac68", message: "feat(bridge): make connection initialization non-blocking", phase: "green" as CommitPhase }], notes: ["Background task handles initialize() + send_initialized_notification()"] },
       { test: "completion() and hover() wait for initialization before sending request", implementation: "Call connection.wait_for_initialized(Duration::from_secs(5)).await before send_request in pool.rs", type: "behavioral" as SubtaskType, status: "completed" as SubtaskStatus, commits: [{ hash: "8367b24", message: "feat(bridge): wire wait_for_initialized into completion and hover", phase: "green" as CommitPhase }], notes: ["Return InternalError if timeout expires"] },
@@ -152,15 +149,10 @@ const scrum: ScrumDashboard = {
   ],
   // Retrospectives (recent 4) | Sprints 1-135: git log -- scrum.yaml, scrum.ts
   retrospectives: [
-    { sprint: 140, improvements: [
-      { action: "Apply root cause analysis from Sprint 139 retrospective (trace full call stack before proposing solution)", timing: "immediate", status: "completed", outcome: "Sprint 140 successfully fixed actual hang by making initialization non-blocking - validated Sprint 139 root cause diagnosis" },
-      { action: "Continue TDD discipline with wait_for_initialized() (test-first for timeout behavior, immediate return, notification wait)", timing: "immediate", status: "completed", outcome: "All 3 wait_for_initialized tests written before implementation, caught edge cases early" },
-      { action: "Document E2E test completion time expectations (< 2s timeout proves no hang vs ~65ms actual)", timing: "immediate", status: "completed", outcome: "E2E test includes timing assertion and clear comments explaining before/after fix behavior" },
-    ] },
     { sprint: 139, improvements: [
-      { action: "Identify root cause BEFORE building infrastructure (Sprint 139 built request superseding but actual hang was in blocking initialize())", timing: "immediate", status: "completed", outcome: "Created PBI-187 for non-blocking initialization; PBI-180b demoted to draft, blocked by PBI-187" },
-      { action: "Add 'does this fix the actual problem?' checkpoint to Sprint Review (ACs passed but user problem persisted)", timing: "immediate", status: "completed", outcome: "Sprint 139 cancelled and reverted when review revealed infrastructure didn't fix hang" },
-      { action: "Trace hang through full call stack before proposing solution (completion→get_or_spawn→initialize→blocking loop)", timing: "sprint", status: "completed", outcome: "Sprint 140 applied this learning - traced get_or_spawn→initialize→blocking await as root cause, fixed with tokio::spawn" },
+      { action: "Verify user-facing behavior with real-world testing after E2E passes (does hang actually disappear for end users?)", timing: "sprint", status: "active", outcome: null },
+      { action: "Document cancelled sprint attempts in PBI refinement notes to prevent repeating same mistake", timing: "immediate", status: "completed", outcome: "Updated PBI-180b refinement_notes with 'SPRINT 139 CANCELLED' context and dependency on PBI-187" },
+      { action: "Maintain strict TDD discipline for concurrent code (all wait_for_initialized tests written before implementation)", timing: "immediate", status: "completed", outcome: "All 3 wait_for_initialized tests written first, caught edge cases early, clean green phase" },
     ] },
     { sprint: 138, improvements: [
       { action: "Document AC interpretation strategy (infrastructure vs end-user behavior - when to accept 'infrastructure complete' vs 'user value delivered')", timing: "immediate", status: "completed", outcome: "Added 'Acceptance Criteria Interpretation Strategy' section to docs/e2e-testing-checklist.md with decision framework and Sprint 138 learning" },
