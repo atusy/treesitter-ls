@@ -23,12 +23,37 @@ const scrum: ScrumDashboard = {
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   // Removed: PBI-163-177 (obsolete - created before greenfield deletion per ASYNC_BRIDGE_REMOVAL.md)
   // Superseded: PBI-183 (merged into PBI-180b during Sprint 136 refinement)
+  // Cancelled: Sprint 139 (PBI-180b) - infrastructure didn't fix actual hang, reverted
   product_backlog: [
     // ADR-0012 Phase 1: Single-LS-per-Language Foundation (PBI-178-181, PBI-184-185 done, Sprint 133-138)
-    // Sprint 139 candidates (prioritized): PBI-180b superseding (ready), PBI-186 lua-ls config investigation (draft)
-    // Future: PBI-182 definition/signatureHelp (draft - needs AC refinement)
-    // PBI-185: DONE - Virtual document synchronization infrastructure complete
-    // Infrastructure successfully sends didOpen with content, lua-ls config issue deferred to PBI-186
+    // CRITICAL: PBI-187 must be done FIRST - it fixes the actual hang by making init non-blocking
+    // Priority order: PBI-187 (hang fix) > PBI-180b (request handling during init) > PBI-186 (lua-ls config) > PBI-182 (features)
+    {
+      id: "PBI-187",
+      story: {
+        role: "developer editing Lua files",
+        capability: "edit files immediately after opening without LSP hanging",
+        benefit: "I can work fluidly without waiting for bridge initialization to complete",
+      },
+      acceptance_criteria: [
+        { criterion: "get_or_spawn_connection() returns immediately without blocking on initialize()", verification: "grep -A10 'get_or_spawn_connection' src/lsp/bridge/pool.rs | grep -v 'initialize().await'" },
+        { criterion: "Connection initialization runs in background task (tokio::spawn)", verification: "grep -E 'tokio::spawn.*initialize|spawn.*init' src/lsp/bridge/pool.rs" },
+        { criterion: "Requests to uninitialized connections return REQUEST_FAILED with clear message", verification: "grep -E 'REQUEST_FAILED.*not.*initialized|initializing' src/lsp/bridge/" },
+        { criterion: "E2E test: typing immediately after file open does not hang", verification: "cargo test --test e2e_bridge_no_hang --features e2e" },
+        { criterion: "All unit tests pass", verification: "make test" },
+      ],
+      status: "ready" as PBIStatus,
+      refinement_notes: [
+        "SPRINT 139 CANCELLED: PBI-180b built infrastructure but didn't fix actual hang",
+        "ROOT CAUSE: get_or_spawn_connection() calls initialize().await synchronously",
+        "ROOT CAUSE: When user types immediately, completion triggers init which blocks tokio runtime",
+        "ROOT CAUSE: This starves other tasks (did_change) causing apparent hang",
+        "FIX: Move initialization to background task, return early for requests during init",
+        "SCOPE: Only make initialization non-blocking - request handling during init is PBI-180b",
+        "DEPENDENCY: None - this is the foundation that PBI-180b depends on",
+        "VALUE: Critical UX fix - users can edit immediately without waiting for bridge",
+      ],
+    },
     {
       id: "PBI-186",
       story: {
@@ -58,30 +83,27 @@ const scrum: ScrumDashboard = {
       id: "PBI-180b",
       story: {
         role: "developer editing Lua files",
-        capability: "have stale incremental requests cancelled when typing rapidly",
+        capability: "have stale incremental requests cancelled when typing rapidly during initialization",
         benefit: "I only see relevant suggestions for current code, not outdated results from earlier positions",
       },
       acceptance_criteria: [
         { criterion: "PendingIncrementalRequests struct tracks latest completion/hover/signatureHelp per connection", verification: "grep 'struct PendingIncrementalRequests' src/lsp/bridge/connection.rs" },
         { criterion: "Request superseding: newer incremental request cancels older with REQUEST_FAILED and superseded reason", verification: "grep -E 'register_completion|register_hover|REQUEST_FAILED.*superseded' src/lsp/bridge/connection.rs" },
-        { criterion: "Phase 2 guard: requests wait for initialized with bounded timeout (5s default)", verification: "grep -B5 -A5 'wait_for_initialized' src/lsp/bridge/connection.rs" },
+        { criterion: "wait_for_initialized() with bounded timeout (5s) returns error if init doesn't complete", verification: "grep -B5 -A5 'wait_for_initialized' src/lsp/bridge/connection.rs" },
         { criterion: "Phase 2 guard: document notifications (didChange, didSave) dropped before didOpen sent", verification: "grep -B5 -A5 'did_open_sent' src/lsp/bridge/connection.rs | grep 'didChange\\|didSave'" },
-        { criterion: "E2E test verifies rapid completion requests trigger superseding with only latest processed", verification: "cargo test --test e2e_bridge_init_race --features e2e" },
+        { criterion: "E2E test verifies rapid completion requests trigger superseding with only latest processed", verification: "cargo test --test e2e_bridge_init_supersede --features e2e" },
         { criterion: "All unit tests pass with superseding infrastructure", verification: "make test" },
       ],
-      status: "ready" as PBIStatus,
+      status: "draft" as PBIStatus,
       refinement_notes: [
-        "SPRINT 137 REFINEMENT: Promoted to ready - all dependencies met, ACs clear",
-        "SPRINT 137 REFINEMENT: 6 ACs at upper complexity threshold but keeping unified (user value: responsive UX)",
-        "SPRINT 136 REFINEMENT: MERGED WITH PBI-183 to eliminate duplication",
+        "SPRINT 139 CANCELLED: Built infrastructure without fixing root cause (blocking init)",
+        "DEPENDENCY: Requires PBI-187 (non-blocking initialization) - BLOCKED until PBI-187 done",
         "SCOPE: Request superseding during initialization window only (ADR-0012 §7.3)",
         "SCOPE: Phase 2 guard implementation (wait pattern + document notification dropping)",
-        "DEPENDENCY: Requires PBI-180a infrastructure (send_request, request ID tracking, timeout) ✓ DONE Sprint 135",
-        "CONSOLIDATION: Combined PBI-180b (Phase 2 guard) + PBI-183 (superseding during init) into single infrastructure PBI",
-        "RATIONALE: Both PBIs had identical user stories; PBI-183 was the infrastructure layer that PBI-180b depended on",
+        "RATIONALE: PBI-187 makes init non-blocking; PBI-180b handles requests DURING that init window",
         "VALUE: Prevents stale results during initialization window (§7.3: after didOpen, requests simply forward)",
-        "COMPLEXITY: Medium-High - introduces new patterns (PendingIncrementalRequests, Phase 2 guard)",
-        "NEXT STEPS: Review ADR-0012 Phase 1 §6.1 (Phase 2 guard) and §7.3 (request superseding) for implementation guidance",
+        "COMPLEXITY: Medium - patterns are clear, just need PBI-187 foundation first",
+        "LEARNING: Sprint 139 showed that request handling during init is useless if init itself blocks",
       ],
     },
     {
@@ -143,6 +165,11 @@ const scrum: ScrumDashboard = {
   ],
   // Retrospectives (recent 3) | Sprints 1-135: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    { sprint: 139, improvements: [
+      { action: "Identify root cause BEFORE building infrastructure (Sprint 139 built request superseding but actual hang was in blocking initialize())", timing: "immediate", status: "completed", outcome: "Created PBI-187 for non-blocking initialization; PBI-180b demoted to draft, blocked by PBI-187" },
+      { action: "Add 'does this fix the actual problem?' checkpoint to Sprint Review (ACs passed but user problem persisted)", timing: "immediate", status: "completed", outcome: "Sprint 139 cancelled and reverted when review revealed infrastructure didn't fix hang" },
+      { action: "Trace hang through full call stack before proposing solution (completion→get_or_spawn→initialize→blocking loop)", timing: "sprint", status: "active", outcome: null },
+    ] },
     { sprint: 138, improvements: [
       { action: "Document AC interpretation strategy (infrastructure vs end-user behavior - when to accept 'infrastructure complete' vs 'user value delivered')", timing: "immediate", status: "completed", outcome: "Added 'Acceptance Criteria Interpretation Strategy' section to docs/e2e-testing-checklist.md with decision framework and Sprint 138 learning" },
       { action: "Create lua-ls workspace configuration investigation PBI (PBI-186: why null results despite didOpen with content - URI format, workspace config, timing, indexing)", timing: "product", status: "completed", outcome: "Created PBI-186 with draft status - investigation PBI to unlock semantic results for all bridged features (hover, completion, future definition/signatureHelp)" },
