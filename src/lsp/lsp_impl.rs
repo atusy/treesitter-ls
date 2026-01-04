@@ -78,10 +78,13 @@ pub struct TreeSitterLs {
     installing_languages: InstallingLanguages,
     /// Tracks parsers that have crashed
     failed_parsers: FailedParserRegistry,
-    /// Receiver for progress notifications from async bridge (when re-implemented).
+    /// Sender for client notifications to be forwarded to bridge.
+    /// Kept alive for server lifetime to prevent channel from closing.
+    tokio_notification_tx: Option<tokio::sync::mpsc::UnboundedSender<serde_json::Value>>,
+    /// Receiver for client notifications to be forwarded to bridge.
     /// Wrapped in Option so it can be taken once when starting the forwarder task.
     tokio_notification_rx:
-        tokio::sync::Mutex<Option<tokio::sync::mpsc::Receiver<serde_json::Value>>>,
+        tokio::sync::Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<serde_json::Value>>>,
     /// Tracks active semantic token requests for cancellation support
     semantic_request_tracker: SemanticRequestTracker,
     /// Language server pool for bridging requests to injection language servers
@@ -117,8 +120,10 @@ impl TreeSitterLs {
         // Note: Startup cleanup of bridge temp directories removed with bridge module.
         // When bridge is re-implemented (ADR-0012), add cleanup here if needed.
 
-        // Create notification channel for async bridge (when re-implemented)
-        let (_tokio_notification_tx, tokio_notification_rx) = tokio::sync::mpsc::channel(256);
+        // Create notification channel for async bridge
+        // Store sender to keep channel alive for server lifetime (PBI-191)
+        let (tokio_notification_tx, tokio_notification_rx) =
+            tokio::sync::mpsc::unbounded_channel();
 
         Self {
             client,
@@ -132,6 +137,7 @@ impl TreeSitterLs {
             settings: ArcSwap::new(Arc::new(WorkspaceSettings::default())),
             installing_languages: InstallingLanguages::new(),
             failed_parsers,
+            tokio_notification_tx: Some(tokio_notification_tx),
             tokio_notification_rx: tokio::sync::Mutex::new(Some(tokio_notification_rx)),
             semantic_request_tracker: SemanticRequestTracker::new(),
             language_server_pool: crate::lsp::bridge::LanguageServerPool::new(),
@@ -1966,6 +1972,33 @@ mod tests {
         assert!(
             !rmd_settings.is_language_bridgeable("python"),
             "Bridge router should block python for rmd (empty filter)"
+        );
+    }
+
+    /// PBI-191 Subtask 1: Test that TreeSitterLs stores tokio_notification_tx sender field.
+    ///
+    /// This test verifies that the notification channel sender is stored in the TreeSitterLs
+    /// struct and kept alive for the server's lifetime. Without this field, the sender is
+    /// dropped at the end of new(), causing the receiver to immediately close.
+    ///
+    /// Test strategy: Create TreeSitterLs instance, verify sender can send after construction.
+    #[tokio::test]
+    async fn test_notification_sender_kept_alive() {
+        // Create a mock client for TreeSitterLs
+        let (service, _) = tower_lsp::LspService::new(|client| TreeSitterLs::new(client));
+        let server = service.inner();
+
+        // Verify that sender field exists and is kept alive
+        assert!(
+            server.tokio_notification_tx.is_some(),
+            "TreeSitterLs should store tokio_notification_tx sender to keep channel alive"
+        );
+
+        // Verify sender is not closed (would be closed if dropped prematurely)
+        let sender = server.tokio_notification_tx.as_ref().unwrap();
+        assert!(
+            !sender.is_closed(),
+            "Sender should not be closed after TreeSitterLs construction"
         );
     }
 }
