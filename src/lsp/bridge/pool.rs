@@ -55,7 +55,12 @@ impl LanguageServerPool {
         // TODO: Make this configurable via settings
         let command = match language {
             "lua" => "lua-language-server",
-            _ => return Err(format!("No language server configured for language: {}", language)),
+            _ => {
+                return Err(format!(
+                    "No language server configured for language: {}",
+                    language
+                ));
+            }
         };
 
         // Spawn and initialize the language server
@@ -334,8 +339,15 @@ mod tests {
         };
 
         let result = pool.completion(params).await;
-        assert!(result.is_ok(), "Completion should succeed: {:?}", result.err());
-        assert!(result.unwrap().is_none(), "Non-virtual URI should return None");
+        assert!(
+            result.is_ok(),
+            "Completion should succeed: {:?}",
+            result.err()
+        );
+        assert!(
+            result.unwrap().is_none(),
+            "Non-virtual URI should return None"
+        );
     }
 
     #[tokio::test]
