@@ -78,7 +78,15 @@ const scrum: ScrumDashboard = {
         { criterion: "E2E test sends completion to Lua block and receives real CompletionItems from lua-ls", verification: "cargo test --test e2e_bridge_completion --features e2e" },
         { criterion: "E2E test verifies rapid completion requests trigger superseding with only latest processed", verification: "cargo test --test e2e_bridge_init_race --features e2e" },
       ],
-      status: "ready" as PBIStatus,
+      status: "refining" as PBIStatus,
+      refinement_notes: [
+        "COMPLEXITY CONCERN: 8 acceptance criteria mixing infrastructure (send_request, superseding) with feature (completion)",
+        "RECOMMENDATION: Split into PBI-180a (basic request/response) + PBI-180b (request superseding pattern)",
+        "PBI-180a would deliver value (real completions work) in one sprint",
+        "PBI-180b would add robustness (rapid typing scenarios) in follow-up sprint",
+        "Alternative: Keep as-is if superseding is deemed essential for MVP user experience",
+        "Decision needed: Sprint 135 planning should confirm scope before starting work",
+      ],
     },
     {
       id: "PBI-181",
@@ -88,11 +96,21 @@ const scrum: ScrumDashboard = {
         benefit: "I can understand Lua APIs and types without leaving the markdown document",
       },
       acceptance_criteria: [
-        { criterion: "BridgeConnection.send_request handles textDocument/hover requests", verification: "grep 'textDocument/hover' src/lsp/bridge/connection.rs" },
-        { criterion: "Hover request uses virtual document position, response translated to host", verification: "grep 'pool.hover\\|translate.*hover' src/lsp/lsp_impl/text_document/hover.rs" },
-        { criterion: "E2E test receives real hover information from lua-ls for Lua identifiers", verification: "cargo test --test e2e_bridge_hover --features e2e" },
+        { criterion: "LanguageServerPool.hover() wired to call BridgeConnection.send_request with textDocument/hover", verification: "grep 'send_request.*hover\\|hover.*send_request' src/lsp/bridge/pool.rs" },
+        { criterion: "Hover request uses virtual document URI and translated position from host coordinates", verification: "grep -E 'virtual.*uri|translate.*position' src/lsp/lsp_impl/text_document/hover.rs" },
+        { criterion: "Hover response (Hover with contents) returned to host without range translation (hover ranges are optional)", verification: "grep -E 'pool.hover|Hover' src/lsp/lsp_impl/text_document/hover.rs" },
+        { criterion: "Request superseding: newer hover cancels older with REQUEST_FAILED (reuses PendingIncrementalRequests from PBI-180)", verification: "grep -E 'register_hover|PendingIncrementalRequests' src/lsp/bridge/connection.rs" },
+        { criterion: "E2E test receives real hover information from lua-ls for Lua built-in (e.g., print)", verification: "cargo test --test e2e_bridge_hover --features e2e" },
+        { criterion: "All unit tests pass with hover implementation", verification: "make test" },
       ],
-      status: "draft" as PBIStatus,
+      status: "ready" as PBIStatus,
+      refinement_notes: [
+        "DEPENDENCY: Assumes PBI-180 (or PBI-180a if split) completes send_request and PendingIncrementalRequests infrastructure",
+        "LEVERAGE: Reuses request superseding pattern from PBI-180, only adds hover-specific wiring",
+        "SIMPLIFICATION: Hover ranges are optional in LSP spec; we can skip range translation for MVP",
+        "COMPLEXITY: Lower than PBI-180 because infrastructure exists; mainly method-specific logic",
+        "ESTIMATE: Should be smaller than PBI-180; could pair with another small PBI if needed",
+      ],
     },
     {
       id: "PBI-182",
@@ -205,7 +223,7 @@ interface SuccessMetric { metric: string; target: string; }
 interface ProductGoal { statement: string; success_metrics: SuccessMetric[]; }
 interface AcceptanceCriterion { criterion: string; verification: string; }
 interface UserStory { role: (typeof userStoryRoles)[number]; capability: string; benefit: string; }
-interface PBI { id: string; story: UserStory; acceptance_criteria: AcceptanceCriterion[]; status: PBIStatus; }
+interface PBI { id: string; story: UserStory; acceptance_criteria: AcceptanceCriterion[]; status: PBIStatus; refinement_notes?: string[]; }
 interface Commit { hash: string; message: string; phase: CommitPhase; }
 interface Subtask { test: string; implementation: string; type: SubtaskType; status: SubtaskStatus; commits: Commit[]; notes: string[]; }
 interface Sprint { number: number; pbi_id: string; goal: string; status: SprintStatus; subtasks: Subtask[]; }
