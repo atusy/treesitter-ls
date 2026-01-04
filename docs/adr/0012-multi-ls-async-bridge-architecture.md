@@ -10,48 +10,52 @@ Accepted
 
 ## Context
 
-ADR-0009 established the tokio-based async bridge architecture for concurrent LSP request handling with a single downstream language server. However, the current implementation suffers from **severe hang issues** due to waker/channel race conditions. Multiple fix attempts (yield_now, mpsc, Notify) have not resolved the root cause.
+### Current Problems
 
-Additionally, real-world usage requires bridging to **multiple downstream language servers** simultaneously:
-- Python code in markdown may need both **pyright** (type checking, completion) and **ruff** (linting, formatting)
-- Embedded SQL may need both a SQL language server and the host language server
-- Future polyglot scenarios (e.g., TypeScript + CSS in Vue files)
+ADR-0009 established the tokio-based async bridge architecture for concurrent LSP request handling with a single downstream language server. However, the current implementation suffers from critical issues:
 
-### Problems with Current Implementation (ADR-0009)
-
-The existing async bridge implementation has fundamental issues that cannot be resolved through incremental fixes:
-
-**1. Waker/Channel Race Conditions:**
+**1. Severe Hang Issues**
 - Async tasks occasionally hang indefinitely waiting for responses
 - Root cause: Complex interaction between tokio wakers and channel notification timing
-- Attempted fixes (yield_now, mpsc channels, Notify) provide partial relief but don't eliminate hangs
+- Multiple fix attempts (yield_now, mpsc channels, Notify) provide partial relief but don't eliminate hangs
 
-**2. LSP Ordering Violations:**
+**2. LSP Ordering Violations**
 - Notifications and requests can arrive out of order at downstream servers
 - Can violate LSP spec requirement: `didOpen` must precede other document notifications
 - Current mutex-based serialization insufficient for multi-document scenarios
 
-**3. Limited to Single LS per Language:**
-- No support for multiple servers handling same language (e.g., pyright + ruff)
+**3. Limited to Single LS per Language**
+- No support for multiple servers handling same language (e.g., pyright + ruff for Python)
 - No aggregation or routing strategies for overlapping capabilities
 - Cannot leverage complementary strengths of different servers
 
+### Real-World Requirements
+
+Real-world usage requires bridging to **multiple downstream language servers** simultaneously:
+- Python code in markdown may need both **pyright** (type checking, completion) and **ruff** (linting, formatting)
+- Embedded SQL may need both a SQL language server and the host language server
+- Future polyglot scenarios (e.g., TypeScript + CSS in Vue files)
+
 ## Decision
 
-**Re-implement from scratch** with simpler, proven patterns. The new architecture uses a **routing-first, aggregation-optional** approach that supports 1:N communication patterns with proper:
+**Re-implement from scratch** with simpler, proven patterns. The new architecture uses a **routing-first, aggregation-optional** approach that supports 1:N communication patterns.
 
-1. **Fan-out/Scatter-Gather** — Send requests to multiple LSes, aggregate responses
-2. **Ordering Guarantees** — Notifications must maintain order per (downstream, document)
-3. **Cancellation Propagation** — `$/cancelRequest` from upstream flows to all downstream
-4. **Resilience** — Circuit breaker and bulkhead patterns for fault isolation
-5. **LSP Compliance** — All error handling uses standard LSP error codes and response structures
+### Core Requirements
+
+1. **LSP Compliance** — All error handling uses standard LSP error codes and response structures
+2. **Fan-out/Scatter-Gather** — Send requests to multiple LSes, aggregate responses when needed
+3. **Ordering Guarantees** — Notifications maintain order per (downstream, document)
+4. **Cancellation Propagation** — `$/cancelRequest` from upstream flows to all downstream
+5. **Resilience** — Circuit breaker and bulkhead patterns for fault isolation
+
+## Architecture
 
 ### 1. LSP Error Codes and Response Structures
 
-All error responses must use standard LSP error codes to maintain protocol compliance:
+All error responses use standard LSP error codes (LSP 3.17+) to maintain protocol compliance:
 
 ```rust
-/// LSP-compliant error codes (LSP 3.17+)
+/// LSP-compliant error codes
 pub struct ErrorCodes;
 
 impl ErrorCodes {
@@ -78,7 +82,7 @@ pub struct ResponseError {
 }
 ```
 
-**Critical LSP requirement:** Every request MUST receive a response. Never return `None`, drop requests, or leave them hanging. Use `ResponseError` with appropriate error codes for all failure scenarios.
+**Critical LSP requirement (LSP 3.x § Response Message):** Every request MUST receive a response. Never return `None`, drop requests, or leave them hanging. Use `ResponseError` with appropriate error codes for all failure scenarios.
 
 **Usage guidelines:**
 - Use `REQUEST_FAILED` (-32803) for most error scenarios: timeouts, downstream failures, circuit breaker open
@@ -123,34 +127,7 @@ Priority order: Servers are sorted alphabetically by name.
 | `codeAction` | ✅ | ✅ | → FanOut + merge_all |
 | `diagnostics` | ✅ | ✅ | → Both (notification pass-through, no aggregation) |
 
-**When aggregation IS needed:**
-- `completion`: Both LSes return completion items → merge into single list
-- `codeAction`: pyright refactorings + ruff lint fixes → merge into single list
-
-**When aggregation is NOT needed:**
-- Single capable LS → route directly
-- Diagnostics → notification pass-through (client aggregates)
-- Capabilities don't overlap → route to respective LS
-
-### 3. Routing Strategies
-
-```rust
-enum RoutingStrategy {
-    /// Route to single LS with highest priority (default)
-    /// No aggregation needed - fast path
-    SingleByCapability {
-        priority: Vec<String>,  // e.g., ["pyright", "ruff"]
-    },
-
-    /// Fan-out to multiple LSes, aggregate responses
-    /// Only for methods where overlapping results must be combined
-    FanOut {
-        aggregation: AggregationStrategy,
-    },
-}
-```
-
-### 4. Multiplexed Request-Reply (when fan-out is needed)
+### 3. System Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -178,21 +155,33 @@ enum RoutingStrategy {
 ```
 
 **Key Design Points:**
-
 - **ID Namespace Isolation**: Each downstream connection maintains its own `next_request_id`. The pool maps `(upstream_id, downstream_key)` → `downstream_id` for correlation.
 - **Per-Connection Send Queue**: Each `TokioAsyncBridgeConnection` serializes writes via `Mutex<ChildStdin>`, ensuring no byte-level corruption.
-- **Aggregation Strategies**: Configurable per method:
-  - `first_wins`: Return first successful response (hedged request)
-  - `merge_all`: Collect all responses, merge arrays (completion items)
-  - `ranked`: Apply priority ranking, return highest-priority response
+- **Aggregation Strategies**: Configurable per method (see section 8).
 
-### 5. Ordered Notification Stream
+### 4. Routing Strategies
 
-Notifications (`didOpen`, `didChange`, `didClose`) have no response and no `id`. Order is critical:
+```rust
+enum RoutingStrategy {
+    /// Route to single LS with highest priority (default)
+    /// No aggregation needed - fast path
+    SingleByCapability {
+        priority: Vec<String>,  // e.g., ["pyright", "ruff"]
+    },
 
-#### 5.1 Initialization Order
+    /// Fan-out to multiple LSes, aggregate responses
+    /// Only for methods where overlapping results must be combined
+    FanOut {
+        aggregation: AggregationStrategy,
+    },
+}
+```
 
-**LSP mandates that `didOpen` and other notifications must be sent AFTER `initialized` notification:**
+### 5. Lifecycle and Initialization
+
+#### 5.1 Initialization Protocol
+
+**LSP mandates that `didOpen` and other notifications must be sent AFTER `initialized` notification (LSP 3.x § Server lifecycle):**
 
 ```
 initialize (request)      →  Server
@@ -203,7 +192,7 @@ didOpen (notification)    →  Server     ← NOW allowed
 hover (request)           →  Server     ← NOW allowed
 ```
 
-**Multi-server parallel initialization:**
+#### 5.2 Parallel Multi-Server Initialization
 
 When connecting to multiple downstream language servers, `initialize` requests can be sent in parallel since each server is an independent process with no inter-server dependencies.
 
@@ -229,7 +218,24 @@ Key points:
 - **Independent lifecycle**: Each server's `initialized` → `didOpen` proceeds as soon as that server responds
 - **No global barrier**: Servers that initialize faster can start handling requests immediately
 
-**Two-phase notification handling during initialization:**
+#### 5.3 Partial Initialization Failure Policy
+
+When initializing multiple downstream servers in parallel, some may succeed while others fail. The bridge handles this gracefully:
+
+| Scenario | Behavior | Rationale |
+|----------|----------|-----------|
+| All servers initialize successfully | Normal operation with all servers | Expected case |
+| Some servers fail initialization | Continue with working servers, failed servers enter circuit breaker open state | Graceful degradation - pyright failures shouldn't block ruff usage |
+| All servers fail initialization | Bridge reports errors but remains alive, circuit breakers prevent request routing | Allow recovery without full bridge restart |
+
+**Error propagation:**
+- Failed `initialize` requests trigger circuit breaker for that specific server
+- Requests routed to failed servers receive `REQUEST_FAILED` with circuit breaker message
+- Client sees degraded functionality (e.g., "pyright unavailable") rather than total failure
+
+### 6. Notification Handling
+
+#### 6.1 Two-Phase Notification Handling During Initialization
 
 Notifications must navigate two critical phases before entering normal operation:
 
@@ -244,7 +250,7 @@ Notifications must navigate two critical phases before entering normal operation
 During the initialization window (after `initialized` but before treesitter-ls sends `didOpen` to downstream), the client may send `didChange` notifications to treesitter-ls for the host document. These must be translated to the virtual document for downstream, but:
 
 1. **State accumulation**: Any changes before `didOpen` are already incorporated into the document state that will be sent
-2. **LSP semantics**: The LSP spec mandates `didOpen` must precede `didChange` for the same document
+2. **LSP semantics**: The LSP spec mandates `didOpen` must precede `didChange` for the same document (LSP 3.x § Text Document Synchronization)
 3. **Bridge control**: treesitter-ls controls when to send `didOpen` downstream, thus also when to start forwarding `didChange`
 
 **Example scenario:**
@@ -263,7 +269,7 @@ During the initialization window (after `initialized` but before treesitter-ls s
     │──didChange(md)─▶│──didChange(virt)▶│  ← NOW forward normally
 ```
 
-**Implementation requirement:**
+**Implementation:**
 
 ```rust
 pub async fn send_notification(&self, method: &str, params: Value) -> Result<(), ResponseError> {
@@ -314,62 +320,34 @@ struct TokioAsyncBridgeConnection {
 }
 ```
 
-**Partial Initialization Failure Policy:**
+#### 6.2 Document Notification Order
 
-When initializing multiple downstream servers in parallel, some may succeed while others fail. The bridge handles this gracefully:
-
-| Scenario | Behavior | Rationale |
-|----------|----------|-----------|
-| All servers initialize successfully | Normal operation with all servers | Expected case |
-| Some servers fail initialization | Continue with working servers, failed servers enter circuit breaker open state | Graceful degradation - pyright failures shouldn't block ruff usage |
-| All servers fail initialization | Bridge reports errors but remains alive, circuit breakers prevent request routing | Allow recovery without full bridge restart |
-
-**Error propagation:**
-- Failed `initialize` requests trigger circuit breaker for that specific server
-- Requests routed to failed servers receive `REQUEST_FAILED` with circuit breaker message
-- Client sees degraded functionality (e.g., "pyright unavailable") rather than total failure
-- Health monitoring logs warn about failed servers for debugging
-
-**Example: pyright fails, ruff succeeds:**
+**Problem:**
 ```
-┌─────────┐     ┌──────────┐     ┌──────────┐
-│ Bridge  │     │ pyright  │     │   ruff   │
-└────┬────┘     └────┬─────┘     └────┬─────┘
-     │──initialize──▶│                │
-     │──initialize───────────────────▶│  (parallel)
-     │               │                │
-     │◀──error───────│                │  (pyright crashes)
-     │  (circuit breaker opens)       │
-     │               │                │
-     │◀──result───────────────────────│  (ruff succeeds)
-     │──initialized──────────────────▶│
-     │──didOpen──────────────────────▶│  (ruff ready)
-     │               │                │
-     │──hover(Python)────────────────▶│  (routes to ruff only)
-     │               X                │  (pyright unavailable)
+upstream: didChange(v10) → completion
+If completion reaches downstream before didChange, downstream computes on stale state.
 ```
 
-This approach maximizes availability while maintaining LSP compliance.
+**Solution:**
+Per-downstream single send queue ensures:
+```
+didChange(v10) → completion  (in downstream read order)
+```
 
-#### 5.1.1 Three-Layer Race Condition
+**Implementation:**
+- Each `TokioAsyncBridgeConnection` already serializes writes via `Mutex<ChildStdin>`
+- Notifications and requests share the same write path, preserving order
+- For document-level parallelism (future optimization): separate queues per `(downstream, document_uri)`
+
+### 7. Request Handling During Initialization
+
+#### 7.1 The Initialization Window Race Condition
 
 **Problem: Client sends requests before bridge downstream is ready**
 
 treesitter-ls responds to client's `initialize` immediately, independent of downstream bridge connections. This creates a race condition.
 
-**Bridge spawn timing options:**
-
-| Option | When to spawn | Tradeoff |
-|--------|---------------|----------|
-| 1. Eager | treesitter-ls startup | Wastes resources if language never used |
-| **2. On language detection** | When embedded language detected (open or edit) | ✓ Balanced: spawn early, but only when needed |
-| 3. On request | When request targets embedded language block | Late spawn, longer race window |
-
-**We use Option 2:** When treesitter-ls detects embedded language blocks (e.g., Python in markdown), it spawns the corresponding downstream LS (e.g., pyright). Detection can occur:
-- On `didOpen`: Document opened with existing embedded blocks
-- On `didChange`: User adds a new embedded block while editing
-
-This means the downstream LS starts initializing as soon as the embedded language is detected, before the user requests hover/completion in that block.
+**Bridge spawn timing:** When treesitter-ls detects embedded language blocks (e.g., Python in markdown), it spawns the corresponding downstream LS (e.g., pyright). Detection can occur on `didOpen` or `didChange`.
 
 ```
 ┌────────┐     ┌──────────────┐     ┌──────────┐
@@ -396,52 +374,34 @@ This means the downstream LS starts initializing as soon as the embedded languag
     │◀──result────────│◀──result─────────│
 ```
 
-**Key insight: The client never sends `didOpen` to the downstream LS.**
-treesitter-ls is responsible for sending `didOpen` to the bridge downstream. This defines two distinct phases:
+**Key insight:** The client never sends `didOpen` to the downstream LS. treesitter-ls is responsible for sending `didOpen` to the bridge downstream. This defines two distinct phases:
 
 | Phase | Duration | Request Handling |
-|-------|----------|-----------------|
-| **Initialization Window** | spawn → didOpen sent | Special handling required (Request Superseding, Wait with Timeout) |
+|-------|----------|------------------|
+| **Initialization Window** | spawn → didOpen sent | Special handling required (see below) |
 | **Normal Operation** | after didOpen sent | Simple pass-through, no queuing needed |
 
-Once `didOpen` is sent to the downstream LS, the bridge enters "Normal Operation" mode where all client requests are simply forwarded without any special handling.
+#### 7.2 Request Handling Strategies
 
-**Design Decision: Wait with Timeout (during Initialization Window)**
-
-Three options were considered:
-
-| Option | Behavior | Tradeoff |
-|--------|----------|----------|
-| Return Error | Fail immediately | Poor UX: user sees error, must retry |
-| Buffer & Resend | Queue requests | Complex: ordering, memory management |
-| **Wait with Timeout** | Block until ready | ✓ Best UX: transparent to user |
-
-**Rationale for Wait with Timeout:**
-
-1. **Initialization is fast** — Most language servers initialize in <1 second
-2. **Async waiting is cheap** — Does not block other requests in the event loop
-3. **Timeout ensures safety** — Returns error if initialization fails/hangs
-4. **Better UX** — Users prefer 500ms delay over error messages
-
-**During Initialization Window, not all requests should wait the same way.** Request handling strategy depends on request semantics:
+**During Initialization Window, request handling strategy depends on request semantics:**
 
 | Category | Requests | Behavior during Init Window | Rationale |
-|----------|----------|----------------------------|-----------|
+|----------|----------|-------------------------------|-----------|
 | **Incremental** | completion, signatureHelp, hover | Request superseding (newer cancels older) | Stale results are useless, but user may be waiting |
-| **Explicit action** | definition, references, rename, codeAction, formatting | Wait with timeout | User explicitly requested, waiting is expected |
+| **Explicit action** | definition, references, rename, codeAction, formatting | Wait with timeout (5s) | User explicitly requested, waiting is expected |
 
 **Note:** After `didOpen` is sent (Normal Operation), all requests are simply forwarded. No special handling needed.
 
-**Request Superseding pattern for incremental requests (during Initialization Window):**
+#### 7.3 Request Superseding Pattern (for Incremental Requests)
 
-Incremental requests (completion, signatureHelp, hover) should NOT immediately return empty. The user might be waiting for the result. Instead, use a **request superseding** pattern:
+Incremental requests should NOT immediately return empty. The user might be waiting for the result. Instead, use a **request superseding** pattern:
 
 1. If not initialized, keep the request pending
 2. If a **new request of the same type** arrives, send `REQUEST_FAILED` error for the old request
 3. When initialization completes, process the most recent pending request
 
 **LSP compliance rationale:**
-- **Every request gets a response** (LSP requirement) - no dropped requests
+- **Every request gets a response** (LSP 3.x § Request Message) - no dropped requests
 - Uses `REQUEST_FAILED` (-32803) for superseded requests (LSP 3.17+)
 - The request failed due to changed client state (newer request arrived), making the result obsolete
 
@@ -469,24 +429,6 @@ ResponseError {
     data: Some(json!({"reason": "incremental_request_superseded"})),
 }
 ```
-
-This provides optimal UX while maintaining LSP compliance:
-- If user pauses typing, they get completion when server is ready
-- If user continues typing, stale requests receive proper failure errors
-- Clients can handle `REQUEST_FAILED` appropriately (typically silently for superseded requests)
-
-**Timeout considerations:**
-
-| Category | Timeout needed? | Rationale |
-|----------|-----------------|-----------|
-| **Incremental** (request superseding) | No | Natural cleanup via newer requests canceling older ones; if initialization hangs, explicit actions will reveal it |
-| **Explicit action** | Yes (5s) | User is explicitly waiting; need feedback if server is broken |
-
-For incremental requests with superseding, timeout is unnecessary because:
-1. User behavior naturally triggers new requests (typing, cursor movement)
-2. New requests automatically discard stale pending ones
-3. Memory usage is bounded (only 1 pending request per type)
-4. If initialization is truly broken, explicit actions (definition, etc.) will timeout and alert user
 
 **Implementation:**
 
@@ -558,32 +500,71 @@ pub async fn send_request(&self, method: &str, params: Value) -> Result<Value, R
 }
 ```
 
-**Timeout value (5 seconds) for explicit actions:**
-- Covers slow language servers (e.g., pyright on large projects)
-- Short enough to fail fast if server is broken (returns `REQUEST_FAILED` error)
-- Configurable per-connection if needed in future
+**Timeout considerations:**
 
-#### 5.2 Document Notification Order
+| Category | Timeout needed? | Rationale |
+|----------|-----------------|-----------|
+| **Incremental** (request superseding) | No | Natural cleanup via newer requests canceling older ones; if initialization hangs, explicit actions will reveal it |
+| **Explicit action** | Yes (5s) | User is explicitly waiting; need feedback if server is broken |
+
+### 8. Response Aggregation Strategies
+
+For fan-out **requests** (with `id`), configure aggregation per method:
+
+```rust
+enum AggregationStrategy {
+    /// Return first successful response, cancel others
+    FirstWins,
+
+    /// Wait for all, merge array results (completion items, code actions)
+    MergeAll {
+        dedup_key: Option<String>,  // field to deduplicate on
+        max_items: Option<usize>,   // limit total items
+    },
+
+    /// Wait for all, return highest priority non-null result
+    Ranked {
+        priority: Vec<String>,  // server keys in priority order
+    },
+}
+```
+
+**When aggregation IS needed:**
+- `completion`: Both LSes return completion items → merge into single list
+- `codeAction`: pyright refactorings + ruff lint fixes → merge into single list
+
+**When aggregation is NOT needed:**
+- Single capable LS → route directly
+- Diagnostics → notification pass-through (client aggregates per LSP 3.x § Publish Diagnostics)
+- Capabilities don't overlap → route to respective LS
+
+### 9. Notification Pass-through (No Aggregation)
+
+**Diagnostics and other server-initiated notifications do NOT require aggregation.**
+
+`textDocument/publishDiagnostics` is a notification (no `id`, no response expected). Each downstream server can publish its own diagnostics independently:
 
 ```
-Problem:
-  upstream: didChange(v10) → completion
-  If completion reaches downstream before didChange, downstream computes on stale state.
-
-Solution:
-  Per-downstream single send queue ensures:
-    didChange(v10) → completion  (in downstream read order)
+pyright  ──publishDiagnostics──►  bridge  ──publishDiagnostics──►  upstream
+ruff     ──publishDiagnostics──►  bridge  ──publishDiagnostics──►  upstream
+                                  (pass-through, no merge)
 ```
 
-**Implementation:**
+The bridge simply:
+1. Receives notification from downstream
+2. Transforms URI (virtual → host document URI)
+3. Forwards to upstream client
 
-- Each `TokioAsyncBridgeConnection` already serializes writes via `Mutex<ChildStdin>`
-- Notifications and requests share the same write path, preserving order
-- For document-level parallelism (future optimization): separate queues per `(downstream, document_uri)`
+The client (e.g., VSCode) automatically aggregates diagnostics from multiple sources. This is the standard LSP behavior and requires no special handling.
 
-### 6. Cancellation Propagation
+**Other pass-through notifications:**
+- `$/progress` — Already forwarded via `notification_sender` channel
+- `window/logMessage` — Can be forwarded as-is
+- `window/showMessage` — Can be forwarded as-is
 
-When upstream sends `$/cancelRequest`, propagate to all downstream servers that have pending requests for that `upstream_id`:
+### 10. Cancellation Propagation
+
+When upstream sends `$/cancelRequest` (LSP 3.x § Cancellation Support), propagate to all downstream servers that have pending requests for that `upstream_id`:
 
 ```rust
 // In TokioAsyncLanguageServerPool
@@ -609,7 +590,7 @@ async fn handle_cancel_request(&self, upstream_id: i64) {
 pending_correlations: DashMap<i64, Vec<(String, i64)>>, // upstream_id → [(downstream_key, downstream_id)]
 ```
 
-### 7. Circuit Breaker Pattern
+### 11. Circuit Breaker Pattern
 
 Prevent cascading failures when a downstream server is unhealthy:
 
@@ -687,7 +668,7 @@ impl TokioAsyncLanguageServerPool {
 }
 ```
 
-### 8. Bulkhead Pattern
+### 12. Bulkhead Pattern
 
 Isolate downstream servers so one slow/broken server doesn't exhaust shared resources:
 
@@ -708,52 +689,7 @@ struct TokioAsyncBridgeConnection {
 
 The current `MAX_PENDING_REQUESTS = 100` acts as a global backpressure limit. Bulkhead adds per-connection limits for finer isolation.
 
-### 9. Notification Pass-through (No Aggregation)
-
-**Diagnostics and other server-initiated notifications do NOT require aggregation.**
-
-`textDocument/publishDiagnostics` is a notification (no `id`, no response expected). Each downstream server can publish its own diagnostics independently:
-
-```
-pyright  ──publishDiagnostics──►  bridge  ──publishDiagnostics──►  upstream
-ruff     ──publishDiagnostics──►  bridge  ──publishDiagnostics──►  upstream
-                                  (pass-through, no merge)
-```
-
-The bridge simply:
-1. Receives notification from downstream
-2. Transforms URI (virtual → host document URI)
-3. Forwards to upstream client
-
-The client (e.g., VSCode) automatically aggregates diagnostics from multiple sources. This is the standard LSP behavior and requires no special handling.
-
-**Other pass-through notifications:**
-- `$/progress` — Already forwarded via `notification_sender` channel
-- `window/logMessage` — Can be forwarded as-is
-- `window/showMessage` — Can be forwarded as-is
-
-### 10. Response Aggregation Strategies (Request/Response Only)
-
-For fan-out **requests** (with `id`), configure aggregation per method:
-
-```rust
-enum AggregationStrategy {
-    /// Return first successful response, cancel others
-    FirstWins,
-
-    /// Wait for all, merge array results (completion items, diagnostics)
-    MergeAll {
-        dedup_key: Option<String>,  // field to deduplicate on
-        max_items: Option<usize>,   // limit total items
-    },
-
-    /// Wait for all, return highest priority non-null result
-    Ranked {
-        priority: Vec<String>,  // server keys in priority order
-    },
-}
-```
-
+### 13. Configuration Example
 
 ```yaml
 # Configuration example (routing-first approach)
@@ -822,8 +758,7 @@ languageServers:
 
 ## Implementation Plan
 
-The current async bridge has **hang issues** due to waker/channel race conditions.
-Multiple fix attempts (yield_now, mpsc, Notify) have not resolved the root cause.
+The current async bridge has **hang issues** due to waker/channel race conditions. Multiple fix attempts have not resolved the root cause.
 **Decision: Re-implement from scratch with simpler, proven patterns.**
 
 ### Phase 1: Single-LS-per-Language Foundation
