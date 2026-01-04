@@ -3,11 +3,11 @@
 //! This module provides the bridge infrastructure for communicating with
 //! language servers asynchronously for injection regions.
 
-pub mod connection;
-pub mod pool;
+pub(crate) mod connection;
+pub(crate) mod pool;
 
-pub use connection::BridgeConnection;
-pub use pool::LanguageServerPool;
+pub(crate) use connection::BridgeConnection;
+pub(crate) use pool::LanguageServerPool;
 
 #[cfg(test)]
 mod tests {
