@@ -1,12 +1,11 @@
-//! End-to-end tests for basic LSP functionality using direct LSP communication with treesitter-ls binary.
+//! End-to-end tests for LSP protocol conformance.
 //!
-//! These tests spawn the treesitter-ls binary and communicate via LSP protocol,
-//! enabling faster and more reliable E2E testing without Neovim dependency.
+//! These tests verify that treesitter-ls correctly implements the core LSP
+//! protocol lifecycle: spawning, initialization handshake, and clean shutdown.
+//! They test the server itself, not any specific language features or bridge
+//! functionality.
 //!
-//! Note: Bridge-specific tests have been removed. These tests verify core LSP
-//! protocol compliance (spawn, initialize, shutdown) independent of bridge functionality.
-//!
-//! Run with: `cargo test --features e2e`
+//! Run with: `cargo test --test e2e_lsp_protocol --features e2e`
 
 #![cfg(feature = "e2e")]
 
