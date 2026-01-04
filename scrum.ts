@@ -170,8 +170,10 @@ const scrum: ScrumDashboard = {
         test: "Pool.hover() passes virtual content to check_and_send_did_open before send_request",
         implementation: "Extract content in hover_impl via cacheable.extract_content(text), pass to Pool via new parameter",
         type: "behavioral" as SubtaskType,
-        status: "pending" as SubtaskStatus,
-        commits: [],
+        status: "completed" as SubtaskStatus,
+        commits: [
+          { hash: "ac7b075", message: "feat(bridge): wire Pool.hover to send didOpen with virtual content", phase: "green" as CommitPhase }
+        ],
         notes: [
           "Change Pool.hover signature: add content: String parameter",
           "hover_impl extracts: let virtual_content = cacheable.extract_content(text).to_string()",
