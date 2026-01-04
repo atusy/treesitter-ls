@@ -196,6 +196,32 @@ impl TreeSitterLs {
         search_paths.iter().any(|p| p == default_str.as_ref())
     }
 
+    /// Forward a client notification to the notification channel for bridge processing.
+    ///
+    /// PBI-191: This method sends notifications (didChange, didSave, didClose) through
+    /// the tokio_notification_tx channel to the notification forwarder task, which then
+    /// routes them to the bridge layer.
+    ///
+    /// # Arguments
+    /// * `notification` - The JSON-RPC notification to forward
+    ///
+    /// # Returns
+    /// * `Ok(())` if notification was sent successfully
+    /// * `Err` if sender is None or channel is closed
+    async fn handle_client_notification(
+        &self,
+        notification: serde_json::Value,
+    ) -> Result<()> {
+        if let Some(ref sender) = self.tokio_notification_tx {
+            sender
+                .send(notification)
+                .map_err(|_| tower_lsp::jsonrpc::Error::internal_error())?;
+            Ok(())
+        } else {
+            Err(tower_lsp::jsonrpc::Error::internal_error())
+        }
+    }
+
     /// Notify user that parser is missing and needs manual installation.
     ///
     /// Called when a parser fails to load and auto-install is disabled
@@ -1999,6 +2025,58 @@ mod tests {
         assert!(
             !sender.is_closed(),
             "Sender should not be closed after TreeSitterLs construction"
+        );
+    }
+
+    /// PBI-191 Subtask 2: Test that handle_client_notification() sends notifications through channel.
+    ///
+    /// This test verifies that when handle_client_notification() is called with a notification,
+    /// it forwards the notification through the tokio_notification_tx channel instead of dropping it.
+    ///
+    /// Test strategy: Call handle_client_notification(), verify receiver gets the notification.
+    #[tokio::test]
+    async fn test_handle_client_notification_sends_to_channel() {
+        // Create a mock client for TreeSitterLs
+        let (service, _) = tower_lsp::LspService::new(|client| TreeSitterLs::new(client));
+        let server = service.inner();
+
+        // Create test notification (didChange)
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/didChange",
+            "params": {
+                "textDocument": {
+                    "uri": "file:///test.lua",
+                    "version": 2
+                },
+                "contentChanges": [{
+                    "text": "local x = 1"
+                }]
+            }
+        });
+
+        // Send notification through handle_client_notification
+        server
+            .handle_client_notification(notification.clone())
+            .await
+            .expect("handle_client_notification should succeed");
+
+        // Verify notification was sent to channel by receiving it
+        let mut rx_guard = server.tokio_notification_rx.lock().await;
+        let rx = rx_guard.as_mut().expect("Receiver should exist");
+
+        // Try to receive with timeout to avoid hanging if nothing was sent
+        let received = tokio::time::timeout(
+            tokio::time::Duration::from_millis(100),
+            rx.recv()
+        )
+        .await
+        .expect("Should receive notification within timeout")
+        .expect("Channel should not be closed");
+
+        assert_eq!(
+            received, notification,
+            "Received notification should match sent notification"
         );
     }
 }
