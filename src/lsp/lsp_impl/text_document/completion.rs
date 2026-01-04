@@ -100,8 +100,8 @@ impl TreeSitterLs {
         // Create cacheable region for position translation
         let cacheable = CacheableInjectionRegion::from_region_info(region, "temp", text);
 
-        // Extract virtual document content (for future use in didOpen)
-        let _virtual_content = cacheable.extract_content(text);
+        // Extract virtual document content for didOpen
+        let virtual_content = cacheable.extract_content(text).to_string();
 
         // Translate position from host to virtual coordinates
         let virtual_position = cacheable.translate_host_to_virtual(position);
@@ -142,8 +142,11 @@ impl TreeSitterLs {
             context: params.context,
         };
 
-        // Call language_server_pool.completion() for the injection region
-        let completion_response = self.language_server_pool.completion(virtual_params).await?;
+        // Call language_server_pool.completion() for the injection region, passing virtual content
+        let completion_response = self
+            .language_server_pool
+            .completion(virtual_params, virtual_content)
+            .await?;
 
         // TODO(PBI-180a Subtask 4): Translate response ranges from virtual to host coordinates
         // For now, return response as-is

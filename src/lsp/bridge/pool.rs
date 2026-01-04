@@ -98,12 +98,14 @@ impl LanguageServerPool {
     ///
     /// # Arguments
     /// * `params` - Completion parameters including virtual document URI and translated position
+    /// * `content` - Virtual document content to send via didOpen on first access
     ///
     /// # Returns
     /// Completion response from language server, or None if no connection
     pub(crate) async fn completion(
         &self,
         params: CompletionParams,
+        content: String,
     ) -> Result<Option<CompletionResponse>> {
         // Extract language from virtual URI
         let uri = &params.text_document_position.text_document.uri;
@@ -121,15 +123,18 @@ impl LanguageServerPool {
             }
         })?;
 
-        // TODO(PBI-181): Send textDocument/didOpen with proper virtual document content
-        // For MVP, we skip didOpen to simplify - lua-ls can handle completion without didOpen
-        // Real implementation will:
-        // 1. Track which virtual documents have been opened per connection
-        // 2. Send didOpen on first access with actual virtual content
-        // 3. Send didChange when virtual content updates
+        // Send didOpen with virtual document content on first access
+        let virtual_uri_str = uri.to_string();
+        connection
+            .check_and_send_did_open(&virtual_uri_str, &language, &content)
+            .await
+            .map_err(|e| tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::InternalError,
+                message: format!("Failed to send didOpen for virtual document: {}", e).into(),
+                data: None,
+            })?;
 
         // Build JSON params for LSP request
-        let virtual_uri_str = uri.to_string();
         let request_params = serde_json::json!({
             "textDocument": {
                 "uri": virtual_uri_str
@@ -393,7 +398,7 @@ mod tests {
             context: None,
         };
 
-        let result = pool.completion(params).await;
+        let result = pool.completion(params, String::new()).await;
         assert!(
             result.is_ok(),
             "Completion should succeed: {:?}",
