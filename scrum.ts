@@ -25,8 +25,37 @@ const scrum: ScrumDashboard = {
   // Superseded: PBI-183 (merged into PBI-180b during Sprint 136 refinement)
   product_backlog: [
     // ADR-0012 Phase 1: Single-LS-per-Language Foundation (PBI-178-181, PBI-184 done, Sprint 133-137)
-    // Sprint 138 candidates: PBI-180b superseding (ready, highest priority), PBI-182 definition/signatureHelp (draft)
+    // Sprint 138 candidates (prioritized): PBI-185 virtual doc sync (ready, HIGHEST - user-facing bug), PBI-180b superseding (ready), PBI-182 definition/signatureHelp (draft)
+    // PRIORITY RATIONALE: PBI-185 fixes "No result" bug (hover/completion return null without didOpen content), blocking all semantic features
     // Future: PBI-182 definition/signatureHelp (draft - needs AC refinement)
+    {
+      id: "PBI-185",
+      story: {
+        role: "developer editing Lua files",
+        capability: "receive real hover and completion results for Lua code in markdown",
+        benefit: "I can see actual documentation and suggestions, not empty results",
+      },
+      acceptance_criteria: [
+        { criterion: "Pool sends didOpen with virtual document content on first request to a connection", verification: "grep -A10 'send.*didOpen' src/lsp/bridge/pool.rs | grep 'content.*CacheableInjectionRegion'" },
+        { criterion: "Virtual document URI and content extracted from CacheableInjectionRegion", verification: "grep 'CacheableInjectionRegion.*virtual_uri\\|virtual_content' src/lsp/bridge/pool.rs" },
+        { criterion: "Connection tracks which virtual documents have been opened (HashSet or similar)", verification: "grep 'opened_documents.*HashSet' src/lsp/bridge/connection.rs" },
+        { criterion: "E2E test receives real hover information (not null) for Lua built-in", verification: "cargo test --test e2e_lsp_lua_hover --features e2e 2>&1 | grep -v 'Workspace loading\\|No result'" },
+        { criterion: "E2E test receives real completion items (not null) for Lua code", verification: "cargo test --test e2e_lsp_lua_completion --features e2e 2>&1 | grep -v 'Workspace loading: 0 / 0'" },
+      ],
+      status: "ready" as PBIStatus,
+      refinement_notes: [
+        "SPRINT 138 REFINEMENT: Created from Sprint 137 retrospective action (product timing)",
+        "CRITICAL USER FEEDBACK: User tested hover and sees 'Workspace loading: 0 / 0' then 'No result' - lua-ls returns null without didOpen content",
+        "ROOT CAUSE: Pool sends requests without first sending didOpen with virtual document content to lua-ls",
+        "PRIORITY: HIGHEST - Without this, hover/completion return null (user-facing bug blocking all semantic features)",
+        "IMPLEMENTATION APPROACH (two-pass): 1) Send didOpen before first request for a language, 2) Use content from CacheableInjectionRegion, 3) Track opened docs per connection",
+        "DEPENDENCY: Requires PBI-184 infrastructure (Pool, get_or_spawn_connection) ✓ DONE Sprint 136",
+        "DEPENDENCY: Requires PBI-181 infrastructure (hover method) ✓ DONE Sprint 137",
+        "VALUE: Fixes 'No result' bug - enables semantic features (hover, completion) to return real results from lua-ls",
+        "COMPLEXITY: Medium - requires connection state tracking (opened documents) and content extraction from injection regions",
+        "NEXT STEPS: Review ADR-0012 Phase 1 §5.1 (initialization protocol) and §6.1 (two-phase notification handling)",
+      ],
+    },
     {
       id: "PBI-180b",
       story: {
@@ -124,7 +153,7 @@ const scrum: ScrumDashboard = {
   // Retrospectives (recent 3) | Sprints 1-133: git log -- scrum.yaml, scrum.ts
   retrospectives: [
     { sprint: 137, improvements: [
-      { action: "Create virtual document synchronization tracking system (track didOpen/didChange per connection, send virtual content on first access)", timing: "product", status: "active", outcome: null },
+      { action: "Create virtual document synchronization tracking system (track didOpen/didChange per connection, send virtual content on first access)", timing: "product", status: "completed", outcome: "Created PBI-185 with ready status - highest priority for Sprint 138 due to user-facing bug (hover/completion return null without didOpen content)" },
       { action: "Consolidate granular subtasks in sprint planning (11 subtasks in Sprint 137 could be 5-6 higher-level tasks, apply ADR-0012 PBI splitting criteria)", timing: "sprint", status: "active", outcome: null },
       { action: "Document pattern reuse strategy in ADR-0012 (completion→hover→definition progression validates incremental feature rollout)", timing: "sprint", status: "active", outcome: null },
     ] },
