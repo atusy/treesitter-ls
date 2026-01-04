@@ -82,7 +82,10 @@ impl LanguageServerPool {
             // Run initialization in background
             // Errors are logged but don't fail the spawn
             if let Err(e) = conn_for_init.initialize().await {
-                eprintln!("Background initialization failed for {}: {}", language_owned, e);
+                eprintln!(
+                    "Background initialization failed for {}: {}",
+                    language_owned, e
+                );
             }
         });
 
