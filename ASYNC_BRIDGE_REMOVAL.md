@@ -44,39 +44,40 @@ The current implementation (`TokioAsyncLanguageServerPool` and `TokioAsyncBridge
 - Would need complete redesign anyway
 - ADR-0012 introduces new architecture (RequestRouter, ResponseAggregator)
 
-### 3. Module Structure Changes
+### 3. Entire Bridge Module (2,532 lines)
 
-**Updated `src/lsp/bridge.rs`:**
-- Removed `mod tokio_connection;`
-- Removed `mod tokio_async_pool;`
-- Removed `pub use tokio_async_pool::TokioAsyncLanguageServerPool;`
-- Added `mod stub_pool;`
-- Added `pub use stub_pool::StubLanguageServerPool;`
+**Removed:** The entire `src/lsp/bridge/` directory in subsequent cleanup
+
+**Files removed:**
+- `cleanup.rs` (349 lines) - Temporary directory cleanup (only used by bridge)
+- `connection.rs` (1,659 lines) - Connection traits and types
+- `error_types.rs` (176 lines) - LSP error code constants
+- `workspace.rs` (266 lines) - Workspace setup utilities
+- `text_document.rs` and subdirectory (80 lines) - Response wrapper types
+
+**Module declaration removed:**
+- Removed `pub mod bridge;` from `src/lsp.rs`
+- Removed `startup_cleanup` call from `src/lsp/lsp_impl.rs`
+
+**Why removed:**
+- Only one function (`startup_cleanup`) was still being called
+- That function only cleaned up temp directories for the removed bridge
+- The new implementation (ADR-0012) will likely need different patterns:
+  - Different directory structure (possibly no temp dirs)
+  - Different connection patterns (simpler, no tokio waker issues)
+  - Different response handling (direct translation, no wrappers)
+- Keeping unused infrastructure creates confusion about which patterns to follow
+- All code preserved in git history (commit `ab7a2d3`) if needed as reference
 
 ## What Was Preserved
 
-These components are **NOT** part of the problematic implementation and remain for re-use:
+**Nothing.** The entire bridge implementation and infrastructure were removed.
 
-### 1. Bridge Infrastructure
-- **`cleanup.rs`** - Temporary directory cleanup utilities
-- **`connection.rs`** - Connection traits and types (interface definitions)
-- **`error_types.rs`** - LSP-compliant error codes (will be reused per ADR-0012 §1)
-- **`workspace.rs`** - Workspace setup utilities
-
-### 2. Response Wrapper Types
-Located in `src/lsp/bridge/text_document/`:
-- `CompletionWithNotifications`
-- `HoverWithNotifications`
-- `SignatureHelpWithNotifications`
-- `GotoDefinitionWithNotifications`
-
-**Why preserved:** These types capture both LSP responses and `$/progress` notifications. They're part of the **interface**, not the flawed implementation. The new `LanguageServerPool` will continue to return these types.
-
-### 3. Configuration Structures
-- `BridgeServerConfig` - Defines server command, args, environment
-- `WorkspaceType` - Defines workspace isolation strategy
-
-**Why preserved:** These define **what** to bridge, not **how**. Configuration schema is stable.
+**Rationale (YAGNI principle):**
+- The old infrastructure was designed for specific patterns (temp directories, workspace isolation, response wrappers) that may not apply to the new design
+- ADR-0012 introduces new architecture (RequestRouter, ResponseAggregator) that will have its own infrastructure needs
+- Git history preserves everything if we need reference material during re-implementation
+- Clean slate makes it clearer where to start with Phase 1
 
 ## No Stub Implementation
 
@@ -157,38 +158,72 @@ Per ADR-0012 naming decision:
 
 When implementing the new `LanguageServerPool`:
 
+- [ ] Create `src/lsp/bridge/` module structure per ADR-0012
 - [ ] Create `src/lsp/bridge/pool.rs` with `LanguageServerPool`
-- [ ] Create `src/lsp/bridge/connection.rs` (replace the trait-only version) with `BridgeConnection`
+- [ ] Create `src/lsp/bridge/connection.rs` with `BridgeConnection`
 - [ ] Implement Phase 1 functionality (single-LS-per-language)
-- [ ] Reuse `error_types.rs` for LSP-compliant error codes
-- [ ] Reuse `workspace.rs` for workspace setup
-- [ ] Continue returning `WithNotifications` wrapper types
-- [ ] Update `src/lsp/lsp_impl.rs` to use new `LanguageServerPool` instead of stub
+- [ ] Design new error handling approach (reference old `error_types.rs` from git)
+- [ ] Design workspace setup if needed (reference old `workspace.rs` from git)
+- [ ] Design notification handling (reference old `WithNotifications` wrappers from git)
+- [ ] Update `src/lsp/lsp_impl.rs` to use new `LanguageServerPool`
+- [ ] Add `pub mod bridge;` back to `src/lsp.rs`
 - [ ] Write tests for new implementation
 - [ ] Verify no hangs under concurrent load
-- [ ] Remove `stub_pool.rs` once new implementation is complete
+- [ ] Add startup cleanup if the new design needs temp directories
 
 ## Files Changed Summary
 
-### Deleted
+### Deleted (Total: ~7,600 lines across 5 commits)
+
+**Commit 1: Remove async implementation (ab7a2d3)**
 - `src/lsp/bridge/tokio_connection.rs` (1,271 lines)
 - `src/lsp/bridge/tokio_async_pool.rs` (2,409 lines)
 
+**Commit 2: Remove bridge e2e tests (958fd51)**
+- `tests/e2e_completion.rs` (240 lines)
+- `tests/e2e_hover.rs` (223 lines)
+- `tests/e2e_signature_help.rs` (261 lines)
+- `tests/e2e_notification.rs` (312 lines)
+- `tests/e2e_definition.rs` - 4 bridge test functions (231 lines)
+
+**Commit 3: Rename test file (1aeb13a)**
+- Renamed `tests/e2e_definition.rs` → `tests/e2e_lsp_protocol.rs`
+
+**Commit 4: Remove unused helpers (72e4495)**
+- `NO_RESULT_MESSAGE` constant from hover.rs
+- `create_no_result_hover()` function from hover.rs
+- Unused imports and variables (27 lines)
+
+**Commit 5: Remove bridge infrastructure (7ca60e7)**
+- `src/lsp/bridge/cleanup.rs` (349 lines)
+- `src/lsp/bridge/connection.rs` (1,659 lines)
+- `src/lsp/bridge/error_types.rs` (176 lines)
+- `src/lsp/bridge/workspace.rs` (266 lines)
+- `src/lsp/bridge/text_document.rs` (14 lines)
+- `src/lsp/bridge/text_document/completion.rs` (17 lines)
+- `src/lsp/bridge/text_document/definition.rs` (17 lines)
+- `src/lsp/bridge/text_document/hover.rs` (17 lines)
+- `src/lsp/bridge/text_document/signature_help.rs` (17 lines)
 
 ### Modified
-- `src/lsp/bridge.rs` (module structure)
-- `src/lsp/lsp_impl.rs` (use stub instead of async pool)
-- `src/lsp/lsp_impl/text_document/completion.rs` (extract `.response`)
-- `src/lsp/lsp_impl/text_document/definition.rs` (extract `.response`)
-- `src/lsp/lsp_impl/text_document/hover.rs` (extract `.response`)
-- `src/lsp/lsp_impl/text_document/signature_help.rs` (extract `.response`)
 
-### Preserved
-- `src/lsp/bridge/cleanup.rs`
-- `src/lsp/bridge/connection.rs` (trait definitions)
-- `src/lsp/bridge/error_types.rs`
-- `src/lsp/bridge/workspace.rs`
-- `src/lsp/bridge/text_document/*.rs` (response wrappers)
+**Commit 1:**
+- `src/lsp/lsp_impl.rs` (removed bridge pool usage, added TODO comments)
+- `src/lsp/lsp_impl/text_document/completion.rs` (return `Ok(None)` with TODO)
+- `src/lsp/lsp_impl/text_document/definition.rs` (return `Ok(None)` with TODO)
+- `src/lsp/lsp_impl/text_document/hover.rs` (return `Ok(None)` with TODO)
+- `src/lsp/lsp_impl/text_document/signature_help.rs` (return `Ok(None)` with TODO)
+
+**Commit 3:**
+- `tests/e2e_lsp_protocol.rs` (updated documentation to reflect protocol tests only)
+
+**Commit 4:**
+- `src/lsp/lsp_impl/text_document/hover.rs` (removed unused code)
+- `src/lsp/lsp_impl/text_document/definition.rs` (removed unused variable)
+
+**Commit 5:**
+- `src/lsp.rs` (removed `pub mod bridge;` declaration)
+- `src/lsp/lsp_impl.rs` (removed `startup_cleanup` call, added comment)
 
 ## Compilation Status
 
