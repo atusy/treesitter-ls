@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::process::{Child, ChildStdin, ChildStdout};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 
 /// Represents a connection to a bridged language server
 #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
@@ -17,6 +17,8 @@ pub struct BridgeConnection {
     next_request_id: AtomicU64,
     /// Tracks whether the connection has been initialized
     initialized: AtomicBool,
+    /// Notify for waking tasks waiting for initialization
+    initialized_notify: Notify,
     /// Tracks whether didOpen notification has been sent
     did_open_sent: AtomicBool,
 }
@@ -65,6 +67,7 @@ impl BridgeConnection {
             stdout: Mutex::new(stdout),
             next_request_id: AtomicU64::new(1),
             initialized: AtomicBool::new(false),
+            initialized_notify: Notify::new(),
             did_open_sent: AtomicBool::new(false),
         })
     }
@@ -187,6 +190,31 @@ impl BridgeConnection {
         response.get("result")
             .cloned()
             .ok_or_else(|| "Initialize response missing 'result' field".to_string())
+    }
+
+    /// Sends the initialized notification to the language server
+    ///
+    /// This MUST be called after receiving InitializeResult and before
+    /// sending any other notifications or requests. Sets the initialized flag.
+    #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
+    pub(crate) async fn send_initialized_notification(&self) -> Result<(), String> {
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "initialized",
+            "params": {}
+        });
+
+        // Write notification
+        {
+            let mut stdin = self.stdin.lock().await;
+            Self::write_message(&mut *stdin, &notification).await?;
+        }
+
+        // Set initialized flag and notify waiters
+        self.initialized.store(true, Ordering::SeqCst);
+        self.initialized_notify.notify_waiters();
+
+        Ok(())
     }
 }
 
