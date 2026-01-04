@@ -19,38 +19,14 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113), PBI-155-161 (Sprint 124-130), PBI-178-180a (Sprint 133-135), PBI-184 (Sprint 136)
+  // Completed PBIs: PBI-001 through PBI-140 (Sprint 1-113), PBI-155-161 (Sprint 124-130), PBI-178-180a (Sprint 133-135), PBI-184 (Sprint 136), PBI-181 (Sprint 137)
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   // Removed: PBI-163-177 (obsolete - created before greenfield deletion per ASYNC_BRIDGE_REMOVAL.md)
   // Superseded: PBI-183 (merged into PBI-180b during Sprint 136 refinement)
   product_backlog: [
-    // ADR-0012 Phase 1: Single-LS-per-Language Foundation (PBI-178-184 done, Sprint 133-136)
-    // Sprint 137 candidates: PBI-181 hover (ready, highest priority), PBI-180b superseding (ready)
+    // ADR-0012 Phase 1: Single-LS-per-Language Foundation (PBI-178-181, PBI-184 done, Sprint 133-137)
+    // Sprint 138 candidates: PBI-180b superseding (ready, highest priority), PBI-182 definition/signatureHelp (draft)
     // Future: PBI-182 definition/signatureHelp (draft - needs AC refinement)
-    {
-      id: "PBI-181",
-      story: {
-        role: "developer editing Lua files",
-        capability: "see hover information for Lua code in markdown code blocks",
-        benefit: "I can understand Lua APIs and types without leaving the markdown document",
-      },
-      acceptance_criteria: [
-        { criterion: "Pool.hover() method calls BridgeConnection.send_request with textDocument/hover", verification: "grep 'send_request.*hover\\|hover.*send_request' src/lsp/bridge/pool.rs" },
-        { criterion: "Hover request uses virtual document URI and translated position from host coordinates", verification: "grep -E 'virtual.*uri|translate.*position' src/lsp/bridge/pool.rs" },
-        { criterion: "Hover response (Hover with contents) returned to host without range translation (hover ranges are optional)", verification: "grep -E 'pool.hover|Hover' src/lsp/lsp_impl/text_document/hover.rs" },
-        { criterion: "E2E test using treesitter-ls binary receives real hover information from lua-ls for Lua built-in (e.g., print)", verification: "cargo test --test e2e_lsp_lua_hover --features e2e" },
-      ],
-      status: "ready" as PBIStatus,
-      refinement_notes: [
-        "SPRINT 137 REFINEMENT: Confirmed ready for sprint - all ACs testable with correct E2E pattern",
-        "SPRINT 137 REFINEMENT: Updated AC4 E2E verification to use binary-first pattern (LspClient, not BridgeConnection)",
-        "ALIGNED WITH SPRINT 136 LEARNING: E2E test must spawn treesitter-ls binary, following e2e_lsp_lua_completion.rs pattern",
-        "SIMPLIFIED: 4 ACs (hover ranges optional in LSP spec, superseding deferred to PBI-180b)",
-        "UNBLOCKED: PBI-184 done (Sprint 136) - pool now spawns/manages BridgeConnection per language",
-        "COMPLEXITY: Low-Medium - directly reuses send_request infrastructure from Sprint 135",
-        "PRIORITY: Highest in ADR-0012 Phase 1 backlog - direct user value for API documentation",
-      ],
-    },
     {
       id: "PBI-180b",
       story: {
@@ -118,12 +94,157 @@ const scrum: ScrumDashboard = {
       { name: "All unit tests pass", run: "make test" },
       { name: "Code quality checks pass", run: "make check" },
       { name: "E2E tests pass", run: "make test_e2e" },
-      { name: "Documentation updated alongside implementation", run: "git diff --name-only | grep -E '(README|docs/|adr/)' || echo 'No docs updated - verify if needed'" },
-      { name: "ADR verification for architectural changes", run: "git diff --name-only | grep -E 'adr/' || echo 'No ADR updated - verify if architectural change'" },
+    ],
+  },
+  completed: [
+    {
+      number: 137,
+      pbi_id: "PBI-181",
+      goal: "Implement hover support for Lua code blocks in markdown so developers can see documentation and type information for Lua APIs",
+      status: "done" as SprintStatus,
+      subtasks: [
+        {
+          test: "Pool.hover() extracts language from virtual URI",
+          implementation: "Reuse Pool::extract_language_from_uri pattern from completion()",
+          type: "behavioral" as SubtaskType,
+          status: "completed" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Pattern: let Some(language) = Self::extract_language_from_uri(uri)",
+          "Reference: Pool.completion() lines 108-113",
+          "Already implemented in pool.rs - reuse existing method",
+        ],
+      },
+      {
+        test: "Pool.hover() calls get_or_spawn_connection(language)",
+        implementation: "Call self.get_or_spawn_connection(&language).await with error mapping",
+        type: "behavioral" as SubtaskType,
+        status: "completed" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Pattern: let connection = self.get_or_spawn_connection(&language).await.map_err(...)",
+          "Reference: Pool.completion() lines 115-122",
+          "Error mapping to tower_lsp::jsonrpc::Error with InternalError code",
+        ],
+      },
+      {
+        test: "Pool.hover() builds hover params with virtual URI and translated position",
+        implementation: "Build JSON params with textDocument.uri and position from HoverParams",
+        type: "behavioral" as SubtaskType,
+        status: "completed" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Pattern: Build JSON params with serde_json::json! macro",
+          "Reference: Pool.completion() lines 131-142",
+          "HoverParams contains text_document_position_params with uri and position",
+          "No context field needed (unlike completion)",
+        ],
+      },
+      {
+        test: "Pool.hover() calls send_request with textDocument/hover method",
+        implementation: "Call connection.send_request('textDocument/hover', params).await",
+        type: "behavioral" as SubtaskType,
+        status: "completed" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Pattern: connection.send_request('textDocument/hover', request_params).await",
+          "Reference: Pool.completion() lines 144-152",
+          "Error mapping to tower_lsp::jsonrpc::Error with InternalError code",
+        ],
+      },
+      {
+        test: "Pool.hover() deserializes response into Hover type",
+        implementation: "Deserialize serde_json::Value into Hover with null handling",
+        type: "behavioral" as SubtaskType,
+        status: "completed" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Pattern: if response.is_null() { return Ok(None); } then serde_json::from_value",
+          "Reference: Pool.completion() lines 155-165",
+          "LSP spec allows null response when no hover information available",
+          "Hover type from tower_lsp::lsp_types contains contents and optional range",
+        ],
+      },
+      {
+        test: "Pool.hover() returns Hover without range translation",
+        implementation: "Return Ok(Some(hover_response)) directly",
+        type: "behavioral" as SubtaskType,
+        status: "completed" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Pattern: Ok(Some(hover_response))",
+          "Reference: Pool.completion() line 167",
+          "No range translation needed - hover ranges optional in LSP spec",
+          "AC3 clarifies: return to host without range translation",
+        ],
+      },
+      {
+        test: "hover_impl() wires Pool.hover() with real params",
+        implementation: "Replace fakeit dummy_params with translated position and virtual URI",
+        type: "behavioral" as SubtaskType,
+        status: "completed" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Location: src/lsp/lsp_impl/text_document/hover.rs lines 104-111",
+          "Build HoverParams with virtual URI from region",
+          "Translate position using CacheableInjectionRegion.translate_host_to_virtual()",
+          "Remove TODO comment about ADR-0012 Phase 2",
+        ],
+      },
+      {
+        test: "E2E test: spawn treesitter-ls binary via LspClient",
+        implementation: "Create tests/e2e_lsp_lua_hover.rs following completion pattern",
+        type: "behavioral" as SubtaskType,
+        status: "completed" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Reference: tests/e2e_lsp_lua_completion.rs as canonical pattern",
+          "Spawn binary with LspClient::new()",
+          "Initialize handshake: initialize → initialized",
+          "Binary-first pattern per docs/e2e-testing-checklist.md",
+        ],
+      },
+      {
+        test: "E2E test: open markdown with Lua code block via didOpen",
+        implementation: "Send textDocument/didOpen notification with markdown content",
+        type: "behavioral" as SubtaskType,
+        status: "completed" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Markdown content with ```lua code block containing Lua built-in",
+          "Example: print() or string.format() for guaranteed hover info",
+          "Reference: e2e_lsp_lua_completion.rs lines 49-73",
+        ],
+      },
+      {
+        test: "E2E test: request hover at Lua built-in position",
+        implementation: "Send textDocument/hover at position over Lua built-in (e.g., print)",
+        type: "behavioral" as SubtaskType,
+        status: "completed" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Position calculation: account for markdown fence and content",
+          "Target: position over 'print' identifier for guaranteed hover",
+          "Reference: e2e_lsp_lua_completion.rs lines 75-89",
+        ],
+      },
+      {
+        test: "E2E test: verify hover response contains contents",
+        implementation: "Assert response.result has Hover with non-empty contents field",
+        type: "behavioral" as SubtaskType,
+        status: "completed" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "Check response.error is None",
+          "Hover.contents can be MarkedString, MarkedString[], or MarkupContent",
+          "Verify contents field exists and is non-empty",
+          "Reference: e2e_lsp_lua_completion.rs lines 91-149 for verification pattern",
+          "AC4: receives real hover information from lua-ls for Lua built-in",
+        ],
+      },
     ],
   },
   // Historical sprints (recent 3) | Sprint 1-133: git log -- scrum.yaml, scrum.ts
-  completed: [
     { number: 136, pbi_id: "PBI-184", goal: "Wire bridge infrastructure to treesitter-ls binary with connection lifecycle management", status: "done", subtasks: [
       { test: "DashMap<String, Arc<BridgeConnection>> for per-language connections", implementation: "Replace _connection: Option with DashMap for concurrent access", type: "behavioral", status: "completed", commits: [{ hash: "1c61df2", message: "feat(bridge): add DashMap for per-language connections", phase: "green" }], notes: [] },
       { test: "get_or_spawn_connection(language) spawns on first access", implementation: "DashMap entry API with lazy initialization", type: "behavioral", status: "completed", commits: [{ hash: "df04faf", message: "feat(bridge): implement lazy connection spawning", phase: "green" }], notes: [] },
