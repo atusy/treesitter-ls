@@ -41,7 +41,7 @@ const scrum: ScrumDashboard = {
     checks: [
       { name: "All unit tests pass", run: "make test" },
       { name: "Code quality checks pass", run: "make check" },
-      { name: "E2E tests pass", run: "make test_nvim" },
+      { name: "E2E tests pass", run: "make test_e2e" },
       { name: "Documentation updated alongside implementation", run: "git diff --name-only | grep -E '(README|docs/|adr/)' || echo 'No docs updated - verify if needed'" },
       { name: "ADR verification for architectural changes", run: "git diff --name-only | grep -E 'adr/' || echo 'No ADR updated - verify if architectural change'" },
     ],
