@@ -297,26 +297,46 @@ pub async fn send_notification(&self, method: &str, params: Value) -> Result<(),
         });
     }
 
-    // Phase 2 guard: handle notifications before didOpen sent
-    if !self.did_open_sent.load(Ordering::SeqCst) {
-        match method {
-            "initialized" => {
-                // Always allow - this sets the initialized flag
-            }
-            "textDocument/didOpen" => {
-                // Send and mark that didOpen has been sent
-                // ... send logic ...
-                self.did_open_sent.store(true, Ordering::SeqCst);
-                return Ok(());
-            }
-            "textDocument/didChange" | "textDocument/didSave" | "textDocument/didClose" => {
-                // Do not forward notification. The state change is accumulated
-                // and will be included in the content of the `didOpen` notification.
-                log::debug!("Not forwarding {} during init; state will be in didOpen", method);
-                return Ok(());
-            }
-            _ => {
-                // Other notifications proceed after initialized
+    // Phase 2 guard: handle notifications before didOpen sent (PER-DOCUMENT)
+    if let Some(uri) = extract_uri_from_params(&params, method) {
+        let has_opened = {
+            let opened = self.opened_documents.lock().await;
+            opened.contains(&uri)
+        };
+
+        if !has_opened {
+            match method {
+                "initialized" => {
+                    // Always allow - this sets the initialized flag
+                }
+                "textDocument/didOpen" => {
+                    // Send and mark that THIS DOCUMENT has been opened
+                    // ... send logic ...
+                    {
+                        let mut opened = self.opened_documents.lock().await;
+                        opened.insert(uri.to_string());
+                    }
+                    return Ok(());
+                }
+                "textDocument/didChange" => {
+                    // Accumulate change - will be included in didOpen content
+                    if let Some(changes) = params.get("contentChanges") {
+                        let mut pending = self.pending_changes.lock().await;
+                        pending.entry(uri.clone())
+                            .or_insert_with(Vec::new)
+                            .extend(parse_changes(changes));
+                    }
+                    log::debug!("Accumulated {} for {}; state will be in didOpen", method, uri);
+                    return Ok(());
+                }
+                "textDocument/didSave" | "textDocument/didClose" => {
+                    // Do not forward - document not opened yet
+                    log::debug!("Not forwarding {} for {} during init", method, uri);
+                    return Ok(());
+                }
+                _ => {
+                    // Other notifications proceed after initialized
+                }
             }
         }
     }
@@ -333,9 +353,40 @@ Phase 1/2 guards are internal only. Notifications must not emit responses on the
 struct BridgeConnection {
     // ... existing fields ...
     initialized: AtomicBool,         // true after "initialized" notification sent
-    did_open_sent: AtomicBool,       // true after first "didOpen" notification sent
     initialized_notify: Notify,      // wake tasks waiting for initialization
+
+    // CRITICAL: Per-document tracking (NOT connection-level)
+    opened_documents: Arc<Mutex<HashSet<String>>>,  // Track which virtual docs have didOpen sent
+    pending_changes: Arc<Mutex<HashMap<String, Vec<ContentChange>>>>,  // Accumulate changes before didOpen
 }
+```
+
+**IMPORTANT - Per-Document vs Connection-Level Tracking:**
+
+The Phase 2 guard MUST track `didOpen` status **per virtual document**, NOT per connection. A single bridge connection may handle multiple virtual documents (e.g., multiple Python code blocks in the same markdown file), and each must track its own lifecycle independently.
+
+**Anti-pattern (WRONG):**
+```rust
+// ❌ Connection-level flag - breaks with multiple documents
+if !self.did_open_sent.load(Ordering::SeqCst) {
+    // Drops didChange for ALL documents if ANY hasn't opened yet
+}
+```
+
+**Correct pattern:**
+```rust
+// ✅ Per-document tracking
+if let Some(uri) = extract_uri_from_params(&params, method) {
+    let has_opened = {
+        let opened = self.opened_documents.lock().await;
+        opened.contains(&uri)
+    };
+
+    if !has_opened {
+        // Only drop for THIS specific document
+    }
+}
+```
 
 **Queue prioritization to avoid head-of-line blocking:** Per-connection send queues prioritize text synchronization (`didOpen`/`didChange`/`didClose`) ahead of long-running requests, preventing large requests from delaying document state updates. For finer isolation in the future, move to per-document queues within a connection while preserving in-order delivery per document.
 ```
