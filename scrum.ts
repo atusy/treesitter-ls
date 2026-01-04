@@ -212,14 +212,19 @@ const scrum: ScrumDashboard = {
         test: "Phase 1 notification guard blocks notifications before initialized with SERVER_NOT_INITIALIZED",
         implementation: "BridgeConnection::send_notification checks initialized flag; return Err(SERVER_NOT_INITIALIZED) if false (except for 'initialized' method itself)",
         type: "behavioral" as SubtaskType,
-        status: "pending" as SubtaskStatus,
-        commits: [],
+        status: "completed" as SubtaskStatus,
+        commits: [
+          { hash: "f276b53", message: "feat(bridge): implement Phase 1 notification guard", phase: "green" as CommitPhase }
+        ],
         notes: [
           "Test: send_notification('textDocument/didOpen', ...) before initialized returns Err(SERVER_NOT_INITIALIZED)",
           "Test: send_notification('initialized', {}) allowed even when initialized=false",
           "Test: After initialized=true, all notifications allowed",
           "ADR-0012 §6.1 Phase 1: LSP requires initialized before other notifications",
-          "Error code: -32002 (SERVER_NOT_INITIALIZED per ADR-0012 §1)"
+          "Error code: -32002 (SERVER_NOT_INITIALIZED per ADR-0012 §1)",
+          "✓ Implemented send_notification() with Phase 1 guard",
+          "✓ Tests verify guard blocks before init, allows after init",
+          "✓ Exception for 'initialized' method itself"
         ]
       },
       {
