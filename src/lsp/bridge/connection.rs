@@ -251,6 +251,36 @@ impl BridgeConnection {
 
         Ok(())
     }
+
+    /// Sends a textDocument/didOpen notification to the language server
+    ///
+    /// # Arguments
+    /// * `uri` - Document URI (e.g., "file:///test.lua")
+    /// * `language_id` - Language ID (e.g., "lua")
+    /// * `text` - Document content
+    #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
+    pub(crate) async fn send_did_open(
+        &self,
+        uri: &str,
+        language_id: &str,
+        text: &str,
+    ) -> Result<(), String> {
+        let params = serde_json::json!({
+            "textDocument": {
+                "uri": uri,
+                "languageId": language_id,
+                "version": 1,
+                "text": text
+            }
+        });
+
+        self.send_notification("textDocument/didOpen", params).await?;
+
+        // Set did_open_sent flag
+        self.did_open_sent.store(true, Ordering::SeqCst);
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -426,5 +456,52 @@ mod tests {
         ).await;
 
         assert!(result.is_ok(), "Notification should be allowed after initialized: {:?}", result.err());
+    }
+
+    #[tokio::test]
+    async fn test_did_open_blocked_before_initialized() {
+        // Test that didOpen is blocked by Phase 1 guard
+        let connection = BridgeConnection::new("cat").await.unwrap();
+
+        // Should not be initialized initially
+        assert!(!connection.initialized.load(Ordering::SeqCst));
+
+        // Try to send didOpen
+        let result = connection.send_did_open(
+            "file:///test.lua",
+            "lua",
+            "print('hello')"
+        ).await;
+
+        assert!(result.is_err(), "didOpen should be blocked before initialized");
+        let error = result.unwrap_err();
+        assert!(error.contains("SERVER_NOT_INITIALIZED"), "Error should mention SERVER_NOT_INITIALIZED: {}", error);
+
+        // did_open_sent flag should still be false
+        assert!(!connection.did_open_sent.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn test_did_open_sets_flag_after_initialized() {
+        // Test that didOpen sets did_open_sent flag
+        let connection = BridgeConnection::new("cat").await.unwrap();
+
+        // Set initialized flag
+        connection.initialized.store(true, Ordering::SeqCst);
+
+        // Initially did_open_sent should be false
+        assert!(!connection.did_open_sent.load(Ordering::SeqCst));
+
+        // Send didOpen
+        let result = connection.send_did_open(
+            "file:///test.lua",
+            "lua",
+            "print('hello')"
+        ).await;
+
+        assert!(result.is_ok(), "didOpen should succeed: {:?}", result.err());
+
+        // did_open_sent flag should now be true
+        assert!(connection.did_open_sent.load(Ordering::SeqCst));
     }
 }
