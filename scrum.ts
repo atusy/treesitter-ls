@@ -156,12 +156,17 @@ const scrum: ScrumDashboard = {
       { test: "E2E test for fakeit bridge", implementation: "tests/e2e_bridge_fakeit.rs verifies no hangs", type: "behavioral", status: "completed", commits: [{ hash: "b4774b4", message: "test(e2e): add fakeit bridge tests", phase: "green" }], notes: ["377 unit tests pass", "39/40 E2E pass (1 pre-existing failure)"] },
     ] },
   ],
-  // Retrospectives (recent 2) | Sprints 1-132: git log -- scrum.yaml, scrum.ts
+  // Retrospectives (recent 3) | Sprints 1-132: git log -- scrum.yaml, scrum.ts
   retrospectives: [
+    { sprint: 134, improvements: [
+      { action: "Document E2E testing patterns (feature-gated visibility, testability vs API surface trade-offs) in ADR-0012 or new ADR-0013", timing: "sprint", status: "active", outcome: null },
+      { action: "Create JSON-RPC framing checklist (Content-Length, \\r\\n\\r\\n separator, UTF-8 byte length, async I/O patterns)", timing: "immediate", status: "completed", outcome: "Created docs/json-rpc-framing-checklist.md with implementation guidance from Sprint 134" },
+      { action: "Add performance budgets to ADR-0012 Phase 2/3 (init < 200ms, completion < 100ms, superseding < 10ms)", timing: "product", status: "active", outcome: null },
+    ] },
     { sprint: 133, improvements: [
       { action: "Document two-pass (fakeit → real) strategy in ADR-0012", timing: "sprint", status: "active", outcome: null },
-      { action: "Add test baseline hygiene check to Sprint Planning", timing: "sprint", status: "active", outcome: null },
-      { action: "Establish dead code annotation convention for phased implementations", timing: "sprint", status: "active", outcome: null },
+      { action: "Add test baseline hygiene check to Sprint Planning", timing: "sprint", status: "completed", outcome: "Sprint 134 started with clean 377 test baseline, all tests passed" },
+      { action: "Establish dead code annotation convention for phased implementations", timing: "sprint", status: "completed", outcome: "Sprint 134 had no dead code warnings, convention implicitly established" },
       { action: "Create PBI for fixing test_semantic_tokens_snapshot failure", timing: "product", status: "active", outcome: null },
       { action: "Add fakeit-first checklist to acceptance criteria template", timing: "product", status: "active", outcome: null },
     ] },
