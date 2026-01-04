@@ -27,7 +27,8 @@ const scrum: ScrumDashboard = {
   product_backlog: [
     // ADR-0012 Phase 1: Single-LS-per-Language Foundation (PBI-178-181, PBI-184-185 done, Sprint 133-138)
     // CRITICAL: PBI-187 must be done FIRST - it fixes the actual hang by making init non-blocking
-    // Priority order: PBI-187 (hang fix) > PBI-180b (request handling during init) > PBI-186 (lua-ls config) > PBI-182 (features)
+    // Priority order: PBI-187 (hang fix) > PBI-180b (request handling during init) > PBI-182 (features)
+    // OBSOLETE: PBI-186 (lua-ls config) - lua-ls returns real results now, issue self-resolved
     {
       id: "PBI-187",
       story: {
@@ -54,31 +55,9 @@ const scrum: ScrumDashboard = {
         "VALUE: Critical UX fix - users can edit immediately without waiting for bridge",
       ],
     },
-    {
-      id: "PBI-186",
-      story: {
-        role: "developer editing Lua files",
-        capability: "receive real semantic results (hover, completion) from lua-language-server for virtual documents",
-        benefit: "I get accurate documentation and suggestions for Lua code blocks in markdown files",
-      },
-      acceptance_criteria: [
-        { criterion: "Investigation documents why lua-ls returns null despite didOpen with virtual content", verification: "cat docs/investigations/PBI-186-lua-ls-virtual-docs.md | grep -E 'Root Cause|Hypothesis'" },
-        { criterion: "E2E hover test receives non-null Hover with real contents from lua-ls", verification: "cargo test --test e2e_lsp_lua_hover --features e2e -- --nocapture | grep -v 'TODO'" },
-        { criterion: "E2E completion test receives non-null CompletionList with items from lua-ls", verification: "cargo test --test e2e_lsp_lua_completion --features e2e -- --nocapture | grep -v 'TODO'" },
-        { criterion: "Solution implemented (workspace config, URI format fix, or timing adjustment)", verification: "grep -E 'workspace.*configuration|initializationOptions' src/lsp/bridge/ || cat docs/investigations/PBI-186-lua-ls-virtual-docs.md" },
-      ],
-      status: "draft" as PBIStatus,
-      refinement_notes: [
-        "SPRINT 138 RETROSPECTIVE: Created to investigate lua-ls null results despite correct didOpen",
-        "CONTEXT: PBI-185 infrastructure complete - didOpen sent with virtual content, tracking works",
-        "ISSUE: lua-ls returns null for hover/completion despite receiving didOpen notification",
-        "HYPOTHESES: (1) Virtual URI format not recognized, (2) Workspace configuration needed, (3) Timing/indexing delay, (4) initializationOptions required",
-        "INVESTIGATION APPROACH: Systematic testing of each hypothesis with lua-ls debugging",
-        "DEPENDENCY: Requires PBI-185 infrastructure (didOpen synchronization) - DONE Sprint 138",
-        "VALUE: Unlocks real semantic results for all bridged features (hover, completion, future definition/signatureHelp)",
-        "NEXT STEPS: Review lua-ls documentation for workspace/virtual document configuration requirements",
-      ],
-    },
+    // PBI-186: OBSOLETE - lua-ls returns real results (hover shows types, completion works)
+    // User confirmed hover shows: (global) x: { [1]: string = "x" }
+    // The null results issue from Sprint 138 was likely a timing issue that resolved itself
     {
       id: "PBI-180b",
       story: {
