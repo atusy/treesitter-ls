@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use tokio::io::BufReader;
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::{Mutex, Notify, oneshot};
 
@@ -51,8 +52,10 @@ pub struct BridgeConnection {
     /// Stdin handle for sending requests/notifications (wrapped in Mutex for async access)
     stdin: Mutex<ChildStdin>,
     /// Stdout handle for receiving responses/notifications (wrapped in Mutex for async access)
-    /// Only used by the background reader task
-    stdout: Mutex<ChildStdout>,
+    /// Wrapped in BufReader to preserve buffered bytes across reads - creating a new BufReader
+    /// per read would lose any extra bytes the LS sent, causing responses to vanish.
+    /// Only used by the background reader task.
+    stdout: Mutex<BufReader<ChildStdout>>,
     /// Next request ID for JSON-RPC requests
     next_request_id: AtomicU64,
     /// Tracks whether the connection has been initialized
@@ -119,7 +122,8 @@ impl BridgeConnection {
         Ok(Self {
             process: Mutex::new(child),
             stdin: Mutex::new(stdin),
-            stdout: Mutex::new(stdout),
+            // Wrap stdout in BufReader ONCE here - not per-read - to preserve buffered bytes
+            stdout: Mutex::new(BufReader::new(stdout)),
             next_request_id: AtomicU64::new(1),
             initialized: AtomicBool::new(false),
             initialized_notify: Notify::new(),
@@ -162,14 +166,19 @@ impl BridgeConnection {
     /// Reads a JSON-RPC message with LSP Base Protocol framing
     ///
     /// Expected format: `Content-Length: N\r\n\r\n{json}`
+    ///
+    /// IMPORTANT: The reader must be a BufReader that persists across calls.
+    /// Creating a new BufReader per read would lose buffered bytes when the
+    /// language server sends multiple messages quickly.
     async fn read_message<R>(reader: &mut R) -> Result<serde_json::Value, String>
     where
-        R: tokio::io::AsyncRead + Unpin,
+        R: tokio::io::AsyncBufRead + Unpin,
     {
         use tokio::io::AsyncBufReadExt;
         use tokio::io::AsyncReadExt;
 
-        let mut reader = tokio::io::BufReader::new(reader);
+        // NOTE: Do NOT create a new BufReader here! The caller provides a persistent
+        // BufReader that preserves buffered bytes across reads.
 
         // Read header line: "Content-Length: N"
         let mut header_line = String::new();
