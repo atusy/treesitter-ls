@@ -3,7 +3,6 @@
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 
-use crate::language::injection::CacheableInjectionRegion;
 use crate::text::PositionMapper;
 
 use super::super::TreeSitterLs;
@@ -127,11 +126,6 @@ impl TreeSitterLs {
             .await;
 
         // Create cacheable region for position translation
-        self.client
-            .log_message(MessageType::INFO, "Creating cacheable region...")
-            .await;
-        let cacheable = CacheableInjectionRegion::from_region_info(region, "temp", text);
-
         // TODO(ADR-0012): Re-implement async bridge goto_definition
         // When LanguageServerPool is implemented:
         // 1. Extract virtual content: let virtual_content = cacheable.extract_content(text).to_owned();

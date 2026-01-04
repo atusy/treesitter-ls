@@ -3,28 +3,9 @@
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 
-use crate::language::injection::CacheableInjectionRegion;
 use crate::text::PositionMapper;
 
 use super::super::TreeSitterLs;
-
-/// Message shown when hover returns no result (e.g., during indexing or no info available).
-pub(crate) const NO_RESULT_MESSAGE: &str = "No result or indexing";
-
-/// Create an informative hover message for when no result is available.
-///
-/// This is shown to users when the bridged language server returns no hover
-/// result, which can happen during indexing or when no information is available
-/// for the current position.
-pub(crate) fn create_no_result_hover() -> Hover {
-    Hover {
-        contents: HoverContents::Markup(MarkupContent {
-            kind: MarkupKind::PlainText,
-            value: NO_RESULT_MESSAGE.to_string(),
-        }),
-        range: None,
-    }
-}
 
 impl TreeSitterLs {
     pub(crate) async fn hover_impl(&self, params: HoverParams) -> Result<Option<Hover>> {
@@ -112,16 +93,14 @@ impl TreeSitterLs {
             return Ok(None);
         };
 
-        // Create cacheable region for position translation
-        let cacheable = CacheableInjectionRegion::from_region_info(region, "temp", text);
-
-        // Extract virtual document content
-        let _virtual_content = cacheable.extract_content(text).to_owned();
-
-        // Translate host position to virtual position
-        let _virtual_position = cacheable.translate_host_to_virtual(position);
-
-        // TODO(ADR-0012): Re-implement async bridge
+        // TODO(ADR-0012): Re-implement async bridge hover
+        // When LanguageServerPool is implemented:
+        // 1. Create cacheable region for position translation
+        // 2. Extract virtual document content
+        // 3. Translate host position to virtual position
+        // 4. Call language_server_pool.hover(...)
+        // 5. Translate response range back to host document
+        //
         // Bridge functionality is currently disabled
         Ok(None)
     }
