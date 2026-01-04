@@ -24,6 +24,7 @@ const scrum: ScrumDashboard = {
   // Removed: PBI-163-177 (obsolete - created before greenfield deletion per ASYNC_BRIDGE_REMOVAL.md)
   // Superseded: PBI-183 (merged into PBI-180b during Sprint 136 refinement)
   // Cancelled: Sprint 139 (PBI-180b) - infrastructure didn't fix actual hang, reverted
+  // Sprint Review 140: All ACs PASSED, all DoD checks PASSED - PBI-187 DONE
   product_backlog: [
     // ADR-0012 Phase 1: Single-LS-per-Language Foundation (PBI-178-181, PBI-184-185, PBI-187 done, Sprint 133-138, 140)
     // Priority order: PBI-180b (init window) > PBI-188 (multi-LS) > PBI-182 (features)
@@ -120,8 +121,11 @@ const scrum: ScrumDashboard = {
       { name: "E2E tests pass", run: "make test_e2e" },
     ],
   },
-  // Historical sprints (recent 3) | Sprint 1-135: git log -- scrum.yaml, scrum.ts
+  // Historical sprints (recent 4) | Sprint 1-135: git log -- scrum.yaml, scrum.ts
   completed: [
+    { number: 139, pbi_id: "PBI-180b", goal: "CANCELLED - Built superseding infrastructure but root cause was blocking initialize() in get_or_spawn_connection() - fixed in Sprint 140 (PBI-187)", status: "cancelled" as SprintStatus, subtasks: [
+      { test: "Track pending incremental requests per connection", implementation: "PendingIncrementalRequests struct with latest request ID tracking", type: "structural" as SubtaskType, status: "completed" as SubtaskStatus, commits: [{ hash: "fe47e0a", message: "feat(bridge): add request superseding infrastructure (REVERTED)", phase: "green" as CommitPhase }], notes: ["Built infrastructure but didn't fix actual problem", "Sprint Review revealed infrastructure didn't prevent hang - reverted all changes", "Root cause: get_or_spawn_connection() blocked on initialize().await, starving tokio runtime", "Learning: Identify root cause BEFORE building infrastructure"] },
+    ] },
     { number: 140, pbi_id: "PBI-187", goal: "Enable non-blocking bridge connection initialization so users can edit immediately after opening files without LSP hangs", status: "done" as SprintStatus, subtasks: [
       { test: "wait_for_initialized() waits for initialized flag with timeout", implementation: "Add wait_for_initialized(timeout: Duration) method using initialized_notify.notified() with tokio::timeout", type: "behavioral" as SubtaskType, status: "completed" as SubtaskStatus, commits: [{ hash: "39c463e", message: "feat(bridge): add wait_for_initialized() for non-blocking init", phase: "green" as CommitPhase }], notes: ["Infrastructure exists: initialized AtomicBool, initialized_notify Notify"] },
       { test: "get_or_spawn_connection() returns immediately without waiting for initialize()", implementation: "Refactor get_or_spawn_connection() to spawn tokio::spawn task for initialize(), return Arc<BridgeConnection> immediately", type: "behavioral" as SubtaskType, status: "completed" as SubtaskStatus, commits: [{ hash: "845ac68", message: "feat(bridge): make connection initialization non-blocking", phase: "green" as CommitPhase }], notes: ["Background task handles initialize() + send_initialized_notification()"] },
@@ -146,7 +150,7 @@ const scrum: ScrumDashboard = {
       { test: "Deprecate wrong-layer e2e_bridge tests", implementation: "Add deprecation comments pointing to correct pattern", type: "structural", status: "completed", commits: [{ hash: "5c26c45", message: "docs: deprecate wrong-layer E2E tests", phase: "green" }], notes: [] },
     ] },
   ],
-  // Retrospectives (recent 3) | Sprints 1-136: git log -- scrum.yaml, scrum.ts
+  // Retrospectives (recent 4) | Sprints 1-135: git log -- scrum.yaml, scrum.ts
   retrospectives: [
     { sprint: 140, improvements: [
       { action: "Apply root cause analysis from Sprint 139 retrospective (trace full call stack before proposing solution)", timing: "immediate", status: "completed", outcome: "Sprint 140 successfully fixed actual hang by making initialization non-blocking - validated Sprint 139 root cause diagnosis" },
