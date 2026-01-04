@@ -477,17 +477,16 @@ pub async fn send_request(&self, method: &str, params: Value) -> Result<Value, R
     match method {
         // initialize: no wait needed
         "initialize" => {}
-        // Incremental: request superseding pattern, no timeout
-        "textDocument/completion" | "textDocument/signatureHelp" | "textDocument/hover" => {
-            // Register this request (sends REQUEST_FAILED to any pending one of same type)
-            // Wait indefinitely - natural cleanup via request superseding pattern
-            self.wait_for_initialized_no_timeout().await;
-        }
-        // Explicit actions: wait with timeout
+        // All other requests: wait with timeout
         _ => {
             self.wait_for_initialized(Duration::from_secs(5)).await?;
         }
     }
+
+    // Request superseding for incremental requests is handled separately:
+    // PendingIncrementalRequests.register_*() sends REQUEST_FAILED to older requests
+    // before this new request is processed
+
     // ... proceed with request
 }
 ```
