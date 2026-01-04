@@ -300,6 +300,40 @@ impl BridgeConnection {
     }
 
     pub_e2e! {
+        /// Checks if virtual document has been opened, and sends didOpen if not
+        ///
+        /// This method is idempotent - it will only send didOpen once per URI.
+        /// Subsequent calls with the same URI will return Ok without sending.
+        ///
+        /// # Arguments
+        /// * `uri` - Virtual document URI (e.g., "file:///virtual/lua/abc123.lua")
+        /// * `language_id` - Language ID (e.g., "lua")
+        /// * `content` - Virtual document content
+        ///
+        /// # Returns
+        /// Ok if URI was already opened OR didOpen sent successfully
+        #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
+        async fn check_and_send_did_open(
+            &self,
+            uri: &str,
+            language_id: &str,
+            content: &str,
+        ) -> Result<(), String> {
+        // Check if this URI has already been opened
+        {
+            let opened = self.opened_documents.lock().await;
+            if opened.contains(uri) {
+                // Already opened, skip didOpen
+                return Ok(());
+            }
+        }
+
+        // Not opened yet - send didOpen
+        self.send_did_open(uri, language_id, content).await
+        }
+    }
+
+    pub_e2e! {
         /// Sends a textDocument/didOpen notification to the language server
         ///
         /// # Arguments
@@ -772,6 +806,65 @@ mod tests {
             );
             assert!(opened.contains(uri), "Should contain first URI");
             assert!(opened.contains(uri2), "Should contain second URI");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_check_and_send_did_open_sends_only_on_first_access() {
+        // RED: Test that check_and_send_did_open sends didOpen only once per URI
+        let connection = BridgeConnection::new("cat").await.unwrap();
+
+        // Set initialized flag
+        connection.initialized.store(true, Ordering::SeqCst);
+
+        let uri = "file:///virtual/lua/abc123.lua";
+        let language_id = "lua";
+        let content = "print('hello')";
+
+        // Initially, URI should not be in opened_documents
+        {
+            let opened = connection.opened_documents.lock().await;
+            assert!(!opened.contains(uri), "URI should not be opened initially");
+        }
+
+        // First call should send didOpen
+        let result1 = connection
+            .check_and_send_did_open(uri, language_id, content)
+            .await;
+        assert!(
+            result1.is_ok(),
+            "First check_and_send_did_open should succeed: {:?}",
+            result1.err()
+        );
+
+        // Verify URI was added to opened_documents
+        {
+            let opened = connection.opened_documents.lock().await;
+            assert!(
+                opened.contains(uri),
+                "URI should be in opened_documents after first call"
+            );
+        }
+
+        // Second call with same URI should not send didOpen (returns Ok but skips)
+        // We can verify by checking that opened_documents still has size 1
+        let result2 = connection
+            .check_and_send_did_open(uri, language_id, content)
+            .await;
+        assert!(
+            result2.is_ok(),
+            "Second check_and_send_did_open should succeed: {:?}",
+            result2.err()
+        );
+
+        // Verify opened_documents still has just one entry
+        {
+            let opened = connection.opened_documents.lock().await;
+            assert_eq!(
+                opened.len(),
+                1,
+                "opened_documents should still have one entry"
+            );
         }
     }
 }
