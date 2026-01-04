@@ -17,13 +17,6 @@ Additionally, real-world usage requires bridging to **multiple downstream langua
 - Embedded SQL may need both a SQL language server and the host language server
 - Future polyglot scenarios (e.g., TypeScript + CSS in Vue files)
 
-**Decision: Re-implement from scratch** with simpler, proven patterns and extend to support 1:N communication patterns with proper:
-
-1. **Fan-out/Scatter-Gather** — Send requests to multiple LSes, aggregate responses
-2. **Ordering Guarantees** — Notifications must maintain order per (downstream, document)
-3. **Cancellation Propagation** — `$/cancelRequest` from upstream flows to all downstream
-4. **Resilience** — Circuit breaker and bulkhead patterns for fault isolation
-
 ### Problems with Current Implementation (ADR-0009)
 
 The existing async bridge implementation has fundamental issues that cannot be resolved through incremental fixes:
@@ -45,7 +38,12 @@ The existing async bridge implementation has fundamental issues that cannot be r
 
 ## Decision
 
-Re-implement the async bridge architecture with a **routing-first, aggregation-optional** approach.
+**Re-implement from scratch** with simpler, proven patterns. The new architecture uses a **routing-first, aggregation-optional** approach that supports 1:N communication patterns with proper:
+
+1. **Fan-out/Scatter-Gather** — Send requests to multiple LSes, aggregate responses
+2. **Ordering Guarantees** — Notifications must maintain order per (downstream, document)
+3. **Cancellation Propagation** — `$/cancelRequest` from upstream flows to all downstream
+4. **Resilience** — Circuit breaker and bulkhead patterns for fault isolation
 
 ### Design Principle: Routing First
 
