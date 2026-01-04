@@ -195,46 +195,7 @@ const scrum: ScrumDashboard = {
     // See PBI-180b refinement_notes for consolidation details
     // Future: Phase 2 (circuit breaker, bulkhead, health monitoring), Phase 3 (multi-LS routing, aggregation)
   ],
-  sprint: {
-    number: 141,
-    pbi_id: "PBI-190",
-    goal: "Forward didChange notifications to downstream LS after didOpen sent so editing updates LSP state in real-time",
-    status: "done" as SprintStatus,
-    subtasks: [
-      {
-        test: "Unit test: send_notification() forwards textDocument/didChange to downstream after didOpen sent (did_open_sent == true)",
-        implementation: "Add forwarding logic in send_notification() after Phase 1 guard - if method is textDocument/didChange and did_open_sent is true, forward to downstream via stdin",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [{ hash: "9062477", message: "feat(bridge): implement Phase 2 guard for notification ordering", phase: "green" as CommitPhase }],
-        notes: ["Phase 2 guard implemented per ADR-0012 §6.1", "Forwards didChange/didSave/didClose after didOpen sent", "Unit tests use cat for basic verification - E2E validates end-to-end behavior"],
-      },
-      {
-        test: "Unit test: send_notification() drops textDocument/didChange before didOpen sent (did_open_sent == false)",
-        implementation: "Add guard check in send_notification() - if method is textDocument/didChange and did_open_sent is false, return Ok without forwarding (silent drop per ADR-0012 Phase 2 guard)",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [{ hash: "9062477", message: "feat(bridge): implement Phase 2 guard for notification ordering", phase: "green" as CommitPhase }],
-        notes: ["Drops didChange/didSave/didClose before didOpen to prevent out-of-order notifications", "State accumulated in didOpen content"],
-      },
-      {
-        test: "Unit test: subsequent didChange notifications are forwarded to downstream after first didChange",
-        implementation: "Verify forwarding logic works for multiple consecutive didChange notifications (no special state needed - just forward each one)",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [{ hash: "9062477", message: "feat(bridge): implement Phase 2 guard for notification ordering", phase: "green" as CommitPhase }],
-        notes: ["No special state tracking needed - Phase 2 guard handles all consecutive didChange after didOpen"],
-      },
-      {
-        test: "E2E test: editing Lua code block triggers didChange to lua-ls and subsequent completion shows updated context",
-        implementation: "Create tests/e2e_lsp_didchange_updates_state.rs with LspClient verifying: didOpen → didChange(add code) → completion shows new symbols",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [{ hash: "b05b892", message: "test(e2e): add didChange state update verification test", phase: "green" as CommitPhase }],
-        notes: ["Test created but marked #[ignore] pending PBI-191 (notification channel fix)", "Client→server notification path broken (sender dropped immediately)", "Test will be enabled once PBI-191 completes infrastructure fix"],
-      },
-    ],
-  },
+  sprint: null,
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
@@ -271,18 +232,6 @@ const scrum: ScrumDashboard = {
       { test: "Track opened documents with HashSet", implementation: "opened_documents: Arc<Mutex<HashSet<String>>> in BridgeConnection", type: "behavioral", status: "completed", commits: [{ hash: "c1b2c2e", message: "feat(bridge): track opened virtual documents", phase: "green" }], notes: [] },
       { test: "Idempotent check_and_send_did_open()", implementation: "Check HashSet, send didOpen if not present, add to set", type: "behavioral", status: "completed", commits: [{ hash: "e1a1799", message: "feat(bridge): implement check_and_send_did_open", phase: "green" }], notes: [] },
       { test: "Wire completion/hover to send didOpen with content", implementation: "Extract content via cacheable.extract_content(), call check_and_send_did_open before send_request", type: "behavioral", status: "completed", commits: [{ hash: "53d3608", message: "feat(bridge): wire completion", phase: "green" }, { hash: "ac7b075", message: "feat(bridge): wire hover", phase: "green" }], notes: ["Infrastructure complete, lua-ls returns null (config issue→PBI-186)"] },
-    ] },
-    { number: 137, pbi_id: "PBI-181", goal: "Hover support for Lua code blocks in markdown", status: "done", subtasks: [
-      { test: "Pool.hover() implementation following completion pattern", implementation: "Extract language, spawn connection, send textDocument/hover, deserialize response", type: "behavioral", status: "completed", commits: [{ hash: "7921b6c", message: "feat(bridge): implement hover support (PBI-181)", phase: "green" }], notes: [] },
-      { test: "hover_impl() wires Pool.hover() with virtual URI", implementation: "Translate position, build HoverParams with virtual URI", type: "behavioral", status: "completed", commits: [{ hash: "7921b6c", message: "feat(bridge): implement hover support (PBI-181)", phase: "green" }], notes: [] },
-      { test: "E2E test via LspClient (treesitter-ls binary)", implementation: "tests/e2e_lsp_lua_hover.rs: hover over print in Lua block", type: "behavioral", status: "completed", commits: [{ hash: "7921b6c", message: "feat(bridge): implement hover support (PBI-181)", phase: "green" }], notes: ["Pattern reuse from e2e_lsp_lua_completion.rs"] },
-    ] },
-    { number: 136, pbi_id: "PBI-184", goal: "Wire bridge infrastructure to treesitter-ls binary with connection lifecycle management", status: "done", subtasks: [
-      { test: "DashMap<String, Arc<BridgeConnection>> for per-language connections", implementation: "Replace _connection: Option with DashMap for concurrent access", type: "behavioral", status: "completed", commits: [{ hash: "1c61df2", message: "feat(bridge): add DashMap for per-language connections", phase: "green" }], notes: [] },
-      { test: "get_or_spawn_connection(language) spawns on first access", implementation: "DashMap entry API with lazy initialization", type: "behavioral", status: "completed", commits: [{ hash: "df04faf", message: "feat(bridge): implement lazy connection spawning", phase: "green" }], notes: [] },
-      { test: "Pool.completion() uses real send_request", implementation: "Extract language from URI, spawn connection, forward request", type: "behavioral", status: "completed", commits: [{ hash: "d3fbae8", message: "feat(bridge): wire completion to real send_request", phase: "green" }], notes: [] },
-      { test: "E2E test via LspClient (treesitter-ls binary)", implementation: "tests/e2e_lsp_lua_completion.rs with correct E2E pattern", type: "behavioral", status: "completed", commits: [{ hash: "797ad7a", message: "feat(bridge): add proper E2E test via LspClient", phase: "green" }], notes: ["lua-ls returns null until didOpen with virtual content implemented"] },
-      { test: "Deprecate wrong-layer e2e_bridge tests", implementation: "Add deprecation comments pointing to correct pattern", type: "structural", status: "completed", commits: [{ hash: "5c26c45", message: "docs: deprecate wrong-layer E2E tests", phase: "green" }], notes: [] },
     ] },
   ],
   // Retrospectives (recent 4) | Sprints 1-137: git log -- scrum.yaml, scrum.ts
