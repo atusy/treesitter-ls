@@ -1,6 +1,8 @@
 //! BridgeConnection for managing connections to language servers
 
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::{Mutex, Notify};
 
@@ -34,6 +36,9 @@ pub struct BridgeConnection {
     initialized_notify: Notify,
     /// Tracks whether didOpen notification has been sent
     did_open_sent: AtomicBool,
+    /// Tracks which virtual document URIs have been opened with didOpen
+    /// Used to avoid sending duplicate didOpen notifications for the same virtual document
+    opened_documents: Arc<Mutex<HashSet<String>>>,
 }
 
 impl std::fmt::Debug for BridgeConnection {
@@ -86,6 +91,7 @@ impl BridgeConnection {
             initialized: AtomicBool::new(false),
             initialized_notify: Notify::new(),
             did_open_sent: AtomicBool::new(false),
+            opened_documents: Arc::new(Mutex::new(HashSet::new())),
         })
         }
     }
@@ -320,6 +326,10 @@ impl BridgeConnection {
 
         // Set did_open_sent flag
         self.did_open_sent.store(true, Ordering::SeqCst);
+
+        // Track that this virtual document has been opened
+        let mut opened = self.opened_documents.lock().await;
+        opened.insert(uri.to_string());
 
         Ok(())
         }
@@ -712,5 +722,56 @@ mod tests {
 
         // did_open_sent flag should now be true
         assert!(connection.did_open_sent.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn test_opened_documents_tracks_virtual_uris() {
+        // RED: Test that opened_documents HashSet tracks which virtual URIs have been opened
+        let connection = BridgeConnection::new("cat").await.unwrap();
+
+        // Set initialized flag
+        connection.initialized.store(true, Ordering::SeqCst);
+
+        // Initially, opened_documents should be empty
+        {
+            let opened = connection.opened_documents.lock().await;
+            assert_eq!(opened.len(), 0, "opened_documents should start empty");
+        }
+
+        // Send didOpen for a virtual URI
+        let uri = "file:///virtual/lua/abc123.lua";
+        let result = connection.send_did_open(uri, "lua", "print('hello')").await;
+        assert!(result.is_ok(), "didOpen should succeed: {:?}", result.err());
+
+        // Verify URI was added to opened_documents
+        {
+            let opened = connection.opened_documents.lock().await;
+            assert_eq!(
+                opened.len(),
+                1,
+                "opened_documents should have one entry after didOpen"
+            );
+            assert!(
+                opened.contains(uri),
+                "opened_documents should contain the virtual URI"
+            );
+        }
+
+        // Send didOpen for a different virtual URI
+        let uri2 = "file:///virtual/lua/xyz789.lua";
+        let result2 = connection.send_did_open(uri2, "lua", "print('world')").await;
+        assert!(result2.is_ok(), "Second didOpen should succeed: {:?}", result2.err());
+
+        // Verify both URIs are tracked
+        {
+            let opened = connection.opened_documents.lock().await;
+            assert_eq!(
+                opened.len(),
+                2,
+                "opened_documents should have two entries after second didOpen"
+            );
+            assert!(opened.contains(uri), "Should contain first URI");
+            assert!(opened.contains(uri2), "Should contain second URI");
+        }
     }
 }
