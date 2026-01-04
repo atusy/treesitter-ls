@@ -108,7 +108,7 @@ impl TreeSitterLs {
             },
             work_done_progress_params: WorkDoneProgressParams::default(),
         };
-        let hover_response = self.language_server_pool.hover(dummy_params)?;
+        let hover_response = self.language_server_pool.hover(dummy_params).await?;
 
         Ok(hover_response)
     }

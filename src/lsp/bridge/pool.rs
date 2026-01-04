@@ -25,25 +25,34 @@ impl LanguageServerPool {
 
     /// Handles textDocument/completion request
     ///
-    /// Fakeit implementation: returns Ok(None) immediately.
-    pub(crate) fn completion(
+    /// # Arguments
+    /// * `params` - Completion parameters including virtual document URI and translated position
+    ///
+    /// # Returns
+    /// Completion response from language server, or None if no connection
+    pub(crate) async fn completion(
         &self,
         _params: CompletionParams,
     ) -> Result<Option<CompletionResponse>> {
+        // TODO(PBI-180a Phase 2): Implement real LSP completion request
+        // For now, return Ok(None) - real implementation will:
+        // 1. Get/create BridgeConnection for language
+        // 2. Call connection.send_request("textDocument/completion", params)
+        // 3. Deserialize response into CompletionResponse
         Ok(None)
     }
 
     /// Handles textDocument/hover request
     ///
     /// Fakeit implementation: returns Ok(None) immediately.
-    pub(crate) fn hover(&self, _params: HoverParams) -> Result<Option<Hover>> {
+    pub(crate) async fn hover(&self, _params: HoverParams) -> Result<Option<Hover>> {
         Ok(None)
     }
 
     /// Handles textDocument/definition request
     ///
     /// Fakeit implementation: returns Ok(None) immediately.
-    pub(crate) fn definition(
+    pub(crate) async fn definition(
         &self,
         _params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
@@ -53,7 +62,7 @@ impl LanguageServerPool {
     /// Handles textDocument/signatureHelp request
     ///
     /// Fakeit implementation: returns Ok(None) immediately.
-    pub(crate) fn signature_help(
+    pub(crate) async fn signature_help(
         &self,
         _params: SignatureHelpParams,
     ) -> Result<Option<SignatureHelp>> {
@@ -65,8 +74,8 @@ impl LanguageServerPool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_pool_completion_returns_ok_none() {
+    #[tokio::test]
+    async fn test_pool_completion_returns_ok_none() {
         let pool = LanguageServerPool::new();
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
@@ -80,13 +89,13 @@ mod tests {
             context: None,
         };
 
-        let result = pool.completion(params);
+        let result = pool.completion(params).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
 
-    #[test]
-    fn test_pool_hover_returns_ok_none() {
+    #[tokio::test]
+    async fn test_pool_hover_returns_ok_none() {
         let pool = LanguageServerPool::new();
         let params = HoverParams {
             text_document_position_params: TextDocumentPositionParams {
@@ -98,13 +107,13 @@ mod tests {
             work_done_progress_params: WorkDoneProgressParams::default(),
         };
 
-        let result = pool.hover(params);
+        let result = pool.hover(params).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
 
-    #[test]
-    fn test_pool_definition_returns_ok_none() {
+    #[tokio::test]
+    async fn test_pool_definition_returns_ok_none() {
         let pool = LanguageServerPool::new();
         let params = GotoDefinitionParams {
             text_document_position_params: TextDocumentPositionParams {
@@ -117,13 +126,13 @@ mod tests {
             partial_result_params: PartialResultParams::default(),
         };
 
-        let result = pool.definition(params);
+        let result = pool.definition(params).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
 
-    #[test]
-    fn test_pool_signature_help_returns_ok_none() {
+    #[tokio::test]
+    async fn test_pool_signature_help_returns_ok_none() {
         let pool = LanguageServerPool::new();
         let params = SignatureHelpParams {
             text_document_position_params: TextDocumentPositionParams {
@@ -136,7 +145,7 @@ mod tests {
             context: None,
         };
 
-        let result = pool.signature_help(params);
+        let result = pool.signature_help(params).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }

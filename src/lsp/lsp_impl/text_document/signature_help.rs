@@ -116,7 +116,7 @@ impl TreeSitterLs {
             work_done_progress_params: WorkDoneProgressParams::default(),
             context: None,
         };
-        let signature_help_response = self.language_server_pool.signature_help(dummy_params)?;
+        let signature_help_response = self.language_server_pool.signature_help(dummy_params).await?;
 
         Ok(signature_help_response)
     }

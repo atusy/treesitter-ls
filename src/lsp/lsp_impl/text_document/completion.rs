@@ -100,27 +100,58 @@ impl TreeSitterLs {
         // Create cacheable region for position translation
         let cacheable = CacheableInjectionRegion::from_region_info(region, "temp", text);
 
-        // Extract virtual document content
-        let _virtual_content = cacheable.extract_content(text).to_owned();
+        // Extract virtual document content (for future use in didOpen)
+        let _virtual_content = cacheable.extract_content(text);
+
+        // Translate position from host to virtual coordinates
+        let virtual_position = cacheable.translate_host_to_virtual(position);
+
+        // Create virtual document URI
+        // Format: treesitter-ls://virtual/<language>/<hash>.lua
+        let virtual_uri = format!(
+            "file:///virtual/{}/{}.{}",
+            region.language,
+            cacheable.content_hash,
+            region.language
+        )
+        .parse()
+        .map_err(|e| {
+            tower_lsp::jsonrpc::Error::invalid_params(format!("Invalid virtual URI: {}", e))
+        })?;
+
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!(
+                    "Translated position from host {}:{} to virtual {}:{} for URI {}",
+                    position.line,
+                    position.character,
+                    virtual_position.line,
+                    virtual_position.character,
+                    virtual_uri
+                ),
+            )
+            .await;
+
+        // Create completion params with virtual document URI and translated position
+        let virtual_params = CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri: virtual_uri },
+                position: virtual_position,
+            },
+            work_done_progress_params: params.work_done_progress_params,
+            partial_result_params: params.partial_result_params,
+            context: params.context,
+        };
 
         // Call language_server_pool.completion() for the injection region
-        // This is a fakeit implementation that returns Ok(None) immediately
-        // TODO(ADR-0012 Phase 2): Implement real LSP communication with:
-        // 1. Virtual document URI and position translation
-        // 2. Actual LSP completion request to bridged language server
-        // 3. Response range translation back to host document coordinates
+        let completion_response = self
+            .language_server_pool
+            .completion(virtual_params)
+            .await?;
 
-        // For fakeit pass, create dummy params (real implementation will use translated position)
-        let dummy_params = CompletionParams {
-            text_document_position: TextDocumentPositionParams {
-                text_document: TextDocumentIdentifier { uri: uri.clone() },
-                position,
-            },
-            work_done_progress_params: WorkDoneProgressParams::default(),
-            partial_result_params: PartialResultParams::default(),
-            context: None,
-        };
-        let completion_response = self.language_server_pool.completion(dummy_params)?;
+        // TODO(PBI-180a Subtask 4): Translate response ranges from virtual to host coordinates
+        // For now, return response as-is
 
         Ok(completion_response)
     }

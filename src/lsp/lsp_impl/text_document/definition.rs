@@ -141,7 +141,7 @@ impl TreeSitterLs {
             work_done_progress_params: WorkDoneProgressParams::default(),
             partial_result_params: PartialResultParams::default(),
         };
-        let definition_response = self.language_server_pool.definition(dummy_params)?;
+        let definition_response = self.language_server_pool.definition(dummy_params).await?;
 
         Ok(definition_response)
     }
