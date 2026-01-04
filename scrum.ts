@@ -155,8 +155,10 @@ const scrum: ScrumDashboard = {
         test: "Pool.completion() passes virtual content to check_and_send_did_open before send_request",
         implementation: "Extract content in completion_impl via cacheable.extract_content(text), pass to Pool via new parameter",
         type: "behavioral" as SubtaskType,
-        status: "pending" as SubtaskStatus,
-        commits: [],
+        status: "completed" as SubtaskStatus,
+        commits: [
+          { hash: "53d3608", message: "feat(bridge): wire Pool.completion to send didOpen with virtual content", phase: "green" as CommitPhase }
+        ],
         notes: [
           "Change Pool.completion signature: add content: String parameter",
           "completion_impl extracts: let virtual_content = cacheable.extract_content(text).to_string()",
