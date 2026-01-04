@@ -2392,9 +2392,7 @@ mod tests {
         );
 
         let uri = "file:///test.rs";
-        let result = pool
-            .sync_document(&conn, uri, "rust", "fn main() {}")
-            .await;
+        let result = pool.sync_document(&conn, uri, "rust", "fn main() {}").await;
 
         // Should return None because initialized=false
         assert!(

@@ -153,7 +153,10 @@ mod tests {
         assert_eq!(full_response["jsonrpc"], "2.0");
         assert_eq!(full_response["id"], 42);
         assert_eq!(full_response["error"]["code"], -32803);
-        assert_eq!(full_response["error"]["message"], "Downstream server timeout");
+        assert_eq!(
+            full_response["error"]["message"],
+            "Downstream server timeout"
+        );
         assert_eq!(full_response["error"]["data"]["server"], "pyright");
     }
 
