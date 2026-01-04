@@ -5,6 +5,7 @@
 
 mod cleanup;
 mod connection;
+mod error_types;
 mod text_document;
 mod tokio_async_pool;
 mod tokio_connection;
@@ -16,6 +17,7 @@ pub use cleanup::{
     startup_cleanup,
 };
 pub use connection::{ConnectionInfo, LanguageServerConnection, ResponseWithNotifications};
+pub use error_types::{ErrorCodes, ResponseError};
 pub use text_document::{
     CompletionWithNotifications, GotoDefinitionWithNotifications, HoverWithNotifications,
     SignatureHelpWithNotifications,
