@@ -288,9 +288,9 @@ const scrum: ScrumDashboard = {
   // Retrospectives (recent 4) | Sprints 1-137: git log -- scrum.yaml, scrum.ts
   retrospectives: [
     { sprint: 141, improvements: [
-      { action: "Accept DONE status for PBIs with infrastructure blockers when logic is proven by unit tests and E2E test scaffold exists", timing: "immediate", status: "completed", outcome: "Sprint 141: PBI-190 marked DONE with 3 unit tests passing and E2E created but #[ignore] due to PBI-191 - forwarding logic verified, E2E will auto-enable once infrastructure fixed" },
-      { action: "Document AC interpretation strategy: distinguish between 'feature logic complete' vs 'end-to-end infrastructure working' when reviewing PBIs with dependencies", timing: "immediate", status: "completed", outcome: "Added SPRINT 141 REVIEW notes clarifying DONE decision: forwarding logic proven independently, E2E blocked by known infrastructure issue (PBI-191)" },
-      { action: "Prioritize infrastructure fixes (PBI-191) before feature additions to unblock dependent E2E tests", timing: "sprint", status: "active", outcome: null },
+      { action: "Add infrastructure validation step during PBI refinement: verify dependent infrastructure is working before marking PBI as 'ready'", timing: "immediate", status: "completed", outcome: "Sprint 141: Discovered notification channel broken (PBI-191) only during PBI-190 E2E implementation - could have been caught during refinement with infrastructure validation checklist" },
+      { action: "Accept DONE status for PBIs with infrastructure blockers when logic is proven by unit tests and E2E test scaffold exists with clear #[ignore] documentation", timing: "immediate", status: "completed", outcome: "Sprint 141: PBI-190 marked DONE with 3 unit tests passing and E2E created but #[ignore] due to PBI-191 - forwarding logic verified independently, E2E will auto-enable once infrastructure fixed" },
+      { action: "Prioritize infrastructure fixes (PBI-191) before feature additions to unblock dependent E2E tests and prevent cascade of blocked PBIs", timing: "sprint", status: "active", outcome: null },
     ] },
     { sprint: 140, improvements: [
       { action: "Review real-world usage logs when user reports issues not caught by E2E tests", timing: "immediate", status: "completed", outcome: "User-reported hang revealed double-wait bottleneck (check_and_send_did_open + send_incremental_request both calling wait_for_initialized) that E2E tests with fast lua-ls didn't catch" },
