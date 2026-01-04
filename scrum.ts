@@ -158,7 +158,114 @@ const scrum: ScrumDashboard = {
     // See PBI-180b refinement_notes for consolidation details
     // Future: Phase 2 (circuit breaker, bulkhead, health monitoring), Phase 3 (multi-LS routing, aggregation)
   ],
-  sprint: null,
+  sprint: {
+    number: 143,
+    pbi_id: "PBI-192",
+    goal: "Route client notifications to correct downstream language server based on document language to complete notification pipeline",
+    status: "planning" as SprintStatus,
+    subtasks: [
+      {
+        test: "Unit test: extract language from textDocument notification URI (test_extract_language_from_notification_uri)",
+        implementation: "Add extract_language_from_uri(uri: &str) -> Option<String> helper function - parse URI query param 'injection.language' or extract from path",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "TDD RED: Write unit test first verifying language extraction from URI",
+          "Example URIs: file:///path/to/file.md?injection.language=lua&injection.content=...",
+          "Return Some(language_id) for valid URIs, None for URIs without language",
+          "Location: src/lsp/lsp_impl.rs or new src/lsp/uri_utils.rs",
+        ],
+      },
+      {
+        test: "Unit test: notification_forwarder gets BridgeConnection for extracted language (test_notification_routing_get_connection)",
+        implementation: "Update notification_forwarder to call language_server_pool.get_or_spawn_connection(language) with extracted language",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "TDD RED: Write test verifying forwarder gets correct connection for language",
+          "Mock language_server_pool.get_or_spawn_connection() call with test language",
+          "Verify connection corresponds to extracted language (lua → lua-language-server)",
+          "Handle None from extract_language_from_uri (skip forwarding if no language)",
+        ],
+      },
+      {
+        test: "Unit test: notification_forwarder forwards textDocument/didChange to bridge connection (test_didchange_forwarding_to_bridge)",
+        implementation: "Update notification_forwarder to call connection.send_notification(method, params) for textDocument/didChange notifications",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "TDD RED: Write test verifying didChange forwarded to bridge via send_notification()",
+          "Use mock BridgeConnection or real connection with cat for verification",
+          "Verify notification JSON sent to connection matches client notification format",
+          "Focus on textDocument/didChange first, then extend to didSave/didClose",
+        ],
+      },
+      {
+        test: "Unit test: notification_forwarder forwards textDocument/didSave to bridge connection (test_didsave_forwarding_to_bridge)",
+        implementation: "Extend notification_forwarder to handle textDocument/didSave using same routing logic as didChange",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "TDD RED: Write test verifying didSave forwarded to bridge",
+          "Reuse routing logic: extract language → get connection → send_notification",
+          "Verify didSave params forwarded without modification",
+        ],
+      },
+      {
+        test: "Unit test: notification_forwarder forwards textDocument/didClose to bridge connection (test_didclose_forwarding_to_bridge)",
+        implementation: "Extend notification_forwarder to handle textDocument/didClose using same routing logic",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "TDD RED: Write test verifying didClose forwarded to bridge",
+          "Complete notification lifecycle: didOpen (from requests) → didChange → didSave → didClose",
+          "Verify connection cleanup if needed (likely not - connections reused)",
+        ],
+      },
+      {
+        test: "Unit test: notification_forwarder handles notifications without language gracefully (test_notification_without_language_skipped)",
+        implementation: "Verify notification_forwarder returns Ok without forwarding when extract_language_from_uri returns None",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "TDD RED: Write test verifying non-language URIs don't cause errors",
+          "Example: workspace/didChangeConfiguration has no textDocument URI",
+          "Silent skip is correct behavior - not all notifications need bridging",
+        ],
+      },
+      {
+        test: "E2E test: enable and verify e2e_lsp_didchange_updates_state passes (remove #[ignore])",
+        implementation: "Remove #[ignore] attribute from tests/e2e_lsp_didchange_updates_state.rs and verify test passes end-to-end",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "UNBLOCK: PBI-190 E2E test created in Sprint 141 but ignored pending PBI-191/192",
+          "TEST SCENARIO: didOpen → didChange(add code) → completion shows new symbols from lua-ls",
+          "VERIFICATION: Proves complete pipeline: client → handler → channel → forwarder → bridge → downstream LS",
+          "SUCCESS CRITERIA: Test passes without #[ignore], validates real-time state updates",
+        ],
+      },
+      {
+        test: "Integration verification: all textDocument/* notifications route correctly in realistic scenario",
+        implementation: "Manual verification or additional E2E test covering full notification lifecycle (didOpen → didChange → didSave → didClose)",
+        type: "behavioral" as SubtaskType,
+        status: "pending" as SubtaskStatus,
+        commits: [],
+        notes: [
+          "COMPREHENSIVE VERIFICATION: Full document lifecycle forwarded correctly",
+          "May merge with E2E test above or verify manually during implementation",
+          "Confirms PBI-192 completes notification pipeline per acceptance criteria",
+        ],
+      },
+    ],
+  },
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
