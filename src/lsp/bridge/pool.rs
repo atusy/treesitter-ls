@@ -169,9 +169,64 @@ impl LanguageServerPool {
 
     /// Handles textDocument/hover request
     ///
-    /// Fakeit implementation: returns Ok(None) immediately.
-    pub(crate) async fn hover(&self, _params: HoverParams) -> Result<Option<Hover>> {
-        Ok(None)
+    /// # Arguments
+    /// * `params` - Hover parameters including virtual document URI and translated position
+    ///
+    /// # Returns
+    /// Hover response from language server, or None if no connection
+    pub(crate) async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        // Extract language from virtual URI
+        let uri = &params.text_document_position_params.text_document.uri;
+        let Some(language) = Self::extract_language_from_uri(uri) else {
+            // Not a virtual URI - return None
+            return Ok(None);
+        };
+
+        // Get or spawn connection for this language
+        let connection = self.get_or_spawn_connection(&language).await.map_err(|e| {
+            tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::InternalError,
+                message: format!("Failed to get language server for {}: {}", language, e).into(),
+                data: None,
+            }
+        })?;
+
+        // Build JSON params for LSP request
+        let virtual_uri_str = uri.to_string();
+        let request_params = serde_json::json!({
+            "textDocument": {
+                "uri": virtual_uri_str
+            },
+            "position": {
+                "line": params.text_document_position_params.position.line,
+                "character": params.text_document_position_params.position.character
+            }
+        });
+
+        // Send hover request
+        let response = connection
+            .send_request("textDocument/hover", request_params)
+            .await
+            .map_err(|e| tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::InternalError,
+                message: format!("Hover request failed: {}", e).into(),
+                data: None,
+            })?;
+
+        // Deserialize response into Hover
+        // LSP spec allows null or Hover object
+        if response.is_null() {
+            return Ok(None);
+        }
+
+        let hover: Hover =
+            serde_json::from_value(response).map_err(|e| tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+                message: format!("Failed to parse hover response: {}", e).into(),
+                data: None,
+            })?;
+
+        Ok(Some(hover))
     }
 
     /// Handles textDocument/definition request
@@ -351,7 +406,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_pool_hover_returns_ok_none() {
+    async fn test_pool_hover_returns_ok_none_for_non_virtual_uri() {
+        // Test that hover returns None for non-virtual URIs (not in injection regions)
         let pool = LanguageServerPool::new();
         let params = HoverParams {
             text_document_position_params: TextDocumentPositionParams {
@@ -364,8 +420,11 @@ mod tests {
         };
 
         let result = pool.hover(params).await;
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
+        assert!(result.is_ok(), "Hover should succeed: {:?}", result.err());
+        assert!(
+            result.unwrap().is_none(),
+            "Non-virtual URI should return None"
+        );
     }
 
     #[tokio::test]

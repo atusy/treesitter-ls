@@ -93,22 +93,56 @@ impl TreeSitterLs {
             return Ok(None);
         };
 
-        // Call language_server_pool.hover() for the injection region
-        // This is a fakeit implementation that returns Ok(None) immediately
-        // TODO(ADR-0012 Phase 2): Implement real LSP communication with:
-        // 1. Virtual document URI and position translation
-        // 2. Actual LSP hover request to bridged language server
-        // 3. Response range translation back to host document coordinates
+        // Create cacheable region for position translation
+        let cacheable = crate::language::injection::CacheableInjectionRegion::from_region_info(
+            region, "temp", text,
+        );
 
-        // For fakeit pass, create dummy params (real implementation will use translated position)
-        let dummy_params = HoverParams {
+        // Extract virtual document content (for future use in didOpen)
+        let _virtual_content = cacheable.extract_content(text);
+
+        // Translate position from host to virtual coordinates
+        let virtual_position = cacheable.translate_host_to_virtual(position);
+
+        // Create virtual document URI
+        // Format: file:///virtual/<language>/<hash>.<language>
+        let virtual_uri = format!(
+            "file:///virtual/{}/{}.{}",
+            region.language, cacheable.content_hash, region.language
+        )
+        .parse()
+        .map_err(|e| {
+            tower_lsp::jsonrpc::Error::invalid_params(format!("Invalid virtual URI: {}", e))
+        })?;
+
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!(
+                    "Translated position from host {}:{} to virtual {}:{} for URI {}",
+                    position.line,
+                    position.character,
+                    virtual_position.line,
+                    virtual_position.character,
+                    virtual_uri
+                ),
+            )
+            .await;
+
+        // Create hover params with virtual document URI and translated position
+        let virtual_params = HoverParams {
             text_document_position_params: TextDocumentPositionParams {
-                text_document: TextDocumentIdentifier { uri: uri.clone() },
-                position,
+                text_document: TextDocumentIdentifier { uri: virtual_uri },
+                position: virtual_position,
             },
-            work_done_progress_params: WorkDoneProgressParams::default(),
+            work_done_progress_params: params.work_done_progress_params,
         };
-        let hover_response = self.language_server_pool.hover(dummy_params).await?;
+
+        // Call language_server_pool.hover() for the injection region
+        let hover_response = self.language_server_pool.hover(virtual_params).await?;
+
+        // TODO(PBI-181 Subtask 4): Translate response ranges from virtual to host coordinates
+        // For now, return response as-is (hover ranges are optional per LSP spec)
 
         Ok(hover_response)
     }
