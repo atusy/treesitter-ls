@@ -103,13 +103,27 @@ impl TreeSitterLs {
         // Extract virtual document content
         let _virtual_content = cacheable.extract_content(text).to_owned();
 
-        // TODO(ADR-0012): Re-implement async bridge completion
-        // When LanguageServerPool is implemented, the full implementation will:
-        // 1. Call language_server_pool.completion() with virtual_content and virtual_position
-        // 2. Translate completion response ranges back to host document using cacheable.translate_virtual_to_host()
-        // 3. Return the translated completion response
-        //
-        // For now, return None to indicate bridge functionality is disabled
-        Ok(None)
+        // Call language_server_pool.completion() for the injection region
+        // This is a fakeit implementation that returns Ok(None) immediately
+        // TODO(ADR-0012 Phase 2): Implement real LSP communication with:
+        // 1. Virtual document URI and position translation
+        // 2. Actual LSP completion request to bridged language server
+        // 3. Response range translation back to host document coordinates
+
+        // For fakeit pass, create dummy params (real implementation will use translated position)
+        let dummy_params = CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier {
+                    uri: uri.clone(),
+                },
+                position,
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+            context: None,
+        };
+        let completion_response = self.language_server_pool.completion(dummy_params)?;
+
+        Ok(completion_response)
     }
 }

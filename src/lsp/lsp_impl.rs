@@ -84,6 +84,8 @@ pub struct TreeSitterLs {
         tokio::sync::Mutex<Option<tokio::sync::mpsc::Receiver<serde_json::Value>>>,
     /// Tracks active semantic token requests for cancellation support
     semantic_request_tracker: SemanticRequestTracker,
+    /// Language server pool for bridging requests to injection language servers
+    language_server_pool: crate::lsp::bridge::LanguageServerPool,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -132,6 +134,7 @@ impl TreeSitterLs {
             failed_parsers,
             tokio_notification_rx: tokio::sync::Mutex::new(Some(tokio_notification_rx)),
             semantic_request_tracker: SemanticRequestTracker::new(),
+            language_server_pool: crate::lsp::bridge::LanguageServerPool::new(),
         }
     }
 
