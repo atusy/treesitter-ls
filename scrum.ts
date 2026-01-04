@@ -23,8 +23,91 @@ const scrum: ScrumDashboard = {
   // Deferred: PBI-091 (idle cleanup), PBI-107 (remove WorkspaceType - rust-analyzer too slow)
   // Removed: PBI-163-177 (obsolete - created before greenfield deletion per ASYNC_BRIDGE_REMOVAL.md)
   product_backlog: [
-    // Future: PBI-147 (hover wait), PBI-141/142/143 (async bridge methods)
-    // ADR-0010: PBI-151 (118), PBI-150 (119), PBI-149 (120) | ADR-0011: PBI-152-155 (121-124)
+    // ADR-0012 Phase 1: Single-LS-per-Language Foundation
+    // Strategy: Start with notifications (simpler), then requests (fakeit → real)
+    {
+      id: "PBI-178",
+      story: {
+        role: "developer editing Lua files",
+        capability: "have lua-language-server initialized when editing Lua code blocks in markdown",
+        benefit: "the bridge is ready to handle LSP requests for embedded Lua code",
+      },
+      acceptance_criteria: [
+        { criterion: "Bridge module structure exists at src/lsp/bridge/", verification: "ls src/lsp/bridge/{mod.rs,pool.rs,connection.rs}" },
+        { criterion: "BridgeConnection spawns downstream LS process", verification: "grep 'Command::new' src/lsp/bridge/connection.rs" },
+        { criterion: "Initialize request sent and response received", verification: "grep -E 'initialize.*request|InitializeResult' src/lsp/bridge/connection.rs" },
+        { criterion: "Initialized notification sent after initialize response", verification: "grep 'initialized' src/lsp/bridge/connection.rs" },
+        { criterion: "E2E test verifies bridge server initialization completes", verification: "make test_e2e" },
+      ],
+      status: "ready" as PBIStatus,
+    },
+    {
+      id: "PBI-179",
+      story: {
+        role: "developer editing Lua files",
+        capability: "receive completion suggestions for Lua code blocks embedded in markdown",
+        benefit: "I can write Lua code efficiently without switching editors",
+      },
+      acceptance_criteria: [
+        { criterion: "LanguageServerPool has completion method", verification: "grep 'fn completion' src/lsp/bridge/pool.rs" },
+        { criterion: "Fakeit pool returns empty CompletionList", verification: "make test && grep -A5 'FakeitPool' src/lsp/bridge/pool.rs" },
+        { criterion: "completion.rs wired to call bridge pool", verification: "grep 'pool.completion' src/lsp/lsp_impl/text_document/completion.rs" },
+      ],
+      status: "draft" as PBIStatus,
+    },
+    {
+      id: "PBI-180",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "see hover information for Lua code blocks embedded in markdown",
+        benefit: "I can understand Lua APIs without leaving the markdown document",
+      },
+      acceptance_criteria: [
+        { criterion: "LanguageServerPool has hover method", verification: "grep 'fn hover' src/lsp/bridge/pool.rs" },
+        { criterion: "hover.rs wired to call bridge pool", verification: "grep 'pool.hover' src/lsp/lsp_impl/text_document/hover.rs" },
+      ],
+      status: "draft" as PBIStatus,
+    },
+    {
+      id: "PBI-181",
+      story: {
+        role: "developer editing Lua files",
+        capability: "navigate to definitions in Lua code blocks",
+        benefit: "I can explore Lua code structure without switching contexts",
+      },
+      acceptance_criteria: [
+        { criterion: "LanguageServerPool has definition method", verification: "grep 'fn definition' src/lsp/bridge/pool.rs" },
+        { criterion: "definition.rs wired to call bridge pool", verification: "grep 'pool.definition' src/lsp/lsp_impl/text_document/definition.rs" },
+      ],
+      status: "draft" as PBIStatus,
+    },
+    {
+      id: "PBI-182",
+      story: {
+        role: "Rustacean editing Markdown",
+        capability: "see signature help for Lua function calls",
+        benefit: "I can write correct function calls without memorizing signatures",
+      },
+      acceptance_criteria: [
+        { criterion: "LanguageServerPool has signature_help method", verification: "grep 'fn signature_help' src/lsp/bridge/pool.rs" },
+        { criterion: "signature_help.rs wired to call bridge pool", verification: "grep 'pool.signature_help' src/lsp/lsp_impl/text_document/signature_help.rs" },
+      ],
+      status: "draft" as PBIStatus,
+    },
+    {
+      id: "PBI-183",
+      story: {
+        role: "developer editing Lua files",
+        capability: "receive real completion suggestions from lua-language-server for embedded Lua",
+        benefit: "I get accurate, context-aware completions for Lua code",
+      },
+      acceptance_criteria: [
+        { criterion: "Completion request sent to downstream LS and response received", verification: "make test_e2e # with lua-language-server" },
+        { criterion: "No request hangs - bounded timeout returns ResponseError", verification: "grep 'tokio::select!' src/lsp/bridge/connection.rs" },
+      ],
+      status: "draft" as PBIStatus,
+    },
+    // Future: PBI-184+ (hover/definition/signature_help real impl), Phase 2 (resilience), Phase 3 (multi-LS)
   ],
   sprint: null,
   definition_of_done: {
