@@ -107,7 +107,10 @@ async fn test_lua_completion_in_markdown_code_block() {
         items
     );
 
-    println!("✓ Received {} completion items from lua-language-server", items.len());
+    println!(
+        "✓ Received {} completion items from lua-language-server",
+        items.len()
+    );
 
     // Verify at least one item has a label (basic sanity check)
     let has_label = items.iter().any(|item| {

@@ -90,11 +90,7 @@ async fn test_lua_ls_did_open_after_initialization() {
 
     // Send didOpen for a virtual Lua document
     let did_open_result = connection
-        .send_did_open(
-            "file:///virtual/test.lua",
-            "lua",
-            "local x = 42\nprint(x)",
-        )
+        .send_did_open("file:///virtual/test.lua", "lua", "local x = 42\nprint(x)")
         .await;
 
     assert!(
@@ -126,11 +122,7 @@ async fn test_lua_ls_did_open_blocked_before_initialization() {
 
     // Try to send didOpen before initialization
     let did_open_result = connection
-        .send_did_open(
-            "file:///virtual/test.lua",
-            "lua",
-            "local x = 42",
-        )
+        .send_did_open("file:///virtual/test.lua", "lua", "local x = 42")
         .await;
 
     assert!(

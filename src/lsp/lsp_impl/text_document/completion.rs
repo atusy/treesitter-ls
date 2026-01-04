@@ -110,9 +110,7 @@ impl TreeSitterLs {
         // Format: treesitter-ls://virtual/<language>/<hash>.lua
         let virtual_uri = format!(
             "file:///virtual/{}/{}.{}",
-            region.language,
-            cacheable.content_hash,
-            region.language
+            region.language, cacheable.content_hash, region.language
         )
         .parse()
         .map_err(|e| {
@@ -145,10 +143,7 @@ impl TreeSitterLs {
         };
 
         // Call language_server_pool.completion() for the injection region
-        let completion_response = self
-            .language_server_pool
-            .completion(virtual_params)
-            .await?;
+        let completion_response = self.language_server_pool.completion(virtual_params).await?;
 
         // TODO(PBI-180a Subtask 4): Translate response ranges from virtual to host coordinates
         // For now, return response as-is
