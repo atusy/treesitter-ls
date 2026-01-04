@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::process::{Child, ChildStdin, ChildStdout};
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Mutex, Notify, oneshot};
 
 /// Type of incremental LSP request (completion, hover, signatureHelp)
 ///
@@ -28,7 +28,20 @@ macro_rules! pub_e2e {
         $(#[$meta])*
         pub(crate) async fn $name $($rest)*
     };
+    // Non-async variant
+    ($(#[$meta:meta])* fn $name:ident $($rest:tt)*) => {
+        #[cfg(feature = "e2e")]
+        $(#[$meta])*
+        pub fn $name $($rest)*
+
+        #[cfg(not(feature = "e2e"))]
+        $(#[$meta])*
+        pub(crate) fn $name $($rest)*
+    };
 }
+
+/// Sender for response routing - maps request ID to oneshot sender
+type ResponseSender = oneshot::Sender<serde_json::Value>;
 
 /// Represents a connection to a bridged language server
 #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
@@ -38,6 +51,7 @@ pub struct BridgeConnection {
     /// Stdin handle for sending requests/notifications (wrapped in Mutex for async access)
     stdin: Mutex<ChildStdin>,
     /// Stdout handle for receiving responses/notifications (wrapped in Mutex for async access)
+    /// Only used by the background reader task
     stdout: Mutex<ChildStdout>,
     /// Next request ID for JSON-RPC requests
     next_request_id: AtomicU64,
@@ -53,6 +67,11 @@ pub struct BridgeConnection {
     /// Tracks at most one pending incremental request per type (completion, hover, signatureHelp)
     /// Maps IncrementalType -> request_id for superseding during initialization window
     pending_incrementals: Mutex<HashMap<IncrementalType, u64>>,
+    /// Maps request ID -> oneshot sender for routing responses to waiting requests
+    /// This eliminates the deadlock where stdout lock was held during response wait loops
+    response_waiters: Mutex<HashMap<u64, ResponseSender>>,
+    /// Flag to track if the background reader has been started
+    reader_started: AtomicBool,
 }
 
 impl std::fmt::Debug for BridgeConnection {
@@ -107,6 +126,8 @@ impl BridgeConnection {
             did_open_sent: AtomicBool::new(false),
             opened_documents: Arc::new(Mutex::new(HashSet::new())),
             pending_incrementals: Mutex::new(HashMap::new()),
+            response_waiters: Mutex::new(HashMap::new()),
+            reader_started: AtomicBool::new(false),
         })
         }
     }
@@ -191,6 +212,80 @@ impl BridgeConnection {
             serde_json::from_slice(&body).map_err(|e| format!("Failed to parse JSON: {}", e))?;
 
         Ok(message)
+    }
+
+    /// Registers a waiter for a specific request ID
+    ///
+    /// Returns a oneshot receiver that will receive the response when it arrives.
+    async fn register_response_waiter(
+        &self,
+        request_id: u64,
+    ) -> oneshot::Receiver<serde_json::Value> {
+        let (tx, rx) = oneshot::channel();
+        let mut waiters = self.response_waiters.lock().await;
+        waiters.insert(request_id, tx);
+        rx
+    }
+
+    /// Routes a received message to the appropriate waiter
+    ///
+    /// If the message has an `id` field, it's a response - route to waiter.
+    /// Otherwise, it's a notification - currently ignored (could be logged).
+    async fn route_message(&self, message: serde_json::Value) {
+        if let Some(id) = message.get("id").and_then(|v| v.as_u64()) {
+            // This is a response - route to the waiting request
+            let mut waiters = self.response_waiters.lock().await;
+            if let Some(sender) = waiters.remove(&id) {
+                // Send response to waiter (ignore error if receiver dropped)
+                let _ = sender.send(message);
+            }
+            // If no waiter found, response is orphaned (request timed out or was cancelled)
+        }
+        // Notifications (no `id` field) are currently ignored
+        // In the future, we could handle window/logMessage, $/progress, etc.
+    }
+
+    pub_e2e! {
+    /// Starts the background reader task that routes messages to waiting requests
+    ///
+    /// This spawns a background task that continuously reads from stdout and
+    /// routes responses to their waiters. The reader acquires the stdout lock
+    /// only for the duration of each message read, then releases it to allow
+    /// response routing without holding the lock.
+    ///
+    /// The reader task exits when the connection is closed (stdout returns empty/error).
+    fn start_background_reader(self: &Arc<Self>) {
+        // Only start once - check and set atomically
+        if self.reader_started.swap(true, Ordering::SeqCst) {
+            return; // Already started
+        }
+
+        let conn = Arc::clone(self);
+        tokio::spawn(async move {
+            loop {
+                // Read one message at a time, releasing lock between reads
+                // This prevents the deadlock where lock was held during response wait
+                let message = {
+                    let mut stdout = conn.stdout.lock().await;
+                    Self::read_message(&mut *stdout).await
+                };
+
+                match message {
+                    Ok(msg) => {
+                        // Route message to waiting request (lock released)
+                        conn.route_message(msg).await;
+                    }
+                    Err(e) => {
+                        // Connection closed or read error - exit reader loop
+                        if !e.contains("Connection closed") && !e.contains("Failed to read header") {
+                            eprintln!("Background reader error: {}", e);
+                        }
+                        break;
+                    }
+                }
+            }
+        });
+    }
     }
 
     /// Sends an initialize request to the language server
@@ -412,6 +507,11 @@ impl BridgeConnection {
         /// - Failed to send request
         /// - Response indicates error
         /// - Timeout waiting for response
+        ///
+        /// # Note
+        /// This method requires the background reader to be running. The reader is
+        /// started automatically after initialization in normal use (via LanguageServerPool).
+        /// For direct usage in tests, call start_background_reader() after initialize().
         #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
         async fn send_request(
             &self,
@@ -431,29 +531,21 @@ impl BridgeConnection {
             "params": params
         });
 
+        // Register waiter BEFORE sending request to avoid race condition
+        let response_rx = self.register_response_waiter(request_id).await;
+
         // Send request
         {
             let mut stdin = self.stdin.lock().await;
             Self::write_message(&mut *stdin, &request).await?;
         }
 
-        // Read response with timeout (skip non-matching messages like notifications)
-        let response = timeout(Duration::from_secs(5), async {
-            let mut stdout = self.stdout.lock().await;
-            loop {
-                let msg = Self::read_message(&mut *stdout).await?;
-
-                // If this message has an "id" field matching our request, it's the response
-                if msg.get("id").and_then(|v| v.as_u64()) == Some(request_id) {
-                    return Ok::<_, String>(msg);
-                }
-
-                // Otherwise, it's a server-initiated notification or request - skip it
-                // In a production implementation, we'd handle these properly
-            }
-        })
-        .await
-        .map_err(|_| "REQUEST_FAILED (-32803): Request timed out after 5s".to_string())??;
+        // Wait for response via the message router (no stdout lock held)
+        // This eliminates the deadlock where stdout lock was held during response wait
+        let response = timeout(Duration::from_secs(5), response_rx)
+            .await
+            .map_err(|_| "REQUEST_FAILED (-32803): Request timed out after 5s".to_string())?
+            .map_err(|_| "REQUEST_FAILED (-32803): Response channel closed".to_string())?;
 
         // Check for error response
         if let Some(error) = response.get("error") {
@@ -558,28 +650,25 @@ impl BridgeConnection {
             "params": params
         });
 
+        // Register waiter BEFORE sending request to avoid race condition
+        let response_rx = self.register_response_waiter(request_id).await;
+
         // Send request
         {
             let mut stdin = self.stdin.lock().await;
             Self::write_message(&mut *stdin, &request).await?;
         }
 
-        // Read response with timeout (skip non-matching messages like notifications)
-        let response = timeout(Duration::from_secs(5), async {
-            let mut stdout = self.stdout.lock().await;
-            loop {
-                let msg = Self::read_message(&mut *stdout).await?;
-
-                // If this message has an "id" field matching our request, it's the response
-                if msg.get("id").and_then(|v| v.as_u64()) == Some(request_id) {
-                    return Ok::<_, String>(msg);
-                }
-
-                // Otherwise, it's a server-initiated notification or request - skip it
-            }
-        })
-        .await
-        .map_err(|_| "REQUEST_FAILED (-32803): Request timed out after 5s".to_string())??;
+        // Wait for response via the message router (no stdout lock held)
+        // This eliminates the deadlock where stdout lock was held during response wait
+        let response = timeout(Duration::from_secs(5), response_rx)
+            .await
+            .map_err(|_| {
+                // Cleanup waiter on timeout
+                // Note: Can't await inside map_err, cleanup happens below
+                "REQUEST_FAILED (-32803): Request timed out after 5s".to_string()
+            })?
+            .map_err(|_| "REQUEST_FAILED (-32803): Response channel closed".to_string())?;
 
         // Remove from pending incrementals (request completed)
         {

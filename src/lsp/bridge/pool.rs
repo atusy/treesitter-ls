@@ -86,7 +86,13 @@ impl LanguageServerPool {
                     "Background initialization failed for {}: {}",
                     language_owned, e
                 );
+                return;
             }
+
+            // Start background reader AFTER initialization completes
+            // This reader routes responses to waiting requests via oneshot channels,
+            // eliminating the deadlock where stdout lock was held during response wait loops.
+            conn_for_init.start_background_reader();
         });
 
         Ok(arc_conn)

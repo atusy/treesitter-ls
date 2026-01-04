@@ -25,6 +25,7 @@
 
 #![cfg(feature = "e2e")]
 
+use std::sync::Arc;
 use treesitter_ls::lsp::bridge::connection::BridgeConnection;
 
 #[tokio::test]
@@ -43,14 +44,20 @@ async fn test_lua_completion_in_markdown_code_block() {
     }
 
     // Spawn and initialize lua-language-server
-    let connection = BridgeConnection::new("lua-language-server")
-        .await
-        .expect("Failed to spawn lua-language-server");
+    let connection = Arc::new(
+        BridgeConnection::new("lua-language-server")
+            .await
+            .expect("Failed to spawn lua-language-server"),
+    );
 
     connection
         .initialize()
         .await
         .expect("Initialize handshake failed");
+
+    // Start background reader to route responses to waiting requests
+    // This is normally done by LanguageServerPool after initialization
+    connection.start_background_reader();
 
     // Send didOpen for a virtual Lua document
     // Use simple Lua code that triggers completions: "pri"
