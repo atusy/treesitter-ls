@@ -1,10 +1,20 @@
 //! BridgeConnection for managing connections to language servers
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::{Mutex, Notify};
+
+/// Type of incremental LSP request (completion, hover, signatureHelp)
+///
+/// Used to track at most one pending request per incremental type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum IncrementalType {
+    Completion,
+    Hover,
+    SignatureHelp,
+}
 
 // Macro to conditionally make methods public for e2e tests
 macro_rules! pub_e2e {
@@ -39,6 +49,9 @@ pub struct BridgeConnection {
     /// Tracks which virtual document URIs have been opened with didOpen
     /// Used to avoid sending duplicate didOpen notifications for the same virtual document
     opened_documents: Arc<Mutex<HashSet<String>>>,
+    /// Tracks at most one pending incremental request per type (completion, hover, signatureHelp)
+    /// Maps IncrementalType -> request_id for superseding during initialization window
+    pending_incrementals: Mutex<HashMap<IncrementalType, u64>>,
 }
 
 impl std::fmt::Debug for BridgeConnection {
@@ -92,6 +105,7 @@ impl BridgeConnection {
             initialized_notify: Notify::new(),
             did_open_sent: AtomicBool::new(false),
             opened_documents: Arc::new(Mutex::new(HashSet::new())),
+            pending_incrementals: Mutex::new(HashMap::new()),
         })
         }
     }
@@ -998,6 +1012,20 @@ mod tests {
             error.contains("not initialized"),
             "Error should mention not initialized: {}",
             error
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pending_incrementals_tracks_request_per_type() {
+        // RED: Test that BridgeConnection tracks at most one pending request per incremental type
+        let connection = BridgeConnection::new("cat").await.unwrap();
+
+        // Access pending_incrementals map (should start empty)
+        let pending = connection.pending_incrementals.lock().await;
+        assert_eq!(
+            pending.len(),
+            0,
+            "pending_incrementals should start empty"
         );
     }
 }
