@@ -1,5 +1,14 @@
 //! End-to-end test for fakeit bridge infrastructure.
 //!
+//! **DEPRECATED**: This test is kept for historical reference but is SUPERSEDED by
+//! tests/e2e_lsp_lua_completion.rs which uses the correct E2E pattern.
+//!
+//! **Why deprecated**:
+//! - This test verified the fakeit phase (PBI-178) which returned Ok(None)
+//! - Bridge infrastructure is now wired to real language servers (PBI-184)
+//! - New E2E tests should use LspClient to spawn treesitter-ls binary
+//! - See tests/e2e_lsp_lua_completion.rs for the correct pattern
+//!
 //! This test verifies that the fakeit bridge implementation works end-to-end:
 //! - LSP server starts and initializes
 //! - Completion request sent to Lua code block in markdown

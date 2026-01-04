@@ -1,5 +1,16 @@
 //! End-to-end test for real lua-language-server initialization via bridge.
 //!
+//! **DEPRECATED**: This test is kept for historical reference but uses WRONG E2E pattern.
+//! This test directly imports and tests BridgeConnection (internal library code).
+//!
+//! **Why deprecated**:
+//! - WRONG: Tests BridgeConnection library directly (not user-facing behavior)
+//! - RIGHT: Should test treesitter-ls binary via LspClient (see e2e_lsp_lua_completion.rs)
+//! - This pattern was useful during development but doesn't test real integration
+//! - BridgeConnection is internal implementation detail, not public API
+//!
+//! **Correct pattern**: See tests/e2e_lsp_lua_completion.rs
+//!
 //! This test verifies that BridgeConnection can spawn and initialize
 //! a real lua-language-server process:
 //! - Process spawns successfully
