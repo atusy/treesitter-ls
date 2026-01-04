@@ -265,12 +265,20 @@ const scrum: ScrumDashboard = {
         test: "Unit test: channel infrastructure stays alive throughout server lifetime (no premature close)",
         implementation: "Verify sender alive after TreeSitterLs::new() completes, receiver doesn't get channel-closed error during normal operation",
         type: "behavioral" as SubtaskType,
-        status: "pending" as SubtaskStatus,
-        commits: [],
+        status: "completed" as SubtaskStatus,
+        commits: [
+          {
+            hash: "e579836",
+            message: "test(server): verify channel lifecycle stays alive during operation",
+            phase: "green" as CommitPhase,
+          },
+        ],
         notes: [
           "REGRESSION PREVENTION: Ensure fix doesn't introduce lifecycle bugs",
           "TEST STRATEGY: Construct TreeSitterLs, verify sender.is_closed() == false, send test message, verify received",
           "COVERAGE: Tests both sender lifetime and receiver availability",
+          "IMPLEMENTATION: Send 3 notifications sequentially, verify all received successfully",
+          "TEST: test_channel_lifecycle_stays_alive verifies sender stays alive during multiple sends",
         ],
       },
       {
