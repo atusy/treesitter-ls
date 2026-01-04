@@ -325,26 +325,27 @@ impl BridgeConnection {
         }
     }
 
-    /// Sends a JSON-RPC request and waits for response
-    ///
-    /// # Arguments
-    /// * `method` - LSP method name (e.g., "textDocument/completion")
-    /// * `params` - Request parameters as JSON value
-    ///
-    /// # Returns
-    /// Response result on success, error string on failure
-    ///
-    /// # Errors
-    /// Returns error if:
-    /// - Failed to send request
-    /// - Response indicates error
-    /// - Timeout waiting for response
-    #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
-    pub(crate) async fn send_request(
-        &self,
-        method: &str,
-        params: serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
+    pub_e2e! {
+        /// Sends a JSON-RPC request and waits for response
+        ///
+        /// # Arguments
+        /// * `method` - LSP method name (e.g., "textDocument/completion")
+        /// * `params` - Request parameters as JSON value
+        ///
+        /// # Returns
+        /// Response result on success, error string on failure
+        ///
+        /// # Errors
+        /// Returns error if:
+        /// - Failed to send request
+        /// - Response indicates error
+        /// - Timeout waiting for response
+        #[allow(dead_code)] // Used in Phase 2 (real LSP communication)
+        async fn send_request(
+            &self,
+            method: &str,
+            params: serde_json::Value,
+        ) -> Result<serde_json::Value, String> {
         use tokio::time::{timeout, Duration};
 
         // Get next request ID
@@ -392,6 +393,7 @@ impl BridgeConnection {
             .get("result")
             .cloned()
             .ok_or_else(|| "REQUEST_FAILED (-32803): Response missing 'result' field".to_string())
+        }
     }
 
     pub_e2e! {
