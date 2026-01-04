@@ -193,14 +193,19 @@ const scrum: ScrumDashboard = {
         test: "Initialized notification sent to lua-language-server after receiving initialize response",
         implementation: "After receiving InitializeResult, send initialized notification (no id, method='initialized', params={}), set initialized flag",
         type: "behavioral" as SubtaskType,
-        status: "pending" as SubtaskStatus,
-        commits: [],
+        status: "completed" as SubtaskStatus,
+        commits: [
+          { hash: "5b9a516", message: "feat(bridge): implement initialized notification", phase: "green" as CommitPhase }
+        ],
         notes: [
           "Test: Verify initialized notification has no id field, method='initialized', params={}",
           "Test: Verify initialized flag (AtomicBool) set to true after sending",
           "Test: Verify initialized_notify (tokio::sync::Notify) triggered to wake waiting tasks",
           "ADR-0012 §5.1: Second step - server now ready for notifications/requests",
-          "Critical: Phase 1 guard uses this flag"
+          "Critical: Phase 1 guard uses this flag",
+          "✓ Implemented send_initialized_notification()",
+          "✓ Added initialized_notify Notify field for wait pattern",
+          "✓ Sets initialized flag and triggers notify_waiters()"
         ]
       },
       {
