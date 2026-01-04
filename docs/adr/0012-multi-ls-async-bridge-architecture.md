@@ -44,6 +44,46 @@ The existing async bridge implementation has fundamental issues that cannot be r
 2. **Ordering Guarantees** — Notifications must maintain order per (downstream, document)
 3. **Cancellation Propagation** — `$/cancelRequest` from upstream flows to all downstream
 4. **Resilience** — Circuit breaker and bulkhead patterns for fault isolation
+5. **LSP Compliance** — All error handling uses standard LSP error codes and response structures
+
+### 0. LSP Error Codes
+
+All error responses must use standard LSP error codes to maintain protocol compliance:
+
+```rust
+/// LSP-compliant error codes (LSP 3.17+)
+pub struct ErrorCodes;
+
+impl ErrorCodes {
+    /// Request failed but was syntactically correct (LSP 3.17)
+    /// Use for: downstream server failures, timeouts, circuit breaker open
+    pub const REQUEST_FAILED: i32 = -32803;
+
+    /// Server cancelled the request (LSP 3.17)
+    /// Only for requests that explicitly support server cancellation
+    pub const SERVER_CANCELLED: i32 = -32802;
+
+    /// Server not initialized (JSON-RPC reserved)
+    /// Use for: requests/notifications sent before `initialized`
+    pub const SERVER_NOT_INITIALIZED: i32 = -32002;
+}
+
+/// LSP-compliant error response structure
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseError {
+    pub code: i32,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<Value>,
+}
+```
+
+**Critical LSP requirement:** Every request MUST receive a response. Never return `None`, drop requests, or leave them hanging. Use `ResponseError` with appropriate error codes for all failure scenarios.
+
+**Usage guidelines:**
+- Use `REQUEST_FAILED` (-32803) for most error scenarios: timeouts, downstream failures, circuit breaker open
+- Include human-readable `message` describing the specific error context
+- Optional `data` field can provide additional debug information (e.g., which downstream server failed)
 
 ### Design Principle: Routing First
 
@@ -194,14 +234,55 @@ Key points:
 - Exception: `initialized` notification itself is allowed before flag is set
 
 ```rust
-pub async fn send_notification(&self, method: &str, params: Value) -> Result<(), String> {
+pub async fn send_notification(&self, method: &str, params: Value) -> Result<(), ResponseError> {
     // Guard: block notifications before initialization (except "initialized" itself)
     if !self.initialized.load(Ordering::SeqCst) && method != "initialized" {
-        return Err("Cannot send notification: language server not initialized".to_string());
+        return Err(ResponseError {
+            code: ErrorCodes::SERVER_NOT_INITIALIZED,
+            message: "Cannot send notification: downstream language server not initialized".to_string(),
+            data: None,
+        });
     }
     // ...
 }
 ```
+
+**Partial Initialization Failure Policy:**
+
+When initializing multiple downstream servers in parallel, some may succeed while others fail. The bridge handles this gracefully:
+
+| Scenario | Behavior | Rationale |
+|----------|----------|-----------|
+| All servers initialize successfully | Normal operation with all servers | Expected case |
+| Some servers fail initialization | Continue with working servers, failed servers enter circuit breaker open state | Graceful degradation - pyright failures shouldn't block ruff usage |
+| All servers fail initialization | Bridge reports errors but remains alive, circuit breakers prevent request routing | Allow recovery without full bridge restart |
+
+**Error propagation:**
+- Failed `initialize` requests trigger circuit breaker for that specific server
+- Requests routed to failed servers receive `REQUEST_FAILED` with circuit breaker message
+- Client sees degraded functionality (e.g., "pyright unavailable") rather than total failure
+- Health monitoring logs warn about failed servers for debugging
+
+**Example: pyright fails, ruff succeeds:**
+```
+┌─────────┐     ┌──────────┐     ┌──────────┐
+│ Bridge  │     │ pyright  │     │   ruff   │
+└────┬────┘     └────┬─────┘     └────┬─────┘
+     │──initialize──▶│                │
+     │──initialize───────────────────▶│  (parallel)
+     │               │                │
+     │◀──error───────│                │  (pyright crashes)
+     │  (circuit breaker opens)       │
+     │               │                │
+     │◀──result───────────────────────│  (ruff succeeds)
+     │──initialized──────────────────▶│
+     │──didOpen──────────────────────▶│  (ruff ready)
+     │               │                │
+     │──hover(Python)────────────────▶│  (routes to ruff only)
+     │               X                │  (pyright unavailable)
+```
+
+This approach maximizes availability while maintaining LSP compliance.
 
 #### 3.1.1 Three-Layer Race Condition
 
@@ -286,30 +367,46 @@ Three options were considered:
 
 **"Latest Wins" pattern for incremental requests (during Initialization Window):**
 
-Incremental requests (completion, signatureHelp, hover) should NOT immediately return empty. The user might be waiting for the result. Instead, use a "latest wins" pattern:
+Incremental requests (completion, signatureHelp, hover) should NOT immediately return empty. The user might be waiting for the result. Instead, use a "latest wins" pattern with **server-side cancellation**:
 
 1. If not initialized, keep the request pending
-2. If a **new request of the same type** arrives, discard the old pending request
+2. If a **new request of the same type** arrives, send `SERVER_CANCELLED` error for the old request (LSP 3.17+)
 3. When initialization completes, process the most recent pending request
+
+**LSP compliance rationale:**
+- **Every request gets a response** (LSP requirement) - no dropped requests
+- Uses `SERVER_CANCELLED` (-32802) error code for superseded requests
+- Server-initiated cancellation is LSP-compliant when client state has changed (LSP spec: "The result could still be useful... by transforming it to a new result")
 
 ```
 Scenario A: User is waiting
   "pri" → completion① (pending)
   ... user waits ...
   (initialization complete)
-  → Process completion① ✓  User gets their result
+  → Process completion①, return result ✓  User gets their result
 
-Scenario B: User continues typing
+Scenario B: User continues typing (server-side cancellation)
   "pri" → completion① (pending)
   "print" → completion② arrives
-  → Discard completion①, keep completion② pending
+  → Send SERVER_CANCELLED error for completion①
+  → Keep completion② pending
   (initialization complete)
-  → Process completion② ✓  Only latest result matters
+  → Process completion②, return result ✓  Only latest result matters
 ```
 
-This provides optimal UX:
+**Error response for superseded requests:**
+```rust
+ResponseError {
+    code: ErrorCodes::SERVER_CANCELLED,  // -32802 (LSP 3.17)
+    message: "Request superseded by newer request of same type".to_string(),
+    data: None,
+}
+```
+
+This provides optimal UX while maintaining LSP compliance:
 - If user pauses typing, they get completion when server is ready
-- If user continues typing, stale requests are automatically discarded
+- If user continues typing, stale requests receive proper cancellation errors
+- Clients can handle `SERVER_CANCELLED` appropriately (typically silently)
 
 **Timeout considerations:**
 
@@ -328,7 +425,7 @@ For "latest wins" requests, timeout is unnecessary because:
 
 ```rust
 /// Wait for initialization with timeout (for explicit actions only)
-async fn wait_for_initialized(&self, timeout: Duration) -> Result<(), String> {
+async fn wait_for_initialized(&self, timeout: Duration) -> Result<(), ResponseError> {
     if self.initialized.load(Ordering::SeqCst) {
         return Ok(());
     }
@@ -336,7 +433,11 @@ async fn wait_for_initialized(&self, timeout: Duration) -> Result<(), String> {
     tokio::select! {
         _ = self.initialized_notify.notified() => Ok(()),
         _ = tokio::time::sleep(timeout) => {
-            Err("Timeout waiting for language server initialization".to_string())
+            Err(ResponseError {
+                code: ErrorCodes::REQUEST_FAILED,
+                message: "Timeout waiting for downstream language server initialization".to_string(),
+                data: None,
+            })
         }
     }
 }
@@ -351,30 +452,34 @@ async fn wait_for_initialized_no_timeout(&self) {
 
 /// Track pending incremental requests (only latest is kept)
 struct PendingIncrementalRequests {
-    completion: Option<(i64, oneshot::Sender<Value>)>,  // (request_id, response_channel)
-    signature_help: Option<(i64, oneshot::Sender<Value>)>,
-    hover: Option<(i64, oneshot::Sender<Value>)>,
+    completion: Option<(i64, oneshot::Sender<Result<Value, ResponseError>>)>,
+    signature_help: Option<(i64, oneshot::Sender<Result<Value, ResponseError>>)>,
+    hover: Option<(i64, oneshot::Sender<Result<Value, ResponseError>>)>,
 }
 
 impl PendingIncrementalRequests {
-    /// Register new request, canceling any existing one of the same type
-    fn register_completion(&mut self, id: i64, sender: oneshot::Sender<Value>) {
+    /// Register new request, sending SERVER_CANCELLED to any existing one of the same type
+    fn register_completion(&mut self, id: i64, sender: oneshot::Sender<Result<Value, ResponseError>>) {
         if let Some((old_id, old_sender)) = self.completion.take() {
-            // Cancel old request by sending empty response
-            let _ = old_sender.send(json!({ "isIncomplete": false, "items": [] }));
-            log::debug!("Discarded stale completion request {}", old_id);
+            // Send SERVER_CANCELLED error to superseded request (LSP 3.17 compliant)
+            let _ = old_sender.send(Err(ResponseError {
+                code: ErrorCodes::SERVER_CANCELLED,
+                message: "Request superseded by newer request of same type".to_string(),
+                data: None,
+            }));
+            log::debug!("Sent SERVER_CANCELLED for stale completion request {}", old_id);
         }
         self.completion = Some((id, sender));
     }
 }
 
-pub async fn send_request(&self, method: &str, params: Value) -> Result<Value, String> {
+pub async fn send_request(&self, method: &str, params: Value) -> Result<Value, ResponseError> {
     match method {
         // initialize: no wait needed
         "initialize" => {}
-        // Incremental: latest wins, no timeout
+        // Incremental: latest wins with server-side cancellation, no timeout
         "textDocument/completion" | "textDocument/signatureHelp" | "textDocument/hover" => {
-            // Register this request (discards any pending one of same type)
+            // Register this request (sends SERVER_CANCELLED to any pending one of same type)
             // Wait indefinitely - natural cleanup via latest-wins pattern
             self.wait_for_initialized_no_timeout().await;
         }
@@ -389,7 +494,7 @@ pub async fn send_request(&self, method: &str, params: Value) -> Result<Value, S
 
 **Timeout value (5 seconds) for explicit actions:**
 - Covers slow language servers (e.g., pyright on large projects)
-- Short enough to fail fast if server is broken
+- Short enough to fail fast if server is broken (returns `REQUEST_FAILED` error)
 - Configurable per-connection if needed in future
 
 #### 3.2 Document Notification Order
@@ -479,24 +584,37 @@ impl TokioAsyncLanguageServerPool {
         key: &str,
         method: &str,
         params: Value,
-    ) -> Option<Value> {
+    ) -> Result<Value, ResponseError> {
         let breaker = self.circuit_breakers.entry(key.to_string())
             .or_insert_with(|| CircuitBreaker::new(self.breaker_config.clone()));
 
         if !breaker.allow_request() {
             log::warn!("Circuit breaker open for {}, skipping request", key);
-            return None;  // Fast-fail, don't even try
+            // LSP compliance: Every request must receive a response
+            return Err(ResponseError {
+                code: ErrorCodes::REQUEST_FAILED,
+                message: format!(
+                    "Downstream server '{}' is unhealthy (circuit breaker open)",
+                    key
+                ),
+                data: None,
+            });
         }
 
         match self.send_request_inner(key, method, params).await {
             Ok(response) => {
                 breaker.record_success();
-                Some(response)
+                Ok(response)
             }
             Err(e) => {
                 breaker.record_failure();
                 log::warn!("Request to {} failed: {}", key, e);
-                None
+                // LSP compliance: Return error response, not None
+                Err(ResponseError {
+                    code: ErrorCodes::REQUEST_FAILED,
+                    message: format!("Request to downstream server '{}' failed: {}", key, e),
+                    data: None,
+                })
             }
         }
     }
@@ -611,11 +729,15 @@ languageServers:
 
 ### Positive
 
+- **LSP Compliance**: All error handling uses standard LSP error codes (REQUEST_FAILED, SERVER_CANCELLED, SERVER_NOT_INITIALIZED)
+- **No Dropped Requests**: Every request receives a response, even during failures (circuit breaker open, timeout, etc.)
+- **Server-Side Cancellation**: "Latest wins" pattern uses LSP-compliant SERVER_CANCELLED errors for superseded incremental requests
+- **Graceful Degradation**: Partial initialization failures allow working servers to continue serving requests
 - **Routing-First Simplicity**: Most requests go to a single LS — no aggregation overhead for common cases
 - **Minimal Configuration**: Default capability-based routing works without per-method config
 - **Multi-LS Support**: Python files can use pyright + ruff simultaneously
 - **Fault Isolation**: One crashed LS doesn't affect others (circuit breaker + bulkhead)
-- **Cancellation**: Users can cancel slow requests, propagated to all downstream
+- **Cancellation Propagation**: Client cancellations propagated to all downstream servers
 - **Flexible Aggregation**: Per-method control over how responses are combined (when needed)
 - **Backward Compatible**: Single-LS configurations continue to work unchanged
 
