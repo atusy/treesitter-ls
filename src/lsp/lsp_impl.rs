@@ -690,7 +690,8 @@ impl TreeSitterLs {
                         };
 
                         // Get or spawn bridge connection for this language
-                        let connection = match bridge_pool.get_or_spawn_connection(&language).await {
+                        let connection = match bridge_pool.get_or_spawn_connection(&language).await
+                        {
                             Ok(conn) => conn,
                             Err(e) => {
                                 log::error!(
@@ -705,7 +706,10 @@ impl TreeSitterLs {
 
                         // Forward notification to bridge connection
                         // Extract just the params (not the full JSON-RPC envelope)
-                        let params = notification.get("params").cloned().unwrap_or(serde_json::json!({}));
+                        let params = notification
+                            .get("params")
+                            .cloned()
+                            .unwrap_or(serde_json::json!({}));
 
                         if let Err(e) = connection.send_notification(method, params).await {
                             log::error!(
@@ -1642,10 +1646,7 @@ mod tests {
         // Notification with regular file URI (not virtual format)
         let uri = "file:///test.md";
         let language = extract_language_from_notification_uri(uri);
-        assert_eq!(
-            language, None,
-            "Should return None for non-virtual URI"
-        );
+        assert_eq!(language, None, "Should return None for non-virtual URI");
 
         // This is correct behavior - notification forwarder will skip forwarding
         // when extract_language_from_notification_uri returns None
@@ -1690,10 +1691,7 @@ mod tests {
         // Test URI without virtual path format
         let uri_no_virtual = "file:///test.md";
         let language = extract_language_from_notification_uri(uri_no_virtual);
-        assert_eq!(
-            language, None,
-            "Should return None for non-virtual URI"
-        );
+        assert_eq!(language, None, "Should return None for non-virtual URI");
 
         // Test URI with wrong path format
         let uri_wrong_format = "file:///real/document.lua";
