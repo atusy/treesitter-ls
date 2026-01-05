@@ -127,7 +127,9 @@ Idle timeout operates based on connection state:
 - **Active State** (pending requests > 0):
   - Timer: RUNNING
   - Additional requests: Keep same timer running (don't restart)
-  - Any stdout activity: Reset timer (fresh 60-second window)
+  - Response received (pending > 1): Reset timer (fresh 60-second window, stay active)
+  - Response received (pending becomes 0): **STOP timer** (transition to Quiescent)
+  - Notification received: Reset timer (fresh 60-second window, stay active)
   - 60s without stdout: Timeout fires (hung server)
 
 **Timer Lifecycle**:
