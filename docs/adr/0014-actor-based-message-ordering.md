@@ -97,19 +97,47 @@ enum BridgeOperation {
     Request { id: i64, method: String, params: Value, response_tx: oneshot::Sender<...> },
 }
 
-// Single operation queue (FIFO)
+// Unified order channel + coalescing map for supersede-able operations
 struct BridgeConnection {
-    operation_queue: mpsc::UnboundedSender<Envelope>,
+    // Coalescing map for supersede-able operations only
+    // Stores LATEST operation per key to minimize memory during initialization
+    coalescing_map: Arc<DashMap<SupersedeKey, Envelope>>,
+
+    // Single order channel for ALL operations (preserves FIFO)
+    // Enqueues either SupersedeKey (for coalesced ops) or Envelope (for direct ops)
+    order_queue: mpsc::Sender<OperationHandle>,  // Bounded (capacity: 256)
+
     // ... other fields
 }
 
-// Single writer loop
-async fn writer_loop() {
-    while let Some(envelope) = operation_rx.recv().await {
-        if is_stale_or_cancelled(&envelope).await {
-            continue; // Drop stale operations
-        }
+// Discriminated union for order channel
+enum OperationHandle {
+    Coalesced(SupersedeKey),  // Retrieve from coalescing_map
+    Direct(Envelope),          // Use directly
+}
 
+// Single writer loop consuming from unified order queue
+async fn writer_loop(
+    coalescing_map: Arc<DashMap<SupersedeKey, Envelope>>,
+    mut order_queue_rx: mpsc::Receiver<OperationHandle>,
+    pending_requests: Arc<DashMap<i64, oneshot::Sender<...>>>,
+) {
+    while let Some(handle) = order_queue_rx.recv().await {
+        let envelope = match handle {
+            OperationHandle::Coalesced(key) => {
+                // Retrieve latest envelope from map
+                match coalescing_map.remove(&key) {
+                    Some((_, envelope)) => envelope,
+                    None => continue, // Superseded and cleaned up early
+                }
+            }
+            OperationHandle::Direct(envelope) => {
+                // Use envelope directly
+                envelope
+            }
+        };
+
+        // Write operation to stdin (ordering preserved!)
         match envelope.operation {
             Notification { method, params } => {
                 write_notification(method, params).await;
@@ -124,9 +152,39 @@ async fn writer_loop() {
 ```
 
 **Benefits**:
-- **Ordering guarantee**: Operations processed in enqueue order (FIFO)
-- **No interleaving**: Single writer prevents byte-level corruption
-- **Unified path**: Notifications and requests use same queue
+- **Ordering guarantee**: Single order channel ensures FIFO for ALL operations (supersede-able + non-supersede-able)
+- **No interleaving**: Single writer loop prevents byte-level corruption
+- **Memory efficiency**: Coalescing map stores only latest operation per key (supersede-able ops only)
+- **Bounded memory**: Hard capacity limits prevent OOM during slow initialization
+- **Early cleanup**: Superseded operations removed from map immediately, not at dequeue time
+
+**Why unified order channel is critical**:
+
+Dual separate channels would break ordering:
+```rust
+// BROKEN: Two separate channels
+tokio::select! {
+    Some(key) = coalescing_rx.recv() => { ... }
+    Some(envelope) = direct_rx.recv() => { ... }
+}
+// select! can arbitrarily choose branch → ordering violated!
+```
+
+Scenario with broken ordering:
+```
+T0: didChange (supersede-able) → coalescing channel
+T1: definition (non-supersede-able) → direct channel
+T2: select! chooses direct branch → definition processed FIRST
+Result: Definition sees stale content (race condition!)
+```
+
+With unified channel:
+```
+T0: didChange → order_queue.send(Coalesced(key))
+T1: definition → order_queue.send(Direct(envelope))
+T2: Writer dequeues in FIFO: didChange, then definition
+Result: Definition sees fresh content ✓
+```
 
 #### 2. Generation-Based Coalescing
 
@@ -156,90 +214,193 @@ struct Envelope {
 async fn send(&self, operation: BridgeOperation) {
     let key = supersede_key_of(&operation);
     let mut gen_map = self.gen_by_key.lock().await;
-    let mut last_req_map = self.last_request_id_by_key.lock().await;
-    let mut cancelled = self.cancelled_request_ids.lock().await;
 
     // Bump generation (newest wins)
     let old_gen = gen_map.get(&key).copied().unwrap_or(0);
     let new_gen = old_gen + 1;
     gen_map.insert(key.clone(), new_gen);
 
-    // If this supersedes a previous request, cancel it
-    let mut cancel_id = None;
-    if should_supersede(&operation) {
-        if let Some(prev_id) = last_req_map.get(&key).copied() {
-            if let BridgeOperation::Request { id, .. } = &operation {
-                if prev_id != *id {
-                    cancel_id = Some(prev_id);
-                    cancelled.insert(prev_id);
-                }
-            }
-        }
-    }
-
-    // Update last request ID for this key
-    if let BridgeOperation::Request { id, .. } = &operation {
-        last_req_map.insert(key.clone(), *id);
-    }
-
     drop(gen_map);
-    drop(last_req_map);
-    drop(cancelled);
 
-    // Send immediate cancellation response (outside lock)
-    if let Some(id) = cancel_id {
-        // Return REQUEST_CANCELLED for superseded request
-        self.send_error_response(id, ErrorCodes::REQUEST_CANCELLED,
-            "Request cancelled (superseded before dispatch)");
-    }
-
-    // Enqueue with generation snapshot
-    self.operation_queue.send(Envelope {
+    let envelope = Envelope {
         operation,
-        key,
-        gen: new_gen
-    }).await;
+        key: key.clone(),
+        gen: new_gen,
+    };
+
+    // Route based on superseding behavior
+    if should_supersede(&envelope.operation) {
+        // Supersede-able: Use coalescing map for early cleanup
+        // This replaces old operation with new one, freeing memory immediately
+        if let Some(old_envelope) = self.coalescing_map.insert(key.clone(), envelope) {
+            // Cancel superseded request immediately
+            if let BridgeOperation::Request { response_tx, .. } = old_envelope.operation {
+                let _ = response_tx.send(Err(ResponseError {
+                    code: ErrorCodes::REQUEST_CANCELLED,
+                    message: "Request cancelled (superseded before dispatch)".into(),
+                    data: None,
+                }));
+            }
+            // Don't enqueue again - key already in order queue
+        } else {
+            // New key - enqueue handle for ordering
+            // If queue full, this blocks (backpressure)
+            self.order_queue.send(OperationHandle::Coalesced(key)).await.ok();
+        }
+    } else {
+        // Non-supersede-able: Enqueue envelope directly
+        // If queue full, this blocks (backpressure)
+        self.order_queue.send(OperationHandle::Direct(envelope)).await.ok();
+    }
 }
 ```
 
-#### 3. Stale Check at Write Time (Late Decision)
+#### 3. Coalescing Map for Memory-Bounded Superseding
 
-The writer loop checks staleness when dequeuing, not when enqueuing:
+**Design choice: Why coalescing map?**
+
+Superseding can be implemented with generation counter + staleness check alone (see Alternative 1), but this accumulates stale envelopes in the queue. The coalescing map is an **optimization** that provides:
+- **Early cleanup**: Stale envelopes freed at enqueue time (not dequeue)
+- **Memory efficiency**: O(unique keys) instead of O(total requests)
+- **No wasted processing**: Writer doesn't check staleness for every envelope
+
+Each supersede-able operation is stored in a `DashMap<SupersedeKey, Envelope>`, where inserting a new envelope for an existing key automatically replaces (and frees) the old one.
+
+**Critical mechanism: Queue deduplication via conditional enqueue**
 
 ```rust
-async fn is_stale_or_cancelled(&self, env: &Envelope) -> bool {
-    let gen_map = self.gen_by_key.lock().await;
-    let cancelled = self.cancelled_request_ids.lock().await;
+// When new operation arrives
+if should_supersede(&envelope.operation) {
+    // Try to insert into map
+    if let Some(old_envelope) = self.coalescing_map.insert(key.clone(), envelope) {
+        // ↑ Map already had this key (returns old envelope)
 
-    // Check if request was explicitly cancelled
-    if let BridgeOperation::Request { id, .. } = &env.operation {
-        if cancelled.contains(id) {
-            return true;
+        // Old envelope freed immediately (early cleanup)
+        if let BridgeOperation::Request { response_tx, .. } = old_envelope.operation {
+            let _ = response_tx.send(Err(REQUEST_CANCELLED));
         }
-    }
 
-    // Check if generation is stale (newer operation enqueued)
-    let cur_gen = gen_map.get(&env.key).copied().unwrap_or(0);
-    env.gen != cur_gen
+        // CRITICAL: Don't enqueue again!
+        // Key is already in order_queue from first send
+        // This prevents duplicate entries in queue
+    } else {
+        // ↑ New key (map.insert returned None)
+
+        // First time seeing this key - enqueue for FIFO ordering
+        self.order_queue.send(OperationHandle::Coalesced(key)).await.ok();
+    }
 }
 ```
 
-**Why late decision matters**:
+**Why this works - Queue deduplication guarantee**:
+
+```
+T0: First send for key → map.insert returns None → ENQUEUE key
+T1: Second send for key → map.insert returns Some → DON'T enqueue
+T2: Third send for key → map.insert returns Some → DON'T enqueue
+...
+TN: Nth send for key → map.insert returns Some → DON'T enqueue
+
+Queue state: [Coalesced(key)] ← Only ONE entry, regardless of N sends
+Map state: {key => envelope_N} ← Only LATEST envelope
+
+Writer dequeues key once → retrieves envelope_N → writes latest
+```
+
+**Deduplication invariant**: For any SupersedeKey, the order_queue contains **at most one** `Coalesced(key)` entry, enqueued on the first send.
+
+**Memory guarantee with queue deduplication**:
 
 ```
 Scenario: User types "pri" → "print" → "printf" rapidly
 
-T0: send(completion, "pri")   → gen=1 enqueued
-T1: send(completion, "print") → gen=2 enqueued, gen=1 cancelled
-T2: send(completion, "printf")→ gen=3 enqueued, gen=2 cancelled
-T3: writer dequeues gen=1 → stale check: cur_gen=3, drop
-T4: writer dequeues gen=2 → stale check: cur_gen=3, drop
-T5: writer dequeues gen=3 → fresh, write to server
+T0: send(completion, "pri")   → map[key] = envelope(gen=1)
+                               → map.insert returns None (new key)
+                               → order_queue.send(Coalesced(key))
+                               Queue: [Coalesced(key)] (1 entry)
+                               Map: {key => env1} (1 envelope, ~1KB)
 
-Result: Only latest request ("printf") reaches server
+T1: send(completion, "print") → map[key] = envelope(gen=2)
+                               → map.insert returns Some(env1) (existing key!)
+                               → DON'T enqueue (key already in queue)
+                               → env1 freed immediately
+                               Queue: [Coalesced(key)] (still 1 entry!)
+                               Map: {key => env2} (1 envelope, ~1KB)
+
+T2: send(completion, "printf")→ map[key] = envelope(gen=3)
+                               → map.insert returns Some(env2)
+                               → DON'T enqueue
+                               → env2 freed immediately
+                               Queue: [Coalesced(key)] (still 1 entry!)
+                               Map: {key => env3} (1 envelope, ~1KB)
+
+T3: Writer dequeues key → map.remove(key) returns env3 → write to server
+
+Result: Only latest request reaches server
+Queue memory: O(unique keys) — 1 entry per key, ~100 bytes each
+Map memory: O(unique keys) — 1 envelope per key, ~1KB each
+Total: ~1.1KB per unique (URI, method) pair
 ```
 
-Early decision (check at enqueue time) would miss rapid superseding. Late decision ensures only the absolutely latest operation proceeds.
+**Scaling analysis**:
+
+| Scenario | Queue Entries | Map Entries | Total Memory |
+|----------|--------------|-------------|--------------|
+| 1 doc, 100 edits (same key) | 1 entry | 1 envelope | ~1.1KB |
+| 10 docs, 10 edits each (10 keys) | 10 entries | 10 envelopes | ~11KB |
+| 100 docs × 5 methods (500 keys) | 500 entries | 500 envelopes | ~550KB |
+
+Compare to unbounded queue without deduplication:
+- 100 edits same doc: 100 envelopes = ~100KB (vs ~1.1KB)
+- 10 docs × 10 edits: 1000 envelopes = ~1MB (vs ~11KB)
+
+**Why unified order channel is critical**:
+
+- Coalescing map (DashMap) doesn't preserve insertion order
+- Single order channel `mpsc::Sender<OperationHandle>` maintains FIFO for ALL operations
+- Handles both coalesced (retrieve from map) and direct (use envelope) operations
+- When coalesced key appears multiple times, only first enqueue matters (later are supersedes with map already updated)
+- Writer processes all operations in strict FIFO order
+
+**Ordering guarantee preserved**:
+
+```
+Scenario: didChange followed by definition request
+
+T0: send(didChange) → coalescing_map[key] = envelope
+                   → order_queue.send(Coalesced(key))
+T1: send(definition) → order_queue.send(Direct(envelope))
+
+Writer loop:
+1. Dequeue Coalesced(key) → retrieve from map → write didChange
+2. Dequeue Direct(envelope) → use envelope → write definition
+
+Result: Server receives didChange BEFORE definition ✓
+```
+
+**Edge case: Document closed before writer processes**:
+
+```
+Scenario: Operations enqueued, then document closed
+
+T0: send(completion, uri1) → map[key1]=env1, queue: [Coalesced(key1)]
+T1: didClose(uri1) → map.retain(|k,_| k.uri != uri1)
+                   → Map now empty (key1 removed)
+                   → Queue still: [Coalesced(key1)]  ← Key remains!
+
+Writer loop:
+1. Dequeue Coalesced(key1)
+2. map.remove(key1) → returns None (already removed)
+3. Continue (skip) ← No write, no error
+
+Result: Stale key in queue is safely skipped
+```
+
+**Queue contains phantom entries after cleanup**: This is acceptable because:
+1. Phantom entries are small (~100 bytes per key)
+2. Writer safely skips them (map lookup returns None)
+3. Queue eventually drains during normal operation
+4. Alternative (scanning queue to remove) would be expensive and complex
 
 #### 4. Immediate Cancellation Response
 
@@ -363,20 +524,35 @@ fn should_supersede(op: &BridgeOperation) -> bool {
 
 **6. Scalability**
 - No timeout task overhead (O(1) state per supersede key, not per request)
-- Late decision minimizes wasted work (only latest operation processed)
+- Early cleanup minimizes wasted work (stale operations freed immediately)
+- Bounded memory footprint during initialization (coalescing map + bounded queues)
 - Generation counter is lightweight (single u64 increment)
+
+**7. Memory Efficiency During Slow Initialization**
+
+Critical improvement over naive queue approach:
+
+| Scenario | Naive Queue (Late Decision) | Coalescing Map (Early Cleanup) |
+|----------|---------------------------|-------------------------------|
+| **User types 100 chars during 5s init** | 100 envelopes queued (~100KB) | 1 envelope in map (~1KB) |
+| **10 documents, rapid editing** | 1000+ envelopes (~1MB+) | 10-50 entries (~50KB) |
+| **Cleanup timing** | After dequeue (late) | On supersede (immediate) |
+| **Memory bound** | Unbounded (grows with requests) | O(documents × methods) |
+
+**Prevents OOM**: Bounded memory even when initialization takes 10+ seconds (e.g., rust-analyzer on large projects).
 
 ### Negative
 
 **1. Per-Virtual-URI State Overhead**
-- Each virtual URI + method combination needs generation counter
-- Memory grows with number of active virtual documents
-- Mitigation: Clean up generations when virtual documents close
+- Each virtual URI + method combination needs entry in coalescing map
+- Memory grows with number of active virtual documents (bounded by O(documents × methods))
+- Typical: 3-50 entries; Max realistic: ~500 entries
+- Mitigation: Clean up map entries when virtual documents close
 
-**2. Complexity of Stale Check**
-- Writer loop must check every operation before processing
-- Lock contention on `gen_by_key` map
-- Mitigation: Use concurrent hash map (DashMap) for lock-free reads
+**2. Dual Queue Complexity**
+- Two separate queues (coalescing + direct) increase implementation complexity
+- Requires routing logic in `send()` to choose correct queue
+- Mitigation: Clear routing based on `should_supersede()` predicate
 
 **3. Cancellation Response Overhead**
 - Superseded requests receive explicit error response
@@ -406,42 +582,53 @@ fn should_supersede(op: &BridgeOperation) -> bool {
 
 ## Implementation
 
-### Phase 1: Unified Queue (PBI-201)
+### Phase 1: Unified Order Queue with Coalescing Map (PBI-201)
 
-**Scope**: Replace separate notification/request paths with single operation queue
+**Scope**: Replace separate notification/request paths with unified order queue + coalescing map
 
 **Files**:
 - `src/lsp/bridge/connection.rs`: Major refactor (lines 49-694)
 
 **Changes**:
 1. Define `BridgeOperation` enum (Notification | Request)
-2. Replace `send_notification` and `send_request` with unified `send` method
-3. Implement single writer loop consuming from operation queue
-4. Remove separate notification forwarder path
+2. Define `OperationHandle` enum (Coalesced | Direct)
+3. Implement coalescing map for supersede-able operations:
+   - `coalescing_map: Arc<DashMap<SupersedeKey, Envelope>>`
+4. Implement unified order channel for ALL operations:
+   - `order_queue: mpsc::Sender<OperationHandle>` (bounded, capacity 256)
+   - Routes coalesced keys and direct envelopes through SAME channel
+5. Replace `send_notification` and `send_request` with unified `send` method
+6. Implement single writer loop consuming from unified order queue
+7. Remove separate notification forwarder path
 
 **Exit Criteria**:
-- All notifications and requests flow through same queue
-- Writer loop processes operations in FIFO order
-- Tests pass (no ordering violations)
+- All operations (supersede-able + non-supersede-able) flow through single order channel
+- Writer loop processes operations in strict FIFO order (no interleaving)
+- Superseded operations cleaned up immediately (early cleanup)
+- Memory bounded during initialization (verify with load test)
+- Tests pass (no ordering violations, including didChange → request sequences)
 
 ### Phase 2: Generation-Based Superseding
 
-**Scope**: Implement generation counter and stale check
+**Scope**: Integrate generation counter with coalescing map
 
 **Files**:
 - `src/lsp/bridge/connection.rs`: Add generation tracking
 
 **Changes**:
-1. Add `gen_by_key: DashMap<SupersedeKey, u64>`
-2. Add `last_request_id_by_key: DashMap<SupersedeKey, i64>`
-3. Add `cancelled_request_ids: DashMap<i64, ()>`
-4. Implement `send` method with generation bump and cancellation
-5. Implement `is_stale_or_cancelled` check in writer loop
-6. Remove timeout-based pending request tracking
+1. Add `gen_by_key: DashMap<SupersedeKey, u64>` for generation tracking
+2. Update `send` method:
+   - Bump generation counter on each send
+   - Use `coalescing_map.insert()` to replace old envelope (early cleanup)
+   - Send immediate `REQUEST_CANCELLED` when superseding
+   - Enqueue key only if new (not if replacing)
+3. Remove stale check from writer loop (no longer needed - map contains only latest)
+4. Remove timeout-based pending request tracking
 
 **Exit Criteria**:
 - Superseded requests receive REQUEST_CANCELLED immediately
 - Only latest request per key proceeds to server
+- Coalescing map never contains stale envelopes
 - No timeout tasks (event-driven)
 
 ### Phase 3: Integration with Stable URIs (PBI-200)
@@ -453,12 +640,19 @@ fn should_supersede(op: &BridgeOperation) -> bool {
 **Changes**:
 1. Update `supersede_key_of` to use stable URIs (not content hash)
 2. Add per-URI lifecycle tracking (didOpen/didClose)
-3. Clean up generation counters when virtual documents close
+3. Clean up coalescing map entries when virtual documents close:
+   ```rust
+   async fn on_did_close(&self, uri: &str) {
+       // Remove all entries for this URI
+       self.coalescing_map.retain(|key, _| key.0 != uri);
+       self.gen_by_key.retain(|key, _| key.0 != uri);
+   }
+   ```
 
 **Exit Criteria**:
 - didChange + completion ordering maintained with stable URIs
-- Generation counters cleaned up on didClose
-- No resource leaks (stale generations)
+- Coalescing map entries cleaned up on didClose
+- No resource leaks (memory stays bounded as documents open/close)
 
 ### Migration Strategy
 
@@ -466,13 +660,201 @@ fn should_supersede(op: &BridgeOperation) -> bool {
 
 | Component | ADR-0012 (Before) | ADR-0014 (After) |
 |-----------|-------------------|------------------|
-| **Operation path** | Notifications → channel, Requests → direct call | Unified queue (single path) |
-| **Superseding** | Timeout-based bounded wait | Generation counter (event-based) |
+| **Operation path** | Notifications → channel, Requests → direct call | Unified order queue (single FIFO path) |
+| **Superseding** | Timeout-based bounded wait | Generation counter + coalescing map (event-based) |
 | **Cancellation** | REQUEST_FAILED after timeout | REQUEST_CANCELLED immediately |
-| **State tracking** | `PendingIncrementalRequests` per type | Generation counter per (URI, method) |
-| **Writer** | Mixed (channel reader + direct write) | Single writer loop (actor pattern) |
+| **State tracking** | `PendingIncrementalRequests` per type | Coalescing map per (URI, method) |
+| **Writer** | Mixed (channel reader + direct write) | Single writer loop (unified order queue) |
+| **Ordering** | Race between notification channel and request call | Guaranteed FIFO (all ops through same queue) |
+| **Memory** | Unbounded during init | Bounded by O(unique URIs × methods) |
+| **Cleanup** | Late (at dequeue) | Early (at enqueue via map replacement) |
 
 **Backward compatibility**: External LSP interface unchanged. Internal refactor only.
+
+## Alternatives Considered
+
+### Alternative 1: Unbounded Queue with Late Staleness Check
+
+Use `mpsc::UnboundedSender` with staleness checking when dequeuing from the writer loop.
+
+**Design**:
+
+```rust
+struct BridgeConnection {
+    operation_queue: mpsc::UnboundedSender<Envelope>,  // Unbounded
+    gen_by_key: Arc<Mutex<HashMap<SupersedeKey, u64>>>,
+    cancelled_request_ids: Arc<Mutex<HashSet<i64>>>,
+}
+
+async fn writer_loop() {
+    while let Some(envelope) = operation_rx.recv().await {
+        // Late decision: Check staleness when dequeuing
+        if is_stale_or_cancelled(&envelope).await {
+            continue; // Drop stale operations
+        }
+        write_to_stdin(envelope).await;
+    }
+}
+
+async fn is_stale_or_cancelled(&self, env: &Envelope) -> bool {
+    let gen_map = self.gen_by_key.lock().await;
+    let cancelled = self.cancelled_request_ids.lock().await;
+
+    // Check if request was explicitly cancelled
+    if let BridgeOperation::Request { id, .. } = &env.operation {
+        if cancelled.contains(id) {
+            return true;
+        }
+    }
+
+    // Check if generation is stale (newer operation enqueued)
+    let cur_gen = gen_map.get(&env.key).copied().unwrap_or(0);
+    env.gen != cur_gen
+}
+```
+
+**How it works**:
+
+```
+Scenario: User types "pri" → "print" → "printf" rapidly during initialization
+
+T0: send(completion, "pri")   → gen=1 enqueued
+T1: send(completion, "print") → gen=2 enqueued, gen=1 marked cancelled
+T2: send(completion, "printf")→ gen=3 enqueued, gen=2 marked cancelled
+    [Queue now contains: envelope(gen=1), envelope(gen=2), envelope(gen=3)]
+
+T3: Initialization completes, writer loop starts
+T4: Dequeue envelope(gen=1) → is_stale? cur_gen=3, yes → drop
+T5: Dequeue envelope(gen=2) → is_stale? cur_gen=3, yes → drop
+T6: Dequeue envelope(gen=3) → is_stale? cur_gen=3, no → write to server
+
+Result: Only latest request reaches server (correct behavior)
+```
+
+**Why rejected**:
+
+**1. Unbounded memory growth during slow initialization**
+
+```
+Scenario: User types 100 characters during 5s rust-analyzer initialization
+
+With late decision:
+- 100 completion requests enqueued
+- All 100 envelopes remain in queue (each ~1KB)
+- Total memory: ~100KB for this one document
+- If 10 documents actively edited: ~1MB
+- If user types 500 chars: ~5MB for completions alone
+
+Risk: OOM crash if initialization takes 10+ seconds under heavy editing
+```
+
+**2. Wasted processing cycles**
+
+Writer loop must:
+- Dequeue all stale envelopes (99 out of 100)
+- Acquire locks to check staleness for each
+- Drop each stale envelope
+- Only 1 out of 100 envelopes actually written
+
+**3. Lock contention on staleness check**
+
+Every dequeued operation requires:
+```rust
+let gen_map = self.gen_by_key.lock().await;      // Lock acquisition
+let cancelled = self.cancelled_request_ids.lock().await; // Another lock
+```
+
+Under high throughput (100+ ops/sec), lock contention becomes bottleneck.
+
+**4. No hard memory bound**
+
+Queue size is `O(total requests sent)`, not `O(unique documents × methods)`:
+- 1 document, 100 edits → 100 envelopes queued
+- 100 documents, 10 edits each → 1000 envelopes queued
+- Scales poorly with user activity during initialization
+
+**Comparison to chosen design**:
+
+| Aspect | Late Decision (Rejected) | Coalescing Map (Chosen) |
+|--------|-------------------------|------------------------|
+| **Memory during init** | O(total requests) — unbounded | O(unique keys) — bounded |
+| **Queue size (100 edits)** | 100 envelopes (~100KB) | 1 envelope (~1KB) |
+| **Staleness check** | At dequeue (all items) | Not needed (map has only latest) |
+| **Lock contention** | High (every dequeue) | Low (only on send) |
+| **OOM risk** | Yes (long init + heavy editing) | No (bounded by documents) |
+
+### Alternative 2: Bounded Queue Only (No Coalescing)
+
+Use `mpsc::Sender<Envelope>` with bounded capacity but no coalescing.
+
+**Design**:
+
+```rust
+struct BridgeConnection {
+    operation_queue: mpsc::Sender<Envelope>,  // Bounded (capacity: 128)
+}
+
+async fn send(&self, operation: BridgeOperation) {
+    let envelope = Envelope { operation, key, gen };
+    // Blocks when queue full (backpressure)
+    self.operation_queue.send(envelope).await.ok();
+}
+```
+
+**Why rejected**:
+
+**1. Still accumulates stale items (just bounded)**
+
+```
+Scenario: User types rapidly, queue capacity = 128
+
+- User types 200 chars during initialization
+- First 128 enqueued
+- 129th send blocks (backpressure)
+- Of the 128 in queue, only 1-2 are fresh, 126+ are stale
+- Still wasting 99% of queue capacity on stale items
+```
+
+**2. Backpressure blocks user actions**
+
+When queue full:
+- `send().await` blocks the LSP request handler
+- User's typing appears frozen (completions don't trigger)
+- Bad UX during initialization window
+
+**3. No memory improvement over late decision**
+
+Bounded queue prevents unbounded growth, but:
+- Max memory still: `capacity × envelope_size` (e.g., 128KB)
+- Coalescing map: typically 3-50 envelopes (3-50KB)
+- **Coalescing is 3-40× more memory efficient**
+
+**4. Doesn't solve the fundamental problem**
+
+The issue isn't queue size per se — it's storing **obsolete data**:
+- Bounded queue: limits obsolete data
+- Coalescing map: **eliminates** obsolete data
+
+**Comparison**:
+
+| Aspect | Bounded Queue Only | Coalescing Map |
+|--------|-------------------|----------------|
+| **Memory bound** | Hard limit (128 envelopes) | Dynamic (unique keys) |
+| **Typical memory** | ~128KB (full queue) | ~3-50KB (active docs) |
+| **Stale items** | Up to capacity-1 | Zero (replaced immediately) |
+| **Backpressure** | Blocks on full queue | Rarely blocks (small map) |
+| **UX during init** | May freeze on heavy editing | Smooth (stale items dropped) |
+
+### Why Coalescing Map is Superior
+
+The chosen design (coalescing map + bounded order channel) combines best of both:
+
+1. **Memory efficient**: O(unique keys) not O(requests)
+2. **No stale accumulation**: Map replacement frees old envelopes immediately
+3. **Smooth backpressure**: Order channel rarely fills (only unique keys)
+4. **Clean semantics**: Map naturally represents "latest state per key"
+
+**Key insight**: Superseding is fundamentally a **state synchronization** problem, not a **message queue** problem. Coalescing map is the semantically correct data structure.
 
 ## Related ADRs
 
