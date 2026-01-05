@@ -158,6 +158,134 @@ async fn writer_loop(
 - **Bounded memory**: Hard capacity limits prevent OOM during slow initialization
 - **Early cleanup**: Superseded operations removed from map immediately, not at dequeue time
 
+**Writer Loop Panic Recovery (Supervisor Pattern)**:
+
+The writer loop MUST include panic recovery to prevent silent permanent hangs:
+
+```rust
+async fn supervised_writer_loop(
+    coalescing_map: Arc<DashMap<SupersedeKey, Envelope>>,
+    mut order_queue_rx: mpsc::Receiver<OperationHandle>,
+    pending_requests: Arc<DashMap<i64, oneshot::Sender<...>>>,
+    stdin: ChildStdin,
+) {
+    loop {
+        // Catch panics in writer loop
+        let result = AssertUnwindSafe(writer_loop_inner(
+            coalescing_map.clone(),
+            &mut order_queue_rx,
+            pending_requests.clone(),
+            stdin.clone(),
+        ))
+        .catch_unwind()
+        .await;
+
+        match result {
+            Ok(()) => {
+                // Clean exit (channel closed)
+                log::info!("Writer loop exited cleanly");
+                break;
+            }
+            Err(panic_err) => {
+                log::error!("Writer loop panicked: {:?}, failing pending operations and restarting", panic_err);
+
+                // Drain queue and fail all pending operations
+                while let Ok(handle) = order_queue_rx.try_recv() {
+                    if let OperationHandle::Direct(envelope) = handle {
+                        if let BridgeOperation::Request { response_tx, .. } = envelope.operation {
+                            let _ = response_tx.send(Err(ResponseError {
+                                code: ErrorCodes::INTERNAL_ERROR,
+                                message: "Writer loop crashed, operation failed".into(),
+                                data: None,
+                            }));
+                        }
+                    } else if let OperationHandle::Coalesced(key) = handle {
+                        if let Some((_, envelope)) = coalescing_map.remove(&key) {
+                            if let BridgeOperation::Request { response_tx, .. } = envelope.operation {
+                                let _ = response_tx.send(Err(ResponseError {
+                                    code: ErrorCodes::INTERNAL_ERROR,
+                                    message: "Writer loop crashed, operation failed".into(),
+                                    data: None,
+                                }));
+                            }
+                        }
+                    }
+                }
+
+                // Fail all pending requests (waiting for responses)
+                for entry in pending_requests.iter() {
+                    let _ = entry.value().send(Err(ResponseError {
+                        code: ErrorCodes::INTERNAL_ERROR,
+                        message: "Writer loop crashed, request failed".into(),
+                        data: None,
+                    }));
+                }
+                pending_requests.clear();
+
+                // Restart loop (note: exponential backoff could be added if panic loops occur)
+                log::info!("Writer loop restarting after panic recovery");
+                continue;
+            }
+        }
+    }
+}
+
+async fn writer_loop_inner(
+    coalescing_map: Arc<DashMap<SupersedeKey, Envelope>>,
+    order_queue_rx: &mut mpsc::Receiver<OperationHandle>,
+    pending_requests: Arc<DashMap<i64, oneshot::Sender<...>>>,
+    mut stdin: ChildStdin,
+) -> Result<(), std::io::Error> {
+    while let Some(handle) = order_queue_rx.recv().await {
+        let envelope = match handle {
+            OperationHandle::Coalesced(key) => {
+                match coalescing_map.remove(&key) {
+                    Some((_, envelope)) => envelope,
+                    None => continue,
+                }
+            }
+            OperationHandle::Direct(envelope) => envelope,
+        };
+
+        // Write operation (with error propagation)
+        match envelope.operation {
+            Notification { method, params } => {
+                write_notification(&mut stdin, method, params).await?;
+            }
+            Request { id, method, params, response_tx } => {
+                write_request(&mut stdin, id, method, params).await?;
+                pending_requests.insert(id, response_tx);
+            }
+        }
+    }
+    Ok(())
+}
+```
+
+**Why panic recovery is critical**:
+
+1. **Silent failure mode prevention**: Without panic recovery, writer loop death is invisible
+   - Queue sender still works (appears healthy)
+   - New operations enqueue successfully
+   - Requests hang forever (no response, no error)
+
+2. **Graceful degradation**: Panic recovery allows:
+   - Pending operations receive explicit error responses (not timeouts)
+   - Writer loop restarts and continues processing new operations
+   - Visibility via logs (`log::error!`)
+
+3. **Common panic scenarios**:
+   - Serialization errors (malformed JSON)
+   - Broken pipe (server crashed)
+   - I/O errors (disk full, permissions)
+   - Logic errors in write functions
+
+**Monitoring considerations**:
+- Log panic occurrences with structured data
+- Add metrics for writer loop restarts
+- Consider exponential backoff if panic loops occur (repeated crashes)
+- Circuit breaker pattern (separate ADR) should detect repeated failures
+
 **Why unified order channel is critical**:
 
 Dual separate channels would break ordering:
