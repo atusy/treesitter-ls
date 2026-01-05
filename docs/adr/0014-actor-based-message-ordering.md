@@ -204,7 +204,147 @@ async fn send(&self, operation: BridgeOperation) -> Result<()> {
 - Tower-lsp worker pool remains available for new requests
 - Initialization can complete (workers not blocked)
 
-#### 1. Actor Pattern: Single-Writer Loop per Server
+#### 1. Initialization State Management
+
+**CRITICAL**: Writer loop MUST track initialization state to prevent requests from being sent to uninitialized servers while still processing notifications immediately.
+
+**Initialization Race Without State Tracking**:
+
+```
+Scenario: Multi-server setup (pyright + ruff)
+
+T0: Both servers spawning, writer loops start
+T1: Client sends didOpen → enqueued to both
+T2: pyright completes init → processes didOpen ✓
+T3: Client sends completion request
+    → pyright: initialized, processes request ✓
+    → ruff: NOT initialized yet, but writer sends request ❌
+T4: ruff hasn't sent initialize request yet
+    → Completion request sent before initialization
+    → SERVER ERROR: "Server not initialized"
+```
+
+**Solution: Initialization Flag with Early Queue Processing**:
+
+```rust
+struct BridgeConnection {
+    // Initialization state flag (shared with router)
+    initialized: Arc<AtomicBool>,  // false until server initialized
+
+    // ... other fields
+    coalescing_map: Arc<DashMap<SupersedeKey, Envelope>>,
+    order_queue: mpsc::Sender<OperationHandle>,
+    pending_requests: Arc<DashMap<i64, oneshot::Sender<...>>>,
+}
+
+async fn writer_loop_inner(
+    initialized: Arc<AtomicBool>,
+    coalescing_map: Arc<DashMap<SupersedeKey, Envelope>>,
+    order_queue_rx: &mut mpsc::Receiver<OperationHandle>,
+    pending_requests: Arc<DashMap<i64, oneshot::Sender<...>>>,
+    mut stdin: ChildStdin,
+) -> Result<(), std::io::Error> {
+    // Writer loop starts IMMEDIATELY (before initialization completes)
+    // This prevents queue buildup during initialization
+
+    while let Some(handle) = order_queue_rx.recv().await {
+        let envelope = match handle {
+            OperationHandle::Coalesced(key) => {
+                match coalescing_map.remove(&key) {
+                    Some((_, envelope)) => envelope,
+                    None => continue,
+                }
+            }
+            OperationHandle::Direct(envelope) => envelope,
+        };
+
+        // CRITICAL: Different handling for notifications vs requests
+        match envelope.operation {
+            Notification { method, params } => {
+                // Notifications: Send IMMEDIATELY (even during initialization)
+                // This establishes document state (didOpen, didChange, etc.)
+                write_notification(&mut stdin, method, params).await?;
+            }
+            Request { id, method, params, response_tx } => {
+                // Requests: GATE on initialization state
+                if !initialized.load(Ordering::Acquire) {
+                    // Server not initialized yet - return error
+                    let _ = response_tx.send(Err(ResponseError {
+                        code: ErrorCodes::SERVER_NOT_INITIALIZED,
+                        message: format!(
+                            "Server initializing, request '{}' cannot be processed yet",
+                            method
+                        ).into(),
+                        data: None,
+                    }));
+                    continue;  // Don't send to server
+                }
+
+                // Server initialized - proceed normally
+                write_request(&mut stdin, id, method, params).await?;
+                pending_requests.insert(id, response_tx);
+            }
+        }
+    }
+    Ok(())
+}
+```
+
+**Initialization Lifecycle**:
+
+```rust
+// 1. Connection spawned - writer loop starts immediately
+let initialized = Arc::new(AtomicBool::new(false));
+tokio::spawn(supervised_writer_loop(
+    initialized.clone(),
+    coalescing_map,
+    order_queue_rx,
+    pending_requests,
+    stdin,
+));
+
+// 2. Send initialize request (special case: sent before flag set)
+let init_response = send_request("initialize", params).await?;
+
+// 3. Initialize completes - set flag
+initialized.store(true, Ordering::Release);
+
+// 4. Send initialized notification
+send_notification("initialized", EmptyParams).await?;
+
+// 5. Now requests can flow through writer loop
+```
+
+**Why This Works**:
+
+1. **Queue never builds up**: Writer loop processes notifications immediately
+   - `didOpen`, `didChange` establish document state during initialization
+   - No backpressure from initialization delay
+
+2. **Requests properly gated**: Only sent after server ready
+   - Client receives explicit error if request before initialization
+   - Better UX than hanging or routing-level skip
+
+3. **Multi-server coordination** (ADR-0015 integration):
+   - Router can check `initialized` flag before routing
+   - Skip uninitialized servers in merge_all aggregation
+   - Prevents 5-10s delays waiting for slow servers
+
+4. **Special case for initialize request**:
+   - `initialize` request itself bypasses the gate (sent before flag set)
+   - OR: Use direct stdin write for initialize (outside normal flow)
+
+**Observability**: Log initialization state transitions with structured logging:
+```rust
+initialized.store(true, Ordering::Release);
+log::info!(
+    server = %server_name,
+    duration_ms = init_start.elapsed().as_millis(),
+    "Server initialized, requests now accepted"
+);
+```
+
+#### 2. Actor Pattern: Single-Writer Loop per Server
 
 Each `BridgeConnection` has exactly one writer task consuming from a unified operation queue:
 
@@ -217,6 +357,9 @@ enum BridgeOperation {
 
 // Unified order channel + coalescing map for supersede-able operations
 struct BridgeConnection {
+    // Initialization state (shared with router for multi-server coordination)
+    initialized: Arc<AtomicBool>,  // false until server completes initialization
+
     // Coalescing map for supersede-able operations only
     // Stores LATEST operation per key to minimize memory during initialization
     coalescing_map: Arc<DashMap<SupersedeKey, Envelope>>,
@@ -236,6 +379,7 @@ enum OperationHandle {
 
 // Single writer loop consuming from unified order queue
 async fn writer_loop(
+    initialized: Arc<AtomicBool>,
     coalescing_map: Arc<DashMap<SupersedeKey, Envelope>>,
     mut order_queue_rx: mpsc::Receiver<OperationHandle>,
     pending_requests: Arc<DashMap<i64, oneshot::Sender<...>>>,
@@ -258,9 +402,22 @@ async fn writer_loop(
         // Write operation to stdin (ordering preserved!)
         match envelope.operation {
             Notification { method, params } => {
+                // Notifications: Always send (even during initialization)
                 write_notification(method, params).await;
             }
             Request { id, method, params, response_tx } => {
+                // Requests: Gate on initialization state
+                if !initialized.load(Ordering::Acquire) {
+                    // Server not ready - return error to client
+                    let _ = response_tx.send(Err(ResponseError {
+                        code: ErrorCodes::SERVER_NOT_INITIALIZED,
+                        message: format!("Server initializing, cannot process '{}'", method),
+                        data: None,
+                    }));
+                    continue;
+                }
+
+                // Server initialized - proceed
                 write_request(id, method, params).await;
                 pending_requests.insert(id, response_tx);
             }
@@ -282,6 +439,7 @@ The writer loop MUST include panic recovery to prevent silent permanent hangs:
 
 ```rust
 async fn supervised_writer_loop(
+    initialized: Arc<AtomicBool>,
     coalescing_map: Arc<DashMap<SupersedeKey, Envelope>>,
     mut order_queue_rx: mpsc::Receiver<OperationHandle>,
     pending_requests: Arc<DashMap<i64, oneshot::Sender<...>>>,
@@ -290,6 +448,7 @@ async fn supervised_writer_loop(
     loop {
         // Catch panics in writer loop
         let result = AssertUnwindSafe(writer_loop_inner(
+            initialized.clone(),
             coalescing_map.clone(),
             &mut order_queue_rx,
             pending_requests.clone(),
@@ -349,6 +508,7 @@ async fn supervised_writer_loop(
 }
 
 async fn writer_loop_inner(
+    initialized: Arc<AtomicBool>,
     coalescing_map: Arc<DashMap<SupersedeKey, Envelope>>,
     order_queue_rx: &mut mpsc::Receiver<OperationHandle>,
     pending_requests: Arc<DashMap<i64, oneshot::Sender<...>>>,
@@ -365,12 +525,24 @@ async fn writer_loop_inner(
             OperationHandle::Direct(envelope) => envelope,
         };
 
-        // Write operation (with error propagation)
+        // Write operation (with error propagation and initialization gating)
         match envelope.operation {
             Notification { method, params } => {
+                // Notifications: Always send (even during initialization)
                 write_notification(&mut stdin, method, params).await?;
             }
             Request { id, method, params, response_tx } => {
+                // Requests: Gate on initialization
+                if !initialized.load(Ordering::Acquire) {
+                    let _ = response_tx.send(Err(ResponseError {
+                        code: ErrorCodes::SERVER_NOT_INITIALIZED,
+                        message: format!("Server initializing, cannot process '{}'", method),
+                        data: None,
+                    }));
+                    continue;
+                }
+
+                // Server initialized - proceed
                 write_request(&mut stdin, id, method, params).await?;
                 pending_requests.insert(id, response_tx);
             }
@@ -859,6 +1031,36 @@ Critical safety improvement using `try_send()` instead of blocking `send().await
 
 **Why this is critical**: During slow initialization (5-10s), rapid user typing could enqueue 256+ operations. Without try_send, the 257th operation would block the handler thread, freezing all LSP workers and preventing initialization from completing—a complete deadlock. With try_send, the system degrades gracefully with explicit feedback.
 
+**9. Initialization State Management Prevents Multi-Server Races**
+
+Explicit initialization tracking with early queue processing eliminates race conditions in multi-server setups:
+
+| Aspect | Without Initialization Flag | With Initialization Flag + Early Processing |
+|--------|----------------------------|---------------------------------------------|
+| **Notifications during init** | Queued (builds up) | Processed immediately (state sync) |
+| **Requests during init** | Sent to uninitialized server | Gated, explicit error to client |
+| **Multi-server coordination** | No visibility into readiness | Router can check `initialized` flag |
+| **User experience** | 5-10s hangs waiting for slow servers | Immediate feedback, fast servers respond |
+| **Queue buildup** | HIGH (all ops queued until init) | LOW (only requests queued) |
+
+**Benefits for multi-server scenarios**:
+- **Router integration**: ADR-0015 can check `initialized.load()` to skip uninitialized servers
+- **Partial results**: Fast-initializing servers (lua-ls: 100ms) can respond while slow ones (rust-analyzer: 5-10s) initialize
+- **No spurious errors**: Requests not sent to uninitialized servers (prevents LSP protocol errors)
+- **Document state sync**: Notifications flow immediately, ensuring all servers have correct document state when they finish initializing
+
+**Example timeline** (pyright 1s init, ruff 8s init):
+```
+T0: Both servers spawn, writer loops start
+T1: didOpen sent → both writer loops process immediately ✓
+T2: pyright initialized (1s) → requests now accepted
+T3: completion request → pyright processes ✓, ruff returns NOT_INITIALIZED
+T4: User sees pyright results immediately (not waiting 8s for ruff)
+T8: ruff initialized (8s) → subsequent requests use both servers
+```
+
+This prevents the **5-10 second hangs** identified in architecture review CRITICAL #3.
+
 ### Negative
 
 **1. Per-Virtual-URI State Overhead**
@@ -927,8 +1129,12 @@ Critical safety improvement using `try_send()` instead of blocking `send().await
 - **CRITICAL**: All `order_queue` sends use `try_send()` (never blocking `send().await`)
 - Backpressure handling distinguishes coalescable/non-coalescable/requests
 - logMessage notifications sent to client on backpressure events
+- **CRITICAL**: `initialized: Arc<AtomicBool>` added to BridgeConnection
+- Writer loop gates requests on initialization state (notifications always flow)
+- Writer loop starts immediately (before initialization completes)
 - Tests pass (no ordering violations, including didChange → request sequences)
 - **Deadlock test**: Verify no hang when queue fills during slow initialization
+- **Initialization race test**: Verify requests during init return SERVER_NOT_INITIALIZED
 
 ### Phase 2: Generation-Based Superseding
 
@@ -953,7 +1159,63 @@ Critical safety improvement using `try_send()` instead of blocking `send().await
 - Coalescing map never contains stale envelopes
 - No timeout tasks (event-driven)
 
-### Phase 3: Integration with Stable URIs (PBI-200)
+### Phase 3: Initialization State Management
+
+**Scope**: Add initialization tracking to prevent requests to uninitialized servers
+
+**Dependencies**: Phase 1 (writer loop infrastructure)
+
+**Changes**:
+1. Add `initialized: Arc<AtomicBool>` to BridgeConnection:
+   ```rust
+   struct BridgeConnection {
+       initialized: Arc<AtomicBool>,  // New field
+       // ... existing fields
+   }
+   ```
+
+2. Update writer_loop_inner to gate requests on initialization:
+   ```rust
+   Request { id, method, params, response_tx } => {
+       if !initialized.load(Ordering::Acquire) {
+           let _ = response_tx.send(Err(ResponseError {
+               code: ErrorCodes::SERVER_NOT_INITIALIZED,
+               message: format!("Server initializing, cannot process '{}'", method),
+               data: None,
+           }));
+           continue;
+       }
+       // ... proceed normally
+   }
+   ```
+
+3. Set initialized flag in initialization lifecycle:
+   ```rust
+   // After initialize request succeeds
+   let init_response = send_request("initialize", init_params).await?;
+   self.initialized.store(true, Ordering::Release);
+   send_notification("initialized", EmptyParams).await?;
+   ```
+
+4. Start writer loop BEFORE initialization (early queue processing):
+   ```rust
+   // Writer loop spawned immediately when connection created
+   let initialized = Arc::new(AtomicBool::new(false));
+   tokio::spawn(supervised_writer_loop(
+       initialized.clone(),
+       // ... other params
+   ));
+   ```
+
+**Exit Criteria**:
+- Writer loop starts before initialization completes
+- Notifications flow through immediately during initialization
+- Requests during initialization return SERVER_NOT_INITIALIZED error
+- Requests after initialization flow normally
+- `initialized` flag exposed for router integration (ADR-0015)
+- Test: Rapid requests during slow initialization (rust-analyzer) don't cause hangs
+
+### Phase 4: Integration with Stable URIs (PBI-200)
 
 **Scope**: Verify superseding works with stable virtual URIs
 
@@ -990,6 +1252,8 @@ Critical safety improvement using `try_send()` instead of blocking `send().await
 | **Ordering** | Race between notification channel and request call | Guaranteed FIFO (all ops through same queue) |
 | **Memory** | Unbounded during init | Bounded by O(unique URIs × methods) |
 | **Cleanup** | Late (at dequeue) | Early (at enqueue via map replacement) |
+| **Initialization** | Implicit (timeout-based) | Explicit flag (notifications flow, requests gated) |
+| **Multi-server races** | Possible (no state tracking) | Prevented (router checks initialized flag) |
 
 **Backward compatibility**: External LSP interface unchanged. Internal refactor only.
 
