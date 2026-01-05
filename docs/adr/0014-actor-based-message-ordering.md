@@ -90,16 +90,36 @@ The bounded order queue (capacity: 256) uses `try_send()` to prevent deadlocks d
 
 **Why non-blocking is essential**: Blocking `send().await` during initialization can freeze all LSP handler threads, creating complete system deadlock.
 
-### 4. Initialization State Tracking
+### 4. Connection State Tracking
 
-Explicit initialization flag separates data flow from control flow.
+Explicit connection state enum separates data flow from control flow.
 
-**Architecture**:
-- Writer loop starts immediately (before initialization completes)
-- **Notifications**: Flow through unconditionally (establish document state)
-- **Requests**: Gated on `initialized` flag (return error if not ready)
+**State Definition**:
+```rust
+enum ConnectionState {
+    Initializing,  // Writer loop started, initialization in progress
+    Ready,         // Initialization completed successfully
+    Failed,        // Initialization failed or writer loop panicked
+    Closed,        // Explicitly shut down
+}
+```
 
-**Multi-server benefit**: Fast-initializing servers (lua-ls: 100ms) respond immediately while slow servers (rust-analyzer: 5-10s) return explicit errors, preventing 5-10 second hangs.
+**State Transitions**:
+```
+Initializing → Ready     (initialization succeeds)
+Initializing → Failed    (initialization fails or times out)
+Ready → Failed           (writer loop panics or server crashes)
+Ready → Closed           (graceful shutdown)
+Failed → Closed          (cleanup after failure)
+Initializing → Closed    (shutdown during initialization)
+```
+
+**Operation Gating**:
+- Writer loop starts immediately in `Initializing` state (before initialization completes)
+- **Notifications**: Flow through unconditionally when state is `Initializing` or `Ready` (establish document state)
+- **Requests**: Gated on state being `Ready` (return SERVER_NOT_INITIALIZED if `Initializing`, REQUEST_FAILED if `Failed`)
+
+**Multi-server benefit**: Fast-initializing servers (lua-ls: 100ms) respond immediately while slow servers (rust-analyzer: 5-10s) return explicit errors, preventing 5-10 second hangs. Multi-server router (ADR-0015) can distinguish temporary unavailability (`Initializing`) from permanent failure (`Failed`) for graceful degradation.
 
 ### 5. Fail-Fast Error Handling
 
@@ -107,7 +127,7 @@ Writer loop panics use fail-fast pattern (not restart) because `ChildStdin` cann
 
 **Strategy**:
 - Panic caught, all pending operations failed with INTERNAL_ERROR
-- Connection marked FAILED (triggers circuit breaker)
+- Connection state transitions to `Failed` (triggers circuit breaker)
 - No restart attempt (stdin consumed, restart creates silent permanent hang)
 - Connection pool spawns new server instance with fresh stdin
 
@@ -214,18 +234,19 @@ Writer loop panics use fail-fast pattern (not restart) because `ChildStdin` cann
 - Only latest operation per key reaches server
 - No timeout tasks (event-driven)
 
-### Phase 3: Initialization State Management
+### Phase 3: Connection State Management
 
-**Scope**: Add initialization tracking to prevent protocol violations.
+**Scope**: Add connection state tracking to prevent protocol violations.
 
 **Key Changes**:
-- Initialization flag in connection struct
-- Writer loop starts immediately (before initialization)
-- Notifications flow unconditionally, requests gated on flag
+- Connection state enum in connection struct (Initializing | Ready | Failed | Closed)
+- Writer loop starts immediately in `Initializing` state (before initialization)
+- Notifications flow unconditionally when `Initializing` or `Ready`, requests gated on `Ready` state
 - Integration with router for multi-server coordination
 
 **Exit Criteria**:
-- Requests during initialization return SERVER_NOT_INITIALIZED
+- Requests during initialization return SERVER_NOT_INITIALIZED (state: `Initializing`)
+- Requests to failed connections return REQUEST_FAILED (state: `Failed`)
 - Notifications flow immediately (establish document state)
 - Multi-server setups: fast servers respond without waiting for slow ones
 
@@ -234,13 +255,14 @@ Writer loop panics use fail-fast pattern (not restart) because `ChildStdin` cann
 **Scope**: Implement fail-fast pattern for writer loop panics.
 
 **Key Changes**:
-- Connection state tracking (Initializing | Ready | Closed | Failed)
-- Panic handler fails all pending operations
-- Mark connection FAILED (circuit breaker integration)
+- Panic handler wraps writer loop
+- Panic caught, all pending operations failed with INTERNAL_ERROR
+- Connection state transitions to `Failed` (circuit breaker integration)
 - No restart attempt (stdin cannot be cloned)
 
 **Exit Criteria**:
 - Panic fails connection explicitly (no silent hang)
+- Connection state transitions to `Failed` on panic
 - Circuit breaker triggered on failure
 - Connection pool integration for respawn
 
