@@ -251,11 +251,12 @@ enum AggregationStrategy {
     /// Return first successful response, cancel others
     FirstWins,
 
-    /// Wait for all, merge array results (e.g., completion items, code actions).
-    /// Note: Merging can be complex. Simple concatenation may lead to
-    /// duplicates (completions) or conflicting text edits (code actions).
-    /// The initial implementation should favor sophisticated deduplication where
-    /// possible and document the risks of conflicting edits.
+    /// Wait for all, merge array results (e.g., completion items, code action candidates).
+    /// Note: This merges CANDIDATE LISTS, not execution results.
+    /// - Completion: Merge completion item candidates from multiple servers
+    /// - CodeAction: Merge code action candidates; user selects one, which is then executed individually
+    /// Challenge: Deduplication is complex - servers may propose similar items with subtle differences.
+    /// Safe by design: User selects one item for execution; no auto-execution conflicts.
     MergeAll {
         dedup_key: Option<String>,  // e.g., 'label' for completions
         max_items: Option<usize>,   // limit total items
