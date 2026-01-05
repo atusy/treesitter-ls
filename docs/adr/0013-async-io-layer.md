@@ -111,36 +111,62 @@ async fn reader_task(
 
 ### Idle Timeout: Dead Server Detection
 
-**Purpose**: Detect zombie servers (process alive but unresponsive).
+**Purpose**: Detect zombie servers (process alive but unresponsive to pending requests).
 
-**Duration**: 60 seconds of inactivity.
+**Duration**: 60 seconds without response to pending requests.
 
-**Activity Definition**: ANY output on server stdout resets the idle timer:
-- Response messages (request results, errors)
-- Notification messages (diagnostics, progress updates)
-- Any other server-initiated output
+**State-Based Timer Management**:
+
+Idle timeout operates based on connection state:
+
+- **Quiescent State** (no pending requests):
+  - Timer: STOPPED
+  - Server silence: Healthy (no activity expected)
+  - Unsolicited notifications: Processed normally, no timer impact
+
+- **Active State** (pending requests > 0):
+  - Timer: RUNNING
+  - Additional requests: Keep same timer running (don't restart)
+  - Any stdout activity: Reset timer (fresh 60-second window)
+  - 60s without stdout: Timeout fires (hung server)
+
+**Timer Lifecycle**:
+1. **Start**: First request sent when quiescent (pending count: 0→1)
+2. **Keep running**: Additional requests sent (pending count increases)
+3. **Reset**: Any stdout activity (response or notification) while active
+4. **Stop**: Last response received (pending count returns to 0)
+
+**Example Trace**:
+```
+T0: Quiescent state (no timer)
+    req1 sent → START timer1 (pending: 0→1)
+
+T1: req2 sent → KEEP timer1 (pending: 1→2)
+
+T2: resp1 received → STOP timer1, START timer2 (pending: 2→1, still active)
+
+T3: Server notification → STOP timer2, START timer3 (reset 60s window)
+
+T4: resp2 received → STOP timer3 (pending: 1→0, quiescent)
+
+T5: 61 seconds of silence → ✅ No timeout (timer stopped, healthy idle)
+```
 
 **Timeout Behavior**:
 1. Close connection
 2. Mark connection state as `Failed` (per ADR-0014)
 3. Connection pool spawns new instance (per ADR-0015)
 
+**Why State-Based**:
+- Servers with minimal functionality (e.g., hover-only) never send unsolicited notifications
+- Healthy servers can be silent indefinitely when idle
+- Timeout should only fire when expecting activity but not receiving it
+
 **Independence from Other Timeouts**:
 - **Per-request timeout** (ADR-0015 aggregation layer): Bounds user-facing latency in multi-server scenarios, operates at router level
 - **Generation-based superseding** (ADR-0014 coalescing): Event-driven cancellation, no time limit
 
-Idle timeout is a **server health monitor**, not a request latency bound. It protects against catastrophic cases where the server process is alive but has stopped all output (deadlock, infinite loop, resource starvation).
-
-**Example**:
-```
-T0: Send request to downstream server (idle timer running)
-T1: 60s pass, no output from server
-    └─ Idle timeout fires
-    └─ Reader loop exits
-    └─ Connection marked Failed
-    └─ User receives error (SERVER_NOT_INITIALIZED or REQUEST_FAILED)
-    └─ Connection pool respawns server instance
-```
+Idle timeout is a **server health monitor** for pending requests, not a request latency bound or idle connection killer.
 
 ## Consequences
 
