@@ -7,8 +7,8 @@ Accepted
 **Extracted from**: [ADR-0012](0012-multi-ls-async-bridge-architecture.md) (focusing on multi-server aspects)
 
 **Related**:
-- [ADR-0013](0013-async-io-infrastructure.md): Async I/O patterns and concurrency primitives
-- [ADR-0014](0014-message-ordering-superseding.md): Single-server message ordering and request superseding
+- [ADR-0013](0013-async-io-layer.md): Async I/O patterns and concurrency primitives
+- [ADR-0014](0014-actor-based-message-ordering.md): Single-server message ordering and request superseding
 
 ## Context
 
@@ -463,9 +463,9 @@ treesitter-ls (host)
   - This ADR extracts multi-server coordination decisions from ADR-0012
   - ADR-0012 will be superseded by ADR-0013 (async I/O), ADR-0014 (message ordering), and ADR-0015 (multi-server coordination)
 
-- **[ADR-0013](0013-async-io-infrastructure.md)**: Async I/O infrastructure
+- **[ADR-0013](0013-async-io-layer.md)**: Async I/O infrastructure
   - Provides the async I/O patterns and concurrency primitives that enable parallel server management
 
-- **[ADR-0014](0014-message-ordering-superseding.md)**: Message ordering and request superseding
+- **[ADR-0014](0014-actor-based-message-ordering.md)**: Message ordering and request superseding
   - Handles single-server message ordering concerns (didOpen before didChange)
   - ADR-0015 coordinates multiple servers; ADR-0014 ensures correct ordering within each server connection
