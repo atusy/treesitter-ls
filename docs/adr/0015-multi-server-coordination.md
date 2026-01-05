@@ -92,8 +92,8 @@ enum RoutingStrategy {
 ```
 
 **When aggregation IS needed:**
-- `completion`: Both LSes return completion items → merge into single list
-- `codeAction`: pyright refactorings + ruff lint fixes → merge into single list
+- `completion`: Both LSes return completion item candidates → merge into single list
+- `codeAction`: pyright refactoring candidates + ruff lint fix candidates → merge candidate lists (user selects one for execution)
 
 **When aggregation is NOT needed:**
 - Single capable LS → route directly
@@ -333,10 +333,10 @@ languageServers:
 ### Negative
 
 - **Configuration Surface**: Users need to understand aggregation strategies for overlapping capabilities
-- **Aggregation Complexity**: Merging candidate lists (completion, codeAction) requires deduplication logic
-  - Challenge: Different servers may propose similar items with subtle differences (labels, kinds, edit details)
+- **Aggregation Complexity**: Merging candidate lists (completion items, codeAction proposals) requires deduplication logic
+  - Challenge: Different servers may propose similar candidates with subtle differences (labels, kinds, descriptions)
   - Making it hard to decide what counts as a "duplicate"
-  - Note: Safe by design since users select one item; conflicts only arise if multiple edits were auto-applied
+  - Note: Safe by design - user selects ONE candidate from merged list; selected action executes individually on specific server (no execution conflicts)
 - **Latency**: Fan-out with `merge_all` waits up to per-server timeouts; partial results may surface instead of complete lists
 - **Memory**: Tracking pending correlations adds overhead
 - **Coordination Complexity**: More state to manage (correlations, circuit breakers, aggregators)
@@ -422,8 +422,9 @@ treesitter-ls (host)
 
 **Exit Criteria:**
 - Can use pyright + ruff simultaneously for Python
-- Completion results merged from both LSes with deduplication working correctly
-- CodeAction lists merged without duplicates or conflicting items in UI
+- Completion item candidates merged from both LSes with deduplication working correctly
+- CodeAction candidate lists merged without duplicate proposals in UI
+- User can select any candidate; execution goes to specific server individually
 - Routing config works (single-by-capability default, fan-out for configured methods)
 - Resilience patterns work per-LS (pyright circuit breaker independent of ruff)
 - Partial results surfaced when one LS times out or is unhealthy
