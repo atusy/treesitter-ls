@@ -113,7 +113,7 @@ async fn reader_task(
 
 **Purpose**: Detect zombie servers (process alive but unresponsive to pending requests).
 
-**Duration**: 60 seconds without response to pending requests.
+**Duration**: Implementation-defined timeout without response to pending requests (typically 30-120 seconds, balancing responsiveness vs false positives).
 
 **State-Based Timer Management**:
 
@@ -127,10 +127,10 @@ Idle timeout operates based on connection state:
 - **Active State** (pending requests > 0):
   - Timer: RUNNING
   - Additional requests: Keep same timer running (don't restart)
-  - Response received (pending > 1): Reset timer (fresh 60-second window, stay active)
+  - Response received (pending > 1): Reset timer (fresh timeout window, stay active)
   - Response received (pending becomes 0): **STOP timer** (transition to Quiescent)
-  - Notification received: Reset timer (fresh 60-second window, stay active)
-  - 60s without stdout: Timeout fires (hung server)
+  - Notification received: Reset timer (fresh timeout window, stay active)
+  - Timeout expires without stdout: Timeout fires (hung server)
 
 **Timer Lifecycle**:
 1. **Start**: First request sent when quiescent (pending count: 0→1)
@@ -141,17 +141,17 @@ Idle timeout operates based on connection state:
 **Example Trace**:
 ```
 T0: Quiescent state (no timer)
-    req1 sent → START timer1 (pending: 0→1)
+    req1 sent → START timer (pending: 0→1)
 
-T1: req2 sent → KEEP timer1 (pending: 1→2)
+T1: req2 sent → KEEP timer running (pending: 1→2)
 
-T2: resp1 received → STOP timer1, START timer2 (pending: 2→1, still active)
+T2: resp1 received → RESET timer (pending: 2→1, still active)
 
-T3: Server notification → STOP timer2, START timer3 (reset 60s window)
+T3: Server notification → RESET timer (fresh timeout window)
 
-T4: resp2 received → STOP timer3 (pending: 1→0, quiescent)
+T4: resp2 received → STOP timer (pending: 1→0, quiescent)
 
-T5: 61 seconds of silence → ✅ No timeout (timer stopped, healthy idle)
+T5: Extended silence → ✅ No timeout (timer stopped, healthy idle)
 ```
 
 **Timeout Behavior**:
