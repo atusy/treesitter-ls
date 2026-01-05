@@ -186,14 +186,69 @@ When initializing multiple downstream servers in parallel, some may succeed whil
 - Client sees degraded functionality (e.g., "pyright unavailable") rather than total failure
 - **Fan-out awareness**: If a method is configured for aggregation (e.g., completion merge_all) and one server is in circuit breaker/open or still uninitialized, the router skips it and proceeds with the available servers. The aggregator marks the response as partial in `data` so UX continues instead of blocking on an unhealthy peer.
 
-#### 4.3 Per-Downstream Snapshotting
+#### 4.3 Per-Downstream Document Lifecycle
 
-Maintain the latest host-document snapshot (or aggregated pending edits) per downstream. When a slower server reaches its `didOpen`, send the full text as of "now", not as of when the first downstream opened.
+Maintain the latest host-document snapshot per downstream. When a slower server reaches its `didOpen`, send the full text as of "now", not as of when the first downstream opened.
 
-**Document lifecycle edge cases:**
-- Queue any later `didChange` for that downstream until its `didOpen` is sent, so every server starts from an accurate, synchronized state
-- If the host sends `didClose` before a downstream receives `didOpen`, mark that downstream as "closed" and suppress the pending `didOpen` entirely (do **not** create a ghost open)
-- If `didOpen` was already sent and `didClose` arrived during initialization, queue the `didClose` and flush it immediately after initialization completes to preserve open/close pairing
+**Document Lifecycle State** (per downstream server, per document URI):
+
+```
+States: NotOpened | Opened | Closed
+
+Transitions:
+- NotOpened → Opened      (didOpen sent to downstream)
+- Opened → Closed         (didClose sent to downstream)
+- NotOpened → Closed      (didClose received before didOpen sent - suppress didOpen)
+```
+
+**Notification Handling by State**:
+
+| Notification | NotOpened State | Opened State | Closed State |
+|--------------|----------------|--------------|--------------|
+| `didChange` | **DROP** (didOpen will contain current state) | **FORWARD** | **SUPPRESS** |
+| `didSave` | **DROP** | **FORWARD** | **SUPPRESS** |
+| `willSave` | **DROP** | **FORWARD** | **SUPPRESS** |
+| `didClose` | Transition to **Closed**, suppress pending didOpen | **FORWARD**, transition to **Closed** | Already closed |
+
+**Example - Multi-server parallel initialization**:
+
+```
+┌────────┐     ┌──────────────┐     ┌──────────┐     ┌──────────┐
+│ Client │     │ treesitter-ls│     │ pyright  │     │   ruff   │
+└───┬────┘     └──────┬───────┘     └────┬─────┘     └────┬─────┘
+    │──didOpen(md)───▶│                  │                │
+    │                 │ (spawn both servers)              │
+    │                 │                  │                │
+    │──didChange(md)─▶│ ❌ DROP both     │                │  ← Both NotOpened
+    │                 │ (initializing...)│                │
+    │                 │◀──init result────│                │
+    │                 │──initialized────▶│                │
+    │                 │──didOpen(virt)──▶│                │  ← pyright: NotOpened→Opened
+    │                 │                  │                │
+    │──didChange(md)─▶│──didChange(virt)▶│                │  ← pyright: FORWARD
+    │                 │ ❌ DROP ruff      │                │  ← ruff: still NotOpened
+    │                 │                  │                │
+    │                 │◀──────────init result─────────────│
+    │                 │──initialized─────────────────────▶│
+    │                 │──didOpen(virt)───────────────────▶│  ← ruff: NotOpened→Opened
+    │                 │                  │                │     (includes ALL changes)
+    │──didChange(md)─▶│──didChange(virt)▶│                │
+    │                 │──didChange(virt)─────────────────▶│  ← Both: FORWARD
+```
+
+**Edge Cases**:
+
+1. **didClose before didOpen sent**:
+   - Transition: `NotOpened → Closed`
+   - Suppress pending didOpen (prevent ghost document)
+   - Example: User closes file while server still initializing
+
+2. **didClose after didOpen sent, during initialization**:
+   - Server state: `Initializing`, document state: `Opened`
+   - Forward didClose immediately (preserve LSP protocol pairing)
+   - Document transitions: `Opened → Closed`
+
+**Why drop instead of queue**: The `didOpen` notification contains the complete document text at send time. Accumulated client edits are included. Dropping `didChange` before `didOpen` avoids duplicate state updates and simplifies state management.
 
 ### 5. Notification Pass-through
 

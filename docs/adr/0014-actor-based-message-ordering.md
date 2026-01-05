@@ -116,8 +116,37 @@ Initializing → Closed    (shutdown during initialization)
 
 **Operation Gating**:
 - Writer loop starts immediately in `Initializing` state (before initialization completes)
-- **Notifications**: Flow through unconditionally when state is `Initializing` or `Ready` (establish document state)
+- **Notifications**: Flow through unconditionally when state is `Initializing` or `Ready`
+  - "Unconditional" means **not gated on connection state** (can be sent during initialization)
+  - BUT notifications ARE gated on **per-document lifecycle** (see Document Lifecycle below)
 - **Requests**: Gated on state being `Ready` (return SERVER_NOT_INITIALIZED if `Initializing`, REQUEST_FAILED if `Failed`)
+
+**Document Lifecycle Gating** (per downstream server, per document URI):
+
+```
+Client → treesitter-ls → downstream server
+
+┌────────────────────────────────────────────────────────────┐
+│ Before didOpen sent to downstream:                         │
+│ - didChange → DROP (don't queue, don't forward)            │
+│ - didOpen contains complete accumulated state              │
+│                                                            │
+│ After didOpen sent to downstream:                          │
+│ - didChange → FORWARD immediately                          │
+│ - didSave, willSave → FORWARD immediately                  │
+└────────────────────────────────────────────────────────────┘
+```
+
+**Example scenario** (multi-server initialization):
+```
+Client edits markdown → treesitter-ls spawns pyright (Initializing)
+  ├─ Client sends didChange → treesitter-ls DROPS (pyright hasn't received didOpen yet)
+  ├─ pyright initialization completes
+  ├─ treesitter-ls sends didOpen(virtual-doc) to pyright (contains ALL accumulated changes)
+  └─ Future didChange → treesitter-ls FORWARDS to pyright normally
+```
+
+**Why drop instead of queue**: The `didOpen` notification contains the complete document text at the time it's sent. Accumulated edits are already included. Queuing `didChange` notifications would create duplicate state updates.
 
 **Multi-server benefit**: Fast-initializing servers (lua-ls: 100ms) respond immediately while slow servers (rust-analyzer: 5-10s) return explicit errors, preventing 5-10 second hangs. Multi-server router (ADR-0015) can distinguish temporary unavailability (`Initializing`) from permanent failure (`Failed`) for graceful degradation.
 
