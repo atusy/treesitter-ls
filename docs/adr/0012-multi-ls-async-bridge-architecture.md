@@ -2,11 +2,29 @@
 
 ## Status
 
-Accepted
+Deprecated (2026-01-05)
 
-**Supersedes**:
+**Superseded by**:
+- [ADR-0014: Actor-Based Message Ordering](0014-actor-based-message-ordering.md) — Message ordering with generation-based coalescing (replaces timeout-based control)
+- [ADR-0015: Multi-Server Coordination](0015-multi-server-coordination.md) — Multi-server routing and lifecycle management
+
+**Previously superseded**:
 - [ADR-0009](0009-async-bridge-architecture.md): Single-LS async architecture (**completely replaced** due to unfixable hang issues)
 - [ADR-0008](0008-language-server-bridge-request-strategies.md): Per-method strategies (**partially replaced** for multi-LS aspects; single-LS strategies remain valid)
+
+---
+
+## Deprecation Notice
+
+**Reason for deprecation:**
+This ADR attempted to solve both message ordering and multi-server coordination in a single architecture. The timeout-based control approach proved insufficient for handling initialization windows and notification ordering. The new ADRs adopt an **event-driven actor pattern** with generation-based coalescing that provides stronger ordering guarantees without timeout complexity.
+
+**Migration path:**
+- Message ordering/superseding → See [ADR-0014](0014-actor-based-message-ordering.md)
+- Multi-server routing/lifecycle → See [ADR-0015](0015-multi-server-coordination.md)
+- Async I/O infrastructure → See [ADR-0013](0013-async-io-layer.md)
+
+---
 
 ## Context
 

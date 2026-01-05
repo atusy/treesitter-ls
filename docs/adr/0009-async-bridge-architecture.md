@@ -2,11 +2,24 @@
 
 | | |
 |---|---|
-| **Status** | accepted |
+| **Status** | deprecated |
 | **Date** | 2026-01-01 |
+| **Deprecated** | 2026-01-05 |
+| **Superseded by** | [ADR-0013](0013-async-io-layer.md), [ADR-0014](0014-actor-based-message-ordering.md) |
 | **Decision-makers** | atusy |
 | **Consulted** | - |
 | **Informed** | - |
+
+## Deprecation Notice
+
+**This ADR has been superseded by:**
+- **[ADR-0013: Async I/O Layer](0013-async-io-layer.md)** — Extracts the tokio::process selection rationale and async I/O infrastructure decisions
+- **[ADR-0014: Actor-Based Message Ordering](0014-actor-based-message-ordering.md)** — Adopts an actor pattern with generation-based coalescing for message ordering guarantees
+
+**Reason for deprecation:**
+This ADR mixed two orthogonal concerns (I/O infrastructure and message ordering) into a single document. The new ADRs provide better separation of concerns and adopt an event-driven actor pattern that eliminates the need for timeout-based control.
+
+---
 
 ## Context and Problem Statement
 
