@@ -360,6 +360,10 @@ struct BridgeConnection {
     // Initialization state (shared with router for multi-server coordination)
     initialized: Arc<AtomicBool>,  // false until server completes initialization
 
+    // Connection state (for circuit breaker and panic recovery)
+    // Values: Initializing(0), Ready(1), Closed(2), Failed(3)
+    connection_state: Arc<AtomicU8>,
+
     // Coalescing map for supersede-able operations only
     // Stores LATEST operation per key to minimize memory during initialization
     coalescing_map: Arc<DashMap<SupersedeKey, Envelope>>,
@@ -433,9 +437,41 @@ async fn writer_loop(
 - **Bounded memory**: Hard capacity limits prevent OOM during slow initialization
 - **Early cleanup**: Superseded operations removed from map immediately, not at dequeue time
 
-**Writer Loop Panic Recovery (Supervisor Pattern)**:
+**Writer Loop Panic Recovery (Fail-Fast Pattern)**:
 
-The writer loop MUST include panic recovery to prevent silent permanent hangs:
+**CRITICAL**: Writer loop panic recovery MUST use fail-fast strategy, NOT restart. `ChildStdin` does not implement `Clone` - after panic, stdin is consumed and cannot be reused.
+
+**Why Restart is Impossible**:
+
+```rust
+// BROKEN: This code CANNOT work
+async fn supervised_writer_loop(
+    stdin: ChildStdin,  // ← Owned, not cloneable
+) {
+    loop {
+        let result = AssertUnwindSafe(writer_loop_inner(
+            stdin.clone(),  // ❌ ERROR: ChildStdin does NOT implement Clone
+        ))
+        .catch_unwind()
+        .await;
+
+        match result {
+            Err(_) => {
+                // stdin consumed by panic - CANNOT restart!
+                continue;  // ← This creates a PERMANENT HANG
+            }
+        }
+    }
+}
+```
+
+**Problem**: `tokio::process::ChildStdin` owns a file descriptor and cannot be cloned. After panic, the stdin handle is consumed and gone. Attempting to restart causes a **silent permanent hang**:
+1. Panic occurs, stdin consumed
+2. Loop continues but has no stdin to write to
+3. Queue continues accepting operations (appears healthy)
+4. All operations hang forever (no writer to process them)
+
+**Solution: Fail-Fast with Connection Cleanup**:
 
 ```rust
 async fn supervised_writer_loop(
@@ -443,66 +479,73 @@ async fn supervised_writer_loop(
     coalescing_map: Arc<DashMap<SupersedeKey, Envelope>>,
     mut order_queue_rx: mpsc::Receiver<OperationHandle>,
     pending_requests: Arc<DashMap<i64, oneshot::Sender<...>>>,
-    stdin: ChildStdin,
+    connection_state: Arc<AtomicU8>,  // NEW: State tracking for circuit breaker
+    mut stdin: ChildStdin,  // Mutable borrow for move into inner
 ) {
-    loop {
-        // Catch panics in writer loop
-        let result = AssertUnwindSafe(writer_loop_inner(
-            initialized.clone(),
-            coalescing_map.clone(),
-            &mut order_queue_rx,
-            pending_requests.clone(),
-            stdin.clone(),
-        ))
-        .catch_unwind()
-        .await;
+    // Run writer loop ONCE (no restart loop)
+    let result = AssertUnwindSafe(writer_loop_inner(
+        initialized.clone(),
+        coalescing_map.clone(),
+        &mut order_queue_rx,
+        pending_requests.clone(),
+        &mut stdin,  // Pass mutable reference
+    ))
+    .catch_unwind()
+    .await;
 
-        match result {
-            Ok(()) => {
-                // Clean exit (channel closed)
-                log::info!("Writer loop exited cleanly");
-                break;
-            }
-            Err(panic_err) => {
-                log::error!("Writer loop panicked: {:?}, failing pending operations and restarting", panic_err);
+    match result {
+        Ok(()) => {
+            // Clean exit (channel closed)
+            log::info!("Writer loop exited cleanly");
+            connection_state.store(ConnectionState::Closed as u8, Ordering::Release);
+        }
+        Err(panic_err) => {
+            log::error!(
+                "Writer loop panicked: {:?}, failing connection permanently",
+                panic_err
+            );
 
-                // Drain queue and fail all pending operations
-                while let Ok(handle) = order_queue_rx.try_recv() {
-                    if let OperationHandle::Direct(envelope) = handle {
+            // Mark connection as FAILED (triggers circuit breaker)
+            connection_state.store(ConnectionState::Failed as u8, Ordering::Release);
+
+            // Fail all queued operations
+            while let Ok(handle) = order_queue_rx.try_recv() {
+                if let OperationHandle::Direct(envelope) = handle {
+                    if let BridgeOperation::Request { response_tx, .. } = envelope.operation {
+                        let _ = response_tx.send(Err(ResponseError {
+                            code: ErrorCodes::INTERNAL_ERROR,
+                            message: "Connection failed due to writer loop crash".into(),
+                            data: None,
+                        }));
+                    }
+                } else if let OperationHandle::Coalesced(key) = handle {
+                    if let Some((_, envelope)) = coalescing_map.remove(&key) {
                         if let BridgeOperation::Request { response_tx, .. } = envelope.operation {
                             let _ = response_tx.send(Err(ResponseError {
                                 code: ErrorCodes::INTERNAL_ERROR,
-                                message: "Writer loop crashed, operation failed".into(),
+                                message: "Connection failed due to writer loop crash".into(),
                                 data: None,
                             }));
                         }
-                    } else if let OperationHandle::Coalesced(key) = handle {
-                        if let Some((_, envelope)) = coalescing_map.remove(&key) {
-                            if let BridgeOperation::Request { response_tx, .. } = envelope.operation {
-                                let _ = response_tx.send(Err(ResponseError {
-                                    code: ErrorCodes::INTERNAL_ERROR,
-                                    message: "Writer loop crashed, operation failed".into(),
-                                    data: None,
-                                }));
-                            }
-                        }
                     }
                 }
-
-                // Fail all pending requests (waiting for responses)
-                for entry in pending_requests.iter() {
-                    let _ = entry.value().send(Err(ResponseError {
-                        code: ErrorCodes::INTERNAL_ERROR,
-                        message: "Writer loop crashed, request failed".into(),
-                        data: None,
-                    }));
-                }
-                pending_requests.clear();
-
-                // Restart loop (note: exponential backoff could be added if panic loops occur)
-                log::info!("Writer loop restarting after panic recovery");
-                continue;
             }
+
+            // Fail all pending requests (waiting for responses)
+            for entry in pending_requests.iter() {
+                let _ = entry.value().send(Err(ResponseError {
+                    code: ErrorCodes::INTERNAL_ERROR,
+                    message: "Connection failed due to writer loop crash".into(),
+                    data: None,
+                }));
+            }
+            pending_requests.clear();
+
+            log::error!(
+                "Connection permanently closed. Pool will spawn new server instance if needed."
+            );
+            // DON'T restart - connection is dead
+            // Connection pool will spawn new server instance
         }
     }
 }
@@ -552,17 +595,19 @@ async fn writer_loop_inner(
 }
 ```
 
-**Why panic recovery is critical**:
+**Why fail-fast (not restart) is critical**:
 
-1. **Silent failure mode prevention**: Without panic recovery, writer loop death is invisible
+1. **Prevents silent permanent hangs**: Restart with consumed stdin creates invisible failure
    - Queue sender still works (appears healthy)
    - New operations enqueue successfully
-   - Requests hang forever (no response, no error)
+   - Requests hang forever (no writer exists)
+   - **Worse than crash** - no error, no recovery, requires manual restart
 
-2. **Graceful degradation**: Panic recovery allows:
-   - Pending operations receive explicit error responses (not timeouts)
-   - Writer loop restarts and continues processing new operations
-   - Visibility via logs (`log::error!`)
+2. **Graceful degradation via connection pool**: Fail-fast enables clean recovery
+   - Pending operations receive explicit error responses (not silent hangs)
+   - Connection marked FAILED (circuit breaker opens)
+   - Connection pool spawns NEW server instance (fresh stdin)
+   - Subsequent requests route to healthy connection
 
 3. **Common panic scenarios**:
    - Serialization errors (malformed JSON)
@@ -570,11 +615,28 @@ async fn writer_loop_inner(
    - I/O errors (disk full, permissions)
    - Logic errors in write functions
 
+**Integration with circuit breaker (ADR-0015)**:
+
+```rust
+enum ConnectionState {
+    Initializing = 0,
+    Ready = 1,
+    Closed = 2,
+    Failed = 3,  // Panic or repeated errors
+}
+
+// After panic, connection_state.store(Failed) triggers:
+// 1. Circuit breaker opens for this connection
+// 2. Router skips this connection (ADR-0015)
+// 3. Pool spawns new server instance
+// 4. New requests route to new instance
+```
+
 **Monitoring considerations**:
-- Log panic occurrences with structured data
-- Add metrics for writer loop restarts
-- Consider exponential backoff if panic loops occur (repeated crashes)
-- Circuit breaker pattern (separate ADR) should detect repeated failures
+- Log panic occurrences with structured data (server name, panic message)
+- Add metrics for connection failures and respawns
+- Alert on repeated failures for same server (config issue?)
+- Track time-to-recovery (how long until new instance ready)
 
 **Why unified order channel is critical**:
 
@@ -1061,6 +1123,50 @@ T8: ruff initialized (8s) → subsequent requests use both servers
 
 This prevents the **5-10 second hangs** identified in architecture review CRITICAL #3.
 
+**10. Fail-Fast Panic Handling Prevents Silent Permanent Hangs**
+
+Writer loop panic recovery uses fail-fast strategy (not restart) to prevent catastrophic failure modes:
+
+| Aspect | Restart Strategy (BROKEN) | Fail-Fast Strategy (CORRECT) |
+|--------|---------------------------|------------------------------|
+| **ChildStdin handling** | Attempts stdin.clone() | Understands stdin is consumed |
+| **After panic** | Permanent silent hang | Explicit errors, connection dead |
+| **Queue behavior** | Accepts ops, never processes | Closed, returns errors immediately |
+| **Recovery mechanism** | None (stdin consumed) | Pool spawns new server instance |
+| **Observability** | Silent (logs panic, appears operational) | Explicit (connection marked FAILED) |
+| **Circuit breaker** | Never triggered (still "alive") | Opens immediately (state = Failed) |
+
+**Why restart is impossible**:
+- `tokio::process::ChildStdin` owns file descriptor (cannot clone)
+- After panic, stdin consumed and gone
+- Loop continues but has no stdin to write to
+- **All operations hang forever** - worse than crash
+
+**Fail-fast benefits**:
+1. **Explicit failure**: All pending operations get INTERNAL_ERROR responses
+2. **Circuit breaker integration**: Connection state = Failed triggers router to skip
+3. **Connection pool recovery**: Pool spawns fresh server instance with new stdin
+4. **No silent hangs**: Better to fail explicitly than appear operational while hung
+
+**Example recovery flow**:
+```
+T0: Writer loop panics (broken pipe)
+T1: supervised_writer_loop catches panic
+    → Fails all queued operations (explicit errors)
+    → Sets connection_state = Failed
+    → Exits (no restart attempt)
+T2: Circuit breaker detects Failed state
+    → Opens circuit for this connection
+T3: Router skips failed connection (ADR-0015)
+T4: Connection pool detects failure
+    → Spawns new server instance (fresh stdin)
+T5: New requests route to new healthy instance
+```
+
+Recovery time: ~100-500ms (spawn new server) vs. infinite hang (restart strategy).
+
+This prevents the **silent permanent hang** identified in architecture review CRITICAL #1.
+
 ### Negative
 
 **1. Per-Virtual-URI State Overhead**
@@ -1130,11 +1236,16 @@ This prevents the **5-10 second hangs** identified in architecture review CRITIC
 - Backpressure handling distinguishes coalescable/non-coalescable/requests
 - logMessage notifications sent to client on backpressure events
 - **CRITICAL**: `initialized: Arc<AtomicBool>` added to BridgeConnection
+- **CRITICAL**: `connection_state: Arc<AtomicU8>` added for panic recovery
+- **CRITICAL**: supervised_writer_loop uses fail-fast (NO restart loop)
 - Writer loop gates requests on initialization state (notifications always flow)
 - Writer loop starts immediately (before initialization completes)
+- Panic in writer loop fails all pending operations with INTERNAL_ERROR
+- Panic sets connection_state = Failed (circuit breaker integration)
 - Tests pass (no ordering violations, including didChange → request sequences)
 - **Deadlock test**: Verify no hang when queue fills during slow initialization
 - **Initialization race test**: Verify requests during init return SERVER_NOT_INITIALIZED
+- **Panic recovery test**: Verify panic fails connection (no silent hang)
 
 ### Phase 2: Generation-Based Superseding
 
@@ -1254,6 +1365,8 @@ This prevents the **5-10 second hangs** identified in architecture review CRITIC
 | **Cleanup** | Late (at dequeue) | Early (at enqueue via map replacement) |
 | **Initialization** | Implicit (timeout-based) | Explicit flag (notifications flow, requests gated) |
 | **Multi-server races** | Possible (no state tracking) | Prevented (router checks initialized flag) |
+| **Panic recovery** | N/A (no explicit handling) | Fail-fast (mark Failed, pool respawns) |
+| **Silent hangs** | Possible (no panic handling) | Prevented (explicit errors, circuit breaker) |
 
 **Backward compatibility**: External LSP interface unchanged. Internal refactor only.
 
