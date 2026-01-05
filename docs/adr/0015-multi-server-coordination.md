@@ -345,35 +345,172 @@ The client (e.g., VSCode) automatically aggregates diagnostics from multiple sou
 - `window/logMessage` — Can be forwarded as-is
 - `window/showMessage` — Can be forwarded as-is
 
-### 6. Cancellation Propagation
+### 6. Cancellation Propagation and Coalescing Handoff
 
-When upstream sends `$/cancelRequest` (LSP 3.x § Cancellation Support), propagate to all downstream servers that have pending requests for that `upstream_id`:
+#### 6.1 Request Lifecycle Phases
+
+Requests transition through distinct phases, each managed by different ADR components:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ Phase 1: Enqueued (ADR-0014 domain)                                │
+│ - Request in unified order queue or coalescing map                 │
+│ - Not yet sent to downstream server                                │
+│ - Managed by: Connection actor (ADR-0014)                          │
+│ - Cancellation: Supersede locally (coalescable) or ignore          │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+                              │ Writer loop dequeues
+                              ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│ TRANSITION POINT: Register in pending_correlations                 │
+│ - Responsibility: Connection writer loop (ADR-0014)                │
+│ - Timing: BEFORE writing to server stdin                           │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+                              │ Write to stdin
+                              ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│ Phase 2: Pending (ADR-0015 domain)                                 │
+│ - Request sent to downstream server stdin                          │
+│ - Awaiting response from server                                    │
+│ - Managed by: Router/pool (ADR-0015)                               │
+│ - Cancellation: Propagate $/cancelRequest to downstream            │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+#### 6.2 Cancellation Handling by Phase
+
+**Phase 1 (Enqueued) - Request in Coalescing Map**:
+
+```
+Upstream sends $/cancelRequest for request ID=42:
+├─ Check pending_correlations for ID=42
+├─ NOT FOUND (request not yet sent to downstream)
+├─ Check if request was superseded (already got REQUEST_CANCELLED response)
+└─ IGNORE cancellation (request already processed via superseding)
+```
+
+**Rationale**: If a coalescable request (e.g., completion) is superseded by a newer request, it immediately receives `REQUEST_CANCELLED` response (ADR-0014 § Generation-Based Coalescing). Subsequent `$/cancelRequest` from upstream is redundant—the request is already "cancelled" from the user's perspective.
+
+**Phase 2 (Pending) - Request Sent to Downstream**:
+
+```
+Upstream sends $/cancelRequest for request ID=42:
+├─ Check pending_correlations for ID=42
+├─ FOUND: [(pyright, 101), (ruff, 205)]
+├─ Propagate $/cancelRequest to all downstream servers:
+│   ├─ pyright: send $/cancelRequest {id: 101}
+│   └─ ruff: send $/cancelRequest {id: 205}
+└─ Remove ID=42 from pending_correlations
+```
+
+**Rationale**: Request was sent to downstream servers and is awaiting response. Propagate cancellation to allow servers to abort processing (though they may legally ignore it per LSP spec).
+
+#### 6.3 Handoff Protocol (ADR-0014 ↔ ADR-0015 Coordination)
+
+**Writer loop responsibilities** (ADR-0014):
 
 ```rust
-// In LanguageServerPool
-async fn handle_cancel_request(&self, upstream_id: i64) {
-    // Find all pending downstream requests for this upstream_id
-    for (downstream_key, downstream_id) in self.pending_correlations.get(&upstream_id) {
-        if let Some(conn) = self.connections.get(&downstream_key) {
-            // Send $/cancelRequest to downstream
-            let _ = conn.send_notification("$/cancelRequest", json!({
-                "id": downstream_id
-            })).await;
+// In connection writer loop (ADR-0014 domain)
+loop {
+    let operation = order_queue.recv().await;
+
+    match operation {
+        Request { id, method, params, response_tx } => {
+            // 1. Remove from coalescing map (if coalescable)
+            coalescing_map.remove((uri, method));
+
+            // 2. HANDOFF: Register in pending_correlations (ADR-0015 domain)
+            //    This MUST happen BEFORE writing to stdin
+            pool.register_pending_request(upstream_id: id, downstream_id: next_id);
+
+            // 3. Write request to server stdin
+            write_request(next_id, method, params).await?;
+
+            // 4. Store response waiter
+            response_waiters.insert(next_id, response_tx);
         }
     }
-    // Clean up pending entries
-    self.pending_correlations.remove(&upstream_id);
 }
 ```
 
-**Downstream non-compliance**: Servers may legally ignore `$/cancelRequest` (LSP § `$` notifications). Timeouts on fan-out aggregation remain the hard ceiling to guarantee the upstream request still completes.
+**Router/pool responsibilities** (ADR-0015):
+
+```rust
+// In LanguageServerPool (ADR-0015 domain)
+async fn handle_cancel_request(&self, upstream_id: i64) {
+    // Check if request is in pending_correlations (Phase 2)
+    if let Some(downstream_requests) = self.pending_correlations.get(&upstream_id) {
+        // Request was sent to downstream - propagate cancellation
+        for (downstream_key, downstream_id) in downstream_requests {
+            if let Some(conn) = self.connections.get(&downstream_key) {
+                let _ = conn.send_notification("$/cancelRequest", json!({
+                    "id": downstream_id
+                })).await;
+            }
+        }
+        self.pending_correlations.remove(&upstream_id);
+    } else {
+        // Request not in pending_correlations
+        // Either: (1) Already superseded and responded with REQUEST_CANCELLED
+        //         (2) Already completed and responded
+        //         (3) Never reached writer loop (gated by connection state)
+        // Action: Ignore cancellation (already processed)
+    }
+}
+```
 
 **Tracking Structure:**
 
 ```rust
-/// Maps upstream request ID to downstream request IDs for cancellation
+/// Maps upstream request ID to downstream request IDs for cancellation propagation
+/// Managed by: LanguageServerPool (ADR-0015)
+/// Updated by: Connection writer loops (ADR-0014) via handoff protocol
 pending_correlations: DashMap<i64, Vec<(String, i64)>>, // upstream_id → [(downstream_key, downstream_id)]
 ```
+
+#### 6.4 Cancellation Scenarios
+
+**Scenario 1: Superseded Before Sending**
+
+```
+T0: User types "foo" → completion request ID=1 enqueued
+T1: User types "o" → completion request ID=2 enqueued (supersedes ID=1)
+    └─ ID=1 immediately receives REQUEST_CANCELLED response
+T2: Upstream sends $/cancelRequest for ID=1
+    └─ pending_correlations check: NOT FOUND
+    └─ Action: IGNORE (already cancelled via superseding)
+```
+
+**Scenario 2: Sent Then Cancelled**
+
+```
+T0: User requests hover ID=42
+T1: Writer loop dequeues, registers in pending_correlations
+    └─ pending_correlations[42] = [(pyright, 101)]
+T2: Writer loop sends to pyright stdin
+T3: Upstream sends $/cancelRequest for ID=42
+    └─ pending_correlations check: FOUND
+    └─ Action: Send $/cancelRequest {id: 101} to pyright
+T4: Clean up pending_correlations[42]
+```
+
+**Scenario 3: Multi-Server Fan-Out Cancellation**
+
+```
+T0: User requests completion ID=99 (fan-out to pyright + ruff)
+T1: Router registers in pending_correlations
+    └─ pending_correlations[99] = [(pyright, 201), (ruff, 305)]
+T2: Both servers receive requests
+T3: Upstream sends $/cancelRequest for ID=99
+    └─ Propagate to both:
+        ├─ pyright: $/cancelRequest {id: 201}
+        └─ ruff: $/cancelRequest {id: 305}
+T4: Clean up pending_correlations[99]
+```
+
+**Downstream non-compliance**: Servers may legally ignore `$/cancelRequest` (LSP § `$` notifications). Timeouts on fan-out aggregation remain the hard ceiling to guarantee the upstream request still completes.
 
 **Upstream response to cancellation**: Always return a response to the client after propagating cancellation. Use the standard LSP `RequestCancelled` code (-32800) when the method is server-cancellable; otherwise use `REQUEST_FAILED` with a `"cancelled"` message. Never leave the upstream request pending—cancellation must still round-trip a response per LSP.
 
