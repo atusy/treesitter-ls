@@ -150,7 +150,61 @@ Client edits markdown → treesitter-ls spawns pyright (Initializing)
 
 **Multi-server benefit**: Fast-initializing servers (lua-ls: 100ms) respond immediately while slow servers (rust-analyzer: 5-10s) return explicit errors, preventing 5-10 second hangs. Multi-server router (ADR-0015) can distinguish temporary unavailability (`Initializing`) from permanent failure (`Failed`) for graceful degradation.
 
-### 5. Fail-Fast Error Handling
+### 5. Request Cancellation Handling
+
+**Cancellation from upstream** (via `$/cancelRequest` from ADR-0015) targets enqueued requests before they reach the downstream server.
+
+**Cancellation Strategy** (per request state):
+
+| Request State | Cancellation Action |
+|---------------|-------------------|
+| **In coalescing map** | Remove from map, send REQUEST_CANCELLED response |
+| **In order queue** (not yet dequeued) | Mark for skipping, send REQUEST_CANCELLED response |
+| **Already superseded** | Ignore (already got REQUEST_CANCELLED via superseding) |
+| **Already sent to downstream** | N/A (handled by ADR-0015 propagation) |
+
+**Cancellation API** (called by multi-server router):
+
+```rust
+async fn cancel_request(&self, request_id: i64) -> bool {
+    // Try to remove from coalescing map
+    if let Some(operation) = coalescing_map.remove_by_id(request_id) {
+        operation.response_tx.send(Err(REQUEST_CANCELLED)).ok();
+        return true; // Cancelled successfully
+    }
+
+    // Try to mark in order queue (if not yet dequeued)
+    if let Some(operation) = order_queue.mark_cancelled(request_id) {
+        operation.response_tx.send(Err(REQUEST_CANCELLED)).ok();
+        return true; // Cancelled successfully
+    }
+
+    // Not found in map or queue
+    // Either: (1) Already superseded (got REQUEST_CANCELLED response)
+    //         (2) Already sent to downstream (ADR-0015 handles propagation)
+    //         (3) Already completed
+    false // Not cancelled (already processed)
+}
+```
+
+**Writer loop handling** (when dequeuing marked request):
+
+```rust
+loop {
+    let operation = order_queue.recv().await;
+
+    if operation.is_cancelled() {
+        // Skip cancelled operations (already sent REQUEST_CANCELLED response)
+        continue;
+    }
+
+    // Process normally...
+}
+```
+
+**Coordination with ADR-0015**: Multi-server router calls `cancel_request()` on all connections for the upstream request. If `false` (request already sent), router propagates `$/cancelRequest` to downstream servers per ADR-0015 § Cancellation Propagation.
+
+### 6. Fail-Fast Error Handling
 
 Writer loop panics use fail-fast pattern (not restart) because `ChildStdin` cannot be cloned.
 

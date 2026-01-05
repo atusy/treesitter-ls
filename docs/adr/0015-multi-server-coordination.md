@@ -357,7 +357,8 @@ Requests transition through distinct phases, each managed by different ADR compo
 │ - Request in unified order queue or coalescing map                 │
 │ - Not yet sent to downstream server                                │
 │ - Managed by: Connection actor (ADR-0014)                          │
-│ - Cancellation: Supersede locally (coalescable) or ignore          │
+│ - Cancellation: Remove from map/queue if present, ignore if        │
+│               already superseded                                    │
 └─────────────────────────────────────────────────────────────────────┘
                               │
                               │ Writer loop dequeues
@@ -381,17 +382,39 @@ Requests transition through distinct phases, each managed by different ADR compo
 
 #### 6.2 Cancellation Handling by Phase
 
-**Phase 1 (Enqueued) - Request in Coalescing Map**:
+**Phase 1 (Enqueued) - Request in Queue or Coalescing Map**:
+
+Cancellation in Phase 1 has **two sub-cases**:
+
+**Sub-case 1a: Request still enqueued (not yet superseded)**:
 
 ```
 Upstream sends $/cancelRequest for request ID=42:
 ├─ Check pending_correlations for ID=42
 ├─ NOT FOUND (request not yet sent to downstream)
-├─ Check if request was superseded (already got REQUEST_CANCELLED response)
-└─ IGNORE cancellation (request already processed via superseding)
+├─ Forward to connection actor (ADR-0014):
+│   ├─ Remove from coalescing map (if coalescable and present)
+│   ├─ Mark in order queue for skipping (if not yet dequeued)
+│   └─ Send REQUEST_CANCELLED response to upstream
+└─ Request never reaches downstream server
 ```
 
-**Rationale**: If a coalescable request (e.g., completion) is superseded by a newer request, it immediately receives `REQUEST_CANCELLED` response (ADR-0014 § Generation-Based Coalescing). Subsequent `$/cancelRequest` from upstream is redundant—the request is already "cancelled" from the user's perspective.
+**Sub-case 1b: Request already superseded**:
+
+```
+Upstream sends $/cancelRequest for request ID=1:
+├─ Check pending_correlations for ID=1
+├─ NOT FOUND (request not yet sent to downstream)
+├─ Forward to connection actor (ADR-0014):
+│   ├─ NOT in coalescing map (was replaced by ID=2)
+│   ├─ Already received REQUEST_CANCELLED response (via superseding)
+│   └─ IGNORE cancellation (already processed)
+└─ No action needed
+```
+
+**Rationale**:
+- **Sub-case 1a**: Request is still enqueued, waiting to be sent. Removing it from the queue prevents unnecessary downstream processing. Connection actor responds with `REQUEST_CANCELLED` to satisfy LSP protocol requirement.
+- **Sub-case 1b**: Coalescable request (e.g., completion) was superseded by a newer request and already received `REQUEST_CANCELLED` response (ADR-0014 § Generation-Based Coalescing). Subsequent `$/cancelRequest` from upstream is redundant.
 
 **Phase 2 (Pending) - Request Sent to Downstream**:
 
@@ -472,15 +495,33 @@ pending_correlations: DashMap<i64, Vec<(String, i64)>>, // upstream_id → [(dow
 
 #### 6.4 Cancellation Scenarios
 
-**Scenario 1: Superseded Before Sending**
+**Scenario 1a: Request Cancelled While Still Enqueued**
+
+```
+T0: User requests hover ID=42 → enqueued in order queue
+T1: Upstream sends $/cancelRequest for ID=42
+    └─ pending_correlations check: NOT FOUND (not yet sent)
+    └─ Forward to connection actor:
+        ├─ Remove from coalescing map (if present)
+        ├─ Mark in queue for skipping
+        └─ Send REQUEST_CANCELLED response to upstream
+T2: Writer loop dequeues ID=42
+    └─ Skip (marked as cancelled)
+    └─ Request never sent to downstream server
+```
+
+**Scenario 1b: Superseded Request Cancelled**
 
 ```
 T0: User types "foo" → completion request ID=1 enqueued
 T1: User types "o" → completion request ID=2 enqueued (supersedes ID=1)
-    └─ ID=1 immediately receives REQUEST_CANCELLED response
+    └─ ID=1 immediately receives REQUEST_CANCELLED response (via superseding)
+    └─ ID=1 removed from coalescing map (replaced by ID=2)
 T2: Upstream sends $/cancelRequest for ID=1
     └─ pending_correlations check: NOT FOUND
-    └─ Action: IGNORE (already cancelled via superseding)
+    └─ Forward to connection actor:
+        └─ NOT in coalescing map (already superseded)
+        └─ IGNORE (already got REQUEST_CANCELLED response)
 ```
 
 **Scenario 2: Sent Then Cancelled**
