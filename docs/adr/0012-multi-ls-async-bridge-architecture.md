@@ -389,7 +389,6 @@ if let Some(uri) = extract_uri_from_params(&params, method) {
 ```
 
 **Queue prioritization to avoid head-of-line blocking:** Per-connection send queues prioritize text synchronization (`didOpen`/`didChange`/`didClose`) ahead of long-running requests, preventing large requests from delaying document state updates. For finer isolation in the future, move to per-document queues within a connection while preserving in-order delivery per document.
-```
 
 #### 6.2 Document Notification Order
 
