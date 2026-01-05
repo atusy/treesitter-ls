@@ -109,6 +109,39 @@ async fn reader_task(
 }
 ```
 
+### Idle Timeout: Dead Server Detection
+
+**Purpose**: Detect zombie servers (process alive but unresponsive).
+
+**Duration**: 60 seconds of inactivity.
+
+**Activity Definition**: ANY output on server stdout resets the idle timer:
+- Response messages (request results, errors)
+- Notification messages (diagnostics, progress updates)
+- Any other server-initiated output
+
+**Timeout Behavior**:
+1. Close connection
+2. Mark connection state as `Failed` (per ADR-0014)
+3. Connection pool spawns new instance (per ADR-0015)
+
+**Independence from Other Timeouts**:
+- **Per-request timeout** (ADR-0015 aggregation layer): Bounds user-facing latency in multi-server scenarios, operates at router level
+- **Generation-based superseding** (ADR-0014 coalescing): Event-driven cancellation, no time limit
+
+Idle timeout is a **server health monitor**, not a request latency bound. It protects against catastrophic cases where the server process is alive but has stopped all output (deadlock, infinite loop, resource starvation).
+
+**Example**:
+```
+T0: Send request to downstream server (idle timer running)
+T1: 60s pass, no output from server
+    └─ Idle timeout fires
+    └─ Reader loop exits
+    └─ Connection marked Failed
+    └─ User receives error (SERVER_NOT_INITIALIZED or REQUEST_FAILED)
+    └─ Connection pool respawns server instance
+```
+
 ## Consequences
 
 ### Positive

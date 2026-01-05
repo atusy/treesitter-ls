@@ -583,10 +583,16 @@ enum AggregationStrategy {
 ```
 
 **Aggregation stability rules:**
-- **Per-LS deadlines**: Each downstream request has a configurable timeout (default: 5s explicit, 2s incremental). On timeout, aggregator returns whatever results are available
+- **Per-request timeout conditions**: Timeout applies **only when n ≥ 2 downstream servers participate in aggregation**
+  - SingleByCapability: No per-request timeout (wait indefinitely for the single capable server, idle timeout per ADR-0013 protects against zombie)
+  - FanOut with n=1: No per-request timeout (functionally equivalent to SingleByCapability)
+  - FanOut with n≥2: Per-request timeout applies (default: 5s explicit, 2s incremental)
+- **Per-request timeout behavior**: On timeout, aggregator returns whatever results are available **without sending $/cancelRequest to downstream servers**
+  - Downstream servers continue processing and send responses
+  - Late responses are **discarded** by router but **reset idle timeout** (serve as heartbeat for connection health)
+  - Rationale: Server health independent of aggregation latency; responses act as natural heartbeat signal
 - **Partial results**: If at least one downstream succeeds, respond with a successful `result` that contains merged items plus partial metadata in-band (e.g., `{ "items": [...], "partial": true, "missing": ["ruff"] }`)
 - **Total failure**: If all downstreams fail or time out, respond with a single `ResponseError` (`REQUEST_FAILED`) describing the missing/unhealthy servers
-- **Cancel in spite of non-compliant servers**: Send `$/cancelRequest` to slow downstream servers, but do not wait indefinitely because servers may ignore `$` notifications per LSP. The aggregator's timeout is the hard ceiling for the upstream response
 - **Partial results are explicit**: Partial metadata must live inside the successful `result` payload (not an `error` field) to keep the wire response LSP-compliant while still surfacing degradation
 
 ### 8. Configuration Example
