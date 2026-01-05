@@ -250,6 +250,77 @@ Transitions:
 
 **Why drop instead of queue**: The `didOpen` notification contains the complete document text at send time. Accumulated client edits are included. Dropping `didChange` before `didOpen` avoids duplicate state updates and simplifies state management.
 
+#### 4.4 Multi-Server Backpressure Coordination
+
+**Decision: Accept state divergence under extreme backpressure** (non-atomic broadcast)
+
+When routing notifications to multiple downstream servers, if one server's queue is full (per ADR-0014 § Non-Blocking Backpressure), notifications are handled independently per server.
+
+**Strategy**:
+
+```
+Router sends didSave to 3 servers:
+├─ pyright: queue full → DROP (per ADR-0014)
+├─ ruff: queue OK → FORWARD
+└─ lua-ls: queue OK → FORWARD
+
+Result: pyright doesn't see didSave, ruff and lua-ls do (STATE DIVERGENCE)
+```
+
+**Why accept divergence**: This is equivalent to attaching language servers to a real file at different times.
+
+**Real-world analogy**:
+```
+User opens Python file:
+  ├─ pyright attached immediately
+  ├─ User makes edits
+  └─ ruff attached 5 seconds later (user starts ruff-server manually)
+
+Result: pyright sees edit history, ruff sees current snapshot (STATE DIVERGENCE)
+```
+
+Language servers already handle being attached at arbitrary points in a document's lifetime. Each server receives its own stream of notifications and builds its own view of document state. Temporary divergence under backpressure is architecturally equivalent to staggered attachment timing.
+
+**Characteristics**:
+
+| Aspect | Decision | Rationale |
+|--------|----------|-----------|
+| **Atomic broadcast** | ❌ Rejected | Requires distributed transaction; blocks healthy servers on slowest server |
+| **Independent delivery** | ✅ Accepted | Keeps healthy servers synchronized; matches real-world attachment timing |
+| **Recovery mechanism** | Automatic | Next coalescable notification (didChange) re-synchronizes state |
+| **Divergence window** | Temporary | Only affects non-coalescable notifications (didSave, willSave); didChange is never dropped (stored in coalescing map per ADR-0014) |
+
+**Trade-offs**:
+
+- **Advantage**: System remains responsive under load; healthy servers continue working
+- **Disadvantage**: Servers may temporarily have inconsistent view of save state
+- **Mitigation**: Coalescable notifications (didChange) are never dropped, ensuring content synchronization
+- **LSP compliance**: Each server receives a valid notification stream; no protocol violations
+
+**Example scenario - Extreme backpressure**:
+
+```
+T0: User saves file (didSave notification)
+T1: Route to pyright, ruff, lua-ls
+    ├─ pyright: queue full (256 operations queued, slow initialization)
+    │   └─ DROP didSave (log warning)
+    ├─ ruff: queue OK → FORWARD didSave
+    └─ lua-ls: queue OK → FORWARD didSave
+
+T2: User edits file (didChange notification - coalescable)
+T3: Route to all servers
+    ├─ pyright: queue still full → Store in coalescing map (NOT dropped)
+    ├─ ruff: queue OK → FORWARD didChange
+    └─ lua-ls: queue OK → FORWARD didChange
+
+T4: pyright initialization completes, queue drains
+T5: pyright processes didChange from coalescing map
+    └─ State synchronized (content matches ruff and lua-ls)
+    └─ didSave notification was missed (non-critical for content sync)
+```
+
+**Conclusion**: State divergence is an acceptable trade-off. Prefer **availability** (healthy servers continue working) over **consistency** (all servers see identical notification sequence) under extreme backpressure.
+
 ### 5. Notification Pass-through
 
 **Diagnostics and other server-initiated notifications do NOT require aggregation.**
