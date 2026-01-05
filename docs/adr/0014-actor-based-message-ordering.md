@@ -86,6 +86,124 @@ The `handler2.py` prototype demonstrates a simpler, event-driven approach using 
 
 ### Core Design Principles
 
+#### 0. Bounded Queue Deadlock Prevention
+
+**CRITICAL**: The bounded order queue (capacity: 256) MUST use non-blocking `try_send()` instead of blocking `send().await` to prevent deadlock during slow initialization.
+
+**Deadlock Scenario Without try_send**:
+
+```
+Server State: Initializing (5-10s for rust-analyzer)
+User Action: Rapidly typing, triggering completions
+
+T0-T256: 256 operations enqueued via send().await
+T257: Next send().await BLOCKS (queue full, handler frozen)
+T258: All tower-lsp worker threads blocked on send()
+      → Cannot process new requests (no free workers)
+      → Cannot process initialization completion
+      → COMPLETE DEADLOCK
+```
+
+**Solution: Non-Blocking Backpressure with Coalescing-Aware Strategy**:
+
+```rust
+async fn send(&self, operation: BridgeOperation) -> Result<()> {
+    let key = supersede_key_of(&operation);
+    // ... generation counter logic ...
+
+    if should_supersede(&envelope.operation) {
+        // Coalescable operation: Store in map, try to enqueue key
+        if let Some(old_envelope) = self.coalescing_map.insert(key.clone(), envelope) {
+            // Superseded - cancel old request
+            if let BridgeOperation::Request { response_tx, .. } = old_envelope.operation {
+                let _ = response_tx.send(Err(ResponseError {
+                    code: ErrorCodes::REQUEST_CANCELLED,
+                    message: "Request cancelled (superseded before dispatch)".into(),
+                    data: None,
+                }));
+            }
+            // DON'T enqueue - key already in queue
+            Ok(())
+        } else {
+            // New key - try to enqueue (NON-BLOCKING)
+            match self.order_queue.try_send(OperationHandle::Coalesced(key)) {
+                Ok(_) => Ok(()),
+                Err(TrySendError::Full(_)) => {
+                    // Queue full, but envelope is ALREADY in coalescing map
+                    // Will be processed when queue drains
+                    self.send_log_message(
+                        MessageType::WARNING,
+                        "Bridge queue backpressure: operation queued but delayed"
+                    ).await;
+                    Ok(())  // NOT an error - envelope safely stored in map
+                }
+                Err(TrySendError::Closed(_)) => {
+                    Err(anyhow!("Connection closed"))
+                }
+            }
+        }
+    } else {
+        // Non-coalescable operation
+        match self.order_queue.try_send(OperationHandle::Direct(envelope.clone())) {
+            Ok(_) => Ok(()),
+            Err(TrySendError::Full(_)) => {
+                // Queue full - different handling for notifications vs requests
+                match envelope.operation {
+                    BridgeOperation::Notification { method, .. } => {
+                        // Drop non-critical notifications under backpressure
+                        self.send_log_message(
+                            MessageType::WARNING,
+                            format!("Bridge overloaded: dropping {} notification", method)
+                        ).await;
+                        Ok(())  // Dropped, but not an error
+                    }
+                    BridgeOperation::Request { response_tx, .. } => {
+                        // Requests MUST receive response - return error immediately
+                        let _ = response_tx.send(Err(ResponseError {
+                            code: ErrorCodes::SERVER_NOT_INITIALIZED,
+                            message: "Bridge overloaded during initialization".into(),
+                            data: None,
+                        }));
+                        self.send_log_message(
+                            MessageType::ERROR,
+                            "Bridge queue full: request rejected"
+                        ).await;
+                        Ok(())  // Error sent to client
+                    }
+                }
+            }
+            Err(TrySendError::Closed(_)) => {
+                Err(anyhow!("Connection closed"))
+            }
+        }
+    }
+}
+```
+
+**Why Coalescing-Aware Handling is Critical**:
+
+1. **Coalescable notifications** (didChange, etc.): Queue full is NOT a problem
+   - Envelope already stored in coalescing map
+   - Will be processed when queue drains
+   - **MUST NOT drop** - would cause state divergence
+
+2. **Non-coalescable notifications** (didSave, willSave, etc.): Can be dropped safely
+   - Not critical for correctness
+   - Better to drop than block handler threads
+
+3. **Requests**: Must receive explicit error response
+   - LSP spec requires all requests get response
+   - Return `SERVER_NOT_INITIALIZED` or `REQUEST_FAILED`
+   - Better UX than hanging indefinitely
+
+**Observability**: All backpressure events send `window/logMessage` to client (e.g., Neovim) for visibility.
+
+**Why This Prevents Deadlock**:
+- `try_send()` never blocks - returns immediately
+- Handler threads never freeze
+- Tower-lsp worker pool remains available for new requests
+- Initialization can complete (workers not blocked)
+
 #### 1. Actor Pattern: Single-Writer Loop per Server
 
 Each `BridgeConnection` has exactly one writer task consuming from a unified operation queue:
@@ -370,15 +488,59 @@ async fn send(&self, operation: BridgeOperation) {
                 }));
             }
             // Don't enqueue again - key already in order queue
+            Ok(())
         } else {
-            // New key - enqueue handle for ordering
-            // If queue full, this blocks (backpressure)
-            self.order_queue.send(OperationHandle::Coalesced(key)).await.ok();
+            // New key - try to enqueue handle for ordering (NON-BLOCKING)
+            match self.order_queue.try_send(OperationHandle::Coalesced(key)) {
+                Ok(_) => Ok(()),
+                Err(TrySendError::Full(_)) => {
+                    // Queue full, but envelope already in coalescing map
+                    // Will be processed when queue drains - NOT an error
+                    self.send_log_message(
+                        MessageType::WARNING,
+                        "Bridge queue backpressure: operation queued but delayed"
+                    ).await;
+                    Ok(())
+                }
+                Err(TrySendError::Closed(_)) => {
+                    Err(anyhow!("Connection closed"))
+                }
+            }
         }
     } else {
-        // Non-supersede-able: Enqueue envelope directly
-        // If queue full, this blocks (backpressure)
-        self.order_queue.send(OperationHandle::Direct(envelope)).await.ok();
+        // Non-supersede-able: Try to enqueue envelope directly (NON-BLOCKING)
+        match self.order_queue.try_send(OperationHandle::Direct(envelope.clone())) {
+            Ok(_) => Ok(()),
+            Err(TrySendError::Full(_)) => {
+                // Queue full - handle based on operation type
+                match envelope.operation {
+                    BridgeOperation::Notification { method, .. } => {
+                        // Drop non-critical notifications under backpressure
+                        self.send_log_message(
+                            MessageType::WARNING,
+                            format!("Bridge overloaded: dropping {} notification", method)
+                        ).await;
+                        Ok(())
+                    }
+                    BridgeOperation::Request { response_tx, .. } => {
+                        // Requests MUST receive response
+                        let _ = response_tx.send(Err(ResponseError {
+                            code: ErrorCodes::SERVER_NOT_INITIALIZED,
+                            message: "Bridge overloaded during initialization".into(),
+                            data: None,
+                        }));
+                        self.send_log_message(
+                            MessageType::ERROR,
+                            "Bridge queue full: request rejected"
+                        ).await;
+                        Ok(())
+                    }
+                }
+            }
+            Err(TrySendError::Closed(_)) => {
+                Err(anyhow!("Connection closed"))
+            }
+        }
     }
 }
 ```
@@ -414,8 +576,17 @@ if should_supersede(&envelope.operation) {
     } else {
         // ↑ New key (map.insert returned None)
 
-        // First time seeing this key - enqueue for FIFO ordering
-        self.order_queue.send(OperationHandle::Coalesced(key)).await.ok();
+        // First time seeing this key - try to enqueue for FIFO ordering (NON-BLOCKING)
+        match self.order_queue.try_send(OperationHandle::Coalesced(key)) {
+            Ok(_) => {}
+            Err(TrySendError::Full(_)) => {
+                // Queue full, but envelope already in map - will process when drains
+                log::warn!("Queue backpressure: operation queued but delayed");
+            }
+            Err(TrySendError::Closed(_)) => {
+                log::error!("Connection closed");
+            }
+        }
     }
 }
 ```
@@ -669,6 +840,25 @@ Critical improvement over naive queue approach:
 
 **Prevents OOM**: Bounded memory even when initialization takes 10+ seconds (e.g., rust-analyzer on large projects).
 
+**8. Deadlock Prevention via Non-Blocking Backpressure**
+
+Critical safety improvement using `try_send()` instead of blocking `send().await`:
+
+| Aspect | Blocking send().await | Non-blocking try_send() |
+|--------|----------------------|------------------------|
+| **Queue full behavior** | Handler thread BLOCKS | Returns immediately |
+| **Deadlock risk** | HIGH (all workers blocked) | NONE (workers never block) |
+| **User experience** | Complete freeze | Graceful degradation |
+| **Error feedback** | None (just hangs) | Explicit errors or delays |
+| **Observability** | Silent failure | logMessage to client |
+
+**Coalescing-aware backpressure handling**:
+- **Coalescable ops**: Queue full is safe (envelope in map, processed when drains)
+- **Non-coalescable notifications**: Drop under backpressure (not critical)
+- **Requests**: Explicit error response (LSP compliant, better UX than hang)
+
+**Why this is critical**: During slow initialization (5-10s), rapid user typing could enqueue 256+ operations. Without try_send, the 257th operation would block the handler thread, freezing all LSP workers and preventing initialization from completing—a complete deadlock. With try_send, the system degrades gracefully with explicit feedback.
+
 ### Negative
 
 **1. Per-Virtual-URI State Overhead**
@@ -734,7 +924,11 @@ Critical improvement over naive queue approach:
 - Writer loop processes operations in strict FIFO order (no interleaving)
 - Superseded operations cleaned up immediately (early cleanup)
 - Memory bounded during initialization (verify with load test)
+- **CRITICAL**: All `order_queue` sends use `try_send()` (never blocking `send().await`)
+- Backpressure handling distinguishes coalescable/non-coalescable/requests
+- logMessage notifications sent to client on backpressure events
 - Tests pass (no ordering violations, including didChange → request sequences)
+- **Deadlock test**: Verify no hang when queue fills during slow initialization
 
 ### Phase 2: Generation-Based Superseding
 
