@@ -158,9 +158,9 @@ Client edits markdown → treesitter-ls spawns pyright (Initializing)
 
 | Request State | Cancellation Action |
 |---------------|-------------------|
-| **In coalescing map** | Remove from map, send REQUEST_CANCELLED response |
-| **In order queue** (not yet dequeued) | Mark for skipping, send REQUEST_CANCELLED response |
-| **Already superseded** | Ignore (already got REQUEST_CANCELLED via superseding) |
+| **In coalescing map** | Remove from map |
+| **In order queue** (not yet dequeued) | Mark for skipping |
+| **Already superseded** | Ignore (already superseded) |
 | **Already sent to downstream** | N/A (handled by ADR-0015 propagation) |
 
 **Cancellation API** (called by multi-server router):
@@ -168,19 +168,17 @@ Client edits markdown → treesitter-ls spawns pyright (Initializing)
 ```rust
 async fn cancel_request(&self, request_id: i64) -> bool {
     // Try to remove from coalescing map
-    if let Some(operation) = coalescing_map.remove_by_id(request_id) {
-        operation.response_tx.send(Err(REQUEST_CANCELLED)).ok();
+    if coalescing_map.remove_by_id(request_id).is_some() {
         return true; // Cancelled successfully
     }
 
     // Try to mark in order queue (if not yet dequeued)
-    if let Some(operation) = order_queue.mark_cancelled(request_id) {
-        operation.response_tx.send(Err(REQUEST_CANCELLED)).ok();
+    if order_queue.mark_cancelled(request_id).is_some() {
         return true; // Cancelled successfully
     }
 
     // Not found in map or queue
-    // Either: (1) Already superseded (got REQUEST_CANCELLED response)
+    // Either: (1) Already superseded
     //         (2) Already sent to downstream (ADR-0015 handles propagation)
     //         (3) Already completed
     false // Not cancelled (already processed)
@@ -194,7 +192,7 @@ loop {
     let operation = order_queue.recv().await;
 
     if operation.is_cancelled() {
-        // Skip cancelled operations (already sent REQUEST_CANCELLED response)
+        // Skip cancelled operations
         continue;
     }
 
