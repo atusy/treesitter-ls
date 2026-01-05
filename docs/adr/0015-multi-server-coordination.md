@@ -91,7 +91,7 @@ enum RoutingStrategy {
 }
 ```
 
-**When aggregation IS needed:**
+**When aggregation IS needed (candidate-based methods):**
 - `completion`: Both LSes return completion item candidates → merge into single list
 - `codeAction`: pyright refactoring candidates + ruff lint fix candidates → merge candidate lists (user selects one for execution)
 
@@ -99,6 +99,15 @@ enum RoutingStrategy {
 - Single capable LS → route directly
 - Diagnostics → notification pass-through (client aggregates per LSP spec)
 - Capabilities don't overlap → route to respective LS
+
+**When aggregation is UNSAFE (direct-edit methods):**
+- `formatting`, `rangeFormatting`: Returns text edits directly (no user selection step)
+  - **MUST use SingleByCapability routing** — multiple servers would produce conflicting edits
+  - Example: If both pyright and ruff could format, their edits would conflict (different indentation, quote styles, etc.)
+  - NOT safe to merge: No way to reconcile conflicting text edits for the same range
+- `rename`: Returns workspace edits directly across multiple files
+  - **MUST use SingleByCapability routing** — multiple rename strategies would corrupt the workspace
+- **Rule**: Methods that return direct edits (not proposals) MUST route to single server only
 
 ### 3. Server Pool Architecture
 
@@ -297,13 +306,15 @@ languages:
         # Default: single_by_capability routing (no aggregation config needed)
         #
         # Only configure methods that need non-default behavior:
+        # IMPORTANT: Only candidate-based methods are safe for merge_all
         aggregations:
           textDocument/completion:
-            strategy: merge_all      # both LSes return items → merge
+            strategy: merge_all      # Safe: candidates merged, user selects one
             dedup_key: label
           textDocument/codeAction:
-            strategy: merge_all      # both LSes return actions → merge
+            strategy: merge_all      # Safe: proposals merged, user selects one for execution
           # hover, definition: use default (single_by_capability, no config)
+          # formatting, rename: MUST use single_by_capability (direct edits cannot be merged)
 
 languageServers:
   pyright:
@@ -332,11 +343,14 @@ languageServers:
 
 ### Negative
 
-- **Configuration Surface**: Users need to understand aggregation strategies for overlapping capabilities
+- **Configuration Surface**: Users need to understand aggregation strategies and routing constraints
+  - Must know which methods are safe for aggregation (candidate-based: completion, codeAction)
+  - Must know which methods are UNSAFE for aggregation (direct-edit: formatting, rename)
+  - Misconfiguration could cause data corruption (e.g., configuring formatting for FanOut would produce conflicting edits)
 - **Aggregation Complexity**: Merging candidate lists (completion items, codeAction proposals) requires deduplication logic
   - Challenge: Different servers may propose similar candidates with subtle differences (labels, kinds, descriptions)
   - Making it hard to decide what counts as a "duplicate"
-  - Note: Safe by design - user selects ONE candidate from merged list; selected action executes individually on specific server (no execution conflicts)
+  - Note: Only safe for candidate-based methods where user selects ONE item; direct-edit methods MUST use SingleByCapability
 - **Latency**: Fan-out with `merge_all` waits up to per-server timeouts; partial results may surface instead of complete lists
 - **Memory**: Tracking pending correlations adds overhead
 - **Coordination Complexity**: More state to manage (correlations, circuit breakers, aggregators)
