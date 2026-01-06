@@ -779,3 +779,7 @@ treesitter-ls (host)
 - **[ADR-0014](0014-actor-based-message-ordering.md)**: Message ordering and request superseding
   - Handles single-server message ordering concerns (didOpen before didChange)
   - ADR-0015 coordinates multiple servers; ADR-0014 ensures correct ordering within each server connection
+
+- **[ADR-0016](0016-graceful-shutdown.md)**: Graceful shutdown and connection lifecycle
+  - Defines shutdown coordination for multiple concurrent connections
+  - ADR-0015 router broadcasts shutdown; ADR-0016 specifies per-connection shutdown sequence and multi-server timeout policy

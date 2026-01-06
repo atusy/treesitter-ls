@@ -100,7 +100,8 @@ enum ConnectionState {
     Initializing,  // Writer loop started, initialization in progress
     Ready,         // Initialization completed successfully
     Failed,        // Initialization failed or writer loop panicked
-    Closed,        // Explicitly shut down
+    Closing,       // Graceful shutdown in progress (see ADR-0016)
+    Closed,        // Fully terminated
 }
 ```
 
@@ -108,10 +109,11 @@ enum ConnectionState {
 ```
 Initializing → Ready     (initialization succeeds)
 Initializing → Failed    (initialization fails or times out)
+Initializing → Closing   (shutdown during initialization, see ADR-0016)
 Ready → Failed           (writer loop panics or server crashes)
-Ready → Closed           (graceful shutdown)
-Failed → Closed          (cleanup after failure)
-Initializing → Closed    (shutdown during initialization)
+Ready → Closing          (graceful shutdown initiated, see ADR-0016)
+Closing → Closed         (shutdown completed)
+Failed → Closed          (cleanup after failure, skip graceful shutdown)
 ```
 
 **Operation Gating**:
@@ -385,9 +387,11 @@ Implementations may vary on:
 - **[ADR-0012](0012-multi-ls-async-bridge-architecture.md)**: Multi-LS async bridge architecture
   - ADR-0014 supersedes timeout-based control while maintaining LSP compliance
 - **[ADR-0015](0015-multi-server-coordination.md)**: Multi-server coordination
-  - Relies on ADR-0014's initialization flag for router integration
+  - Relies on ADR-0014's ConnectionState for router integration
 - **[ADR-0013](0013-async-io-layer.md)**: Async I/O layer
   - ADR-0014 builds on tokio runtime, uses ChildStdin from process spawning
+- **[ADR-0016](0016-graceful-shutdown.md)**: Graceful shutdown and connection lifecycle
+  - Extends ADR-0014's ConnectionState with Closing state for graceful shutdown coordination
 - **[ADR-0007](0007-language-server-bridge-virtual-document-model.md)**: Virtual document model
   - ADR-0014 requires stable URIs (PBI-200) for effective superseding
 

@@ -262,6 +262,7 @@ Spawn N instances of each language server, distribute requests round-robin.
 - **ADR-0006**: Core LSP bridge architecture (pooling, spawn strategy)
 - **ADR-0014**: Message ordering and request superseding (built on this I/O layer)
 - **ADR-0015**: Multi-server coordination (uses this I/O foundation for N servers)
+- **ADR-0016**: Graceful shutdown (uses shutdown signal from `select!`, adds LSP handshake and process cleanup)
 
 ## Notes
 
