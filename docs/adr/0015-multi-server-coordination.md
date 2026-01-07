@@ -403,7 +403,7 @@ Requests transition through distinct phases, each managed by different ADR compo
                               │ Writer loop dequeues
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│ TRANSITION POINT: Register in pending_correlations                 │
+│ TRANSITION POINT: Register in pending_responses                    │
 │ - Responsibility: Connection writer loop (ADR-0014)                │
 │ - Timing: BEFORE writing to server stdin                           │
 └─────────────────────────────────────────────────────────────────────┘
@@ -429,7 +429,7 @@ Cancellation in Phase 1 has **two sub-cases**:
 
 ```
 Upstream sends $/cancelRequest for request ID=42:
-├─ Check pending_correlations for ID=42
+├─ Check pending_responses for ID=42
 ├─ NOT FOUND (request not yet sent to downstream)
 ├─ Forward to connection actor (ADR-0014):
 │   ├─ Remove from coalescing map (if coalescable and present)
@@ -442,7 +442,7 @@ Upstream sends $/cancelRequest for request ID=42:
 
 ```
 Upstream sends $/cancelRequest for request ID=1:
-├─ Check pending_correlations for ID=1
+├─ Check pending_responses for ID=1
 ├─ NOT FOUND (request not yet sent to downstream)
 ├─ Forward to connection actor (ADR-0014):
 │   ├─ NOT in coalescing map (was replaced by ID=2)
@@ -459,15 +459,15 @@ Upstream sends $/cancelRequest for request ID=1:
 
 ```
 Upstream sends $/cancelRequest for request ID=42:
-├─ Check pending_correlations for ID=42
-├─ FOUND: [(pyright, 101), (ruff, 205)]
+├─ Check pending_responses for ID=42
+├─ FOUND: [(pyright, tx1), (ruff, tx2)]
 ├─ Propagate $/cancelRequest to all downstream servers:
-│   ├─ pyright: send $/cancelRequest {id: 101}
-│   └─ ruff: send $/cancelRequest {id: 205}
-└─ Remove ID=42 from pending_correlations
+│   ├─ pyright: send $/cancelRequest {id: 42}
+│   └─ ruff: send $/cancelRequest {id: 42}
+└─ Keep ID=42 in pending_responses (responses still expected)
 ```
 
-**Rationale**: Request was sent to downstream servers and is awaiting response. Propagate cancellation to allow servers to abort processing (though they may legally ignore it per LSP spec).
+**Rationale**: Request was sent to downstream servers using same ID (42) and is awaiting response. Propagate cancellation to allow servers to abort processing (though they may legally ignore it per LSP spec). Entry remains in `pending_responses` until responses arrive or timeout.
 
 #### 6.3 Handoff Protocol (ADR-0014 ↔ ADR-0015 Coordination)
 
@@ -483,15 +483,15 @@ loop {
             // 1. Remove from coalescing map (if coalescable)
             coalescing_map.remove((uri, method));
 
-            // 2. HANDOFF: Register in pending_correlations (ADR-0015 domain)
+            // 2. HANDOFF: Register in pending_responses (ADR-0015 domain)
             //    This MUST happen BEFORE writing to stdin
-            pool.register_pending_request(upstream_id: id, downstream_id: next_id);
+            pool.register_pending_request(request_id: id, server_key: self.key, response_tx);
 
-            // 3. Write request to server stdin
-            write_request(next_id, method, params).await?;
+            // 3. Write request to server stdin (using same ID)
+            write_request(id, method, params).await?;
 
-            // 4. Store response waiter
-            response_waiters.insert(next_id, response_tx);
+            // 4. Store response waiter (using same ID)
+            response_waiters.insert(id, response_tx);
         }
     }
 }
@@ -501,20 +501,20 @@ loop {
 
 ```rust
 // In LanguageServerPool (ADR-0015 domain)
-async fn handle_cancel_request(&self, upstream_id: i64) {
-    // Check if request is in pending_correlations (Phase 2)
-    if let Some(downstream_requests) = self.pending_correlations.get(&upstream_id) {
+async fn handle_cancel_request(&self, request_id: i64) {
+    // Check if request is in pending_responses (Phase 2)
+    if let Some(entry) = self.pending_responses.get(&request_id) {
         // Request was sent to downstream - propagate cancellation
-        for (downstream_key, downstream_id) in downstream_requests {
-            if let Some(conn) = self.connections.get(&downstream_key) {
+        for (server_key, _response_tx) in entry.value() {
+            if let Some(conn) = self.connections.get(server_key) {
                 let _ = conn.send_notification("$/cancelRequest", json!({
-                    "id": downstream_id
+                    "id": request_id  // Same ID used downstream
                 })).await;
             }
         }
-        self.pending_correlations.remove(&upstream_id);
+        // Keep entry in pending_responses - responses still expected
     } else {
-        // Request not in pending_correlations
+        // Request not in pending_responses
         // Either: (1) Already superseded and responded with REQUEST_CANCELLED
         //         (2) Already completed and responded
         //         (3) Never reached writer loop (gated by connection state)
@@ -525,11 +525,11 @@ async fn handle_cancel_request(&self, upstream_id: i64) {
 
 **Tracking Structure:**
 
+Already defined in § 3.1 Request ID Semantics:
 ```rust
-/// Maps upstream request ID to downstream request IDs for cancellation propagation
-/// Managed by: LanguageServerPool (ADR-0015)
-/// Updated by: Connection writer loops (ADR-0014) via handoff protocol
-pending_correlations: DashMap<i64, Vec<(String, i64)>>, // upstream_id → [(downstream_key, downstream_id)]
+/// Maps request ID to response handlers for all servers handling that request
+/// Single source of truth for in-flight requests
+pending_responses: DashMap<i64, Vec<(String, oneshot::Sender<ResponseResult>)>>
 ```
 
 #### 6.4 Cancellation Scenarios
