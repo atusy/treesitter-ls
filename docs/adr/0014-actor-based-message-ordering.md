@@ -163,6 +163,68 @@ loop {
 - ✅ REQUEST_CANCELLED is the only response for superseded operations
 - ✅ Order queue can contain stale refs (harmless, filtered at dequeue)
 
+**Memory Management: Document Lifecycle Cleanup**
+
+**Problem**: Coalescing map grows unbounded as documents open/close over long sessions.
+
+**Memory Growth Scenario**:
+```
+User opens/closes 10,000 files over 8-hour session
+Coalescing map: 10,000 URIs × 3 methods (didChange, completion, hover)
+Memory: ~30,000 entries × ~100 bytes = ~3MB
+No automatic eviction → memory leak
+```
+
+**Cleanup Strategy**: Hook `textDocument/didClose` notification
+
+```rust
+// In connection writer loop
+async fn handle_notification(&mut self, notification: Notification) {
+    // Process notification normally
+    self.order_queue.send(notification.clone()).await?;
+
+    // Cleanup: Remove coalescing entries for closed documents
+    if notification.method == "textDocument/didClose" {
+        if let Some(uri) = notification.params.get("textDocument")
+            .and_then(|doc| doc.get("uri"))
+            .and_then(|u| u.as_str())
+        {
+            // Remove ALL coalescing map entries for this URI
+            let removed = self.coalescing_map.retain(|(doc_uri, _method), _envelope| {
+                doc_uri != uri
+            });
+
+            log::debug!("Cleaned up {} coalescing entries for closed document: {}",
+                       removed, uri);
+        }
+    }
+}
+```
+
+**Why This Works**:
+- `didClose` is explicit document lifecycle event (LSP protocol guarantee)
+- Editor sends `didClose` when document no longer open
+- Safe to remove all pending operations for that URI (document gone)
+- No time-based heuristics needed (event-driven)
+
+**Cleanup Timing**:
+- Cleanup happens AFTER `didClose` queued (order preserved)
+- Coalescable operations already in order queue will be filtered at dequeue (atomic claim fails)
+- No race: if operation dequeued before cleanup, it successfully claims; if after, claim fails
+
+**Memory Bounds**:
+```
+Typical session: 50 open documents × 3 methods = 150 entries (~15KB)
+Long session with cleanup: Bounded by max concurrent open documents
+Without cleanup: Unbounded growth (all historical URIs retained)
+```
+
+**Guarantees**:
+- ✅ Memory bounded by concurrent open documents (not historical total)
+- ✅ No resource leak over long-running sessions
+- ✅ Event-driven cleanup (no polling or timers)
+- ✅ Safe concurrent access (DashMap's atomic operations)
+
 ### 3. Non-Blocking Backpressure
 
 The bounded order queue (capacity: 256) uses `try_send()` to prevent deadlocks during slow initialization.
