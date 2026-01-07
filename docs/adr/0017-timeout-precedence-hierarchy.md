@@ -10,11 +10,12 @@
 
 ## Context
 
-The async bridge architecture defines three distinct timeout systems across three ADRs:
+The async bridge architecture defines four distinct timeout systems across three ADRs:
 
-1. **Per-Request Timeout** (ADR-0015): Bounds user-facing latency for multi-server aggregation
-2. **Idle Timeout** (ADR-0013): Detects hung servers (unresponsive to pending requests)
-3. **Global Shutdown Timeout** (ADR-0016): Bounds total shutdown time
+1. **Initialization Timeout** (ADR-0013): Bounds server initialization time during startup
+2. **Per-Request Timeout** (ADR-0015): Bounds user-facing latency for multi-server aggregation
+3. **Idle Timeout** (ADR-0013): Detects hung servers (unresponsive to pending requests)
+4. **Global Shutdown Timeout** (ADR-0016): Bounds total shutdown time
 
 **Problem**: These timeout systems have overlapping responsibilities without clear precedence, causing non-deterministic behavior when multiple timeouts could fire simultaneously.
 
@@ -45,7 +46,55 @@ What happens to late responses?
 
 ## Decision
 
-**Establish a three-tier timeout hierarchy with explicit precedence rules and interaction semantics.**
+**Establish a four-tier timeout hierarchy with explicit precedence rules and interaction semantics.**
+
+### Tier 0: Initialization Timeout (Connection Startup)
+
+**Scope**: Per-connection during Initializing state only
+
+**Duration**: Implementation-defined (typically 30-60 seconds)
+- Longer than idle timeout (initialization is legitimately slow)
+- Example: 60 seconds to allow for slow language server startup
+
+**Trigger**: When `initialize` request sent to downstream server
+
+**Action on Timeout**:
+1. Log error: "Server initialization timeout after {duration}s"
+2. Transition connection state: `Initializing` → `Failed`
+3. Fail initialization request with `REQUEST_FAILED` (-32803)
+4. Trigger circuit breaker (per ADR-0015 § Server Lifecycle)
+5. Connection pool schedules retry with exponential backoff
+
+**State Impact**: Connection transitions to `Failed` state
+
+**Gating**:
+- Enabled: Only during `Initializing` state
+- Disabled: When entering `Closing` state (global shutdown takes precedence)
+
+**Example**:
+```
+T0: Spawn server, send initialize request
+    → Initialization timeout: 60s timer STARTS
+    → Idle timeout: DISABLED (state = Initializing)
+
+T8: Initialize response received
+    → Initialization timeout: STOPPED
+    → Connection state: Initializing → Ready
+    → Idle timeout: ENABLED
+
+Connection now ready for normal operations
+```
+
+**Failure Case**:
+```
+T0: Spawn server, send initialize
+    → Initialization timeout: 60s timer STARTS
+
+T60: Timeout fires (no initialize response)
+    → Connection state: Initializing → Failed
+    → Circuit breaker: record failure, backoff 500ms
+    → Pool: retry with new server instance
+```
 
 ### Tier 1: Per-Request Timeout (Application Layer)
 
@@ -74,7 +123,7 @@ T5: Per-request timeout fires
 Connection state: Still Ready (timeout is per-request, not per-connection)
 ```
 
-### Tier 2: Idle Timeout (Connection Layer)
+### Tier 2: Idle Timeout (Connection Health)
 
 **Scope**: Per-connection health monitoring
 
@@ -230,6 +279,64 @@ Clarification: Late responses are discarded at aggregation layer but
 
 **Correction**: Late responses after per-request timeout are discarded by the aggregation layer (already returned partial results to client), but reader task continues processing them normally (doesn't block or hang).
 
+### Rule 5: Shutdown During Initialization
+
+**Scenario**: Shutdown initiated while connection is still initializing
+
+```
+T0: Server spawned, initialize request sent
+    → Connection state: Initializing
+    → Initialization timeout: 60s timer STARTS
+    → Idle timeout: DISABLED
+
+T5: Shutdown signal received
+    → Connection state: Initializing → Closing
+    → Initialization timeout: CANCELLED
+    → Global shutdown timeout: 10s timer STARTS
+
+Active timeouts: Global Shutdown (10s)
+Precedence: Global Shutdown > Initialization
+```
+
+**Behavior**:
+- Initialization timeout **CANCELLED** when entering Closing state
+- Global shutdown timeout takes over as the only active timeout
+- Connection immediately begins shutdown sequence:
+  1. Skip LSP shutdown/exit (not yet initialized)
+  2. Send SIGTERM to server process
+  3. Wait for graceful deadline (80% of global timeout)
+  4. Send SIGKILL if process still running
+
+**Rationale**:
+- Server is not yet ready for LSP protocol commands (no initialized state)
+- Graceful LSP shutdown not applicable (requires initialized server)
+- Force termination via SIGTERM/SIGKILL is appropriate
+- Global timeout ensures bounded shutdown time even for stuck initialization
+
+**Example Timeline**:
+```
+T0: Initialize request sent
+    → State: Initializing
+    → Init timeout: 60s
+    → Idle timeout: DISABLED
+
+T5: Shutdown signal
+    → State: Closing
+    → Init timeout: CANCELLED
+    → Global timeout: 10s STARTS
+
+T5: Begin shutdown sequence
+    → Skip LSP shutdown (not initialized)
+    → Send SIGTERM
+
+T13: Graceful deadline (80% of 10s = 8s)
+    → If process alive: send SIGTERM
+
+T15: Global timeout fires (10s from T5)
+    → If process alive: send SIGKILL
+    → State: Closed
+```
+
 ## State-Based Idle Timeout Lifecycle
 
 Per ADR-0013 Amendment 002, idle timeout computation is state-based:
@@ -255,10 +362,12 @@ fn compute_idle_timeout(state: ConnectionState, pending_count: usize) -> Duratio
 
 | Scenario | Active Timeouts | Precedence | Final Action |
 |----------|----------------|------------|--------------|
+| **Initialization** | Initialization only | N/A | Connection → Failed, retry with backoff |
 | **Normal operation** | Per-request, Idle | Per-request → Idle resets | Partial results, connection stays Ready |
 | **Single-server request** | Idle only | N/A (only one timeout) | Connection → Failed on timeout |
 | **Shutdown (no pending)** | Global only | N/A | Clean shutdown or force kill |
 | **Shutdown (pending)** | Per-request, Global | Global > Per-request | Force kill after global timeout |
+| **Shutdown (initializing)** | Global only | Global > Initialization | Skip LSP shutdown, SIGTERM/SIGKILL |
 | **Late response in shutdown** | Global only | Accept until global timeout | Deliver if before global timeout |
 
 ## Configuration Recommendations
@@ -559,16 +668,19 @@ async fn shutdown_all_connections(connections: Vec<Connection>) -> Result<()> {
 
 ## Summary
 
-**Decision**: Three-tier timeout hierarchy with explicit precedence rules
+**Decision**: Four-tier timeout hierarchy with explicit precedence rules
 
 **Tiers**:
-1. **Per-Request** (application): Bounds user-facing latency
-2. **Idle** (connection): Detects hung servers
-3. **Global Shutdown** (system): Enforces bounded shutdown time
+0. **Initialization** (startup): Bounds server initialization time during connection startup
+1. **Per-Request** (application): Bounds user-facing latency for multi-server aggregation
+2. **Idle** (connection): Detects hung servers when requests are pending
+3. **Global Shutdown** (system): Enforces bounded shutdown time across all connections
 
 **Precedence Rules**:
-- Global shutdown > Per-request timeout
-- Idle timeout STOPS during shutdown
+- Global shutdown > Initialization timeout (shutdown during init)
+- Global shutdown > Per-request timeout (shutdown during request)
+- Global shutdown > Idle timeout (idle timeout STOPS during shutdown)
+- Idle timeout DISABLED during Initializing state (initialization timeout applies)
 - Late responses accepted until global timeout
 
 **Impact**:
