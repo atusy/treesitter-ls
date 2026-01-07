@@ -154,6 +154,83 @@ fn cleanup_and_fail_pending(
 - ✅ Failed send attempts logged but don't block cleanup (client may have disconnected)
 - ✅ Pending map cleared to prevent memory leaks
 
+### Race Prevention: Request Registration vs Reader Exit
+
+**Problem**: Race condition between request registration and reader task cleanup.
+
+**Race Scenario**:
+```rust
+T0: send_request() obtains next ID (42)
+T1: Reader task detects EOF, starts cleanup_and_fail_pending()
+T2: cleanup iterates pending map (doesn't include ID 42)
+T3: send_request() inserts ID 42 into pending map
+T4: send_request() writes to stdin (but reader/writer tasks are dead)
+Result: Request 42 hangs forever—never receives response
+```
+
+**Root Cause**: No atomic check preventing request registration after connection failure.
+
+**Mitigation**: Double-check connection state pattern (check-insert-check)
+
+```rust
+async fn send_request(&self, request: Request) -> Result<Response> {
+    // FIRST CHECK: Fail fast if connection not ready
+    let state = self.connection_state.load();
+    if state != ConnectionState::Ready {
+        return Err(Error::ConnectionNotReady(state));
+    }
+
+    let request_id = self.next_request_id();
+    let (response_tx, response_rx) = oneshot::channel();
+
+    // INSERT: Add to pending map optimistically
+    self.pending.insert(request_id, response_tx);
+
+    // SECOND CHECK: Detect race with cleanup
+    // If state changed between first check and insertion, cleanup may have missed this entry
+    if self.connection_state.load() != ConnectionState::Ready {
+        // Race detected: cleanup may be running or complete
+        self.pending.remove(&request_id);
+        return Err(Error::ConnectionNotReady(self.connection_state.load()));
+    }
+
+    // Safe to proceed: cleanup either:
+    // 1. Hasn't started (state still Ready)
+    // 2. Will include our entry (we inserted before state transition)
+    self.write_request(request_id, request).await?;
+    response_rx.await
+}
+```
+
+**Why This Works**:
+- If cleanup runs between first and second check → second check fails, we remove our entry
+- If cleanup runs after second check → our entry already in map, cleanup will find it
+- If cleanup runs before first check → first check fails immediately
+- No window where entry can be orphaned
+
+**Integration with cleanup_and_fail_pending**:
+```rust
+// In reader task exit path
+fn trigger_cleanup(&self, reason: &str) {
+    // FIRST: Transition state (prevents new requests)
+    self.connection_state.store(ConnectionState::Failed);
+
+    // SECOND: Cleanup pending (catches requests that passed first check)
+    cleanup_and_fail_pending(&self.pending, reason);
+
+    // Any request that passed first check but not second check will:
+    // 1. See Failed state in second check
+    // 2. Remove itself from pending map
+    // 3. Return ConnectionNotReady error
+}
+```
+
+**Guarantees**:
+- ✅ No request hangs after reader exit
+- ✅ State transition visible before cleanup starts
+- ✅ Late insertions detected and cleaned up by requestor
+- ✅ LSP protocol compliance maintained (error response or ConnectionNotReady)
+
 ### Idle Timeout: Dead Server Detection
 
 **Purpose**: Detect zombie servers (process alive but unresponsive to pending requests).

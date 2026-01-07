@@ -79,6 +79,90 @@ Superseding uses monotonic generation counters instead of timeouts.
 - Memory efficient: O(unique keys) not O(total requests)
 - Immediate feedback: superseded operations get REQUEST_CANCELLED instantly
 
+**Race Prevention: Supersede vs Writer Dequeue**
+
+**Problem**: Race condition between superseding in coalescing map and writer loop dequeue.
+
+**Race Scenario**:
+```rust
+T0: Operation ID=1 added to coalescing map and order queue
+    → coalescing_map[(uri, method)] = (gen=1, id=1, envelope)
+    → order_queue.push(OperationRef { id=1, coalescing_key: Some((uri, method)) })
+
+T1: Operation ID=2 supersedes ID=1 in map
+    → coalescing_map[(uri, method)] = (gen=2, id=2, envelope)
+    → ID=1 response_tx receives REQUEST_CANCELLED
+    → order_queue.push(OperationRef { id=2, coalescing_key: Some((uri, method)) })
+
+T2: Writer loop dequeues ID=1 from order queue
+    → Tries to claim from coalescing map
+    → Map now contains ID=2 (not ID=1)
+
+T3: Writer loop sends ID=1 to server (WRONG!)
+    → LSP violation: two responses for one request (REQUEST_CANCELLED + actual response)
+```
+
+**Root Cause**: Order queue contains stale reference to superseded operation.
+
+**Mitigation**: Atomic claim pattern in writer loop
+
+```rust
+// In writer loop
+loop {
+    let operation_ref = order_queue.recv().await;
+
+    match operation_ref {
+        OperationRef { id, method, params, response_tx, coalescing_key } => {
+            // CRITICAL: Verify ownership before writing
+            if let Some(key) = coalescing_key {
+                // Try to atomically claim this operation from coalescing map
+                match coalescing_map.remove(&key) {
+                    Some((gen, claimed_id, envelope)) if claimed_id == id => {
+                        // SUCCESS: We own this operation, proceed
+                        // (This operation is the current latest for this key)
+                    }
+                    Some((gen, other_id, envelope)) => {
+                        // SUPERSEDED: Map contains a newer operation
+                        // Put the newer operation back (we don't own it yet)
+                        coalescing_map.insert(key, (gen, other_id, envelope));
+
+                        // Skip this operation (already received REQUEST_CANCELLED at T1)
+                        log::debug!("Skipping superseded operation ID={} (replaced by ID={})",
+                                   id, other_id);
+                        continue;
+                    }
+                    None => {
+                        // Map entry already removed (either superseded or cancelled)
+                        // This operation already received REQUEST_CANCELLED
+                        log::debug!("Skipping superseded/cancelled operation ID={}", id);
+                        continue;
+                    }
+                }
+            }
+
+            // Non-coalescable operation or successfully claimed coalescable operation
+            // Safe to send to downstream server
+            pool.register_pending_request(request_id: id, server_key: self.key, response_tx);
+            write_request(id, method, params).await?;
+            response_waiters.insert(id, response_tx);
+        }
+    }
+}
+```
+
+**Why This Works**:
+- Coalescing map is the **source of truth** for latest operation
+- `remove()` is atomic claim operation
+- If claim fails (ID mismatch or None), operation was superseded → skip
+- If claim succeeds, we own it → safe to send
+- Newer operations remain in map for their future dequeue
+
+**Guarantees**:
+- ✅ No double-response LSP violation
+- ✅ Superseded operations never reach downstream server
+- ✅ REQUEST_CANCELLED is the only response for superseded operations
+- ✅ Order queue can contain stale refs (harmless, filtered at dequeue)
+
 ### 3. Non-Blocking Backpressure
 
 The bounded order queue (capacity: 256) uses `try_send()` to prevent deadlocks during slow initialization.
