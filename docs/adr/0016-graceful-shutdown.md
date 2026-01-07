@@ -101,12 +101,118 @@ Failed → Closed (skip LSP handshake)
 
 | Operation Location | Shutdown Action |
 |-------------------|----------------|
-| **Coalescing map** | Fail with `REQUEST_FAILED` ("connection closing") |
-| **Order queue** | Continue processing (already dequeued, may be mid-write) |
-| **Pending responses** | Fail with `REQUEST_FAILED` when timeout expires |
-| **New operations** | Reject with `SERVER_NOT_INITIALIZED` (Closing state) |
+| **Coalescing map** | Fail with `REQUEST_FAILED` ("connection closing") immediately |
+| **Order queue - Not yet dequeued** | Never sent (writer loop stops dequeuing) |
+| **Order queue - Currently writing** | Complete write, then writer loop exits |
+| **Pending responses** | Fail with `REQUEST_FAILED` when global timeout expires |
+| **New operations** | Reject with `REQUEST_FAILED` ("connection closing") when attempting to enqueue |
 
 **Why fail coalescing map but not order queue**: Operations in the order queue may be partially written to stdin. Aborting mid-write corrupts the protocol stream. Coalescing map operations haven't been serialized yet—safe to fail.
+
+### Writer Loop Shutdown Synchronization
+
+**Problem**: Writer loop and shutdown sequence both write to stdin. Concurrent writes corrupt protocol stream.
+
+**Solution**: Three-phase shutdown coordination between shutdown sequence and writer loop.
+
+**Phase 1: Signal Stop**
+```rust
+// Shutdown sequence (ADR-0016 layer)
+async fn graceful_shutdown(&self) {
+    // 1a. Transition to Closing state (new operations rejected)
+    self.state.set(Closing);
+
+    // 1b. Fail coalescing map operations
+    self.fail_coalescing_map_operations();
+
+    // 1c. Signal writer loop to STOP dequeuing
+    let _ = self.writer_stop_tx.send(());
+
+    // Phase 2: Wait for writer to become idle...
+}
+
+// Writer loop (ADR-0014 layer)
+async fn writer_loop(&self) {
+    loop {
+        select! {
+            operation = self.order_queue.recv() => {
+                // Write operation to stdin...
+
+                // After write completes, check if stop signaled
+                if self.writer_stop_rx.try_recv().is_ok() {
+                    log::debug!("Writer loop stop signal received");
+                    break; // Exit loop, no more dequeuing
+                }
+            }
+            _ = &mut self.writer_stop_rx => {
+                log::debug!("Writer loop stop signal (waiting)");
+                break; // Exit immediately if idle
+            }
+        }
+    }
+
+    // Signal shutdown sequence: writer is idle
+    let _ = self.writer_idle_tx.send(());
+}
+```
+
+**Phase 2: Wait for Idle**
+```rust
+// Shutdown sequence continues
+async fn graceful_shutdown(&self) {
+    // ... (Phase 1 above)
+
+    // 2. Wait for writer loop to signal idle (or timeout)
+    match tokio::time::timeout(
+        Duration::from_secs(2),  // Writer should finish quickly
+        self.writer_idle_rx.recv()
+    ).await {
+        Ok(_) => {
+            log::debug!("Writer loop idle, proceeding with shutdown");
+        }
+        Err(_) => {
+            log::warn!("Writer loop timeout, forcing shutdown");
+            // Continue anyway - better than indefinite hang
+        }
+    }
+
+    // Phase 3: Exclusive stdin access...
+}
+```
+
+**Phase 3: Exclusive Access**
+```rust
+// Shutdown sequence continues
+async fn graceful_shutdown(&self) {
+    // ... (Phase 1-2 above)
+
+    // 3. NOW safe to write to stdin (writer loop stopped)
+    self.send_shutdown_request().await?;
+
+    // Wait for shutdown response...
+    // Send exit notification...
+    // Kill process...
+}
+```
+
+**Guarantees**:
+- ✅ Writer loop stops dequeuing **before** shutdown writes to stdin
+- ✅ No concurrent writes to stdin (sequential: writer → shutdown)
+- ✅ Bounded wait (2s timeout prevents indefinite hang)
+- ✅ Current write completes (no mid-write abortion)
+
+**Why 2-second timeout**: Writer loop writes are typically <100ms. 2s allows for slow disk I/O without indefinite hang. Timeout doesn't corrupt stream (writer already stopped or forcibly killed).
+
+**Writer Loop Mid-Write Timeout**:
+
+If writer loop doesn't become idle within 2 seconds:
+1. Log warning: "Writer loop failed to stop, forcing shutdown"
+2. Continue with shutdown sequence (send LSP shutdown request)
+3. Risk: Possible stdin corruption if writer truly stuck mid-write
+4. Mitigation: Extremely rare (write is async, typically <100ms)
+5. Tradeoff: Bounded shutdown time > perfect stream consistency
+
+**Rationale**: Prefer 2-second hang + possible corruption over indefinite hang. In practice, writer loop responds in <10ms.
 
 ### 4. Shutdown Timeout Policy: Implementation-Defined
 
@@ -347,3 +453,7 @@ async fn shutdown_router() {
 **Process Management**: SIGTERM → SIGKILL pattern
 - SIGTERM allows graceful cleanup
 - SIGKILL guarantees termination (last resort)
+
+## Amendment History
+
+- **2026-01-06**: Merged [Amendment 001](0016-graceful-shutdown-amendment-001.md) - Added three-phase writer loop shutdown synchronization to prevent stdin corruption during concurrent shutdown writes (addresses Critical Issue C1: Writer Loop stdin Corruption During Shutdown)

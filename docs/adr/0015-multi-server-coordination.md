@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Proposed
 
 **Extracted from**: [ADR-0012](0012-multi-ls-async-bridge-architecture.md) (focusing on multi-server aspects)
 

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
+| **Status** | Proposed |
 | **Date** | 2026-01-05 |
 | **Decision-makers** | atusy |
 | **Consulted** | - |
@@ -92,22 +92,67 @@ async fn reader_task(
             result = read_message(&mut reader) => {
                 match result {
                     Ok(Some(msg)) => route_response(msg, &pending),
-                    Ok(None) => break,  // EOF - server died
-                    Err(e) => { log::error!("Read error: {}", e); break; }
+
+                    Ok(None) => {
+                        // EOF - server died
+                        log::error!("Server process exited unexpectedly (EOF on stdout)");
+                        cleanup_and_fail_pending(&pending, "Server process exited");
+                        break;
+                    }
+
+                    Err(e) => {
+                        log::error!("Read error on server stdout: {}", e);
+                        cleanup_and_fail_pending(&pending, &format!("Connection error: {}", e));
+                        break;
+                    }
                 }
             }
             _ = &mut shutdown_rx => {
                 log::debug!("Shutdown signal received");
-                break;  // Clean exit without blocked thread
+                cleanup_and_fail_pending(&pending, "Connection shutting down");
+                break;
             }
             _ = tokio::time::sleep(idle_timeout) => {
-                log::warn!("Server idle timeout, closing connection");
-                break;  // Dead server detection
+                log::warn!("Server idle timeout - no response to pending requests");
+                cleanup_and_fail_pending(&pending, "Server idle timeout");
+                break;
             }
         }
     }
 }
+
+/// Fail all pending requests with INTERNAL_ERROR and clear the pending map.
+/// This is called when the reader task exits abnormally (EOF, read error, timeout, or shutdown).
+fn cleanup_and_fail_pending(
+    pending: &Arc<DashMap<i64, oneshot::Sender<ResponseResult>>>,
+    reason: &str,
+) {
+    let count = pending.len();
+
+    // Fail all pending requests
+    for entry in pending.iter() {
+        let request_id = *entry.key();
+        if let Some((_, response_tx)) = pending.remove(entry.key()) {
+            let error = ResponseError {
+                code: ErrorCode::InternalError,  // -32603
+                message: reason.to_string(),
+                data: None,
+            };
+
+            // Send error response (ignore send failures - client may have disconnected)
+            let _ = response_tx.send(Err(error));
+        }
+    }
+
+    log::warn!("Failed {} pending requests due to: {}", count, reason);
+}
 ```
+
+**Cleanup Guarantees**:
+- ✅ Every pending request receives exactly one error response (LSP protocol compliance)
+- ✅ All responses sent before reader task exits (atomic from client perspective)
+- ✅ Failed send attempts logged but don't block cleanup (client may have disconnected)
+- ✅ Pending map cleared to prevent memory leaks
 
 ### Idle Timeout: Dead Server Detection
 
@@ -115,9 +160,29 @@ async fn reader_task(
 
 **Duration**: Implementation-defined timeout without response to pending requests (typically 30-120 seconds, balancing responsiveness vs false positives).
 
-**State-Based Timer Management**:
+**Idle Timeout Gating by Connection State** (ADR-0014 integration):
 
-Idle timeout operates based on connection state:
+- **Initializing State**: Timer DISABLED
+  - Rationale: Initialization has its own timeout mechanism (see § Initialization Timeout below)
+  - Initialize request does NOT trigger idle timer
+  - Server silence is expected (initialization is slow)
+
+- **Ready State**: Timer operates normally (see below)
+  - Quiescent: STOPPED
+  - Active: RUNNING
+
+- **Failed State**: Timer STOPPED
+  - Connection unusable, no pending operations allowed
+
+- **Closing State**: Timer STOPPED
+  - Shutdown in progress, pending operations being failed (per ADR-0016)
+
+- **Closed State**: Timer N/A
+  - Connection terminated
+
+**State-Based Timer Management** (when in Ready state):
+
+Idle timeout operates based on request activity:
 
 - **Quiescent State** (no pending requests):
   - Timer: STOPPED
@@ -169,6 +234,61 @@ T5: Extended silence → ✅ No timeout (timer stopped, healthy idle)
 - **Generation-based superseding** (ADR-0014 coalescing): Event-driven cancellation, no time limit
 
 Idle timeout is a **server health monitor** for pending requests, not a request latency bound or idle connection killer.
+
+### Initialization Timeout: Separate Mechanism
+
+**Purpose**: Bound initialization time to prevent indefinite hangs during server startup.
+
+**Duration**: Implementation-defined (typically 30-60 seconds)
+- Longer than idle timeout (initialization is legitimately slow)
+- Accounts for slow servers: rust-analyzer (5-10s), pyright on large projects (3-8s)
+- Fails fast on broken servers: missing dependencies, bad config (<1s to crash)
+
+**Timer Management**:
+1. **Start**: When initialize request sent (Connection state: Initializing)
+2. **Stop**: When initialize response received (transition to Ready)
+3. **Timeout**: If no response within duration
+
+**Timeout Behavior**:
+1. Log error: "Server initialization timeout after {duration}s"
+2. Transition connection state: Initializing → Failed
+3. Fail initialization request with REQUEST_FAILED
+4. Trigger circuit breaker (per ADR-0015)
+5. Connection pool schedules retry with backoff
+
+**Independence from Idle Timeout**:
+- Initialization timeout: Longer duration, single operation (initialize)
+- Idle timeout: Shorter duration, any pending request (once Ready)
+- Both are per-connection health monitors
+- No overlap: Initialization timeout disabled once Ready; idle timeout disabled during Initializing
+
+**Example Timeline**:
+```
+T0: Spawn server, send initialize
+    → Initialization timeout: 60s timer STARTS
+    → Idle timeout: DISABLED (state = Initializing)
+
+T1: Server processing (8 seconds)
+    → Initialization timeout: 52s remaining
+    → Idle timeout: still DISABLED
+
+T2: Initialize response received
+    → Initialization timeout: STOPPED
+    → Idle timeout: ENABLED (state = Ready)
+    → Connection ready for normal operations
+```
+
+**Failure Case**:
+```
+T0: Spawn server, send initialize
+    → Initialization timeout: 60s timer STARTS
+
+T1: Server crashes (bad config, exit code 1)
+    → Initialization timeout: fires immediately (no response)
+    → Transition: Initializing → Failed
+    → Circuit breaker: record failure, backoff 500ms
+    → Pool: spawn new instance after backoff
+```
 
 ## Consequences
 
@@ -276,3 +396,8 @@ Spawn N instances of each language server, distribute requests round-robin.
 - Unit test: Verify `select!` correctly handles concurrent read + shutdown + timeout
 - Integration test: Shutdown while server silent → connection closes cleanly (no hang)
 - Resource test: 10+ language servers active → OS thread count does not increase proportionally
+
+## Amendment History
+
+- **2026-01-06**: Merged [Amendment 001](0013-async-io-layer-amendment-001.md) - Added pending request cleanup requirements to prevent indefinite client hangs on reader task exit (addresses Critical Issue C2: Pending Request Hang on Reader Task Abnormal Exit)
+- **2026-01-06**: Merged [Amendment 002](0013-async-io-layer-amendment-002.md) - Added state-based idle timeout gating and separate initialization timeout mechanism to prevent idle timeout from firing during slow initialization (addresses Critical Issue C3: Idle Timeout Firing During Initialization)

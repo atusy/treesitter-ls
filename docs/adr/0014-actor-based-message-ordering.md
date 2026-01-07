@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Proposed
 
 **Supersedes**:
 - [ADR-0012](0012-multi-ls-async-bridge-architecture.md) § Timeout-based control
