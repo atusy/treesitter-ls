@@ -85,10 +85,103 @@ The bounded order queue (capacity: 256) uses `try_send()` to prevent deadlocks d
 
 **Strategy**:
 - **Coalescable operations** (didChange, completion): Queue full is safe—envelope stored in coalescing map, processed when queue drains
-- **Non-coalescable notifications** (didSave, willSave): Dropped under extreme backpressure
+- **Non-coalescable notifications** (didSave, willSave): Dropped under extreme backpressure with telemetry feedback
 - **Requests**: Return explicit SERVER_NOT_INITIALIZED or REQUEST_FAILED error
 
 **Why non-blocking is essential**: Blocking `send().await` during initialization can freeze all LSP handler threads, creating complete system deadlock.
+
+### Notification Drop Handling
+
+When dropping non-coalescable notifications due to queue full, provide comprehensive telemetry to prevent silent state divergence:
+
+**1. Log at WARN level** (always, unconditionally):
+```rust
+log::warn!(
+    "Dropped {} notification for {} (queue {}/{}, state: {:?})",
+    method,
+    uri.unwrap_or("unknown"),
+    queue_len,
+    QUEUE_CAPACITY,
+    connection_state
+);
+```
+
+**2. Send telemetry event to client** (LSP `$/telemetry` notification):
+```rust
+// Send to client via reverse notification channel
+client_notification_tx.send(Notification {
+    method: "$/telemetry".to_string(),
+    params: json!({
+        "type": "notification_dropped",
+        "severity": "warning",
+        "data": {
+            "method": method,
+            "uri": uri,
+            "reason": "queue_full",
+            "queue_length": queue_len,
+            "queue_capacity": QUEUE_CAPACITY,
+            "connection_state": format!("{:?}", connection_state),
+            "timestamp": SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        }
+    })
+});
+```
+
+**LSP Compliance**: `$/telemetry` is a standard LSP notification clients can subscribe to for monitoring events.
+
+**3. Circuit breaker integration**:
+```rust
+// Track dropped notifications in rolling time window
+self.circuit_breaker.record_dropped_notification();
+
+// Thresholds (configurable)
+if self.circuit_breaker.dropped_count_in_window(Duration::from_secs(10)) > 10 {
+    log::error!(
+        "Circuit breaker OPEN: >10 notifications dropped in 10s (connection unhealthy)"
+    );
+    self.circuit_breaker.open();
+    // Connection marked as unhealthy, pool may spawn replacement
+}
+```
+
+**Rationale**: Sustained notification drops indicate severe backpressure, suggesting connection is unhealthy.
+
+**4. State re-synchronization metadata**:
+
+Track dropped events per URI and inject metadata into next coalescable notification (didChange):
+
+```rust
+// In coalescing map, track dropped events per URI
+struct CoalescingEntry {
+    operation: Operation,
+    generation: u64,
+    dropped_events: Vec<String>,  // Track dropped lifecycle events
+}
+
+// When processing didChange after didSave drop
+if let Some(dropped_events) = coalescing_entry.dropped_events.take() {
+    // Inject metadata into didChange params
+    let mut params = operation.params.clone();
+    params["metadata"] = json!({
+        "saved": dropped_events.contains(&"textDocument/didSave"),
+        "dropped_lifecycle_events": dropped_events
+    });
+}
+```
+
+**Drop Severity by Notification Type**:
+
+| Notification Type | Drop Impact | Mitigation Strategy |
+|------------------|-------------|---------------------|
+| **textDocument/didSave** | HIGH - Diagnostics stale | Re-sync via didChange metadata |
+| **textDocument/willSave** | MEDIUM - Pre-save hooks missed | Best-effort, informational only |
+| **textDocument/didClose** | LOW - Resource leak risk | Server GC handles cleanup |
+| **Custom notifications** | VARIES - Application-specific | Log + telemetry for visibility |
+
+**Priority**: didSave has highest impact (diagnostics critical for UX).
 
 ### 4. Connection State Tracking
 
@@ -100,20 +193,84 @@ enum ConnectionState {
     Initializing,  // Writer loop started, initialization in progress
     Ready,         // Initialization completed successfully
     Failed,        // Initialization failed or writer loop panicked
-    Closing,       // Graceful shutdown in progress (see ADR-0016)
+    Closing,       // Shutdown initiated, failing pending operations
     Closed,        // Fully terminated
 }
 ```
 
-**State Transitions**:
+**State Transitions** (Complete):
+
+Normal Operation:
 ```
 Initializing → Ready     (initialization succeeds)
-Initializing → Failed    (initialization fails or times out)
-Initializing → Closing   (shutdown during initialization, see ADR-0016)
+Initializing → Failed    (initialization fails, times out, or server crashes)
+```
+
+Shutdown Paths:
+```
+Initializing → Closing   (shutdown during initialization)
+Ready → Closing          (graceful shutdown initiated)
+Failed → Closing         (graceful shutdown initiated on failed connection)
+Closing → Closed         (shutdown completed or timed out)
+```
+
+Failure Paths:
+```
 Ready → Failed           (writer loop panics or server crashes)
-Ready → Closing          (graceful shutdown initiated, see ADR-0016)
-Closing → Closed         (shutdown completed)
-Failed → Closed          (cleanup after failure, skip graceful shutdown)
+Closing → Closed         (writer panic during shutdown - skip Failed state)
+Failed → Closed          (cleanup without shutdown, if shutdown not initiated)
+```
+
+Edge Cases:
+```
+Initializing + Shutdown + Timeout → Closing (not Failed)
+  Rationale: Shutdown in progress; initialization failure is moot
+```
+
+Priority Rules (when multiple transitions possible):
+```
+1. If current state = Closing: All failures → Closed (skip Failed)
+2. If shutdown signal + current state = Failed: Failed → Closing → Closed
+3. Else: Normal transition rules apply
+```
+
+**Visual State Diagram**:
+```
+                    ┌─────────────┐
+                    │Initializing │
+                    └──────┬──────┘
+                           │
+          ┌────────────────┼────────────────┐
+          │                │                │
+       success         timeout/          shutdown
+          │             failure          signal
+          ▼                │                │
+     ┌────────┐            │                │
+     │ Ready  │            │                │
+     └───┬────┘            │                │
+         │                 │                │
+    ┌────┼─────────────────┼────────────────┤
+    │    │                 │                │
+shutdown crash/         crash/              │
+ signal  panic          panic               │
+    │    │                 │                │
+    ▼    ▼                 ▼                ▼
+┌──────────┐          ┌────────┐      ┌─────────┐
+│ Closing  │◄─────────┤ Failed │      │ (abort) │
+└────┬─────┘ shutdown └────┬───┘      └─────────┘
+     │        signal       │
+     │                     │ no shutdown
+     │                     │ (cleanup only)
+     │                     │
+     └──────────┬──────────┘
+                │
+                ▼
+           ┌──────────┐
+           │  Closed  │  (terminal state)
+           └──────────┘
+
+Priority Rule: Closing state is "sticky" - once entered, all failures
+               skip Failed state and go directly to Closed.
 ```
 
 **Operation Gating**:
@@ -215,6 +372,140 @@ Writer loop panics use fail-fast pattern (not restart) because `ChildStdin` cann
 - Connection pool spawns new server instance with fresh stdin
 
 **Recovery time**: ~100-500ms (respawn) vs. infinite hang (restart attempt).
+
+### Panic Handler Implementation Requirements
+
+**Scope**: Writer loop panic must be caught and handled without hanging.
+
+**Architecture**:
+```rust
+// Connection spawns writer loop with panic handler
+pub struct Connection {
+    writer_handle: JoinHandle<Result<()>>,
+    pending_operations: Arc<DashMap<i64, oneshot::Sender<ResponseResult>>>,
+    state: Arc<AtomicConnectionState>,
+    circuit_breaker: Arc<CircuitBreaker>,
+}
+
+impl Connection {
+    pub fn spawn_writer_loop(&self) -> JoinHandle<Result<()>> {
+        let pending = self.pending_operations.clone();
+        let state = self.state.clone();
+        let circuit_breaker = self.circuit_breaker.clone();
+
+        tokio::spawn(async move {
+            // Panic handler wrapper
+            let result = AssertUnwindSafe(writer_loop(/* ... */))
+                .catch_unwind()
+                .await;
+
+            match result {
+                Ok(Ok(())) => {
+                    log::debug!("Writer loop exited normally");
+                }
+                Ok(Err(e)) => {
+                    log::error!("Writer loop error: {}", e);
+                    Self::handle_writer_failure(pending, state, circuit_breaker).await;
+                }
+                Err(panic_info) => {
+                    log::error!("Writer loop panicked: {:?}", panic_info);
+                    Self::handle_writer_panic(pending, state, circuit_breaker).await;
+                }
+            }
+        })
+    }
+
+    async fn handle_writer_panic(
+        pending: Arc<DashMap<i64, oneshot::Sender<ResponseResult>>>,
+        state: Arc<AtomicConnectionState>,
+        circuit_breaker: Arc<CircuitBreaker>,
+    ) {
+        // CRITICAL: Fail pending operations BEFORE state transition
+        // This ensures LSP response guarantee (every request gets response)
+
+        let count = pending.len();
+        log::warn!("Failing {} pending operations due to writer panic", count);
+
+        // 1. Fail all pending operations (FIRST - response guarantee)
+        for entry in pending.iter() {
+            if let Some((_, response_tx)) = pending.remove(entry.key()) {
+                let error = ResponseError {
+                    code: ErrorCode::InternalError,
+                    message: "Writer loop panicked".to_string(),
+                    data: None,
+                };
+
+                // Send error response (ignore send failures)
+                let _ = response_tx.send(Err(error));
+            }
+        }
+
+        // 2. Check current state (SECOND - determines final state)
+        let current_state = state.get();
+
+        match current_state {
+            ConnectionState::Closing => {
+                // Exception: Panic during shutdown → Closed (not Failed)
+                log::warn!("Writer panic during shutdown, transitioning to Closed");
+                state.set(ConnectionState::Closed);
+                // Do NOT record circuit breaker failure (shutdown already in progress)
+            }
+            _ => {
+                // Normal: Panic → Failed
+                log::error!("Writer panic, transitioning to Failed");
+                state.set(ConnectionState::Failed);
+
+                // 3. Trigger circuit breaker (THIRD - enables recovery)
+                circuit_breaker.record_failure();
+            }
+        }
+    }
+
+    async fn handle_writer_failure(
+        pending: Arc<DashMap<i64, oneshot::Sender<ResponseResult>>>,
+        state: Arc<AtomicConnectionState>,
+        circuit_breaker: Arc<CircuitBreaker>,
+    ) {
+        // Same as panic handler, but different error message
+        // (Error return vs panic - both are failures)
+        Self::handle_writer_panic(pending, state, circuit_breaker).await;
+    }
+}
+```
+
+**Guarantees**:
+1. ✅ Every pending request receives error response (LSP compliance)
+2. ✅ Responses sent BEFORE state transition (atomic from client perspective)
+3. ✅ State transition respects Closing state priority (no rollback)
+4. ✅ Circuit breaker triggered (enables automatic recovery)
+
+**Why This Order Matters**:
+```
+CORRECT Order:
+  1. Send error responses → Client sees errors
+  2. Transition state → Pool sees failure
+  3. Trigger circuit breaker → Recovery begins
+
+WRONG Order (if state transition first):
+  1. Transition state → Pool spawns new instance
+  2. New instance starts accepting requests
+  3. Send error responses ← Old responses mixed with new connection!
+  4. Client confused (response for old connection on new connection)
+```
+
+**Special Case: Closing State Exception**:
+```rust
+if current_state == ConnectionState::Closing {
+    // Don't transition to Failed - we're already shutting down
+    state.set(ConnectionState::Closed);
+    // Don't trigger circuit breaker - not a recoverable failure
+}
+```
+
+**Rationale**:
+- Shutdown already in progress → Failed state rollback creates confusion
+- Circuit breaker shouldn't trigger during intentional shutdown
+- Final state should be Closed (lifecycle complete) not Failed (needs recovery)
 
 ## Consequences
 
@@ -404,3 +695,8 @@ Implementations may vary on:
 **Architecture Review**: `__ignored/review-adr.md` (identified deadlock, initialization race, and panic hang issues)
 
 **Critical Dependency**: PBI-200 (Stable Virtual Document Identity) - without stable URIs, generation counters reset on every edit
+
+## Amendment History
+
+- **2026-01-06**: Merged [Amendment 001](0014-actor-based-message-ordering-amendment-001.md) - Completed state machine with all transitions, panic handler implementation requirements, and error code corrections (addresses Critical Issue C5: ConnectionState Transition Race Conditions and state machine completeness)
+- **2026-01-06**: Merged [Amendment 002](0014-actor-based-message-ordering-amendment-002.md) - Added comprehensive notification drop telemetry, circuit breaker integration, and state re-synchronization metadata to prevent silent data loss (addresses Critical Issue C7: Silent Notification Drops Without Client Feedback)
