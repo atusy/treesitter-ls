@@ -276,18 +276,64 @@ fn compute_idle_timeout(state: ConnectionState, pending_count: usize) -> Duratio
 
 ```
 Initialization (60s)  > Idle (30-120s) > Per-request (5s)
-Global Shutdown (10s) > Per-request (5s)
 Global Shutdown (10s) overrides Idle (any duration)
+
+Note: Per-request timeout is NOT part of shutdown sequence
+      (requests failed immediately during shutdown per ADR-0016 § 3)
 ```
 
 ### Constraint
 
+**Design: Concurrent Global Timeout (User-Bounded)**
+
+The global timeout is a **single ceiling** for the entire shutdown process. All phases (graceful, SIGTERM, SIGKILL) execute **concurrently within** this deadline, not sequentially.
+
 ```
-Global Shutdown ≥ max(Per-connection timeout) + SIGKILL delay
-Global Shutdown ≥ max(Writer idle timeout (2s), Per-request timeout (5s)) + SIGKILL (1s)
-Global Shutdown ≥ 8s minimum
-Recommended: 10-15s for safety margin
+Shutdown Timeline (Concurrent):
+
+T0: Start global timeout (e.g., 10s), begin graceful shutdown
+    ├─ Writer idle synchronization: ~2s
+    ├─ LSP shutdown request/response: ~3-5s
+    └─ LSP exit notification + wait for process
+
+T0-T8: Graceful attempts (dynamically determined)
+       If successful → Done early (total time: actual, not full timeout)
+
+T8: Graceful timeout → Send SIGTERM (escalation heuristic)
+    Reserve ~20% of global timeout for SIGTERM/SIGKILL
+
+T8-T10: Wait for SIGTERM to work (~2s remaining)
+
+T10: Global timeout expires → Send SIGKILL immediately
+     Guaranteed termination
+
+Maximum total shutdown time = Global Timeout (exactly)
 ```
+
+**Constraint**:
+```
+Global Shutdown ≥ 1s (minimum practical value)
+
+Recommended: 5-15s
+  - 5s: Minimum for graceful LSP handshake attempt
+  - 10s: Balanced (8s graceful + 2s SIGTERM)
+  - 15s: Conservative (12s graceful + 3s SIGTERM)
+
+Escalation heuristic: Reserve 20% of global timeout for SIGTERM
+  - Global 10s → Graceful deadline 8s, SIGTERM reserve 2s
+  - Global 5s → Graceful deadline 4s, SIGTERM reserve 1s
+```
+
+**Why Concurrent Design**:
+- **User experience**: Guaranteed maximum wait time (critical for editor responsiveness)
+- **Simplicity**: Single timer, one deadline, easier to implement and test
+- **Parallel efficiency**: Multiple servers shut down concurrently (10s total, not N×10s)
+- **Early completion**: If graceful succeeds quickly, total time is actual not timeout
+- **Safety trade-off**: Language servers must handle abrupt termination (they already do for crashes)
+
+**Rejected Alternative**: Sequential timeouts (graceful timeout → SIGTERM timeout → SIGKILL) would guarantee minimum time per phase but create unbounded total time (bad UX: 3 servers × 7s = 21s wait).
+
+Recommended: 10s global timeout for balance between graceful exit opportunity and user responsiveness.
 
 ## Implementation Requirements
 
