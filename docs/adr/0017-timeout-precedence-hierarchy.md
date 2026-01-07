@@ -1,7 +1,7 @@
 # ADR-0017: Timeout Precedence Hierarchy
 
 **Date**: 2026-01-06
-**Status**: Proposed
+**Status**: Draft
 **Type**: Cross-ADR Coordination
 **Related ADRs**:
 - [ADR-0013](0013-async-io-layer.md) § Idle Timeout
