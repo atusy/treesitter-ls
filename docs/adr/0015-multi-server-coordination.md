@@ -605,68 +605,27 @@ T4: Clean up pending_responses[99]
 
 **Downstream non-compliance**: Servers may legally ignore `$/cancelRequest` (LSP § `$` notifications). Timeouts on fan-out aggregation remain the hard ceiling to guarantee the upstream request still completes.
 
-### Upstream Response to Cancellation
+### Cancellation Response Handling
 
-**Critical Distinction**:
-1. **Original request** (e.g., `textDocument/completion` ID=42): MUST receive response
-2. **$/cancelRequest notification**: Does NOT receive response (it's a notification, not a request)
+**treesitter-ls operates as a transparent proxy for cancellation:**
 
-**Original Request Response**:
+**For requests already sent to downstream:**
+- Forward `$/cancelRequest` to downstream server(s)
+- Downstream decides: send `result` (too late) or `REQUEST_CANCELLED` error
+- Forward downstream response to client
+- No decision-making by bridge
 
-The request being cancelled MUST still receive a response:
-- If server processed it before cancellation: Send `result`
-- If cancelled before processing: Send `error` with `RequestCancelled` (-32800)
-- If cancellation fails (request already sent): Server may still respond with `result`
+**For requests NOT yet sent (in coalescing map/order queue):**
+- Remove from local tracking structures
+- Bridge MUST send `REQUEST_CANCELLED` error to client immediately
+- Never forward to downstream (request never sent)
+- This is the **only case** where bridge generates a response
 
-**Example - Successful Cancellation**:
-```json
-// Client sends
-{"jsonrpc":"2.0", "id":42, "method":"textDocument/completion", ...}
-
-// Client sends (notification, no id)
-{"jsonrpc":"2.0", "method":"$/cancelRequest", "params":{"id":42}}
-
-// Bridge responds to ORIGINAL request (ID=42)
-{
-  "jsonrpc":"2.0",
-  "id":42,  // ← Matches original request
-  "error":{
-    "code":-32800,
-    "message":"Request cancelled"
-  }
-}
-
-// Bridge does NOT respond to $/cancelRequest (it's a notification)
-```
-
-**Example - Late Cancellation**:
-```json
-// Client sends completion request
-{"jsonrpc":"2.0", "id":42, "method":"textDocument/completion", ...}
-
-// Server responds quickly (100ms)
-{"jsonrpc":"2.0", "id":42, "result":{...}}
-
-// Client sends cancellation (too late, 200ms)
-{"jsonrpc":"2.0", "method":"$/cancelRequest", "params":{"id":42}}
-
-// Bridge ignores $/cancelRequest (response already sent)
-// Client already has the result - no action needed
-```
-
-**LSP Compliance**:
-- ✅ Every request with `id` receives exactly one response
-- ✅ Notifications (like `$/cancelRequest`) receive no response
-- ✅ Cancellation is best-effort (server may complete before cancel)
-
-**Method Cancellability**:
-
-Not all LSP methods are cancellable:
-- **Cancellable**: `textDocument/completion`, `textDocument/hover`, `textDocument/signatureHelp` (incremental, user-facing)
-- **Non-cancellable**: `textDocument/didChange`, `textDocument/didSave` (notifications, no response anyway)
-- **Side-effecting**: `workspace/executeCommand`, `textDocument/rename` (may have already executed)
-
-For non-cancellable methods, bridge should still send `REQUEST_CANCELLED` to maintain protocol consistency, even though cancellation may not prevent execution.
+**Why local cancellation requires response generation:**
+- Coalesced/queued request removed before reaching downstream
+- Downstream never saw it, cannot respond
+- Client still expects response per LSP protocol
+- Bridge must provide `RequestCancelled` (-32800) error
 
 ### 7. Response Aggregation Strategies
 
