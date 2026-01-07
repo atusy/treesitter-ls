@@ -663,6 +663,7 @@ enum AggregationStrategy {
   - Downstream servers continue processing and send responses
   - Late responses are **discarded** by router but **reset idle timeout** (serve as heartbeat for connection health)
   - Rationale: Server health independent of aggregation latency; responses act as natural heartbeat signal
+  - **Memory management**: After returning partial results to client, the request entry **MUST be removed** from `pending_responses` map to prevent memory leak (each orphaned entry ~200 bytes). Late responses check a separate `discarded_requests` set to avoid delivering to non-existent channels
 - **Partial results**: If at least one downstream succeeds, respond with a successful `result` using LSP-native fields where available (e.g., for CompletionList: `{ "isIncomplete": true, "items": [...] }`). For methods without native partial support (e.g., hover), return the most complete response available
 - **Total failure**: If all downstreams fail or time out, respond with a single `ResponseError` (`REQUEST_FAILED`) describing the missing/unhealthy servers
 - **Partial results are explicit**: Partial metadata must live inside the successful `result` payload (not an `error` field) to keep the wire response LSP-compliant while still surfacing degradation
