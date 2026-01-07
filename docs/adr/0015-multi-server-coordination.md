@@ -138,9 +138,48 @@ enum RoutingStrategy {
 
 **Key Design Points:**
 - **RequestRouter**: New component that determines which server(s) receive a request
-- **Per-Connection Isolation**: Each downstream connection maintains its own request ID namespace and send queue
+- **Per-Connection Isolation**: Each downstream connection maintains its own send queue
 - **ResponseAggregator**: New component that combines responses when fan-out is used
-- **ID Namespace Isolation**: Each downstream connection maintains its own `next_request_id`. The pool maps `(upstream_id, downstream_key)` → `downstream_id` for correlation
+- **Request ID Semantics**: Upstream request IDs are used directly for downstream servers (no ID transformation)
+
+#### 3.1 Request ID Semantics
+
+**Decision**: Use upstream request IDs directly for downstream servers.
+
+**ID Flow**:
+```
+Client (editor)          treesitter-ls           Downstream Servers
+     ├─ completion ID=42 ─→ Router
+                             ├─ pyright (ID=42)
+                             └─ ruff (ID=42)
+```
+
+**Tracking Structure**:
+```rust
+/// Maps request ID to response handlers for all servers handling that request
+/// Single source of truth for in-flight requests
+pending_responses: DashMap<i64, Vec<(String, oneshot::Sender<ResponseResult>)>>
+                   //      ↑            ↑                    ↑
+                   //   Request ID  Server Key          Response sender
+
+// Example entry:
+// 42 → [("pyright", tx1), ("ruff", tx2)]
+//
+// When aggregating:
+// - Wait for both tx1 and tx2 to receive responses
+// - Merge results according to aggregation strategy
+// - Send single response to client with ID=42
+```
+
+**Benefits**:
+- Single map lookup for cancellation (no correlation indirection)
+- Request ID consistent across client → bridge → servers
+- Simpler state management (one entry per request)
+
+**Safety**:
+- No ID collision risk (single upstream client)
+- Each request ID is unique per client connection
+- Downstream servers never see conflicting IDs from different upstreams
 
 ### 4. Server Lifecycle Management
 
@@ -500,60 +539,134 @@ pending_correlations: DashMap<i64, Vec<(String, i64)>>, // upstream_id → [(dow
 ```
 T0: User requests hover ID=42 → enqueued in order queue
 T1: Upstream sends $/cancelRequest for ID=42
-    └─ pending_correlations check: NOT FOUND (not yet sent)
-    └─ Forward to connection actor:
-        ├─ Remove from coalescing map (if present)
-        ├─ Mark in queue for skipping
-        └─ Send REQUEST_CANCELLED response to upstream
-T2: Writer loop dequeues ID=42
-    └─ Skip (marked as cancelled)
-    └─ Request never sent to downstream server
+T2: Router forwards to connection actor
+T3: Connection actor processes cancellation:
+    ├─ Check coalescing map: FOUND, remove
+    ├─ OR check order queue: FOUND, mark for skipping
+    └─ IMMEDIATELY send REQUEST_CANCELLED response:
+        {
+          "id": 42,
+          "error": {
+            "code": -32800,
+            "message": "Request cancelled"
+          }
+        }
+T4: Connection actor returns success to router
+T5: Writer loop dequeues marked operation → skip (already cancelled)
 ```
+
+**Response Guarantee**:
+- Response sent SYNCHRONOUSLY by connection actor (Step T3)
+- Response sent BEFORE removing from tracking structures
+- If oneshot send fails, log warning (client may have disconnected)
+- Response is sent exactly once (atomic remove-and-send)
 
 **Scenario 1b: Superseded Request Cancelled**
 
 ```
 T0: User types "foo" → completion request ID=1 enqueued
 T1: User types "o" → completion request ID=2 enqueued (supersedes ID=1)
-    └─ ID=1 immediately receives REQUEST_CANCELLED response (via superseding)
-    └─ ID=1 removed from coalescing map (replaced by ID=2)
-T2: Upstream sends $/cancelRequest for ID=1
-    └─ pending_correlations check: NOT FOUND
-    └─ Forward to connection actor:
-        └─ NOT in coalescing map (already superseded)
-        └─ IGNORE (already got REQUEST_CANCELLED response)
+    └─ ID=1 IMMEDIATELY receives REQUEST_CANCELLED (via superseding)
+        Response sent synchronously when ID=2 replaces ID=1 in coalescing map
+T2: Upstream sends $/cancelRequest for ID=1 (race condition)
+    └─ Connection actor checks: NOT in coalescing map (already superseded)
+    └─ Connection actor checks: NOT in order queue (never enqueued)
+    └─ IGNORE cancellation (response already sent at T1)
 ```
+
+**Key Point**: Superseding sends `REQUEST_CANCELLED` response **synchronously** when new operation replaces old in coalescing map (per ADR-0014 Amendment 001).
 
 **Scenario 2: Sent Then Cancelled**
 
 ```
 T0: User requests hover ID=42
-T1: Writer loop dequeues, registers in pending_correlations
-    └─ pending_correlations[42] = [(pyright, 101)]
-T2: Writer loop sends to pyright stdin
+T1: Router registers in pending_responses
+    └─ pending_responses[42] = [(pyright, tx1)]
+T2: Writer loop sends to pyright stdin (ID=42, same as upstream)
 T3: Upstream sends $/cancelRequest for ID=42
-    └─ pending_correlations check: FOUND
-    └─ Action: Send $/cancelRequest {id: 101} to pyright
-T4: Clean up pending_correlations[42]
+    └─ pending_responses check: FOUND
+    └─ Action: Send $/cancelRequest {id: 42} to pyright (same ID)
+T4: Clean up pending_responses[42]
 ```
 
 **Scenario 3: Multi-Server Fan-Out Cancellation**
 
 ```
 T0: User requests completion ID=99 (fan-out to pyright + ruff)
-T1: Router registers in pending_correlations
-    └─ pending_correlations[99] = [(pyright, 201), (ruff, 305)]
-T2: Both servers receive requests
+T1: Router registers in pending_responses
+    └─ pending_responses[99] = [(pyright, tx1), (ruff, tx2)]
+T2: Both servers receive requests (both with ID=99)
 T3: Upstream sends $/cancelRequest for ID=99
     └─ Propagate to both:
-        ├─ pyright: $/cancelRequest {id: 201}
-        └─ ruff: $/cancelRequest {id: 305}
-T4: Clean up pending_correlations[99]
+        ├─ pyright: $/cancelRequest {id: 99} (same ID)
+        └─ ruff: $/cancelRequest {id: 99} (same ID)
+T4: Clean up pending_responses[99]
 ```
 
 **Downstream non-compliance**: Servers may legally ignore `$/cancelRequest` (LSP § `$` notifications). Timeouts on fan-out aggregation remain the hard ceiling to guarantee the upstream request still completes.
 
-**Upstream response to cancellation**: Always return a response to the client after propagating cancellation. Use the standard LSP `RequestCancelled` code (-32800) when the method is server-cancellable; otherwise use `REQUEST_FAILED` with a `"cancelled"` message. Never leave the upstream request pending—cancellation must still round-trip a response per LSP.
+### Upstream Response to Cancellation
+
+**Critical Distinction**:
+1. **Original request** (e.g., `textDocument/completion` ID=42): MUST receive response
+2. **$/cancelRequest notification**: Does NOT receive response (it's a notification, not a request)
+
+**Original Request Response**:
+
+The request being cancelled MUST still receive a response:
+- If server processed it before cancellation: Send `result`
+- If cancelled before processing: Send `error` with `RequestCancelled` (-32800)
+- If cancellation fails (request already sent): Server may still respond with `result`
+
+**Example - Successful Cancellation**:
+```json
+// Client sends
+{"jsonrpc":"2.0", "id":42, "method":"textDocument/completion", ...}
+
+// Client sends (notification, no id)
+{"jsonrpc":"2.0", "method":"$/cancelRequest", "params":{"id":42}}
+
+// Bridge responds to ORIGINAL request (ID=42)
+{
+  "jsonrpc":"2.0",
+  "id":42,  // ← Matches original request
+  "error":{
+    "code":-32800,
+    "message":"Request cancelled"
+  }
+}
+
+// Bridge does NOT respond to $/cancelRequest (it's a notification)
+```
+
+**Example - Late Cancellation**:
+```json
+// Client sends completion request
+{"jsonrpc":"2.0", "id":42, "method":"textDocument/completion", ...}
+
+// Server responds quickly (100ms)
+{"jsonrpc":"2.0", "id":42, "result":{...}}
+
+// Client sends cancellation (too late, 200ms)
+{"jsonrpc":"2.0", "method":"$/cancelRequest", "params":{"id":42}}
+
+// Bridge ignores $/cancelRequest (response already sent)
+// Client already has the result - no action needed
+```
+
+**LSP Compliance**:
+- ✅ Every request with `id` receives exactly one response
+- ✅ Notifications (like `$/cancelRequest`) receive no response
+- ✅ Cancellation is best-effort (server may complete before cancel)
+
+**Method Cancellability**:
+
+Not all LSP methods are cancellable:
+- **Cancellable**: `textDocument/completion`, `textDocument/hover`, `textDocument/signatureHelp` (incremental, user-facing)
+- **Non-cancellable**: `textDocument/didChange`, `textDocument/didSave` (notifications, no response anyway)
+- **Side-effecting**: `workspace/executeCommand`, `textDocument/rename` (may have already executed)
+
+For non-cancellable methods, bridge should still send `REQUEST_CANCELLED` to maintain protocol consistency, even though cancellation may not prevent execution.
 
 ### 7. Response Aggregation Strategies
 
@@ -591,7 +704,7 @@ enum AggregationStrategy {
   - Downstream servers continue processing and send responses
   - Late responses are **discarded** by router but **reset idle timeout** (serve as heartbeat for connection health)
   - Rationale: Server health independent of aggregation latency; responses act as natural heartbeat signal
-- **Partial results**: If at least one downstream succeeds, respond with a successful `result` that contains merged items plus partial metadata in-band (e.g., `{ "items": [...], "partial": true, "missing": ["ruff"] }`)
+- **Partial results**: If at least one downstream succeeds, respond with a successful `result` using LSP-native fields where available (e.g., for CompletionList: `{ "isIncomplete": true, "items": [...] }`). For methods without native partial support (e.g., hover), return the most complete response available
 - **Total failure**: If all downstreams fail or time out, respond with a single `ResponseError` (`REQUEST_FAILED`) describing the missing/unhealthy servers
 - **Partial results are explicit**: Partial metadata must live inside the successful `result` payload (not an `error` field) to keep the wire response LSP-compliant while still surfacing degradation
 
@@ -783,3 +896,8 @@ treesitter-ls (host)
 - **[ADR-0016](0016-graceful-shutdown.md)**: Graceful shutdown and connection lifecycle
   - Defines shutdown coordination for multiple concurrent connections
   - ADR-0015 router broadcasts shutdown; ADR-0016 specifies per-connection shutdown sequence and multi-server timeout policy
+
+## Amendment History
+
+- **2026-01-07**: Merged [Amendment 002](0015-multi-server-coordination-amendment-002.md) - Simplified ID namespace by using upstream request IDs directly for downstream servers (no ID transformation), replaced `pending_correlations` with `pending_responses`, updated Scenarios 2-3 to reflect same-ID forwarding (addresses Critical Issue C5: ID Registration Race and architectural simplification)
+- **2026-01-06**: Merged [Amendment 001](0015-multi-server-coordination-amendment-001.md) - Updated partial results format to use LSP-native fields (isIncomplete) instead of custom fields, clarified $/cancelRequest notification semantics, and added explicit response guarantees for cancelled requests (addresses Critical Issue C4: Missing Response Guarantee for Cancelled Requests and LSP protocol compliance)
