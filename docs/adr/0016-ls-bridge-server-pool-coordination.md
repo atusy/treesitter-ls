@@ -400,57 +400,6 @@ languageServers:
 
 **Phase 3 Configuration Example** (future): See Future Extensions for multi-LS aggregation config.
 
-## Implementation Plan
-
-### Phase 1: Single-LS-per-Language Foundation
-
-**Scope**: Support **one language server per language** (multiple languages, each uses only one server)
-
-**What Works:**
-- Multiple embedded languages in same document (Python, Lua, SQL blocks)
-- Parallel initialization: Each server initializes independently
-- Per-downstream snapshotting: Late initializers receive latest state
-- Simple routing: language → single server
-- Routing errors surfaced: `REQUEST_FAILED` when no provider
-
-**What Phase 1 Does NOT Support:**
-- Multiple servers for same language (Python → pyright + ruff)
-- Fan-out / scatter-gather
-- Response aggregation/merging
-
-### Phase 2: Resilience Patterns
-
-**Scope**: Add fault isolation and recovery to single-server-per-language setup
-
-**What Phase 2 Adds:**
-- Circuit Breaker: Prevent cascading failures
-- Bulkhead Pattern: Isolate downstream servers
-- Per-server timeout configuration
-- Health monitoring
-- Partial-result metadata
-
-**Why Before Multi-LS**: Stabilize foundation before adding aggregation complexity.
-
-### Phase 3: Multi-LS-per-Language with Aggregation
-
-**Scope**: Extend to support **multiple language servers per language**
-
-**What Phase 3 Adds:**
-- Routing strategies: single-by-capability (default) and fan-out
-- Response aggregation: merge_all, first_wins, ranked strategies
-- Per-method aggregation configuration
-- Cancellation propagation to all downstream servers
-- Fan-out skip/partial for unhealthy servers
-- Leverages Phase 2 resilience per-server
-
-**Exit Criteria:**
-- Can use pyright + ruff simultaneously for Python
-- Completion candidates merged with deduplication
-- CodeAction candidates merged without duplicates
-- Routing config works (defaults + overrides)
-- Resilience patterns work per-server
-- Partial results surfaced when one server times out
-
 ## Related ADRs
 
 - **[ADR-0006](0006-language-server-bridge.md)**: Core LSP bridge architecture (1:1 pattern)
