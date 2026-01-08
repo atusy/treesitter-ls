@@ -12,7 +12,7 @@ ADR-0014 (Async Bridge Connection), ADR-0015 (Message Ordering), and ADR-0016 (S
 ### Critical Gaps Without Shutdown Specification
 
 1. **No LSP shutdown handshake**: LSP protocol requires `shutdown` request → `exit` notification sequence for clean server termination
-2. **Undefined operation disposal**: What happens to pending operations, coalescing map contents, and queued requests during shutdown?
+2. **Undefined operation disposal**: What happens to pending operations and queued requests during shutdown?
 3. **No state for shutdown-in-progress**: ConnectionState (Initializing/Ready/Failed) has no "shutting down" state, creating race conditions
 4. **Multi-connection coordination unspecified**: How to shut down multiple concurrent language servers (parallel vs sequential, timeout handling)
 
@@ -52,7 +52,6 @@ Failed → Closed          (skip shutdown handshake, cleanup only)
 
 **Operation Gating in Closing State:**
 - New operations: Reject with `REQUEST_FAILED` ("bridge: connection closing")
-- Coalescing map: Fail all operations with `REQUEST_FAILED` ("bridge: connection closing")
 - Order queue: Continue draining (send queued operations)
 - Pending responses: Wait for responses up to global timeout
 
@@ -65,12 +64,11 @@ Follow LSP specification's two-phase shutdown:
 │ Phase 1: Graceful Shutdown                              │
 │ ────────────────────────────────────────────────────    │
 │ 1. Transition to Closing state                          │
-│ 2. Fail all operations in coalescing map                │
-│ 3. Send LSP shutdown request to server                  │
-│ 4. Wait for shutdown response (until global timeout)    │
-│ 5. Send LSP exit notification                           │
-│ 6. Wait for process exit (until global timeout)         │
-│ 7. Transition to Closed state                           │
+│ 2. Send LSP shutdown request to server                  │
+│ 3. Wait for shutdown response (until global timeout)    │
+│ 4. Send LSP exit notification                           │
+│ 5. Wait for process exit (until global timeout)         │
+│ 6. Transition to Closed state                           │
 └─────────────────────────────────────────────────────────┘
                            │
                            │ Timeout expires
@@ -106,13 +104,12 @@ Failed → Closed (skip LSP handshake)
 
 | Operation Location | Shutdown Action |
 |-------------------|-----------------|
-| **Coalescing map** | Fail with `REQUEST_FAILED` ("bridge: connection closing") immediately |
 | **Order queue - Not yet dequeued** | Never sent (writer loop stops dequeuing) |
 | **Order queue - Currently writing** | Complete write, then writer loop exits |
 | **Pending responses** | Fail with `REQUEST_FAILED` ("bridge: connection closing") when global timeout expires |
 | **New operations** | Reject with `REQUEST_FAILED` ("bridge: connection closing") when attempting to enqueue |
 
-**Why fail coalescing map but not order queue**: Operations in the order queue may be partially written to stdin. Aborting mid-write corrupts the protocol stream. Coalescing map operations haven't been serialized yet—safe to fail.
+**Why not abort mid-write**: Operations in the order queue may be partially written to stdin. Aborting mid-write corrupts the protocol stream.
 
 ### Writer Loop Shutdown Synchronization
 
@@ -127,10 +124,7 @@ async fn graceful_shutdown(&self) {
     // 1. Transition to Closing state (new operations rejected)
     self.state.set(Closing);
 
-    // 2. Fail coalescing map operations
-    self.fail_coalescing_map_operations();
-
-    // 3. Signal writer loop to STOP dequeuing
+    // 2. Signal writer loop to STOP dequeuing
     let _ = self.writer_stop_tx.send(());
 
     // Phase 2: Wait for writer to become idle...
@@ -320,7 +314,7 @@ async fn shutdown_router() {
 ### Negative
 
 **No Operation Draining:**
-- Operations in coalescing map never reach server (failed immediately)
+- Queued operations never reach server (writer loop stops dequeuing)
 - May surprise users expecting "finish pending work"
 - Trade-off: Predictable shutdown time vs completion
 
@@ -397,7 +391,7 @@ Skip synchronization, just send shutdown request whenever ready.
   - ADR-0017 adds LSP handshake and process cleanup
 - **[ADR-0015](0015-ls-bridge-message-ordering.md)**: Message Ordering
   - Extends ConnectionState enum with Closing/Closed states
-  - Defines operation disposal for coalescing map and pending requests
+  - Defines operation disposal for pending requests
 - **[ADR-0016](0016-ls-bridge-server-pool-coordination.md)**: Server Pool Coordination
   - ADR-0017 defines router shutdown coordination strategy
   - Parallel shutdown with global timeout
