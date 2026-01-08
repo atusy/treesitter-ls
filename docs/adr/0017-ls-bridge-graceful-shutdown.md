@@ -28,21 +28,11 @@ ADR-0014 (Async Bridge Connection), ADR-0015 (Message Ordering), and ADR-0016 (S
 
 ## Architecture
 
-### Connection State Extension
+### Connection State for Shutdown
 
-Add `Closing` and `Closed` states to ADR-0015's ConnectionState:
+This ADR defines behavior for `Closing` and `Closed` states. See [ADR-0015 § Connection State Tracking](0015-ls-bridge-message-ordering.md#4-connection-state-tracking) for the complete ConnectionState enum.
 
-```rust
-enum ConnectionState {
-    Initializing,  // Writer loop started, initialization in progress
-    Ready,         // Initialization completed successfully
-    Failed,        // Initialization failed or writer loop panicked
-    Closing,       // Shutdown initiated, draining operations
-    Closed,        // Connection fully terminated
-}
-```
-
-**State Transitions:**
+**Shutdown-Specific Transitions:**
 ```
 Ready → Closing          (graceful shutdown initiated)
 Initializing → Closing   (abort initialization, shutdown)

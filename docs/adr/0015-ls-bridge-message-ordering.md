@@ -172,6 +172,16 @@ The bounded order queue (capacity: 256) uses `try_send()` to prevent deadlocks d
 
 Explicit connection state enum separates data flow from control flow.
 
+```rust
+enum ConnectionState {
+    Initializing,  // Writer loop started, initialization in progress
+    Ready,         // Initialization completed successfully
+    Failed,        // Initialization failed or writer loop panicked
+    Closing,       // Shutdown initiated, draining operations (ADR-0017)
+    Closed,        // Connection fully terminated
+}
+```
+
 **State Machine:**
 
 ```
@@ -384,7 +394,7 @@ Attempt to restart the writer loop after panic instead of failing the connection
 - **[ADR-0014](0014-ls-bridge-async-connection.md)**: Async Bridge Connection
   - ADR-0015 builds on tokio runtime, uses ChildStdin from process spawning
 - **[ADR-0017](0017-ls-bridge-graceful-shutdown.md)**: Graceful Shutdown
-  - Extends ADR-0015's ConnectionState with Closing state for graceful shutdown coordination
+  - Defines behavior for Closing/Closed states in the ConnectionState enum
 - **[ADR-0007](0007-language-server-bridge-virtual-document-model.md)**: Virtual document model
   - Stable URIs (PBI-200) enable consistent request tracking
 
