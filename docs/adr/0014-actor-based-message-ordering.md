@@ -151,7 +151,7 @@ The bounded order queue (capacity: 256) uses `try_send()` to prevent deadlocks d
 |---------------|-------------------|-----------|
 | **Coalescable** (didChange, completion) | Store in map, skip queue | Envelope persisted, processed when queue drains |
 | **Non-coalescable notifications** (didSave, willSave) | Drop with telemetry | Extreme backpressure, recoverable via next didChange |
-| **Requests** | Explicit error | Return SERVER_NOT_INITIALIZED or REQUEST_FAILED |
+| **Requests** | Explicit error | Return `REQUEST_FAILED` |
 
 **Notification Drop Telemetry:**
 - Log at WARN level (always)
@@ -203,7 +203,11 @@ shutdown crash/         crash/              │
 **Operation Gating:**
 - Writer loop starts immediately in `Initializing` state (before initialization completes)
 - **Notifications**: Flow unconditionally when `Initializing` or `Ready` (establish document state)
-- **Requests**: Gated on `Ready` state (return SERVER_NOT_INITIALIZED if `Initializing`, REQUEST_FAILED if `Failed`)
+- **Requests**: Gated on `Ready` state:
+  - `Initializing` → `REQUEST_FAILED` ("bridge: downstream server initializing")
+  - `Failed` → `REQUEST_FAILED` ("bridge: downstream server failed")
+
+**Why `REQUEST_FAILED` instead of `SERVER_NOT_INITIALIZED`**: The upstream client communicates with treesitter-ls, which IS initialized. The client has no knowledge of downstream servers—that's an internal implementation detail. Using `SERVER_NOT_INITIALIZED` would confuse clients that just received an `initialized` response from treesitter-ls.
 
 **Document Lifecycle Gating:**
 
@@ -378,6 +382,37 @@ Attempt to restart the writer loop after panic instead of failing the connection
 **Critical Dependency**: PBI-200 (Stable Virtual Document Identity) - without stable URIs, generation counters reset on every edit, preventing effective superseding across document edits
 
 **Design Pattern Origins**: Event-driven superseding with generation counters emerged from analysis of timeout-based control limitations in ADR-0012. The pattern combines actor model principles (single-writer loop) with optimistic concurrency control (generation numbers).
+
+## Future Considerations
+
+### Request Queuing During Initialization
+
+The current design rejects requests with `REQUEST_FAILED` during initialization. A future enhancement could queue coalescable requests and drain them after `didOpen`, providing seamless UX during slow server startup.
+
+**Proposed Behavior:**
+
+```
+┌────────┐     ┌──────────────┐     ┌──────────┐
+│ Client │     │ treesitter-ls│     │downstream│
+└───┬────┘     └──────┬───────┘     └────┬─────┘
+    │──hover(md)─────▶│ (queue)          │
+    │──complete1(md)─▶│ (queue)          │
+    │──complete2(md)─▶│ (supersede complete1)
+    │                 │                  │
+    │                 │◀──init result────│
+    │                 │──initialized────▶│
+    │                 │──didOpen(virt)──▶│
+    │                 │──hover(virt)────▶│  ← drain queue
+    │                 │──complete2(virt)▶│  ← superseded
+```
+
+**Trade-offs:**
+- **Pro**: No user-visible errors during initialization
+- **Pro**: First hover/completion works immediately after server ready
+- **Con**: Queue management complexity (memory bounds, superseding, timeouts)
+- **Con**: Stale requests may be processed (user moved cursor during init)
+
+**Deferred because**: Current design prioritizes simplicity and transparency; client retry behavior provides acceptable UX without queue complexity.
 
 ## Amendment History
 

@@ -116,6 +116,8 @@ async fn send_request(&self, request: Request) -> Result<Response> {
 }
 ```
 
+**Error Code Mapping**: `Error::ConnectionNotReady` maps to `REQUEST_FAILED` (-32803) with state-specific messages. See ADR-0014 § Operation Gating for the complete mapping.
+
 ### Timeout Architecture
 
 The system uses two distinct timeout mechanisms with different purposes:

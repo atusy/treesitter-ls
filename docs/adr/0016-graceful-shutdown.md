@@ -51,8 +51,8 @@ Failed → Closed          (skip shutdown handshake, cleanup only)
 ```
 
 **Operation Gating in Closing State:**
-- New operations: Reject with `REQUEST_FAILED` ("connection closing")
-- Coalescing map: Fail all operations with `REQUEST_FAILED`
+- New operations: Reject with `REQUEST_FAILED` ("bridge: connection closing")
+- Coalescing map: Fail all operations with `REQUEST_FAILED` ("bridge: connection closing")
 - Order queue: Continue draining (send queued operations)
 - Pending responses: Wait for responses up to global timeout
 
@@ -106,11 +106,11 @@ Failed → Closed (skip LSP handshake)
 
 | Operation Location | Shutdown Action |
 |-------------------|-----------------|
-| **Coalescing map** | Fail with `REQUEST_FAILED` ("connection closing") immediately |
+| **Coalescing map** | Fail with `REQUEST_FAILED` ("bridge: connection closing") immediately |
 | **Order queue - Not yet dequeued** | Never sent (writer loop stops dequeuing) |
 | **Order queue - Currently writing** | Complete write, then writer loop exits |
-| **Pending responses** | Fail with `REQUEST_FAILED` when global timeout expires |
-| **New operations** | Reject with `REQUEST_FAILED` when attempting to enqueue |
+| **Pending responses** | Fail with `REQUEST_FAILED` ("bridge: connection closing") when global timeout expires |
+| **New operations** | Reject with `REQUEST_FAILED` ("bridge: connection closing") when attempting to enqueue |
 
 **Why fail coalescing map but not order queue**: Operations in the order queue may be partially written to stdin. Aborting mid-write corrupts the protocol stream. Coalescing map operations haven't been serialized yet—safe to fail.
 
@@ -305,7 +305,7 @@ async fn shutdown_router() {
 **Clear Error Semantics:**
 - Operations in flight receive explicit errors, not timeout
 - New operations rejected immediately during shutdown (Closing state)
-- Users see "connection closing" error, not silent hang
+- Users see "bridge: connection closing" error, not silent hang
 
 **Resource Cleanup:**
 - SIGTERM → SIGKILL sequence ensures process termination
