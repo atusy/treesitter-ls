@@ -13,9 +13,9 @@
 
 This ADR defines message ordering guarantees for **a single connection** to a downstream language server. It covers:
 - Single-writer actor loop for protocol correctness
-- Generation-based request coalescing and superseding
 - Connection state machine (Initializing → Ready → Failed/Closing → Closed)
 - Operation gating based on connection state
+- Cancellation forwarding to downstream servers
 
 **Out of Scope**: Coordination of multiple connections (routing, aggregation) is covered by ADR-0015.
 
@@ -42,16 +42,17 @@ Timeout tracking requires separate pending maps per request type, each with its 
 
 ### Key Architectural Insight
 
-Event-driven superseding offers a simpler alternative to timeout-based control:
+A thin bridge that forwards requests and relies on client-driven cancellation:
 - Single-writer loop serializes all writes (prevents protocol corruption)
-- Generation counters enable superseding without timeouts (event-driven, not time-based)
-- Immediate REQUEST_CANCELLED feedback instead of timeout waits (better UX)
+- Clients manage stale requests via `$/cancelRequest` (LSP standard)
+- Downstream servers handle concurrent requests efficiently
+- Bridge stays simple: forward requests, forward responses, forward cancellations
 
-**Superseding provides the bounded wait**: Users either get the latest result (when ready) or immediate cancellation (if superseded).
+**End-to-end principle**: Don't add complexity in the middle layer for something the endpoints already handle.
 
 ## Decision
 
-**Adopt actor-based message ordering with event-driven superseding**, structured around six architectural principles.
+**Adopt actor-based message ordering with a thin forwarding bridge**, structured around five architectural principles.
 
 ### Architecture Overview
 
@@ -67,15 +68,6 @@ Event-driven superseding offers a simpler alternative to timeout-based control:
 │                    │                                     │
 │                    ▼                                     │
 │  ┌──────────────────────────────────────────────────┐    │
-│  │         Coalescing Map (superseding)             │    │
-│  │  Key: (URI, method)                              │    │
-│  │  Value: Latest operation + generation            │    │
-│  │  - Stores only latest per key                    │    │
-│  │  - Early cleanup (superseded ops freed)          │    │
-│  └─────────────────┬────────────────────────────────┘    │
-│                    │                                     │
-│                    ▼                                     │
-│  ┌──────────────────────────────────────────────────┐    │
 │  │           Unified Order Queue (FIFO)             │    │
 │  │  Bounded capacity (256)                          │    │
 │  │  - Ensures FIFO ordering                         │    │
@@ -86,8 +78,8 @@ Event-driven superseding offers a simpler alternative to timeout-based control:
 │  ┌──────────────────────────────────────────────────┐    │
 │  │         Single Writer Loop (Actor)               │    │
 │  │  - Dequeues from order queue                     │    │
-│  │  - Atomic claim from coalescing map              │    │
 │  │  - Writes to server stdin                        │    │
+│  │  - Tracks pending requests for correlation       │    │
 │  └─────────────────┬────────────────────────────────┘    │
 │                    │                                     │
 └────────────────────┼──────────────────────────────────────┘
@@ -104,54 +96,41 @@ Each server connection has exactly one writer task consuming from a unified queu
 - No byte-level corruption (single writer, no interleaving)
 - Prevents notification/request race (all flow through same channel)
 
-### 2. Generation-Based Coalescing
+### 2. Request Forwarding (Thin Bridge)
 
-Superseding uses monotonic generation counters instead of timeouts.
+Requests are forwarded directly to downstream servers without coalescing or superseding.
 
-**State Scope**: Coalescing only applies in `Ready` state. During `Initializing`, requests fail-fast with `REQUEST_FAILED` (see §4 Operation Gating), so no coalescing is needed.
+**Rationale**:
+- Upstream clients manage stale requests via `$/cancelRequest`
+- Downstream servers handle concurrent requests efficiently
+- Simplicity over premature optimization
 
-**Mechanism:**
-- Each (URI, method) key has a generation counter
-- New operation increments generation, supersedes old
-- Coalescing map stores only latest operation per key
-- Early cleanup: old operations freed immediately at enqueue time
-
-**Benefits:**
-- Event-driven (no artificial time limits)
-- Memory efficient: O(unique keys) not O(total requests)
-- Immediate feedback: superseded operations get REQUEST_CANCELLED instantly
-
-**Race Prevention (Supersede vs Writer Dequeue):**
-
-The atomic claim pattern prevents double-response violations:
+**Writer Loop:**
 
 ```rust
-// In writer loop
+// Simple forwarding loop
 loop {
-    let operation_ref = order_queue.recv().await;
-    let id = operation_ref.id;  // LSP spec: integer | string
+    let operation = order_queue.recv().await;
 
-    if let Some(key) = operation_ref.coalescing_key {
-        // Atomic claim from coalescing map
-        match coalescing_map.remove(&key) {
-            Some((gen, claimed_id, envelope)) if claimed_id == id => {
-                // SUCCESS: We own this operation, proceed
-            }
-            _ => {
-                // SUPERSEDED: Skip (already got REQUEST_CANCELLED)
-                continue;
-            }
-        }
+    // Track for response correlation
+    if operation.is_request() {
+        pending_requests.insert(operation.id, response_channel);
     }
 
-    // Safe to send to downstream server
-    write_request(id, method, params).await?;
+    // Forward to downstream server
+    write_to_stdin(operation).await?;
 }
 ```
 
-**Memory Management:**
+**Pending Request Tracking:**
 
-Coalescing map grows unbounded without cleanup. The solution: hook `textDocument/didClose` to remove all entries for closed documents, bounding memory by concurrent open documents (not historical total).
+The bridge tracks pending requests for response correlation only:
+- `pending_requests: HashMap<RequestId, ResponseChannel>`
+- Entry added when request sent to downstream
+- Entry removed when response received or connection closes
+- Memory bounded by O(concurrent requests), not O(historical requests)
+
+**Future Extension (Phase 2)**: If profiling shows excessive load from rapid-fire requests, add optional coalescing with generation counters. See Future Considerations.
 
 ### 3. Non-Blocking Backpressure
 
@@ -161,14 +140,13 @@ The bounded order queue (capacity: 256) uses `try_send()` to prevent deadlocks d
 
 | Operation Type | Queue Full Behavior | Rationale |
 |---------------|-------------------|-----------|
-| **Coalescable** (didChange, completion) | Store in map, skip queue | Envelope persisted, processed when queue drains |
-| **Non-coalescable notifications** (didSave, willSave) | Drop with telemetry | Extreme backpressure, recoverable via next didChange |
+| **Notifications** (didChange, didSave, etc.) | Drop with telemetry | Extreme backpressure, recoverable via next notification |
 | **Requests** | Explicit error | Return `REQUEST_FAILED` |
 
 **Notification Drop Telemetry:**
 - Log at WARN level (always)
 
-**Future Extension (Phase 2)**: Full telemetry (`$/telemetry` events), circuit breaker integration, and state re-synchronization metadata. See ADR-0015 § Implementation Plan.
+**Future Extension (Phase 2)**: Full telemetry (`$/telemetry` events) and circuit breaker integration.
 
 ### 4. Connection State Tracking
 
@@ -228,20 +206,29 @@ Per downstream server, per document URI:
 
 The `didOpen` notification contains the complete accumulated state, making queued `didChange` notifications redundant.
 
-### 5. Request Cancellation Handling
+### 5. Cancellation Forwarding
 
-Cancellation from upstream (via `$/cancelRequest`) targets enqueued requests before they reach the downstream server.
+Cancellation from upstream (via `$/cancelRequest`) is forwarded to downstream servers.
 
-**Cancellation Strategy by Request State:**
+**Cancellation Flow:**
 
-| Request State | Cancellation Action |
-|--------------|---------------------|
-| **In coalescing map** | Remove from map |
-| **In order queue** (not yet dequeued) | Mark for skipping |
-| **Already superseded** | Ignore (already got REQUEST_CANCELLED) |
-| **Already sent to downstream** | N/A (handled by ADR-0015 propagation) |
+```
+Client                    Bridge                  Downstream
+  │──$/cancelRequest(42)──▶│──$/cancelRequest(42)──▶│
+  │                        │                        │ (server decides)
+  │◀───────────────────────│◀──error or result──────│
+```
 
-**Coordination with ADR-0015:** Multi-server router calls `cancel_request()` on all connections. If `false` (request already sent), router propagates `$/cancelRequest` to downstream servers.
+**Bridge Behavior:**
+- Forward `$/cancelRequest` notification to downstream server
+- Keep pending request entry (response still expected)
+- Forward whatever response the server sends (result or REQUEST_CANCELLED error)
+
+**Rationale**: The bridge doesn't need to intercept cancellation. Downstream servers implement `$/cancelRequest` per LSP spec—they either:
+- Complete the request (too late to cancel) → forward result
+- Cancel successfully → forward REQUEST_CANCELLED error
+
+**Coordination with ADR-0015:** Router forwards `$/cancelRequest` to all connections that received the original request.
 
 ### 6. Fail-Fast Error Handling
 
@@ -267,29 +254,23 @@ Writer loop panics use fail-fast pattern (not restart) because `ChildStdin` cann
 
 ### Positive
 
-**Event-Driven Control:**
-- Adapts naturally to server initialization time
-- Immediate feedback (REQUEST_CANCELLED) instead of waiting for timeout
-- No artificial ceiling based on fixed time values
+**Simplicity (Thin Bridge):**
+- No coalescing map, no generation counters, no superseding logic
+- Just forward requests, forward responses, forward cancellations
+- Easier to understand, test, and debug
 
 **Guaranteed Message Ordering:**
 - Unified queue ensures notifications and requests maintain order
 - Eliminates didChange → completion race condition
 - Critical for stable URIs (PBI-200)
 
-**Simpler State Management:**
-- Single generation counter per key (not per-request-type pending maps)
-- No timeout tasks or expiry tracking
-- Automatic cleanup through coalescing map
-
-**Memory Efficiency:**
-- Bounded by O(unique URIs × methods) not O(total requests)
-- Early cleanup: stale operations freed at enqueue time
-- Prevents OOM during slow initialization
+**End-to-End Principle:**
+- Clients already handle stale request management via `$/cancelRequest`
+- Servers already handle concurrent requests efficiently
+- Bridge doesn't duplicate endpoint responsibilities
 
 **Multi-Server Coordination:**
 - State tracking enables router to skip uninitialized servers
-- Partial results from fast servers without waiting for slow ones
 - No spurious protocol errors from requests to uninitialized servers
 
 **Robust Error Handling:**
@@ -299,15 +280,10 @@ Writer loop panics use fail-fast pattern (not restart) because `ChildStdin` cann
 
 **LSP Compliance:**
 - Every request receives response (result or error)
-- Standard error codes (REQUEST_CANCELLED: -32800)
+- Standard cancellation flow via `$/cancelRequest`
 - Maintains protocol semantics
 
 ### Negative
-
-**Per-URI State Overhead:**
-- Memory grows with active virtual documents (bounded by O(documents × methods))
-- Typical: 3-50 entries; worst case: ~500 entries
-- Mitigation: Clean up on didClose
 
 **Connection-Level Failure:**
 - Writer loop panic fails entire connection (not just one operation)
@@ -315,16 +291,16 @@ Writer loop panics use fail-fast pattern (not restart) because `ChildStdin` cann
 - Trade-off: Better than silent permanent hang
 
 **Notification Dropping Under Extreme Backpressure:**
-- Non-coalescable notifications can be dropped if queue full
-- Only under extreme conditions (256+ operations queued)
-- Coalescable notifications (didChange) never dropped (stored in map)
+- Notifications can be dropped if queue full (256+ operations)
+- Only under extreme conditions
+- Recoverable via subsequent notifications
+
+**No Bridge-Level Superseding:**
+- Rapid-fire requests all forwarded to server
+- Server load may increase compared to coalescing approach
+- Mitigation: Most servers handle this efficiently; add coalescing in Phase 2 if profiling shows need
 
 ### Neutral
-
-**Explicit Action Requests:**
-- Non-incremental requests (definition, references, rename) don't supersede
-- Each explicit user action receives response
-- Same as ADR-0012 behavior
 
 **Backward Compatibility:**
 - External LSP interface unchanged
@@ -332,25 +308,27 @@ Writer loop panics use fail-fast pattern (not restart) because `ChildStdin` cann
 
 ## Alternatives Considered
 
-### Alternative 1: Timeout-Based Superseding (ADR-0012)
+### Alternative 1: Bridge-Level Coalescing (Generation-Based Superseding)
 
-Continue using timeouts to determine when to abandon old requests.
+Bridge maintains a coalescing map with generation counters to supersede stale requests before forwarding.
 
-**Rejected Reasons:**
+**Not Chosen For Phase 1:**
 
-1. **Time-based control disconnected from readiness**: Fixed timeout values don't adapt to server variability
-2. **Additional complexity**: Separate timeout tasks per request type, cleanup logic, cancellation handling
-3. **Poor user feedback**: Timeout expiry tells users "we gave up" not "here's the latest result"
-4. **Memory overhead**: Must track all pending requests until timeout (not just latest)
+1. **Duplicates client responsibility**: Clients already send `$/cancelRequest` for stale requests
+2. **Additional complexity**: Coalescing map, generation counters, atomic claim pattern
+3. **Premature optimization**: Most servers handle concurrent requests efficiently
+4. **Memory overhead**: Must track per-(URI, method) state
 
 **Comparison:**
 
-| Aspect | Timeout-Based | Generation-Based |
-|--------|--------------|------------------|
-| **Wait time** | Fixed (e.g., 5s) | Event-driven (immediate or complete) |
-| **Memory** | O(total requests) | O(unique keys) |
-| **Feedback** | Timeout error | REQUEST_CANCELLED or latest result |
-| **Complexity** | Per-type timeout tasks | Single generation counter |
+| Aspect | Coalescing | Thin Bridge (chosen) |
+|--------|------------|----------------------|
+| **Complexity** | Coalescing map + generations | Simple forwarding |
+| **Memory** | O(unique URIs × methods) | O(concurrent requests) |
+| **Superseding** | Bridge decides | Client decides via `$/cancelRequest` |
+| **Server load** | Reduced (only latest sent) | All requests forwarded |
+
+**Future Extension (Phase 2)**: If profiling shows excessive server load from rapid-fire requests, add optional coalescing.
 
 ### Alternative 2: Dual Channels (Separate Notification/Request Paths)
 
@@ -387,44 +365,54 @@ Attempt to restart the writer loop after panic instead of failing the connection
 - **[ADR-0016](0016-graceful-shutdown.md)**: Graceful shutdown and connection lifecycle
   - Extends ADR-0014's ConnectionState with Closing state for graceful shutdown coordination
 - **[ADR-0007](0007-language-server-bridge-virtual-document-model.md)**: Virtual document model
-  - ADR-0014 requires stable URIs (PBI-200) for effective superseding
+  - Stable URIs (PBI-200) enable consistent request tracking
 
 ## References
 
-**Critical Dependency**: PBI-200 (Stable Virtual Document Identity) - without stable URIs, generation counters reset on every edit, preventing effective superseding across document edits
-
-**Design Pattern Origins**: Event-driven superseding with generation counters emerged from analysis of timeout-based control limitations in ADR-0012. The pattern combines actor model principles (single-writer loop) with optimistic concurrency control (generation numbers).
+**Design Pattern Origins**: The thin bridge pattern follows the end-to-end principle—don't add complexity in the middle layer for something the endpoints already handle. LSP clients manage stale requests via `$/cancelRequest`; servers handle concurrent requests efficiently.
 
 ## Future Considerations
 
+### Phase 2: Optional Bridge-Level Coalescing
+
+If profiling shows excessive load from rapid-fire requests (e.g., user typing very quickly), add optional coalescing:
+
+**Proposed Mechanism:**
+
+```rust
+struct CoalescingMap {
+    // Key: (URI, method) → Value: (generation, request_id, envelope)
+    map: HashMap<(Uri, Method), (u64, RequestId, Envelope)>,
+}
+```
+
+- Each (URI, method) key has a monotonic generation counter
+- New request supersedes old → old gets immediate `REQUEST_CANCELLED`
+- Writer loop uses atomic claim pattern to detect superseded requests
+
+**When to Enable:**
+- Per-server configuration (some servers may benefit more than others)
+- Or adaptive: enable when pending requests exceed threshold
+
+**Trade-offs:**
+- **Pro**: Reduced server load for rapid-fire requests
+- **Pro**: Immediate `REQUEST_CANCELLED` feedback
+- **Con**: Additional complexity (coalescing map, generation counters)
+- **Con**: Bridge makes assumptions about what's "stale"
+
+**Deferred because**: Most servers handle concurrent requests efficiently; client `$/cancelRequest` provides adequate stale request management.
+
 ### Request Queuing During Initialization
 
-The current design rejects requests with `REQUEST_FAILED` during initialization. A future enhancement could queue coalescable requests and drain them after `didOpen`, providing seamless UX during slow server startup.
-
-**Proposed Behavior:**
-
-```
-┌────────┐     ┌──────────────┐     ┌──────────┐
-│ Client │     │ treesitter-ls│     │downstream│
-└───┬────┘     └──────┬───────┘     └────┬─────┘
-    │──hover(md)─────▶│ (queue)          │
-    │──complete1(md)─▶│ (queue)          │
-    │──complete2(md)─▶│ (supersede complete1)
-    │                 │                  │
-    │                 │◀──init result────│
-    │                 │──initialized────▶│
-    │                 │──didOpen(virt)──▶│
-    │                 │──hover(virt)────▶│  ← drain queue
-    │                 │──complete2(virt)▶│  ← superseded
-```
+The current design rejects requests with `REQUEST_FAILED` during initialization. A future enhancement could queue requests and drain them after `didOpen`.
 
 **Trade-offs:**
 - **Pro**: No user-visible errors during initialization
 - **Pro**: First hover/completion works immediately after server ready
-- **Con**: Queue management complexity (memory bounds, superseding, timeouts)
+- **Con**: Queue management complexity (memory bounds, timeouts)
 - **Con**: Stale requests may be processed (user moved cursor during init)
 
-**Deferred because**: Current design prioritizes simplicity and transparency; client retry behavior provides acceptable UX without queue complexity.
+**Deferred because**: Current design prioritizes simplicity and transparency; client retry behavior provides acceptable UX.
 
 ## Amendment History
 
