@@ -1,4 +1,4 @@
-# ADR-0013: Async Bridge Connection
+# ADR-0014: Async Bridge Connection
 
 | | |
 |---|---|
@@ -14,7 +14,7 @@ This ADR defines how to communicate with **a single downstream language server**
 - Connection-level timeout mechanisms
 - Pending request lifecycle
 
-**Out of Scope**: Coordination of multiple language servers (single-LS vs multi-LS per language) is covered by ADR-0015.
+**Out of Scope**: Coordination of multiple language servers (single-LS vs multi-LS per language) is covered by ADR-0016.
 
 ## Context
 
@@ -123,7 +123,7 @@ async fn send_request(&self, request: Request) -> Result<Response> {
 }
 ```
 
-**Error Code Mapping**: `Error::ConnectionNotReady` maps to `REQUEST_FAILED` (-32803) with state-specific messages. See ADR-0014 § Operation Gating for the complete mapping.
+**Error Code Mapping**: `Error::ConnectionNotReady` maps to `REQUEST_FAILED` (-32803) with state-specific messages. See ADR-0015 § Operation Gating for the complete mapping.
 
 ### Timeout Architecture
 
@@ -153,7 +153,7 @@ The system uses two distinct timeout mechanisms with different purposes:
   - **Stop**: When initialize response received (transition to Ready)
 - **Behavior on Timeout**: Connection transitions to Failed state
 
-**Future Extension (Phase 2)**: Circuit breaker integration for failure tracking and backoff. See ADR-0015 § Implementation Plan.
+**Future Extension (Phase 2)**: Circuit breaker integration for failure tracking and backoff. See ADR-0016 § Implementation Plan.
 
 **Independence**: The two timeouts serve different purposes and never overlap (idle disabled during Initializing; initialization timeout disabled once Ready).
 
@@ -232,10 +232,10 @@ Use standard library's `std::process` with one blocking OS thread per server rea
 ## Related Decisions
 
 - **ADR-0006**: Core LSP bridge architecture (pooling, spawn strategy)
-- **ADR-0014**: Message ordering and request superseding (built on this I/O layer)
-- **ADR-0015**: Multi-server coordination (uses this I/O foundation for N servers)
-- **ADR-0016**: Graceful shutdown (uses shutdown signal from `select!`, adds LSP handshake and process cleanup)
-- **ADR-0017**: Timeout precedence hierarchy (coordinates idle timeout with other timeout systems)
+- **[ADR-0015](0015-message-ordering.md)**: Message Ordering (built on this I/O layer)
+- **[ADR-0016](0016-server-pool-coordination.md)**: Server Pool Coordination (uses this I/O foundation for N servers)
+- **[ADR-0017](0017-graceful-shutdown.md)**: Graceful Shutdown (uses shutdown signal from `select!`, adds LSP handshake and process cleanup)
+- **[ADR-0018](0018-timeout-hierarchy.md)**: Timeout Hierarchy (coordinates idle timeout with other timeout systems)
 
 ## Notes
 

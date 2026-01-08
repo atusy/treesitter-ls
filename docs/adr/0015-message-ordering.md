@@ -1,4 +1,4 @@
-# ADR-0014: Actor-Based Message Ordering
+# ADR-0015: Message Ordering
 
 | | |
 |---|---|
@@ -9,7 +9,7 @@
 - [ADR-0012](0012-multi-ls-async-bridge-architecture.md) § Timeout-based control
 - [ADR-0009](0009-async-bridge-architecture.md): Original async architecture
 
-**Phasing**: See [ADR-0018](0018-implementation-phasing.md) — This ADR covers Phase 1; optional coalescing deferred to Phase 2.
+**Phasing**: See [ADR-0013](0013-implementation-phasing.md) — This ADR covers Phase 1; optional coalescing deferred to Phase 2.
 
 ## Scope
 
@@ -19,7 +19,7 @@ This ADR defines message ordering guarantees for **a single connection** to a do
 - Operation gating based on connection state
 - Cancellation forwarding to downstream servers
 
-**Out of Scope**: Coordination of multiple connections (routing, aggregation) is covered by ADR-0015.
+**Out of Scope**: Coordination of multiple connections (routing, aggregation) is covered by ADR-0016.
 
 ## Context
 
@@ -249,7 +249,7 @@ Client                    Bridge                      Downstream
 - Complete the request (too late to cancel) → forward result
 - Cancel successfully → forward REQUEST_CANCELLED error
 
-**Coordination with ADR-0015:** Router forwards `$/cancelRequest` to all connections that received the original request.
+**Coordination with ADR-0016:** Router forwards `$/cancelRequest` to all connections that received the original request.
 
 ### 6. Fail-Fast Error Handling
 
@@ -378,13 +378,13 @@ Attempt to restart the writer loop after panic instead of failing the connection
 ## Related ADRs
 
 - **[ADR-0012](0012-multi-ls-async-bridge-architecture.md)**: Multi-LS async bridge architecture
-  - ADR-0014 supersedes timeout-based control while maintaining LSP compliance
-- **[ADR-0015](0015-multi-server-coordination.md)**: Multi-server coordination
-  - Relies on ADR-0014's ConnectionState for router integration
-- **[ADR-0013](0013-async-bridge-connection.md)**: Async bridge connection
-  - ADR-0014 builds on tokio runtime, uses ChildStdin from process spawning
-- **[ADR-0016](0016-graceful-shutdown.md)**: Graceful shutdown and connection lifecycle
-  - Extends ADR-0014's ConnectionState with Closing state for graceful shutdown coordination
+  - ADR-0015 supersedes timeout-based control while maintaining LSP compliance
+- **[ADR-0016](0016-server-pool-coordination.md)**: Server Pool Coordination
+  - Relies on ADR-0015's ConnectionState for router integration
+- **[ADR-0014](0014-async-bridge-connection.md)**: Async Bridge Connection
+  - ADR-0015 builds on tokio runtime, uses ChildStdin from process spawning
+- **[ADR-0017](0017-graceful-shutdown.md)**: Graceful Shutdown
+  - Extends ADR-0015's ConnectionState with Closing state for graceful shutdown coordination
 - **[ADR-0007](0007-language-server-bridge-virtual-document-model.md)**: Virtual document model
   - Stable URIs (PBI-200) enable consistent request tracking
 

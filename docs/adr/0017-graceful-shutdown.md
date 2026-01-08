@@ -1,4 +1,4 @@
-# ADR-0016: Graceful Shutdown and Connection Lifecycle
+# ADR-0017: Graceful Shutdown
 
 | | |
 |---|---|
@@ -7,7 +7,7 @@
 
 ## Context
 
-ADR-0013 (Async Bridge Connection), ADR-0014 (Actor-Based Message Ordering), and ADR-0015 (Multi-Server Coordination) establish the communication architecture but do not specify shutdown behavior.
+ADR-0014 (Async Bridge Connection), ADR-0015 (Message Ordering), and ADR-0016 (Server Pool Coordination) establish the communication architecture but do not specify shutdown behavior.
 
 ### Critical Gaps Without Shutdown Specification
 
@@ -30,7 +30,7 @@ ADR-0013 (Async Bridge Connection), ADR-0014 (Actor-Based Message Ordering), and
 
 ### Connection State Extension
 
-Add `Closing` and `Closed` states to ADR-0014's ConnectionState:
+Add `Closing` and `Closed` states to ADR-0015's ConnectionState:
 
 ```rust
 enum ConnectionState {
@@ -392,16 +392,16 @@ Skip synchronization, just send shutdown request whenever ready.
 
 ## Related ADRs
 
-- **[ADR-0013](0013-async-bridge-connection.md)**: Async bridge connection
+- **[ADR-0014](0014-async-bridge-connection.md)**: Async Bridge Connection
   - Uses shutdown signal from `select!` pattern
-  - ADR-0016 adds LSP handshake and process cleanup
-- **[ADR-0014](0014-actor-based-message-ordering.md)**: Actor-based message ordering
+  - ADR-0017 adds LSP handshake and process cleanup
+- **[ADR-0015](0015-message-ordering.md)**: Message Ordering
   - Extends ConnectionState enum with Closing/Closed states
   - Defines operation disposal for coalescing map and pending requests
-- **[ADR-0015](0015-multi-server-coordination.md)**: Multi-server coordination
-  - ADR-0016 defines router shutdown coordination strategy
+- **[ADR-0016](0016-server-pool-coordination.md)**: Server Pool Coordination
+  - ADR-0017 defines router shutdown coordination strategy
   - Parallel shutdown with global timeout
-- **[ADR-0017](0017-timeout-precedence-hierarchy.md)**: Timeout precedence hierarchy
+- **[ADR-0018](0018-timeout-hierarchy.md)**: Timeout Hierarchy
   - Global shutdown timeout takes precedence over other timeouts
   - Idle timeout disabled during Closing state
 

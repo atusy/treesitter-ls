@@ -1,4 +1,4 @@
-# ADR-0015: Server Pool Coordination
+# ADR-0016: Server Pool Coordination
 
 | | |
 |---|---|
@@ -6,10 +6,10 @@
 | **Date** | 2026-01-07 |
 
 **Related**:
-- [ADR-0013](0013-async-bridge-connection.md): Single-connection async I/O
-- [ADR-0014](0014-actor-based-message-ordering.md): Single-server message ordering
+- [ADR-0014](0014-async-bridge-connection.md): Single-connection async I/O
+- [ADR-0015](0015-message-ordering.md): Single-server message ordering
 
-**Phasing**: See [ADR-0018](0018-implementation-phasing.md) — Phase 1 (routing), Phase 2 (health), Phase 3 (aggregation).
+**Phasing**: See [ADR-0013](0013-implementation-phasing.md) — Phase 1 (routing), Phase 2 (health), Phase 3 (aggregation).
 
 ## Scope
 
@@ -21,7 +21,7 @@ This ADR defines how to coordinate **multiple downstream language server connect
 
 ## Context
 
-The bridge manages connections to multiple downstream language servers. Even in Phase 1, multiple servers exist (e.g., pyright for Python, lua-ls for Lua). Each connection follows ADR-0013 (async I/O) and ADR-0014 (message ordering).
+The bridge manages connections to multiple downstream language servers. Even in Phase 1, multiple servers exist (e.g., pyright for Python, lua-ls for Lua). Each connection follows ADR-0014 (async I/O) and ADR-0015 (message ordering).
 
 ### Key Challenges
 
@@ -62,14 +62,14 @@ Each language maps to exactly one downstream server. Routing is simple: language
 │  │ └───────────┘  └───────────┘  └───────────┘        │ │
 │  │      ↑              ↑              ↑               │ │
 │  │      └──────────────┴──────────────┘               │ │
-│  │           Each: ADR-0013 + ADR-0014                │ │
+│  │           Each: ADR-0014 + ADR-0015                │ │
 │  └────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────┘
 ```
 
 **Phase 1 Design:**
 - **RequestRouter**: Routes by `languageId` to single server
-- **Per-Connection Isolation**: Each downstream connection maintains its own actor (ADR-0014)
+- **Per-Connection Isolation**: Each downstream connection maintains its own actor (ADR-0015)
 - **No Aggregation**: Single server per language, no fan-out
 
 **Phase 3 Extension**: ResponseAggregator for multi-LS fan-out (see Future Extensions).
@@ -203,7 +203,7 @@ Client                    Bridge                      Downstream
 - Keep pending request entry (response still expected)
 - Forward whatever response the server sends
 
-**Rationale**: Following ADR-0014's thin bridge principle, the bridge forwards cancellation rather than intercepting it. Downstream servers implement `$/cancelRequest` per LSP spec.
+**Rationale**: Following ADR-0015's thin bridge principle, the bridge forwards cancellation rather than intercepting it. Downstream servers implement `$/cancelRequest` per LSP spec.
 
 ## Future Extensions
 
@@ -215,7 +215,7 @@ When routing notifications to multiple servers for the same language (Phase 3), 
 
 ```
 Router sends didSave to pyright + ruff (both handle Python):
-├─ pyright: queue full → DROP (per ADR-0014)
+├─ pyright: queue full → DROP (per ADR-0015)
 └─ ruff: queue OK → FORWARD
 
 Result: State divergence (recoverable via next didChange)
@@ -454,18 +454,18 @@ languageServers:
 ## Related ADRs
 
 - **[ADR-0006](0006-language-server-bridge.md)**: Core LSP bridge architecture (1:1 pattern)
-  - ADR-0015 extends to 1:N (one client → multiple servers per language)
+  - ADR-0016 extends to 1:N (one client → multiple servers per language)
 - **[ADR-0008](0008-language-server-bridge-request-strategies.md)**: Per-method bridge strategies
   - Per-method strategies remain valid for single-server routing
 - **[ADR-0012](0012-multi-ls-async-bridge-architecture.md)**: Multi-LS async bridge **(Parent ADR)**
   - This ADR extracts multi-server coordination from ADR-0012
-- **[ADR-0013](0013-async-bridge-connection.md)**: Async bridge connection (single-server I/O)
+- **[ADR-0014](0014-async-bridge-connection.md)**: Async Bridge Connection (single-server I/O)
   - Provides async I/O patterns enabling parallel server management
-- **[ADR-0014](0014-actor-based-message-ordering.md)**: Message ordering and superseding
-  - Handles single-server ordering; ADR-0015 coordinates multiple servers
-- **[ADR-0016](0016-graceful-shutdown.md)**: Graceful shutdown
+- **[ADR-0015](0015-message-ordering.md)**: Message Ordering
+  - Handles single-server ordering; ADR-0016 coordinates multiple servers
+- **[ADR-0017](0017-graceful-shutdown.md)**: Graceful Shutdown
   - Defines shutdown coordination for multiple concurrent connections
-  - Router broadcasts shutdown; ADR-0016 specifies per-connection sequence
+  - Router broadcasts shutdown; ADR-0017 specifies per-connection sequence
 
 ## Amendment History
 

@@ -1,4 +1,4 @@
-# ADR-0018: Implementation Phasing Strategy
+# ADR-0013: Implementation Phasing
 
 | | |
 |---|---|
@@ -8,7 +8,7 @@
 
 ## Context
 
-The async bridge architecture spans multiple ADRs (0013-0017), each defining features at different complexity levels. Without a clear phasing strategy, it's unclear:
+The async bridge architecture spans multiple ADRs (0014-0018), each defining features at different complexity levels. Without a clear phasing strategy, it's unclear:
 - What must be implemented first
 - What can be deferred
 - How features depend on each other
@@ -29,11 +29,11 @@ The async bridge architecture spans multiple ADRs (0013-0017), each defining fea
 
 | Component | Phase 1 Behavior |
 |-----------|------------------|
-| **Routing** | `languageId` → single server (ADR-0015) |
-| **Requests during init** | `REQUEST_FAILED` immediately (ADR-0014) |
-| **Cancellation** | Forward `$/cancelRequest` to downstream (ADR-0014) |
-| **Timeouts** | Init, Idle, Global Shutdown (ADR-0017) |
-| **Coalescing** | None — trust client/server (ADR-0014) |
+| **Routing** | `languageId` → single server (ADR-0016) |
+| **Requests during init** | `REQUEST_FAILED` immediately (ADR-0015) |
+| **Cancellation** | Forward `$/cancelRequest` to downstream (ADR-0015) |
+| **Timeouts** | Init, Idle, Global Shutdown (ADR-0018) |
+| **Coalescing** | None — trust client/server (ADR-0015) |
 
 **What Works:**
 - Multiple embedded languages (Python + Lua + TOML in markdown)
@@ -55,7 +55,7 @@ The async bridge architecture spans multiple ADRs (0013-0017), each defining fea
 | **Circuit Breaker** | Track failures, exponential backoff |
 | **Health Monitoring** | Per-server health state |
 | **Telemetry** | `$/telemetry` events for drops/failures |
-| **Coalescing** | Optional, profile-driven (ADR-0014 Future) |
+| **Coalescing** | Optional, profile-driven (ADR-0015 Future) |
 
 **Why Before Phase 3**: Stabilize single-server-per-language before adding aggregation complexity.
 
@@ -67,10 +67,10 @@ The async bridge architecture spans multiple ADRs (0013-0017), each defining fea
 
 | Component | Phase 3 Addition |
 |-----------|------------------|
-| **Routing** | Fan-out to multiple servers (ADR-0015) |
+| **Routing** | Fan-out to multiple servers (ADR-0016) |
 | **Aggregation** | merge_all, first_wins, ranked strategies |
-| **Per-Request Timeout** | Bounds aggregation latency (ADR-0017) |
-| **Backpressure** | Multi-server coordination (ADR-0015) |
+| **Per-Request Timeout** | Bounds aggregation latency (ADR-0018) |
+| **Backpressure** | Multi-server coordination (ADR-0016) |
 
 **Use Case**: pyright (types) + ruff (linting) for Python simultaneously.
 
@@ -96,11 +96,11 @@ The async bridge architecture spans multiple ADRs (0013-0017), each defining fea
 
 | ADR | Phase 1 Scope | Phase 2 Additions | Phase 3 Additions |
 |-----|---------------|-------------------|-------------------|
-| **0013** (Connection) | Async I/O, timeouts | Circuit breaker hooks | — |
-| **0014** (Ordering) | Thin bridge, forwarding | Optional coalescing | — |
-| **0015** (Coordination) | Simple routing, lifecycle | Health monitoring | Aggregation, fan-out |
-| **0016** (Shutdown) | Graceful shutdown | — | — |
-| **0017** (Timeouts) | Init, Idle, Global | — | Per-request timeout |
+| **0014** (Connection) | Async I/O, timeouts | Circuit breaker hooks | — |
+| **0015** (Ordering) | Thin bridge, forwarding | Optional coalescing | — |
+| **0016** (Coordination) | Simple routing, lifecycle | Health monitoring | Aggregation, fan-out |
+| **0017** (Shutdown) | Graceful shutdown | — | — |
+| **0018** (Timeouts) | Init, Idle, Global | — | Per-request timeout |
 
 ## Consequences
 
@@ -121,8 +121,8 @@ The async bridge architecture spans multiple ADRs (0013-0017), each defining fea
 
 ## Related ADRs
 
-- **[ADR-0013](0013-async-bridge-connection.md)**: Single-connection async I/O
-- **[ADR-0014](0014-actor-based-message-ordering.md)**: Message ordering (thin bridge)
-- **[ADR-0015](0015-multi-server-coordination.md)**: Server pool coordination
-- **[ADR-0016](0016-graceful-shutdown.md)**: Graceful shutdown
-- **[ADR-0017](0017-timeout-precedence-hierarchy.md)**: Timeout hierarchy
+- **[ADR-0014](0014-async-bridge-connection.md)**: Async Bridge Connection
+- **[ADR-0015](0015-message-ordering.md)**: Message Ordering
+- **[ADR-0016](0016-server-pool-coordination.md)**: Server Pool Coordination
+- **[ADR-0017](0017-graceful-shutdown.md)**: Graceful Shutdown
+- **[ADR-0018](0018-timeout-hierarchy.md)**: Timeout Hierarchy
