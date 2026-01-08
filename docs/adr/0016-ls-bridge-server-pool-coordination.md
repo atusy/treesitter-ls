@@ -188,22 +188,9 @@ The client (e.g., VSCode) automatically aggregates diagnostics from multiple sou
 
 ### Cancellation Propagation
 
-**Cancellation Flow (Phase 1):**
+See [ADR-0015 § Cancellation Forwarding](0015-ls-bridge-message-ordering.md#5-cancellation-forwarding) for single-connection cancellation semantics.
 
-```
-Client                    Bridge                      Downstream
-  │──$/cancelRequest(42)──▶│──$/cancelRequest(42)────▶│
-  │                        │                          │ (server decides)
-  │◀──error or result──────│◀──error or result────────│
-  │  (transformed)         │  (transform response)    │
-```
-
-**Bridge Behavior:**
-- Forward `$/cancelRequest` notification to downstream server
-- Keep pending request entry (response still expected)
-- Forward whatever response the server sends
-
-**Rationale**: Following ADR-0015's thin bridge principle, the bridge forwards cancellation rather than intercepting it. Downstream servers implement `$/cancelRequest` per LSP spec.
+**Multi-Connection Coordination (Phase 3)**: Router forwards `$/cancelRequest` to all connections that received the original fan-out request.
 
 ## Future Extensions
 
