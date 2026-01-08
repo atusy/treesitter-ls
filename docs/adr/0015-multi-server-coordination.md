@@ -1,10 +1,9 @@
 # ADR-0015: Multi-Server Coordination for Bridge Architecture
 
-## Status
-
-Draft
-
-**Extracted from**: [ADR-0012](0012-multi-ls-async-bridge-architecture.md) (focusing on multi-server aspects)
+| | |
+|---|---|
+| **Status** | Draft |
+| **Date** | 2026-01-07 |
 
 **Related**:
 - [ADR-0013](0013-async-io-layer.md): Async I/O patterns and concurrency primitives
@@ -31,36 +30,18 @@ Traditional LSP bridges support only **one server per language**. This limitatio
 
 ## Decision
 
-Adopt a **routing-first, aggregation-optional** multi-server coordination model that supports 1:N communication patterns (one client → multiple language servers per language).
+**Adopt a routing-first, aggregation-optional multi-server coordination model that supports 1:N communication patterns (one client → multiple language servers per language).**
 
-### 1. Design Principle: Routing First
+### Design Principle: Routing First
 
-**Most requests should be routed to a single downstream LS based on capabilities.** Aggregation is only needed when multiple LSes provide overlapping functionality that must be combined.
+Most requests should be routed to a single downstream server based on capabilities. Aggregation is only needed when multiple servers provide overlapping functionality that must be combined.
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                           Request Routing                                │
-│                                                                          │
-│   Incoming Request                                                       │
-│         │                                                                │
-│         ▼                                                                │
-│   ┌─────────────────────────────────────────────────────────────────┐    │
-│   │ Which LSes have this capability for this languageId?            │    │
-│   └─────────────────────────────────────────────────────────────────┘    │
-│         │                                                                │
-│         ├── 0 LSes → Return REQUEST_FAILED (-32803) w/ "no provider"     │
-│         ├── 1 LS   → Route to single LS (no aggregation needed)          │
-│         └── N LSes → Check routing strategy:                             │
-│                        ├── SingleByCapability → Pick alphabetically first│
-│                        └── FanOut → Send to all, aggregate responses     │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+**Priority Order:**
+- Users can explicitly define a `priority` list in bridge configuration
+- If not defined, fall back to deterministic alphabetical order of server names
+- Example: `priority: ["ruff", "pyright"]` → ruff checked first; default: pyright wins (alphabetical)
 
-**Priority order**: Users can explicitly define a `priority` list in the bridge configuration. If not defined, the bridge falls back to a deterministic order based on server names (sorted alphabetically).
-- Explicit: `priority: ["ruff", "pyright"]` → `ruff` is checked first
-- Default: `pyright` vs `ruff` → `pyright` wins (alphabetical)
-
-**No-provider handling**: Returning `REQUEST_FAILED` with a clear message ("no downstream language server provides hover for python") keeps misconfiguration visible instead of silently returning `null`.
+**No-Provider Handling:** Return `REQUEST_FAILED` with clear message ("no downstream language server provides hover for python") to keep misconfiguration visible.
 
 **Example: pyright + ruff for Python**
 
@@ -71,82 +52,50 @@ Adopt a **routing-first, aggregation-optional** multi-server coordination model 
 | `completion` | ✅ | ✅ | → FanOut + merge_all |
 | `formatting` | ❌ | ✅ | → ruff only |
 | `codeAction` | ✅ | ✅ | → FanOut + merge_all |
-| `diagnostics` | ✅ | ✅ | → Both (notification pass-through, no aggregation) |
+| `diagnostics` | ✅ | ✅ | → Both (notification pass-through) |
 
-### 2. Routing Strategies
+## Architecture
 
-```rust
-enum RoutingStrategy {
-    /// Route to single LS with highest priority (default)
-    /// No aggregation needed - fast path
-    SingleByCapability {
-        priority: Vec<String>,  // e.g., ["pyright", "ruff"]
-    },
-
-    /// Fan-out to multiple LSes, aggregate responses
-    /// Only for methods where overlapping results must be combined
-    FanOut {
-        aggregation: AggregationStrategy,
-    },
-}
-```
-
-**When aggregation IS needed (candidate-based methods):**
-- `completion`: Both LSes return completion item candidates → merge into single list
-- `codeAction`: pyright refactoring candidates + ruff lint fix candidates → merge candidate lists (user selects one for execution)
-
-**When aggregation is NOT needed:**
-- Single capable LS → route directly
-- Diagnostics → notification pass-through (client aggregates per LSP spec)
-- Capabilities don't overlap → route to respective LS
-
-**When aggregation is UNSAFE (direct-edit methods):**
-- `formatting`, `rangeFormatting`: Returns text edits directly (no user selection step)
-  - **MUST use SingleByCapability routing** — multiple servers would produce conflicting edits
-  - Example: If both pyright and ruff could format, their edits would conflict (different indentation, quote styles, etc.)
-  - NOT safe to merge: No way to reconcile conflicting text edits for the same range
-- `rename`: Returns workspace edits directly across multiple files
-  - **MUST use SingleByCapability routing** — multiple rename strategies would corrupt the workspace
-- **Rule**: Methods that return direct edits (not proposals) MUST route to single server only
-
-### 3. Server Pool Architecture
+### Server Pool Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         treesitter-ls (Host LS)                         │
-│  ┌────────────────────────────────────────────────────────────────────┐ │
-│  │                      LanguageServerPool                            │ │
-│  │                                                                    │ │
-│  │   ┌─────────────────┐                                              │ │
-│  │   │  RequestRouter  │ ─── routes by (method, languageId, caps)     │ │
-│  │   └────────┬────────┘                                              │ │
-│  │            │                                                       │ │
-│  │   ┌────────┴────────┐    Fan-out: scatter to multiple LSes         │ │
-│  │   │                 │                                              │ │
-│  │   ▼                 ▼                                              │ │
-│  │ ┌───────────┐  ┌───────────┐  ┌───────────┐                        │ │
-│  │ │  pyright  │  │   ruff    │  │ lua-ls    │  ... per-LS connection │ │
-│  │ │(conn + Q) │  │(conn + Q) │  │(conn + Q) │                        │ │
-│  │ └─────┬─────┘  └─────┬─────┘  └─────┬─────┘                        │ │
-│  │       │              │              │                              │ │
-│  │   ┌───┴──────────────┴──────────────┴───┐                          │ │
-│  │   │         ResponseAggregator          │  Fan-in: merge/rank      │ │
-│  │   └─────────────────────────────────────┘                          │ │
-│  └────────────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                   treesitter-ls (Host LS)               │
+│  ┌────────────────────────────────────────────────────┐ │
+│  │              LanguageServerPool                    │ │
+│  │                                                    │ │
+│  │   ┌─────────────────┐                              │ │
+│  │   │  RequestRouter  │ ── routes by (method,        │ │
+│  │   │                 │     languageId, caps)        │ │
+│  │   └────────┬────────┘                              │ │
+│  │            │                                       │ │
+│  │   ┌────────┴────────┐    Fan-out to multiple LSes  │ │
+│  │   │                 │                              │ │
+│  │   ▼                 ▼                              │ │
+│  │ ┌───────────┐  ┌───────────┐  ┌───────────┐        │ │
+│  │ │  pyright  │  │   ruff    │  │ lua-ls    │        │ │
+│  │ │(conn + Q) │  │(conn + Q) │  │(conn + Q) │        │ │
+│  │ └─────┬─────┘  └─────┬─────┘  └─────┬─────┘        │ │
+│  │       │              │              │              │ │
+│  │   ┌───┴──────────────┴──────────────┴───┐          │ │
+│  │   │         ResponseAggregator          │          │ │
+│  │   │            (Fan-in)                 │          │ │
+│  │   └─────────────────────────────────────┘          │ │
+│  └────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────┘
 ```
 
 **Key Design Points:**
-- **RequestRouter**: New component that determines which server(s) receive a request
-- **Per-Connection Isolation**: Each downstream connection maintains its own send queue
-- **ResponseAggregator**: New component that combines responses when fan-out is used
-- **Request ID Semantics**: Upstream request IDs are used directly for downstream servers (no ID transformation)
+- **RequestRouter**: Determines which server(s) receive a request
+- **Per-Connection Isolation**: Each downstream connection maintains its own send queue (ADR-0014)
+- **ResponseAggregator**: Combines responses when fan-out is used
+- **Request ID Semantics**: Upstream request IDs used directly for downstream servers (no transformation)
 
-#### 3.1 Request ID Semantics
+### Request ID Semantics
 
 **Decision**: Use upstream request IDs directly for downstream servers.
 
-**ID Flow**:
+**ID Flow:**
 ```
 Client (editor)          treesitter-ls           Downstream Servers
      ├─ completion ID=42 ─→ Router
@@ -154,82 +103,101 @@ Client (editor)          treesitter-ls           Downstream Servers
                              └─ ruff (ID=42)
 ```
 
-**Tracking Structure**:
+**Tracking Structure:**
 ```rust
 /// Maps request ID to response handlers for all servers handling that request
-/// Single source of truth for in-flight requests
-pending_responses: DashMap<i64, Vec<(String, oneshot::Sender<ResponseResult>)>>
-                   //      ↑            ↑                    ↑
-                   //   Request ID  Server Key          Response sender
+/// Request ID type per LSP spec: integer | string
+pending_responses: DashMap<RequestId, Vec<(String, oneshot::Sender<ResponseResult>)>>
+                   //       ↑               ↑                    ↑
+                   //   Request ID      Server Key          Response sender
+                   //   (int | string)
 
 // Example entry:
 // 42 → [("pyright", tx1), ("ruff", tx2)]
-//
-// When aggregating:
-// - Wait for both tx1 and tx2 to receive responses
-// - Merge results according to aggregation strategy
-// - Send single response to client with ID=42
 ```
 
-**Benefits**:
+**Benefits:**
 - Single map lookup for cancellation (no correlation indirection)
 - Request ID consistent across client → bridge → servers
 - Simpler state management (one entry per request)
 
-**Safety**:
+**Safety:**
 - No ID collision risk (single upstream client)
 - Each request ID is unique per client connection
-- Downstream servers never see conflicting IDs from different upstreams
 
-### 4. Server Lifecycle Management
+### Routing Strategies
 
-#### 4.1 Parallel Multi-Server Initialization
+```rust
+enum RoutingStrategy {
+    /// Route to single LS with highest priority (default)
+    SingleByCapability {
+        priority: Vec<String>,  // e.g., ["pyright", "ruff"]
+    },
 
-When connecting to multiple downstream language servers, `initialize` requests can be sent in parallel since each server is an independent process with no inter-server dependencies.
+    /// Fan-out to multiple LSes, aggregate responses
+    FanOut {
+        aggregation: AggregationStrategy,
+    },
+}
+```
+
+**When Aggregation IS Needed (Candidate-Based Methods):**
+- `completion`: Both servers return candidates → merge into single list
+- `codeAction`: pyright refactoring + ruff lint fixes → merge candidates (user selects one for execution)
+
+**When Aggregation is NOT Needed:**
+- Single capable server → route directly
+- Diagnostics → notification pass-through (client aggregates per LSP spec)
+- Capabilities don't overlap → route to respective server
+
+**When Aggregation is UNSAFE (Direct-Edit Methods):**
+- `formatting`, `rangeFormatting`: Returns text edits directly (no user selection)
+  - **MUST use SingleByCapability** — multiple servers would produce conflicting edits
+- `rename`: Returns workspace edits directly across files
+  - **MUST use SingleByCapability** — multiple rename strategies would corrupt workspace
+
+**Rule**: Methods that return direct edits (not proposals) MUST route to single server only.
+
+### Server Lifecycle Management
+
+**Parallel Multi-Server Initialization:**
+
+When connecting to multiple downstream servers, `initialize` requests sent in parallel since each server is independent.
 
 ```
 ┌─────────┐     ┌──────────┐     ┌──────────┐
 │ Bridge  │     │ pyright  │     │   ruff   │
 └────┬────┘     └────┬─────┘     └────┬─────┘
-     │               │                │
      │──initialize──▶│                │
      │──initialize───────────────────▶│  (parallel, no wait)
-     │               │                │
      │◀──result──────│                │  (pyright responds first)
      │──initialized─▶│                │
-     │──didOpen─────▶│                │  (pyright ready, can use)
-     │               │                │
+     │──didOpen─────▶│                │  (pyright ready)
      │◀──result───────────────────────│  (ruff responds later)
      │──initialized──────────────────▶│
      │──didOpen──────────────────────▶│  (ruff now ready)
 ```
 
-Key points:
-- **Parallel `initialize`**: Send to all servers concurrently without waiting
+**Key Points:**
+- **Parallel `initialize`**: Send to all servers concurrently
 - **Independent lifecycle**: Each server's `initialized` → `didOpen` proceeds as soon as that server responds
 - **No global barrier**: Servers that initialize faster can start handling requests immediately
 
-#### 4.2 Partial Initialization Failure Policy
-
-When initializing multiple downstream servers in parallel, some may succeed while others fail. The bridge handles this gracefully:
+**Partial Initialization Failure Policy:**
 
 | Scenario | Behavior | Rationale |
 |----------|----------|-----------|
-| All servers initialize successfully | Normal operation with all servers | Expected case |
-| Some servers fail initialization | Continue with working servers, failed servers enter circuit breaker open state | Graceful degradation - pyright failures shouldn't block ruff usage |
-| All servers fail initialization | Bridge reports errors but remains alive, circuit breakers prevent request routing | Allow recovery without full bridge restart |
+| All servers initialize successfully | Normal operation | Expected case |
+| Some servers fail | Continue with working servers, failed enter circuit breaker open state | Graceful degradation |
+| All servers fail | Bridge reports errors but remains alive, circuit breakers prevent routing | Allow recovery without restart |
 
-**Error propagation:**
-- Failed `initialize` requests trigger circuit breaker for that specific server
-- Requests routed to failed servers receive `REQUEST_FAILED` with circuit breaker message
-- Client sees degraded functionality (e.g., "pyright unavailable") rather than total failure
-- **Fan-out awareness**: If a method is configured for aggregation (e.g., completion merge_all) and one server is in circuit breaker/open or still uninitialized, the router skips it and proceeds with the available servers. The aggregator marks the response as partial in `data` so UX continues instead of blocking on an unhealthy peer.
+**Fan-out awareness**: If a method is configured for aggregation and one server is unhealthy/uninitialized, router skips it and proceeds with available servers. Aggregator marks response as partial so UX continues instead of blocking.
 
-#### 4.3 Per-Downstream Document Lifecycle
+**Per-Downstream Document Lifecycle:**
 
-Maintain the latest host-document snapshot per downstream. When a slower server reaches its `didOpen`, send the full text as of "now", not as of when the first downstream opened.
+Maintain the latest host-document snapshot per downstream. When a slower server reaches `didOpen`, send the full text as of "now", not as of when the first downstream opened.
 
-**Document Lifecycle State** (per downstream server, per document URI):
+**Document Lifecycle States** (per downstream, per URI):
 
 ```
 States: NotOpened | Opened | Closed
@@ -237,66 +205,27 @@ States: NotOpened | Opened | Closed
 Transitions:
 - NotOpened → Opened      (didOpen sent to downstream)
 - Opened → Closed         (didClose sent to downstream)
-- NotOpened → Closed      (didClose received before didOpen sent - suppress didOpen)
+- NotOpened → Closed      (didClose before didOpen - suppress didOpen)
 ```
 
-**Notification Handling by State**:
+**Notification Handling by State:**
 
 | Notification | NotOpened State | Opened State | Closed State |
 |--------------|----------------|--------------|--------------|
-| `didChange` | **DROP** (didOpen will contain current state) | **FORWARD** | **SUPPRESS** |
+| `didChange` | **DROP** (didOpen contains current state) | **FORWARD** | **SUPPRESS** |
 | `didSave` | **DROP** | **FORWARD** | **SUPPRESS** |
 | `willSave` | **DROP** | **FORWARD** | **SUPPRESS** |
 | `didClose` | Transition to **Closed**, suppress pending didOpen | **FORWARD**, transition to **Closed** | Already closed |
 
-**Example - Multi-server parallel initialization**:
+**Why drop instead of queue**: The `didOpen` notification contains the complete document text at send time. Accumulated client edits are included. Dropping `didChange` before `didOpen` avoids duplicate state updates.
 
-```
-┌────────┐     ┌──────────────┐     ┌──────────┐     ┌──────────┐
-│ Client │     │ treesitter-ls│     │ pyright  │     │   ruff   │
-└───┬────┘     └──────┬───────┘     └────┬─────┘     └────┬─────┘
-    │──didOpen(md)───▶│                  │                │
-    │                 │ (spawn both servers)              │
-    │                 │                  │                │
-    │──didChange(md)─▶│ ❌ DROP both     │                │  ← Both NotOpened
-    │                 │ (initializing...)│                │
-    │                 │◀──init result────│                │
-    │                 │──initialized────▶│                │
-    │                 │──didOpen(virt)──▶│                │  ← pyright: NotOpened→Opened
-    │                 │                  │                │
-    │──didChange(md)─▶│──didChange(virt)▶│                │  ← pyright: FORWARD
-    │                 │ ❌ DROP ruff      │                │  ← ruff: still NotOpened
-    │                 │                  │                │
-    │                 │◀──────────init result─────────────│
-    │                 │──initialized─────────────────────▶│
-    │                 │──didOpen(virt)───────────────────▶│  ← ruff: NotOpened→Opened
-    │                 │                  │                │     (includes ALL changes)
-    │──didChange(md)─▶│──didChange(virt)▶│                │
-    │                 │──didChange(virt)─────────────────▶│  ← Both: FORWARD
-```
+**Multi-Server Backpressure Coordination:**
 
-**Edge Cases**:
+**Decision**: Accept state divergence under extreme backpressure (non-atomic broadcast).
 
-1. **didClose before didOpen sent**:
-   - Transition: `NotOpened → Closed`
-   - Suppress pending didOpen (prevent ghost document)
-   - Example: User closes file while server still initializing
+When routing notifications to multiple downstream servers, if one server's queue is full (per ADR-0014), notifications are handled independently per server.
 
-2. **didClose after didOpen sent, during initialization**:
-   - Server state: `Initializing`, document state: `Opened`
-   - Forward didClose immediately (preserve LSP protocol pairing)
-   - Document transitions: `Opened → Closed`
-
-**Why drop instead of queue**: The `didOpen` notification contains the complete document text at send time. Accumulated client edits are included. Dropping `didChange` before `didOpen` avoids duplicate state updates and simplifies state management.
-
-#### 4.4 Multi-Server Backpressure Coordination
-
-**Decision: Accept state divergence under extreme backpressure** (non-atomic broadcast)
-
-When routing notifications to multiple downstream servers, if one server's queue is full (per ADR-0014 § Non-Blocking Backpressure), notifications are handled independently per server.
-
-**Strategy**:
-
+**Strategy:**
 ```
 Router sends didSave to 3 servers:
 ├─ pyright: queue full → DROP (per ADR-0014)
@@ -306,65 +235,13 @@ Router sends didSave to 3 servers:
 Result: pyright doesn't see didSave, ruff and lua-ls do (STATE DIVERGENCE)
 ```
 
-**Why accept divergence**: This is equivalent to attaching language servers to a real file at different times.
+**Why Accept Divergence**: This is equivalent to attaching language servers to a real file at different times. Servers already handle being attached at arbitrary points in a document's lifetime.
 
-**Real-world analogy**:
-```
-User opens Python file:
-  ├─ pyright attached immediately
-  ├─ User makes edits
-  └─ ruff attached 5 seconds later (user starts ruff-server manually)
+**Recovery**: Next coalescable notification (didChange) re-synchronizes state.
 
-Result: pyright sees edit history, ruff sees current snapshot (STATE DIVERGENCE)
-```
-
-Language servers already handle being attached at arbitrary points in a document's lifetime. Each server receives its own stream of notifications and builds its own view of document state. Temporary divergence under backpressure is architecturally equivalent to staggered attachment timing.
-
-**Characteristics**:
-
-| Aspect | Decision | Rationale |
-|--------|----------|-----------|
-| **Atomic broadcast** | ❌ Rejected | Requires distributed transaction; blocks healthy servers on slowest server |
-| **Independent delivery** | ✅ Accepted | Keeps healthy servers synchronized; matches real-world attachment timing |
-| **Recovery mechanism** | Automatic | Next coalescable notification (didChange) re-synchronizes state |
-| **Divergence window** | Temporary | Only affects non-coalescable notifications (didSave, willSave); didChange is never dropped (stored in coalescing map per ADR-0014) |
-
-**Trade-offs**:
-
-- **Advantage**: System remains responsive under load; healthy servers continue working
-- **Disadvantage**: Servers may temporarily have inconsistent view of save state
-- **Mitigation**: Coalescable notifications (didChange) are never dropped, ensuring content synchronization
-- **LSP compliance**: Each server receives a valid notification stream; no protocol violations
-
-**Example scenario - Extreme backpressure**:
-
-```
-T0: User saves file (didSave notification)
-T1: Route to pyright, ruff, lua-ls
-    ├─ pyright: queue full (256 operations queued, slow initialization)
-    │   └─ DROP didSave (log warning)
-    ├─ ruff: queue OK → FORWARD didSave
-    └─ lua-ls: queue OK → FORWARD didSave
-
-T2: User edits file (didChange notification - coalescable)
-T3: Route to all servers
-    ├─ pyright: queue still full → Store in coalescing map (NOT dropped)
-    ├─ ruff: queue OK → FORWARD didChange
-    └─ lua-ls: queue OK → FORWARD didChange
-
-T4: pyright initialization completes, queue drains
-T5: pyright processes didChange from coalescing map
-    └─ State synchronized (content matches ruff and lua-ls)
-    └─ didSave notification was missed (non-critical for content sync)
-```
-
-**Conclusion**: State divergence is an acceptable trade-off. Prefer **availability** (healthy servers continue working) over **consistency** (all servers see identical notification sequence) under extreme backpressure.
-
-### 5. Notification Pass-through
+### Notification Pass-Through
 
 **Diagnostics and other server-initiated notifications do NOT require aggregation.**
-
-`textDocument/publishDiagnostics` is a notification (no `id`, no response expected). Each downstream server can publish its own diagnostics independently:
 
 ```
 pyright  ──publishDiagnostics──►  bridge  ──publishDiagnostics──►  upstream
@@ -372,262 +249,73 @@ ruff     ──publishDiagnostics──►  bridge  ──publishDiagnostics─�
                                   (pass-through, no merge)
 ```
 
-The bridge simply:
+The bridge:
 1. Receives notification from downstream
 2. Transforms URI (virtual → host document URI)
 3. Forwards to upstream client
 
-The client (e.g., VSCode) automatically aggregates diagnostics from multiple sources. This is the standard LSP behavior and requires no special handling.
+The client (e.g., VSCode) automatically aggregates diagnostics from multiple sources per LSP standard behavior.
 
-**Other pass-through notifications:**
-- `$/progress` — Already forwarded via `notification_sender` channel
-- `window/logMessage` — Can be forwarded as-is
-- `window/showMessage` — Can be forwarded as-is
+**Other Pass-Through Notifications:**
+- `$/progress` — Already forwarded via notification channel
+- `window/logMessage` — Forwarded as-is
+- `window/showMessage` — Forwarded as-is
 
-### 6. Cancellation Propagation and Coalescing Handoff
+### Cancellation Propagation
 
-#### 6.1 Request Lifecycle Phases
-
-Requests transition through distinct phases, each managed by different ADR components:
+**Request Lifecycle Phases:**
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│ Phase 1: Enqueued (ADR-0014 domain)                                │
-│ - Request in unified order queue or coalescing map                 │
-│ - Not yet sent to downstream server                                │
-│ - Managed by: Connection actor (ADR-0014)                          │
-│ - Cancellation: Remove from map/queue if present, ignore if        │
-│               already superseded                                    │
-└─────────────────────────────────────────────────────────────────────┘
-                              │
-                              │ Writer loop dequeues
-                              ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│ TRANSITION POINT: Register in pending_responses                    │
-│ - Responsibility: Connection writer loop (ADR-0014)                │
-│ - Timing: BEFORE writing to server stdin                           │
-└─────────────────────────────────────────────────────────────────────┘
-                              │
-                              │ Write to stdin
-                              ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│ Phase 2: Pending (ADR-0015 domain)                                 │
-│ - Request sent to downstream server stdin                          │
-│ - Awaiting response from server                                    │
-│ - Managed by: Router/pool (ADR-0015)                               │
-│ - Cancellation: Propagate $/cancelRequest to downstream            │
-└─────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│ Phase 1: Enqueued (ADR-0014 domain)                    │
+│ - Request in order queue or coalescing map             │
+│ - Not yet sent to downstream server                    │
+│ - Cancellation: Remove from map/queue if present       │
+└─────────────────────────────────────────────────────────┘
+                      │
+                      │ Writer loop dequeues
+                      ▼
+┌─────────────────────────────────────────────────────────┐
+│ TRANSITION: Register in pending_responses              │
+│ - Connection writer loop (ADR-0014)                    │
+│ - BEFORE writing to server stdin                       │
+└─────────────────────────────────────────────────────────┘
+                      │
+                      │ Write to stdin
+                      ▼
+┌─────────────────────────────────────────────────────────┐
+│ Phase 2: Pending (ADR-0015 domain)                     │
+│ - Request sent to downstream server stdin              │
+│ - Awaiting response                                    │
+│ - Cancellation: Propagate $/cancelRequest to downstream│
+└─────────────────────────────────────────────────────────┘
 ```
 
-#### 6.2 Cancellation Handling by Phase
+**Cancellation Handling by Phase:**
 
-**Phase 1 (Enqueued) - Request in Queue or Coalescing Map**:
+**Phase 1 (Enqueued):**
+- **Sub-case 1a**: Request still enqueued → Connection actor removes from map/queue, sends REQUEST_CANCELLED
+- **Sub-case 1b**: Request already superseded → Ignore (already got REQUEST_CANCELLED via superseding)
 
-Cancellation in Phase 1 has **two sub-cases**:
+**Phase 2 (Pending):**
+- Propagate `$/cancelRequest` to all downstream servers
+- Keep entry in `pending_responses` (responses still expected)
 
-**Sub-case 1a: Request still enqueued (not yet superseded)**:
+**Cancellation Response Handling:**
 
-```
-Upstream sends $/cancelRequest for request ID=42:
-├─ Check pending_responses for ID=42
-├─ NOT FOUND (request not yet sent to downstream)
-├─ Forward to connection actor (ADR-0014):
-│   ├─ Remove from coalescing map (if coalescable and present)
-│   ├─ Mark in order queue for skipping (if not yet dequeued)
-│   └─ Send REQUEST_CANCELLED response to upstream
-└─ Request never reaches downstream server
-```
+treesitter-ls operates as transparent proxy for cancellation:
 
-**Sub-case 1b: Request already superseded**:
-
-```
-Upstream sends $/cancelRequest for request ID=1:
-├─ Check pending_responses for ID=1
-├─ NOT FOUND (request not yet sent to downstream)
-├─ Forward to connection actor (ADR-0014):
-│   ├─ NOT in coalescing map (was replaced by ID=2)
-│   ├─ Already received REQUEST_CANCELLED response (via superseding)
-│   └─ IGNORE cancellation (already processed)
-└─ No action needed
-```
-
-**Rationale**:
-- **Sub-case 1a**: Request is still enqueued, waiting to be sent. Removing it from the queue prevents unnecessary downstream processing. Connection actor responds with `REQUEST_CANCELLED` to satisfy LSP protocol requirement.
-- **Sub-case 1b**: Coalescable request (e.g., completion) was superseded by a newer request and already received `REQUEST_CANCELLED` response (ADR-0014 § Generation-Based Coalescing). Subsequent `$/cancelRequest` from upstream is redundant.
-
-**Phase 2 (Pending) - Request Sent to Downstream**:
-
-```
-Upstream sends $/cancelRequest for request ID=42:
-├─ Check pending_responses for ID=42
-├─ FOUND: [(pyright, tx1), (ruff, tx2)]
-├─ Propagate $/cancelRequest to all downstream servers:
-│   ├─ pyright: send $/cancelRequest {id: 42}
-│   └─ ruff: send $/cancelRequest {id: 42}
-└─ Keep ID=42 in pending_responses (responses still expected)
-```
-
-**Rationale**: Request was sent to downstream servers using same ID (42) and is awaiting response. Propagate cancellation to allow servers to abort processing (though they may legally ignore it per LSP spec). Entry remains in `pending_responses` until responses arrive or timeout.
-
-#### 6.3 Handoff Protocol (ADR-0014 ↔ ADR-0015 Coordination)
-
-**Writer loop responsibilities** (ADR-0014):
-
-```rust
-// In connection writer loop (ADR-0014 domain)
-loop {
-    let operation = order_queue.recv().await;
-
-    match operation {
-        Request { id, method, params, response_tx } => {
-            // 1. Remove from coalescing map (if coalescable)
-            coalescing_map.remove((uri, method));
-
-            // 2. HANDOFF: Register in pending_responses (ADR-0015 domain)
-            //    This MUST happen BEFORE writing to stdin
-            pool.register_pending_request(request_id: id, server_key: self.key, response_tx);
-
-            // 3. Write request to server stdin (using same ID)
-            write_request(id, method, params).await?;
-
-            // 4. Store response waiter (using same ID)
-            response_waiters.insert(id, response_tx);
-        }
-    }
-}
-```
-
-**Router/pool responsibilities** (ADR-0015):
-
-```rust
-// In LanguageServerPool (ADR-0015 domain)
-async fn handle_cancel_request(&self, request_id: i64) {
-    // Check if request is in pending_responses (Phase 2)
-    if let Some(entry) = self.pending_responses.get(&request_id) {
-        // Request was sent to downstream - propagate cancellation
-        for (server_key, _response_tx) in entry.value() {
-            if let Some(conn) = self.connections.get(server_key) {
-                let _ = conn.send_notification("$/cancelRequest", json!({
-                    "id": request_id  // Same ID used downstream
-                })).await;
-            }
-        }
-        // Keep entry in pending_responses - responses still expected
-    } else {
-        // Request not in pending_responses
-        // Either: (1) Already superseded and responded with REQUEST_CANCELLED
-        //         (2) Already completed and responded
-        //         (3) Never reached writer loop (gated by connection state)
-        // Action: Ignore cancellation (already processed)
-    }
-}
-```
-
-**Tracking Structure:**
-
-Already defined in § 3.1 Request ID Semantics:
-```rust
-/// Maps request ID to response handlers for all servers handling that request
-/// Single source of truth for in-flight requests
-pending_responses: DashMap<i64, Vec<(String, oneshot::Sender<ResponseResult>)>>
-```
-
-#### 6.4 Cancellation Scenarios
-
-**Scenario 1a: Request Cancelled While Still Enqueued**
-
-```
-T0: User requests hover ID=42 → enqueued in order queue
-T1: Upstream sends $/cancelRequest for ID=42
-T2: Router forwards to connection actor
-T3: Connection actor processes cancellation:
-    ├─ Check coalescing map: FOUND, remove
-    ├─ OR check order queue: FOUND, mark for skipping
-    └─ IMMEDIATELY send REQUEST_CANCELLED response:
-        {
-          "id": 42,
-          "error": {
-            "code": -32800,
-            "message": "Request cancelled"
-          }
-        }
-T4: Connection actor returns success to router
-T5: Writer loop dequeues marked operation → skip (already cancelled)
-```
-
-**Response Guarantee**:
-- Response sent SYNCHRONOUSLY by connection actor (Step T3)
-- Response sent BEFORE removing from tracking structures
-- If oneshot send fails, log warning (client may have disconnected)
-- Response is sent exactly once (atomic remove-and-send)
-
-**Scenario 1b: Superseded Request Cancelled**
-
-```
-T0: User types "foo" → completion request ID=1 enqueued
-T1: User types "o" → completion request ID=2 enqueued (supersedes ID=1)
-    └─ ID=1 IMMEDIATELY receives REQUEST_CANCELLED (via superseding)
-        Response sent synchronously when ID=2 replaces ID=1 in coalescing map
-T2: Upstream sends $/cancelRequest for ID=1 (race condition)
-    └─ Connection actor checks: NOT in coalescing map (already superseded)
-    └─ Connection actor checks: NOT in order queue (never enqueued)
-    └─ IGNORE cancellation (response already sent at T1)
-```
-
-**Key Point**: Superseding sends `REQUEST_CANCELLED` response **synchronously** when new operation replaces old in coalescing map (per ADR-0014 Amendment 001).
-
-**Scenario 2: Sent Then Cancelled**
-
-```
-T0: User requests hover ID=42
-T1: Router registers in pending_responses
-    └─ pending_responses[42] = [(pyright, tx1)]
-T2: Writer loop sends to pyright stdin (ID=42, same as upstream)
-T3: Upstream sends $/cancelRequest for ID=42
-    └─ pending_responses check: FOUND
-    └─ Action: Send $/cancelRequest {id: 42} to pyright (same ID)
-T4: Clean up pending_responses[42]
-```
-
-**Scenario 3: Multi-Server Fan-Out Cancellation**
-
-```
-T0: User requests completion ID=99 (fan-out to pyright + ruff)
-T1: Router registers in pending_responses
-    └─ pending_responses[99] = [(pyright, tx1), (ruff, tx2)]
-T2: Both servers receive requests (both with ID=99)
-T3: Upstream sends $/cancelRequest for ID=99
-    └─ Propagate to both:
-        ├─ pyright: $/cancelRequest {id: 99} (same ID)
-        └─ ruff: $/cancelRequest {id: 99} (same ID)
-T4: Clean up pending_responses[99]
-```
-
-**Downstream non-compliance**: Servers may legally ignore `$/cancelRequest` (LSP § `$` notifications). Timeouts on fan-out aggregation remain the hard ceiling to guarantee the upstream request still completes.
-
-### Cancellation Response Handling
-
-**treesitter-ls operates as a transparent proxy for cancellation:**
-
-**For requests already sent to downstream:**
+**For requests already sent:**
 - Forward `$/cancelRequest` to downstream server(s)
 - Downstream decides: send `result` (too late) or `REQUEST_CANCELLED` error
 - Forward downstream response to client
-- No decision-making by bridge
 
-**For requests NOT yet sent (in coalescing map/order queue):**
+**For requests NOT yet sent (in coalescing map/queue):**
 - Remove from local tracking structures
-- Bridge MUST send `REQUEST_CANCELLED` error to client immediately
+- Bridge sends `REQUEST_CANCELLED` error to client immediately
 - Never forward to downstream (request never sent)
-- This is the **only case** where bridge generates a response
 
-**Why local cancellation requires response generation:**
-- Coalesced/queued request removed before reaching downstream
-- Downstream never saw it, cannot respond
-- Client still expects response per LSP protocol
-- Bridge must provide `RequestCancelled` (-32800) error
-
-### 7. Response Aggregation Strategies
+### Response Aggregation Strategies
 
 For fan-out **requests** (with `id`), configure aggregation per method:
 
@@ -636,228 +324,232 @@ enum AggregationStrategy {
     /// Return first successful response, cancel others
     FirstWins,
 
-    /// Wait for all, merge array results (e.g., completion items, code action candidates).
-    /// Note: This merges CANDIDATE LISTS, not execution results.
-    /// - Completion: Merge completion item candidates from multiple servers
-    /// - CodeAction: Merge code action candidates; user selects one, which is then executed individually
-    /// Challenge: Deduplication is complex - servers may propose similar items with subtle differences.
-    /// Safe by design: User selects one item for execution; no auto-execution conflicts.
+    /// Wait for all, merge array results (candidate lists only)
     MergeAll {
         dedup_key: Option<String>,  // e.g., 'label' for completions
-        max_items: Option<usize>,   // limit total items
+        max_items: Option<usize>,
     },
 
     /// Wait for all, return highest priority non-null result
     Ranked {
-        priority: Vec<String>,  // server keys in priority order
+        priority: Vec<String>,
     },
 }
 ```
 
-**Aggregation stability rules:**
-- **Per-request timeout conditions**: Timeout applies **only when n ≥ 2 downstream servers participate in aggregation**
-  - SingleByCapability: No per-request timeout (wait indefinitely for the single capable server, idle timeout per ADR-0013 protects against zombie)
-  - FanOut with n=1: No per-request timeout (functionally equivalent to SingleByCapability)
+**Aggregation Stability Rules:**
+- **Per-request timeout conditions**: Timeout applies **only when n ≥ 2 downstream servers participate**
+  - SingleByCapability: No per-request timeout (wait for single server, idle timeout protects)
+  - FanOut with n=1: No per-request timeout (functionally equivalent to single)
   - FanOut with n≥2: Per-request timeout applies (default: 5s explicit, 2s incremental)
-- **Per-request timeout behavior**: On timeout, aggregator returns whatever results are available **without sending $/cancelRequest to downstream servers**
+- **Per-request timeout behavior**: On timeout, return whatever results available **without sending $/cancelRequest**
   - Downstream servers continue processing and send responses
-  - Late responses are **discarded** by router but **reset idle timeout** (serve as heartbeat for connection health)
-  - Rationale: Server health independent of aggregation latency; responses act as natural heartbeat signal
-  - **Memory management**: After returning partial results to client, the request entry **MUST be removed** from `pending_responses` map to prevent memory leak (each orphaned entry ~200 bytes). Late responses check a separate `discarded_requests` set to avoid delivering to non-existent channels
-- **Partial results**: If at least one downstream succeeds, respond with a successful `result` using LSP-native fields where available (e.g., for CompletionList: `{ "isIncomplete": true, "items": [...] }`). For methods without native partial support (e.g., hover), return the most complete response available
-- **Total failure**: If all downstreams fail or time out, respond with a single `ResponseError` (`REQUEST_FAILED`) describing the missing/unhealthy servers
-- **Partial results are explicit**: Partial metadata must live inside the successful `result` payload (not an `error` field) to keep the wire response LSP-compliant while still surfacing degradation
-
-### 8. Configuration Example
-
-```yaml
-# Configuration example (routing-first approach)
-#
-# Server discovery: languageServers with matching `languages` field are
-# automatically used for that injection language. No explicit server list
-# needed in bridges config.
-#
-# Priority order can be explicitly configured. If `priority` is omitted,
-# it defaults to alphabetical order of server names.
-
-languages:
-  markdown:
-    bridges:
-      python:
-        # Servers discovered from languageServers with languages: [python]
-        priority: ["ruff", "pyright"] # Explicitly prioritize ruff
-        # Default: single_by_capability routing (no aggregation config needed)
-        #
-        # Only configure methods that need non-default behavior:
-        # IMPORTANT: Only candidate-based methods are safe for merge_all
-        aggregations:
-          textDocument/completion:
-            strategy: merge_all      # Safe: candidates merged, user selects one
-            dedup_key: label
-          textDocument/codeAction:
-            strategy: merge_all      # Safe: proposals merged, user selects one for execution
-          # hover, definition: use default (single_by_capability, no config)
-          # formatting, rename: MUST use single_by_capability (direct edits cannot be merged)
-
-languageServers:
-  pyright:
-    cmd: [pyright-langserver, --stdio]
-    languages: [python]              # ← auto-discovered for python bridges
-  ruff:
-    cmd: [ruff, server]
-    languages: [python]              # ← auto-discovered for python bridges
-```
+  - Late responses **discarded** by router but **reset idle timeout** (heartbeat for connection health)
+  - **Memory management**: Request entry removed from `pending_responses` after returning partial results
+- **Partial results**: If at least one downstream succeeds, respond with successful `result` using LSP-native fields (e.g., for CompletionList: `{ "isIncomplete": true, "items": [...] }`)
+- **Total failure**: If all downstreams fail or time out, respond with `ResponseError` (`REQUEST_FAILED`)
 
 ## Consequences
 
 ### Positive
 
-- **Complementary Tools**: Users can leverage multiple specialized tools for the same language (e.g., pyright + ruff)
-- **Routing-First Simplicity**: Most requests go to a single LS — no aggregation overhead for common cases
-- **Minimal Configuration**: Default capability-based routing works without per-method config
-- **Graceful Degradation**: Partial initialization failures allow working servers to continue serving requests
-- **Fault Isolation**: One crashed LS doesn't affect others (circuit breaker + bulkhead)
-- **Parallel Initialization**: Multiple servers initialize concurrently without global barriers
-- **Independent Lifecycles**: Faster servers can start handling requests immediately
-- **Flexible Aggregation**: Per-method control over how responses are combined (when needed)
-- **Cancellation Propagation**: Client cancellations propagated to all downstream servers
-- **No Silent Failures**: Missing providers surface as explicit errors instead of `null` results
-- **Backward Compatible**: Single-LS configurations continue to work unchanged
+**Complementary Tools:**
+- Users can leverage multiple specialized tools for same language (pyright + ruff)
+
+**Routing-First Simplicity:**
+- Most requests go to single server — no aggregation overhead for common cases
+
+**Minimal Configuration:**
+- Default capability-based routing works without per-method config
+
+**Graceful Degradation:**
+- Partial initialization failures allow working servers to continue
+- Fault isolation: One crashed server doesn't affect others
+
+**Parallel Initialization:**
+- Multiple servers initialize concurrently without global barriers
+- Faster servers start handling requests immediately
+
+**Flexible Aggregation:**
+- Per-method control over response combination (when needed)
+
+**Cancellation Propagation:**
+- Client cancellations propagated to all downstream servers
+
+**No Silent Failures:**
+- Missing providers surface as explicit errors instead of `null` results
+
+**Backward Compatible:**
+- Single-server configurations continue to work unchanged
 
 ### Negative
 
-- **Configuration Surface**: Users need to understand aggregation strategies and routing constraints
-  - Must know which methods are safe for aggregation (candidate-based: completion, codeAction)
-  - Must know which methods are UNSAFE for aggregation (direct-edit: formatting, rename)
-  - Misconfiguration could cause data corruption (e.g., configuring formatting for FanOut would produce conflicting edits)
-- **Aggregation Complexity**: Merging candidate lists (completion items, codeAction proposals) requires deduplication logic
-  - Challenge: Different servers may propose similar candidates with subtle differences (labels, kinds, descriptions)
-  - Making it hard to decide what counts as a "duplicate"
-  - Note: Only safe for candidate-based methods where user selects ONE item; direct-edit methods MUST use SingleByCapability
-- **Latency**: Fan-out with `merge_all` waits up to per-server timeouts; partial results may surface instead of complete lists
-- **Memory**: Tracking pending correlations adds overhead
-- **Coordination Complexity**: More state to manage (correlations, circuit breakers, aggregators)
+**Configuration Surface:**
+- Users must understand aggregation strategies and routing constraints
+- Must know which methods are safe for aggregation (candidate-based vs direct-edit)
+- Misconfiguration could cause data corruption
+
+**Aggregation Complexity:**
+- Merging candidate lists requires deduplication logic
+- Different servers may propose similar candidates with subtle differences
+- Safe only for candidate-based methods where user selects ONE item
+
+**Latency:**
+- Fan-out with `merge_all` waits up to per-server timeouts
+- Partial results may surface instead of complete lists
+
+**Memory:**
+- Tracking pending responses adds overhead
+
+**Coordination Complexity:**
+- More state to manage (response tracking, circuit breakers, aggregators)
 
 ### Neutral
 
-- **Existing Tests**: Current single-LS tests remain valid
-- **Incremental Adoption**: Routing-first means aggregation can be added later for specific methods
-- **Diagnostics**: Pass-through by design — client handles aggregation
+**Existing Tests:**
+- Current single-server tests remain valid
+
+**Incremental Adoption:**
+- Routing-first means aggregation can be added later for specific methods
+
+**Diagnostics:**
+- Pass-through by design — client handles aggregation
+
+## Alternatives Considered
+
+### Alternative 1: Single Server Per Language (Status Quo)
+
+Maintain the limitation of one server per language.
+
+**Rejected Reasons:**
+
+1. **Forced choice**: Users must choose between complementary tools instead of using both
+2. **Limited functionality**: Can't combine pyright's type checking with ruff's linting in single session
+3. **User workarounds**: Users resort to running multiple editors or manual tool switching
+4. **Industry trend**: Modern development benefits from specialized, composable tools
+
+### Alternative 2: Merge All Servers into Single Process
+
+Create monolithic language servers that combine all capabilities.
+
+**Rejected Reasons:**
+
+1. **Maintenance burden**: Would require forking and merging upstream language servers
+2. **Update lag**: Can't track upstream updates without constant merging
+3. **Resource waste**: Combined server loads all capabilities even if user needs subset
+4. **Binary compatibility**: Different servers may have conflicting dependencies
+
+### Alternative 3: Always Aggregate (No Routing Priority)
+
+Always fan out to all servers and merge results.
+
+**Rejected Reasons:**
+
+1. **Unnecessary latency**: Most requests have single capable server (no aggregation needed)
+2. **Unsafe for direct-edit methods**: Formatting/rename would produce conflicting edits
+3. **Memory overhead**: Tracking all responses for all requests even when unnecessary
+4. **Complexity without benefit**: Aggregation logic for methods that don't need it
+
+**Why routing-first is better**: Fast path for common case (single capable server), aggregation only when actually needed.
+
+## Configuration Example
+
+```yaml
+# Routing-first approach: minimal configuration needed
+languages:
+  markdown:
+    bridges:
+      python:
+        # Servers auto-discovered from languageServers with languages: [python]
+        priority: ["ruff", "pyright"]  # Explicitly prioritize ruff
+
+        # Only configure methods that need non-default behavior:
+        aggregations:
+          textDocument/completion:
+            strategy: merge_all      # Safe: candidates, user selects one
+            dedup_key: label
+          textDocument/codeAction:
+            strategy: merge_all      # Safe: proposals, user executes one
+          # hover, definition: use default (single_by_capability)
+          # formatting, rename: MUST use single_by_capability
+
+languageServers:
+  pyright:
+    cmd: [pyright-langserver, --stdio]
+    languages: [python]  # ← auto-discovered
+  ruff:
+    cmd: [ruff, server]
+    languages: [python]  # ← auto-discovered
+```
 
 ## Implementation Plan
 
 ### Phase 1: Single-LS-per-Language Foundation
 
-**Scope**: Support **one language server per language** (multiple languages supported, but each language uses only one LS)
+**Scope**: Support **one language server per language** (multiple languages, each uses only one server)
 
-```
-treesitter-ls (host)
-  ├─→ pyright  (Python only)
-  ├─→ lua-ls   (Lua only)
-  └─→ sqlls    (SQL only)
-```
+**What Works:**
+- Multiple embedded languages in same document (Python, Lua, SQL blocks)
+- Parallel initialization: Each server initializes independently
+- Per-downstream snapshotting: Late initializers receive latest state
+- Simple routing: language → single server
+- Routing errors surfaced: `REQUEST_FAILED` when no provider
 
-**What works in Phase 1:**
-- Multiple embedded languages in same document (Python, Lua, SQL blocks in markdown)
-- Parallel initialization of multiple LSes: Each LS initializes independently with no global barrier
-- Per-downstream snapshotting: Late initializers receive latest document state, not stale snapshot
-- Simple routing: language → single LS (no aggregation needed)
-- Routing errors surfaced: `REQUEST_FAILED` when no provider exists (no silent `null`)
-
-**What Phase 1 does NOT support:**
-- Multiple LSes for same language (e.g., Python → pyright + ruff)
-- Fan-out / scatter-gather for requests
+**What Phase 1 Does NOT Support:**
+- Multiple servers for same language (Python → pyright + ruff)
+- Fan-out / scatter-gather
 - Response aggregation/merging
 
-**Exit Criteria:**
-- All existing single-LS tests pass without hangs
-- Can handle Python, Lua, SQL blocks simultaneously in markdown
-- No initialization race failures under normal conditions
+### Phase 2: Resilience Patterns
 
-### Phase 2: Resilience Patterns (Stability Before Complexity)
+**Scope**: Add fault isolation and recovery to single-server-per-language setup
 
-**Scope**: Add fault isolation and recovery patterns to **single-LS-per-language** setup before adding multi-LS complexity
+**What Phase 2 Adds:**
+- Circuit Breaker: Prevent cascading failures
+- Bulkhead Pattern: Isolate downstream servers
+- Per-server timeout configuration
+- Health monitoring
+- Partial-result metadata
 
-**Why Phase 2 before Multi-LS:**
-- Resilience patterns work with simple single-LS architecture
-- Stabilize foundation before adding aggregation complexity
-- Circuit breaker and bulkhead become MORE critical with multi-LS (Phase 3)
-- Better to debug resilience issues without aggregation layer
-
-**What Phase 2 adds:**
-- Circuit Breaker: Prevent cascading failures when downstream LS is unhealthy
-- Bulkhead Pattern: Isolate downstream servers to prevent resource exhaustion
-- Per-server timeout configuration: Custom timeout per LS type
-- Health monitoring: Track LS health metrics
-- Partial-result metadata: Flag degraded responses
-
-**Exit Criteria:**
-- Circuit breaker opens/closes correctly when LS crashes/recovers
-- Bulkhead prevents slow LS from blocking other languages
-- System remains responsive even when one LS is unhealthy
+**Why Before Multi-LS**: Stabilize foundation before adding aggregation complexity.
 
 ### Phase 3: Multi-LS-per-Language with Aggregation
 
-**Scope**: Extend to support **multiple language servers per language** with routing and aggregation
+**Scope**: Extend to support **multiple language servers per language**
 
-```
-treesitter-ls (host)
-  └─→ Python blocks
-        ├─→ pyright  (type checking, completion) ← Circuit breaker from Phase 2
-        └─→ ruff     (linting, formatting)       ← Bulkhead from Phase 2
-             ↓
-        [RequestRouter + ResponseAggregator] ← New in Phase 3
-```
-
-**What Phase 3 adds:**
+**What Phase 3 Adds:**
 - Routing strategies: single-by-capability (default) and fan-out
 - Response aggregation: merge_all, first_wins, ranked strategies
-- Per-method aggregation configuration: Configure only methods that need non-default behavior
-- Cancellation propagation: Propagate `$/cancelRequest` to all downstream LSes with pending requests
-- Fan-out skip/partial: Unhealthy or uninitialized servers skipped in aggregation
-- Leverages Phase 2 resilience: Each LS in multi-LS setup already has circuit breaker + bulkhead
+- Per-method aggregation configuration
+- Cancellation propagation to all downstream servers
+- Fan-out skip/partial for unhealthy servers
+- Leverages Phase 2 resilience per-server
 
 **Exit Criteria:**
 - Can use pyright + ruff simultaneously for Python
-- Completion item candidates merged from both LSes with deduplication working correctly
-- CodeAction candidate lists merged without duplicate proposals in UI
-- User can select any candidate; execution goes to specific server individually
-- Routing config works (single-by-capability default, fan-out for configured methods)
-- Resilience patterns work per-LS (pyright circuit breaker independent of ruff)
-- Partial results surfaced when one LS times out or is unhealthy
-
-**Rationale for phased approach:**
-- Phase 1 delivers immediate value (multi-language support) with minimal complexity
-- Phase 2 adds stability/resilience to simple architecture (easier to debug)
-- Phase 3 adds multi-LS complexity on top of stable, resilient foundation
-- Routing-first principle means most requests still use Phase 1 fast path (single LS)
+- Completion candidates merged with deduplication
+- CodeAction candidates merged without duplicates
+- Routing config works (defaults + overrides)
+- Resilience patterns work per-server
+- Partial results surfaced when one server times out
 
 ## Related ADRs
 
-- **[ADR-0006](0006-language-server-bridge.md)**: Core LSP bridge architecture
-  - Establishes the fundamental 1:1 bridge pattern (host document → single language server per language)
-  - ADR-0015 extends this to 1:N (host document → multiple language servers per language)
-
+- **[ADR-0006](0006-language-server-bridge.md)**: Core LSP bridge architecture (1:1 pattern)
+  - ADR-0015 extends to 1:N (one client → multiple servers per language)
 - **[ADR-0008](0008-language-server-bridge-request-strategies.md)**: Per-method bridge strategies
-  - ADR-0008's per-method strategies remain valid for single-LS routing
-  - ADR-0015 clarifies multi-LS aspects: diagnostics pass-through, fan-out routing, aggregation strategies
-
-- **[ADR-0012](0012-multi-ls-async-bridge-architecture.md)**: Multi-LS async bridge architecture **(Parent ADR)**
-  - This ADR extracts multi-server coordination decisions from ADR-0012
-  - ADR-0012 will be superseded by ADR-0013 (async I/O), ADR-0014 (message ordering), and ADR-0015 (multi-server coordination)
-
+  - Per-method strategies remain valid for single-server routing
+- **[ADR-0012](0012-multi-ls-async-bridge-architecture.md)**: Multi-LS async bridge **(Parent ADR)**
+  - This ADR extracts multi-server coordination from ADR-0012
 - **[ADR-0013](0013-async-io-layer.md)**: Async I/O infrastructure
-  - Provides the async I/O patterns and concurrency primitives that enable parallel server management
-
-- **[ADR-0014](0014-actor-based-message-ordering.md)**: Message ordering and request superseding
-  - Handles single-server message ordering concerns (didOpen before didChange)
-  - ADR-0015 coordinates multiple servers; ADR-0014 ensures correct ordering within each server connection
-
-- **[ADR-0016](0016-graceful-shutdown.md)**: Graceful shutdown and connection lifecycle
+  - Provides async I/O patterns enabling parallel server management
+- **[ADR-0014](0014-actor-based-message-ordering.md)**: Message ordering and superseding
+  - Handles single-server ordering; ADR-0015 coordinates multiple servers
+- **[ADR-0016](0016-graceful-shutdown.md)**: Graceful shutdown
   - Defines shutdown coordination for multiple concurrent connections
-  - ADR-0015 router broadcasts shutdown; ADR-0016 specifies per-connection shutdown sequence and multi-server timeout policy
+  - Router broadcasts shutdown; ADR-0016 specifies per-connection sequence
 
 ## Amendment History
 
-- **2026-01-07**: Merged [Amendment 002](0015-multi-server-coordination-amendment-002.md) - Simplified ID namespace by using upstream request IDs directly for downstream servers (no ID transformation), replaced `pending_correlations` with `pending_responses`, updated Scenarios 2-3 to reflect same-ID forwarding (addresses Critical Issue C5: ID Registration Race and architectural simplification)
-- **2026-01-06**: Merged [Amendment 001](0015-multi-server-coordination-amendment-001.md) - Updated partial results format to use LSP-native fields (isIncomplete) instead of custom fields, clarified $/cancelRequest notification semantics, and added explicit response guarantees for cancelled requests (addresses Critical Issue C4: Missing Response Guarantee for Cancelled Requests and LSP protocol compliance)
+- **2026-01-07**: Merged [Amendment 002](0015-multi-server-coordination-amendment-002.md) - Simplified ID namespace by using upstream request IDs directly (no transformation), replaced `pending_correlations` with `pending_responses`
+- **2026-01-06**: Merged [Amendment 001](0015-multi-server-coordination-amendment-001.md) - Updated partial results to use LSP-native fields (isIncomplete), clarified $/cancelRequest semantics, added response guarantees for cancelled requests

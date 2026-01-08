@@ -1,8 +1,9 @@
 # ADR-0014: Actor-Based Message Ordering for Bridge Architecture
 
-## Status
-
-Draft
+| | |
+|---|---|
+| **Status** | Draft |
+| **Date** | 2026-01-06 |
 
 **Supersedes**:
 - [ADR-0012](0012-multi-ls-async-bridge-architecture.md) § Timeout-based control
@@ -10,9 +11,9 @@ Draft
 
 ## Context
 
-### Problems with Timeout-Based Control
+### Problems with Previous Approach
 
-ADR-0012 established timeout-based control for initialization and request superseding. This approach has three fundamental problems:
+ADR-0012 established timeout-based control for initialization and request superseding. This approach had three fundamental problems:
 
 **1. Time-Based Control Doesn't Reflect System State**
 
@@ -23,43 +24,72 @@ Timeouts create artificial ceilings unrelated to actual readiness:
 
 **2. Notification/Request Ordering Violation**
 
-Separate code paths create race conditions:
-```
-Notifications → channel → forwarder
-Requests     → direct call → connection
-
-Result: Requests can arrive before notifications (completion on stale content)
-```
-
-This is hidden by content-hash URIs but becomes catastrophic with stable URIs (PBI-200).
+Separate code paths create race conditions where requests can arrive before notifications, leading to completion on stale content. This is hidden by content-hash URIs but becomes catastrophic with stable URIs.
 
 **3. Complexity from Per-Type State Management**
 
-Timeout tracking requires separate pending maps per request type (completion, hover, signature_help), each with its own timeout task, cancellation logic, and cleanup.
+Timeout tracking requires separate pending maps per request type, each with its own timeout task, cancellation logic, and cleanup.
 
-### Insight from Python Prototype
+### Key Architectural Insight
 
-The `handler2.py` prototype demonstrates a simpler event-driven approach:
-- Single-writer loop serializes all writes
-- Generation counters enable superseding without timeouts
-- Immediate REQUEST_CANCELLED feedback instead of timeout waits
+Event-driven superseding offers a simpler alternative to timeout-based control:
+- Single-writer loop serializes all writes (prevents protocol corruption)
+- Generation counters enable superseding without timeouts (event-driven, not time-based)
+- Immediate REQUEST_CANCELLED feedback instead of timeout waits (better UX)
 
-**Key insight**: Superseding provides the bounded wait. Users either get the latest result (when ready) or immediate cancellation (if superseded).
+**Superseding provides the bounded wait**: Users either get the latest result (when ready) or immediate cancellation (if superseded).
 
 ## Decision
 
-**Adopt actor-based message ordering with event-driven superseding**, structured around five architectural principles:
+**Adopt actor-based message ordering with event-driven superseding**, structured around six architectural principles.
 
-### 1. Single-Writer Loop per Connection (Actor Pattern)
+### Architecture Overview
+
+```
+┌──────────────────────────────────────────────────────────┐
+│              Per-Connection Actor Pattern                │
+│                                                          │
+│  Unified Operation Stream:                               │
+│  ┌──────────────────────────────────────────────────┐    │
+│  │ Notifications + Requests                         │    │
+│  │   (didChange, hover, completion, etc.)           │    │
+│  └─────────────────┬────────────────────────────────┘    │
+│                    │                                     │
+│                    ▼                                     │
+│  ┌──────────────────────────────────────────────────┐    │
+│  │         Coalescing Map (superseding)             │    │
+│  │  Key: (URI, method)                              │    │
+│  │  Value: Latest operation + generation            │    │
+│  │  - Stores only latest per key                    │    │
+│  │  - Early cleanup (superseded ops freed)          │    │
+│  └─────────────────┬────────────────────────────────┘    │
+│                    │                                     │
+│                    ▼                                     │
+│  ┌──────────────────────────────────────────────────┐    │
+│  │           Unified Order Queue (FIFO)             │    │
+│  │  Bounded capacity (256)                          │    │
+│  │  - Ensures FIFO ordering                         │    │
+│  │  - Non-blocking backpressure (try_send)          │    │
+│  └─────────────────┬────────────────────────────────┘    │
+│                    │                                     │
+│                    ▼                                     │
+│  ┌──────────────────────────────────────────────────┐    │
+│  │         Single Writer Loop (Actor)               │    │
+│  │  - Dequeues from order queue                     │    │
+│  │  - Atomic claim from coalescing map              │    │
+│  │  - Writes to server stdin                        │    │
+│  └─────────────────┬────────────────────────────────┘    │
+│                    │                                     │
+└────────────────────┼──────────────────────────────────────┘
+                     ▼
+              Server stdin (serialized)
+```
+
+### 1. Single-Writer Loop (Actor Pattern)
 
 Each server connection has exactly one writer task consuming from a unified queue, ensuring FIFO ordering for all operations.
 
-**Architecture**:
-```
-All Operations → Unified Order Queue → Single Writer Loop → Server stdin
-```
-
-**Guarantees**:
+**Key Properties:**
 - Strict FIFO ordering (notifications and requests maintain sequence)
 - No byte-level corruption (single writer, no interleaving)
 - Prevents notification/request race (all flow through same channel)
@@ -68,319 +98,73 @@ All Operations → Unified Order Queue → Single Writer Loop → Server stdin
 
 Superseding uses monotonic generation counters instead of timeouts.
 
-**Mechanism**:
+**Mechanism:**
 - Each (URI, method) key has a generation counter
 - New operation increments generation, supersedes old
 - Coalescing map stores only latest operation per key
 - Early cleanup: old operations freed immediately at enqueue time
 
-**Benefits**:
+**Benefits:**
 - Event-driven (no artificial time limits)
 - Memory efficient: O(unique keys) not O(total requests)
 - Immediate feedback: superseded operations get REQUEST_CANCELLED instantly
 
-**Race Prevention: Supersede vs Writer Dequeue**
+**Race Prevention (Supersede vs Writer Dequeue):**
 
-**Problem**: Race condition between superseding in coalescing map and writer loop dequeue.
-
-**Race Scenario**:
-```rust
-T0: Operation ID=1 added to coalescing map and order queue
-    → coalescing_map[(uri, method)] = (gen=1, id=1, envelope)
-    → order_queue.push(OperationRef { id=1, coalescing_key: Some((uri, method)) })
-
-T1: Operation ID=2 supersedes ID=1 in map
-    → coalescing_map[(uri, method)] = (gen=2, id=2, envelope)
-    → ID=1 response_tx receives REQUEST_CANCELLED
-    → order_queue.push(OperationRef { id=2, coalescing_key: Some((uri, method)) })
-
-T2: Writer loop dequeues ID=1 from order queue
-    → Tries to claim from coalescing map
-    → Map now contains ID=2 (not ID=1)
-
-T3: Writer loop sends ID=1 to server (WRONG!)
-    → LSP violation: two responses for one request (REQUEST_CANCELLED + actual response)
-```
-
-**Root Cause**: Order queue contains stale reference to superseded operation.
-
-**Mitigation**: Atomic claim pattern in writer loop
+The atomic claim pattern prevents double-response violations:
 
 ```rust
 // In writer loop
 loop {
     let operation_ref = order_queue.recv().await;
+    let id = operation_ref.id;  // LSP spec: integer | string
 
-    match operation_ref {
-        OperationRef { id, method, params, response_tx, coalescing_key } => {
-            // CRITICAL: Verify ownership before writing
-            if let Some(key) = coalescing_key {
-                // Try to atomically claim this operation from coalescing map
-                match coalescing_map.remove(&key) {
-                    Some((gen, claimed_id, envelope)) if claimed_id == id => {
-                        // SUCCESS: We own this operation, proceed
-                        // (This operation is the current latest for this key)
-                    }
-                    Some((gen, other_id, envelope)) => {
-                        // SUPERSEDED: Map contains a newer operation
-                        // Put the newer operation back (we don't own it yet)
-                        coalescing_map.insert(key, (gen, other_id, envelope));
-
-                        // Skip this operation (already received REQUEST_CANCELLED at T1)
-                        log::debug!("Skipping superseded operation ID={} (replaced by ID={})",
-                                   id, other_id);
-                        continue;
-                    }
-                    None => {
-                        // Map entry already removed (either superseded or cancelled)
-                        // This operation already received REQUEST_CANCELLED
-                        log::debug!("Skipping superseded/cancelled operation ID={}", id);
-                        continue;
-                    }
-                }
+    if let Some(key) = operation_ref.coalescing_key {
+        // Atomic claim from coalescing map
+        match coalescing_map.remove(&key) {
+            Some((gen, claimed_id, envelope)) if claimed_id == id => {
+                // SUCCESS: We own this operation, proceed
             }
-
-            // Non-coalescable operation or successfully claimed coalescable operation
-            // Safe to send to downstream server
-            pool.register_pending_request(request_id: id, server_key: self.key, response_tx);
-            write_request(id, method, params).await?;
-            response_waiters.insert(id, response_tx);
+            _ => {
+                // SUPERSEDED: Skip (already got REQUEST_CANCELLED)
+                continue;
+            }
         }
     }
+
+    // Safe to send to downstream server
+    write_request(id, method, params).await?;
 }
 ```
 
-**Why This Works**:
-- Coalescing map is the **source of truth** for latest operation
-- `remove()` is atomic claim operation
-- If claim fails (ID mismatch or None), operation was superseded → skip
-- If claim succeeds, we own it → safe to send
-- Newer operations remain in map for their future dequeue
+**Memory Management:**
 
-**Guarantees**:
-- ✅ No double-response LSP violation
-- ✅ Superseded operations never reach downstream server
-- ✅ REQUEST_CANCELLED is the only response for superseded operations
-- ✅ Order queue can contain stale refs (harmless, filtered at dequeue)
-
-**Memory Management: Document Lifecycle Cleanup**
-
-**Problem**: Coalescing map grows unbounded as documents open/close over long sessions.
-
-**Memory Growth Scenario**:
-```
-User opens/closes 10,000 files over 8-hour session
-Coalescing map: 10,000 URIs × 3 methods (didChange, completion, hover)
-Memory: ~30,000 entries × ~100 bytes = ~3MB
-No automatic eviction → memory leak
-```
-
-**Cleanup Strategy**: Hook `textDocument/didClose` notification
-
-```rust
-// In connection writer loop
-async fn handle_notification(&mut self, notification: Notification) {
-    // Process notification normally
-    self.order_queue.send(notification.clone()).await?;
-
-    // Cleanup: Remove coalescing entries for closed documents
-    if notification.method == "textDocument/didClose" {
-        if let Some(uri) = notification.params.get("textDocument")
-            .and_then(|doc| doc.get("uri"))
-            .and_then(|u| u.as_str())
-        {
-            // Remove ALL coalescing map entries for this URI
-            let removed = self.coalescing_map.retain(|(doc_uri, _method), _envelope| {
-                doc_uri != uri
-            });
-
-            log::debug!("Cleaned up {} coalescing entries for closed document: {}",
-                       removed, uri);
-        }
-    }
-}
-```
-
-**Why This Works**:
-- `didClose` is explicit document lifecycle event (LSP protocol guarantee)
-- Editor sends `didClose` when document no longer open
-- Safe to remove all pending operations for that URI (document gone)
-- No time-based heuristics needed (event-driven)
-
-**Cleanup Timing**:
-- Cleanup happens AFTER `didClose` queued (order preserved)
-- Coalescable operations already in order queue will be filtered at dequeue (atomic claim fails)
-- No race: if operation dequeued before cleanup, it successfully claims; if after, claim fails
-
-**Memory Bounds**:
-```
-Typical session: 50 open documents × 3 methods = 150 entries (~15KB)
-Long session with cleanup: Bounded by max concurrent open documents
-Without cleanup: Unbounded growth (all historical URIs retained)
-```
-
-**Guarantees**:
-- ✅ Memory bounded by concurrent open documents (not historical total)
-- ✅ No resource leak over long-running sessions
-- ✅ Event-driven cleanup (no polling or timers)
-- ✅ Safe concurrent access (DashMap's atomic operations)
+Coalescing map grows unbounded without cleanup. The solution: hook `textDocument/didClose` to remove all entries for closed documents, bounding memory by concurrent open documents (not historical total).
 
 ### 3. Non-Blocking Backpressure
 
 The bounded order queue (capacity: 256) uses `try_send()` to prevent deadlocks during slow initialization.
 
-**Strategy**:
-- **Coalescable operations** (didChange, completion): Queue full is safe—envelope stored in coalescing map, processed when queue drains
-- **Non-coalescable notifications** (didSave, willSave): Dropped under extreme backpressure with telemetry feedback
-- **Requests**: Return explicit SERVER_NOT_INITIALIZED or REQUEST_FAILED error
+**Strategy by Operation Type:**
 
-**Why non-blocking is essential**: Blocking `send().await` during initialization can freeze all LSP handler threads, creating complete system deadlock.
+| Operation Type | Queue Full Behavior | Rationale |
+|---------------|-------------------|-----------|
+| **Coalescable** (didChange, completion) | Store in map, skip queue | Envelope persisted, processed when queue drains |
+| **Non-coalescable notifications** (didSave, willSave) | Drop with telemetry | Extreme backpressure, recoverable via next didChange |
+| **Requests** | Explicit error | Return SERVER_NOT_INITIALIZED or REQUEST_FAILED |
 
-### Notification Drop Handling
-
-When dropping non-coalescable notifications due to queue full, provide comprehensive telemetry to prevent silent state divergence:
-
-**1. Log at WARN level** (always, unconditionally):
-```rust
-log::warn!(
-    "Dropped {} notification for {} (queue {}/{}, state: {:?})",
-    method,
-    uri.unwrap_or("unknown"),
-    queue_len,
-    QUEUE_CAPACITY,
-    connection_state
-);
-```
-
-**2. Send telemetry event to client** (LSP `$/telemetry` notification):
-```rust
-// Send to client via reverse notification channel
-client_notification_tx.send(Notification {
-    method: "$/telemetry".to_string(),
-    params: json!({
-        "type": "notification_dropped",
-        "severity": "warning",
-        "data": {
-            "method": method,
-            "uri": uri,
-            "reason": "queue_full",
-            "queue_length": queue_len,
-            "queue_capacity": QUEUE_CAPACITY,
-            "connection_state": format!("{:?}", connection_state),
-            "timestamp": SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis()
-        }
-    })
-});
-```
-
-**LSP Compliance**: `$/telemetry` is a standard LSP notification clients can subscribe to for monitoring events.
-
-**3. Circuit breaker integration**:
-```rust
-// Track dropped notifications in rolling time window
-self.circuit_breaker.record_dropped_notification();
-
-// Thresholds (configurable)
-if self.circuit_breaker.dropped_count_in_window(Duration::from_secs(10)) > 10 {
-    log::error!(
-        "Circuit breaker OPEN: >10 notifications dropped in 10s (connection unhealthy)"
-    );
-    self.circuit_breaker.open();
-    // Connection marked as unhealthy, pool may spawn replacement
-}
-```
-
-**Rationale**: Sustained notification drops indicate severe backpressure, suggesting connection is unhealthy.
-
-**4. State re-synchronization metadata**:
-
-Track dropped events per URI and inject metadata into next coalescable notification (didChange):
-
-```rust
-// In coalescing map, track dropped events per URI
-struct CoalescingEntry {
-    operation: Operation,
-    generation: u64,
-    dropped_events: Vec<String>,  // Track dropped lifecycle events
-}
-
-// When processing didChange after didSave drop
-if let Some(dropped_events) = coalescing_entry.dropped_events.take() {
-    // Inject metadata into didChange params
-    let mut params = operation.params.clone();
-    params["metadata"] = json!({
-        "saved": dropped_events.contains(&"textDocument/didSave"),
-        "dropped_lifecycle_events": dropped_events
-    });
-}
-```
-
-**Drop Severity by Notification Type**:
-
-| Notification Type | Drop Impact | Mitigation Strategy |
-|------------------|-------------|---------------------|
-| **textDocument/didSave** | HIGH - Diagnostics stale | Re-sync via didChange metadata |
-| **textDocument/willSave** | MEDIUM - Pre-save hooks missed | Best-effort, informational only |
-| **textDocument/didClose** | LOW - Resource leak risk | Server GC handles cleanup |
-| **Custom notifications** | VARIES - Application-specific | Log + telemetry for visibility |
-
-**Priority**: didSave has highest impact (diagnostics critical for UX).
+**Notification Drop Telemetry:**
+- Log at WARN level (always)
+- Send `$/telemetry` event to client (LSP standard)
+- Circuit breaker integration (sustained drops → connection unhealthy)
+- State re-synchronization metadata (track dropped events, inject into next didChange)
 
 ### 4. Connection State Tracking
 
 Explicit connection state enum separates data flow from control flow.
 
-**State Definition**:
-```rust
-enum ConnectionState {
-    Initializing,  // Writer loop started, initialization in progress
-    Ready,         // Initialization completed successfully
-    Failed,        // Initialization failed or writer loop panicked
-    Closing,       // Shutdown initiated, failing pending operations
-    Closed,        // Fully terminated
-}
-```
+**State Machine:**
 
-**State Transitions** (Complete):
-
-Normal Operation:
-```
-Initializing → Ready     (initialization succeeds)
-Initializing → Failed    (initialization fails, times out, or server crashes)
-```
-
-Shutdown Paths:
-```
-Initializing → Closing   (shutdown during initialization)
-Ready → Closing          (graceful shutdown initiated)
-Failed → Closing         (graceful shutdown initiated on failed connection)
-Closing → Closed         (shutdown completed or timed out)
-```
-
-Failure Paths:
-```
-Ready → Failed           (writer loop panics or server crashes)
-Closing → Closed         (writer panic during shutdown - skip Failed state)
-Failed → Closed          (cleanup without shutdown, if shutdown not initiated)
-```
-
-Edge Cases:
-```
-Initializing + Shutdown + Timeout → Closing (not Failed)
-  Rationale: Shutdown in progress; initialization failure is moot
-```
-
-Priority Rules (when multiple transitions possible):
-```
-1. If current state = Closing: All failures → Closed (skip Failed)
-2. If shutdown signal + current state = Failed: Failed → Closing → Closed
-3. Else: Normal transition rules apply
-```
-
-**Visual State Diagram**:
 ```
                     ┌─────────────┐
                     │Initializing │
@@ -414,104 +198,41 @@ shutdown crash/         crash/              │
            ┌──────────┐
            │  Closed  │  (terminal state)
            └──────────┘
-
-Priority Rule: Closing state is "sticky" - once entered, all failures
-               skip Failed state and go directly to Closed.
 ```
 
-**Operation Gating**:
+**Operation Gating:**
 - Writer loop starts immediately in `Initializing` state (before initialization completes)
-- **Notifications**: Flow through unconditionally when state is `Initializing` or `Ready`
-  - "Unconditional" means **not gated on connection state** (can be sent during initialization)
-  - BUT notifications ARE gated on **per-document lifecycle** (see Document Lifecycle below)
-- **Requests**: Gated on state being `Ready` (return SERVER_NOT_INITIALIZED if `Initializing`, REQUEST_FAILED if `Failed`)
+- **Notifications**: Flow unconditionally when `Initializing` or `Ready` (establish document state)
+- **Requests**: Gated on `Ready` state (return SERVER_NOT_INITIALIZED if `Initializing`, REQUEST_FAILED if `Failed`)
 
-**Document Lifecycle Gating** (per downstream server, per document URI):
+**Document Lifecycle Gating:**
 
-```
-Client → treesitter-ls → downstream server
+Per downstream server, per document URI:
+- **Before didOpen sent**: didChange → DROP (don't queue, don't forward)
+- **After didOpen sent**: didChange, didSave, willSave → FORWARD immediately
 
-┌────────────────────────────────────────────────────────────┐
-│ Before didOpen sent to downstream:                         │
-│ - didChange → DROP (don't queue, don't forward)            │
-│ - didOpen contains complete accumulated state              │
-│                                                            │
-│ After didOpen sent to downstream:                          │
-│ - didChange → FORWARD immediately                          │
-│ - didSave, willSave → FORWARD immediately                  │
-└────────────────────────────────────────────────────────────┘
-```
-
-**Example scenario** (multi-server initialization):
-```
-Client edits markdown → treesitter-ls spawns pyright (Initializing)
-  ├─ Client sends didChange → treesitter-ls DROPS (pyright hasn't received didOpen yet)
-  ├─ pyright initialization completes
-  ├─ treesitter-ls sends didOpen(virtual-doc) to pyright (contains ALL accumulated changes)
-  └─ Future didChange → treesitter-ls FORWARDS to pyright normally
-```
-
-**Why drop instead of queue**: The `didOpen` notification contains the complete document text at the time it's sent. Accumulated edits are already included. Queuing `didChange` notifications would create duplicate state updates.
-
-**Multi-server benefit**: Fast-initializing servers (lua-ls: 100ms) respond immediately while slow servers (rust-analyzer: 5-10s) return explicit errors, preventing 5-10 second hangs. Multi-server router (ADR-0015) can distinguish temporary unavailability (`Initializing`) from permanent failure (`Failed`) for graceful degradation.
+The `didOpen` notification contains the complete accumulated state, making queued `didChange` notifications redundant.
 
 ### 5. Request Cancellation Handling
 
-**Cancellation from upstream** (via `$/cancelRequest` from ADR-0015) targets enqueued requests before they reach the downstream server.
+Cancellation from upstream (via `$/cancelRequest`) targets enqueued requests before they reach the downstream server.
 
-**Cancellation Strategy** (per request state):
+**Cancellation Strategy by Request State:**
 
 | Request State | Cancellation Action |
-|---------------|-------------------|
+|--------------|---------------------|
 | **In coalescing map** | Remove from map |
 | **In order queue** (not yet dequeued) | Mark for skipping |
-| **Already superseded** | Ignore (already superseded) |
+| **Already superseded** | Ignore (already got REQUEST_CANCELLED) |
 | **Already sent to downstream** | N/A (handled by ADR-0015 propagation) |
 
-**Cancellation API** (called by multi-server router):
-
-```rust
-async fn cancel_request(&self, request_id: i64) -> bool {
-    // Try to remove from coalescing map
-    if coalescing_map.remove_by_id(request_id).is_some() {
-        return true; // Cancelled successfully
-    }
-
-    // Try to mark in order queue (if not yet dequeued)
-    if order_queue.mark_cancelled(request_id).is_some() {
-        return true; // Cancelled successfully
-    }
-
-    // Not found in map or queue
-    // Either: (1) Already superseded
-    //         (2) Already sent to downstream (ADR-0015 handles propagation)
-    //         (3) Already completed
-    false // Not cancelled (already processed)
-}
-```
-
-**Writer loop handling** (when dequeuing marked request):
-
-```rust
-loop {
-    let operation = order_queue.recv().await;
-
-    if operation.is_cancelled() {
-        // Skip cancelled operations
-        continue;
-    }
-
-    // Process normally...
-}
-```
-
-**Coordination with ADR-0015**: Multi-server router calls `cancel_request()` on all connections for the upstream request. If `false` (request already sent), router propagates `$/cancelRequest` to downstream servers per ADR-0015 § Cancellation Propagation.
+**Coordination with ADR-0015:** Multi-server router calls `cancel_request()` on all connections. If `false` (request already sent), router propagates `$/cancelRequest` to downstream servers.
 
 ### 6. Fail-Fast Error Handling
 
 Writer loop panics use fail-fast pattern (not restart) because `ChildStdin` cannot be cloned.
 
-**Strategy**:
+**Strategy:**
 - Panic caught, all pending operations failed with INTERNAL_ERROR
 - Connection state transitions to `Failed` (triggers circuit breaker)
 - No restart attempt (stdin consumed, restart creates silent permanent hang)
@@ -519,305 +240,125 @@ Writer loop panics use fail-fast pattern (not restart) because `ChildStdin` cann
 
 **Recovery time**: ~100-500ms (respawn) vs. infinite hang (restart attempt).
 
-### Panic Handler Implementation Requirements
+**Panic Handler Order:**
+1. **First**: Fail all pending operations (LSP response guarantee)
+2. **Second**: Check current state (determines final state)
+3. **Third**: Trigger circuit breaker (enables recovery)
 
-**Scope**: Writer loop panic must be caught and handled without hanging.
-
-**Architecture**:
-```rust
-// Connection spawns writer loop with panic handler
-pub struct Connection {
-    writer_handle: JoinHandle<Result<()>>,
-    pending_operations: Arc<DashMap<i64, oneshot::Sender<ResponseResult>>>,
-    state: Arc<AtomicConnectionState>,
-    circuit_breaker: Arc<CircuitBreaker>,
-}
-
-impl Connection {
-    pub fn spawn_writer_loop(&self) -> JoinHandle<Result<()>> {
-        let pending = self.pending_operations.clone();
-        let state = self.state.clone();
-        let circuit_breaker = self.circuit_breaker.clone();
-
-        tokio::spawn(async move {
-            // Panic handler wrapper
-            let result = AssertUnwindSafe(writer_loop(/* ... */))
-                .catch_unwind()
-                .await;
-
-            match result {
-                Ok(Ok(())) => {
-                    log::debug!("Writer loop exited normally");
-                }
-                Ok(Err(e)) => {
-                    log::error!("Writer loop error: {}", e);
-                    Self::handle_writer_failure(pending, state, circuit_breaker).await;
-                }
-                Err(panic_info) => {
-                    log::error!("Writer loop panicked: {:?}", panic_info);
-                    Self::handle_writer_panic(pending, state, circuit_breaker).await;
-                }
-            }
-        })
-    }
-
-    async fn handle_writer_panic(
-        pending: Arc<DashMap<i64, oneshot::Sender<ResponseResult>>>,
-        state: Arc<AtomicConnectionState>,
-        circuit_breaker: Arc<CircuitBreaker>,
-    ) {
-        // CRITICAL: Fail pending operations BEFORE state transition
-        // This ensures LSP response guarantee (every request gets response)
-
-        let count = pending.len();
-        log::warn!("Failing {} pending operations due to writer panic", count);
-
-        // 1. Fail all pending operations (FIRST - response guarantee)
-        for entry in pending.iter() {
-            if let Some((_, response_tx)) = pending.remove(entry.key()) {
-                let error = ResponseError {
-                    code: ErrorCode::InternalError,
-                    message: "Writer loop panicked".to_string(),
-                    data: None,
-                };
-
-                // Send error response (ignore send failures)
-                let _ = response_tx.send(Err(error));
-            }
-        }
-
-        // 2. Check current state (SECOND - determines final state)
-        let current_state = state.get();
-
-        match current_state {
-            ConnectionState::Closing => {
-                // Exception: Panic during shutdown → Closed (not Failed)
-                log::warn!("Writer panic during shutdown, transitioning to Closed");
-                state.set(ConnectionState::Closed);
-                // Do NOT record circuit breaker failure (shutdown already in progress)
-            }
-            _ => {
-                // Normal: Panic → Failed
-                log::error!("Writer panic, transitioning to Failed");
-                state.set(ConnectionState::Failed);
-
-                // 3. Trigger circuit breaker (THIRD - enables recovery)
-                circuit_breaker.record_failure();
-            }
-        }
-    }
-
-    async fn handle_writer_failure(
-        pending: Arc<DashMap<i64, oneshot::Sender<ResponseResult>>>,
-        state: Arc<AtomicConnectionState>,
-        circuit_breaker: Arc<CircuitBreaker>,
-    ) {
-        // Same as panic handler, but different error message
-        // (Error return vs panic - both are failures)
-        Self::handle_writer_panic(pending, state, circuit_breaker).await;
-    }
-}
-```
-
-**Guarantees**:
-1. ✅ Every pending request receives error response (LSP compliance)
-2. ✅ Responses sent BEFORE state transition (atomic from client perspective)
-3. ✅ State transition respects Closing state priority (no rollback)
-4. ✅ Circuit breaker triggered (enables automatic recovery)
-
-**Why This Order Matters**:
-```
-CORRECT Order:
-  1. Send error responses → Client sees errors
-  2. Transition state → Pool sees failure
-  3. Trigger circuit breaker → Recovery begins
-
-WRONG Order (if state transition first):
-  1. Transition state → Pool spawns new instance
-  2. New instance starts accepting requests
-  3. Send error responses ← Old responses mixed with new connection!
-  4. Client confused (response for old connection on new connection)
-```
-
-**Special Case: Closing State Exception**:
-```rust
-if current_state == ConnectionState::Closing {
-    // Don't transition to Failed - we're already shutting down
-    state.set(ConnectionState::Closed);
-    // Don't trigger circuit breaker - not a recoverable failure
-}
-```
-
-**Rationale**:
-- Shutdown already in progress → Failed state rollback creates confusion
-- Circuit breaker shouldn't trigger during intentional shutdown
-- Final state should be Closed (lifecycle complete) not Failed (needs recovery)
+**Special Case**: Panic during `Closing` state → `Closed` (not `Failed`), skip circuit breaker.
 
 ## Consequences
 
 ### Positive
 
-**Event-Driven Control**
+**Event-Driven Control:**
 - Adapts naturally to server initialization time
-- Users receive immediate feedback (REQUEST_CANCELLED) instead of waiting for timeout
+- Immediate feedback (REQUEST_CANCELLED) instead of waiting for timeout
 - No artificial ceiling based on fixed time values
 
-**Guaranteed Message Ordering**
+**Guaranteed Message Ordering:**
 - Unified queue ensures notifications and requests maintain order
 - Eliminates didChange → completion race condition
 - Critical for stable URIs (PBI-200)
 
-**Simpler State Management**
+**Simpler State Management:**
 - Single generation counter per key (not per-request-type pending maps)
 - No timeout tasks or expiry tracking
 - Automatic cleanup through coalescing map
 
-**Memory Efficiency**
+**Memory Efficiency:**
 - Bounded by O(unique URIs × methods) not O(total requests)
 - Early cleanup: stale operations freed at enqueue time
-- Prevents OOM during slow initialization (10+ seconds with heavy editing)
+- Prevents OOM during slow initialization
 
-**Multi-Server Coordination**
-- Initialization flag enables router to skip uninitialized servers
+**Multi-Server Coordination:**
+- State tracking enables router to skip uninitialized servers
 - Partial results from fast servers without waiting for slow ones
 - No spurious protocol errors from requests to uninitialized servers
 
-**Robust Error Handling**
+**Robust Error Handling:**
 - Deadlock prevention via non-blocking backpressure
 - Silent hang prevention via fail-fast panic handling
 - Explicit errors enable graceful degradation
 
-**LSP Compliance**
+**LSP Compliance:**
 - Every request receives response (result or error)
 - Standard error codes (REQUEST_CANCELLED: -32800)
 - Maintains protocol semantics
 
 ### Negative
 
-**Per-URI State Overhead**
+**Per-URI State Overhead:**
 - Memory grows with active virtual documents (bounded by O(documents × methods))
 - Typical: 3-50 entries; worst case: ~500 entries
 - Mitigation: Clean up on didClose
 
-**Connection-Level Failure**
+**Connection-Level Failure:**
 - Writer loop panic fails entire connection (not just one operation)
 - Requires connection pool to spawn new instance
 - Trade-off: Better than silent permanent hang
 
-**Notification Dropping Under Extreme Backpressure**
+**Notification Dropping Under Extreme Backpressure:**
 - Non-coalescable notifications can be dropped if queue full
 - Only under extreme conditions (256+ operations queued)
 - Coalescable notifications (didChange) never dropped (stored in map)
 
 ### Neutral
 
-**Explicit Action Requests**
+**Explicit Action Requests:**
 - Non-incremental requests (definition, references, rename) don't supersede
 - Each explicit user action receives response
 - Same as ADR-0012 behavior
 
-**Backward Compatibility**
+**Backward Compatibility:**
 - External LSP interface unchanged
 - Internal refactor only
 
-## Implementation Guidance
+## Alternatives Considered
 
-### Phase 1: Unified Order Queue with Coalescing Map
+### Alternative 1: Timeout-Based Superseding (ADR-0012)
 
-**Scope**: Replace separate notification/request paths with unified actor pattern.
+Continue using timeouts to determine when to abandon old requests.
 
-**Key Changes**:
-- Define unified operation type (notification | request)
-- Implement coalescing map for supersede-able operations
-- Implement single order queue for ALL operations (FIFO)
-- Single writer loop consuming from unified queue
-- Non-blocking `try_send()` with operation-aware backpressure
+**Rejected Reasons:**
 
-**Exit Criteria**:
-- Strict FIFO ordering maintained (no notification/request races)
-- Memory bounded during initialization
-- No deadlocks when queue fills
-- Tests verify: didChange → request sequences, queue backpressure scenarios
+1. **Time-based control disconnected from readiness**: Fixed timeout values don't adapt to server variability
+2. **Additional complexity**: Separate timeout tasks per request type, cleanup logic, cancellation handling
+3. **Poor user feedback**: Timeout expiry tells users "we gave up" not "here's the latest result"
+4. **Memory overhead**: Must track all pending requests until timeout (not just latest)
 
-### Phase 2: Generation-Based Superseding
+**Comparison:**
 
-**Scope**: Integrate generation counters with coalescing map.
+| Aspect | Timeout-Based | Generation-Based |
+|--------|--------------|------------------|
+| **Wait time** | Fixed (e.g., 5s) | Event-driven (immediate or complete) |
+| **Memory** | O(total requests) | O(unique keys) |
+| **Feedback** | Timeout error | REQUEST_CANCELLED or latest result |
+| **Complexity** | Per-type timeout tasks | Single generation counter |
 
-**Key Changes**:
-- Generation counter per (URI, method) key
-- Immediate REQUEST_CANCELLED on supersede
-- Early cleanup via map replacement
-- Remove timeout-based pending request tracking
+### Alternative 2: Dual Channels (Separate Notification/Request Paths)
 
-**Exit Criteria**:
-- Superseded operations receive immediate cancellation
-- Only latest operation per key reaches server
-- No timeout tasks (event-driven)
+Maintain separate channels for notifications and requests.
 
-### Phase 3: Connection State Management
+**Rejected Reasons:**
 
-**Scope**: Add connection state tracking to prevent protocol violations.
+1. **Ordering violation**: Requests can overtake notifications, causing stale content issues
+2. **Critical with stable URIs**: Race condition becomes catastrophic (PBI-200)
+3. **Complexity**: Two code paths, two sets of backpressure handling
+4. **No FIFO guarantee**: Must manually coordinate ordering
 
-**Key Changes**:
-- Connection state enum in connection struct (Initializing | Ready | Failed | Closed)
-- Writer loop starts immediately in `Initializing` state (before initialization)
-- Notifications flow unconditionally when `Initializing` or `Ready`, requests gated on `Ready` state
-- Integration with router for multi-server coordination
+**Why single channel is essential**: LSP semantics require `didChange` to be processed before subsequent `completion` on the same URI.
 
-**Exit Criteria**:
-- Requests during initialization return SERVER_NOT_INITIALIZED (state: `Initializing`)
-- Requests to failed connections return REQUEST_FAILED (state: `Failed`)
-- Notifications flow immediately (establish document state)
-- Multi-server setups: fast servers respond without waiting for slow ones
+### Alternative 3: Writer Loop Restart on Panic
 
-### Phase 4: Fail-Fast Panic Handling
+Attempt to restart the writer loop after panic instead of failing the connection.
 
-**Scope**: Implement fail-fast pattern for writer loop panics.
+**Rejected Reasons:**
 
-**Key Changes**:
-- Panic handler wraps writer loop
-- Panic caught, all pending operations failed with INTERNAL_ERROR
-- Connection state transitions to `Failed` (circuit breaker integration)
-- No restart attempt (stdin cannot be cloned)
-
-**Exit Criteria**:
-- Panic fails connection explicitly (no silent hang)
-- Connection state transitions to `Failed` on panic
-- Circuit breaker triggered on failure
-- Connection pool integration for respawn
-
-### Phase 5: Stable URI Integration (PBI-200)
-
-**Scope**: Verify superseding works with stable virtual URIs.
-
-**Dependencies**: PBI-200 (Stable Virtual Document Identity)
-
-**Key Changes**:
-- Update supersede key extraction for stable URIs
-- Per-URI lifecycle tracking (didOpen/didClose)
-- Cleanup coalescing map on didClose
-
-**Exit Criteria**:
-- didChange + request ordering maintained
-- No resource leaks as documents open/close
-
-## Architectural Constraints
-
-### Non-Negotiable Requirements
-
-1. **Single order queue**: Dual channels break FIFO guarantee
-2. **Non-blocking sends**: Blocking creates deadlock risk
-3. **Fail-fast on panic**: Restart creates silent hang (stdin consumed)
-4. **Early queue processing**: Writer loop must start before initialization
-
-### Implementation Freedom
-
-Implementations may vary on:
-- Specific capacity values (bounded queue size, map limits)
-- Error message formatting
-- Logging and observability details
-- Cleanup strategies (eager vs. lazy)
-- Performance optimizations (batching, buffering)
+1. **Silent permanent hang**: `ChildStdin` consumed by panic, cannot be cloned, restart creates zombie writer
+2. **Resource leak**: Original stdin handle lost, new writer cannot write
+3. **Debugging nightmare**: Appears to work but silently fails
+4. **Better alternative exists**: Respawn entire connection with fresh stdin (~100-500ms)
 
 ## Related ADRs
 
@@ -834,15 +375,11 @@ Implementations may vary on:
 
 ## References
 
-**Source Prototype**: `__ignored/handler2.py` (lines 69-216)
+**Critical Dependency**: PBI-200 (Stable Virtual Document Identity) - without stable URIs, generation counters reset on every edit, preventing effective superseding across document edits
 
-**Root Cause Analysis**: `__ignored/plan-fix-hang.md` (Root Cause #8)
-
-**Architecture Review**: `__ignored/review-adr.md` (identified deadlock, initialization race, and panic hang issues)
-
-**Critical Dependency**: PBI-200 (Stable Virtual Document Identity) - without stable URIs, generation counters reset on every edit
+**Design Pattern Origins**: Event-driven superseding with generation counters emerged from analysis of timeout-based control limitations in ADR-0012. The pattern combines actor model principles (single-writer loop) with optimistic concurrency control (generation numbers).
 
 ## Amendment History
 
-- **2026-01-06**: Merged [Amendment 001](0014-actor-based-message-ordering-amendment-001.md) - Completed state machine with all transitions, panic handler implementation requirements, and error code corrections (addresses Critical Issue C5: ConnectionState Transition Race Conditions and state machine completeness)
-- **2026-01-06**: Merged [Amendment 002](0014-actor-based-message-ordering-amendment-002.md) - Added comprehensive notification drop telemetry, circuit breaker integration, and state re-synchronization metadata to prevent silent data loss (addresses Critical Issue C7: Silent Notification Drops Without Client Feedback)
+- **2026-01-06**: Merged [Amendment 001](0014-actor-based-message-ordering-amendment-001.md) - Completed state machine with all transitions, panic handler implementation requirements, and error code corrections
+- **2026-01-06**: Merged [Amendment 002](0014-actor-based-message-ordering-amendment-002.md) - Added comprehensive notification drop telemetry, circuit breaker integration, and state re-synchronization metadata to prevent silent data loss
