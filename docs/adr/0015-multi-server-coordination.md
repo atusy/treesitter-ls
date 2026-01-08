@@ -7,7 +7,9 @@
 
 **Related**:
 - [ADR-0013](0013-async-bridge-connection.md): Single-connection async I/O
-- [ADR-0014](0014-actor-based-message-ordering.md): Single-server message ordering and request superseding
+- [ADR-0014](0014-actor-based-message-ordering.md): Single-server message ordering
+
+**Phasing**: See [ADR-0018](0018-implementation-phasing.md) — Phase 1 (routing), Phase 2 (health), Phase 3 (aggregation).
 
 ## Scope
 
@@ -16,11 +18,6 @@ This ADR defines how to coordinate **multiple downstream language server connect
 - Request routing to appropriate server(s)
 - Document lifecycle per downstream server
 - Notification handling (drop, forward, pass-through)
-
-**Implementation Phases**:
-- **Phase 1** (current): Single-LS-per-language — one server per language, simple routing
-- **Phase 2** (future): Resilience patterns — circuit breaker, health monitoring
-- **Phase 3** (future): Multi-LS-per-language — multiple servers per language, aggregation
 
 ## Context
 

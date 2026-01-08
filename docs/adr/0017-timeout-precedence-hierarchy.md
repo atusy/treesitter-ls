@@ -11,6 +11,8 @@
 - [ADR-0015](0015-multi-server-coordination.md) § Response Aggregation
 - [ADR-0016](0016-graceful-shutdown.md) § Shutdown Timeout
 
+**Phasing**: See [ADR-0018](0018-implementation-phasing.md) — Phase 1 (Init, Idle, Global Shutdown), Phase 3 (Per-Request).
+
 ## Scope
 
 This ADR coordinates timeout mechanisms across the bridge architecture. It defines:

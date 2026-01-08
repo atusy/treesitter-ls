@@ -9,6 +9,8 @@
 - [ADR-0012](0012-multi-ls-async-bridge-architecture.md) § Timeout-based control
 - [ADR-0009](0009-async-bridge-architecture.md): Original async architecture
 
+**Phasing**: See [ADR-0018](0018-implementation-phasing.md) — This ADR covers Phase 1; optional coalescing deferred to Phase 2.
+
 ## Scope
 
 This ADR defines message ordering guarantees for **a single connection** to a downstream language server. It covers:
