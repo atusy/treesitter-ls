@@ -1,4 +1,4 @@
-# ADR-0015: Multi-Server Coordination for Bridge Architecture
+# ADR-0015: Server Pool Coordination
 
 | | |
 |---|---|
@@ -9,54 +9,43 @@
 - [ADR-0013](0013-async-bridge-connection.md): Single-connection async I/O
 - [ADR-0014](0014-actor-based-message-ordering.md): Single-server message ordering and request superseding
 
+## Scope
+
+This ADR defines how to coordinate **multiple downstream language server connections** from a single bridge. It covers:
+- Server pool lifecycle (spawn, initialize, shutdown)
+- Request routing to appropriate server(s)
+- Document lifecycle per downstream server
+- Notification handling (drop, forward, pass-through)
+
+**Implementation Phases**:
+- **Phase 1** (current): Single-LS-per-language — one server per language, simple routing
+- **Phase 2** (future): Resilience patterns — circuit breaker, health monitoring
+- **Phase 3** (future): Multi-LS-per-language — multiple servers per language, aggregation
+
 ## Context
 
-### The Multi-Server Problem
-
-Real-world usage requires bridging to **multiple downstream language servers** simultaneously for the same language:
-- Python code may need both **pyright** (type checking, completion) and **ruff** (linting, formatting)
-- Embedded SQL may need both a SQL language server and the host language server
-- Future polyglot scenarios (e.g., TypeScript + CSS in Vue files)
-
-Traditional LSP bridges support only **one server per language**. This limitation forces users to choose between complementary tools instead of leveraging their combined strengths.
+The bridge manages connections to multiple downstream language servers. Even in Phase 1, multiple servers exist (e.g., pyright for Python, lua-ls for Lua). Each connection follows ADR-0013 (async I/O) and ADR-0014 (message ordering).
 
 ### Key Challenges
 
-1. **Server Discovery**: How do we identify which servers handle which languages?
-2. **Request Routing**: Given a request for a language, which server(s) should receive it?
-3. **Lifecycle Management**: How do we spawn, initialize, and shut down multiple servers?
-4. **Capability Overlap**: When multiple servers support the same LSP method, how do we decide which to use?
-5. **Partial Failures**: What happens when some servers initialize successfully but others fail?
+1. **Lifecycle Management**: How do we spawn, initialize, and shut down multiple servers?
+2. **Request Routing**: Given a request for a language, which server should receive it?
+3. **Document State**: How do we track document lifecycle per downstream server?
+4. **Partial Failures**: What happens when some servers initialize successfully but others fail?
 
 ## Decision
 
-**Adopt a routing-first, aggregation-optional multi-server coordination model that supports 1:N communication patterns (one client → multiple language servers per language).**
+**Adopt a phased approach: start with single-LS-per-language routing, extend to multi-LS aggregation in Phase 3.**
 
-### Design Principle: Routing First
+### Phase 1: Single-LS-per-Language (Current)
 
-Most requests should be routed to a single downstream server based on capabilities. Aggregation is only needed when multiple servers provide overlapping functionality that must be combined.
+Each language maps to exactly one downstream server. Routing is simple: language → server.
 
-**Priority Order:**
-- Users can explicitly define a `priority` list in bridge configuration
-- If not defined, fall back to deterministic alphabetical order of server names
-- Example: `priority: ["ruff", "pyright"]` → ruff checked first; default: pyright wins (alphabetical)
-
-**No-Provider Handling:** Return `REQUEST_FAILED` with clear message ("no downstream language server provides hover for python") to keep misconfiguration visible.
-
-**Example: pyright + ruff for Python**
-
-| Method | pyright | ruff | Routing Strategy |
-|--------|---------|------|------------------|
-| `hover` | ✅ | ❌ | → pyright only (no aggregation) |
-| `definition` | ✅ | ❌ | → pyright only |
-| `completion` | ✅ | ✅ | → FanOut + merge_all |
-| `formatting` | ❌ | ✅ | → ruff only |
-| `codeAction` | ✅ | ✅ | → FanOut + merge_all |
-| `diagnostics` | ✅ | ✅ | → Both (notification pass-through) |
+**No-Provider Handling:** Return `REQUEST_FAILED` with clear message ("bridge: no provider for hover in python") to keep misconfiguration visible.
 
 ## Architecture
 
-### Server Pool Architecture
+### Server Pool Architecture (Phase 1)
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -65,133 +54,92 @@ Most requests should be routed to a single downstream server based on capabiliti
 │  │              LanguageServerPool                    │ │
 │  │                                                    │ │
 │  │   ┌─────────────────┐                              │ │
-│  │   │  RequestRouter  │ ── routes by (method,        │ │
-│  │   │                 │     languageId, caps)        │ │
+│  │   │  RequestRouter  │ ── routes by languageId      │ │
 │  │   └────────┬────────┘                              │ │
 │  │            │                                       │ │
-│  │   ┌────────┴────────┐    Fan-out to multiple LSes  │ │
-│  │   │                 │                              │ │
-│  │   ▼                 ▼                              │ │
+│  │            │    (Phase 1: one server per language) │ │
+│  │            ▼                                       │ │
 │  │ ┌───────────┐  ┌───────────┐  ┌───────────┐        │ │
-│  │ │  pyright  │  │   ruff    │  │ lua-ls    │        │ │
-│  │ │(conn + Q) │  │(conn + Q) │  │(conn + Q) │        │ │
-│  │ └─────┬─────┘  └─────┬─────┘  └─────┬─────┘        │ │
-│  │       │              │              │              │ │
-│  │   ┌───┴──────────────┴──────────────┴───┐          │ │
-│  │   │         ResponseAggregator          │          │ │
-│  │   │            (Fan-in)                 │          │ │
-│  │   └─────────────────────────────────────┘          │ │
+│  │ │  pyright  │  │  lua-ls   │  │  taplo    │        │ │
+│  │ │ (python)  │  │  (lua)    │  │  (toml)   │        │ │
+│  │ └───────────┘  └───────────┘  └───────────┘        │ │
+│  │      ↑              ↑              ↑               │ │
+│  │      └──────────────┴──────────────┘               │ │
+│  │           Each: ADR-0013 + ADR-0014                │ │
 │  └────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Key Design Points:**
-- **RequestRouter**: Determines which server(s) receive a request
-- **Per-Connection Isolation**: Each downstream connection maintains its own send queue (ADR-0014)
-- **ResponseAggregator**: Combines responses when fan-out is used
-- **Request ID Semantics**: Upstream request IDs used directly for downstream servers (no transformation)
+**Phase 1 Design:**
+- **RequestRouter**: Routes by `languageId` to single server
+- **Per-Connection Isolation**: Each downstream connection maintains its own actor (ADR-0014)
+- **No Aggregation**: Single server per language, no fan-out
+
+**Phase 3 Extension**: ResponseAggregator for multi-LS fan-out (see Future Extensions).
 
 ### Request ID Semantics
 
 **Decision**: Use upstream request IDs directly for downstream servers.
 
-**ID Flow:**
+**Phase 1 Flow** (single server per language):
 ```
-Client (editor)          treesitter-ls           Downstream Servers
-     ├─ completion ID=42 ─→ Router
-                             ├─ pyright (ID=42)
-                             └─ ruff (ID=42)
-```
-
-**Tracking Structure:**
-```rust
-/// Maps request ID to response handlers for all servers handling that request
-/// Request ID type per LSP spec: integer | string
-pending_responses: DashMap<RequestId, Vec<(String, oneshot::Sender<ResponseResult>)>>
-                   //       ↑               ↑                    ↑
-                   //   Request ID      Server Key          Response sender
-                   //   (int | string)
-
-// Example entry:
-// 42 → [("pyright", tx1), ("ruff", tx2)]
+Client (editor)          treesitter-ls           Downstream Server
+     ├─ hover ID=42 ────→ Router ──────────────→ pyright (ID=42)
+     ◀─ result ─────────────────────────────────◀
 ```
 
 **Benefits:**
-- Single map lookup for cancellation (no correlation indirection)
-- Request ID consistent across client → bridge → servers
-- Simpler state management (one entry per request)
+- Request ID consistent across client → bridge → server
+- Simple state management (one pending entry per request)
+- No ID transformation needed
 
-**Safety:**
-- No ID collision risk (single upstream client)
-- Each request ID is unique per client connection
+### Routing (Phase 1)
 
-### Routing Strategies
+In Phase 1, routing is simple: `languageId` → single server.
 
 ```rust
-enum RoutingStrategy {
-    /// Route to single LS with highest priority (default)
-    SingleByCapability {
-        priority: Vec<String>,  // e.g., ["pyright", "ruff"]
-    },
-
-    /// Fan-out to multiple LSes, aggregate responses
-    FanOut {
-        aggregation: AggregationStrategy,
-    },
+// Phase 1: Simple language-based routing
+fn route_request(language_id: &str) -> Option<&Connection> {
+    self.connections.get(language_id)
 }
 ```
 
-**When Aggregation IS Needed (Candidate-Based Methods):**
-- `completion`: Both servers return candidates → merge into single list
-- `codeAction`: pyright refactoring + ruff lint fixes → merge candidates (user selects one for execution)
-
-**When Aggregation is NOT Needed:**
-- Single capable server → route directly
-- Diagnostics → notification pass-through (client aggregates per LSP spec)
-- Capabilities don't overlap → route to respective server
-
-**When Aggregation is UNSAFE (Direct-Edit Methods):**
-- `formatting`, `rangeFormatting`: Returns text edits directly (no user selection)
-  - **MUST use SingleByCapability** — multiple servers would produce conflicting edits
-- `rename`: Returns workspace edits directly across files
-  - **MUST use SingleByCapability** — multiple rename strategies would corrupt workspace
-
-**Rule**: Methods that return direct edits (not proposals) MUST route to single server only.
+**Phase 3 Extension**: Multi-LS routing strategies (SingleByCapability, FanOut) — see Future Extensions.
 
 ### Server Lifecycle Management
 
-**Parallel Multi-Server Initialization:**
+**Parallel Initialization:**
 
-When connecting to multiple downstream servers, `initialize` requests sent in parallel since each server is independent.
+Multiple downstream servers initialize in parallel since each is independent:
 
 ```
 ┌─────────┐     ┌──────────┐     ┌──────────┐
-│ Bridge  │     │ pyright  │     │   ruff   │
+│ Bridge  │     │ pyright  │     │  lua-ls  │
 └────┬────┘     └────┬─────┘     └────┬─────┘
      │──initialize──▶│                │
      │──initialize───────────────────▶│  (parallel, no wait)
      │◀──result──────│                │  (pyright responds first)
      │──initialized─▶│                │
-     │──didOpen─────▶│                │  (pyright ready)
-     │◀──result───────────────────────│  (ruff responds later)
+     │──didOpen─────▶│                │  (pyright ready for Python)
+     │◀──result───────────────────────│  (lua-ls responds later)
      │──initialized──────────────────▶│
-     │──didOpen──────────────────────▶│  (ruff now ready)
+     │──didOpen──────────────────────▶│  (lua-ls ready for Lua)
 ```
 
 **Key Points:**
 - **Parallel `initialize`**: Send to all servers concurrently
-- **Independent lifecycle**: Each server's `initialized` → `didOpen` proceeds as soon as that server responds
-- **No global barrier**: Servers that initialize faster can start handling requests immediately
+- **Independent lifecycle**: Each server proceeds as soon as it responds
+- **No global barrier**: Fast servers start handling requests immediately
 
-**Partial Initialization Failure Policy:**
+**Partial Initialization Failure:**
 
-| Scenario | Behavior | Rationale |
-|----------|----------|-----------|
-| All servers initialize successfully | Normal operation | Expected case |
-| Some servers fail | Continue with working servers, failed enter circuit breaker open state | Graceful degradation |
-| All servers fail | Bridge reports errors but remains alive, circuit breakers prevent routing | Allow recovery without restart |
+| Scenario | Behavior |
+|----------|----------|
+| All servers succeed | Normal operation |
+| Some servers fail | Continue with working servers, respawn failed |
+| All servers fail | Bridge reports errors, continues respawning |
 
-**Fan-out awareness**: If a method is configured for aggregation and one server is unhealthy/uninitialized, router skips it and proceeds with available servers. Aggregator marks response as partial so UX continues instead of blocking.
+**Future Extension (Phase 2)**: Circuit breaker for failure tracking and backoff.
 
 **Per-Downstream Document Lifecycle:**
 
@@ -315,7 +263,11 @@ treesitter-ls operates as transparent proxy for cancellation:
 - Bridge sends `REQUEST_CANCELLED` error to client immediately
 - Never forward to downstream (request never sent)
 
-### Response Aggregation Strategies
+## Future Extensions
+
+### Phase 3: Response Aggregation Strategies
+
+> **Note**: This section describes Phase 3 multi-LS-per-language features. Phase 1 uses single-server routing.
 
 For fan-out **requests** (with `id`), configure aggregation per method:
 
@@ -349,121 +301,18 @@ enum AggregationStrategy {
 - **Partial results**: If at least one downstream succeeds, respond with successful `result` using LSP-native fields (e.g., for CompletionList: `{ "isIncomplete": true, "items": [...] }`)
 - **Total failure**: If all downstreams fail or time out, respond with `ResponseError` (`REQUEST_FAILED`)
 
-## Consequences
-
-### Positive
-
-**Complementary Tools:**
-- Users can leverage multiple specialized tools for same language (pyright + ruff)
-
-**Routing-First Simplicity:**
-- Most requests go to single server — no aggregation overhead for common cases
-
-**Minimal Configuration:**
-- Default capability-based routing works without per-method config
-
-**Graceful Degradation:**
-- Partial initialization failures allow working servers to continue
-- Fault isolation: One crashed server doesn't affect others
-
-**Parallel Initialization:**
-- Multiple servers initialize concurrently without global barriers
-- Faster servers start handling requests immediately
-
-**Flexible Aggregation:**
-- Per-method control over response combination (when needed)
-
-**Cancellation Propagation:**
-- Client cancellations propagated to all downstream servers
-
-**No Silent Failures:**
-- Missing providers surface as explicit errors instead of `null` results
-
-**Backward Compatible:**
-- Single-server configurations continue to work unchanged
-
-### Negative
-
-**Configuration Surface:**
-- Users must understand aggregation strategies and routing constraints
-- Must know which methods are safe for aggregation (candidate-based vs direct-edit)
-- Misconfiguration could cause data corruption
-
-**Aggregation Complexity:**
-- Merging candidate lists requires deduplication logic
-- Different servers may propose similar candidates with subtle differences
-- Safe only for candidate-based methods where user selects ONE item
-
-**Latency:**
-- Fan-out with `merge_all` waits up to per-server timeouts
-- Partial results may surface instead of complete lists
-
-**Memory:**
-- Tracking pending responses adds overhead
-
-**Coordination Complexity:**
-- More state to manage (response tracking, circuit breakers, aggregators)
-
-### Neutral
-
-**Existing Tests:**
-- Current single-server tests remain valid
-
-**Incremental Adoption:**
-- Routing-first means aggregation can be added later for specific methods
-
-**Diagnostics:**
-- Pass-through by design — client handles aggregation
-
-## Alternatives Considered
-
-### Alternative 1: Single Server Per Language (Status Quo)
-
-Maintain the limitation of one server per language.
-
-**Rejected Reasons:**
-
-1. **Forced choice**: Users must choose between complementary tools instead of using both
-2. **Limited functionality**: Can't combine pyright's type checking with ruff's linting in single session
-3. **User workarounds**: Users resort to running multiple editors or manual tool switching
-4. **Industry trend**: Modern development benefits from specialized, composable tools
-
-### Alternative 2: Merge All Servers into Single Process
-
-Create monolithic language servers that combine all capabilities.
-
-**Rejected Reasons:**
-
-1. **Maintenance burden**: Would require forking and merging upstream language servers
-2. **Update lag**: Can't track upstream updates without constant merging
-3. **Resource waste**: Combined server loads all capabilities even if user needs subset
-4. **Binary compatibility**: Different servers may have conflicting dependencies
-
-### Alternative 3: Always Aggregate (No Routing Priority)
-
-Always fan out to all servers and merge results.
-
-**Rejected Reasons:**
-
-1. **Unnecessary latency**: Most requests have single capable server (no aggregation needed)
-2. **Unsafe for direct-edit methods**: Formatting/rename would produce conflicting edits
-3. **Memory overhead**: Tracking all responses for all requests even when unnecessary
-4. **Complexity without benefit**: Aggregation logic for methods that don't need it
-
-**Why routing-first is better**: Fast path for common case (single capable server), aggregation only when actually needed.
-
-## Configuration Example
+### Phase 3: Configuration Example
 
 ```yaml
-# Routing-first approach: minimal configuration needed
+# Phase 3: Multiple servers per language with aggregation
 languages:
   markdown:
     bridges:
       python:
-        # Servers auto-discovered from languageServers with languages: [python]
-        priority: ["ruff", "pyright"]  # Explicitly prioritize ruff
+        # Multiple servers for Python
+        priority: ["ruff", "pyright"]  # Prioritize ruff when capability overlaps
 
-        # Only configure methods that need non-default behavior:
+        # Per-method aggregation config:
         aggregations:
           textDocument/completion:
             strategy: merge_all      # Safe: candidates, user selects one
@@ -476,11 +325,122 @@ languages:
 languageServers:
   pyright:
     cmd: [pyright-langserver, --stdio]
-    languages: [python]  # ← auto-discovered
+    languages: [python]
   ruff:
     cmd: [ruff, server]
-    languages: [python]  # ← auto-discovered
+    languages: [python]  # Same language as pyright
 ```
+
+## Consequences
+
+### Positive
+
+**Simple Routing (Phase 1):**
+- Language → single server mapping is straightforward
+- No aggregation overhead for common cases
+
+**Graceful Degradation:**
+- Partial initialization failures allow working servers to continue
+- Fault isolation: One crashed server doesn't affect others
+
+**Parallel Initialization:**
+- Multiple servers initialize concurrently without global barriers
+- Faster servers start handling requests immediately
+
+**No Silent Failures:**
+- Missing providers surface as explicit `REQUEST_FAILED` errors
+- Users can diagnose configuration issues immediately
+
+**Extensible Foundation:**
+- Phase 1 architecture supports future multi-LS extension (Phase 3)
+- Single-server configurations continue to work unchanged
+
+### Negative
+
+**Single Server Limitation (Phase 1):**
+- Cannot use multiple servers for same language (e.g., pyright + ruff) until Phase 3
+
+**Coordination Complexity:**
+- Per-downstream document state tracking required
+- State divergence possible under extreme backpressure
+
+### Neutral
+
+**Existing Tests:**
+- Current single-server tests remain valid
+
+**Diagnostics:**
+- Pass-through by design — client handles aggregation
+
+**Phase 3 Trade-offs** (future):
+- Aggregation adds complexity and latency
+- Configuration surface grows with multi-LS support
+
+## Alternatives Considered
+
+### Alternative 1: Sequential Initialization
+
+Initialize servers one at a time, waiting for each to complete.
+
+**Rejected Reasons:**
+
+1. **Increased startup time**: N servers × init time = long wait
+2. **No benefit**: Server initialization is independent, parallelization is free
+3. **Poor UX**: Users wait for slowest server before any work
+
+**Why parallel is better**: Faster servers can start handling requests immediately.
+
+### Alternative 2: Global Initialization Barrier
+
+Wait for ALL servers to initialize before handling any requests.
+
+**Rejected Reasons:**
+
+1. **Slow server blocks all**: One slow server delays entire system
+2. **No partial utility**: Fast servers sit idle waiting
+3. **Fragile**: One failure delays everything
+
+**Why per-server independence is better**: Each language proceeds as soon as its server is ready.
+
+### Alternative 3: Drop Notifications Silently Before didOpen
+
+Silently discard notifications instead of explicit DROP with state tracking.
+
+**Rejected Reasons:**
+
+1. **Hidden behavior**: Hard to debug why notifications don't reach server
+2. **No state visibility**: Can't tell if notification was dropped or queued
+3. **Inconsistent**: Some notifications reach server, others don't
+
+**Why explicit state is better**: Clear rules for notification handling based on document lifecycle state.
+
+## Configuration Example (Phase 1)
+
+```yaml
+# Phase 1: One server per language (simple)
+languages:
+  markdown:
+    bridges:
+      python:
+        server: pyright          # Single server for Python
+      lua:
+        server: lua-ls           # Single server for Lua
+      toml:
+        server: taplo            # Single server for TOML
+
+languageServers:
+  pyright:
+    cmd: [pyright-langserver, --stdio]
+    languages: [python]
+  lua-ls:
+    cmd: [lua-language-server, --stdio]
+    languages: [lua]
+  taplo:
+    cmd: [taplo, lsp, stdio]
+    languages: [toml]
+```
+
+**Phase 3 Configuration Example** (future): See Future Extensions for multi-LS aggregation config.
 
 ## Implementation Plan
 

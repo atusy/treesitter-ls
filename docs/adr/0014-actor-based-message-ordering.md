@@ -1,4 +1,4 @@
-# ADR-0014: Actor-Based Message Ordering for Bridge Architecture
+# ADR-0014: Actor-Based Message Ordering
 
 | | |
 |---|---|
@@ -8,6 +8,16 @@
 **Supersedes**:
 - [ADR-0012](0012-multi-ls-async-bridge-architecture.md) § Timeout-based control
 - [ADR-0009](0009-async-bridge-architecture.md): Original async architecture
+
+## Scope
+
+This ADR defines message ordering guarantees for **a single connection** to a downstream language server. It covers:
+- Single-writer actor loop for protocol correctness
+- Generation-based request coalescing and superseding
+- Connection state machine (Initializing → Ready → Failed/Closing → Closed)
+- Operation gating based on connection state
+
+**Out of Scope**: Coordination of multiple connections (routing, aggregation) is covered by ADR-0015.
 
 ## Context
 
@@ -98,6 +108,8 @@ Each server connection has exactly one writer task consuming from a unified queu
 
 Superseding uses monotonic generation counters instead of timeouts.
 
+**State Scope**: Coalescing only applies in `Ready` state. During `Initializing`, requests fail-fast with `REQUEST_FAILED` (see §4 Operation Gating), so no coalescing is needed.
+
 **Mechanism:**
 - Each (URI, method) key has a generation counter
 - New operation increments generation, supersedes old
@@ -155,9 +167,8 @@ The bounded order queue (capacity: 256) uses `try_send()` to prevent deadlocks d
 
 **Notification Drop Telemetry:**
 - Log at WARN level (always)
-- Send `$/telemetry` event to client (LSP standard)
-- Circuit breaker integration (sustained drops → connection unhealthy)
-- State re-synchronization metadata (track dropped events, inject into next didChange)
+
+**Future Extension (Phase 2)**: Full telemetry (`$/telemetry` events), circuit breaker integration, and state re-synchronization metadata. See ADR-0015 § Implementation Plan.
 
 ### 4. Connection State Tracking
 
@@ -238,7 +249,7 @@ Writer loop panics use fail-fast pattern (not restart) because `ChildStdin` cann
 
 **Strategy:**
 - Panic caught, all pending operations failed with INTERNAL_ERROR
-- Connection state transitions to `Failed` (triggers circuit breaker)
+- Connection state transitions to `Failed`
 - No restart attempt (stdin consumed, restart creates silent permanent hang)
 - Connection pool spawns new server instance with fresh stdin
 
@@ -246,10 +257,11 @@ Writer loop panics use fail-fast pattern (not restart) because `ChildStdin` cann
 
 **Panic Handler Order:**
 1. **First**: Fail all pending operations (LSP response guarantee)
-2. **Second**: Check current state (determines final state)
-3. **Third**: Trigger circuit breaker (enables recovery)
+2. **Second**: Transition to `Failed` state (or `Closed` if already `Closing`)
 
-**Special Case**: Panic during `Closing` state → `Closed` (not `Failed`), skip circuit breaker.
+**Special Case**: Panic during `Closing` state → `Closed` (not `Failed`).
+
+**Future Extension (Phase 2)**: Circuit breaker integration for failure tracking and exponential backoff.
 
 ## Consequences
 

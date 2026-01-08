@@ -11,12 +11,23 @@
 - [ADR-0015](0015-multi-server-coordination.md) § Response Aggregation
 - [ADR-0016](0016-graceful-shutdown.md) § Shutdown Timeout
 
+## Scope
+
+This ADR coordinates timeout mechanisms across the bridge architecture. It defines:
+- Timeout tier hierarchy and precedence rules
+- Interaction semantics when multiple timeouts are active
+- State transitions triggered by each timeout
+
+**Phase 1 Timeouts** (implemented now): Initialization (Tier 0), Idle (Tier 2), Global Shutdown (Tier 3)
+
+**Phase 3 Timeout** (future): Per-Request (Tier 1) — only needed for multi-server aggregation
+
 ## Context
 
-The async bridge architecture defines four distinct timeout systems across three ADRs:
+The async bridge architecture defines timeout systems across three ADRs:
 
 1. **Initialization Timeout** (ADR-0013): Bounds server initialization time during startup
-2. **Per-Request Timeout** (ADR-0015): Bounds user-facing latency for multi-server aggregation
+2. **Per-Request Timeout** (ADR-0015): Bounds user-facing latency for multi-server aggregation *[Phase 3]*
 3. **Idle Timeout** (ADR-0013): Detects hung servers (unresponsive to pending requests)
 4. **Global Shutdown Timeout** (ADR-0016): Bounds total shutdown time
 
@@ -63,16 +74,19 @@ What happens to late responses?
 **Action on Timeout**:
 1. Transition connection state: `Initializing` → `Failed`
 2. Fail initialization request with `REQUEST_FAILED`
-3. Trigger circuit breaker
-4. Connection pool schedules retry with backoff
+3. Connection pool spawns new instance
 
 **State Gating**:
 - **Enabled**: Only during `Initializing` state
 - **Disabled**: When entering `Closing` state (global shutdown takes precedence)
 
-#### Tier 1: Per-Request Timeout (Application Layer)
+**Future Extension (Phase 2)**: Circuit breaker integration for failure tracking and exponential backoff.
 
-**Scope**: Single upstream request (may fan out to multiple downstream servers)
+#### Tier 1: Per-Request Timeout (Application Layer) — Phase 3
+
+> **Note**: This timeout is only needed for multi-server aggregation (Phase 3). In Phase 1 (single-LS-per-language), idle timeout provides sufficient protection.
+
+**Scope**: Single upstream request fanning out to multiple downstream servers
 
 **Duration**:
 - Explicit requests (hover, definition): 5 seconds
@@ -100,8 +114,9 @@ What happens to late responses?
 1. Close connection
 2. Fail all pending requests with INTERNAL_ERROR
 3. Transition connection state: Ready → Failed
-4. Trigger circuit breaker
-5. Connection pool spawns new instance
+4. Connection pool spawns new instance
+
+**Future Extension (Phase 2)**: Circuit breaker integration for failure tracking.
 
 #### Tier 3: Global Shutdown Timeout (System Layer)
 
@@ -186,26 +201,33 @@ Initialization timeout **CANCELLED**; global shutdown timeout takes over; skip L
 
 ## Timeout Summary Table
 
+### Phase 1 Scenarios (Single-LS-per-Language)
+
+| Scenario | Active Timeouts | Final Action |
+|----------|----------------|--------------|
+| **Initialization** | Initialization (Tier 0) | Connection → Failed, respawn |
+| **Normal operation** | Idle (Tier 2) | Connection → Failed on timeout |
+| **Shutdown (no pending)** | Global (Tier 3) | Clean shutdown or force kill |
+| **Shutdown (pending)** | Global (Tier 3) | Force kill after global timeout |
+| **Shutdown (initializing)** | Global (Tier 3) | Skip LSP shutdown, SIGTERM/SIGKILL |
+
+### Phase 3 Scenarios (Multi-LS Aggregation)
+
 | Scenario | Active Timeouts | Precedence | Final Action |
 |----------|----------------|------------|--------------|
-| **Initialization** | Initialization only | N/A | Connection → Failed, retry with backoff |
-| **Normal operation** | Per-request, Idle | Per-request → Idle resets | Partial results, connection stays Ready |
-| **Single-server request** | Idle only | N/A | Connection → Failed on timeout |
-| **Shutdown (no pending)** | Global only | N/A | Clean shutdown or force kill |
-| **Shutdown (pending)** | Per-request, Global | Global > Per-request | Force kill after global timeout |
-| **Shutdown (initializing)** | Global only | Global > Initialization | Skip LSP shutdown, SIGTERM/SIGKILL |
-| **Late response in shutdown** | Global only | Accept until global timeout | Deliver if before global timeout |
+| **Multi-server request** | Per-request (Tier 1), Idle | Per-request → Idle resets | Partial results |
+| **Shutdown (aggregating)** | Per-request, Global | Global > Per-request | Force kill |
 
 ## Configuration Recommendations
 
 ### Timeout Values by Layer
 
-| Timeout Type | Recommended Duration | Rationale |
-|-------------|---------------------|-----------|
-| **Initialization** | 30-60s | Heavy servers (rust-analyzer) need time to index |
-| **Per-Request** | 5s explicit, 2s incremental | User-facing latency bound |
-| **Idle** | 30-120s | Detect hung servers without false positives |
-| **Global Shutdown** | 5-15s | Total shutdown time, balance clean exit vs user wait |
+| Timeout Type | Recommended Duration | Rationale | Phase |
+|-------------|---------------------|-----------|-------|
+| **Initialization** | 30-60s | Heavy servers (rust-analyzer) need time to index | 1 |
+| **Idle** | 30-120s | Detect hung servers without false positives | 1 |
+| **Global Shutdown** | 5-15s | Total shutdown time, balance clean exit vs user wait | 1 |
+| **Per-Request** | 5s explicit, 2s incremental | User-facing latency bound for aggregation | 3 |
 
 ### Relationships
 
@@ -373,19 +395,22 @@ Let timeout implementation details determine precedence implicitly.
 
 ## Summary
 
-**Four-Tier Timeout Hierarchy:**
+**Phase 1 Timeout Hierarchy (Three Tiers):**
 
 0. **Initialization** (startup): Bounds server initialization time (30-60s)
-1. **Per-Request** (application): Bounds user-facing latency for multi-server aggregation (2-5s)
 2. **Idle** (connection): Detects hung servers when requests pending (30-120s)
-3. **Global Shutdown** (system): Enforces bounded shutdown time across all connections (5-15s)
+3. **Global Shutdown** (system): Enforces bounded shutdown time (5-15s)
+
+**Phase 3 Addition:**
+
+1. **Per-Request** (application): Bounds user-facing latency for multi-server aggregation (2-5s)
 
 **Precedence Rules:**
 - Global shutdown > Initialization timeout (shutdown during init)
-- Global shutdown > Per-request timeout (shutdown during request)
 - Global shutdown > Idle timeout (idle timeout STOPS during shutdown)
 - Idle timeout DISABLED during Initializing state (initialization timeout applies)
 - Late responses accepted until global timeout
+- *[Phase 3]* Global shutdown > Per-request timeout
 
 **Impact**:
 - ✅ Deterministic timeout behavior
