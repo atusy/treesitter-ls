@@ -5,7 +5,7 @@
 | **Status** | deprecated |
 | **Date** | 2026-01-01 |
 | **Deprecated** | 2026-01-05 |
-| **Superseded by** | [ADR-0013](0013-async-io-layer.md), [ADR-0014](0014-actor-based-message-ordering.md) |
+| **Superseded by** | [ADR-0013](0013-async-bridge-connection.md), [ADR-0014](0014-actor-based-message-ordering.md) |
 | **Decision-makers** | atusy |
 | **Consulted** | - |
 | **Informed** | - |
@@ -13,7 +13,7 @@
 ## Deprecation Notice
 
 **This ADR has been superseded by:**
-- **[ADR-0013: Async I/O Layer](0013-async-io-layer.md)** — Extracts the tokio::process selection rationale and async I/O infrastructure decisions
+- **[ADR-0013: Async Bridge Connection](0013-async-bridge-connection.md)** — Defines single-connection async I/O patterns and timeout mechanisms
 - **[ADR-0014: Actor-Based Message Ordering](0014-actor-based-message-ordering.md)** — Adopts an actor pattern with generation-based coalescing for message ordering guarantees
 
 **Reason for deprecation:**

@@ -7,7 +7,7 @@
 | **Type** | Cross-ADR Coordination |
 
 **Related ADRs**:
-- [ADR-0013](0013-async-io-layer.md) § Idle Timeout & Initialization Timeout
+- [ADR-0013](0013-async-bridge-connection.md) § Idle Timeout & Initialization Timeout
 - [ADR-0015](0015-multi-server-coordination.md) § Response Aggregation
 - [ADR-0016](0016-graceful-shutdown.md) § Shutdown Timeout
 
@@ -340,7 +340,7 @@ Let timeout implementation details determine precedence implicitly.
 
 ## Coordination With Other ADRs
 
-### ADR-0013 (Async I/O Layer)
+### ADR-0013 (Async Bridge Connection)
 
 - Idle timeout lifecycle now state-based (Amendment 002)
 - Idle timeout STOPS during Closing state
@@ -366,7 +366,7 @@ Let timeout implementation details determine precedence implicitly.
 
 ## Related ADRs
 
-- **[ADR-0013](0013-async-io-layer.md)**: Async I/O layer (defines idle and initialization timeouts)
+- **[ADR-0013](0013-async-bridge-connection.md)**: Async bridge connection (defines idle and initialization timeouts)
 - **[ADR-0014](0014-actor-based-message-ordering.md)**: Actor-based message ordering (connection state machine)
 - **[ADR-0015](0015-multi-server-coordination.md)**: Multi-server coordination (per-request timeout)
 - **[ADR-0016](0016-graceful-shutdown.md)**: Graceful shutdown (global shutdown timeout)

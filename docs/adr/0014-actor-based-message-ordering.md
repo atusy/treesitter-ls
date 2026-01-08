@@ -370,7 +370,7 @@ Attempt to restart the writer loop after panic instead of failing the connection
   - ADR-0014 supersedes timeout-based control while maintaining LSP compliance
 - **[ADR-0015](0015-multi-server-coordination.md)**: Multi-server coordination
   - Relies on ADR-0014's ConnectionState for router integration
-- **[ADR-0013](0013-async-io-layer.md)**: Async I/O layer
+- **[ADR-0013](0013-async-bridge-connection.md)**: Async bridge connection
   - ADR-0014 builds on tokio runtime, uses ChildStdin from process spawning
 - **[ADR-0016](0016-graceful-shutdown.md)**: Graceful shutdown and connection lifecycle
   - Extends ADR-0014's ConnectionState with Closing state for graceful shutdown coordination

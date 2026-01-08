@@ -1,4 +1,4 @@
-# ADR-0013: Async I/O Layer for Bridge Architecture
+# ADR-0013: Async Bridge Connection
 
 | | |
 |---|---|

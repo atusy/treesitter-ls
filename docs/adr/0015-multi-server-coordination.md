@@ -6,7 +6,7 @@
 | **Date** | 2026-01-07 |
 
 **Related**:
-- [ADR-0013](0013-async-io-layer.md): Async I/O patterns and concurrency primitives
+- [ADR-0013](0013-async-bridge-connection.md): Single-connection async I/O
 - [ADR-0014](0014-actor-based-message-ordering.md): Single-server message ordering and request superseding
 
 ## Context
@@ -541,7 +541,7 @@ languageServers:
   - Per-method strategies remain valid for single-server routing
 - **[ADR-0012](0012-multi-ls-async-bridge-architecture.md)**: Multi-LS async bridge **(Parent ADR)**
   - This ADR extracts multi-server coordination from ADR-0012
-- **[ADR-0013](0013-async-io-layer.md)**: Async I/O infrastructure
+- **[ADR-0013](0013-async-bridge-connection.md)**: Async bridge connection (single-server I/O)
   - Provides async I/O patterns enabling parallel server management
 - **[ADR-0014](0014-actor-based-message-ordering.md)**: Message ordering and superseding
   - Handles single-server ordering; ADR-0015 coordinates multiple servers

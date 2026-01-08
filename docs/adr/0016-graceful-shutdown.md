@@ -7,7 +7,7 @@
 
 ## Context
 
-ADR-0013 (Async I/O Layer), ADR-0014 (Actor-Based Message Ordering), and ADR-0015 (Multi-Server Coordination) establish the communication architecture but do not specify shutdown behavior.
+ADR-0013 (Async Bridge Connection), ADR-0014 (Actor-Based Message Ordering), and ADR-0015 (Multi-Server Coordination) establish the communication architecture but do not specify shutdown behavior.
 
 ### Critical Gaps Without Shutdown Specification
 
@@ -392,7 +392,7 @@ Skip synchronization, just send shutdown request whenever ready.
 
 ## Related ADRs
 
-- **[ADR-0013](0013-async-io-layer.md)**: Async I/O layer
+- **[ADR-0013](0013-async-bridge-connection.md)**: Async bridge connection
   - Uses shutdown signal from `select!` pattern
   - ADR-0016 adds LSP handshake and process cleanup
 - **[ADR-0014](0014-actor-based-message-ordering.md)**: Actor-based message ordering
