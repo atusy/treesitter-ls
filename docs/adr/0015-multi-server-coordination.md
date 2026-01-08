@@ -167,26 +167,6 @@ Transitions:
 
 **Why drop instead of queue**: The `didOpen` notification contains the complete document text at send time. Accumulated client edits are included. Dropping `didChange` before `didOpen` avoids duplicate state updates.
 
-**Multi-Server Backpressure Coordination:**
-
-**Decision**: Accept state divergence under extreme backpressure (non-atomic broadcast).
-
-When routing notifications to multiple downstream servers, if one server's queue is full (per ADR-0014), notifications are handled independently per server.
-
-**Strategy:**
-```
-Router sends didSave to 3 servers:
-├─ pyright: queue full → DROP (per ADR-0014)
-├─ ruff: queue OK → FORWARD
-└─ lua-ls: queue OK → FORWARD
-
-Result: pyright doesn't see didSave, ruff and lua-ls do (STATE DIVERGENCE)
-```
-
-**Why Accept Divergence**: This is equivalent to attaching language servers to a real file at different times. Servers already handle being attached at arbitrary points in a document's lifetime.
-
-**Recovery**: Next coalescable notification (didChange) re-synchronizes state.
-
 ### Notification Pass-Through
 
 **Diagnostics and other server-initiated notifications do NOT require aggregation.**
@@ -211,59 +191,40 @@ The client (e.g., VSCode) automatically aggregates diagnostics from multiple sou
 
 ### Cancellation Propagation
 
-**Request Lifecycle Phases:**
+**Cancellation Flow (Phase 1):**
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│ Phase 1: Enqueued (ADR-0014 domain)                    │
-│ - Request in order queue or coalescing map             │
-│ - Not yet sent to downstream server                    │
-│ - Cancellation: Remove from map/queue if present       │
-└─────────────────────────────────────────────────────────┘
-                      │
-                      │ Writer loop dequeues
-                      ▼
-┌─────────────────────────────────────────────────────────┐
-│ TRANSITION: Register in pending_responses              │
-│ - Connection writer loop (ADR-0014)                    │
-│ - BEFORE writing to server stdin                       │
-└─────────────────────────────────────────────────────────┘
-                      │
-                      │ Write to stdin
-                      ▼
-┌─────────────────────────────────────────────────────────┐
-│ Phase 2: Pending (ADR-0015 domain)                     │
-│ - Request sent to downstream server stdin              │
-│ - Awaiting response                                    │
-│ - Cancellation: Propagate $/cancelRequest to downstream│
-└─────────────────────────────────────────────────────────┘
+Client                    Bridge                      Downstream
+  │──$/cancelRequest(42)──▶│──$/cancelRequest(42)────▶│
+  │                        │                          │ (server decides)
+  │◀──error or result──────│◀──error or result────────│
+  │  (transformed)         │  (transform response)    │
 ```
 
-**Cancellation Handling by Phase:**
+**Bridge Behavior:**
+- Forward `$/cancelRequest` notification to downstream server
+- Keep pending request entry (response still expected)
+- Forward whatever response the server sends
 
-**Phase 1 (Enqueued):**
-- **Sub-case 1a**: Request still enqueued → Connection actor removes from map/queue, sends REQUEST_CANCELLED
-- **Sub-case 1b**: Request already superseded → Ignore (already got REQUEST_CANCELLED via superseding)
-
-**Phase 2 (Pending):**
-- Propagate `$/cancelRequest` to all downstream servers
-- Keep entry in `pending_responses` (responses still expected)
-
-**Cancellation Response Handling:**
-
-treesitter-ls operates as transparent proxy for cancellation:
-
-**For requests already sent:**
-- Forward `$/cancelRequest` to downstream server(s)
-- Downstream decides: send `result` (too late) or `REQUEST_CANCELLED` error
-- Forward downstream response to client
-
-**For requests NOT yet sent (in coalescing map/queue):**
-- Remove from local tracking structures
-- Bridge sends `REQUEST_CANCELLED` error to client immediately
-- Never forward to downstream (request never sent)
+**Rationale**: Following ADR-0014's thin bridge principle, the bridge forwards cancellation rather than intercepting it. Downstream servers implement `$/cancelRequest` per LSP spec.
 
 ## Future Extensions
+
+### Phase 3: Multi-Server Backpressure Coordination
+
+When routing notifications to multiple servers for the same language (Phase 3), if one server's queue is full, notifications are handled independently per server.
+
+**Decision**: Accept state divergence under extreme backpressure (non-atomic broadcast).
+
+```
+Router sends didSave to pyright + ruff (both handle Python):
+├─ pyright: queue full → DROP (per ADR-0014)
+└─ ruff: queue OK → FORWARD
+
+Result: State divergence (recoverable via next didChange)
+```
+
+**Rationale**: Servers already handle being attached at arbitrary points in a document's lifetime.
 
 ### Phase 3: Response Aggregation Strategies
 
