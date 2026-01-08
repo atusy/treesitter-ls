@@ -1,4 +1,4 @@
-# ADR-0018: Timeout Hierarchy
+# ADR-0018: LS Bridge Timeout Hierarchy
 
 | | |
 |---|---|
@@ -7,11 +7,11 @@
 | **Type** | Cross-ADR Coordination |
 
 **Related ADRs**:
-- [ADR-0014](0014-async-bridge-connection.md) § Idle Timeout & Initialization Timeout
-- [ADR-0016](0016-server-pool-coordination.md) § Response Aggregation
-- [ADR-0017](0017-graceful-shutdown.md) § Shutdown Timeout
+- [ADR-0014](0014-ls-bridge-async-connection.md) § Idle Timeout & Initialization Timeout
+- [ADR-0016](0016-ls-bridge-server-pool-coordination.md) § Response Aggregation
+- [ADR-0017](0017-ls-bridge-graceful-shutdown.md) § Shutdown Timeout
 
-**Phasing**: See [ADR-0013](0013-implementation-phasing.md) — Phase 1 (Init, Idle, Global Shutdown), Phase 3 (Per-Request).
+**Phasing**: See [ADR-0013](0013-ls-bridge-implementation-phasing.md) — Phase 1 (Init, Idle, Global Shutdown), Phase 3 (Per-Request).
 
 ## Scope
 
@@ -139,10 +139,10 @@ Let implementation details determine which timeout wins.
 
 ## Related ADRs
 
-- **[ADR-0014](0014-async-bridge-connection.md)**: Defines idle and initialization timeouts
-- **[ADR-0015](0015-message-ordering.md)**: Connection state machine (state-based timeout gating)
-- **[ADR-0016](0016-server-pool-coordination.md)**: Per-request timeout *(Phase 3)*
-- **[ADR-0017](0017-graceful-shutdown.md)**: Global shutdown timeout
+- **[ADR-0014](0014-ls-bridge-async-connection.md)**: Defines idle and initialization timeouts
+- **[ADR-0015](0015-ls-bridge-message-ordering.md)**: Connection state machine (state-based timeout gating)
+- **[ADR-0016](0016-ls-bridge-server-pool-coordination.md)**: Per-request timeout *(Phase 3)*
+- **[ADR-0017](0017-ls-bridge-graceful-shutdown.md)**: Global shutdown timeout
 
 ## Summary
 

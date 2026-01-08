@@ -1,4 +1,4 @@
-# ADR-0013: Implementation Phasing
+# ADR-0013: LS Bridge Implementation Phasing
 
 | | |
 |---|---|
@@ -121,8 +121,8 @@ The async bridge architecture spans multiple ADRs (0014-0018), each defining fea
 
 ## Related ADRs
 
-- **[ADR-0014](0014-async-bridge-connection.md)**: Async Bridge Connection
-- **[ADR-0015](0015-message-ordering.md)**: Message Ordering
-- **[ADR-0016](0016-server-pool-coordination.md)**: Server Pool Coordination
-- **[ADR-0017](0017-graceful-shutdown.md)**: Graceful Shutdown
-- **[ADR-0018](0018-timeout-hierarchy.md)**: Timeout Hierarchy
+- **[ADR-0014](0014-ls-bridge-async-connection.md)**: Async Bridge Connection
+- **[ADR-0015](0015-ls-bridge-message-ordering.md)**: Message Ordering
+- **[ADR-0016](0016-ls-bridge-server-pool-coordination.md)**: Server Pool Coordination
+- **[ADR-0017](0017-ls-bridge-graceful-shutdown.md)**: Graceful Shutdown
+- **[ADR-0018](0018-ls-bridge-timeout-hierarchy.md)**: Timeout Hierarchy

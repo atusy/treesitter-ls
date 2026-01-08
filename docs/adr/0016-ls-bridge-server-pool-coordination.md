@@ -1,4 +1,4 @@
-# ADR-0016: Server Pool Coordination
+# ADR-0016: LS Bridge Server Pool Coordination
 
 | | |
 |---|---|
@@ -6,10 +6,10 @@
 | **Date** | 2026-01-07 |
 
 **Related**:
-- [ADR-0014](0014-async-bridge-connection.md): Single-connection async I/O
-- [ADR-0015](0015-message-ordering.md): Single-server message ordering
+- [ADR-0014](0014-ls-bridge-async-connection.md): Single-connection async I/O
+- [ADR-0015](0015-ls-bridge-message-ordering.md): Single-server message ordering
 
-**Phasing**: See [ADR-0013](0013-implementation-phasing.md) — Phase 1 (routing), Phase 2 (health), Phase 3 (aggregation).
+**Phasing**: See [ADR-0013](0013-ls-bridge-implementation-phasing.md) — Phase 1 (routing), Phase 2 (health), Phase 3 (aggregation).
 
 ## Scope
 
@@ -459,11 +459,11 @@ languageServers:
   - Per-method strategies remain valid for single-server routing
 - **[ADR-0012](0012-multi-ls-async-bridge-architecture.md)**: Multi-LS async bridge **(Parent ADR)**
   - This ADR extracts multi-server coordination from ADR-0012
-- **[ADR-0014](0014-async-bridge-connection.md)**: Async Bridge Connection (single-server I/O)
+- **[ADR-0014](0014-ls-bridge-async-connection.md)**: Async Bridge Connection (single-server I/O)
   - Provides async I/O patterns enabling parallel server management
-- **[ADR-0015](0015-message-ordering.md)**: Message Ordering
+- **[ADR-0015](0015-ls-bridge-message-ordering.md)**: Message Ordering
   - Handles single-server ordering; ADR-0016 coordinates multiple servers
-- **[ADR-0017](0017-graceful-shutdown.md)**: Graceful Shutdown
+- **[ADR-0017](0017-ls-bridge-graceful-shutdown.md)**: Graceful Shutdown
   - Defines shutdown coordination for multiple concurrent connections
   - Router broadcasts shutdown; ADR-0017 specifies per-connection sequence
 

@@ -1,4 +1,4 @@
-# ADR-0015: Message Ordering
+# ADR-0015: LS Bridge Message Ordering
 
 | | |
 |---|---|
@@ -9,7 +9,7 @@
 - [ADR-0012](0012-multi-ls-async-bridge-architecture.md) § Timeout-based control
 - [ADR-0009](0009-async-bridge-architecture.md): Original async architecture
 
-**Phasing**: See [ADR-0013](0013-implementation-phasing.md) — This ADR covers Phase 1; optional coalescing deferred to Phase 2.
+**Phasing**: See [ADR-0013](0013-ls-bridge-implementation-phasing.md) — This ADR covers Phase 1; optional coalescing deferred to Phase 2.
 
 ## Scope
 
@@ -379,11 +379,11 @@ Attempt to restart the writer loop after panic instead of failing the connection
 
 - **[ADR-0012](0012-multi-ls-async-bridge-architecture.md)**: Multi-LS async bridge architecture
   - ADR-0015 supersedes timeout-based control while maintaining LSP compliance
-- **[ADR-0016](0016-server-pool-coordination.md)**: Server Pool Coordination
+- **[ADR-0016](0016-ls-bridge-server-pool-coordination.md)**: Server Pool Coordination
   - Relies on ADR-0015's ConnectionState for router integration
-- **[ADR-0014](0014-async-bridge-connection.md)**: Async Bridge Connection
+- **[ADR-0014](0014-ls-bridge-async-connection.md)**: Async Bridge Connection
   - ADR-0015 builds on tokio runtime, uses ChildStdin from process spawning
-- **[ADR-0017](0017-graceful-shutdown.md)**: Graceful Shutdown
+- **[ADR-0017](0017-ls-bridge-graceful-shutdown.md)**: Graceful Shutdown
   - Extends ADR-0015's ConnectionState with Closing state for graceful shutdown coordination
 - **[ADR-0007](0007-language-server-bridge-virtual-document-model.md)**: Virtual document model
   - Stable URIs (PBI-200) enable consistent request tracking

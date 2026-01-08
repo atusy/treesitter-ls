@@ -1,4 +1,4 @@
-# ADR-0014: Async Bridge Connection
+# ADR-0014: LS Bridge Async Connection
 
 | | |
 |---|---|
@@ -232,10 +232,10 @@ Use standard library's `std::process` with one blocking OS thread per server rea
 ## Related Decisions
 
 - **ADR-0006**: Core LSP bridge architecture (pooling, spawn strategy)
-- **[ADR-0015](0015-message-ordering.md)**: Message Ordering (built on this I/O layer)
-- **[ADR-0016](0016-server-pool-coordination.md)**: Server Pool Coordination (uses this I/O foundation for N servers)
-- **[ADR-0017](0017-graceful-shutdown.md)**: Graceful Shutdown (uses shutdown signal from `select!`, adds LSP handshake and process cleanup)
-- **[ADR-0018](0018-timeout-hierarchy.md)**: Timeout Hierarchy (coordinates idle timeout with other timeout systems)
+- **[ADR-0015](0015-ls-bridge-message-ordering.md)**: Message Ordering (built on this I/O layer)
+- **[ADR-0016](0016-ls-bridge-server-pool-coordination.md)**: Server Pool Coordination (uses this I/O foundation for N servers)
+- **[ADR-0017](0017-ls-bridge-graceful-shutdown.md)**: Graceful Shutdown (uses shutdown signal from `select!`, adds LSP handshake and process cleanup)
+- **[ADR-0018](0018-ls-bridge-timeout-hierarchy.md)**: Timeout Hierarchy (coordinates idle timeout with other timeout systems)
 
 ## Notes
 

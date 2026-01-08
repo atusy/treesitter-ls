@@ -1,4 +1,4 @@
-# ADR-0017: Graceful Shutdown
+# ADR-0017: LS Bridge Graceful Shutdown
 
 | | |
 |---|---|
@@ -392,16 +392,16 @@ Skip synchronization, just send shutdown request whenever ready.
 
 ## Related ADRs
 
-- **[ADR-0014](0014-async-bridge-connection.md)**: Async Bridge Connection
+- **[ADR-0014](0014-ls-bridge-async-connection.md)**: Async Bridge Connection
   - Uses shutdown signal from `select!` pattern
   - ADR-0017 adds LSP handshake and process cleanup
-- **[ADR-0015](0015-message-ordering.md)**: Message Ordering
+- **[ADR-0015](0015-ls-bridge-message-ordering.md)**: Message Ordering
   - Extends ConnectionState enum with Closing/Closed states
   - Defines operation disposal for coalescing map and pending requests
-- **[ADR-0016](0016-server-pool-coordination.md)**: Server Pool Coordination
+- **[ADR-0016](0016-ls-bridge-server-pool-coordination.md)**: Server Pool Coordination
   - ADR-0017 defines router shutdown coordination strategy
   - Parallel shutdown with global timeout
-- **[ADR-0018](0018-timeout-hierarchy.md)**: Timeout Hierarchy
+- **[ADR-0018](0018-ls-bridge-timeout-hierarchy.md)**: Timeout Hierarchy
   - Global shutdown timeout takes precedence over other timeouts
   - Idle timeout disabled during Closing state
 
