@@ -6,21 +6,28 @@
 | **Date** | 2026-01-05 |
 | **Decision-makers** | atusy |
 
+## Scope
+
+This ADR defines how to communicate with **a single downstream language server** via stdio. It covers:
+- Process spawning and I/O primitives
+- Async reader/writer task patterns
+- Connection-level timeout mechanisms
+- Pending request lifecycle
+
+**Out of Scope**: Coordination of multiple language servers (single-LS vs multi-LS per language) is covered by ADR-0015.
+
 ## Context
 
-The LSP bridge connects injection regions to external language servers via stdio (ADR-0006). Language servers are spawned as child processes with stdin/stdout streams for LSP JSON-RPC communication. The bridge must handle I/O from multiple concurrent requests without blocking, while efficiently managing system resources.
+The LSP bridge connects injection regions to external language servers via stdio (ADR-0006). A language server is spawned as a child process with stdin/stdout streams for LSP JSON-RPC communication. The bridge must handle I/O from multiple concurrent requests on a single connection without blocking.
 
 ### Key Requirements
 
-The fundamental I/O infrastructure decision impacts:
-
-1. **Scalability**: How many OS threads are needed to manage N language servers?
-2. **Cancellation**: How to cleanly interrupt I/O operations on shutdown/timeout?
-3. **Reliability**: How to detect dead or hung servers?
-4. **Maintainability**: Sync vs async boundaries, idiomatic patterns
+1. **Cancellation**: How to cleanly interrupt I/O operations on shutdown/timeout?
+2. **Reliability**: How to detect dead or hung servers?
+3. **Maintainability**: Sync vs async boundaries, idiomatic patterns
 
 Three critical requirements drive this decision:
-- **Zero extra OS threads**: Language servers are long-lived; one thread per server doesn't scale
+- **Zero extra OS threads per connection**: Avoid blocking OS threads on I/O
 - **Clean cancellation**: Shutdown and timeout must interrupt blocked I/O without hanging
 - **Idiomatic async**: Pure async codebase integrates cleanly with tower-lsp's async handlers
 
@@ -134,7 +141,7 @@ The system uses two distinct timeout mechanisms with different purposes:
   - **Keep running**: Additional requests sent (pending count increases)
   - **Reset**: Any stdout activity (response or notification) while active
   - **Stop**: Last response received (pending count returns to 0)
-- **Behavior on Timeout**: Connection marked as Failed, circuit breaker triggered, pool spawns new instance
+- **Behavior on Timeout**: Connection transitions to Failed state
 
 **2. Initialization Timeout (Startup Bound)**
 
@@ -144,7 +151,9 @@ The system uses two distinct timeout mechanisms with different purposes:
 - **Timer Management**:
   - **Start**: When initialize request sent (Connection state: Initializing)
   - **Stop**: When initialize response received (transition to Ready)
-- **Behavior on Timeout**: Connection transitions to Failed, circuit breaker triggered, pool retries with backoff
+- **Behavior on Timeout**: Connection transitions to Failed state
+
+**Future Extension (Phase 2)**: Circuit breaker integration for failure tracking and backoff. See ADR-0015 § Implementation Plan.
 
 **Independence**: The two timeouts serve different purposes and never overlap (idle disabled during Initializing; initialization timeout disabled once Ready).
 
@@ -152,10 +161,10 @@ The system uses two distinct timeout mechanisms with different purposes:
 
 ### Positive
 
-**Zero Extra OS Threads:**
-- tokio reactor monitors all file descriptors in a single event loop
-- N language servers = N async tasks (green threads) multiplexed on tokio runtime's thread pool
-- Thread count scales with CPU cores, not with number of language servers
+**Zero Extra OS Threads Per Connection:**
+- tokio reactor monitors file descriptors in a single event loop
+- Each connection uses async tasks (green threads), not OS threads
+- Multiple connections share the tokio runtime's thread pool
 
 **Clean Cancellation:**
 - `select!` macro unifies shutdown, timeout, and read in one construct
@@ -170,9 +179,9 @@ The system uses two distinct timeout mechanisms with different purposes:
 - Pure async codebase with no sync/async boundary crossing
 - Compatible with tower-lsp's async request handlers
 
-**Scalability:**
-- Concurrent requests on same connection supported
-- Efficient resource usage even with many language servers
+**Concurrent Requests:**
+- Multiple in-flight requests on same connection supported
+- Pending map tracks request-response correlation
 
 ### Negative
 
@@ -212,25 +221,13 @@ Use standard library's `std::process` with one blocking OS thread per server rea
 
 4. **Manual Timeout Logic**: Complex and error-prone to implement correctly
 
-**Thread Comparison:**
+**Comparison:**
 
-| Scenario | Background Threads | tokio async |
-|----------|-------------------|-------------|
-| 1 language server | 1 extra OS thread | 0 extra OS threads |
-| 5 language servers | 5 extra OS threads | 0 extra OS threads |
-| 20 language servers | 20 extra OS threads | 0 extra OS threads |
+| Aspect | Background Thread | tokio async |
+|--------|-------------------|-------------|
+| OS thread usage | 1 per connection | 0 per connection |
 | Shutdown while idle | ❌ Hangs on read | ✅ Clean exit via `select!` |
-
-### Alternative 2: Multiple Connection Instances per Language
-
-Spawn N instances of each language server, distribute requests round-robin.
-
-**Rejected Reasons:**
-
-1. **N× Resource Usage**: Each instance consumes memory and CPU
-2. **Unacceptable Memory Cost**: rust-analyzer alone uses 500MB+ RAM; multiple instances infeasible
-3. **Server Compatibility**: Language servers may not handle multiple instances (file locking, port conflicts)
-4. **Complexity**: Requires load balancing logic without solving the fundamental I/O cancellation problem
+| Timeout handling | Manual, error-prone | Built into `select!` |
 
 ## Related Decisions
 
@@ -243,15 +240,13 @@ Spawn N instances of each language server, distribute requests round-robin.
 ## Notes
 
 **Clarification on "Zero Extra Threads":**
-- Refers to zero extra **OS threads**, not zero async tasks
-- Multiple async tasks (reader + writer per server) are expected and desirable
-- All async tasks are green threads multiplexed by tokio runtime
-- Multiple language servers = multiple async tasks, but thread count remains constant
+- Refers to zero extra **OS threads** per connection, not zero async tasks
+- Each connection uses two async tasks (reader + writer)
+- Async tasks are green threads (~2KB stack), multiplexed by tokio runtime
 
 **Verification:**
 - Unit test: `select!` correctly handles concurrent read + shutdown + timeout
 - Integration test: Shutdown while server silent → connection closes cleanly
-- Resource test: 10+ language servers active → OS thread count does not increase proportionally
 
 ## Amendment History
 
