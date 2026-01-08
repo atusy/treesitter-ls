@@ -105,6 +105,23 @@ Requests are forwarded directly to downstream servers without coalescing or supe
 - Downstream servers handle concurrent requests efficiently
 - Simplicity over premature optimization
 
+**Request/Response Flow:**
+
+```
+Client                    Bridge                      Downstream
+  │                         │                             │
+  │──hover(host-uri, pos)──▶│──hover(virtual-uri, pos')──▶│
+  │                         │   (transform URI & position)│
+  │                         │                             │
+  │◀──result(host-uri, pos)─│◀──result(virtual-uri, pos')─│
+  │    (transformed)        │   (transform URI & position)│
+```
+
+**Bridge Responsibilities:**
+- **Outbound**: Transform host URI → virtual URI, map positions (host → virtual)
+- **Inbound**: Transform virtual URI → host URI, map positions (virtual → host)
+- **Correlation**: Match response to pending request by ID
+
 **Writer Loop:**
 
 ```rust
@@ -117,8 +134,9 @@ loop {
         pending_requests.insert(operation.id, response_channel);
     }
 
-    // Forward to downstream server
-    write_to_stdin(operation).await?;
+    // Transform and forward to downstream server
+    let transformed = transform_outbound(operation);
+    write_to_stdin(transformed).await?;
 }
 ```
 
@@ -213,10 +231,11 @@ Cancellation from upstream (via `$/cancelRequest`) is forwarded to downstream se
 **Cancellation Flow:**
 
 ```
-Client                    Bridge                  Downstream
-  │──$/cancelRequest(42)──▶│──$/cancelRequest(42)──▶│
-  │                        │                        │ (server decides)
-  │◀───────────────────────│◀──error or result──────│
+Client                    Bridge                      Downstream
+  │──$/cancelRequest(42)──▶│──$/cancelRequest(42)────▶│
+  │                        │                          │ (server decides)
+  │◀──error or result──────│◀──error or result────────│
+  │  (transformed)         │  (transform response)    │
 ```
 
 **Bridge Behavior:**
