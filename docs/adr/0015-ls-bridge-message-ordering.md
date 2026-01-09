@@ -279,6 +279,22 @@ Writer loop panics use fail-fast pattern (not restart) because `ChildStdin` cann
 
 **Special Case**: Panic during `Closing` state → `Closed` (not `Failed`).
 
+**Cross-Task Panic Propagation:**
+When the writer task panics, the reader task must also exit to prevent CPU spin on orphaned channels:
+- Use a shared `CancellationToken` (e.g., `tokio_util::sync::CancellationToken`)
+- Writer panic handler calls `token.cancel()` before cleanup
+- Reader task includes `token.cancelled()` in its `select!` loop
+- Reader exits when token is cancelled, allowing connection respawn
+
+```rust
+// Reader task select! loop
+select! {
+    line = reader.read_line() => { /* handle response */ }
+    _ = token.cancelled() => { break; }  // Writer panicked, exit
+    _ = shutdown_rx.recv() => { break; } // Graceful shutdown
+}
+```
+
 **Future Extension (Phase 2)**: Circuit breaker integration for failure tracking and exponential backoff.
 
 ## Consequences
