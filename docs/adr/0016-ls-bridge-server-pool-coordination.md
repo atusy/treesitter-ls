@@ -168,6 +168,8 @@ Transitions:
 
 **Why drop instead of queue**: The `didOpen` notification contains the complete document text at send time. Accumulated client edits are included. Dropping `didChange` before `didOpen` avoids duplicate state updates.
 
+**Connection Termination**: When a connection enters `Closed` state (graceful shutdown, crash, or respawn), all document lifecycle entries for that downstream are discarded. A respawned connection starts with all documents in `Closed` (default) state, requiring fresh `didOpen` notifications.
+
 ### Notification Pass-Through
 
 **Diagnostics and other server-initiated notifications do NOT require aggregation.**
