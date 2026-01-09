@@ -185,38 +185,51 @@ enum ConnectionState {
 **State Machine:**
 
 ```
-                    ┌─────────────┐
-                    │Initializing │
-                    └──────┬──────┘
-                           │
-          ┌────────────────┼────────────────┐
-          │                │                │
-       success         timeout/          shutdown
-          │             failure          signal
-          ▼                │                │
-     ┌────────┐            │                │
-     │ Ready  │            │                │
-     └───┬────┘            │                │
-         │                 │                │
-    ┌────┼─────────────────┤                │
-    │    │                 │                │
-shutdown crash/         crash/              │
- signal  panic          panic               │
-    │    │                 │                │
-    ▼    ▼                 ▼                ▼
-┌──────────┐          ┌────────┐      ┌─────────┐
-│ Closing  │          │ Failed │      │ Closing │
-└────┬─────┘          └────┬───┘      └────┬────┘
-     │                     │               │
-     │                     │ (direct)      │
-     │                     │               │
-     └──────────┬──────────┴───────────────┘
-                │
-                ▼
-           ┌──────────┐
-           │  Closed  │  (terminal state)
-           └──────────┘
+                      ┌─────────────┐
+                      │Initializing │
+                      └──────┬──────┘
+                             │
+           ┌─────────────────┼───────────────────┐
+           │                 │                   │
+        success       timeout/failure/       shutdown
+           │           crash/panic             signal
+           ▼                 │                   │
+      ┌────────┐             │                   │
+      │ Ready  │             │                   │
+      └───┬────┘             │                   │
+          │                  │                   │
+     ┌────┴───────────────┐  │                   │
+     │                    │  │                   │
+ shutdown             crash/ │                   │
+  signal              panic  │                   │
+     │                    │  │                   │
+     ▼                    ▼  ▼                   ▼
+┌─────────┐             ┌────────┐          ┌─────────┐
+│ Closing │             │ Failed │          │ Closing │
+└────┬────┘             └────┬───┘          └────┬────┘
+     │                       │                   │
+     │                       │                   │
+     │                       │ (direct to        │
+     │                       │  Closed)          │
+     └───────────────────────┼───────────────────┘
+                             │
+                             ▼
+                       ┌──────────┐
+                       │  Closed  │  (terminal state)
+                       └──────────┘
 ```
+
+**Transition Summary:**
+
+| From | Trigger | To |
+|------|---------|-----|
+| `Initializing` | success (init response received) | `Ready` |
+| `Initializing` | timeout / failure / crash / panic | `Failed` |
+| `Initializing` | shutdown signal | `Closing` |
+| `Ready` | shutdown signal | `Closing` |
+| `Ready` | crash / panic | `Failed` |
+| `Failed` | (automatic) | `Closed` |
+| `Closing` | (graceful or timeout) | `Closed` |
 
 **Key Transition: Failed → Closed (Direct)**
 
