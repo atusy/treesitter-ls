@@ -32,7 +32,7 @@ The async bridge architecture spans multiple ADRs (0014-0018), each defining fea
 | **Routing** | `languageId` → single server (ADR-0016) |
 | **Requests during init** | `REQUEST_FAILED` immediately (ADR-0015) |
 | **Cancellation** | Forward `$/cancelRequest` to downstream (ADR-0015) |
-| **Timeouts** | Init, Idle, Global Shutdown (ADR-0018) |
+| **Timeouts** | Init, Liveness, Global Shutdown (ADR-0018) |
 | **Coalescing** | None — trust client/server (ADR-0015) |
 
 **What Works:**
@@ -115,7 +115,7 @@ The async bridge architecture spans multiple ADRs (0014-0018), each defining fea
 | **0015** (Ordering) | Thin bridge, forwarding | Optional coalescing, telemetry | — |
 | **0016** (Coordination) | Simple routing, lifecycle | Rate-limited respawn | Aggregation, fan-out |
 | **0017** (Shutdown) | Graceful shutdown | — | — |
-| **0018** (Timeouts) | Init, Idle, Global | — | Per-request timeout |
+| **0018** (Timeouts) | Init, Liveness, Global | — | Per-request timeout |
 
 ## Consequences
 
