@@ -181,6 +181,8 @@ async fn graceful_shutdown(&self) {
 
 **Why 2-second timeout**: Writer loop writes typically <100ms. 2s allows for slow disk I/O without indefinite hang.
 
+**Note**: This 2s timeout is per-connection and runs inside `graceful_shutdown()`, which itself runs under the global shutdown timeout. The 2s counts against the global budget.
+
 ### Shutdown Timeout Policy
 
 **Global timeout**: Implementation-defined duration (typically 5-15 seconds) for entire shutdown sequence across all connections.
