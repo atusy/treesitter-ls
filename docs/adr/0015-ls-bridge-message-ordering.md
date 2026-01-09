@@ -220,19 +220,31 @@ shutdown crash/         crash/              │
 ```
 
 **Operation Gating:**
-- Writer loop starts immediately in `Initializing` state (before initialization completes)
-- **Notifications**: Flow unconditionally when `Initializing` or `Ready` (establish document state)
+
+Operations are gated at two levels: **server lifecycle** and **document lifecycle**.
+
+**Server Lifecycle Gating** (ConnectionState):
+- Writer loop starts immediately in `Initializing` state
 - **Requests**: Gated on `Ready` state:
   - `Initializing` → `REQUEST_FAILED` ("bridge: downstream server initializing")
   - `Failed` → `REQUEST_FAILED` ("bridge: downstream server failed")
+- **Notifications**: Accepted by writer loop in `Initializing` or `Ready` state, but subject to document lifecycle gating below
 
 **Why `REQUEST_FAILED` instead of `SERVER_NOT_INITIALIZED`**: The upstream client communicates with treesitter-ls, which IS initialized. The client has no knowledge of downstream servers—that's an internal implementation detail. Using `SERVER_NOT_INITIALIZED` would confuse clients that just received an `initialized` response from treesitter-ls.
 
-**Document Lifecycle Gating:**
+**Document Lifecycle Gating** (per downstream, per URI):
 
-Per downstream server, per document URI:
-- **Before didOpen sent**: didChange → DROP (don't queue, don't forward)
-- **After didOpen sent**: didChange, didSave, willSave → FORWARD immediately
+LSP requires `didOpen` before any document-specific operations. Two-level gating ensures correct ordering:
+
+| Operation | Server Lifecycle | Document Lifecycle |
+|-----------|------------------|-------------------|
+| `didOpen` | Requires `Ready` | Transitions NotOpened → Opened |
+| `didChange`, `didSave`, `willSave` | Requires `Ready` | Requires `Opened` (DROP if NotOpened) |
+| Document requests (hover, etc.) | Requires `Ready` | Requires `Opened` |
+
+**Key constraint**: `didOpen` is only sent **after** the server reaches `Ready` state. This ensures:
+1. LSP handshake completes before document notifications
+2. `didOpen` contains the current document snapshot (not stale content)
 
 The `didOpen` notification contains the complete accumulated state, making queued `didChange` notifications redundant.
 
