@@ -230,6 +230,7 @@ enum ConnectionState {
 | `Ready` | crash / panic | `Failed` |
 | `Failed` | (automatic) | `Closed` |
 | `Closing` | (graceful or timeout) | `Closed` |
+| `Closing` | panic | `Closed` |
 
 **Key Transition: Failed → Closed (Direct)**
 
