@@ -145,22 +145,26 @@ Maintain the latest host-document snapshot per downstream. When a slower server 
 **Document Lifecycle States** (per downstream, per URI):
 
 ```
-States: NotOpened | Opened | Closed
+States: Opened | Closed
+
+Default: Closed (absent entry = Closed)
 
 Transitions:
-- NotOpened → Opened      (didOpen sent to downstream)
+- Closed → Opened         (didOpen sent to downstream)
 - Opened → Closed         (didClose sent to downstream)
-- NotOpened → Closed      (didClose before didOpen - suppress didOpen)
 ```
+
+**Why `Closed` as default**: From the downstream server's perspective, "never opened" and "was opened, now closed" are functionally equivalent—both require `didOpen` before any document operations. Using `Closed` as the default simplifies re-opening: it's just the normal `Closed → Opened` transition.
 
 **Notification Handling by State:**
 
-| Notification | NotOpened State | Opened State | Closed State |
-|--------------|----------------|--------------|--------------|
-| `didChange` | **DROP** (didOpen contains current state) | **FORWARD** | **SUPPRESS** |
-| `didSave` | **DROP** | **FORWARD** | **SUPPRESS** |
-| `willSave` | **DROP** | **FORWARD** | **SUPPRESS** |
-| `didClose` | Transition to **Closed**, suppress pending didOpen | **FORWARD**, transition to **Closed** | Already closed |
+| Notification | Closed State (default) | Opened State |
+|--------------|------------------------|--------------|
+| `didOpen` | **SEND**, transition to **Opened** | Unexpected (log warning) |
+| `didChange` | **DROP** (didOpen contains current state) | **FORWARD** |
+| `didSave` | **DROP** | **FORWARD** |
+| `willSave` | **DROP** | **FORWARD** |
+| `didClose` | Suppress (already closed) | **FORWARD**, transition to **Closed** |
 
 **Why drop instead of queue**: The `didOpen` notification contains the complete document text at send time. Accumulated client edits are included. Dropping `didChange` before `didOpen` avoids duplicate state updates.
 

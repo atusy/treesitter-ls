@@ -198,26 +198,32 @@ enum ConnectionState {
      │ Ready  │            │                │
      └───┬────┘            │                │
          │                 │                │
-    ┌────┼─────────────────┼────────────────┤
+    ┌────┼─────────────────┤                │
     │    │                 │                │
 shutdown crash/         crash/              │
  signal  panic          panic               │
     │    │                 │                │
     ▼    ▼                 ▼                ▼
 ┌──────────┐          ┌────────┐      ┌─────────┐
-│ Closing  │◄─────────┤ Failed │      │ (abort) │
-└────┬─────┘ shutdown └────┬───┘      └─────────┘
-     │        signal       │
-     │                     │ no shutdown
-     │                     │ (cleanup only)
-     │                     │
-     └──────────┬──────────┘
+│ Closing  │          │ Failed │      │ Closing │
+└────┬─────┘          └────┬───┘      └────┬────┘
+     │                     │               │
+     │                     │ (direct)      │
+     │                     │               │
+     └──────────┬──────────┴───────────────┘
                 │
                 ▼
            ┌──────────┐
            │  Closed  │  (terminal state)
            └──────────┘
 ```
+
+**Key Transition: Failed → Closed (Direct)**
+
+`Failed` transitions directly to `Closed`, bypassing `Closing`. This is because:
+- `Failed` state means the connection is already broken (panic, crash, timeout)
+- LSP shutdown handshake is impossible (stdin may be unavailable)
+- ADR-0017 specifies: `Failed → Closed` with process cleanup only (SIGTERM → SIGKILL)
 
 **Operation Gating:**
 
@@ -228,7 +234,11 @@ Operations are gated at two levels: **server lifecycle** and **document lifecycl
 - **Requests**: Gated on `Ready` state:
   - `Initializing` → `REQUEST_FAILED` ("bridge: downstream server initializing")
   - `Failed` → `REQUEST_FAILED` ("bridge: downstream server failed")
-- **Notifications**: Accepted by writer loop in `Initializing` or `Ready` state, but subject to document lifecycle gating below
+  - `Closing` → `REQUEST_FAILED` ("bridge: connection closing") [See ADR-0017]
+  - `Closed` → `REQUEST_FAILED` ("bridge: connection closed")
+- **Notifications**: Accepted by writer loop in `Initializing` or `Ready` state only
+  - `Closing`/`Closed` → DROP (writer loop stopped, see ADR-0017)
+  - Subject to document lifecycle gating below
 
 **Why `REQUEST_FAILED` instead of `SERVER_NOT_INITIALIZED`**: The upstream client communicates with treesitter-ls, which IS initialized. The client has no knowledge of downstream servers—that's an internal implementation detail. Using `SERVER_NOT_INITIALIZED` would confuse clients that just received an `initialized` response from treesitter-ls.
 

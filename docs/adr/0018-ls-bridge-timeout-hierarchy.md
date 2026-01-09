@@ -100,6 +100,12 @@ Global Shutdown overrides all (highest priority)
 - Graceful attempts → SIGTERM → SIGKILL escalation
 - Reserve ~20% of timeout for SIGTERM/SIGKILL (e.g., 10s total → 8s graceful + 2s forced)
 
+**Writer-Idle Timeout** (within Global Shutdown):
+- **Duration**: 2s fixed
+- **Purpose**: Wait for writer loop to finish current operation before taking exclusive stdin access
+- **Scope**: Counts against global shutdown budget (not additional time)
+- **See**: ADR-0017 § Writer Loop Shutdown Synchronization
+
 ## Consequences
 
 ### Positive

@@ -157,6 +157,7 @@ The system uses two distinct timeout mechanisms with different purposes:
 - **Timer Management**:
   - **Start**: When initialize request sent (Connection state: Initializing)
   - **Stop**: When initialize response received (transition to Ready)
+  - **Cancel**: On shutdown signal (global shutdown timeout takes over, see ADR-0018)
 - **Behavior on Timeout**: Connection transitions to Failed state
 
 **Future Extension (Phase 2)**: Circuit breaker integration for failure tracking and backoff.
