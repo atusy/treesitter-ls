@@ -65,19 +65,21 @@ Without clear precedence rules, timeout interactions are non-deterministic:
 |------|---------|----------|---------|--------|
 | **1** | Per-Request | 2-5s | Fan-out to n≥2 servers | Return partial results or `REQUEST_FAILED` |
 
-### Precedence Rules (Phase 1)
+### Precedence Rules
 
 **Global shutdown overrides all other timeouts.**
 
 | Scenario | Active Timeouts | Behavior |
 |----------|----------------|----------|
-| Normal operation | Liveness | Reset on activity; `Ready` → `Failed` on timeout |
-| Shutdown (any state) | Global only | Liveness/Init timeouts STOP; global enforces termination |
+| Normal operation (Phase 1) | Liveness | Reset on activity; `Ready` → `Failed` on timeout |
+| Normal operation (Phase 3) | Liveness, Per-request | Per-request bounds aggregation; Liveness detects hung servers |
+| Shutdown (any state) | Global only | All other timeouts (Init/Liveness/Per-request) STOP; global enforces termination |
 | Late response during shutdown | Global | ACCEPT until global timeout expires |
 
 **Key Interactions:**
 - Liveness timeout **STOPS** when entering `Closing` state
 - Initialization timeout **CANCELLED** on shutdown (global takes over)
+- Per-request timeout **STOPS** on shutdown (futures receive `RecvError` from closed channels)
 - Late responses accepted until global timeout (server is responsive, not hung)
 
 ## Configuration Recommendations
@@ -145,7 +147,7 @@ Let implementation details determine which timeout wins.
 
 ## Related ADRs
 
-- **[ADR-0014](0014-ls-bridge-async-connection.md)**: Defines idle and initialization timeouts
+- **[ADR-0014](0014-ls-bridge-async-connection.md)**: Defines liveness and initialization timeouts
 - **[ADR-0015](0015-ls-bridge-message-ordering.md)**: Connection state machine (state-based timeout gating)
 - **[ADR-0016](0016-ls-bridge-server-pool-coordination.md)**: Per-request timeout *(Phase 3)*
 - **[ADR-0017](0017-ls-bridge-graceful-shutdown.md)**: Global shutdown timeout
