@@ -185,11 +185,19 @@ async fn graceful_shutdown(&self) {
 
 **Global timeout**: Implementation-defined duration (typically 5-15 seconds) for entire shutdown sequence across all connections.
 
+**Best-Effort Parallel Shutdown:**
+All connections shut down in parallel under a single global ceiling. This is intentionally best-effort:
+- No per-connection budget allocation (avoids complexity)
+- Fast servers complete quickly; slow servers use remaining time
+- If global timeout expires, all remaining connections are force-killed
+- No fairness guarantee: a very slow server may consume most of the budget
+
 **Rationale for Global Timeout:**
 - Multi-server coordination requires bounded total time
 - User experience: Shutdown shouldn't hang indefinitely
 - Per-server timeout could multiply (5 servers × 5s = 25s unacceptable)
 - Fast servers don't wait for slow servers to time out
+- Simplicity: No complex budget-splitting logic
 
 **Timeout Application:**
 ```rust
@@ -197,7 +205,7 @@ async fn shutdown_all_connections(connections: Vec<Connection>) {
     let global_timeout = Duration::from_secs(IMPL_DEFINED);
 
     tokio::time::timeout(global_timeout, async {
-        // Shutdown all connections in parallel
+        // Shutdown all connections in parallel (best-effort)
         let tasks = connections.iter()
             .map(|conn| conn.graceful_shutdown());
 
