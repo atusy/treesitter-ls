@@ -222,7 +222,9 @@ For fan-out **requests** (with `id`), configure aggregation per method:
 
 ```rust
 enum AggregationStrategy {
-    /// Return first successful response, cancel others
+    /// Return first successful response, cancel others.
+    /// On first success: immediately send $/cancelRequest to remaining servers,
+    /// discard any late responses.
     FirstWins,
 
     /// Wait for all, merge array results (candidate lists only)
@@ -249,6 +251,14 @@ enum AggregationStrategy {
   - **Memory management**: Request entry removed from `pending_responses` after returning partial results
 - **Partial results**: If at least one downstream succeeds, respond with successful `result` using LSP-native fields (e.g., for CompletionList: `{ "isIncomplete": true, "items": [...] }`)
 - **Total failure**: If all downstreams fail or time out, respond with `ResponseError` (`REQUEST_FAILED`)
+
+**Aggregation Error Messages:**
+
+| Scenario | Error Code | Message |
+|----------|------------|---------|
+| All servers timeout, no responses | `REQUEST_FAILED` | "bridge: aggregation timeout, no responses received" |
+| All servers return errors | `REQUEST_FAILED` | "bridge: all downstream servers failed" |
+| No servers configured for method | `REQUEST_FAILED` | "bridge: no provider for {method} in {language}" |
 
 ### Phase 3: Configuration Example
 
