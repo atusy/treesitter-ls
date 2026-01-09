@@ -96,6 +96,12 @@ When the reader task exits abnormally (EOF, read error, timeout, or shutdown), a
 - Clear the pending map to prevent memory leaks
 - Log failures for observability
 
+**Cleanup Timeout Bounds:**
+The cleanup operation itself must complete within a bounded time (recommended: 100ms) to prevent cleanup hangs from blocking state transitions:
+- If cleanup exceeds timeout, force state transition anyway
+- Log cleanup timeout as a warning (indicates potential channel saturation)
+- Remaining pending entries will be dropped when the pending map is dropped
+
 **Race Prevention (Request Registration vs Reader Exit):**
 
 A critical race condition exists between request registration and reader task cleanup. The **check-insert-check pattern** prevents orphaned requests:
