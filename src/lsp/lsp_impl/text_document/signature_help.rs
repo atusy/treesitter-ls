@@ -3,7 +3,6 @@
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 
-use crate::language::injection::CacheableInjectionRegion;
 use crate::text::PositionMapper;
 
 use super::super::TreeSitterLs;
@@ -97,30 +96,6 @@ impl TreeSitterLs {
             return Ok(None);
         };
 
-        // Create cacheable region for position translation
-        let _cacheable = CacheableInjectionRegion::from_region_info(region, "temp", text);
-
-        // Call language_server_pool.signature_help() for the injection region
-        // This is a fakeit implementation that returns Ok(None) immediately
-        // TODO(ADR-0012 Phase 2): Implement real LSP communication with:
-        // 1. Virtual document URI and position translation
-        // 2. Actual LSP signatureHelp request to bridged language server
-        // 3. Response translation back to host document coordinates
-
-        // For fakeit pass, create dummy params (real implementation will use translated position)
-        let dummy_params = SignatureHelpParams {
-            text_document_position_params: TextDocumentPositionParams {
-                text_document: TextDocumentIdentifier { uri: uri.clone() },
-                position,
-            },
-            work_done_progress_params: WorkDoneProgressParams::default(),
-            context: None,
-        };
-        let signature_help_response = self
-            .language_server_pool
-            .signature_help(dummy_params)
-            .await?;
-
-        Ok(signature_help_response)
+        Ok(None)
     }
 }

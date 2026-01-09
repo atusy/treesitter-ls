@@ -125,24 +125,6 @@ impl TreeSitterLs {
             )
             .await;
 
-        // Call language_server_pool.definition() for the injection region
-        // This is a fakeit implementation that returns Ok(None) immediately
-        // TODO(ADR-0012 Phase 2): Implement real LSP communication with:
-        // 1. Virtual document URI and position translation
-        // 2. Actual LSP definition request to bridged language server
-        // 3. Response location translation back to host document coordinates
-
-        // For fakeit pass, create dummy params (real implementation will use translated position)
-        let dummy_params = GotoDefinitionParams {
-            text_document_position_params: TextDocumentPositionParams {
-                text_document: TextDocumentIdentifier { uri: uri.clone() },
-                position,
-            },
-            work_done_progress_params: WorkDoneProgressParams::default(),
-            partial_result_params: PartialResultParams::default(),
-        };
-        let definition_response = self.language_server_pool.definition(dummy_params).await?;
-
-        Ok(definition_response)
+        Ok(None)
     }
 }

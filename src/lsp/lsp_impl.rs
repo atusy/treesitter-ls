@@ -29,53 +29,6 @@ use super::auto_install::{InstallingLanguages, get_injected_languages};
 use super::progress::{create_progress_begin, create_progress_end};
 use super::semantic_request_tracker::SemanticRequestTracker;
 
-/// Parse a JSON notification and extract ProgressParams if it's a $/progress notification.
-///
-/// Returns None if:
-/// - The notification is not a $/progress notification
-/// - The params field cannot be parsed as ProgressParams
-fn parse_progress_notification(notification: &serde_json::Value) -> Option<ProgressParams> {
-    // Check if this is a $/progress notification
-    let method = notification.get("method")?.as_str()?;
-    if method != "$/progress" {
-        return None;
-    }
-
-    // Extract and parse the params field
-    let params = notification.get("params")?;
-    serde_json::from_value::<ProgressParams>(params.clone()).ok()
-}
-
-/// Extract language from virtual document URI path.
-///
-/// PBI-192: Virtual document URIs use path-based format to identify the injection language.
-/// Expected format: `file:///virtual/{language}/{hash}.{ext}`
-/// Example: `file:///virtual/lua/abc123.lua` → "lua"
-///
-/// This is the same format used by completion requests (see completion.rs line 112).
-///
-/// # Arguments
-/// * `uri_str` - The URI string from the notification
-///
-/// # Returns
-/// * `Some(language_id)` if the URI matches the virtual document format
-/// * `None` if the URI is not a virtual document or cannot be parsed
-fn extract_language_from_notification_uri(uri_str: &str) -> Option<String> {
-    // Parse the URI
-    let url = Url::parse(uri_str).ok()?;
-
-    // Extract language from path: /virtual/{language}/{hash}.{ext}
-    let path = url.path();
-    let parts: Vec<&str> = path.split('/').collect();
-
-    // Path format: ["", "virtual", "{language}", "{hash}.{ext}"]
-    if parts.len() >= 4 && parts[1] == "virtual" {
-        Some(parts[2].to_string())
-    } else {
-        None
-    }
-}
-
 fn lsp_legend_types() -> Vec<SemanticTokenType> {
     LEGEND_TYPES
         .iter()
@@ -108,17 +61,8 @@ pub struct TreeSitterLs {
     installing_languages: InstallingLanguages,
     /// Tracks parsers that have crashed
     failed_parsers: FailedParserRegistry,
-    /// Sender for client notifications to be forwarded to bridge.
-    /// Kept alive for server lifetime to prevent channel from closing.
-    tokio_notification_tx: Option<tokio::sync::mpsc::UnboundedSender<serde_json::Value>>,
-    /// Receiver for client notifications to be forwarded to bridge.
-    /// Wrapped in Option so it can be taken once when starting the forwarder task.
-    tokio_notification_rx:
-        tokio::sync::Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<serde_json::Value>>>,
     /// Tracks active semantic token requests for cancellation support
     semantic_request_tracker: SemanticRequestTracker,
-    /// Language server pool for bridging requests to injection language servers
-    language_server_pool: crate::lsp::bridge::LanguageServerPool,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -147,12 +91,7 @@ impl TreeSitterLs {
         // Initialize failed parser registry with crash detection
         let failed_parsers = Self::init_failed_parser_registry();
 
-        // Note: Startup cleanup of bridge temp directories removed with bridge module.
-        // When bridge is re-implemented (ADR-0012), add cleanup here if needed.
-
-        // Create notification channel for async bridge
-        // Store sender to keep channel alive for server lifetime (PBI-191)
-        let (tokio_notification_tx, tokio_notification_rx) = tokio::sync::mpsc::unbounded_channel();
+        // Note: Bridge infrastructure removed. Will be re-implemented per ADR-0013 through ADR-0018.
 
         Self {
             client,
@@ -166,10 +105,7 @@ impl TreeSitterLs {
             settings: ArcSwap::new(Arc::new(WorkspaceSettings::default())),
             installing_languages: InstallingLanguages::new(),
             failed_parsers,
-            tokio_notification_tx: Some(tokio_notification_tx),
-            tokio_notification_rx: tokio::sync::Mutex::new(Some(tokio_notification_rx)),
             semantic_request_tracker: SemanticRequestTracker::new(),
-            language_server_pool: crate::lsp::bridge::LanguageServerPool::new(),
         }
     }
 
@@ -223,29 +159,6 @@ impl TreeSitterLs {
 
         let default_str = default_dir.to_string_lossy();
         search_paths.iter().any(|p| p == default_str.as_ref())
-    }
-
-    /// Forward a client notification to the notification channel for bridge processing.
-    ///
-    /// PBI-191: This method sends notifications (didChange, didSave, didClose) through
-    /// the tokio_notification_tx channel to the notification forwarder task, which then
-    /// routes them to the bridge layer.
-    ///
-    /// # Arguments
-    /// * `notification` - The JSON-RPC notification to forward
-    ///
-    /// # Returns
-    /// * `Ok(())` if notification was sent successfully
-    /// * `Err` if sender is None or channel is closed
-    async fn handle_client_notification(&self, notification: serde_json::Value) -> Result<()> {
-        if let Some(ref sender) = self.tokio_notification_tx {
-            sender
-                .send(notification)
-                .map_err(|_| tower_lsp::jsonrpc::Error::internal_error())?;
-            Ok(())
-        } else {
-            Err(tower_lsp::jsonrpc::Error::internal_error())
-        }
     }
 
     /// Notify user that parser is missing and needs manual installation.
@@ -595,154 +508,6 @@ impl TreeSitterLs {
         self.settings.store(Arc::new(settings.clone()));
         let summary = self.language.load_settings(settings);
         self.handle_language_events(&summary.events).await;
-    }
-
-    /// Start the background task that forwards notifications bidirectionally.
-    ///
-    /// PBI-191/192: This task forwards notifications in two directions:
-    /// 1. $/progress notifications from bridge → LSP client
-    /// 2. Client notifications (didChange/didSave/didClose) → bridge
-    ///
-    /// This takes ownership of the notification receiver and spawns a task that:
-    /// 1. Polls the receiver for notifications from handle_client_notification
-    /// 2. Routes based on notification method:
-    ///    - $/progress → forward to client
-    ///    - textDocument/* → extract language → get connection → forward to bridge
-    ///
-    /// This method is called once from `initialized()` after the LSP handshake completes.
-    async fn start_notification_forwarder(&self) {
-        // Take the receiver from the Option (can only be done once)
-        let mut rx_guard = self.tokio_notification_rx.lock().await;
-        let Some(mut rx) = rx_guard.take() else {
-            // Receiver already taken (shouldn't happen, but defensive)
-            log::warn!(
-                target: "treesitter_ls::notification_forwarder",
-                "Notification receiver already taken, forwarder not started"
-            );
-            return;
-        };
-        drop(rx_guard); // Release the lock before spawning
-
-        let client = self.client.clone();
-        // PBI-192: Clone bridge pool reference for forwarding client notifications to bridge
-        let bridge_pool = self.language_server_pool.clone();
-
-        // Spawn the forwarder task
-        tokio::spawn(async move {
-            log::debug!(
-                target: "treesitter_ls::notification_forwarder",
-                "Notification forwarder started"
-            );
-
-            while let Some(notification) = rx.recv().await {
-                // Extract method to route notification
-                let method = notification
-                    .get("method")
-                    .and_then(|m| m.as_str())
-                    .unwrap_or("");
-
-                match method {
-                    "$/progress" => {
-                        // Progress notification from bridge → forward to client
-                        if let Some(progress_params) = parse_progress_notification(&notification) {
-                            log::debug!(
-                                target: "treesitter_ls::notification_forwarder",
-                                "Forwarding $/progress notification to client"
-                            );
-                            client.send_notification::<Progress>(progress_params).await;
-                        }
-                    }
-                    "textDocument/didChange" | "textDocument/didSave" | "textDocument/didClose" => {
-                        // PBI-192: Client notification → extract language → route to bridge
-                        log::debug!(
-                            target: "treesitter_ls::notification_forwarder",
-                            "Received {} notification for bridge forwarding",
-                            method
-                        );
-
-                        // Extract URI from notification params
-                        let uri_str = notification
-                            .get("params")
-                            .and_then(|p| p.get("textDocument"))
-                            .and_then(|td| td.get("uri"))
-                            .and_then(|u| u.as_str());
-
-                        let Some(uri_str) = uri_str else {
-                            log::warn!(
-                                target: "treesitter_ls::notification_forwarder",
-                                "Failed to extract URI from {} notification",
-                                method
-                            );
-                            continue;
-                        };
-
-                        // Extract language from virtual URI path
-                        let Some(language) = extract_language_from_notification_uri(uri_str) else {
-                            // Not a virtual URI (/virtual/{lang}/) - skip forwarding
-                            // This is normal for host document notifications
-                            log::debug!(
-                                target: "treesitter_ls::notification_forwarder",
-                                "Skipping {} notification - not a virtual document URI: {}",
-                                method,
-                                uri_str
-                            );
-                            continue;
-                        };
-
-                        // Get or spawn bridge connection for this language
-                        let connection = match bridge_pool.get_or_spawn_connection(&language).await
-                        {
-                            Ok(conn) => conn,
-                            Err(e) => {
-                                log::error!(
-                                    target: "treesitter_ls::notification_forwarder",
-                                    "Failed to get bridge connection for {}: {}",
-                                    language,
-                                    e
-                                );
-                                continue;
-                            }
-                        };
-
-                        // Forward notification to bridge connection
-                        // Extract just the params (not the full JSON-RPC envelope)
-                        let params = notification
-                            .get("params")
-                            .cloned()
-                            .unwrap_or(serde_json::json!({}));
-
-                        if let Err(e) = connection.send_notification(method, params).await {
-                            log::error!(
-                                target: "treesitter_ls::notification_forwarder",
-                                "Failed to forward {} notification to {} bridge: {}",
-                                method,
-                                language,
-                                e
-                            );
-                        } else {
-                            log::debug!(
-                                target: "treesitter_ls::notification_forwarder",
-                                "Successfully forwarded {} notification to {} bridge",
-                                method,
-                                language
-                            );
-                        }
-                    }
-                    _ => {
-                        log::warn!(
-                            target: "treesitter_ls::notification_forwarder",
-                            "Unknown notification method: {}",
-                            method
-                        );
-                    }
-                }
-            }
-
-            log::debug!(
-                target: "treesitter_ls::notification_forwarder",
-                "Notification forwarder stopped (channel closed)"
-            );
-        });
     }
 
     async fn report_settings_events(&self, events: &[SettingsEvent]) {
@@ -1225,9 +990,6 @@ impl LanguageServer for TreeSitterLs {
     }
 
     async fn initialized(&self, _: InitializedParams) {
-        // Start the background task that forwards $/progress notifications to the client
-        self.start_notification_forwarder().await;
-
         self.client
             .log_message(MessageType::INFO, "server is ready")
             .await;
@@ -1375,18 +1137,12 @@ impl LanguageServer for TreeSitterLs {
         // Cancel any pending semantic token requests for this document
         self.semantic_request_tracker.cancel_all_for_uri(&uri);
 
-        // Note: When async bridge is re-implemented (ADR-0012), add cleanup call here:
-        // self.language_server_pool.close_documents_for_host(uri.as_str()).await;
-
         self.client
             .log_message(MessageType::INFO, "file closed!")
             .await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
-        // PBI-191: Clone params early for bridge notification forwarding
-        let params_for_bridge = params.clone();
-
         let uri = params.text_document.uri;
 
         self.client
@@ -1497,28 +1253,6 @@ impl LanguageServer for TreeSitterLs {
         self.client
             .log_message(MessageType::INFO, "file changed!")
             .await;
-
-        // PBI-191: Forward didChange notification to bridge via channel
-        // Reconstruct JSON-RPC notification for bridge forwarding
-        let notification = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "textDocument/didChange",
-            "params": {
-                "textDocument": {
-                    "uri": params_for_bridge.text_document.uri.to_string(),
-                    "version": params_for_bridge.text_document.version
-                },
-                "contentChanges": params_for_bridge.content_changes
-            }
-        });
-
-        if let Err(e) = self.handle_client_notification(notification).await {
-            log::warn!(
-                target: "treesitter_ls::notification",
-                "Failed to forward didChange notification to bridge: {:?}",
-                e
-            );
-        }
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
@@ -1590,117 +1324,6 @@ mod tests {
     use super::*;
     use crate::config::settings::BridgeLanguageConfig;
     use std::collections::{HashMap, HashSet};
-
-    /// PBI-192 Subtask 2-6: Test notification routing to bridge connection.
-    ///
-    /// This test verifies the complete notification forwarding pipeline:
-    /// 1. Extract language from URI
-    /// 2. Get or spawn bridge connection for that language
-    /// 3. Forward didChange/didSave/didClose to the bridge
-    /// 4. Handle notifications without language gracefully
-    ///
-    /// Since we can't easily mock BridgeConnection in unit tests, this test
-    /// verifies the logic structure. E2E tests will verify end-to-end behavior.
-    #[tokio::test]
-    async fn test_notification_forwarder_routes_to_bridge() {
-        // Create a notification with lua injection language (virtual URI format)
-        let notification = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "textDocument/didChange",
-            "params": {
-                "textDocument": {
-                    "uri": "file:///virtual/lua/abc123.lua",
-                    "version": 2
-                },
-                "contentChanges": [{
-                    "text": "local x = 1"
-                }]
-            }
-        });
-
-        // Extract URI from notification
-        let uri_str = notification["params"]["textDocument"]["uri"]
-            .as_str()
-            .expect("Should have URI");
-
-        // Extract language
-        let language = extract_language_from_notification_uri(uri_str);
-        assert_eq!(
-            language,
-            Some("lua".to_string()),
-            "Should extract lua from virtual URI path"
-        );
-
-        // Verify we can extract params for forwarding
-        let params = &notification["params"];
-        assert!(params.get("textDocument").is_some());
-        assert!(params.get("contentChanges").is_some());
-    }
-
-    /// PBI-192 Subtask 6: Test handling notifications without language.
-    ///
-    /// Notifications for non-virtual URIs should be handled gracefully
-    /// (silent skip, no error). This can occur for host document notifications.
-    #[test]
-    fn test_notification_without_language_returns_none() {
-        // Notification with regular file URI (not virtual format)
-        let uri = "file:///test.md";
-        let language = extract_language_from_notification_uri(uri);
-        assert_eq!(language, None, "Should return None for non-virtual URI");
-
-        // This is correct behavior - notification forwarder will skip forwarding
-        // when extract_language_from_notification_uri returns None
-    }
-
-    /// PBI-192 Subtask 1: Test extracting language from virtual document URI.
-    ///
-    /// Virtual document URIs use path-based format to identify the injection language.
-    /// Expected format: file:///virtual/{language}/{hash}.{ext}
-    ///
-    /// This test verifies extract_language_from_notification_uri() correctly parses
-    /// the URI path to extract the language identifier.
-    #[test]
-    fn test_extract_language_from_notification_uri() {
-        // Test with lua language
-        let uri_lua = "file:///virtual/lua/abc123.lua";
-        let language = extract_language_from_notification_uri(uri_lua);
-        assert_eq!(
-            language,
-            Some("lua".to_string()),
-            "Should extract 'lua' from virtual URI path"
-        );
-
-        // Test with python language
-        let uri_python = "file:///virtual/python/xyz789.py";
-        let language = extract_language_from_notification_uri(uri_python);
-        assert_eq!(
-            language,
-            Some("python".to_string()),
-            "Should extract 'python' from virtual URI path"
-        );
-
-        // Test with rust language
-        let uri_rust = "file:///virtual/rust/def456.rs";
-        let language = extract_language_from_notification_uri(uri_rust);
-        assert_eq!(
-            language,
-            Some("rust".to_string()),
-            "Should extract 'rust' from virtual URI path"
-        );
-
-        // Test URI without virtual path format
-        let uri_no_virtual = "file:///test.md";
-        let language = extract_language_from_notification_uri(uri_no_virtual);
-        assert_eq!(language, None, "Should return None for non-virtual URI");
-
-        // Test URI with wrong path format
-        let uri_wrong_format = "file:///real/document.lua";
-        let language = extract_language_from_notification_uri(uri_wrong_format);
-        assert_eq!(
-            language, None,
-            "Should return None for URI not matching /virtual/{{lang}}/ format"
-        );
-    }
 
     #[test]
     fn should_create_valid_url_from_file_path() {
@@ -1861,88 +1484,6 @@ mod tests {
     }
 
     // Note: Large integration tests for auto-install are in tests/test_auto_install_integration.rs
-
-    /// Test that parse_progress_notification correctly extracts ProgressParams from JSON.
-    ///
-    /// This is the core logic used by the notification forwarder to parse
-    /// $/progress notifications before forwarding to the client.
-    #[test]
-    fn test_parse_progress_notification_extracts_params() {
-        // Create a mock $/progress notification as the reader task would receive
-        let notification = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "$/progress",
-            "params": {
-                "token": "rust-analyzer/indexing",
-                "value": {
-                    "kind": "begin",
-                    "title": "Indexing",
-                    "message": "0/100 crates"
-                }
-            }
-        });
-
-        // Parse using the same logic as the forwarder
-        let progress_params = parse_progress_notification(&notification);
-
-        // Verify the params were extracted correctly
-        assert!(
-            progress_params.is_some(),
-            "Should successfully parse $/progress notification"
-        );
-
-        let params = progress_params.unwrap();
-        match params.token {
-            NumberOrString::String(s) => {
-                assert_eq!(s, "rust-analyzer/indexing");
-            }
-            NumberOrString::Number(_) => {
-                panic!("Expected string token");
-            }
-        }
-    }
-
-    /// Test that parse_progress_notification returns None for non-progress notifications.
-    #[test]
-    fn test_parse_progress_notification_returns_none_for_other_methods() {
-        // Create a different notification (not $/progress)
-        let notification = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "textDocument/publishDiagnostics",
-            "params": {
-                "uri": "file:///test.rs",
-                "diagnostics": []
-            }
-        });
-
-        let progress_params = parse_progress_notification(&notification);
-
-        assert!(
-            progress_params.is_none(),
-            "Should return None for non-progress notifications"
-        );
-    }
-
-    /// Test that parse_progress_notification returns None for malformed params.
-    #[test]
-    fn test_parse_progress_notification_returns_none_for_malformed_params() {
-        // Create a $/progress notification with invalid params structure
-        let notification = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "$/progress",
-            "params": {
-                "invalid_field": "this is not a valid ProgressParams"
-            }
-        });
-
-        let progress_params = parse_progress_notification(&notification);
-
-        // ProgressParams requires 'token' and 'value' fields
-        assert!(
-            progress_params.is_none(),
-            "Should return None for malformed $/progress params"
-        );
-    }
 
     /// PBI-155 Subtask 2: Test wildcard language config inheritance
     ///
@@ -2261,208 +1802,6 @@ mod tests {
         assert!(
             !rmd_settings.is_language_bridgeable("python"),
             "Bridge router should block python for rmd (empty filter)"
-        );
-    }
-
-    /// PBI-191 Subtask 1: Test that TreeSitterLs stores tokio_notification_tx sender field.
-    ///
-    /// This test verifies that the notification channel sender is stored in the TreeSitterLs
-    /// struct and kept alive for the server's lifetime. Without this field, the sender is
-    /// dropped at the end of new(), causing the receiver to immediately close.
-    ///
-    /// Test strategy: Create TreeSitterLs instance, verify sender can send after construction.
-    #[tokio::test]
-    async fn test_notification_sender_kept_alive() {
-        // Create a mock client for TreeSitterLs
-        let (service, _) = tower_lsp::LspService::new(|client| TreeSitterLs::new(client));
-        let server = service.inner();
-
-        // Verify that sender field exists and is kept alive
-        assert!(
-            server.tokio_notification_tx.is_some(),
-            "TreeSitterLs should store tokio_notification_tx sender to keep channel alive"
-        );
-
-        // Verify sender is not closed (would be closed if dropped prematurely)
-        let sender = server.tokio_notification_tx.as_ref().unwrap();
-        assert!(
-            !sender.is_closed(),
-            "Sender should not be closed after TreeSitterLs construction"
-        );
-    }
-
-    /// PBI-191 Subtask 2: Test that handle_client_notification() sends notifications through channel.
-    ///
-    /// This test verifies that when handle_client_notification() is called with a notification,
-    /// it forwards the notification through the tokio_notification_tx channel instead of dropping it.
-    ///
-    /// Test strategy: Call handle_client_notification(), verify receiver gets the notification.
-    #[tokio::test]
-    async fn test_handle_client_notification_sends_to_channel() {
-        // Create a mock client for TreeSitterLs
-        let (service, _) = tower_lsp::LspService::new(|client| TreeSitterLs::new(client));
-        let server = service.inner();
-
-        // Create test notification (didChange)
-        let notification = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "textDocument/didChange",
-            "params": {
-                "textDocument": {
-                    "uri": "file:///test.lua",
-                    "version": 2
-                },
-                "contentChanges": [{
-                    "text": "local x = 1"
-                }]
-            }
-        });
-
-        // Send notification through handle_client_notification
-        server
-            .handle_client_notification(notification.clone())
-            .await
-            .expect("handle_client_notification should succeed");
-
-        // Verify notification was sent to channel by receiving it
-        let mut rx_guard = server.tokio_notification_rx.lock().await;
-        let rx = rx_guard.as_mut().expect("Receiver should exist");
-
-        // Try to receive with timeout to avoid hanging if nothing was sent
-        let received = tokio::time::timeout(tokio::time::Duration::from_millis(100), rx.recv())
-            .await
-            .expect("Should receive notification within timeout")
-            .expect("Channel should not be closed");
-
-        assert_eq!(
-            received, notification,
-            "Received notification should match sent notification"
-        );
-    }
-
-    /// PBI-191 Subtask 3: Test that notification forwarder receives from channel.
-    ///
-    /// This test verifies that the notification channel infrastructure works end-to-end:
-    /// notifications sent via handle_client_notification() can be received by a forwarder task.
-    ///
-    /// Note: Full bridge forwarding is tested in E2E tests (Subtask 5) as it requires
-    /// real bridge connections. This test focuses on channel mechanics.
-    ///
-    /// Test strategy: Send notification, start forwarder-like task, verify it receives notification.
-    #[tokio::test]
-    async fn test_notification_forwarder_receives_from_channel() {
-        // Create a mock client for TreeSitterLs
-        let (service, _) = tower_lsp::LspService::new(|client| TreeSitterLs::new(client));
-        let server = service.inner();
-
-        // Create test notification (didChange)
-        let notification = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "textDocument/didChange",
-            "params": {
-                "textDocument": {
-                    "uri": "file:///test.lua",
-                    "version": 2
-                },
-                "contentChanges": [{
-                    "text": "local x = 1"
-                }]
-            }
-        });
-
-        // Take receiver to simulate forwarder task
-        let mut rx_guard = server.tokio_notification_rx.lock().await;
-        let mut rx = rx_guard.take().expect("Receiver should exist");
-        drop(rx_guard);
-
-        // Send notification through handle_client_notification
-        server
-            .handle_client_notification(notification.clone())
-            .await
-            .expect("handle_client_notification should succeed");
-
-        // Simulate forwarder task receiving notification
-        let received = tokio::time::timeout(tokio::time::Duration::from_millis(100), rx.recv())
-            .await
-            .expect("Forwarder should receive notification within timeout")
-            .expect("Channel should not be closed");
-
-        assert_eq!(
-            received, notification,
-            "Forwarder should receive the exact notification that was sent"
-        );
-
-        // Verify method is didChange (forwarder will route based on method)
-        let method = received.get("method").and_then(|m| m.as_str());
-        assert_eq!(
-            method,
-            Some("textDocument/didChange"),
-            "Forwarder should be able to extract notification method"
-        );
-    }
-
-    /// PBI-191 Subtask 4: Test that channel infrastructure stays alive throughout server lifetime.
-    ///
-    /// This is a regression prevention test: verifies the fix from Subtask 1 (storing sender)
-    /// prevents the channel from closing prematurely during normal operation.
-    ///
-    /// Test strategy: Create server, send multiple notifications, verify all are received.
-    #[tokio::test]
-    async fn test_channel_lifecycle_stays_alive() {
-        // Create a mock client for TreeSitterLs
-        let (service, _) = tower_lsp::LspService::new(|client| TreeSitterLs::new(client));
-        let server = service.inner();
-
-        // Verify sender is not closed immediately after construction
-        let sender = server.tokio_notification_tx.as_ref().unwrap();
-        assert!(
-            !sender.is_closed(),
-            "Sender should not be closed after TreeSitterLs construction"
-        );
-
-        // Take receiver to verify it can receive messages
-        let mut rx_guard = server.tokio_notification_rx.lock().await;
-        let mut rx = rx_guard.take().expect("Receiver should exist");
-        drop(rx_guard);
-
-        // Send multiple notifications to verify channel stays open
-        for i in 0..3 {
-            let notification = serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "textDocument/didChange",
-                "params": {
-                    "textDocument": {
-                        "uri": format!("file:///test{}.lua", i),
-                        "version": i + 1
-                    },
-                    "contentChanges": [{
-                        "text": format!("local x = {}", i)
-                    }]
-                }
-            });
-
-            server
-                .handle_client_notification(notification.clone())
-                .await
-                .expect("handle_client_notification should succeed");
-
-            // Verify each notification is received
-            let received = tokio::time::timeout(tokio::time::Duration::from_millis(100), rx.recv())
-                .await
-                .expect("Should receive notification within timeout")
-                .expect("Channel should not be closed");
-
-            assert_eq!(
-                received, notification,
-                "Notification {} should be received correctly",
-                i
-            );
-        }
-
-        // Verify sender is still not closed after multiple sends
-        assert!(
-            !sender.is_closed(),
-            "Sender should still not be closed after sending multiple notifications"
         );
     }
 }
