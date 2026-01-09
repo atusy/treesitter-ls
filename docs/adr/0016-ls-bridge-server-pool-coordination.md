@@ -236,12 +236,12 @@ enum AggregationStrategy {
 
 **Aggregation Stability Rules:**
 - **Per-request timeout conditions**: Timeout applies **only when n ≥ 2 downstream servers participate**
-  - SingleByCapability: No per-request timeout (wait for single server, idle timeout protects)
+  - SingleByCapability: No per-request timeout (wait for single server, liveness timeout protects)
   - FanOut with n=1: No per-request timeout (functionally equivalent to single)
   - FanOut with n≥2: Per-request timeout applies (default: 5s explicit, 2s incremental)
 - **Per-request timeout behavior**: On timeout, return whatever results available **without sending $/cancelRequest**
   - Downstream servers continue processing and send responses
-  - Late responses **discarded** by router but **reset idle timeout** (heartbeat for connection health)
+  - Late responses **discarded** by router but **reset liveness timeout** (heartbeat for connection health)
   - **Memory management**: Request entry removed from `pending_responses` after returning partial results
 - **Partial results**: If at least one downstream succeeds, respond with successful `result` using LSP-native fields (e.g., for CompletionList: `{ "isIncomplete": true, "items": [...] }`)
 - **Total failure**: If all downstreams fail or time out, respond with `ResponseError` (`REQUEST_FAILED`)

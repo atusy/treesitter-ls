@@ -395,7 +395,7 @@ Skip synchronization, just send shutdown request whenever ready.
   - Parallel shutdown with global timeout
 - **[ADR-0018](0018-ls-bridge-timeout-hierarchy.md)**: Timeout Hierarchy
   - Global shutdown timeout takes precedence over other timeouts
-  - Idle timeout disabled during Closing state
+  - Liveness timeout disabled during Closing state
 
 ## References
 

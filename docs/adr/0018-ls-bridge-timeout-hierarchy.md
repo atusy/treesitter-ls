@@ -7,11 +7,11 @@
 | **Type** | Cross-ADR Coordination |
 
 **Related ADRs**:
-- [ADR-0014](0014-ls-bridge-async-connection.md) § Idle Timeout & Initialization Timeout
+- [ADR-0014](0014-ls-bridge-async-connection.md) § Liveness Timeout & Initialization Timeout
 - [ADR-0016](0016-ls-bridge-server-pool-coordination.md) § Response Aggregation
 - [ADR-0017](0017-ls-bridge-graceful-shutdown.md) § Shutdown Timeout
 
-**Phasing**: See [ADR-0013](0013-ls-bridge-implementation-phasing.md) — Phase 1 (Init, Idle, Global Shutdown), Phase 3 (Per-Request).
+**Phasing**: See [ADR-0013](0013-ls-bridge-implementation-phasing.md) — Phase 1 (Init, Liveness, Global Shutdown), Phase 3 (Per-Request).
 
 ## Scope
 
@@ -20,7 +20,7 @@ This ADR coordinates timeout mechanisms across the bridge architecture. It defin
 - Interaction semantics when multiple timeouts are active
 - State transitions triggered by each timeout
 
-**Phase 1 Timeouts** (implemented now): Initialization (Tier 0), Idle (Tier 2), Global Shutdown (Tier 3)
+**Phase 1 Timeouts** (implemented now): Initialization (Tier 0), Liveness (Tier 2), Global Shutdown (Tier 3)
 
 **Phase 3 Timeout** (future): Per-Request (Tier 1) — only needed for multi-server aggregation
 
@@ -29,7 +29,7 @@ This ADR coordinates timeout mechanisms across the bridge architecture. It defin
 The async bridge architecture defines timeout systems across three ADRs:
 
 1. **Initialization Timeout** (ADR-0014): Bounds server initialization time during startup
-2. **Idle Timeout** (ADR-0014): Detects hung servers (unresponsive to pending requests)
+2. **Liveness Timeout** (ADR-0014): Detects hung servers (unresponsive to pending requests)
 3. **Global Shutdown Timeout** (ADR-0017): Bounds total shutdown time
 4. **Per-Request Timeout** (ADR-0016): Bounds user-facing latency for multi-server aggregation *[Phase 3 only]*
 
@@ -37,7 +37,7 @@ The async bridge architecture defines timeout systems across three ADRs:
 
 Without clear precedence rules, timeout interactions are non-deterministic:
 - What happens if shutdown starts during initialization?
-- Should idle timeout fire during shutdown?
+- Should liveness timeout fire during shutdown?
 - Which timeout triggers state transitions?
 
 ## Decision
@@ -49,17 +49,17 @@ Without clear precedence rules, timeout interactions are non-deterministic:
 | Tier | Timeout | Duration | Trigger | Action |
 |------|---------|----------|---------|--------|
 | **0** | Initialization | 30-60s | `initialize` request sent | `Initializing` → `Failed`, respawn |
-| **2** | Idle | 30-120s | Ready state + pending > 0 | `Ready` → `Failed`, respawn |
+| **2** | Liveness | 30-120s | Ready state + pending > 0 | `Ready` → `Failed`, respawn |
 | **3** | Global Shutdown | 5-15s | Shutdown initiated | SIGTERM → SIGKILL, all → `Closed` |
 
 **State-Based Gating:**
 - **Initialization timeout**: Only during `Initializing` state; disabled on shutdown
-- **Idle timeout**: Only during `Ready` state with pending requests; disabled on shutdown
+- **Liveness timeout**: Only during `Ready` state with pending requests; disabled on shutdown
 - **Global shutdown**: Overrides all other timeouts (highest priority)
 
 ### Phase 3 Addition: Per-Request Timeout (Tier 1)
 
-> **Note**: Only needed for multi-server aggregation. In Phase 1, idle timeout provides sufficient protection.
+> **Note**: Only needed for multi-server aggregation. In Phase 1, liveness timeout provides sufficient protection.
 
 | Tier | Timeout | Duration | Trigger | Action |
 |------|---------|----------|---------|--------|
@@ -71,12 +71,12 @@ Without clear precedence rules, timeout interactions are non-deterministic:
 
 | Scenario | Active Timeouts | Behavior |
 |----------|----------------|----------|
-| Normal operation | Idle | Reset on activity; `Ready` → `Failed` on timeout |
-| Shutdown (any state) | Global only | Idle/Init timeouts STOP; global enforces termination |
+| Normal operation | Liveness | Reset on activity; `Ready` → `Failed` on timeout |
+| Shutdown (any state) | Global only | Liveness/Init timeouts STOP; global enforces termination |
 | Late response during shutdown | Global | ACCEPT until global timeout expires |
 
 **Key Interactions:**
-- Idle timeout **STOPS** when entering `Closing` state
+- Liveness timeout **STOPS** when entering `Closing` state
 - Initialization timeout **CANCELLED** on shutdown (global takes over)
 - Late responses accepted until global timeout (server is responsive, not hung)
 
@@ -85,13 +85,13 @@ Without clear precedence rules, timeout interactions are non-deterministic:
 | Timeout | Recommended | Rationale |
 |---------|-------------|-----------|
 | **Initialization** | 30-60s | Heavy servers (rust-analyzer) need time to index |
-| **Idle** | 30-120s | Detect hung servers without false positives |
+| **Liveness** | 30-120s | Detect hung servers without false positives |
 | **Global Shutdown** | 5-15s | Balance clean exit vs user wait time |
 | **Per-Request** *(Phase 3)* | 2-5s | User-facing latency bound for aggregation |
 
 **Relationships:**
 ```
-Initialization (60s) > Idle (30-120s) > Per-request (5s)
+Initialization (60s) > Liveness (30-120s) > Per-request (5s)
 Global Shutdown overrides all (highest priority)
 ```
 
@@ -106,7 +106,7 @@ Global Shutdown overrides all (highest priority)
 
 - **Deterministic behavior**: Clear precedence when multiple timeouts could fire
 - **Bounded shutdown**: Global timeout guarantees termination
-- **Hung server detection**: Idle timeout catches unresponsive servers
+- **Hung server detection**: Liveness timeout catches unresponsive servers
 
 ### Negative
 
@@ -146,7 +146,7 @@ Let implementation details determine which timeout wins.
 
 ## Summary
 
-**Phase 1**: Three timeout tiers — Initialization (30-60s), Idle (30-120s), Global Shutdown (5-15s)
+**Phase 1**: Three timeout tiers — Initialization (30-60s), Liveness (30-120s), Global Shutdown (5-15s)
 
 **Phase 3**: Adds Per-Request timeout (2-5s) for multi-server aggregation
 

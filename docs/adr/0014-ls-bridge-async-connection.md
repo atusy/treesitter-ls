@@ -135,7 +135,7 @@ async fn send_request(&self, request: Request) -> Result<Response> {
 
 The system uses two distinct timeout mechanisms with different purposes:
 
-**1. Idle Timeout (Server Health Monitor)**
+**1. Liveness Timeout (Server Health Monitor)**
 
 - **Purpose**: Detect zombie servers (process alive but unresponsive to pending requests)
 - **Scope**: Connection-level health monitoring
@@ -153,7 +153,7 @@ The system uses two distinct timeout mechanisms with different purposes:
 
 - **Purpose**: Bound initialization time to prevent indefinite hangs during server startup
 - **Scope**: Single operation during connection startup
-- **Duration**: Longer than idle timeout (typically 30-60 seconds)
+- **Duration**: Longer than liveness timeout (typically 30-60 seconds)
 - **Timer Management**:
   - **Start**: When initialize request sent (Connection state: Initializing)
   - **Stop**: When initialize response received (transition to Ready)
@@ -180,7 +180,7 @@ The system uses two distinct timeout mechanisms with different purposes:
 - Immediate shutdown even when server is silent
 
 **Dead Server Detection:**
-- Idle timeout detects hung servers without separate monitoring
+- Liveness timeout detects hung servers without separate monitoring
 - EOF on stdout automatically detected and propagated
 
 **Idiomatic Async Patterns:**
@@ -243,7 +243,7 @@ Use standard library's `std::process` with one blocking OS thread per server rea
 - **[ADR-0015](0015-ls-bridge-message-ordering.md)**: Message Ordering (built on this I/O layer)
 - **[ADR-0016](0016-ls-bridge-server-pool-coordination.md)**: Server Pool Coordination (uses this I/O foundation for N servers)
 - **[ADR-0017](0017-ls-bridge-graceful-shutdown.md)**: Graceful Shutdown (uses shutdown signal from `select!`, adds LSP handshake and process cleanup)
-- **[ADR-0018](0018-ls-bridge-timeout-hierarchy.md)**: Timeout Hierarchy (coordinates idle timeout with other timeout systems)
+- **[ADR-0018](0018-ls-bridge-timeout-hierarchy.md)**: Timeout Hierarchy (coordinates liveness timeout with other timeout systems)
 
 ## Notes
 
@@ -259,4 +259,4 @@ Use standard library's `std::process` with one blocking OS thread per server rea
 ## Amendment History
 
 - **2026-01-06**: Merged [Amendment 001](0013-async-io-layer-amendment-001.md) - Added pending request cleanup requirements and race prevention pattern to prevent indefinite client hangs on reader task exit
-- **2026-01-06**: Merged [Amendment 002](0013-async-io-layer-amendment-002.md) - Added state-based idle timeout gating and separate initialization timeout mechanism to prevent idle timeout from firing during slow initialization
+- **2026-01-06**: Merged [Amendment 002](0013-async-io-layer-amendment-002.md) - Added state-based liveness timeout gating and separate initialization timeout mechanism to prevent liveness timeout from firing during slow initialization
