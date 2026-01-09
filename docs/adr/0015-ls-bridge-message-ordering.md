@@ -285,6 +285,11 @@ Writer loop panics use fail-fast pattern (not restart) because `ChildStdin` cann
 
 **Recovery time**: ~100-500ms (respawn) vs. infinite hang (restart attempt).
 
+**Failed State Semantics:**
+- `Failed` is a terminal state for the *connection* (no self-recovery)
+- The *pool* decides the response: respawn new connection (normal) or cleanup (shutdown)
+- During shutdown: `Failed → Closed` (see ADR-0017), no respawn
+
 **Panic Handler Order:**
 1. **First**: Fail all pending operations (LSP response guarantee)
 2. **Second**: Transition to `Failed` state (or `Closed` if already `Closing`)
