@@ -58,6 +58,21 @@ The async bridge architecture spans multiple ADRs (0014-0018), each defining fea
 
 **Why Rate-limited Respawn**: Language servers fail by crashing, not by returning errors while alive. Rate-limited respawn prevents respawn storms when a server keeps crashing (e.g., bad config, missing dependency).
 
+**Rate-Limited Respawn Specification**:
+
+*Mechanism*:
+- Sliding window rate limiting per language
+- Exponential backoff with cap when limit exceeded
+- Self-healing: retries indefinitely, no permanent death state
+
+*Behavior*:
+- Requests during backoff receive `REQUEST_FAILED` ("server recovering")
+- Telemetry: fire-and-forget, never blocks respawn decisions
+
+*Shutdown*: Respawn suppressed when pool is shutting down (per ADR-0015 § 6).
+
+*Parameters (max respawns, window size, backoff intervals) are implementation-defined.*
+
 **Dependencies**: Phase 1 complete.
 
 ### Phase 3: Multi-LS-per-Language (Future)
