@@ -102,6 +102,8 @@ The cleanup operation itself must complete within a bounded time (recommended: 1
 - Log cleanup timeout as a warning (indicates potential channel saturation)
 - Remaining pending entries will be dropped when the pending map is dropped
 
+**Note on Dropped Channels:** When a `oneshot::Sender` is dropped without sending (due to cleanup timeout), the receiver's `.await` returns `RecvError`. This is semantically equivalent to receiving `INTERNAL_ERROR` - the client knows the request failed. Callers should handle both explicit error responses and channel errors uniformly.
+
 **Race Prevention (Request Registration vs Reader Exit):**
 
 A critical race condition exists between request registration and reader task cleanup. The **check-insert-check pattern** prevents orphaned requests:
@@ -140,10 +142,10 @@ The system uses two distinct timeout mechanisms with different purposes:
 - **Purpose**: Detect zombie servers (process alive but unresponsive to pending requests)
 - **Scope**: Connection-level health monitoring
 - **State-Based Gating**:
-  - **Disabled** during: Initializing, Quiescent (no pending), Closing, Failed, Closed states
+  - **Disabled** during: Initializing, Closing, Failed, Closed states, or Ready with pending = 0
   - **Enabled** during: Ready state with pending requests > 0
 - **Timer Lifecycle**:
-  - **Start**: First request sent when quiescent (pending count: 0→1)
+  - **Start**: First request sent when pending count transitions 0→1
   - **Keep running**: Additional requests sent (pending count increases)
   - **Reset**: Any stdout activity (response or notification) while active
   - **Stop**: Last response received (pending count returns to 0)
