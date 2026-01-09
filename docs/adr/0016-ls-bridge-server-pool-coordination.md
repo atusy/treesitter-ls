@@ -9,7 +9,7 @@
 - [ADR-0014](0014-ls-bridge-async-connection.md): Single-connection async I/O
 - [ADR-0015](0015-ls-bridge-message-ordering.md): Single-server message ordering
 
-**Phasing**: See [ADR-0013](0013-ls-bridge-implementation-phasing.md) — Phase 1 (routing), Phase 2 (health), Phase 3 (aggregation).
+**Phasing**: See [ADR-0013](0013-ls-bridge-implementation-phasing.md) — Phase 1 (routing), Phase 2 (rate-limited respawn), Phase 3 (aggregation).
 
 ## Scope
 
@@ -136,7 +136,7 @@ Multiple downstream servers initialize in parallel since each is independent:
 | Some servers fail | Continue with working servers, respawn failed |
 | All servers fail | Bridge reports errors, continues respawning |
 
-**Future Extension (Phase 2)**: Circuit breaker for failure tracking and backoff.
+**Future Extension (Phase 2)**: Rate-limited respawn to prevent respawn storms.
 
 **Per-Downstream Document Lifecycle:**
 

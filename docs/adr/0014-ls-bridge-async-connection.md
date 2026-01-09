@@ -162,8 +162,6 @@ The system uses two distinct timeout mechanisms with different purposes:
   - **Cancel**: On shutdown signal (global shutdown timeout takes over, see ADR-0018)
 - **Behavior on Timeout**: Connection transitions to Failed state
 
-**Future Extension (Phase 2)**: Circuit breaker integration for failure tracking and backoff.
-
 **Independence**: The two timeouts serve different purposes and never overlap (idle disabled during Initializing; initialization timeout disabled once Ready).
 
 **Coordination with Other Timeouts**: See [ADR-0018](0018-ls-bridge-timeout-hierarchy.md) for precedence rules when shutdown timeout is active.

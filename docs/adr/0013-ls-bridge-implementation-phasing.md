@@ -44,20 +44,19 @@ The async bridge architecture spans multiple ADRs (0014-0018), each defining fea
 **What Doesn't Work Yet:**
 - Multiple servers for same language (pyright + ruff for Python)
 - Response aggregation/merging
-- Circuit breaker / health monitoring
+- Rate-limited respawn (respawn storms possible)
 
 ### Phase 2: Resilience Patterns (Future)
 
-**Goal**: Add fault isolation and recovery without changing routing model.
+**Goal**: Add crash resilience without changing routing model.
 
 | Component | Phase 2 Addition |
 |-----------|------------------|
-| **Circuit Breaker** | Track failures, exponential backoff |
-| **Health Monitoring** | Per-server health state |
-| **Telemetry** | `$/telemetry` events for drops/failures |
+| **Rate-limited respawn** | Max N respawns per time window, backoff on limit |
+| **Telemetry** | `$/telemetry` events for crashes/backoff |
 | **Coalescing** | Optional, profile-driven (ADR-0015 Future) |
 
-**Why Before Phase 3**: Stabilize single-server-per-language before adding aggregation complexity.
+**Why Rate-limited Respawn**: Language servers fail by crashing, not by returning errors while alive. Rate-limited respawn prevents respawn storms when a server keeps crashing (e.g., bad config, missing dependency).
 
 **Dependencies**: Phase 1 complete.
 
@@ -86,8 +85,9 @@ The async bridge architecture spans multiple ADRs (0014-0018), each defining fea
 | Graceful shutdown | ✅ | ✅ | ✅ |
 | Fail-fast during init | ✅ | ✅ | ✅ |
 | Cancellation forwarding | ✅ | ✅ | ✅ |
-| Circuit breaker | ❌ | ✅ | ✅ |
-| Health monitoring | ❌ | ✅ | ✅ |
+| Rate-limited respawn | ❌ | ✅ | ✅ |
+| Telemetry | ❌ | ✅ | ✅ |
+| Coalescing (optional) | ❌ | ✅ | ✅ |
 | Multiple servers/language | ❌ | ❌ | ✅ |
 | Response aggregation | ❌ | ❌ | ✅ |
 | Per-request timeout | ❌ | ❌ | ✅ |
@@ -96,9 +96,9 @@ The async bridge architecture spans multiple ADRs (0014-0018), each defining fea
 
 | ADR | Phase 1 Scope | Phase 2 Additions | Phase 3 Additions |
 |-----|---------------|-------------------|-------------------|
-| **0014** (Connection) | Async I/O, timeouts | Circuit breaker hooks | — |
-| **0015** (Ordering) | Thin bridge, forwarding | Optional coalescing | — |
-| **0016** (Coordination) | Simple routing, lifecycle | Health monitoring | Aggregation, fan-out |
+| **0014** (Connection) | Async I/O, timeouts | — | — |
+| **0015** (Ordering) | Thin bridge, forwarding | Optional coalescing, telemetry | — |
+| **0016** (Coordination) | Simple routing, lifecycle | Rate-limited respawn | Aggregation, fan-out |
 | **0017** (Shutdown) | Graceful shutdown | — | — |
 | **0018** (Timeouts) | Init, Idle, Global | — | Per-request timeout |
 

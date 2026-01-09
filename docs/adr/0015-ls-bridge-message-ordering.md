@@ -166,7 +166,7 @@ The bounded order queue (capacity: 256) uses `try_send()` to prevent deadlocks d
 **Notification Drop Telemetry:**
 - Log at WARN level (always)
 
-**Future Extension (Phase 2)**: Full telemetry (`$/telemetry` events) and circuit breaker integration.
+**Future Extension (Phase 2)**: Full telemetry (`$/telemetry` events).
 
 ### 4. Connection State Tracking
 
@@ -336,8 +336,6 @@ select! {
 }
 ```
 
-**Future Extension (Phase 2)**: Circuit breaker integration for failure tracking and exponential backoff.
-
 ## Consequences
 
 ### Positive
@@ -505,4 +503,4 @@ The current design rejects requests with `REQUEST_FAILED` during initialization.
 ## Amendment History
 
 - **2026-01-06**: Merged [Amendment 001](0014-actor-based-message-ordering-amendment-001.md) - Completed state machine with all transitions, panic handler implementation requirements, and error code corrections
-- **2026-01-06**: Merged [Amendment 002](0014-actor-based-message-ordering-amendment-002.md) - Added comprehensive notification drop telemetry, circuit breaker integration, and state re-synchronization metadata to prevent silent data loss
+- **2026-01-06**: Merged [Amendment 002](0014-actor-based-message-ordering-amendment-002.md) - Added comprehensive notification drop telemetry and state re-synchronization metadata to prevent silent data loss
