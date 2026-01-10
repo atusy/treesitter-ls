@@ -265,8 +265,8 @@ const scrum: ScrumDashboard = {
         test: "Unit test that reader task parses Content-Length header and reads JSON-RPC response body",
         implementation: "Spawn async reader task that reads from stdout, parses LSP messages",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "d48e9557", message: "feat(bridge): implement read_message for JSON-RPC parsing", phase: "green" }],
         notes: ["ADR-0014: Reader task with select! for read/shutdown"],
       },
       {
