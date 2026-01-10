@@ -132,8 +132,8 @@ const scrum: ScrumDashboard = {
         test: "Test that BridgeManager tracks which virtual documents have been opened per language server connection",
         implementation: "Add opened_documents HashSet to connection state; check before sending didOpen",
         type: "behavioral",
-        status: "green",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "55abb5e0", message: "feat(bridge): add opened_documents tracking to BridgeManager", phase: "green" }],
         notes: ["Prerequisite for avoiding duplicate didOpen; enables stateful document sync"],
       },
       {
