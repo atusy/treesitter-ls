@@ -33,10 +33,10 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001-140 (Sprint 1-113), PBI-155-161 (124-130), PBI-178-180a (133-135), PBI-184 (136), PBI-181 (137), PBI-185 (138), PBI-187 (139), PBI-180b (140), PBI-190 (141), PBI-191 (142), PBI-192 (143)
+  // Completed PBIs: PBI-001-140 (Sprint 1-113), PBI-155-161 (124-130), PBI-178-180a (133-135), PBI-184 (136), PBI-181 (137), PBI-185 (138), PBI-187 (139), PBI-180b (140), PBI-190 (141), PBI-191 (142), PBI-192 (143), PBI-301 (144)
   // Deferred: PBI-091, PBI-107 | Removed: PBI-163-177 | Superseded: PBI-183 | Cancelled: Sprint 139 PBI-180b attempt
-  // Sprint 139-143: All sprints DONE (Sprint 143: unit tests + code quality PASSED, E2E test infrastructure issue documented)
-  // Walking Skeleton PBIs: PBI-301 through PBI-304 (Draft)
+  // Sprint 139-144: All sprints DONE (Sprint 144: async bridge walking skeleton - 7 tests pass, all ACs satisfied)
+  // Walking Skeleton PBIs: PBI-302 through PBI-304 (Ready)
   product_backlog: [
     // ============================================================
     // Walking Skeleton: Incremental Bridge Feature Development
@@ -73,7 +73,7 @@ const scrum: ScrumDashboard = {
             "Integration test: verify no orphan lua-language-server processes after treesitter-ls exit",
         },
       ],
-      status: "ready",
+      status: "done",
       refinement_notes: [
         "Thinnest possible slice - just spawn the server and confirm it's running",
         "lua-language-server chosen over rust-analyzer: faster init, simpler config, common use case (Neovim docs)",
@@ -231,74 +231,76 @@ const scrum: ScrumDashboard = {
       ],
     },
   ],
-  sprint: {
-    number: 144,
-    pbi_id: "PBI-301",
-    goal: "Establish the foundational bridge architecture by spawning lua-language-server as a child process and confirming successful initialization, proving the async bridge concept works",
-    status: "review",
-    subtasks: [
-      {
-        test: "Unit test that src/lsp/bridge/mod.rs module compiles and exports AsyncBridgeConnection type",
-        implementation: "Create minimal module structure with placeholder types",
-        type: "structural",
-        status: "completed",
-        commits: [{ hash: "1393ded9", message: "feat(bridge): add AsyncBridgeConnection module structure", phase: "green" }],
-        notes: ["Module organization following existing lsp/ structure"],
-      },
-      {
-        test: "Unit test that AsyncBridgeConnection::spawn() spawns a child process with the given command",
-        implementation: "Use tokio::process::Command to spawn lua-language-server with stdio pipes",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "a7116891", message: "feat(bridge): implement spawn() for child process creation", phase: "green" }],
-        notes: ["ADR-0014: Use tokio::process for async I/O"],
-      },
-      {
-        test: "Unit test that send_request() writes JSON-RPC message to stdin with proper Content-Length header",
-        implementation: "Serialize LSP initialize request to JSON-RPC format, write to async stdin",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "4ff80258", message: "feat(bridge): implement write_message for JSON-RPC formatting", phase: "green" }],
-        notes: ["LSP JSON-RPC format: Content-Length header + body"],
-      },
-      {
-        test: "Unit test that reader task parses Content-Length header and reads JSON-RPC response body",
-        implementation: "Spawn async reader task that reads from stdout, parses LSP messages",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "d48e9557", message: "feat(bridge): implement read_message for JSON-RPC parsing", phase: "green" }],
-        notes: ["ADR-0014: Reader task with select! for read/shutdown"],
-      },
-      {
-        test: "Unit test that response is routed to correct pending request via request ID",
-        implementation: "Use DashMap<RequestId, oneshot::Sender> for pending request tracking",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "551917f1", message: "feat(bridge): implement pending request routing via request ID", phase: "green" }],
-        notes: ["ADR-0014: Pending request lifecycle management"],
-      },
-      {
-        test: "Integration test that spawning lua-language-server and sending initialize results in log message",
-        implementation: "Wire up full initialization flow, add log output on successful initialize response",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "89a2e1f6", message: "test(bridge): add lua-language-server initialization integration test", phase: "green" }],
-        notes: [
-          "AC2: logs 'lua-language-server initialized' or similar confirmation",
-          "Requires lua-language-server installed on test machine",
-        ],
-      },
-      {
-        test: "Integration test that dropping AsyncBridgeConnection terminates the child process",
-        implementation: "Implement Drop trait to kill child process; verify no orphan processes",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "525661d9", message: "feat(bridge): implement Drop trait to terminate child process", phase: "green" }],
-        notes: ["AC3: child process terminated when treesitter-ls terminates"],
-      },
-    ],
-  },
-  completed: [],
+  sprint: null,
+  completed: [
+    {
+      number: 144,
+      pbi_id: "PBI-301",
+      goal: "Establish the foundational bridge architecture by spawning lua-language-server as a child process and confirming successful initialization, proving the async bridge concept works",
+      status: "done",
+      subtasks: [
+        {
+          test: "Unit test that src/lsp/bridge/mod.rs module compiles and exports AsyncBridgeConnection type",
+          implementation: "Create minimal module structure with placeholder types",
+          type: "structural",
+          status: "completed",
+          commits: [{ hash: "1393ded9", message: "feat(bridge): add AsyncBridgeConnection module structure", phase: "green" }],
+          notes: ["Module organization following existing lsp/ structure"],
+        },
+        {
+          test: "Unit test that AsyncBridgeConnection::spawn() spawns a child process with the given command",
+          implementation: "Use tokio::process::Command to spawn lua-language-server with stdio pipes",
+          type: "behavioral",
+          status: "completed",
+          commits: [{ hash: "a7116891", message: "feat(bridge): implement spawn() for child process creation", phase: "green" }],
+          notes: ["ADR-0014: Use tokio::process for async I/O"],
+        },
+        {
+          test: "Unit test that send_request() writes JSON-RPC message to stdin with proper Content-Length header",
+          implementation: "Serialize LSP initialize request to JSON-RPC format, write to async stdin",
+          type: "behavioral",
+          status: "completed",
+          commits: [{ hash: "4ff80258", message: "feat(bridge): implement write_message for JSON-RPC formatting", phase: "green" }],
+          notes: ["LSP JSON-RPC format: Content-Length header + body"],
+        },
+        {
+          test: "Unit test that reader task parses Content-Length header and reads JSON-RPC response body",
+          implementation: "Spawn async reader task that reads from stdout, parses LSP messages",
+          type: "behavioral",
+          status: "completed",
+          commits: [{ hash: "d48e9557", message: "feat(bridge): implement read_message for JSON-RPC parsing", phase: "green" }],
+          notes: ["ADR-0014: Reader task with select! for read/shutdown"],
+        },
+        {
+          test: "Unit test that response is routed to correct pending request via request ID",
+          implementation: "Use DashMap<RequestId, oneshot::Sender> for pending request tracking",
+          type: "behavioral",
+          status: "completed",
+          commits: [{ hash: "551917f1", message: "feat(bridge): implement pending request routing via request ID", phase: "green" }],
+          notes: ["ADR-0014: Pending request lifecycle management"],
+        },
+        {
+          test: "Integration test that spawning lua-language-server and sending initialize results in log message",
+          implementation: "Wire up full initialization flow, add log output on successful initialize response",
+          type: "behavioral",
+          status: "completed",
+          commits: [{ hash: "89a2e1f6", message: "test(bridge): add lua-language-server initialization integration test", phase: "green" }],
+          notes: [
+            "AC2: logs 'lua-language-server initialized' or similar confirmation",
+            "Requires lua-language-server installed on test machine",
+          ],
+        },
+        {
+          test: "Integration test that dropping AsyncBridgeConnection terminates the child process",
+          implementation: "Implement Drop trait to kill child process; verify no orphan processes",
+          type: "behavioral",
+          status: "completed",
+          commits: [{ hash: "525661d9", message: "feat(bridge): implement Drop trait to terminate child process", phase: "green" }],
+          notes: ["AC3: child process terminated when treesitter-ls terminates"],
+        },
+      ],
+    },
+  ],
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
