@@ -200,7 +200,7 @@ const scrum: ScrumDashboard = {
         test: "bridge_hover_request_uses_virtual_uri_and_mapped_position",
         implementation: "Construct textDocument/hover JSON-RPC request with virtual URI and transformed position for downstream LS",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: ["Builds on subtasks 1-2; uses PBI-301 write_message()"],
       },
