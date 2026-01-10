@@ -188,7 +188,7 @@ const scrum: ScrumDashboard = {
         test: "Test that completion_impl calls bridge and returns transformed CompletionResponse",
         implementation: "Wire completion_impl to call BridgeManager.send_completion_request",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: ["AC1, AC2: Final wiring to make completions work"],
       },
