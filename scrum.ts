@@ -218,7 +218,7 @@ const scrum: ScrumDashboard = {
         test: "hover_impl_returns_bridge_response_for_lua_injection",
         implementation: "Wire hover_impl to: detect injection -> get bridge connection -> send request -> await response -> transform and return",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: ["Connects all pieces; requires initialized bridge connection"],
       },
