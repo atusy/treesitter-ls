@@ -16,6 +16,7 @@ use crate::config::{
 };
 use crate::document::DocumentStore;
 use crate::language::injection::{CacheableInjectionRegion, collect_all_injections};
+use crate::lsp::bridge::BridgeManager;
 use crate::language::{DocumentParserPool, FailedParserRegistry, LanguageCoordinator};
 use crate::language::{LanguageEvent, LanguageLogLevel};
 use crate::lsp::{SettingsEvent, SettingsEventKind, SettingsSource, load_settings};
@@ -63,6 +64,8 @@ pub struct TreeSitterLs {
     failed_parsers: FailedParserRegistry,
     /// Tracks active semantic token requests for cancellation support
     semantic_request_tracker: SemanticRequestTracker,
+    /// Manages bridge connections to downstream language servers
+    bridge_manager: BridgeManager,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -79,6 +82,7 @@ impl std::fmt::Debug for TreeSitterLs {
             .field("settings", &"ArcSwap<WorkspaceSettings>")
             .field("installing_languages", &"InstallingLanguages")
             .field("failed_parsers", &"FailedParserRegistry")
+            .field("bridge_manager", &"BridgeManager")
             .finish_non_exhaustive()
     }
 }
@@ -91,7 +95,8 @@ impl TreeSitterLs {
         // Initialize failed parser registry with crash detection
         let failed_parsers = Self::init_failed_parser_registry();
 
-        // Note: Bridge infrastructure removed. Will be re-implemented per ADR-0013 through ADR-0018.
+        // Bridge infrastructure (ADR-0013 through ADR-0018)
+        let bridge_manager = BridgeManager::new();
 
         Self {
             client,
@@ -106,6 +111,7 @@ impl TreeSitterLs {
             installing_languages: InstallingLanguages::new(),
             failed_parsers,
             semantic_request_tracker: SemanticRequestTracker::new(),
+            bridge_manager,
         }
     }
 

@@ -9,6 +9,7 @@
 // Walking skeleton: suppress dead_code warnings until fully integrated
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::io;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -16,7 +17,7 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Mutex};
 
 /// Async connection to a downstream language server process.
 ///
@@ -440,6 +441,163 @@ impl PendingRequests {
         {
             // Ignore send error - receiver may have been dropped
             let _ = sender.send(response.clone());
+        }
+    }
+}
+
+/// Manages bridge connections to downstream language servers.
+///
+/// Provides lazy initialization of connections and handles the LSP handshake
+/// (initialize/initialized) for each language server.
+pub(crate) struct BridgeManager {
+    /// Map of language -> initialized connection
+    connections: Mutex<HashMap<String, Arc<Mutex<AsyncBridgeConnection>>>>,
+    /// Counter for generating unique request IDs
+    next_request_id: std::sync::atomic::AtomicI64,
+}
+
+impl BridgeManager {
+    /// Create a new bridge manager.
+    pub(crate) fn new() -> Self {
+        Self {
+            connections: Mutex::new(HashMap::new()),
+            next_request_id: std::sync::atomic::AtomicI64::new(1),
+        }
+    }
+
+    /// Get or create a connection for the specified language.
+    ///
+    /// If no connection exists, spawns the language server and performs
+    /// the LSP initialize/initialized handshake.
+    pub(crate) async fn get_or_create_connection(
+        &self,
+        language: &str,
+        server_config: &crate::config::settings::BridgeServerConfig,
+    ) -> io::Result<Arc<Mutex<AsyncBridgeConnection>>> {
+        let mut connections = self.connections.lock().await;
+
+        // Check if we already have a connection for this language
+        if let Some(conn) = connections.get(language) {
+            return Ok(Arc::clone(conn));
+        }
+
+        // Spawn new connection
+        let mut conn = AsyncBridgeConnection::spawn(server_config.cmd.clone()).await?;
+
+        // Perform LSP initialize handshake
+        let init_request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": self.next_request_id(),
+            "method": "initialize",
+            "params": {
+                "processId": std::process::id(),
+                "rootUri": null,
+                "capabilities": {},
+                "initializationOptions": server_config.initialization_options
+            }
+        });
+
+        conn.write_message(&init_request).await?;
+
+        // Read initialize response (skip any notifications)
+        loop {
+            let msg = conn.read_message().await?;
+            if msg.get("id").is_some() {
+                // Got the initialize response
+                if msg.get("error").is_some() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("Initialize failed: {:?}", msg.get("error")),
+                    ));
+                }
+                break;
+            }
+            // Skip notifications
+        }
+
+        // Send initialized notification
+        let initialized = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "initialized",
+            "params": {}
+        });
+        conn.write_message(&initialized).await?;
+
+        let conn = Arc::new(Mutex::new(conn));
+        connections.insert(language.to_string(), Arc::clone(&conn));
+        Ok(conn)
+    }
+
+    /// Generate a unique request ID.
+    fn next_request_id(&self) -> i64 {
+        self.next_request_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Send a hover request and wait for the response.
+    ///
+    /// This is a convenience method that handles the full request/response cycle:
+    /// 1. Get or create a connection to the language server
+    /// 2. Send a textDocument/didOpen notification if needed
+    /// 3. Send the hover request
+    /// 4. Wait for and return the response
+    pub(crate) async fn send_hover_request(
+        &self,
+        server_config: &crate::config::settings::BridgeServerConfig,
+        host_uri: &tower_lsp::lsp_types::Url,
+        host_position: tower_lsp::lsp_types::Position,
+        injection_language: &str,
+        region_id: &str,
+        region_start_line: u32,
+        virtual_content: &str,
+    ) -> io::Result<serde_json::Value> {
+        // Get or create connection
+        let conn = self
+            .get_or_create_connection(injection_language, server_config)
+            .await?;
+        let mut conn = conn.lock().await;
+
+        // Build virtual document URI
+        let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+        let virtual_uri_string = virtual_uri.to_uri_string();
+
+        // Send didOpen notification for the virtual document
+        let did_open = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/didOpen",
+            "params": {
+                "textDocument": {
+                    "uri": virtual_uri_string,
+                    "languageId": injection_language,
+                    "version": 1,
+                    "text": virtual_content
+                }
+            }
+        });
+        conn.write_message(&did_open).await?;
+
+        // Build and send hover request
+        let request_id = self.next_request_id();
+        let hover_request = build_bridge_hover_request(
+            host_uri,
+            host_position,
+            injection_language,
+            region_id,
+            region_start_line,
+            request_id,
+        );
+        conn.write_message(&hover_request).await?;
+
+        // Wait for the hover response (skip notifications)
+        loop {
+            let msg = conn.read_message().await?;
+            if let Some(id) = msg.get("id") {
+                if id.as_i64() == Some(request_id) {
+                    // Transform response to host coordinates
+                    return Ok(transform_hover_response_to_host(msg, region_start_line));
+                }
+            }
+            // Skip notifications and other responses
         }
     }
 }
@@ -908,5 +1066,80 @@ mod tests {
 
         // Response should be unchanged
         assert_eq!(transformed, response);
+    }
+
+    /// Integration test: BridgeManager sends hover request to lua-language-server (PBI-302 Subtask 6)
+    #[tokio::test]
+    async fn hover_impl_returns_bridge_response_for_lua_injection() {
+        use crate::config::settings::BridgeServerConfig;
+        use tower_lsp::lsp_types::{Position, Url};
+
+        // Skip test if lua-language-server is not available
+        if std::process::Command::new("lua-language-server")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping test: lua-language-server not found");
+            return;
+        }
+
+        let manager = BridgeManager::new();
+
+        let server_config = BridgeServerConfig {
+            cmd: vec!["lua-language-server".to_string()],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        // Host position: line 3 in markdown (region starts at line 3)
+        let host_position = Position {
+            line: 3,
+            character: 9, // Position on "greet"
+        };
+        let region_start_line = 3; // Lua code block starts at line 3 in host
+        let virtual_content = "function greet(name)\n    return \"Hello, \" .. name\nend";
+
+        // Send hover request via BridgeManager
+        let response = manager
+            .send_hover_request(
+                &server_config,
+                &host_uri,
+                host_position,
+                "lua",
+                "region-0",
+                region_start_line,
+                virtual_content,
+            )
+            .await;
+
+        // Verify we got a response (not an error)
+        assert!(
+            response.is_ok(),
+            "BridgeManager should successfully communicate with lua-language-server: {:?}",
+            response.err()
+        );
+
+        let json_response = response.unwrap();
+
+        // Verify it's a valid JSON-RPC response
+        assert_eq!(json_response["jsonrpc"], "2.0");
+        assert!(
+            json_response.get("id").is_some(),
+            "Response should have an id"
+        );
+
+        // The result may be null if lua-ls hasn't indexed yet, but the request should succeed
+        assert!(
+            json_response.get("result").is_some() || json_response.get("error").is_none(),
+            "Response should have result or no error"
+        );
+
+        println!(
+            "✓ BridgeManager successfully sent hover request to lua-language-server: {:?}",
+            json_response
+        );
     }
 }

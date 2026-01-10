@@ -3,6 +3,7 @@
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 
+use crate::language::injection::CacheableInjectionRegion;
 use crate::text::PositionMapper;
 
 use super::super::TreeSitterLs;
@@ -29,7 +30,7 @@ impl TreeSitterLs {
                 .await;
             return Ok(None);
         };
-        let text = doc.text();
+        let text = doc.text().to_string();
 
         // Get the language for this document
         let Some(language_name) = self.get_language_for_document(&uri) else {
@@ -43,14 +44,17 @@ impl TreeSitterLs {
         };
 
         // Get the parse tree
-        let Some(tree) = doc.tree() else {
+        let Some(tree) = doc.tree().cloned() else {
             return Ok(None);
         };
+
+        // Drop the document reference to avoid holding it across await
+        drop(doc);
 
         // Collect all injection regions
         let injections = crate::language::injection::collect_all_injections(
             &tree.root_node(),
-            text,
+            &text,
             Some(injection_query.as_ref()),
         );
 
@@ -59,7 +63,7 @@ impl TreeSitterLs {
         };
 
         // Convert Position to byte offset
-        let mapper = PositionMapper::new(text);
+        let mapper = PositionMapper::new(&text);
         let Some(byte_offset) = mapper.position_to_byte(position) else {
             return Ok(None);
         };
@@ -76,9 +80,13 @@ impl TreeSitterLs {
             return Ok(None);
         };
 
+        // Convert to CacheableInjectionRegion to get line_range for position mapping
+        let cacheable_region =
+            CacheableInjectionRegion::from_region_info(region, "hover-temp", &text);
+
         // Get bridge server config for this language
         // The bridge filter is checked inside get_bridge_config_for_language
-        let Some(_server_config) =
+        let Some(server_config) =
             self.get_bridge_config_for_language(&language_name, &region.language)
         else {
             self.client
@@ -93,6 +101,47 @@ impl TreeSitterLs {
             return Ok(None);
         };
 
-        Ok(None)
+        // Extract the virtual document content (just the injection region)
+        let virtual_content = cacheable_region.extract_content(&text).to_string();
+
+        // Send hover request via bridge
+        let response = self
+            .bridge_manager
+            .send_hover_request(
+                &server_config,
+                &uri,
+                position,
+                &region.language,
+                &cacheable_region.result_id,
+                cacheable_region.line_range.start,
+                &virtual_content,
+            )
+            .await;
+
+        match response {
+            Ok(json_response) => {
+                // Parse the hover response
+                if let Some(result) = json_response.get("result") {
+                    if result.is_null() {
+                        return Ok(None);
+                    }
+
+                    // Parse the result into a Hover
+                    if let Ok(hover) = serde_json::from_value::<Hover>(result.clone()) {
+                        return Ok(Some(hover));
+                    }
+                }
+                Ok(None)
+            }
+            Err(e) => {
+                self.client
+                    .log_message(
+                        MessageType::ERROR,
+                        format!("Bridge hover request failed: {}", e),
+                    )
+                    .await;
+                Ok(None)
+            }
+        }
     }
 }
