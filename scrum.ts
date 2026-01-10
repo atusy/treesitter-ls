@@ -114,7 +114,7 @@ const scrum: ScrumDashboard = {
     number: 147,
     pbi_id: "PBI-304",
     goal: "Ensure bridge initialization never blocks treesitter-ls by implementing ConnectionState tracking and state-gated request handling per ADR-0015",
-    status: "planning",
+    status: "in_progress",
     subtasks: [
       {
         test: "ConnectionState enum has Initializing, Ready, Failed variants",
