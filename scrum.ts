@@ -164,8 +164,8 @@ const scrum: ScrumDashboard = {
         test: "Test that completion request uses virtual URI and mapped position (like hover)",
         implementation: "Add build_bridge_completion_request in protocol.rs",
         type: "behavioral",
-        status: "green",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "befa5294", message: "feat(bridge): add build_bridge_completion_request function", phase: "green" }],
         notes: ["AC5: Request transformation mirrors hover pattern"],
       },
       {
