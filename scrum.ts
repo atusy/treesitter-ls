@@ -148,7 +148,7 @@ const scrum: ScrumDashboard = {
         test: "Test that didChange notification is built with correct virtual URI and incremental changes",
         implementation: "Add build_bridge_didchange_notification in protocol.rs",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: ["AC4: didChange updates virtual document in downstream LS"],
       },
