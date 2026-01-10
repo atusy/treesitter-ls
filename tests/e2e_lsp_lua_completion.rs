@@ -82,13 +82,21 @@ fn test_lua_completion_in_markdown_code_block_via_binary() {
     // Spawn treesitter-ls binary
     let mut client = LspClient::new();
 
-    // Initialize handshake
+    // Initialize handshake with bridge configuration for lua-language-server
     let _init_response = client.send_request(
         "initialize",
         json!({
             "processId": std::process::id(),
             "rootUri": null,
-            "capabilities": {}
+            "capabilities": {},
+            "initializationOptions": {
+                "languageServers": {
+                    "lua-language-server": {
+                        "cmd": ["lua-language-server"],
+                        "languages": ["lua"]
+                    }
+                }
+            }
         }),
     );
     client.send_notification("initialized", json!({}));
@@ -132,6 +140,7 @@ More text.
     // The first completion request triggers bridge initialization (spawn lua-ls,
     // initialize handshake, didOpen for virtual document).
     // Use polling with retries to give lua-ls time to process.
+    // Typically lua-ls returns results on the 2nd attempt (< 1 second).
     let completion_response = poll_for_completions(
         &mut client,
         markdown_uri,
