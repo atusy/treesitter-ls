@@ -16,9 +16,9 @@ use crate::config::{
 };
 use crate::document::DocumentStore;
 use crate::language::injection::{CacheableInjectionRegion, collect_all_injections};
-use crate::lsp::bridge::BridgeManager;
 use crate::language::{DocumentParserPool, FailedParserRegistry, LanguageCoordinator};
 use crate::language::{LanguageEvent, LanguageLogLevel};
+use crate::lsp::bridge::BridgeManager;
 use crate::lsp::{SettingsEvent, SettingsEventKind, SettingsSource, load_settings};
 use crate::text::PositionMapper;
 use arc_swap::ArcSwap;
