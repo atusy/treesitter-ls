@@ -235,7 +235,7 @@ const scrum: ScrumDashboard = {
     number: 144,
     pbi_id: "PBI-301",
     goal: "Establish the foundational bridge architecture by spawning lua-language-server as a child process and confirming successful initialization, proving the async bridge concept works",
-    status: "in_progress",
+    status: "review",
     subtasks: [
       {
         test: "Unit test that src/lsp/bridge/mod.rs module compiles and exports AsyncBridgeConnection type",
@@ -292,8 +292,8 @@ const scrum: ScrumDashboard = {
         test: "Integration test that dropping AsyncBridgeConnection terminates the child process",
         implementation: "Implement Drop trait to kill child process; verify no orphan processes",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "525661d9", message: "feat(bridge): implement Drop trait to terminate child process", phase: "green" }],
         notes: ["AC3: child process terminated when treesitter-ls terminates"],
       },
     ],
