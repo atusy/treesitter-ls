@@ -9,6 +9,29 @@ use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
+/// Connection state for downstream language server.
+///
+/// Tracks the lifecycle of a connection per ADR-0015:
+/// - `Initializing`: Connection spawned, LSP handshake in progress
+/// - `Ready`: Initialization completed, requests can be processed
+/// - `Failed`: Initialization failed or connection error occurred
+///
+/// State transitions:
+/// - `Initializing` -> `Ready` (on successful initialize response)
+/// - `Initializing` -> `Failed` (on timeout or error)
+/// - `Ready` -> `Failed` (on crash or panic)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(dead_code)] // Used in subsequent subtasks
+pub(crate) enum ConnectionState {
+    /// Connection spawned, LSP initialize/initialized handshake in progress.
+    #[default]
+    Initializing,
+    /// Initialization completed successfully, ready to process requests.
+    Ready,
+    /// Initialization failed or connection encountered an error.
+    Failed,
+}
+
 /// Async connection to a downstream language server process.
 ///
 /// Manages the lifecycle of a child process running a language server,
@@ -153,6 +176,31 @@ impl AsyncBridgeConnection {
         );
 
         Ok(full_message)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connection_state_has_required_variants() {
+        // Test that ConnectionState enum has the required variants per ADR-0015
+        let init = ConnectionState::Initializing;
+        let ready = ConnectionState::Ready;
+        let failed = ConnectionState::Failed;
+
+        // Verify each variant is distinct
+        assert_ne!(init, ready);
+        assert_ne!(ready, failed);
+        assert_ne!(init, failed);
+    }
+
+    #[test]
+    fn connection_state_default_is_initializing() {
+        // New connections should start in Initializing state
+        let state = ConnectionState::default();
+        assert_eq!(state, ConnectionState::Initializing);
     }
 }
 
