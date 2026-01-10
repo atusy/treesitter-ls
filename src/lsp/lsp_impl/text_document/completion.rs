@@ -107,9 +107,9 @@ impl TreeSitterLs {
         // Extract the virtual document content (just the injection region)
         let virtual_content = cacheable_region.extract_content(&text).to_string();
 
-        // Send completion request via bridge
+        // Send completion request via language server pool
         let response = self
-            .bridge_manager
+            .language_server_pool
             .send_completion_request(
                 &server_config,
                 &uri,

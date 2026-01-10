@@ -7,19 +7,19 @@
 //!
 //! - `connection` - AsyncBridgeConnection for process spawning and I/O
 //! - `protocol` - VirtualDocumentUri, request building, and response transformation
-//! - `manager` - BridgeManager for connection lifecycle management
+//! - `pool` - LanguageServerPool for server pool coordination (ADR-0016)
 
 mod connection;
-mod manager;
+mod pool;
 mod protocol;
 
 // Re-export public types
-pub(crate) use manager::BridgeManager;
+pub(crate) use pool::LanguageServerPool;
 
 #[cfg(test)]
 mod tests {
     use super::connection::AsyncBridgeConnection;
-    use super::manager::BridgeManager;
+    use super::pool::LanguageServerPool;
     use super::protocol::{
         PendingRequests, VirtualDocumentUri, build_bridge_completion_request,
         build_bridge_didchange_notification, build_bridge_hover_request,
@@ -488,15 +488,15 @@ mod tests {
         assert_eq!(transformed, response);
     }
 
-    /// Test that BridgeManager tracks which virtual documents have been opened per connection (PBI-303 Subtask 1)
+    /// Test that LanguageServerPool tracks which virtual documents have been opened per connection (PBI-303 Subtask 1)
     #[test]
-    fn bridge_manager_tracks_opened_documents() {
+    fn language_server_pool_tracks_opened_documents() {
         use tower_lsp::lsp_types::Url;
 
-        // BridgeManager should track which virtual document URIs have been opened
+        // LanguageServerPool should track which virtual document URIs have been opened
         // per language server connection, to avoid sending duplicate didOpen notifications
 
-        let manager = BridgeManager::new();
+        let manager = LanguageServerPool::new();
 
         // Create virtual URI using the struct
         let host_uri = Url::parse("file:///test.md").unwrap();
@@ -518,7 +518,7 @@ mod tests {
         // When we mark a document as opened, subsequent checks should return true
         // This ensures didOpen is only sent once per virtual document per language server
 
-        let manager = BridgeManager::new();
+        let manager = LanguageServerPool::new();
         let host_uri = Url::parse("file:///test.md").unwrap();
         let virtual_doc = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
         let virtual_uri = virtual_doc.to_uri_string();
@@ -589,15 +589,15 @@ mod tests {
         assert_eq!(changes[0]["text"], new_content);
     }
 
-    /// RED: Test that BridgeManager tracks document versions (PBI-303 Subtask 4)
+    /// RED: Test that LanguageServerPool tracks document versions (PBI-303 Subtask 4)
     #[tokio::test]
-    async fn bridge_manager_tracks_document_versions() {
+    async fn language_server_pool_tracks_document_versions() {
         use tower_lsp::lsp_types::Url;
 
-        // BridgeManager should track the version number for each opened document
+        // LanguageServerPool should track the version number for each opened document
         // so that didChange notifications use incrementing versions
 
-        let manager = BridgeManager::new();
+        let manager = LanguageServerPool::new();
         let host_uri = Url::parse("file:///test.md").unwrap();
         let virtual_doc = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
         let virtual_uri = virtual_doc.to_uri_string();
@@ -798,7 +798,7 @@ mod tests {
         );
     }
 
-    /// Integration test: BridgeManager sends hover request to lua-language-server (PBI-302 Subtask 6)
+    /// Integration test: LanguageServerPool sends hover request to lua-language-server (PBI-302 Subtask 6)
     #[tokio::test]
     async fn hover_impl_returns_bridge_response_for_lua_injection() {
         use crate::config::settings::BridgeServerConfig;
@@ -814,7 +814,7 @@ mod tests {
             return;
         }
 
-        let manager = BridgeManager::new();
+        let manager = LanguageServerPool::new();
 
         let server_config = BridgeServerConfig {
             cmd: vec!["lua-language-server".to_string()],
@@ -832,7 +832,7 @@ mod tests {
         let region_start_line = 3; // Lua code block starts at line 3 in host
         let virtual_content = "function greet(name)\n    return \"Hello, \" .. name\nend";
 
-        // Send hover request via BridgeManager
+        // Send hover request via LanguageServerPool
         let response = manager
             .send_hover_request(
                 &server_config,
@@ -848,7 +848,7 @@ mod tests {
         // Verify we got a response (not an error)
         assert!(
             response.is_ok(),
-            "BridgeManager should successfully communicate with lua-language-server: {:?}",
+            "LanguageServerPool should successfully communicate with lua-language-server: {:?}",
             response.err()
         );
 
@@ -868,12 +868,12 @@ mod tests {
         );
 
         println!(
-            "BridgeManager successfully sent hover request to lua-language-server: {:?}",
+            "LanguageServerPool successfully sent hover request to lua-language-server: {:?}",
             json_response
         );
     }
 
-    /// Integration test: BridgeManager sends completion request to lua-language-server (PBI-303 Subtask 7)
+    /// Integration test: LanguageServerPool sends completion request to lua-language-server (PBI-303 Subtask 7)
     #[tokio::test]
     async fn completion_request_returns_items_from_lua_language_server() {
         use crate::config::settings::BridgeServerConfig;
@@ -889,7 +889,7 @@ mod tests {
             return;
         }
 
-        let manager = BridgeManager::new();
+        let manager = LanguageServerPool::new();
 
         let server_config = BridgeServerConfig {
             cmd: vec!["lua-language-server".to_string()],
@@ -907,7 +907,7 @@ mod tests {
         let region_start_line = 3; // Lua code block starts at line 3 in host
         let virtual_content = "pri"; // Partial identifier that should trigger 'print' completion
 
-        // Send completion request via BridgeManager
+        // Send completion request via LanguageServerPool
         let response = manager
             .send_completion_request(
                 &server_config,
@@ -923,7 +923,7 @@ mod tests {
         // Verify we got a response (not an error)
         assert!(
             response.is_ok(),
-            "BridgeManager should successfully communicate with lua-language-server: {:?}",
+            "LanguageServerPool should successfully communicate with lua-language-server: {:?}",
             response.err()
         );
 
@@ -943,7 +943,7 @@ mod tests {
         );
 
         println!(
-            "BridgeManager successfully sent completion request to lua-language-server: {:?}",
+            "LanguageServerPool successfully sent completion request to lua-language-server: {:?}",
             json_response
         );
     }

@@ -1,7 +1,9 @@
-//! Bridge connection manager for downstream language servers.
+//! Language server pool for downstream language servers.
 //!
-//! This module provides the BridgeManager which handles lazy initialization
-//! of connections and the LSP handshake with downstream language servers.
+//! This module provides the LanguageServerPool which manages connections to
+//! downstream language servers per ADR-0016 (Server Pool Coordination).
+//!
+//! Phase 1: Single-LS-per-Language routing (language → single server).
 
 use std::collections::HashMap;
 use std::io;
@@ -16,11 +18,14 @@ use super::protocol::{
     transform_hover_response_to_host,
 };
 
-/// Manages bridge connections to downstream language servers.
+/// Pool of connections to downstream language servers (ADR-0016).
+///
+/// Implements Phase 1: Single-LS-per-Language routing where each injection
+/// language maps to exactly one downstream server.
 ///
 /// Provides lazy initialization of connections and handles the LSP handshake
 /// (initialize/initialized) for each language server.
-pub(crate) struct BridgeManager {
+pub(crate) struct LanguageServerPool {
     /// Map of language -> initialized connection
     connections: Mutex<HashMap<String, Arc<Mutex<AsyncBridgeConnection>>>>,
     /// Map of language -> (virtual document URI -> version)
@@ -30,8 +35,8 @@ pub(crate) struct BridgeManager {
     next_request_id: std::sync::atomic::AtomicI64,
 }
 
-impl BridgeManager {
-    /// Create a new bridge manager.
+impl LanguageServerPool {
+    /// Create a new language server pool.
     pub(crate) fn new() -> Self {
         Self {
             connections: Mutex::new(HashMap::new()),

@@ -18,7 +18,7 @@ use crate::document::DocumentStore;
 use crate::language::injection::{CacheableInjectionRegion, collect_all_injections};
 use crate::language::{DocumentParserPool, FailedParserRegistry, LanguageCoordinator};
 use crate::language::{LanguageEvent, LanguageLogLevel};
-use crate::lsp::bridge::BridgeManager;
+use crate::lsp::bridge::LanguageServerPool;
 use crate::lsp::{SettingsEvent, SettingsEventKind, SettingsSource, load_settings};
 use crate::text::PositionMapper;
 use arc_swap::ArcSwap;
@@ -64,8 +64,8 @@ pub struct TreeSitterLs {
     failed_parsers: FailedParserRegistry,
     /// Tracks active semantic token requests for cancellation support
     semantic_request_tracker: SemanticRequestTracker,
-    /// Manages bridge connections to downstream language servers
-    bridge_manager: BridgeManager,
+    /// Pool of downstream language server connections (ADR-0016)
+    language_server_pool: LanguageServerPool,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -82,7 +82,7 @@ impl std::fmt::Debug for TreeSitterLs {
             .field("settings", &"ArcSwap<WorkspaceSettings>")
             .field("installing_languages", &"InstallingLanguages")
             .field("failed_parsers", &"FailedParserRegistry")
-            .field("bridge_manager", &"BridgeManager")
+            .field("language_server_pool", &"LanguageServerPool")
             .finish_non_exhaustive()
     }
 }
@@ -95,8 +95,8 @@ impl TreeSitterLs {
         // Initialize failed parser registry with crash detection
         let failed_parsers = Self::init_failed_parser_registry();
 
-        // Bridge infrastructure (ADR-0013 through ADR-0018)
-        let bridge_manager = BridgeManager::new();
+        // Language server pool (ADR-0016: Server Pool Coordination)
+        let language_server_pool = LanguageServerPool::new();
 
         Self {
             client,
@@ -111,7 +111,7 @@ impl TreeSitterLs {
             installing_languages: InstallingLanguages::new(),
             failed_parsers,
             semantic_request_tracker: SemanticRequestTracker::new(),
-            bridge_manager,
+            language_server_pool,
         }
     }
 

@@ -168,7 +168,7 @@ impl StatefulBridgeConnection {
 /// Handle to a bridge connection with state tracking.
 ///
 /// Combines connection state tracking (via atomic) with connection access.
-/// Used by BridgeManager to provide non-blocking initialization per ADR-0015.
+/// Used by LanguageServerPool to provide non-blocking initialization per ADR-0015.
 ///
 /// The handle starts in Initializing state and transitions to:
 /// - Ready: After successful LSP handshake (Subtask 5)

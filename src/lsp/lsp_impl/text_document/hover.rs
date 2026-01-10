@@ -104,9 +104,9 @@ impl TreeSitterLs {
         // Extract the virtual document content (just the injection region)
         let virtual_content = cacheable_region.extract_content(&text).to_string();
 
-        // Send hover request via bridge
+        // Send hover request via language server pool
         let response = self
-            .bridge_manager
+            .language_server_pool
             .send_hover_request(
                 &server_config,
                 &uri,
