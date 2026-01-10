@@ -249,8 +249,8 @@ const scrum: ScrumDashboard = {
         test: "Unit test that AsyncBridgeConnection::spawn() spawns a child process with the given command",
         implementation: "Use tokio::process::Command to spawn lua-language-server with stdio pipes",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "a7116891", message: "feat(bridge): implement spawn() for child process creation", phase: "green" }],
         notes: ["ADR-0014: Use tokio::process for async I/O"],
       },
       {
