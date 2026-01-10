@@ -173,8 +173,8 @@ const scrum: ScrumDashboard = {
         test: "virtual_document_uri_creates_scheme_for_injection_region",
         implementation: "Create VirtualDocumentUri type that encodes host URI + injection language + region ID into a unique URI scheme (e.g., tsls-virtual://lua/file.md/region-0)",
         type: "behavioral",
-        status: "green",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "09dcfd1e", message: "feat(bridge): add VirtualDocumentUri for injection region encoding", phase: "green" }],
         notes: ["Foundation for URI transformation; downstream LS sees virtual URI, responses transformed back"],
       },
       // Subtask 2: Position mapping host -> virtual
@@ -182,18 +182,18 @@ const scrum: ScrumDashboard = {
         test: "position_maps_host_markdown_line_to_virtual_lua_line",
         implementation: "Use CacheableInjectionRegion.translate_host_to_virtual() to map hover position from markdown coordinates to Lua code block coordinates",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
-        notes: ["AC3: position correctly mapped; existing translate_host_to_virtual in injection.rs"],
+        notes: ["AC3: position correctly mapped; existing translate_host_to_virtual in injection.rs; test: test_cacheable_injection_region_translate_host_to_virtual"],
       },
       // Subtask 3: Position mapping virtual -> host (for response ranges)
       {
         test: "position_maps_virtual_lua_line_back_to_host_markdown_line",
         implementation: "Use CacheableInjectionRegion.translate_virtual_to_host() to map hover response ranges back to markdown coordinates",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
-        notes: ["AC4: response transformed back; existing translate_virtual_to_host in injection.rs"],
+        notes: ["AC4: response transformed back; existing translate_virtual_to_host in injection.rs; test: test_cacheable_injection_region_translate_virtual_to_host"],
       },
       // Subtask 4: Bridge hover request construction
       {
