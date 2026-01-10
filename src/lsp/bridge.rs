@@ -299,6 +299,51 @@ impl VirtualDocumentUri {
     }
 }
 
+/// Build a JSON-RPC hover request for a downstream language server.
+///
+/// Transforms the host document position and URI to virtual document coordinates
+/// for the injection region.
+///
+/// # Arguments
+/// * `host_uri` - The URI of the host document
+/// * `host_position` - The position in the host document
+/// * `injection_language` - The injection language (e.g., "lua")
+/// * `region_id` - The unique region ID for this injection
+/// * `region_start_line` - The starting line of the injection region in the host document
+/// * `request_id` - The JSON-RPC request ID
+pub(crate) fn build_bridge_hover_request(
+    host_uri: &tower_lsp::lsp_types::Url,
+    host_position: tower_lsp::lsp_types::Position,
+    injection_language: &str,
+    region_id: &str,
+    region_start_line: u32,
+    request_id: i64,
+) -> serde_json::Value {
+    // Create virtual document URI
+    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+
+    // Translate position from host to virtual coordinates
+    let virtual_position = tower_lsp::lsp_types::Position {
+        line: host_position.line - region_start_line,
+        character: host_position.character,
+    };
+
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": {
+                "uri": virtual_uri.to_uri_string()
+            },
+            "position": {
+                "line": virtual_position.line,
+                "character": virtual_position.character
+            }
+        }
+    })
+}
+
 /// Request ID type for JSON-RPC messages.
 ///
 /// LSP spec allows either integer or string IDs.
@@ -678,5 +723,58 @@ mod tests {
         assert_eq!(parsed.host_uri(), &host_uri);
         assert_eq!(parsed.language(), "python");
         assert_eq!(parsed.region_id(), "region-42");
+    }
+
+    /// RED: Test bridge hover request uses virtual URI and mapped position (PBI-302 Subtask 4)
+    #[test]
+    fn bridge_hover_request_uses_virtual_uri_and_mapped_position() {
+        use tower_lsp::lsp_types::{Position, Url};
+
+        // Create a hover request builder for bridge
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        let host_position = Position {
+            line: 5,
+            character: 10,
+        };
+        let region_id = "region-0";
+        let injection_language = "lua";
+
+        // The region starts at line 3 in the host document
+        let region_start_line = 3;
+
+        // Build the hover request for downstream language server
+        let request = build_bridge_hover_request(
+            &host_uri,
+            host_position,
+            injection_language,
+            region_id,
+            region_start_line,
+            42, // request ID
+        );
+
+        // Verify the request structure
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], 42);
+        assert_eq!(request["method"], "textDocument/hover");
+
+        // The params should use virtual URI
+        let text_doc = &request["params"]["textDocument"];
+        let uri_str = text_doc["uri"].as_str().unwrap();
+        assert!(
+            uri_str.starts_with("tsls-virtual://lua/"),
+            "Request should use virtual URI: {}",
+            uri_str
+        );
+
+        // The position should be translated (line 5 - region_start 3 = line 2)
+        let position = &request["params"]["position"];
+        assert_eq!(
+            position["line"], 2,
+            "Position line should be translated to virtual coordinates"
+        );
+        assert_eq!(
+            position["character"], 10,
+            "Position character should remain unchanged"
+        );
     }
 }
