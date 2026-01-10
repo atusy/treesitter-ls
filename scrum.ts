@@ -166,14 +166,14 @@ const scrum: ScrumDashboard = {
     number: 145,
     pbi_id: "PBI-302",
     goal: "Enable Lua developers to receive hover information from lua-language-server for Lua code blocks embedded in markdown, proving the bridge request/response flow with position and URI transformations",
-    status: "planning",
+    status: "in_progress",
     subtasks: [
       // Subtask 1: Virtual document URI scheme
       {
         test: "virtual_document_uri_creates_scheme_for_injection_region",
         implementation: "Create VirtualDocumentUri type that encodes host URI + injection language + region ID into a unique URI scheme (e.g., tsls-virtual://lua/file.md/region-0)",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: ["Foundation for URI transformation; downstream LS sees virtual URI, responses transformed back"],
       },
