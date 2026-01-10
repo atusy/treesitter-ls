@@ -120,8 +120,8 @@ const scrum: ScrumDashboard = {
         test: "ConnectionState enum has Initializing, Ready, Failed variants",
         implementation: "Add ConnectionState enum to connection.rs with state tracking field",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "34c5c4c7", message: "feat(bridge): add ConnectionState enum", phase: "green" }],
         notes: ["ADR-0015: ConnectionState enum separates data flow from control flow"],
       },
       {
