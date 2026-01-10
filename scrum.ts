@@ -172,8 +172,8 @@ const scrum: ScrumDashboard = {
         test: "Test that completion response transforms positions back to host coordinates",
         implementation: "Add transform_completion_response_to_host in protocol.rs",
         type: "behavioral",
-        status: "green",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "ba096e83", message: "feat(bridge): add transform_completion_response_to_host function", phase: "green" }],
         notes: ["AC5: textEdit ranges must be in host coordinates for editor"],
       },
       {
