@@ -165,6 +165,59 @@ impl StatefulBridgeConnection {
     }
 }
 
+/// Handle to a bridge connection with state tracking.
+///
+/// Combines connection state tracking (via atomic) with connection access.
+/// Used by BridgeManager to provide non-blocking initialization per ADR-0015.
+///
+/// The handle starts in Initializing state and transitions to:
+/// - Ready: After successful LSP handshake (Subtask 5)
+/// - Failed: On timeout or initialization error (Subtask 6)
+#[derive(Clone)]
+pub(crate) struct BridgeConnectionHandle {
+    state: StatefulBridgeConnection,
+}
+
+impl BridgeConnectionHandle {
+    /// Create a new handle in Initializing state.
+    ///
+    /// Per ADR-0015, connections start in Initializing state.
+    /// Requests during this state will receive REQUEST_FAILED error.
+    #[allow(dead_code)]
+    pub(crate) fn new_initializing() -> Self {
+        Self {
+            state: StatefulBridgeConnection::new_initializing(),
+        }
+    }
+
+    /// Get the current connection state.
+    #[allow(dead_code)]
+    pub(crate) fn state(&self) -> ConnectionState {
+        self.state.state()
+    }
+
+    /// Transition to Ready state after successful initialization.
+    #[allow(dead_code)]
+    pub(crate) fn set_ready(&self) {
+        self.state.set_ready();
+    }
+
+    /// Transition to Failed state on initialization error or timeout.
+    #[allow(dead_code)]
+    pub(crate) fn set_failed(&self) {
+        self.state.set_failed();
+    }
+
+    /// Check if the connection is ready for requests.
+    ///
+    /// Returns None if Ready, or BridgeError if not ready.
+    /// Per ADR-0015: Requests during non-Ready states return REQUEST_FAILED.
+    #[allow(dead_code)]
+    pub(crate) fn check_ready(&self) -> Option<BridgeError> {
+        BridgeError::for_state(self.state())
+    }
+}
+
 /// Async connection to a downstream language server process.
 ///
 /// Manages the lifecycle of a child process running a language server,
@@ -393,6 +446,56 @@ mod tests {
         let error = error.unwrap();
         assert_eq!(error.code(), -32803);
         assert!(error.message().contains("failed"));
+    }
+
+    // --- Subtask 4, 5, 6: BridgeConnectionHandle tests ---
+
+    #[test]
+    fn bridge_connection_handle_starts_in_initializing_state() {
+        // BridgeConnectionHandle should start in Initializing state
+        let handle = BridgeConnectionHandle::new_initializing();
+        assert_eq!(handle.state(), ConnectionState::Initializing);
+    }
+
+    #[test]
+    fn bridge_connection_handle_can_transition_to_ready() {
+        let handle = BridgeConnectionHandle::new_initializing();
+        handle.set_ready();
+        assert_eq!(handle.state(), ConnectionState::Ready);
+    }
+
+    #[test]
+    fn bridge_connection_handle_can_transition_to_failed() {
+        let handle = BridgeConnectionHandle::new_initializing();
+        handle.set_failed();
+        assert_eq!(handle.state(), ConnectionState::Failed);
+    }
+
+    #[test]
+    fn bridge_connection_handle_check_ready_returns_none_for_ready() {
+        let handle = BridgeConnectionHandle::new_initializing();
+        handle.set_ready();
+        let error = handle.check_ready();
+        assert!(error.is_none(), "Ready state should allow requests");
+    }
+
+    #[test]
+    fn bridge_connection_handle_check_ready_returns_error_for_initializing() {
+        let handle = BridgeConnectionHandle::new_initializing();
+        let error = handle.check_ready();
+        assert!(error.is_some(), "Initializing state should reject requests");
+        let error = error.unwrap();
+        assert_eq!(error.code(), -32803);
+    }
+
+    #[test]
+    fn bridge_connection_handle_check_ready_returns_error_for_failed() {
+        let handle = BridgeConnectionHandle::new_initializing();
+        handle.set_failed();
+        let error = handle.check_ready();
+        assert!(error.is_some(), "Failed state should reject requests");
+        let error = error.unwrap();
+        assert_eq!(error.code(), -32803);
     }
 }
 
