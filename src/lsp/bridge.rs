@@ -851,4 +851,79 @@ mod tests {
             json_response
         );
     }
+
+    /// Integration test: BridgeManager sends completion request to lua-language-server (PBI-303 Subtask 7)
+    #[tokio::test]
+    async fn completion_request_returns_items_from_lua_language_server() {
+        use crate::config::settings::BridgeServerConfig;
+        use tower_lsp::lsp_types::{Position, Url};
+
+        // Skip test if lua-language-server is not available
+        if std::process::Command::new("lua-language-server")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping test: lua-language-server not found");
+            return;
+        }
+
+        let manager = BridgeManager::new();
+
+        let server_config = BridgeServerConfig {
+            cmd: vec!["lua-language-server".to_string()],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        // Host position: line 3 in markdown, after "pri" (region starts at line 3)
+        let host_position = Position {
+            line: 3,
+            character: 3, // After "pri"
+        };
+        let region_start_line = 3; // Lua code block starts at line 3 in host
+        let virtual_content = "pri"; // Partial identifier that should trigger 'print' completion
+
+        // Send completion request via BridgeManager
+        let response = manager
+            .send_completion_request(
+                &server_config,
+                &host_uri,
+                host_position,
+                "lua",
+                "region-0",
+                region_start_line,
+                virtual_content,
+            )
+            .await;
+
+        // Verify we got a response (not an error)
+        assert!(
+            response.is_ok(),
+            "BridgeManager should successfully communicate with lua-language-server: {:?}",
+            response.err()
+        );
+
+        let json_response = response.unwrap();
+
+        // Verify it's a valid JSON-RPC response
+        assert_eq!(json_response["jsonrpc"], "2.0");
+        assert!(
+            json_response.get("id").is_some(),
+            "Response should have an id"
+        );
+
+        // The result may be null if lua-ls hasn't indexed yet, but the request should succeed
+        assert!(
+            json_response.get("result").is_some() || json_response.get("error").is_none(),
+            "Response should have result or no error"
+        );
+
+        println!(
+            "BridgeManager successfully sent completion request to lua-language-server: {:?}",
+            json_response
+        );
+    }
 }

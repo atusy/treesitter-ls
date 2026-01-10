@@ -11,7 +11,9 @@ use tokio::sync::Mutex;
 
 use super::connection::AsyncBridgeConnection;
 use super::protocol::{
-    VirtualDocumentUri, build_bridge_hover_request, transform_hover_response_to_host,
+    VirtualDocumentUri, build_bridge_completion_request, build_bridge_didchange_notification,
+    build_bridge_hover_request, transform_completion_response_to_host,
+    transform_hover_response_to_host,
 };
 
 /// Manages bridge connections to downstream language servers.
@@ -244,6 +246,95 @@ impl BridgeManager {
             {
                 // Transform response to host coordinates
                 return Ok(transform_hover_response_to_host(msg, region_start_line));
+            }
+            // Skip notifications and other responses
+        }
+    }
+
+    /// Send a completion request and wait for the response.
+    ///
+    /// This is a convenience method that handles the full request/response cycle:
+    /// 1. Get or create a connection to the language server
+    /// 2. Send a textDocument/didOpen notification if not opened, or didChange if already opened
+    /// 3. Send the completion request
+    /// 4. Wait for and return the response with transformed coordinates
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn send_completion_request(
+        &self,
+        server_config: &crate::config::settings::BridgeServerConfig,
+        host_uri: &tower_lsp::lsp_types::Url,
+        host_position: tower_lsp::lsp_types::Position,
+        injection_language: &str,
+        region_id: &str,
+        region_start_line: u32,
+        virtual_content: &str,
+    ) -> io::Result<serde_json::Value> {
+        // Get or create connection
+        let conn = self
+            .get_or_create_connection(injection_language, server_config)
+            .await?;
+        let mut conn = conn.lock().await;
+
+        // Build virtual document URI
+        let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+        let virtual_uri_string = virtual_uri.to_uri_string();
+
+        // Send didOpen or didChange depending on whether document is already opened
+        if self
+            .should_send_didopen(injection_language, &virtual_uri_string)
+            .await
+        {
+            // First time: send didOpen
+            let did_open = serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": virtual_uri_string,
+                        "languageId": injection_language,
+                        "version": 1,
+                        "text": virtual_content
+                    }
+                }
+            });
+            conn.write_message(&did_open).await?;
+        } else {
+            // Document already opened: send didChange with incremented version
+            if let Some(version) = self
+                .increment_document_version(injection_language, &virtual_uri_string)
+                .await
+            {
+                let did_change = build_bridge_didchange_notification(
+                    host_uri,
+                    injection_language,
+                    region_id,
+                    virtual_content,
+                    version,
+                );
+                conn.write_message(&did_change).await?;
+            }
+        }
+
+        // Build and send completion request
+        let request_id = self.next_request_id();
+        let completion_request = build_bridge_completion_request(
+            host_uri,
+            host_position,
+            injection_language,
+            region_id,
+            region_start_line,
+            request_id,
+        );
+        conn.write_message(&completion_request).await?;
+
+        // Wait for the completion response (skip notifications)
+        loop {
+            let msg = conn.read_message().await?;
+            if let Some(id) = msg.get("id")
+                && id.as_i64() == Some(request_id)
+            {
+                // Transform response to host coordinates
+                return Ok(transform_completion_response_to_host(msg, region_start_line));
             }
             // Skip notifications and other responses
         }
