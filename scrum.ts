@@ -281,8 +281,8 @@ const scrum: ScrumDashboard = {
         test: "Integration test that spawning lua-language-server and sending initialize results in log message",
         implementation: "Wire up full initialization flow, add log output on successful initialize response",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "89a2e1f6", message: "test(bridge): add lua-language-server initialization integration test", phase: "green" }],
         notes: [
           "AC2: logs 'lua-language-server initialized' or similar confirmation",
           "Requires lua-language-server installed on test machine",
