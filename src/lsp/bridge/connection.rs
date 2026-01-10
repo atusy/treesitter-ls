@@ -5,6 +5,8 @@
 
 use std::io;
 use std::process::Stdio;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -30,6 +32,65 @@ pub(crate) enum ConnectionState {
     Ready,
     /// Initialization failed or connection encountered an error.
     Failed,
+}
+
+impl ConnectionState {
+    /// Convert to u8 for atomic storage.
+    fn to_u8(self) -> u8 {
+        match self {
+            ConnectionState::Initializing => 0,
+            ConnectionState::Ready => 1,
+            ConnectionState::Failed => 2,
+        }
+    }
+
+    /// Convert from u8 from atomic storage.
+    fn from_u8(value: u8) -> Self {
+        match value {
+            0 => ConnectionState::Initializing,
+            1 => ConnectionState::Ready,
+            _ => ConnectionState::Failed,
+        }
+    }
+}
+
+/// Thread-safe connection state holder.
+///
+/// Wraps connection state in an atomic for safe access across async tasks.
+/// Used per ADR-0015 for operation gating based on connection state.
+#[derive(Clone)]
+pub(crate) struct StatefulBridgeConnection {
+    state: Arc<AtomicU8>,
+}
+
+impl StatefulBridgeConnection {
+    /// Create a new state holder in Initializing state.
+    #[allow(dead_code)]
+    pub(crate) fn new_initializing() -> Self {
+        Self {
+            state: Arc::new(AtomicU8::new(ConnectionState::Initializing.to_u8())),
+        }
+    }
+
+    /// Get the current connection state.
+    #[allow(dead_code)]
+    pub(crate) fn state(&self) -> ConnectionState {
+        ConnectionState::from_u8(self.state.load(Ordering::Acquire))
+    }
+
+    /// Transition to Ready state.
+    #[allow(dead_code)]
+    pub(crate) fn set_ready(&self) {
+        self.state
+            .store(ConnectionState::Ready.to_u8(), Ordering::Release);
+    }
+
+    /// Transition to Failed state.
+    #[allow(dead_code)]
+    pub(crate) fn set_failed(&self) {
+        self.state
+            .store(ConnectionState::Failed.to_u8(), Ordering::Release);
+    }
 }
 
 /// Async connection to a downstream language server process.
@@ -201,6 +262,27 @@ mod tests {
         // New connections should start in Initializing state
         let state = ConnectionState::default();
         assert_eq!(state, ConnectionState::Initializing);
+    }
+
+    #[test]
+    fn stateful_connection_exposes_state() {
+        // StatefulBridgeConnection should expose current state via state() method
+        let state_holder = StatefulBridgeConnection::new_initializing();
+        assert_eq!(state_holder.state(), ConnectionState::Initializing);
+    }
+
+    #[test]
+    fn stateful_connection_can_transition_to_ready() {
+        let state_holder = StatefulBridgeConnection::new_initializing();
+        state_holder.set_ready();
+        assert_eq!(state_holder.state(), ConnectionState::Ready);
+    }
+
+    #[test]
+    fn stateful_connection_can_transition_to_failed() {
+        let state_holder = StatefulBridgeConnection::new_initializing();
+        state_holder.set_failed();
+        assert_eq!(state_holder.state(), ConnectionState::Failed);
     }
 }
 
