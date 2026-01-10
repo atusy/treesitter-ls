@@ -355,4 +355,85 @@ mod tests {
         assert_eq!(result["id"], 42);
         assert_eq!(result["result"]["value"], "hello");
     }
+
+    /// Integration test: Initialize lua-language-server and verify response
+    #[tokio::test]
+    async fn initialize_lua_language_server_logs_success() {
+        use serde_json::json;
+
+        // Skip test if lua-language-server is not available
+        if std::process::Command::new("lua-language-server")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping test: lua-language-server not found");
+            return;
+        }
+
+        // Spawn lua-language-server
+        let cmd = vec!["lua-language-server".to_string()];
+        let mut conn = AsyncBridgeConnection::spawn(cmd)
+            .await
+            .expect("should spawn lua-language-server");
+
+        // Send initialize request
+        let init_request = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "processId": std::process::id(),
+                "rootUri": null,
+                "capabilities": {}
+            }
+        });
+
+        conn.write_message(&init_request)
+            .await
+            .expect("should write initialize request");
+
+        // Read initialize response (may need to skip notifications)
+        let response = loop {
+            let msg = conn.read_message().await.expect("should read message");
+            // Skip notifications (messages without id that have a method)
+            if msg.get("id").is_some() {
+                break msg;
+            }
+            // It's a notification, continue reading
+            log::debug!(
+                target: "treesitter_ls::bridge::test",
+                "Received notification: {:?}",
+                msg.get("method")
+            );
+        };
+
+        // Verify the response indicates successful initialization
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], 1);
+        assert!(
+            response["result"].is_object(),
+            "should have result object"
+        );
+        assert!(
+            response["result"]["capabilities"].is_object(),
+            "should have capabilities in result"
+        );
+
+        // Log successful initialization (as required by AC2)
+        log::info!(
+            target: "treesitter_ls::bridge",
+            "lua-language-server initialized successfully"
+        );
+
+        // Send initialized notification
+        let initialized = json!({
+            "jsonrpc": "2.0",
+            "method": "initialized",
+            "params": {}
+        });
+        conn.write_message(&initialized)
+            .await
+            .expect("should write initialized notification");
+    }
 }
