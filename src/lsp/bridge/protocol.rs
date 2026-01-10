@@ -10,12 +10,15 @@ use tokio::sync::oneshot;
 
 /// Virtual document URI for injection regions.
 ///
-/// Encodes host URI + injection language + region ID into a unique URI scheme
+/// Encodes host URI + injection language + region ID into a file:// URI
 /// that downstream language servers can use to identify virtual documents.
 ///
-/// Format: `tsls-virtual://{language}/{region_id}?host={url_encoded_host_uri}`
+/// Format: `file:///.treesitter-ls/{host_hash}/{region_id}.{ext}`
 ///
-/// Example: `tsls-virtual://lua/region-0?host=file%3A%2F%2F%2Fproject%2Fdoc.md`
+/// Example: `file:///.treesitter-ls/a1b2c3d4e5f6/region-0.lua`
+///
+/// The file:// scheme is used for compatibility with language servers that
+/// only support file:// URIs (e.g., lua-language-server).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct VirtualDocumentUri {
     host_uri: tower_lsp::lsp_types::Url,
@@ -44,39 +47,88 @@ impl VirtualDocumentUri {
 
     /// Parse a virtual document URI from a URI string.
     ///
-    /// Returns None if the URI is not a valid tsls-virtual:// URI.
+    /// Returns None if the URI is not a valid treesitter-ls virtual URI.
+    /// Format: `file:///.treesitter-ls/{host_hash}/{region_id}.{ext}`
+    ///
+    /// Note: This method cannot fully reconstruct the original host_uri since only
+    /// the hash is stored. It returns a placeholder host_uri for testing purposes.
     #[allow(dead_code)]
     pub(crate) fn parse(uri_str: &str) -> Option<Self> {
-        use percent_encoding::percent_decode_str;
         use tower_lsp::lsp_types::Url;
 
         let url = Url::parse(uri_str).ok()?;
 
-        // Check scheme
-        if url.scheme() != "tsls-virtual" {
+        // Check scheme and path prefix
+        if url.scheme() != "file" {
             return None;
         }
 
-        // Extract language from host (authority) part
-        let language = url.host_str()?.to_string();
+        let path = url.path();
+        if !path.starts_with("/.treesitter-ls/") {
+            return None;
+        }
 
-        // Extract region_id from path (strip leading /)
-        let region_id = url.path().strip_prefix('/')?.to_string();
+        // Parse path: /.treesitter-ls/{host_hash}/{region_id}.{ext}
+        let path_without_prefix = path.strip_prefix("/.treesitter-ls/")?;
+        let (_host_hash, filename) = path_without_prefix.split_once('/')?;
 
-        // Extract host URI from query parameter
-        let query = url.query()?;
-        let host_encoded = query.strip_prefix("host=")?;
-        let host_decoded = percent_decode_str(host_encoded)
-            .decode_utf8()
-            .ok()?
-            .to_string();
-        let host_uri = Url::parse(&host_decoded).ok()?;
+        // Extract region_id and extension from filename
+        let (region_id, ext) = if let Some(dot_pos) = filename.rfind('.') {
+            (&filename[..dot_pos], &filename[dot_pos + 1..])
+        } else {
+            return None;
+        };
+
+        // Infer language from extension
+        let language = Self::extension_to_language(ext)?.to_string();
+
+        // Create a placeholder host_uri since we can't recover it from the hash
+        let host_uri = Url::parse("file:///unknown").ok()?;
 
         Some(Self {
             host_uri,
             language,
-            region_id,
+            region_id: region_id.to_string(),
         })
+    }
+
+    /// Map file extension back to language name.
+    fn extension_to_language(ext: &str) -> Option<&'static str> {
+        match ext {
+            "lua" => Some("lua"),
+            "py" => Some("python"),
+            "rs" => Some("rust"),
+            "js" => Some("javascript"),
+            "ts" => Some("typescript"),
+            "go" => Some("go"),
+            "c" => Some("c"),
+            "cpp" => Some("cpp"),
+            "java" => Some("java"),
+            "rb" => Some("ruby"),
+            "php" => Some("php"),
+            "swift" => Some("swift"),
+            "kt" => Some("kotlin"),
+            "scala" => Some("scala"),
+            "hs" => Some("haskell"),
+            "ml" => Some("ocaml"),
+            "ex" => Some("elixir"),
+            "erl" => Some("erlang"),
+            "clj" => Some("clojure"),
+            "r" => Some("r"),
+            "jl" => Some("julia"),
+            "sql" => Some("sql"),
+            "html" => Some("html"),
+            "css" => Some("css"),
+            "json" => Some("json"),
+            "yaml" => Some("yaml"),
+            "toml" => Some("toml"),
+            "xml" => Some("xml"),
+            "md" => Some("markdown"),
+            "sh" => Some("bash"),
+            "ps1" => Some("powershell"),
+            "txt" => None, // Default extension, language unknown
+            _ => None,
+        }
     }
 
     /// Get the host document URI.
@@ -99,31 +151,70 @@ impl VirtualDocumentUri {
 
     /// Convert to a URI string.
     ///
-    /// Format: `tsls-virtual://{language}/{region_id}?host={url_encoded_host_uri}`
+    /// Format: `file:///.treesitter-ls/{host_path_hash}/{region_id}.{ext}`
+    ///
+    /// Uses file:// scheme with a virtual path under .treesitter-ls directory.
+    /// This format is compatible with most language servers that expect file:// URIs.
+    /// The file extension is derived from the language to help downstream language servers
+    /// recognize the file type (e.g., lua-language-server needs `.lua` extension).
     pub(crate) fn to_uri_string(&self) -> String {
-        use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
 
-        // Encode all characters that are not safe in query strings
-        const QUERY_ENCODE_SET: &AsciiSet = &CONTROLS
-            .add(b' ')
-            .add(b'"')
-            .add(b'#')
-            .add(b'<')
-            .add(b'>')
-            .add(b'`')
-            .add(b'?')
-            .add(b'{')
-            .add(b'}')
-            .add(b'/')
-            .add(b':')
-            .add(b'@')
-            .add(b'%');
+        // Hash the host URI to create a unique but deterministic directory name
+        let mut hasher = DefaultHasher::new();
+        self.host_uri.as_str().hash(&mut hasher);
+        let host_hash = hasher.finish();
 
-        let host_encoded = utf8_percent_encode(self.host_uri.as_str(), QUERY_ENCODE_SET);
+        // Get file extension for the language
+        let extension = Self::language_to_extension(&self.language);
+
+        // Create a file:// URI with a virtual path
+        // This allows downstream language servers to recognize the file type by extension
         format!(
-            "tsls-virtual://{}/{}?host={}",
-            self.language, self.region_id, host_encoded
+            "file:///.treesitter-ls/{:x}/{}.{}",
+            host_hash, self.region_id, extension
         )
+    }
+
+    /// Map language name to file extension.
+    ///
+    /// Downstream language servers often use file extension to determine file type.
+    fn language_to_extension(language: &str) -> &'static str {
+        match language {
+            "lua" => "lua",
+            "python" => "py",
+            "rust" => "rs",
+            "javascript" => "js",
+            "typescript" => "ts",
+            "go" => "go",
+            "c" => "c",
+            "cpp" => "cpp",
+            "java" => "java",
+            "ruby" => "rb",
+            "php" => "php",
+            "swift" => "swift",
+            "kotlin" => "kt",
+            "scala" => "scala",
+            "haskell" => "hs",
+            "ocaml" => "ml",
+            "elixir" => "ex",
+            "erlang" => "erl",
+            "clojure" => "clj",
+            "r" => "r",
+            "julia" => "jl",
+            "sql" => "sql",
+            "html" => "html",
+            "css" => "css",
+            "json" => "json",
+            "yaml" => "yaml",
+            "toml" => "toml",
+            "xml" => "xml",
+            "markdown" => "md",
+            "bash" | "sh" => "sh",
+            "powershell" => "ps1",
+            _ => "txt", // Default fallback
+        }
     }
 }
 

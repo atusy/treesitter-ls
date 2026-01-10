@@ -43,22 +43,26 @@ impl BridgeManager {
     /// Check if a virtual document has been opened for a given language.
     ///
     /// This is used to avoid sending duplicate didOpen notifications.
+    /// Exposed for testing.
+    #[cfg(test)]
     pub(crate) fn is_document_opened(&self, language: &str, virtual_uri: &str) -> bool {
         // Use try_lock for synchronous access (will always succeed in single-threaded context)
-        if let Ok(versions) = self.document_versions.try_lock() {
-            if let Some(docs) = versions.get(language) {
-                return docs.contains_key(virtual_uri);
-            }
+        if let Ok(versions) = self.document_versions.try_lock()
+            && let Some(docs) = versions.get(language)
+        {
+            return docs.contains_key(virtual_uri);
         }
         false
     }
 
     /// Get the current version of a virtual document, if it has been opened.
+    /// Exposed for testing.
+    #[cfg(test)]
     pub(crate) fn get_document_version(&self, language: &str, virtual_uri: &str) -> Option<i32> {
-        if let Ok(versions) = self.document_versions.try_lock() {
-            if let Some(docs) = versions.get(language) {
-                return docs.get(virtual_uri).copied();
-            }
+        if let Ok(versions) = self.document_versions.try_lock()
+            && let Some(docs) = versions.get(language)
+        {
+            return docs.get(virtual_uri).copied();
         }
         None
     }
@@ -67,6 +71,8 @@ impl BridgeManager {
     ///
     /// This should be called after sending didOpen notification to avoid duplicates.
     /// Sets the initial version to 1.
+    /// Exposed for testing.
+    #[cfg(test)]
     pub(crate) async fn mark_document_opened(&self, language: &str, virtual_uri: &str) {
         let mut versions = self.document_versions.lock().await;
         versions
@@ -78,17 +84,13 @@ impl BridgeManager {
     /// Increment the version of a virtual document and return the new version.
     ///
     /// Returns None if the document has not been opened.
-    pub(crate) async fn increment_document_version(
-        &self,
-        language: &str,
-        virtual_uri: &str,
-    ) -> Option<i32> {
+    async fn increment_document_version(&self, language: &str, virtual_uri: &str) -> Option<i32> {
         let mut versions = self.document_versions.lock().await;
-        if let Some(docs) = versions.get_mut(language) {
-            if let Some(version) = docs.get_mut(virtual_uri) {
-                *version += 1;
-                return Some(*version);
-            }
+        if let Some(docs) = versions.get_mut(language)
+            && let Some(version) = docs.get_mut(virtual_uri)
+        {
+            *version += 1;
+            return Some(*version);
         }
         None
     }
@@ -334,7 +336,10 @@ impl BridgeManager {
                 && id.as_i64() == Some(request_id)
             {
                 // Transform response to host coordinates
-                return Ok(transform_completion_response_to_host(msg, region_start_line));
+                return Ok(transform_completion_response_to_host(
+                    msg,
+                    region_start_line,
+                ));
             }
             // Skip notifications and other responses
         }
