@@ -162,7 +162,95 @@ const scrum: ScrumDashboard = {
       refinement_notes: ["ADR-0018 init window; async handling; errors not hangs during init; builds on PBI-301/302/303"],
     },
   ],
-  sprint: null,
+  sprint: {
+    number: 145,
+    pbi_id: "PBI-302",
+    goal: "Enable Lua developers to receive hover information from lua-language-server for Lua code blocks embedded in markdown, proving the bridge request/response flow with position and URI transformations",
+    status: "planning",
+    subtasks: [
+      // Subtask 1: Virtual document URI scheme
+      {
+        test: "virtual_document_uri_creates_scheme_for_injection_region",
+        implementation: "Create VirtualDocumentUri type that encodes host URI + injection language + region ID into a unique URI scheme (e.g., tsls-virtual://lua/file.md/region-0)",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Foundation for URI transformation; downstream LS sees virtual URI, responses transformed back"],
+      },
+      // Subtask 2: Position mapping host -> virtual
+      {
+        test: "position_maps_host_markdown_line_to_virtual_lua_line",
+        implementation: "Use CacheableInjectionRegion.translate_host_to_virtual() to map hover position from markdown coordinates to Lua code block coordinates",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["AC3: position correctly mapped; existing translate_host_to_virtual in injection.rs"],
+      },
+      // Subtask 3: Position mapping virtual -> host (for response ranges)
+      {
+        test: "position_maps_virtual_lua_line_back_to_host_markdown_line",
+        implementation: "Use CacheableInjectionRegion.translate_virtual_to_host() to map hover response ranges back to markdown coordinates",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["AC4: response transformed back; existing translate_virtual_to_host in injection.rs"],
+      },
+      // Subtask 4: Bridge hover request construction
+      {
+        test: "bridge_hover_request_uses_virtual_uri_and_mapped_position",
+        implementation: "Construct textDocument/hover JSON-RPC request with virtual URI and transformed position for downstream LS",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Builds on subtasks 1-2; uses PBI-301 write_message()"],
+      },
+      // Subtask 5: Bridge hover response parsing
+      {
+        test: "bridge_hover_response_transforms_range_to_host_coordinates",
+        implementation: "Parse hover response, transform any Range in the result back to host document coordinates using subtask 3",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Hover response may contain Range; must transform for client"],
+      },
+      // Subtask 6: Integration - hover_impl calls bridge
+      {
+        test: "hover_impl_returns_bridge_response_for_lua_injection",
+        implementation: "Wire hover_impl to: detect injection -> get bridge connection -> send request -> await response -> transform and return",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Connects all pieces; requires initialized bridge connection"],
+      },
+      // Subtask 7: E2E test - hover on local variable
+      {
+        test: "e2e_hover_on_lua_local_variable_shows_type",
+        implementation: "E2E test: markdown with Lua code block containing 'local x = 1', hover on x shows type annotation from lua-language-server",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["AC1 verification; requires lua-language-server installed"],
+      },
+      // Subtask 8: E2E test - hover on function call
+      {
+        test: "e2e_hover_on_lua_function_shows_signature",
+        implementation: "E2E test: markdown with Lua code block containing 'print(x)', hover on print shows function signature from lua-language-server",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["AC2 verification; requires lua-language-server installed"],
+      },
+      // Subtask 9 (structural): Monitor bridge.rs size per Sprint 144 retrospective
+      {
+        test: "bridge_module_size_under_600_lines",
+        implementation: "Check bridge.rs line count; if > 600, split into submodules (connection.rs, protocol.rs, routing.rs)",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: ["Sprint 144 retrospective action; currently 517 lines"],
+      },
+    ],
+  },
   // Sprint 144 (PBI-301): 7 subtasks, commits: 1393ded9, a7116891, 4ff80258, d48e9557, 551917f1, 89a2e1f6, 525661d9
   completed: [],
   definition_of_done: {
