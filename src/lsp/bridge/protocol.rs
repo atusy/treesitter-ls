@@ -294,6 +294,91 @@ pub(crate) fn transform_hover_response_to_host(
     response
 }
 
+/// Transform a completion response from virtual to host document coordinates.
+///
+/// If completion items contain textEdit ranges, translates the line numbers from virtual
+/// document coordinates back to host document coordinates by adding region_start_line.
+/// Handles both CompletionList format (with items array) and direct array format.
+///
+/// # Arguments
+/// * `response` - The JSON-RPC response from the downstream language server
+/// * `region_start_line` - The starting line of the injection region in the host document
+pub(crate) fn transform_completion_response_to_host(
+    mut response: serde_json::Value,
+    region_start_line: u32,
+) -> serde_json::Value {
+    // Get mutable reference to result
+    let Some(result) = response.get_mut("result") else {
+        return response;
+    };
+
+    // Null result - pass through unchanged
+    if result.is_null() {
+        return response;
+    }
+
+    // Determine the items to transform
+    // CompletionList: { items: [...] } or direct array: [...]
+    let items = if result.is_array() {
+        result.as_array_mut()
+    } else if result.is_object() {
+        result.get_mut("items").and_then(|i| i.as_array_mut())
+    } else {
+        None
+    };
+
+    if let Some(items) = items {
+        for item in items.iter_mut() {
+            transform_completion_item_range(item, region_start_line);
+        }
+    }
+
+    response
+}
+
+/// Transform the textEdit range in a single completion item to host coordinates.
+fn transform_completion_item_range(item: &mut serde_json::Value, region_start_line: u32) {
+    // Check for textEdit field
+    if let Some(text_edit) = item.get_mut("textEdit")
+        && let Some(range) = text_edit.get_mut("range")
+        && range.is_object()
+    {
+        transform_range(range, region_start_line);
+    }
+
+    // Also check for additionalTextEdits (array of TextEdit)
+    if let Some(additional) = item.get_mut("additionalTextEdits")
+        && let Some(additional_arr) = additional.as_array_mut()
+    {
+        for edit in additional_arr.iter_mut() {
+            if let Some(range) = edit.get_mut("range")
+                && range.is_object()
+            {
+                transform_range(range, region_start_line);
+            }
+        }
+    }
+}
+
+/// Transform a range's line numbers from virtual to host coordinates.
+fn transform_range(range: &mut serde_json::Value, region_start_line: u32) {
+    // Transform start position
+    if let Some(start) = range.get_mut("start")
+        && let Some(line) = start.get_mut("line")
+        && let Some(line_num) = line.as_u64()
+    {
+        *line = serde_json::json!(line_num + region_start_line as u64);
+    }
+
+    // Transform end position
+    if let Some(end) = range.get_mut("end")
+        && let Some(line) = end.get_mut("line")
+        && let Some(line_num) = line.as_u64()
+    {
+        *line = serde_json::json!(line_num + region_start_line as u64);
+    }
+}
+
 /// Request ID type for JSON-RPC messages.
 ///
 /// LSP spec allows either integer or string IDs.

@@ -23,7 +23,7 @@ mod tests {
     use super::protocol::{
         PendingRequests, VirtualDocumentUri, build_bridge_completion_request,
         build_bridge_didchange_notification, build_bridge_hover_request,
-        transform_hover_response_to_host,
+        transform_completion_response_to_host, transform_hover_response_to_host,
     };
 
     #[test]
@@ -659,6 +659,121 @@ mod tests {
         assert_eq!(
             position["character"], 6,
             "Position character should remain unchanged"
+        );
+    }
+
+    /// RED: Test that completion response transforms textEdit ranges to host coordinates (PBI-303 Subtask 6)
+    #[test]
+    fn bridge_completion_response_transforms_textedit_ranges_to_host() {
+        use serde_json::json;
+
+        // Simulate a completion response from lua-language-server with textEdit ranges
+        // The ranges are in virtual document coordinates (starting at line 0)
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "isIncomplete": false,
+                "items": [
+                    {
+                        "label": "print",
+                        "kind": 3,
+                        "textEdit": {
+                            "range": {
+                                "start": { "line": 1, "character": 0 },
+                                "end": { "line": 1, "character": 3 }
+                            },
+                            "newText": "print"
+                        }
+                    },
+                    {
+                        "label": "pairs",
+                        "kind": 3
+                    }
+                ]
+            }
+        });
+
+        // The injection region starts at line 3 in the host document
+        let region_start_line = 3;
+
+        // Transform the response to host coordinates
+        let transformed = transform_completion_response_to_host(response, region_start_line);
+
+        // Verify the items array exists
+        let items = transformed["result"]["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+
+        // First item with textEdit should have transformed range
+        let first_item = &items[0];
+        let text_edit = &first_item["textEdit"];
+        let range = &text_edit["range"];
+        assert_eq!(
+            range["start"]["line"], 4,
+            "Start line should be translated to host (1 + 3 = 4)"
+        );
+        assert_eq!(
+            range["end"]["line"], 4,
+            "End line should be translated to host (1 + 3 = 4)"
+        );
+
+        // Second item without textEdit should be unchanged
+        let second_item = &items[1];
+        assert_eq!(second_item["label"], "pairs");
+        assert!(second_item.get("textEdit").is_none());
+    }
+
+    /// Test completion response with null result passes through unchanged
+    #[test]
+    fn bridge_completion_response_null_result_unchanged() {
+        use serde_json::json;
+
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": null
+        });
+
+        let region_start_line = 3;
+        let transformed = transform_completion_response_to_host(response.clone(), region_start_line);
+        assert_eq!(transformed, response);
+    }
+
+    /// Test completion response as array (not CompletionList) is also transformed
+    #[test]
+    fn bridge_completion_response_array_result_transforms_textedit() {
+        use serde_json::json;
+
+        // Some servers return array directly instead of CompletionList
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "label": "print",
+                    "textEdit": {
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 2 }
+                        },
+                        "newText": "print"
+                    }
+                }
+            ]
+        });
+
+        let region_start_line = 5;
+        let transformed = transform_completion_response_to_host(response, region_start_line);
+
+        let items = transformed["result"].as_array().unwrap();
+        let text_edit = &items[0]["textEdit"];
+        assert_eq!(
+            text_edit["range"]["start"]["line"], 5,
+            "Start line should be translated (0 + 5 = 5)"
+        );
+        assert_eq!(
+            text_edit["range"]["end"]["line"], 5,
+            "End line should be translated (0 + 5 = 5)"
         );
     }
 
