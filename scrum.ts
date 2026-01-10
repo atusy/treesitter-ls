@@ -34,7 +34,8 @@ const scrum: ScrumDashboard = {
   },
 
   // Completed: PBI-001-304 (1-147) | Walking Skeleton complete! | Deferred: PBI-091, PBI-107
-  // Remaining: PBI-305-314 (ADR compliance gaps from review)
+  // Removed: PBI-305 (obsolete - lua-ls completion issue fixed in 5a91bebb)
+  // Remaining: PBI-306-314 (ADR compliance gaps from review)
   // Priority order: P0=PBI-306 (timeout), P1=PBI-307,308,309,310 (state/shutdown/cancel/notify), P2=PBI-311,312,313 (actor), P3=PBI-314 (config)
   product_backlog: [
 
@@ -84,40 +85,6 @@ const scrum: ScrumDashboard = {
         "Location: src/lsp/bridge/pool.rs lines 154-167, 249-258, 338-350",
         "Phase 1 scope: Simple timeout wrapping only; no actor pattern or graceful shutdown yet",
       ],
-    },
-
-    // --- PBI-305: lua-language-server Workspace Configuration ---
-    {
-      id: "PBI-305",
-      story: {
-        role: "Lua developer editing markdown",
-        capability:
-          "have lua-language-server return completion items in virtual documents",
-        benefit:
-          "I can get actual autocomplete suggestions instead of null responses",
-      },
-      acceptance_criteria: [
-        {
-          criterion:
-            "Given a completion request in Lua code block, when lua-ls is initialized with proper workspace configuration, then lua-ls returns completion items",
-          verification:
-            "E2E test: typing 'pri' in Lua block receives non-null completion response from lua-ls",
-        },
-        {
-          criterion:
-            "Given virtual document URI, when lua-ls indexes the document, then lua-ls recognizes the virtual file scheme",
-          verification:
-            "Test with file:// scheme variations or document materialization (ADR-0007)",
-        },
-        {
-          criterion:
-            "Given lua-ls initialization, when rootUri or workspaceFolder is provided, then lua-ls initializes workspace correctly",
-          verification:
-            "Verify lua-ls telemetry/logs show successful workspace indexing",
-        },
-      ],
-      status: "ready",
-      refinement_notes: ["Blocking issue from PBI-303 Sprint 146; investigate lua-ls config requirements; may require ADR-0007 document materialization"],
     },
 
     // --- PBI-307: Complete State Machine (P1 - ADR-0015, ADR-0017) ---
