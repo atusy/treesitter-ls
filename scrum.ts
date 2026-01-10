@@ -140,8 +140,8 @@ const scrum: ScrumDashboard = {
         test: "Test that didOpen is only sent once per virtual document URI per connection",
         implementation: "Guard didOpen with opened_documents.contains check; insert after sending",
         type: "behavioral",
-        status: "green",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "ed41ead2", message: "feat(bridge): guard didOpen with should_send_didopen check", phase: "green" }],
         notes: ["AC3: didOpen sent on first access; prevents duplicate notifications"],
       },
       {
