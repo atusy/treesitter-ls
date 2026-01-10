@@ -35,458 +35,291 @@ const scrum: ScrumDashboard = {
 
   // Completed: PBI-001-304 (1-147) | Walking Skeleton complete! | Deferred: PBI-091, PBI-107
   // Removed: PBI-305 (obsolete - lua-ls completion issue fixed in 5a91bebb)
-  // Remaining: PBI-306-314 (ADR compliance gaps from review)
-  // Priority order: P0=PBI-306 (timeout), P1=PBI-307,308,309,310 (state/shutdown/cancel/notify), P2=PBI-311,312,313 (actor), P3=PBI-314 (config)
+  // Consolidated: PBI-307+308 -> PBI-307, PBI-311+312+313 -> PBI-311
+  // Remaining: PBI-306, PBI-307, PBI-309, PBI-310, PBI-311, PBI-314 (6 PBIs, user-focused)
+  // Priority: P0=PBI-306, P1=PBI-307,309,310, P2=PBI-311, P3=PBI-314
   product_backlog: [
 
-    // --- PBI-306: Timeout Protection for Async Bridge Loops (P0 - Critical) ---
-    // ADR Compliance: ADR-0014 (Async Connection), ADR-0018 (Timeout Hierarchy)
-    // Addresses: 3 infinite loops in pool.rs that can hang treesitter-ls indefinitely
+    // --- PBI-306: Responsive LSP Even When Servers Hang (P0 - Critical) ---
     {
       id: "PBI-306",
       story: {
         role: "Lua developer editing markdown",
         capability:
-          "have LSP bridge requests timeout gracefully instead of hanging forever",
+          "continue editing even when a language server stops responding",
         benefit:
-          "treesitter-ls remains responsive even when downstream servers hang or crash",
+          "my editor never freezes waiting for a stuck language server",
       },
       acceptance_criteria: [
         {
           criterion:
-            "Given server initialization hangs, when 60 seconds elapse without initialize response, then get_or_create_connection returns io::Error with timeout message",
+            "Given a language server that hangs during startup, when I open a file, then I see an error message within 60 seconds instead of my editor freezing",
           verification:
-            "Unit test: mock server that never responds to initialize; verify timeout error after 60s (use tokio::time::pause for fast test)",
+            "Manual test: Start treesitter-ls with mock server that never responds; verify error appears within 60s and editor remains usable",
         },
         {
           criterion:
-            "Given hover request hangs, when 30 seconds elapse without matching response, then send_hover_request returns io::Error with timeout message",
+            "Given a language server that hangs on hover request, when I hover over code, then I see an error or empty result within 30 seconds instead of indefinite wait",
           verification:
-            "Unit test: mock server that never responds to hover; verify timeout error after 30s",
+            "Manual test: Hover over Lua code with mock server that hangs; verify response within 30s",
         },
         {
           criterion:
-            "Given completion request hangs, when 30 seconds elapse without matching response, then send_completion_request returns io::Error with timeout message",
+            "Given a language server that hangs on completion request, when I trigger completion, then I see an error or empty result within 30 seconds",
           verification:
-            "Unit test: mock server that never responds to completion; verify timeout error after 30s",
+            "Manual test: Trigger completion with mock server that hangs; verify response within 30s",
         },
         {
           criterion:
-            "Given normal server response within timeout, when request completes successfully, then behavior is unchanged from current implementation",
+            "Given a normally functioning language server, when I use LSP features, then behavior is unchanged from before",
           verification:
-            "Existing E2E tests continue to pass (make test_e2e)",
+            "E2E tests continue to pass: make test_e2e",
         },
       ],
       status: "ready",
       refinement_notes: [
-        "P0 Critical: These loops can hang treesitter-ls indefinitely if downstream server hangs",
-        "Minimal fix: wrap each loop with tokio::time::timeout",
-        "Timeout values per ADR-0018: Init 60s (Tier 0), Request 30s (Liveness tier approximation)",
-        "Location: src/lsp/bridge/pool.rs lines 154-167, 249-258, 338-350",
-        "Phase 1 scope: Simple timeout wrapping only; no actor pattern or graceful shutdown yet",
+        "TECHNICAL: Wrap loops in pool.rs with tokio::time::timeout",
+        "TECHNICAL: Location: src/lsp/bridge/pool.rs lines 154-167, 249-258, 338-350",
+        "TECHNICAL: Timeout values per ADR-0018: Init 60s (Tier 0), Request 30s (Liveness tier)",
+        "ADR Compliance: ADR-0014 (Async Connection), ADR-0018 (Timeout Hierarchy)",
+        "Phase 1 scope: Simple timeout wrapping only; actor pattern in later PBIs",
       ],
     },
 
-    // --- PBI-307: Complete State Machine (P1 - ADR-0015, ADR-0017) ---
-    // Adds Closing and Closed states to ConnectionState enum per ADR-0015
+    // --- PBI-307: Clean Shutdown Without Orphaned Processes (P1) ---
+    // Consolidated from: PBI-307 (State Machine) + PBI-308 (Graceful Shutdown)
     {
       id: "PBI-307",
       story: {
         role: "Lua developer editing markdown",
         capability:
-          "have LSP bridge connections track their full lifecycle including shutdown states",
+          "have language servers shut down cleanly when I close my editor",
         benefit:
-          "treesitter-ls can gracefully handle shutdown and report accurate connection status",
+          "no orphaned lua-language-server processes accumulate on my system",
       },
       acceptance_criteria: [
         {
           criterion:
-            "Given ConnectionState enum, when reviewed against ADR-0015, then it includes Closing and Closed variants in addition to Initializing, Ready, Failed",
+            "Given I close my editor normally, when I check running processes, then no orphaned lua-language-server processes remain",
           verification:
-            "Unit test: ConnectionState enum has 5 variants with correct discriminant values for atomic storage",
+            "Manual test: Open file with Lua code, wait for LSP features, close editor, run 'pgrep lua-language-server' and verify no processes",
         },
         {
           criterion:
-            "Given BridgeError::for_state(), when called with Closing state, then it returns REQUEST_FAILED with message 'bridge: connection closing'",
+            "Given I force-quit my editor, when shutdown timeout (15s) expires, then language servers are forcefully terminated",
           verification:
-            "Unit test: BridgeError::for_state(Closing) returns error with code -32803 and correct message",
+            "Manual test: Force-quit editor, wait 15s, verify no orphaned processes with 'pgrep'",
         },
         {
           criterion:
-            "Given BridgeError::for_state(), when called with Closed state, then it returns REQUEST_FAILED with message 'bridge: connection closed'",
+            "Given a language server in error state, when I close my editor, then the process is cleaned up without hanging",
           verification:
-            "Unit test: BridgeError::for_state(Closed) returns error with code -32803 and correct message",
+            "Manual test: Simulate server error, close editor, verify cleanup within 5s",
         },
         {
           criterion:
-            "Given StatefulBridgeConnection, when transitioning states, then valid transitions per ADR-0015 state machine are supported: Ready->Closing, Initializing->Closing, Closing->Closed, Failed->Closed",
+            "Given multiple language servers running, when I close my editor, then all are shut down within the global timeout",
           verification:
-            "Unit tests: set_closing() and set_closed() methods work from valid source states",
+            "Manual test: Open files using multiple language servers, close editor, verify all cleaned up",
         },
       ],
       status: "ready",
       refinement_notes: [
-        "P1 Priority: Foundation for graceful shutdown (PBI-308)",
-        "Location: src/lsp/bridge/connection.rs lines 27-55",
-        "Current: Only Initializing, Ready, Failed (3 states)",
-        "Target: Add Closing, Closed per ADR-0015 state machine diagram",
-        "State transitions per ADR-0015: Ready->Closing (shutdown), Failed->Closed (direct), Closing->Closed",
-        "Update to_u8/from_u8 for atomic storage (Closing=3, Closed=4)",
+        "TECHNICAL: Add Closing and Closed states to ConnectionState enum (ADR-0015)",
+        "TECHNICAL: Location: src/lsp/bridge/connection.rs lines 27-55",
+        "TECHNICAL: Implement LSP shutdown/exit handshake before killing process",
+        "TECHNICAL: Two-tier shutdown per ADR-0017: graceful (shutdown/exit) then forced (SIGTERM/SIGKILL)",
+        "TECHNICAL: Global shutdown timeout 5-15s per ADR-0018",
+        "TECHNICAL: State transitions: Ready->Closing (shutdown), Failed->Closed (direct), Closing->Closed",
+        "ADR Compliance: ADR-0015 (State Machine), ADR-0017 (Graceful Shutdown)",
+        "Consolidates former PBI-307 (State Machine) and PBI-308 (Graceful Shutdown)",
       ],
     },
 
-    // --- PBI-308: Graceful Shutdown (P1 - ADR-0017) ---
-    // Implements LSP shutdown/exit handshake before killing process
-    {
-      id: "PBI-308",
-      story: {
-        role: "Lua developer editing markdown",
-        capability:
-          "have downstream language servers shut down cleanly when treesitter-ls exits",
-        benefit:
-          "language servers can flush buffers, save state, and release resources properly",
-      },
-      acceptance_criteria: [
-        {
-          criterion:
-            "Given a Ready connection, when shutdown is initiated, then LSP shutdown request is sent before exit notification",
-          verification:
-            "Integration test: mock server receives shutdown request followed by exit notification in correct order",
-        },
-        {
-          criterion:
-            "Given shutdown sequence, when shutdown response is received, then exit notification is sent and process termination awaited",
-          verification:
-            "Integration test: verify exit notification sent only after shutdown response received",
-        },
-        {
-          criterion:
-            "Given global shutdown timeout (5-15s per ADR-0018), when timeout expires before graceful completion, then SIGTERM followed by SIGKILL is sent",
-          verification:
-            "Unit test with tokio::time::pause: mock slow server; verify SIGTERM/SIGKILL escalation after timeout",
-        },
-        {
-          criterion:
-            "Given a Failed connection, when shutdown is initiated, then LSP handshake is skipped and process cleanup (SIGTERM/SIGKILL) proceeds directly",
-          verification:
-            "Unit test: Failed state connection goes directly to process cleanup without sending shutdown/exit",
-        },
-        {
-          criterion:
-            "Given multiple connections, when shutdown is initiated, then all connections shut down in parallel within global timeout",
-          verification:
-            "Integration test: 3 mock servers shut down concurrently; total time < global timeout",
-        },
-      ],
-      status: "draft",
-      refinement_notes: [
-        "P1 Priority: Production readiness - proper LSP compliance on exit",
-        "Depends on PBI-307 (Closing/Closed states)",
-        "Per ADR-0017: Two-tier shutdown (graceful then forced)",
-        "Per ADR-0018: Global shutdown timeout 5-15s (implementation-defined)",
-        "Currently: Drop trait only calls start_kill() (SIGTERM) - no LSP handshake",
-        "Location: connection.rs Drop impl, new shutdown module",
-        "Phase 1 scope: Single-connection shutdown; multi-connection parallel in Phase 2",
-      ],
-    },
-
-    // --- PBI-309: Cancellation Forwarding (P1 - ADR-0015, ADR-0016) ---
-    // Handle upstream $/cancelRequest and forward to downstream servers
+    // --- PBI-309: Cancel Slow Operations (P1) ---
     {
       id: "PBI-309",
       story: {
         role: "Lua developer editing markdown",
         capability:
-          "have cancellation requests forwarded to downstream language servers",
+          "cancel LSP operations that are taking too long",
         benefit:
-          "downstream servers can stop processing cancelled requests, reducing wasted computation",
+          "I can abort slow operations and continue working without waiting",
       },
       acceptance_criteria: [
         {
           criterion:
-            "Given upstream $/cancelRequest notification with request ID, when received by bridge, then $/cancelRequest is forwarded to downstream server handling that request",
+            "Given I start typing while a completion request is pending, when the editor sends a cancellation, then the language server stops processing the old request",
           verification:
-            "Integration test: send cancelRequest; verify downstream server receives it",
+            "Manual test: Trigger slow completion, type more characters; verify no stale completions appear",
         },
         {
           criterion:
-            "Given pending request tracking, when response received for cancelled request, then response is forwarded to upstream normally",
+            "Given I cancel a request, when the language server finishes anyway, then I see the result (cancellation is best-effort)",
           verification:
-            "Integration test: cancel request; server completes anyway; verify result returned to client",
+            "Integration test: Cancel request; server completes anyway; verify result returned to client",
         },
         {
           criterion:
-            "Given cancelled request, when server returns REQUEST_CANCELLED error, then error is forwarded to upstream client",
+            "Given I cancel a request, when the language server honors the cancellation, then I see a 'request cancelled' indication (not an error)",
           verification:
-            "Integration test: cancel request; server honors cancellation; verify error code -32800 returned",
-        },
-        {
-          criterion:
-            "Given request not found in pending map, when cancelRequest received, then notification is silently dropped",
-          verification:
-            "Unit test: cancelRequest for unknown ID is logged at debug level and ignored",
+            "Integration test: Cancel request; server honors it; verify no error shown to user",
         },
       ],
       status: "draft",
       refinement_notes: [
-        "P1 Priority: LSP compliance - standard cancellation flow",
-        "Per ADR-0015 section 5: Forward $/cancelRequest to downstream",
-        "Per ADR-0016: Router forwards to all connections that received original request (Phase 3 multi-LS)",
-        "Phase 1 scope: Single-server cancellation forwarding",
-        "Requires pending request tracking (HashMap<RequestId, ResponseChannel>)",
-        "Bridge stays thin: just forward, don't intercept",
+        "TECHNICAL: Handle upstream $/cancelRequest and forward to downstream servers",
+        "TECHNICAL: Per ADR-0015 section 5: Forward $/cancelRequest to downstream",
+        "TECHNICAL: Requires pending request tracking (HashMap<RequestId, ResponseChannel>)",
+        "TECHNICAL: Bridge stays thin: just forward, don't intercept",
+        "ADR Compliance: ADR-0015 (Cancellation), ADR-0016 (Router)",
+        "Phase 1 scope: Single-server cancellation; multi-LS in Phase 3",
       ],
     },
 
-    // --- PBI-310: Notification Pass-Through (P1 - ADR-0016) ---
-    // Route publishDiagnostics and other notifications from downstream to host client
+    // --- PBI-310: See Errors and Progress from Language Servers (P1) ---
     {
       id: "PBI-310",
       story: {
         role: "Lua developer editing markdown",
         capability:
-          "receive diagnostics and progress notifications from downstream language servers",
+          "see diagnostics, errors, and progress indicators from language servers",
         benefit:
-          "I see errors, warnings, and progress indicators from language servers in my editor",
+          "I know about syntax errors, warnings, and server activity in my Lua code blocks",
       },
       acceptance_criteria: [
         {
           criterion:
-            "Given downstream server sends publishDiagnostics, when bridge receives it, then notification is transformed (virtual URI -> host URI) and forwarded to upstream client",
+            "Given I introduce a syntax error in a Lua code block, when the language server detects it, then I see the error squiggle in my editor",
           verification:
-            "E2E test: introduce syntax error in Lua block; verify diagnostic appears in editor",
+            "E2E test: Introduce syntax error in Lua block; verify diagnostic appears in editor",
         },
         {
           criterion:
-            "Given downstream sends window/logMessage, when bridge receives it, then notification is forwarded to upstream unchanged",
+            "Given the language server is indexing files, when it sends progress updates, then I see a progress indicator in my editor",
           verification:
-            "Integration test: downstream sends logMessage; verify upstream receives it",
+            "Manual test: Open large project; verify progress indicator appears during indexing",
         },
         {
           criterion:
-            "Given downstream sends $/progress, when bridge receives it, then notification is forwarded to upstream",
+            "Given the language server logs a message, when it's important (warning/error), then I can see it in my editor's log",
           verification:
-            "Integration test: downstream sends progress; verify upstream receives it",
+            "Manual test: Trigger server warning; verify message visible in editor output panel",
         },
         {
           criterion:
-            "Given downstream sends window/showMessage, when bridge receives it, then notification is forwarded to upstream",
+            "Given diagnostics are on a specific line in the Lua block, when shown in the editor, then the line number correctly maps to the markdown file",
           verification:
-            "Integration test: downstream sends showMessage; verify upstream receives it",
-        },
-        {
-          criterion:
-            "Given URI transformation for diagnostics, when virtual URI is transformed, then host document URI with correct position mapping is returned",
-          verification:
-            "Unit test: virtual URI 'treesitter-ls://lua/file.md' transforms to 'file:///path/to/file.md' with position offset applied",
+            "E2E test: Error on line 3 of Lua block maps to correct line in markdown document",
         },
       ],
       status: "draft",
       refinement_notes: [
-        "P1 Priority: Essential for usable LSP experience",
-        "Per ADR-0016: Pass-through notifications without aggregation",
-        "publishDiagnostics requires URI transformation (virtual -> host)",
-        "Position mapping: virtual document positions -> host document positions",
-        "Other notifications (logMessage, showMessage, progress) forward as-is",
-        "Requires reader task to handle incoming notifications from downstream",
-        "Location: pool.rs reader loop, new notification routing module",
+        "TECHNICAL: Route publishDiagnostics from downstream to host client with URI transformation",
+        "TECHNICAL: Transform virtual URI (treesitter-ls://lua/file.md) to host URI (file:///path/to/file.md)",
+        "TECHNICAL: Apply position offset for embedded code blocks",
+        "TECHNICAL: Forward window/logMessage, window/showMessage, $/progress as-is",
+        "TECHNICAL: Requires reader task to handle incoming notifications from downstream",
+        "TECHNICAL: Location: pool.rs reader loop, new notification routing module",
+        "ADR Compliance: ADR-0016 (Notification Pass-Through)",
       ],
     },
 
-    // --- PBI-311: Single-Writer Actor Loop (P2 - ADR-0015) ---
-    // Serialize all stdin writes through bounded mpsc channel
+    // --- PBI-311: Reliable Operation Under Heavy Load (P2) ---
+    // Consolidated from: PBI-311 (Actor Loop) + PBI-312 (Reader Task) + PBI-313 (Backpressure)
     {
       id: "PBI-311",
       story: {
         role: "Lua developer editing markdown",
         capability:
-          "have concurrent LSP requests handled without protocol corruption",
+          "have reliable LSP features even when editing rapidly or working with large files",
         benefit:
-          "treesitter-ls remains stable under high request load without message interleaving",
+          "my editor stays responsive and stable regardless of my editing speed or project size",
       },
       acceptance_criteria: [
         {
           criterion:
-            "Given bounded mpsc channel with capacity 256, when operations are enqueued, then they are dequeued and written to stdin in FIFO order",
+            "Given I type rapidly while completions are loading, when multiple requests are queued, then my editor remains responsive (no freezing)",
           verification:
-            "Unit test: enqueue 10 operations concurrently; verify writes to mock stdin are serialized in order",
+            "Manual test: Type rapidly in Lua block; verify editor remains responsive throughout",
         },
         {
           criterion:
-            "Given single writer task, when multiple async tasks send operations, then no byte-level interleaving occurs on stdin",
+            "Given I have many LSP requests in flight, when the queue fills up, then new requests fail gracefully with an error instead of blocking",
           verification:
-            "Integration test: spawn 5 concurrent requests; verify each LSP message is complete and parseable",
+            "Manual test: Trigger many rapid requests; verify errors returned rather than freezing",
         },
         {
           criterion:
-            "Given actor loop, when request is sent, then pending_requests map is updated with response channel before write",
+            "Given a language server crashes mid-request, when I continue editing, then the editor recovers without freezing or orphaned tasks",
           verification:
-            "Unit test: send request through actor; verify entry exists in pending_requests before write completes",
+            "Manual test: Kill lua-language-server during operation; verify editor recovers gracefully",
         },
         {
           criterion:
-            "Given actor loop shutdown, when stop signal received, then current write completes before loop exits",
+            "Given multiple concurrent LSP requests, when they complete, then responses are routed to the correct requests (no mix-ups)",
           verification:
-            "Unit test: signal stop mid-write; verify write completes and loop exits cleanly",
+            "Integration test: Send hover and completion concurrently; verify correct responses returned",
         },
       ],
       status: "draft",
       refinement_notes: [
-        "P2 Priority: Robustness under concurrent load",
-        "Per ADR-0015 section 1: Single-writer loop prevents protocol corruption",
-        "Bounded channel capacity 256 per ADR-0015",
-        "Actor pattern: dequeue from order_queue, write to stdin, track pending",
-        "Location: New actor module or extend pool.rs",
-        "Foundation for graceful shutdown (writer-idle synchronization per ADR-0017)",
+        "TECHNICAL: Implement single-writer actor loop for stdin serialization (ADR-0015 section 1)",
+        "TECHNICAL: Bounded mpsc channel with capacity 256",
+        "TECHNICAL: Spawn dedicated reader task per connection with select! loop (ADR-0014)",
+        "TECHNICAL: Use try_send() for non-blocking backpressure (ADR-0015 section 3)",
+        "TECHNICAL: Notifications dropped with WARN log when queue full",
+        "TECHNICAL: Requests return REQUEST_FAILED (-32803) when queue full",
+        "TECHNICAL: CancellationToken for cross-task panic propagation (ADR-0015 section 6)",
+        "ADR Compliance: ADR-0014 (Async), ADR-0015 (Actor Pattern)",
+        "Consolidates former PBI-311 (Actor Loop), PBI-312 (Reader Task), PBI-313 (Backpressure)",
       ],
     },
 
-    // --- PBI-312: Reader Task with select! (P2 - ADR-0014) ---
-    // Spawn dedicated async reader task per connection
-    {
-      id: "PBI-312",
-      story: {
-        role: "Lua developer editing markdown",
-        capability:
-          "have LSP responses routed correctly with proper timeout and shutdown handling",
-        benefit:
-          "treesitter-ls responds promptly and shuts down cleanly without orphaned tasks",
-      },
-      acceptance_criteria: [
-        {
-          criterion:
-            "Given dedicated reader task, when response received from downstream, then response is routed to correct pending request via oneshot channel",
-          verification:
-            "Unit test: send request; inject response; verify caller receives response via oneshot",
-        },
-        {
-          criterion:
-            "Given reader task select! loop, when shutdown signal received, then reader exits cleanly",
-          verification:
-            "Unit test: spawn reader; send shutdown signal; verify task completes without panic",
-        },
-        {
-          criterion:
-            "Given reader task select! loop, when liveness timeout fires, then connection transitions to Failed state",
-          verification:
-            "Unit test with tokio::time::pause: no response for 30s; verify Failed state transition",
-        },
-        {
-          criterion:
-            "Given reader task with CancellationToken, when writer panics, then reader exits after token is cancelled",
-          verification:
-            "Unit test: simulate writer panic; verify reader receives cancellation and exits",
-        },
-      ],
-      status: "draft",
-      refinement_notes: [
-        "P2 Priority: Foundation for robust async operation",
-        "Per ADR-0014: select! multiplexes read, shutdown, timeout",
-        "Per ADR-0015 section 6: CancellationToken for cross-task panic propagation",
-        "Route responses via oneshot channels in pending_requests map",
-        "Location: New reader task in connection.rs or separate module",
-        "Complements writer actor (PBI-311) for complete async architecture",
-      ],
-    },
-
-    // --- PBI-313: Non-Blocking Backpressure (P2 - ADR-0015) ---
-    // Use try_send() on bounded queue with graceful degradation
-    {
-      id: "PBI-313",
-      story: {
-        role: "Lua developer editing markdown",
-        capability:
-          "have the bridge handle queue overflow gracefully without blocking or deadlock",
-        benefit:
-          "treesitter-ls remains responsive even under extreme load conditions",
-      },
-      acceptance_criteria: [
-        {
-          criterion:
-            "Given queue is full (256 operations), when notification enqueued via try_send(), then notification is dropped with WARN log",
-          verification:
-            "Unit test: fill queue to capacity; enqueue didChange; verify WARN log and operation dropped",
-        },
-        {
-          criterion:
-            "Given queue is full, when request enqueued via try_send(), then REQUEST_FAILED error is returned immediately",
-          verification:
-            "Unit test: fill queue; send hover request; verify REQUEST_FAILED (-32803) returned",
-        },
-        {
-          criterion:
-            "Given notification drop, when logged, then log includes URI, method, and queue depth",
-          verification:
-            "Unit test: verify log message contains relevant debugging information",
-        },
-        {
-          criterion:
-            "Given queue has capacity, when operation enqueued, then operation proceeds normally",
-          verification:
-            "Unit test: queue with space; enqueue operation; verify success",
-        },
-      ],
-      status: "draft",
-      refinement_notes: [
-        "P2 Priority: Prevents deadlock under backpressure",
-        "Per ADR-0015 section 3: Non-blocking backpressure with try_send()",
-        "Notifications: DROP with telemetry (WARN log)",
-        "Requests: Return REQUEST_FAILED immediately",
-        "Depends on PBI-311 (actor loop with bounded channel)",
-        "Phase 2 extension: $/telemetry events for monitoring",
-      ],
-    },
-
-    // --- PBI-314: Timeout Configuration (P3 - ADR-0018) ---
-    // Add timeout fields to BridgeServerConfig for per-server customization
+    // --- PBI-314: Customizable Timeouts for Different Servers (P3) ---
     {
       id: "PBI-314",
       story: {
         role: "Lua developer editing markdown",
         capability:
-          "configure timeout values per language server",
+          "configure timeout values for different language servers",
         benefit:
-          "I can tune timeouts for slow servers (e.g., rust-analyzer) or fast servers (e.g., lua-ls)",
+          "slow servers like rust-analyzer get longer timeouts while fast servers respond quickly",
       },
       acceptance_criteria: [
         {
           criterion:
-            "Given BridgeServerConfig, when parsed from YAML, then initialization_timeout field is recognized",
+            "Given I configure a 90-second timeout for rust-analyzer in my config, when rust-analyzer takes 70 seconds to start, then it succeeds instead of timing out",
           verification:
-            "Unit test: parse config with initialization_timeout: 90s; verify value is 90 seconds",
+            "Manual test: Configure long init timeout; verify slow server startup succeeds",
         },
         {
           criterion:
-            "Given BridgeServerConfig, when parsed from YAML, then liveness_timeout field is recognized",
+            "Given I configure a 10-second timeout for lua-language-server, when it takes longer, then I get a timeout error quickly",
           verification:
-            "Unit test: parse config with liveness_timeout: 60s; verify value is 60 seconds",
+            "Manual test: Configure short timeout; verify quick error on slow response",
         },
         {
           criterion:
-            "Given BridgeServerConfig, when parsed from YAML, then shutdown_timeout field is recognized",
+            "Given I don't configure any timeouts, when I use LSP features, then sensible defaults apply (60s init, 30s request, 10s shutdown)",
           verification:
-            "Unit test: parse config with shutdown_timeout: 10s; verify value is 10 seconds",
+            "Manual test: Use default config; verify default timeouts work correctly",
         },
         {
           criterion:
-            "Given timeout fields not specified, when config loaded, then ADR-0018 defaults are used (init: 60s, liveness: 30s, shutdown: 10s)",
+            "Given I configure timeouts in my treesitter-ls config, when I save the config, then the new timeouts apply to new connections",
           verification:
-            "Unit test: parse minimal config; verify default timeout values applied",
-        },
-        {
-          criterion:
-            "Given per-server timeout config, when connection is created, then connection uses server-specific timeout values",
-          verification:
-            "Integration test: configure lua-ls with 30s init timeout; verify timeout applied during initialization",
+            "Manual test: Change config; open new file; verify new timeout applies",
         },
       ],
       status: "draft",
       refinement_notes: [
-        "P3 Priority: Polish - allows per-server tuning",
-        "Per ADR-0018: initialization_timeout, liveness_timeout, shutdown_timeout",
-        "Recommended defaults: init 60s, liveness 30-120s, shutdown 5-15s",
-        "Location: config.rs BridgeServerConfig struct",
-        "Consider Duration type with human-readable parsing (e.g., '30s', '2m')",
+        "TECHNICAL: Add timeout fields to BridgeServerConfig struct",
+        "TECHNICAL: Fields: initialization_timeout, liveness_timeout, shutdown_timeout",
+        "TECHNICAL: Location: config.rs BridgeServerConfig",
+        "TECHNICAL: Use Duration type with human-readable parsing (e.g., '30s', '2m')",
+        "TECHNICAL: Defaults per ADR-0018: init 60s, liveness 30s, shutdown 10s",
+        "ADR Compliance: ADR-0018 (Timeout Hierarchy)",
         "Depends on PBI-306 (timeout protection) being implemented first",
       ],
     },
