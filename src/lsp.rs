@@ -1,4 +1,5 @@
 pub mod auto_install;
+mod bridge;
 
 mod lsp_impl;
 mod progress;
