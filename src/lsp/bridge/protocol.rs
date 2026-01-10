@@ -173,6 +173,44 @@ pub(crate) fn build_bridge_hover_request(
     })
 }
 
+/// Build a JSON-RPC didChange notification for a downstream language server.
+///
+/// Uses full text sync (TextDocumentSyncKind::Full) which sends the entire
+/// document content on each change. This is simpler and sufficient for bridge use.
+///
+/// # Arguments
+/// * `host_uri` - The URI of the host document
+/// * `injection_language` - The injection language (e.g., "lua")
+/// * `region_id` - The unique region ID for this injection
+/// * `new_content` - The new content of the virtual document
+/// * `version` - The document version number
+pub(crate) fn build_bridge_didchange_notification(
+    host_uri: &tower_lsp::lsp_types::Url,
+    injection_language: &str,
+    region_id: &str,
+    new_content: &str,
+    version: i32,
+) -> serde_json::Value {
+    // Create virtual document URI
+    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didChange",
+        "params": {
+            "textDocument": {
+                "uri": virtual_uri.to_uri_string(),
+                "version": version
+            },
+            "contentChanges": [
+                {
+                    "text": new_content
+                }
+            ]
+        }
+    })
+}
+
 /// Transform a hover response from virtual to host document coordinates.
 ///
 /// If the response contains a range, translates the line numbers from virtual

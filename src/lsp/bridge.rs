@@ -21,8 +21,8 @@ mod tests {
     use super::connection::AsyncBridgeConnection;
     use super::manager::BridgeManager;
     use super::protocol::{
-        PendingRequests, VirtualDocumentUri, build_bridge_hover_request,
-        transform_hover_response_to_host,
+        PendingRequests, VirtualDocumentUri, build_bridge_didchange_notification,
+        build_bridge_hover_request, transform_hover_response_to_host,
     };
 
     #[test]
@@ -531,6 +531,47 @@ mod tests {
             !manager.is_document_opened(language, other_uri),
             "Different document should not be affected"
         );
+    }
+
+    /// RED: Test that didChange notification is built with correct virtual URI (PBI-303 Subtask 3)
+    #[test]
+    fn bridge_didchange_notification_uses_virtual_uri() {
+        use tower_lsp::lsp_types::Url;
+
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        let injection_language = "lua";
+        let region_id = "region-0";
+        let new_content = "local x = 42\nprint(x)";
+        let version = 2;
+
+        // Build the didChange notification for downstream language server
+        let notification = build_bridge_didchange_notification(
+            &host_uri,
+            injection_language,
+            region_id,
+            new_content,
+            version,
+        );
+
+        // Verify the notification structure
+        assert_eq!(notification["jsonrpc"], "2.0");
+        assert_eq!(notification["method"], "textDocument/didChange");
+        assert!(notification.get("id").is_none(), "Notification should not have id");
+
+        // The params should use virtual URI
+        let text_doc = &notification["params"]["textDocument"];
+        let uri_str = text_doc["uri"].as_str().unwrap();
+        assert!(
+            uri_str.starts_with("tsls-virtual://lua/"),
+            "didChange should use virtual URI: {}",
+            uri_str
+        );
+        assert_eq!(text_doc["version"], 2);
+
+        // contentChanges should contain full text sync
+        let changes = notification["params"]["contentChanges"].as_array().unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0]["text"], new_content);
     }
 
     /// Integration test: BridgeManager sends hover request to lua-language-server (PBI-302 Subtask 6)
