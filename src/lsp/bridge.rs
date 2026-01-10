@@ -184,6 +184,121 @@ impl Drop for AsyncBridgeConnection {
     }
 }
 
+/// Virtual document URI for injection regions.
+///
+/// Encodes host URI + injection language + region ID into a unique URI scheme
+/// that downstream language servers can use to identify virtual documents.
+///
+/// Format: `tsls-virtual://{language}/{region_id}?host={url_encoded_host_uri}`
+///
+/// Example: `tsls-virtual://lua/region-0?host=file%3A%2F%2F%2Fproject%2Fdoc.md`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct VirtualDocumentUri {
+    host_uri: tower_lsp::lsp_types::Url,
+    language: String,
+    region_id: String,
+}
+
+impl VirtualDocumentUri {
+    /// Create a new virtual document URI for an injection region.
+    ///
+    /// # Arguments
+    /// * `host_uri` - The URI of the host document (e.g., markdown file)
+    /// * `language` - The injection language (e.g., "lua", "python")
+    /// * `region_id` - Unique identifier for this injection region within the host
+    pub(crate) fn new(
+        host_uri: &tower_lsp::lsp_types::Url,
+        language: &str,
+        region_id: &str,
+    ) -> Self {
+        Self {
+            host_uri: host_uri.clone(),
+            language: language.to_string(),
+            region_id: region_id.to_string(),
+        }
+    }
+
+    /// Parse a virtual document URI from a URI string.
+    ///
+    /// Returns None if the URI is not a valid tsls-virtual:// URI.
+    pub(crate) fn parse(uri_str: &str) -> Option<Self> {
+        use tower_lsp::lsp_types::Url;
+        use percent_encoding::percent_decode_str;
+
+        let url = Url::parse(uri_str).ok()?;
+
+        // Check scheme
+        if url.scheme() != "tsls-virtual" {
+            return None;
+        }
+
+        // Extract language from host (authority) part
+        let language = url.host_str()?.to_string();
+
+        // Extract region_id from path (strip leading /)
+        let region_id = url.path().strip_prefix('/')?.to_string();
+
+        // Extract host URI from query parameter
+        let query = url.query()?;
+        let host_encoded = query.strip_prefix("host=")?;
+        let host_decoded = percent_decode_str(host_encoded)
+            .decode_utf8()
+            .ok()?
+            .to_string();
+        let host_uri = Url::parse(&host_decoded).ok()?;
+
+        Some(Self {
+            host_uri,
+            language,
+            region_id,
+        })
+    }
+
+    /// Get the host document URI.
+    pub(crate) fn host_uri(&self) -> &tower_lsp::lsp_types::Url {
+        &self.host_uri
+    }
+
+    /// Get the injection language.
+    pub(crate) fn language(&self) -> &str {
+        &self.language
+    }
+
+    /// Get the region ID.
+    pub(crate) fn region_id(&self) -> &str {
+        &self.region_id
+    }
+
+    /// Convert to a URI string.
+    ///
+    /// Format: `tsls-virtual://{language}/{region_id}?host={url_encoded_host_uri}`
+    pub(crate) fn to_uri_string(&self) -> String {
+        use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
+
+        // Encode all characters that are not safe in query strings
+        const QUERY_ENCODE_SET: &AsciiSet = &CONTROLS
+            .add(b' ')
+            .add(b'"')
+            .add(b'#')
+            .add(b'<')
+            .add(b'>')
+            .add(b'`')
+            .add(b'?')
+            .add(b'{')
+            .add(b'}')
+            .add(b'/')
+            .add(b':')
+            .add(b'@')
+            .add(b'%');
+
+        let host_encoded = utf8_percent_encode(self.host_uri.as_str(), QUERY_ENCODE_SET);
+        format!(
+            "tsls-virtual://{}/{}?host={}",
+            self.language, self.region_id, host_encoded
+        )
+    }
+}
+
 /// Request ID type for JSON-RPC messages.
 ///
 /// LSP spec allows either integer or string IDs.
@@ -512,5 +627,56 @@ mod tests {
             .output()
             .map(|output| output.status.success())
             .unwrap_or(false)
+    }
+
+    /// RED: Test VirtualDocumentUri creates scheme for injection region (PBI-302 Subtask 1)
+    #[test]
+    fn virtual_document_uri_creates_scheme_for_injection_region() {
+        use tower_lsp::lsp_types::Url;
+
+        // Create a virtual document URI for a Lua injection in a markdown file
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        let injection_language = "lua";
+        let region_id = "region-0";
+
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, injection_language, region_id);
+
+        // The virtual URI should encode all three pieces of information
+        assert_eq!(virtual_uri.host_uri(), &host_uri);
+        assert_eq!(virtual_uri.language(), "lua");
+        assert_eq!(virtual_uri.region_id(), "region-0");
+
+        // The URI string should use a custom scheme
+        let uri_string = virtual_uri.to_uri_string();
+        assert!(
+            uri_string.starts_with("tsls-virtual://"),
+            "URI should use tsls-virtual:// scheme: {}",
+            uri_string
+        );
+        assert!(
+            uri_string.contains("lua"),
+            "URI should contain injection language: {}",
+            uri_string
+        );
+    }
+
+    /// RED: Test VirtualDocumentUri can be parsed back from URI string (PBI-302 Subtask 1)
+    #[test]
+    fn virtual_document_uri_roundtrip() {
+        use tower_lsp::lsp_types::Url;
+
+        let host_uri = Url::parse("file:///project/readme.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "python", "region-42");
+
+        // Convert to URI string
+        let uri_string = virtual_uri.to_uri_string();
+
+        // Parse back
+        let parsed = VirtualDocumentUri::parse(&uri_string).expect("should parse virtual URI");
+
+        // Verify roundtrip preserves all data
+        assert_eq!(parsed.host_uri(), &host_uri);
+        assert_eq!(parsed.language(), "python");
+        assert_eq!(parsed.region_id(), "region-42");
     }
 }

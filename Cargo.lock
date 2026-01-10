@@ -2413,6 +2413,7 @@ dependencies = [
  "log",
  "lua-pattern",
  "path-clean",
+ "percent-encoding",
  "regex",
  "reqwest",
  "rstest",
