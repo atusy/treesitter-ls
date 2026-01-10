@@ -533,7 +533,7 @@ mod tests {
         );
     }
 
-    /// RED: Test that didChange notification is built with correct virtual URI (PBI-303 Subtask 3)
+    /// Test that didChange notification is built with correct virtual URI (PBI-303 Subtask 3)
     #[test]
     fn bridge_didchange_notification_uses_virtual_uri() {
         use tower_lsp::lsp_types::Url;
@@ -572,6 +572,40 @@ mod tests {
         let changes = notification["params"]["contentChanges"].as_array().unwrap();
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0]["text"], new_content);
+    }
+
+    /// RED: Test that BridgeManager tracks document versions (PBI-303 Subtask 4)
+    #[tokio::test]
+    async fn bridge_manager_tracks_document_versions() {
+        // BridgeManager should track the version number for each opened document
+        // so that didChange notifications use incrementing versions
+
+        let manager = BridgeManager::new();
+        let virtual_uri = "tsls-virtual://lua/region-0?host=file%3A%2F%2F%2Ftest.md";
+        let language = "lua";
+
+        // Initially, document should have no version (not opened)
+        assert!(
+            manager.get_document_version(language, virtual_uri).is_none(),
+            "Document should not have a version initially"
+        );
+
+        // After marking as opened, version should be 1
+        manager.mark_document_opened(language, virtual_uri).await;
+        assert_eq!(
+            manager.get_document_version(language, virtual_uri),
+            Some(1),
+            "Version should be 1 after opening"
+        );
+
+        // Incrementing version should return 2
+        let new_version = manager.increment_document_version(language, virtual_uri).await;
+        assert_eq!(new_version, Some(2), "Version should be 2 after increment");
+        assert_eq!(
+            manager.get_document_version(language, virtual_uri),
+            Some(2),
+            "Stored version should be 2"
+        );
     }
 
     /// Integration test: BridgeManager sends hover request to lua-language-server (PBI-302 Subtask 6)

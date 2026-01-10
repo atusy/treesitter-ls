@@ -3,7 +3,7 @@
 //! This module provides the BridgeManager which handles lazy initialization
 //! of connections and the LSP handshake with downstream language servers.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
 
@@ -21,9 +21,9 @@ use super::protocol::{
 pub(crate) struct BridgeManager {
     /// Map of language -> initialized connection
     connections: Mutex<HashMap<String, Arc<Mutex<AsyncBridgeConnection>>>>,
-    /// Map of language -> set of opened virtual document URIs
-    /// Tracks which documents have received didOpen notification to avoid duplicates
-    opened_documents: Mutex<HashMap<String, HashSet<String>>>,
+    /// Map of language -> (virtual document URI -> version)
+    /// Tracks which documents have been opened and their current version number
+    document_versions: Mutex<HashMap<String, HashMap<String, i32>>>,
     /// Counter for generating unique request IDs
     next_request_id: std::sync::atomic::AtomicI64,
 }
@@ -33,7 +33,7 @@ impl BridgeManager {
     pub(crate) fn new() -> Self {
         Self {
             connections: Mutex::new(HashMap::new()),
-            opened_documents: Mutex::new(HashMap::new()),
+            document_versions: Mutex::new(HashMap::new()),
             next_request_id: std::sync::atomic::AtomicI64::new(1),
         }
     }
@@ -43,23 +43,52 @@ impl BridgeManager {
     /// This is used to avoid sending duplicate didOpen notifications.
     pub(crate) fn is_document_opened(&self, language: &str, virtual_uri: &str) -> bool {
         // Use try_lock for synchronous access (will always succeed in single-threaded context)
-        if let Ok(opened) = self.opened_documents.try_lock() {
-            if let Some(docs) = opened.get(language) {
-                return docs.contains(virtual_uri);
+        if let Ok(versions) = self.document_versions.try_lock() {
+            if let Some(docs) = versions.get(language) {
+                return docs.contains_key(virtual_uri);
             }
         }
         false
     }
 
+    /// Get the current version of a virtual document, if it has been opened.
+    pub(crate) fn get_document_version(&self, language: &str, virtual_uri: &str) -> Option<i32> {
+        if let Ok(versions) = self.document_versions.try_lock() {
+            if let Some(docs) = versions.get(language) {
+                return docs.get(virtual_uri).copied();
+            }
+        }
+        None
+    }
+
     /// Mark a virtual document as opened for a given language.
     ///
     /// This should be called after sending didOpen notification to avoid duplicates.
+    /// Sets the initial version to 1.
     pub(crate) async fn mark_document_opened(&self, language: &str, virtual_uri: &str) {
-        let mut opened = self.opened_documents.lock().await;
-        opened
+        let mut versions = self.document_versions.lock().await;
+        versions
             .entry(language.to_string())
             .or_default()
-            .insert(virtual_uri.to_string());
+            .insert(virtual_uri.to_string(), 1);
+    }
+
+    /// Increment the version of a virtual document and return the new version.
+    ///
+    /// Returns None if the document has not been opened.
+    pub(crate) async fn increment_document_version(
+        &self,
+        language: &str,
+        virtual_uri: &str,
+    ) -> Option<i32> {
+        let mut versions = self.document_versions.lock().await;
+        if let Some(docs) = versions.get_mut(language) {
+            if let Some(version) = docs.get_mut(virtual_uri) {
+                *version += 1;
+                return Some(*version);
+            }
+        }
+        None
     }
 
     /// Check if document is opened and mark it as opened atomically.
@@ -67,12 +96,12 @@ impl BridgeManager {
     /// Returns true if the document was NOT previously opened (i.e., didOpen should be sent).
     /// Returns false if the document was already opened (i.e., skip didOpen).
     async fn should_send_didopen(&self, language: &str, virtual_uri: &str) -> bool {
-        let mut opened = self.opened_documents.lock().await;
-        let docs = opened.entry(language.to_string()).or_default();
-        if docs.contains(virtual_uri) {
+        let mut versions = self.document_versions.lock().await;
+        let docs = versions.entry(language.to_string()).or_default();
+        if docs.contains_key(virtual_uri) {
             false
         } else {
-            docs.insert(virtual_uri.to_string());
+            docs.insert(virtual_uri.to_string(), 1);
             true
         }
     }
