@@ -33,59 +33,9 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed PBIs: PBI-001-140 (Sprint 1-113), PBI-155-161 (124-130), PBI-178-180a (133-135), PBI-184 (136), PBI-181 (137), PBI-185 (138), PBI-187 (139), PBI-180b (140), PBI-190 (141), PBI-191 (142), PBI-192 (143), PBI-301 (144)
-  // Deferred: PBI-091, PBI-107 | Removed: PBI-163-177 | Superseded: PBI-183 | Cancelled: Sprint 139 PBI-180b attempt
-  // Sprint 139-144: All sprints DONE (Sprint 144: async bridge walking skeleton - 7 tests pass, all ACs satisfied)
+  // Completed: PBI-001-192 (Sprint 1-143), PBI-301 (144) | Deferred: PBI-091, PBI-107
   // Walking Skeleton PBIs: PBI-302 through PBI-304 (Ready)
   product_backlog: [
-    // ============================================================
-    // Walking Skeleton: Incremental Bridge Feature Development
-    // Each PBI delivers independently testable, demonstrable value
-    // ============================================================
-
-    // --- PBI-301: Basic Bridge Attachment (Minimal Viable Slice) ---
-    {
-      id: "PBI-301",
-      story: {
-        role: "Lua developer editing markdown",
-        capability:
-          "notice lua-language-server is attached to Lua code block in markdown",
-        benefit:
-          "I can expect lua-language-server features",
-      },
-      acceptance_criteria: [
-        {
-          criterion:
-            "Given a markdown file with Lua code block, when treesitter-ls opens the file, then lua-language-server process is spawned as a child process",
-          verification:
-            "Unit test: verify child process spawned with correct command (lua-language-server)",
-        },
-        {
-          criterion:
-            "Given lua-language-server is spawned, when initialization completes, then treesitter-ls logs 'lua-language-server initialized' or similar confirmation",
-          verification:
-            "Integration test: check log output contains initialization confirmation",
-        },
-        {
-          criterion:
-            "Given lua-language-server is running, when treesitter-ls terminates, then lua-language-server child process is also terminated",
-          verification:
-            "Integration test: verify no orphan lua-language-server processes after treesitter-ls exit",
-        },
-      ],
-      status: "done",
-      refinement_notes: [
-        "Thinnest possible slice - just spawn the server and confirm it's running",
-        "lua-language-server chosen over rust-analyzer: faster init, simpler config, common use case (Neovim docs)",
-        "No initialization window required (assume notifications/requests start after initialized)",
-        "No shutdown required (assume child process lua-language-server is killed by termination of parent process treesitter-ls)",
-        "Assume single language server support. No need of language server pool yet",
-        "Editor shows 'lua-language-server spawned' or similar in logs",
-        "No useful features yet (no hover, no completions, ...)",
-        "Proves the architecture works",
-      ],
-    },
-
     // --- PBI-302: Hover Feature ---
     {
       id: "PBI-302",
@@ -123,13 +73,7 @@ const scrum: ScrumDashboard = {
         },
       ],
       status: "ready",
-      refinement_notes: [
-        "First actual LSP feature on top of the basic bridge",
-        "Proves request/response flow works (textDocument/hover)",
-        "Requires position mapping: host markdown position -> virtual Lua document position",
-        "Requires URI transformation: markdown URI <-> virtual Lua URI",
-        "Builds on PBI-301 (basic bridge attachment)",
-      ],
+      refinement_notes: ["First LSP feature; proves request/response flow; requires position/URI mapping; builds on PBI-301"],
     },
 
     // --- PBI-303: Completions Feature ---
@@ -175,13 +119,7 @@ const scrum: ScrumDashboard = {
         },
       ],
       status: "ready",
-      refinement_notes: [
-        "Second LSP feature after hover",
-        "Proves notifications work (textDocument/didOpen, textDocument/didChange)",
-        "Requires document synchronization between host markdown and virtual Lua document",
-        "Completion items should be filtered/relevant to Lua context",
-        "Builds on PBI-301 (bridge) and PBI-302 (position/URI mapping)",
-      ],
+      refinement_notes: ["Second LSP feature; proves notifications (didOpen/didChange); requires doc sync; builds on PBI-301/302"],
     },
 
     // --- PBI-304: Non-Blocking Initialization ---
@@ -221,86 +159,12 @@ const scrum: ScrumDashboard = {
         },
       ],
       status: "ready",
-      refinement_notes: [
-        "Add initialization window handling per ADR-0018",
-        "lua-language-server has faster init than rust-analyzer, but still needs async handling",
-        "treesitter-ls remains responsive during lua-language-server startup",
-        "Requests to Lua bridge during initialization return appropriate errors (not hang/timeout)",
-        "Improves user experience - no perceived lag when opening files",
-        "Builds on PBI-301, PBI-302, PBI-303",
-      ],
+      refinement_notes: ["ADR-0018 init window; async handling; errors not hangs during init; builds on PBI-301/302/303"],
     },
   ],
   sprint: null,
-  completed: [
-    {
-      number: 144,
-      pbi_id: "PBI-301",
-      goal: "Establish the foundational bridge architecture by spawning lua-language-server as a child process and confirming successful initialization, proving the async bridge concept works",
-      status: "done",
-      subtasks: [
-        {
-          test: "Unit test that src/lsp/bridge/mod.rs module compiles and exports AsyncBridgeConnection type",
-          implementation: "Create minimal module structure with placeholder types",
-          type: "structural",
-          status: "completed",
-          commits: [{ hash: "1393ded9", message: "feat(bridge): add AsyncBridgeConnection module structure", phase: "green" }],
-          notes: ["Module organization following existing lsp/ structure"],
-        },
-        {
-          test: "Unit test that AsyncBridgeConnection::spawn() spawns a child process with the given command",
-          implementation: "Use tokio::process::Command to spawn lua-language-server with stdio pipes",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "a7116891", message: "feat(bridge): implement spawn() for child process creation", phase: "green" }],
-          notes: ["ADR-0014: Use tokio::process for async I/O"],
-        },
-        {
-          test: "Unit test that send_request() writes JSON-RPC message to stdin with proper Content-Length header",
-          implementation: "Serialize LSP initialize request to JSON-RPC format, write to async stdin",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "4ff80258", message: "feat(bridge): implement write_message for JSON-RPC formatting", phase: "green" }],
-          notes: ["LSP JSON-RPC format: Content-Length header + body"],
-        },
-        {
-          test: "Unit test that reader task parses Content-Length header and reads JSON-RPC response body",
-          implementation: "Spawn async reader task that reads from stdout, parses LSP messages",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "d48e9557", message: "feat(bridge): implement read_message for JSON-RPC parsing", phase: "green" }],
-          notes: ["ADR-0014: Reader task with select! for read/shutdown"],
-        },
-        {
-          test: "Unit test that response is routed to correct pending request via request ID",
-          implementation: "Use DashMap<RequestId, oneshot::Sender> for pending request tracking",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "551917f1", message: "feat(bridge): implement pending request routing via request ID", phase: "green" }],
-          notes: ["ADR-0014: Pending request lifecycle management"],
-        },
-        {
-          test: "Integration test that spawning lua-language-server and sending initialize results in log message",
-          implementation: "Wire up full initialization flow, add log output on successful initialize response",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "89a2e1f6", message: "test(bridge): add lua-language-server initialization integration test", phase: "green" }],
-          notes: [
-            "AC2: logs 'lua-language-server initialized' or similar confirmation",
-            "Requires lua-language-server installed on test machine",
-          ],
-        },
-        {
-          test: "Integration test that dropping AsyncBridgeConnection terminates the child process",
-          implementation: "Implement Drop trait to kill child process; verify no orphan processes",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "525661d9", message: "feat(bridge): implement Drop trait to terminate child process", phase: "green" }],
-          notes: ["AC3: child process terminated when treesitter-ls terminates"],
-        },
-      ],
-    },
-  ],
+  // Sprint 144 (PBI-301): 7 subtasks, commits: 1393ded9, a7116891, 4ff80258, d48e9557, 551917f1, 89a2e1f6, 525661d9
+  completed: [],
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
@@ -309,7 +173,25 @@ const scrum: ScrumDashboard = {
     ],
   },
   // Retrospectives (recent 4) | Sprints 1-139: git log -- scrum.yaml, scrum.ts
-  retrospectives: [],
+  retrospectives: [
+    {
+      sprint: 144,
+      improvements: [
+        {
+          action: "Monitor bridge.rs size; split into submodules (e.g., connection.rs, protocol.rs, routing.rs) if it exceeds ~600 lines during PBI-302 implementation",
+          timing: "sprint",
+          status: "active",
+          outcome: null,
+        },
+        {
+          action: "Investigate and fix BrokenPipe error in pre-existing E2E tests (non-blocking, deferred)",
+          timing: "product",
+          status: "active",
+          outcome: null,
+        },
+      ],
+    },
+  ],
 };
 
 // Type Definitions (DO NOT MODIFY) =============================================
