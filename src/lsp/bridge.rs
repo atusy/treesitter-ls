@@ -2,6 +2,12 @@
 //!
 //! This module implements the async bridge architecture (ADR-0014) for communicating
 //! with downstream language servers via stdio.
+//!
+//! NOTE: Walking skeleton (PBI-301) - types are currently only used in tests.
+//! Dead code warnings are suppressed until integration with the main LSP server.
+
+// Walking skeleton: suppress dead_code warnings until fully integrated
+#![allow(dead_code)]
 
 use std::io;
 use std::process::Stdio;
@@ -51,12 +57,12 @@ impl AsyncBridgeConnection {
         let stdin = child
             .stdin
             .take()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "failed to capture stdin"))?;
+            .ok_or_else(|| io::Error::other("failed to capture stdin"))?;
 
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "failed to capture stdout"))?;
+            .ok_or_else(|| io::Error::other("failed to capture stdout"))?;
 
         Ok(Self {
             child,
@@ -117,8 +123,7 @@ impl AsyncBridgeConnection {
     /// Parses the Content-Length header and reads the JSON body.
     pub(crate) async fn read_message(&mut self) -> io::Result<serde_json::Value> {
         let body = self.read_message_bytes().await?;
-        serde_json::from_slice(&body)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+        serde_json::from_slice(&body).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
 
     /// Read a raw LSP message from the child process stdout.
@@ -156,6 +161,26 @@ impl AsyncBridgeConnection {
         );
 
         Ok(full_message)
+    }
+}
+
+impl Drop for AsyncBridgeConnection {
+    fn drop(&mut self) {
+        // Kill the child process to prevent orphans (AC3)
+        // start_kill() is non-blocking and signals the process to terminate
+        if let Err(e) = self.child.start_kill() {
+            log::warn!(
+                target: "treesitter_ls::bridge",
+                "Failed to kill child process: {}",
+                e
+            );
+        } else {
+            log::debug!(
+                target: "treesitter_ls::bridge",
+                "Killed child process {:?}",
+                self.child.id()
+            );
+        }
     }
 }
 
@@ -212,11 +237,11 @@ impl PendingRequests {
     /// Extracts the request ID from the response and sends it to the
     /// corresponding pending request, if one exists.
     pub(crate) fn complete(&self, response: &serde_json::Value) {
-        if let Some(id) = RequestId::from_json(response) {
-            if let Some((_, sender)) = self.inner.remove(&id) {
-                // Ignore send error - receiver may have been dropped
-                let _ = sender.send(response.clone());
-            }
+        if let Some(id) = RequestId::from_json(response)
+            && let Some((_, sender)) = self.inner.remove(&id)
+        {
+            // Ignore send error - receiver may have been dropped
+            let _ = sender.send(response.clone());
         }
     }
 }
@@ -236,7 +261,9 @@ mod tests {
     async fn spawn_creates_child_process_with_stdio() {
         // Use `cat` as a simple test process that echoes stdin to stdout
         let cmd = vec!["cat".to_string()];
-        let conn = AsyncBridgeConnection::spawn(cmd).await.expect("spawn should succeed");
+        let conn = AsyncBridgeConnection::spawn(cmd)
+            .await
+            .expect("spawn should succeed");
 
         // The connection should have a child process ID
         assert!(conn.child_id().is_some(), "child process should have an ID");
@@ -249,7 +276,9 @@ mod tests {
 
         // Use `cat` to echo what we write to stdin back to stdout
         let cmd = vec!["cat".to_string()];
-        let mut conn = AsyncBridgeConnection::spawn(cmd).await.expect("spawn should succeed");
+        let mut conn = AsyncBridgeConnection::spawn(cmd)
+            .await
+            .expect("spawn should succeed");
 
         // Send a simple JSON-RPC request
         let request = json!({
@@ -259,7 +288,9 @@ mod tests {
             "params": {}
         });
 
-        conn.write_message(&request).await.expect("write should succeed");
+        conn.write_message(&request)
+            .await
+            .expect("write should succeed");
 
         // Read back what was written to verify the format
         let output = conn.read_raw_message().await.expect("read should succeed");
@@ -286,7 +317,9 @@ mod tests {
 
         // Use `cat` to echo what we write back to us
         let cmd = vec!["cat".to_string()];
-        let mut conn = AsyncBridgeConnection::spawn(cmd).await.expect("spawn should succeed");
+        let mut conn = AsyncBridgeConnection::spawn(cmd)
+            .await
+            .expect("spawn should succeed");
 
         // Write a JSON-RPC response message
         let response = json!({
@@ -297,7 +330,9 @@ mod tests {
             }
         });
 
-        conn.write_message(&response).await.expect("write should succeed");
+        conn.write_message(&response)
+            .await
+            .expect("write should succeed");
 
         // Read it back using the reader task's parsing logic
         let parsed = conn.read_message().await.expect("read should succeed");
@@ -316,7 +351,9 @@ mod tests {
 
         // Use `cat` to echo what we write back
         let cmd = vec!["cat".to_string()];
-        let conn = AsyncBridgeConnection::spawn(cmd).await.expect("spawn should succeed");
+        let conn = AsyncBridgeConnection::spawn(cmd)
+            .await
+            .expect("spawn should succeed");
 
         // Wrap in Arc for sharing between reader task and main task
         let conn = Arc::new(tokio::sync::Mutex::new(conn));
@@ -344,7 +381,9 @@ mod tests {
                 "id": 42,
                 "result": { "value": "hello" }
             });
-            conn.write_message(&response).await.expect("write should succeed");
+            conn.write_message(&response)
+                .await
+                .expect("write should succeed");
         }
 
         // Wait for reader task
@@ -411,10 +450,7 @@ mod tests {
         // Verify the response indicates successful initialization
         assert_eq!(response["jsonrpc"], "2.0");
         assert_eq!(response["id"], 1);
-        assert!(
-            response["result"].is_object(),
-            "should have result object"
-        );
+        assert!(response["result"].is_object(), "should have result object");
         assert!(
             response["result"]["capabilities"].is_object(),
             "should have capabilities in result"
@@ -435,5 +471,46 @@ mod tests {
         conn.write_message(&initialized)
             .await
             .expect("should write initialized notification");
+    }
+
+    /// Integration test: Dropping connection terminates child process
+    #[tokio::test]
+    async fn drop_terminates_child_process() {
+        // Spawn a long-running process that we can check is terminated
+        // Using `sleep` as it will run indefinitely until killed
+        let cmd = vec!["sleep".to_string(), "3600".to_string()];
+        let conn = AsyncBridgeConnection::spawn(cmd)
+            .await
+            .expect("should spawn sleep process");
+
+        let child_id = conn.child_id().expect("should have child ID");
+
+        // Verify process is running before drop
+        assert!(
+            is_process_running(child_id),
+            "child process should be running before drop"
+        );
+
+        // Drop the connection
+        drop(conn);
+
+        // Give the OS a moment to clean up
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Verify process is no longer running after drop
+        assert!(
+            !is_process_running(child_id),
+            "child process should be terminated after drop"
+        );
+    }
+
+    /// Check if a process with the given PID is still running
+    fn is_process_running(pid: u32) -> bool {
+        // Use kill -0 via Command to check if process exists
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
     }
 }
