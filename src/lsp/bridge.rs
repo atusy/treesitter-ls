@@ -81,6 +81,42 @@ impl AsyncBridgeConnection {
         Ok(())
     }
 
+    /// Read the raw bytes of an LSP message body from stdout.
+    ///
+    /// Parses the Content-Length header, reads the separator, and returns the body bytes.
+    async fn read_message_bytes(&mut self) -> io::Result<Vec<u8>> {
+        use tokio::io::AsyncReadExt;
+
+        // Read header line
+        let mut header_line = String::new();
+        self.stdout.read_line(&mut header_line).await?;
+
+        // Parse content length
+        let content_length: usize = header_line
+            .strip_prefix("Content-Length: ")
+            .and_then(|s| s.trim().parse().ok())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid Content-Length"))?;
+
+        // Read empty line (CRLF separator)
+        let mut empty_line = String::new();
+        self.stdout.read_line(&mut empty_line).await?;
+
+        // Read body
+        let mut body = vec![0u8; content_length];
+        self.stdout.read_exact(&mut body).await?;
+
+        Ok(body)
+    }
+
+    /// Read and parse a JSON-RPC message from the child process stdout.
+    ///
+    /// Parses the Content-Length header and reads the JSON body.
+    pub(crate) async fn read_message(&mut self) -> io::Result<serde_json::Value> {
+        let body = self.read_message_bytes().await?;
+        serde_json::from_slice(&body)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    }
+
     /// Read a raw LSP message from the child process stdout.
     ///
     /// Returns the full message including header and body as a string.
@@ -107,7 +143,7 @@ impl AsyncBridgeConnection {
         let mut body = vec![0u8; content_length];
         self.stdout.read_exact(&mut body).await?;
 
-        // Reconstruct the full message
+        // Reconstruct the full message (including headers for verification)
         let full_message = format!(
             "{}{}{}",
             header_line,
@@ -175,5 +211,34 @@ mod tests {
             output.contains("\"jsonrpc\":\"2.0\""),
             "body should contain JSON-RPC content"
         );
+    }
+
+    /// RED: Test that read_message parses Content-Length header and reads JSON body
+    #[tokio::test]
+    async fn read_message_parses_content_length_and_body() {
+        use serde_json::json;
+
+        // Use `cat` to echo what we write back to us
+        let cmd = vec!["cat".to_string()];
+        let mut conn = AsyncBridgeConnection::spawn(cmd).await.expect("spawn should succeed");
+
+        // Write a JSON-RPC response message
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "capabilities": {}
+            }
+        });
+
+        conn.write_message(&response).await.expect("write should succeed");
+
+        // Read it back using the reader task's parsing logic
+        let parsed = conn.read_message().await.expect("read should succeed");
+
+        // Verify the parsed message matches what we sent
+        assert_eq!(parsed["jsonrpc"], "2.0");
+        assert_eq!(parsed["id"], 1);
+        assert!(parsed["result"].is_object());
     }
 }
