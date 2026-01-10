@@ -487,6 +487,22 @@ mod tests {
         assert_eq!(transformed, response);
     }
 
+    /// RED: Test that BridgeManager tracks which virtual documents have been opened per connection (PBI-303 Subtask 1)
+    #[test]
+    fn bridge_manager_tracks_opened_documents() {
+        // BridgeManager should track which virtual document URIs have been opened
+        // per language server connection, to avoid sending duplicate didOpen notifications
+
+        let manager = BridgeManager::new();
+
+        // Check that a virtual URI has not been opened yet
+        let virtual_uri = "tsls-virtual://lua/region-0?host=file%3A%2F%2F%2Ftest.md";
+        assert!(
+            !manager.is_document_opened("lua", virtual_uri),
+            "Document should not be marked as opened initially"
+        );
+    }
+
     /// Integration test: BridgeManager sends hover request to lua-language-server (PBI-302 Subtask 6)
     #[tokio::test]
     async fn hover_impl_returns_bridge_response_for_lua_injection() {

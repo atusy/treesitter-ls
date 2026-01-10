@@ -3,7 +3,7 @@
 //! This module provides the BridgeManager which handles lazy initialization
 //! of connections and the LSP handshake with downstream language servers.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::Arc;
 
@@ -21,6 +21,9 @@ use super::protocol::{
 pub(crate) struct BridgeManager {
     /// Map of language -> initialized connection
     connections: Mutex<HashMap<String, Arc<Mutex<AsyncBridgeConnection>>>>,
+    /// Map of language -> set of opened virtual document URIs
+    /// Tracks which documents have received didOpen notification to avoid duplicates
+    opened_documents: Mutex<HashMap<String, HashSet<String>>>,
     /// Counter for generating unique request IDs
     next_request_id: std::sync::atomic::AtomicI64,
 }
@@ -30,8 +33,22 @@ impl BridgeManager {
     pub(crate) fn new() -> Self {
         Self {
             connections: Mutex::new(HashMap::new()),
+            opened_documents: Mutex::new(HashMap::new()),
             next_request_id: std::sync::atomic::AtomicI64::new(1),
         }
+    }
+
+    /// Check if a virtual document has been opened for a given language.
+    ///
+    /// This is used to avoid sending duplicate didOpen notifications.
+    pub(crate) fn is_document_opened(&self, language: &str, virtual_uri: &str) -> bool {
+        // Use try_lock for synchronous access (will always succeed in single-threaded context)
+        if let Ok(opened) = self.opened_documents.try_lock() {
+            if let Some(docs) = opened.get(language) {
+                return docs.contains(virtual_uri);
+            }
+        }
+        false
     }
 
     /// Get or create a connection for the specified language.
