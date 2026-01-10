@@ -273,8 +273,8 @@ const scrum: ScrumDashboard = {
         test: "Unit test that response is routed to correct pending request via request ID",
         implementation: "Use DashMap<RequestId, oneshot::Sender> for pending request tracking",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "551917f1", message: "feat(bridge): implement pending request routing via request ID", phase: "green" }],
         notes: ["ADR-0014: Pending request lifecycle management"],
       },
       {
