@@ -126,13 +126,13 @@ const scrum: ScrumDashboard = {
     number: 146,
     pbi_id: "PBI-303",
     goal: "Enable completions in Lua code blocks by implementing proper document synchronization (didOpen/didChange) and completion request/response flow via bridge",
-    status: "planning",
+    status: "in_progress",
     subtasks: [
       {
         test: "Test that BridgeManager tracks which virtual documents have been opened per language server connection",
         implementation: "Add opened_documents HashSet to connection state; check before sending didOpen",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: ["Prerequisite for avoiding duplicate didOpen; enables stateful document sync"],
       },
