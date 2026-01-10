@@ -21,8 +21,9 @@ mod tests {
     use super::connection::AsyncBridgeConnection;
     use super::manager::BridgeManager;
     use super::protocol::{
-        PendingRequests, VirtualDocumentUri, build_bridge_didchange_notification,
-        build_bridge_hover_request, transform_hover_response_to_host,
+        PendingRequests, VirtualDocumentUri, build_bridge_completion_request,
+        build_bridge_didchange_notification, build_bridge_hover_request,
+        transform_hover_response_to_host,
     };
 
     #[test]
@@ -605,6 +606,59 @@ mod tests {
             manager.get_document_version(language, virtual_uri),
             Some(2),
             "Stored version should be 2"
+        );
+    }
+
+    /// RED: Test that completion request uses virtual URI and mapped position (PBI-303 Subtask 5)
+    #[test]
+    fn bridge_completion_request_uses_virtual_uri_and_mapped_position() {
+        use tower_lsp::lsp_types::{Position, Url};
+
+        // Create a completion request builder for bridge
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        let host_position = Position {
+            line: 5,
+            character: 6,
+        };
+        let region_id = "region-0";
+        let injection_language = "lua";
+
+        // The region starts at line 3 in the host document
+        let region_start_line = 3;
+
+        // Build the completion request for downstream language server
+        let request = build_bridge_completion_request(
+            &host_uri,
+            host_position,
+            injection_language,
+            region_id,
+            region_start_line,
+            42, // request ID
+        );
+
+        // Verify the request structure
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], 42);
+        assert_eq!(request["method"], "textDocument/completion");
+
+        // The params should use virtual URI
+        let text_doc = &request["params"]["textDocument"];
+        let uri_str = text_doc["uri"].as_str().unwrap();
+        assert!(
+            uri_str.starts_with("tsls-virtual://lua/"),
+            "Request should use virtual URI: {}",
+            uri_str
+        );
+
+        // The position should be translated (line 5 - region_start 3 = line 2)
+        let position = &request["params"]["position"];
+        assert_eq!(
+            position["line"], 2,
+            "Position line should be translated to virtual coordinates"
+        );
+        assert_eq!(
+            position["character"], 6,
+            "Position character should remain unchanged"
         );
     }
 
