@@ -209,7 +209,7 @@ const scrum: ScrumDashboard = {
         test: "bridge_hover_response_transforms_range_to_host_coordinates",
         implementation: "Parse hover response, transform any Range in the result back to host document coordinates using subtask 3",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: ["Hover response may contain Range; must transform for client"],
       },
