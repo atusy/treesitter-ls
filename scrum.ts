@@ -128,8 +128,8 @@ const scrum: ScrumDashboard = {
         test: "BridgeConnection exposes current state via state() method",
         implementation: "Add state field and accessor to AsyncBridgeConnection or wrapper type",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "9d563274", message: "feat(bridge): add StatefulBridgeConnection with state() accessor", phase: "green" }],
         notes: ["State must be observable for request gating decisions"],
       },
       {
