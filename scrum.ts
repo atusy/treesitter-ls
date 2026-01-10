@@ -33,56 +33,9 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed: PBI-001-192 (Sprint 1-143), PBI-301 (144), PBI-302 (145) | Deferred: PBI-091, PBI-107
-  // Walking Skeleton: PBI-303, PBI-304 (Ready)
+  // Completed: PBI-001-192 (1-143), PBI-301 (144), PBI-302 (145), PBI-303 (146 partial) | Deferred: PBI-091, PBI-107
+  // Walking Skeleton: PBI-304, PBI-305 (Ready)
   product_backlog: [
-    // --- PBI-303: Completions Feature ---
-    {
-      id: "PBI-303",
-      story: {
-        role: "Lua developer editing markdown",
-        capability:
-          "completions from lua-language-server in Lua code block in markdown",
-        benefit:
-          "I can write Lua code faster with autocomplete",
-      },
-      acceptance_criteria: [
-        {
-          criterion:
-            "Given a Lua code block, when I type a partial identifier, then I see completion suggestions from lua-language-server",
-          verification:
-            "E2E test: typing 'pri' in Lua block shows 'print' completion",
-        },
-        {
-          criterion:
-            "Given a Lua code block with a table variable, when I type the table name followed by dot, then I see member completions",
-          verification:
-            "E2E test: typing 'string.' shows string library methods",
-        },
-        {
-          criterion:
-            "Given document changes in markdown, when textDocument/didOpen is sent, then virtual Lua document is synced to lua-language-server",
-          verification:
-            "Unit test: verify didOpen notification sent with correct virtual document content",
-        },
-        {
-          criterion:
-            "Given document changes in markdown, when textDocument/didChange is sent, then virtual Lua document is updated in lua-language-server",
-          verification:
-            "Unit test: verify didChange notification sent with correct incremental changes",
-        },
-        {
-          criterion:
-            "Given completion items from lua-language-server, when items are returned to client, then they are relevant to the Lua context",
-          verification:
-            "E2E test: completions include Lua-specific items (local, function, table, etc.)",
-        },
-      ],
-      status: "done",
-      refinement_notes: ["Second LSP feature; proves notifications (didOpen/didChange); requires doc sync; builds on PBI-301/302"],
-      completion_notes: ["8/10 subtasks completed; AC3,AC4 fully met; AC1,AC2,AC5 infrastructure complete but E2E blocked by lua-ls config; Follow-up: PBI-305"],
-    },
-
     // --- PBI-304: Non-Blocking Initialization ---
     {
       id: "PBI-304",
@@ -158,99 +111,10 @@ const scrum: ScrumDashboard = {
     },
   ],
   sprint: null,
-  // Sprint 146 (PBI-303): 8/10 subtasks completed, commits: 55abb5e0, ed41ead2, 5b08e1d0, 905481ac, befa5294, ba096e83, ecb997f9, b5588476, 7845a679
-  // Sprint 145 (PBI-302): 9 subtasks, commits: 09dcfd1e, e4dbb8f8, 50d7f096, 764e64d8, a475c413, 13941068
-  // Sprint 144 (PBI-301): 7 subtasks, commits: 1393ded9, a7116891, 4ff80258, d48e9557, 551917f1, 89a2e1f6, 525661d9
-  completed: [
-    {
-      number: 146,
-      pbi_id: "PBI-303",
-      goal: "Enable completions in Lua code blocks by implementing proper document synchronization (didOpen/didChange) and completion request/response flow via bridge",
-      status: "done",
-      subtasks: [
-        {
-          test: "Test that BridgeManager tracks which virtual documents have been opened per language server connection",
-          implementation: "Add opened_documents HashSet to connection state; check before sending didOpen",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "55abb5e0", message: "feat(bridge): add opened_documents tracking to BridgeManager", phase: "green" }],
-          notes: ["Prerequisite for avoiding duplicate didOpen; enables stateful document sync"],
-        },
-        {
-          test: "Test that didOpen is only sent once per virtual document URI per connection",
-          implementation: "Guard didOpen with opened_documents.contains check; insert after sending",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "ed41ead2", message: "feat(bridge): guard didOpen with should_send_didopen check", phase: "green" }],
-          notes: ["AC3: didOpen sent on first access; prevents duplicate notifications"],
-        },
-        {
-          test: "Test that didChange notification is built with correct virtual URI and incremental changes",
-          implementation: "Add build_bridge_didchange_notification in protocol.rs",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "5b08e1d0", message: "feat(bridge): add build_bridge_didchange_notification function", phase: "green" }],
-          notes: ["AC4: didChange updates virtual document in downstream LS"],
-        },
-        {
-          test: "Test that BridgeManager sends didChange when document content differs from last sent",
-          implementation: "Add send_didchange method to BridgeManager; track document versions",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "905481ac", message: "feat(bridge): add document version tracking to BridgeManager", phase: "green" }],
-          notes: ["AC4: Version tracking ensures incremental sync"],
-        },
-        {
-          test: "Test that completion request uses virtual URI and mapped position (like hover)",
-          implementation: "Add build_bridge_completion_request in protocol.rs",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "befa5294", message: "feat(bridge): add build_bridge_completion_request function", phase: "green" }],
-          notes: ["AC5: Request transformation mirrors hover pattern"],
-        },
-        {
-          test: "Test that completion response transforms positions back to host coordinates",
-          implementation: "Add transform_completion_response_to_host in protocol.rs",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "ba096e83", message: "feat(bridge): add transform_completion_response_to_host function", phase: "green" }],
-          notes: ["AC5: textEdit ranges must be in host coordinates for editor"],
-        },
-        {
-          test: "Test that BridgeManager.send_completion_request returns CompletionItems from downstream",
-          implementation: "Add send_completion_request method to BridgeManager",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "ecb997f9", message: "feat(bridge): add send_completion_request method to BridgeManager", phase: "green" }],
-          notes: ["Integration: end-to-end bridge flow for completions"],
-        },
-        {
-          test: "Test that completion_impl calls bridge and returns transformed CompletionResponse",
-          implementation: "Wire completion_impl to call BridgeManager.send_completion_request",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "b5588476", message: "feat(lsp): wire completion_impl to BridgeManager.send_completion_request", phase: "green" }],
-          notes: ["AC1, AC2: Final wiring to make completions work"],
-        },
-        {
-          test: "E2E: typing 'pri' in Lua block shows 'print' completion via treesitter-ls binary",
-          implementation: "Update e2e_lsp_lua_completion.rs to verify actual completions received",
-          type: "behavioral",
-          status: "red",
-          commits: [{ hash: "7845a679", message: "feat(bridge): change virtual URI to file:// scheme for lua-ls compatibility", phase: "green" }],
-          notes: ["AC1: Infrastructure working, lua-ls returns null - needs workspace/rootUri config (PBI-305)", "Changed virtual URI to file:///.treesitter-ls/ format with .lua extension for compatibility"],
-        },
-        {
-          test: "E2E: typing 'string.' in Lua block shows member completions",
-          implementation: "Add test case for table member completions in e2e_lsp_lua_completion.rs",
-          type: "behavioral",
-          status: "pending",
-          commits: [],
-          notes: ["AC2: Blocked by lua-ls config issue (PBI-305)"],
-        },
-      ],
-    },
-  ],
+  // Sprint 146 (PBI-303): 8/10 subtasks, commits: 55abb5e0..b5588476, 7845a679 (E2E blocked by lua-ls config)
+  // Sprint 145 (PBI-302): 9 subtasks, commits: 09dcfd1e..13941068
+  // Sprint 144 (PBI-301): 7 subtasks, commits: 1393ded9..525661d9
+  completed: [],
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
@@ -258,20 +122,14 @@ const scrum: ScrumDashboard = {
       { name: "E2E tests pass", run: "make test_e2e" },
     ],
   },
-  // Retrospectives: Sprint 146 (lua-ls config), Sprint 145 (perf, BrokenPipe, E2E), Sprint 144 (bridge split)
+  // Retrospectives: 146 (E2E early, distribute tests, PBI-305), 145 (perf, BrokenPipe), 144 (bridge split done)
   retrospectives: [
     { sprint: 146, improvements: [
-      { action: "lua-language-server configuration complexity - created PBI-305 for workspace/rootUri investigation", timing: "product", status: "active", outcome: null },
-      { action: "E2E investigation earlier in sprint - discovered lua-ls issue late", timing: "sprint", status: "active", outcome: null },
-      { action: "Hypothesis-driven debugging for language server issues", timing: "sprint", status: "active", outcome: null },
+      { action: "Run E2E smoke test early when involving external LS", timing: "sprint", status: "active", outcome: null },
+      { action: "Distribute E2E tests across sprint", timing: "sprint", status: "active", outcome: null },
     ]},
     { sprint: 145, improvements: [
-      { action: "Perf regression: test_incremental_tokenization (29ms vs 20ms)", timing: "product", status: "active", outcome: null },
-      { action: "BrokenPipe in e2e_lsp_didchange_updates_state", timing: "product", status: "active", outcome: null },
-      { action: "E2E test infrastructure robustness", timing: "product", status: "active", outcome: null },
-    ]},
-    { sprint: 144, improvements: [
-      { action: "Bridge.rs split", timing: "sprint", status: "completed", outcome: "Split into 4 submodules" },
+      { action: "Perf regression + BrokenPipe E2E issues", timing: "product", status: "active", outcome: null },
     ]},
   ],
 };
