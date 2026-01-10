@@ -5,8 +5,12 @@
 
 use std::io;
 use std::process::Stdio;
+use std::sync::Arc;
+
+use dashmap::DashMap;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::sync::oneshot;
 
 /// Async connection to a downstream language server process.
 ///
@@ -155,6 +159,68 @@ impl AsyncBridgeConnection {
     }
 }
 
+/// Request ID type for JSON-RPC messages.
+///
+/// LSP spec allows either integer or string IDs.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum RequestId {
+    Int(i64),
+    String(String),
+}
+
+impl RequestId {
+    /// Extract request ID from a JSON-RPC message.
+    fn from_json(value: &serde_json::Value) -> Option<Self> {
+        match &value["id"] {
+            serde_json::Value::Number(n) => n.as_i64().map(RequestId::Int),
+            serde_json::Value::String(s) => Some(RequestId::String(s.clone())),
+            _ => None,
+        }
+    }
+}
+
+/// Tracks pending requests waiting for responses.
+///
+/// Uses `DashMap` for concurrent access from writer and reader tasks.
+/// Each pending request is associated with a `oneshot::Sender` to deliver
+/// the response back to the caller.
+#[derive(Clone)]
+pub(crate) struct PendingRequests {
+    inner: Arc<DashMap<RequestId, oneshot::Sender<serde_json::Value>>>,
+}
+
+impl PendingRequests {
+    /// Create a new pending request tracker.
+    pub(crate) fn new() -> Self {
+        Self {
+            inner: Arc::new(DashMap::new()),
+        }
+    }
+
+    /// Register a pending request and return a receiver for the response.
+    ///
+    /// Returns a tuple of (response_receiver, request_id).
+    pub(crate) fn register(&self, id: i64) -> (oneshot::Receiver<serde_json::Value>, RequestId) {
+        let request_id = RequestId::Int(id);
+        let (tx, rx) = oneshot::channel();
+        self.inner.insert(request_id.clone(), tx);
+        (rx, request_id)
+    }
+
+    /// Complete a pending request by routing the response to its sender.
+    ///
+    /// Extracts the request ID from the response and sends it to the
+    /// corresponding pending request, if one exists.
+    pub(crate) fn complete(&self, response: &serde_json::Value) {
+        if let Some(id) = RequestId::from_json(response) {
+            if let Some((_, sender)) = self.inner.remove(&id) {
+                // Ignore send error - receiver may have been dropped
+                let _ = sender.send(response.clone());
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,5 +306,53 @@ mod tests {
         assert_eq!(parsed["jsonrpc"], "2.0");
         assert_eq!(parsed["id"], 1);
         assert!(parsed["result"].is_object());
+    }
+
+    /// RED: Test that response is routed to correct pending request via request ID
+    #[tokio::test]
+    async fn response_routed_to_pending_request_by_id() {
+        use serde_json::json;
+        use std::sync::Arc;
+
+        // Use `cat` to echo what we write back
+        let cmd = vec!["cat".to_string()];
+        let conn = AsyncBridgeConnection::spawn(cmd).await.expect("spawn should succeed");
+
+        // Wrap in Arc for sharing between reader task and main task
+        let conn = Arc::new(tokio::sync::Mutex::new(conn));
+
+        // Create a pending request tracker
+        let pending = PendingRequests::new();
+
+        // Register a pending request with ID 42
+        let (response_rx, _request_id) = pending.register(42);
+
+        // Spawn a "reader task" that reads a response and routes it
+        let conn_clone = Arc::clone(&conn);
+        let pending_clone = pending.clone();
+        let reader_task = tokio::spawn(async move {
+            let mut conn = conn_clone.lock().await;
+            let response = conn.read_message().await.expect("read should succeed");
+            pending_clone.complete(&response);
+        });
+
+        // Write a response with matching ID (simulate language server response)
+        {
+            let mut conn = conn.lock().await;
+            let response = json!({
+                "jsonrpc": "2.0",
+                "id": 42,
+                "result": { "value": "hello" }
+            });
+            conn.write_message(&response).await.expect("write should succeed");
+        }
+
+        // Wait for reader task
+        reader_task.await.expect("reader task should complete");
+
+        // The pending request should receive the response
+        let result = response_rx.await.expect("should receive response");
+        assert_eq!(result["id"], 42);
+        assert_eq!(result["result"]["value"], "hello");
     }
 }
