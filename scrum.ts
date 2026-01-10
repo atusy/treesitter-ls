@@ -241,8 +241,8 @@ const scrum: ScrumDashboard = {
         test: "Unit test that src/lsp/bridge/mod.rs module compiles and exports AsyncBridgeConnection type",
         implementation: "Create minimal module structure with placeholder types",
         type: "structural",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "1393ded9", message: "feat(bridge): add AsyncBridgeConnection module structure", phase: "green" }],
         notes: ["Module organization following existing lsp/ structure"],
       },
       {
