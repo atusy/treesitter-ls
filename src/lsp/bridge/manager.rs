@@ -51,6 +51,32 @@ impl BridgeManager {
         false
     }
 
+    /// Mark a virtual document as opened for a given language.
+    ///
+    /// This should be called after sending didOpen notification to avoid duplicates.
+    pub(crate) async fn mark_document_opened(&self, language: &str, virtual_uri: &str) {
+        let mut opened = self.opened_documents.lock().await;
+        opened
+            .entry(language.to_string())
+            .or_default()
+            .insert(virtual_uri.to_string());
+    }
+
+    /// Check if document is opened and mark it as opened atomically.
+    ///
+    /// Returns true if the document was NOT previously opened (i.e., didOpen should be sent).
+    /// Returns false if the document was already opened (i.e., skip didOpen).
+    async fn should_send_didopen(&self, language: &str, virtual_uri: &str) -> bool {
+        let mut opened = self.opened_documents.lock().await;
+        let docs = opened.entry(language.to_string()).or_default();
+        if docs.contains(virtual_uri) {
+            false
+        } else {
+            docs.insert(virtual_uri.to_string());
+            true
+        }
+    }
+
     /// Get or create a connection for the specified language.
     ///
     /// If no connection exists, spawns the language server and performs
@@ -149,20 +175,25 @@ impl BridgeManager {
         let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
         let virtual_uri_string = virtual_uri.to_uri_string();
 
-        // Send didOpen notification for the virtual document
-        let did_open = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "textDocument/didOpen",
-            "params": {
-                "textDocument": {
-                    "uri": virtual_uri_string,
-                    "languageId": injection_language,
-                    "version": 1,
-                    "text": virtual_content
+        // Send didOpen notification only if document hasn't been opened yet
+        if self
+            .should_send_didopen(injection_language, &virtual_uri_string)
+            .await
+        {
+            let did_open = serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": virtual_uri_string,
+                        "languageId": injection_language,
+                        "version": 1,
+                        "text": virtual_content
+                    }
                 }
-            }
-        });
-        conn.write_message(&did_open).await?;
+            });
+            conn.write_message(&did_open).await?;
+        }
 
         // Build and send hover request
         let request_id = self.next_request_id();

@@ -487,7 +487,7 @@ mod tests {
         assert_eq!(transformed, response);
     }
 
-    /// RED: Test that BridgeManager tracks which virtual documents have been opened per connection (PBI-303 Subtask 1)
+    /// Test that BridgeManager tracks which virtual documents have been opened per connection (PBI-303 Subtask 1)
     #[test]
     fn bridge_manager_tracks_opened_documents() {
         // BridgeManager should track which virtual document URIs have been opened
@@ -500,6 +500,36 @@ mod tests {
         assert!(
             !manager.is_document_opened("lua", virtual_uri),
             "Document should not be marked as opened initially"
+        );
+    }
+
+    /// RED: Test that didOpen is only sent once per virtual document URI per connection (PBI-303 Subtask 2)
+    #[tokio::test]
+    async fn didopen_only_sent_once_per_virtual_document() {
+        // When we mark a document as opened, subsequent checks should return true
+        // This ensures didOpen is only sent once per virtual document per language server
+
+        let manager = BridgeManager::new();
+        let virtual_uri = "tsls-virtual://lua/region-0?host=file%3A%2F%2F%2Ftest.md";
+        let language = "lua";
+
+        // Initially not opened
+        assert!(!manager.is_document_opened(language, virtual_uri));
+
+        // Mark as opened
+        manager.mark_document_opened(language, virtual_uri).await;
+
+        // Now should be marked as opened
+        assert!(
+            manager.is_document_opened(language, virtual_uri),
+            "Document should be marked as opened after mark_document_opened"
+        );
+
+        // Different URI for same language should still be unopened
+        let other_uri = "tsls-virtual://lua/region-1?host=file%3A%2F%2F%2Ftest.md";
+        assert!(
+            !manager.is_document_opened(language, other_uri),
+            "Different document should not be affected"
         );
     }
 
