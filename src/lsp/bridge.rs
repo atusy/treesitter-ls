@@ -344,6 +344,44 @@ pub(crate) fn build_bridge_hover_request(
     })
 }
 
+/// Transform a hover response from virtual to host document coordinates.
+///
+/// If the response contains a range, translates the line numbers from virtual
+/// document coordinates back to host document coordinates by adding region_start_line.
+///
+/// # Arguments
+/// * `response` - The JSON-RPC response from the downstream language server
+/// * `region_start_line` - The starting line of the injection region in the host document
+pub(crate) fn transform_hover_response_to_host(
+    mut response: serde_json::Value,
+    region_start_line: u32,
+) -> serde_json::Value {
+    // Check if response has a result with a range
+    if let Some(result) = response.get_mut("result")
+        && result.is_object()
+        && let Some(range) = result.get_mut("range")
+        && range.is_object()
+    {
+        // Transform start position
+        if let Some(start) = range.get_mut("start")
+            && let Some(line) = start.get_mut("line")
+            && let Some(line_num) = line.as_u64()
+        {
+            *line = serde_json::json!(line_num + region_start_line as u64);
+        }
+
+        // Transform end position
+        if let Some(end) = range.get_mut("end")
+            && let Some(line) = end.get_mut("line")
+            && let Some(line_num) = line.as_u64()
+        {
+            *line = serde_json::json!(line_num + region_start_line as u64);
+        }
+    }
+
+    response
+}
+
 /// Request ID type for JSON-RPC messages.
 ///
 /// LSP spec allows either integer or string IDs.
@@ -776,5 +814,99 @@ mod tests {
             position["character"], 10,
             "Position character should remain unchanged"
         );
+    }
+
+    /// RED: Test bridge hover response transforms range to host coordinates (PBI-302 Subtask 5)
+    #[test]
+    fn bridge_hover_response_transforms_range_to_host_coordinates() {
+        use serde_json::json;
+
+        // Simulate a hover response from lua-language-server with a range
+        // The range is in virtual document coordinates (starting at line 0)
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "contents": {
+                    "kind": "markdown",
+                    "value": "```lua\nfunction greet(name: string)\n```"
+                },
+                "range": {
+                    "start": { "line": 0, "character": 9 },
+                    "end": { "line": 0, "character": 14 }
+                }
+            }
+        });
+
+        // The injection region starts at line 3 in the host document
+        let region_start_line = 3;
+
+        // Transform the response to host coordinates
+        let transformed = transform_hover_response_to_host(response, region_start_line);
+
+        // Verify the contents are unchanged
+        assert_eq!(
+            transformed["result"]["contents"]["kind"], "markdown",
+            "Contents should be preserved"
+        );
+
+        // Verify the range is transformed to host coordinates
+        let range = &transformed["result"]["range"];
+        assert_eq!(
+            range["start"]["line"], 3,
+            "Start line should be translated to host (0 + 3 = 3)"
+        );
+        assert_eq!(
+            range["start"]["character"], 9,
+            "Start character should remain unchanged"
+        );
+        assert_eq!(
+            range["end"]["line"], 3,
+            "End line should be translated to host (0 + 3 = 3)"
+        );
+        assert_eq!(
+            range["end"]["character"], 14,
+            "End character should remain unchanged"
+        );
+    }
+
+    /// Test hover response without range is passed through unchanged
+    #[test]
+    fn bridge_hover_response_without_range_unchanged() {
+        use serde_json::json;
+
+        // Hover response without a range (just contents)
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "contents": "Simple hover text"
+            }
+        });
+
+        let region_start_line = 5;
+        let transformed = transform_hover_response_to_host(response.clone(), region_start_line);
+
+        // Response should be unchanged (no range to transform)
+        assert_eq!(transformed, response);
+    }
+
+    /// Test hover response with null result is passed through unchanged
+    #[test]
+    fn bridge_hover_response_null_result_unchanged() {
+        use serde_json::json;
+
+        // Hover response with null result (no hover info available)
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": null
+        });
+
+        let region_start_line = 5;
+        let transformed = transform_hover_response_to_host(response.clone(), region_start_line);
+
+        // Response should be unchanged
+        assert_eq!(transformed, response);
     }
 }
