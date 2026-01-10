@@ -156,8 +156,8 @@ const scrum: ScrumDashboard = {
         test: "Test that BridgeManager sends didChange when document content differs from last sent",
         implementation: "Add send_didchange method to BridgeManager; track document versions",
         type: "behavioral",
-        status: "green",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "905481ac", message: "feat(bridge): add document version tracking to BridgeManager", phase: "green" }],
         notes: ["AC4: Version tracking ensures incremental sync"],
       },
       {
