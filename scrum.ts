@@ -34,48 +34,8 @@ const scrum: ScrumDashboard = {
   },
 
   // Completed: PBI-001-192 (Sprint 1-143), PBI-301 (144), PBI-302 (145) | Deferred: PBI-091, PBI-107
-  // Walking Skeleton PBIs: PBI-303 through PBI-304 (Ready)
+  // Walking Skeleton: PBI-303, PBI-304 (Ready)
   product_backlog: [
-    // --- PBI-302: Hover Feature (COMPLETED Sprint 145) ---
-    {
-      id: "PBI-302",
-      story: {
-        role: "Lua developer editing markdown",
-        capability:
-          "hover from lua-language-server in Lua code block in markdown",
-        benefit:
-          "I understand the details of variables and functions",
-      },
-      acceptance_criteria: [
-        {
-          criterion:
-            "Given a Lua code block with a local variable, when I hover over the variable name, then I see type information from lua-language-server",
-          verification:
-            "E2E test: hover on 'local x = 1' variable shows type annotation",
-        },
-        {
-          criterion:
-            "Given a Lua code block with a function call, when I hover over the function name, then I see function signature from lua-language-server",
-          verification:
-            "E2E test: hover on 'print' shows function signature",
-        },
-        {
-          criterion:
-            "Given cursor position in host markdown, when hover request is sent, then position is correctly mapped to virtual Lua document",
-          verification:
-            "Unit test: verify position transformation from markdown line/col to Lua line/col",
-        },
-        {
-          criterion:
-            "Given hover response from lua-language-server, when response is returned to client, then URI is transformed back to original markdown URI",
-          verification:
-            "Unit test: verify URI transformation from virtual Lua URI to markdown URI",
-        },
-      ],
-      status: "done",
-      refinement_notes: ["First LSP feature; proves request/response flow; requires position/URI mapping; builds on PBI-301"],
-    },
-
     // --- PBI-303: Completions Feature ---
     {
       id: "PBI-303",
@@ -163,100 +123,9 @@ const scrum: ScrumDashboard = {
     },
   ],
   sprint: null,
-  // Sprint 145 (PBI-302): 9 subtasks (8 behavioral + 1 structural)
-  // Commits: 09dcfd1e, e4dbb8f8, 50d7f096, 764e64d8, a475c413, 13941068
+  // Sprint 145 (PBI-302): 9 subtasks, commits: 09dcfd1e, e4dbb8f8, 50d7f096, 764e64d8, a475c413, 13941068
   // Sprint 144 (PBI-301): 7 subtasks, commits: 1393ded9, a7116891, 4ff80258, d48e9557, 551917f1, 89a2e1f6, 525661d9
-  completed: [
-    {
-      number: 145,
-      pbi_id: "PBI-302",
-      goal: "Enable Lua developers to receive hover information from lua-language-server for Lua code blocks embedded in markdown, proving the bridge request/response flow with position and URI transformations",
-      status: "done",
-      subtasks: [
-        // Subtask 1: Virtual document URI scheme
-        {
-          test: "virtual_document_uri_creates_scheme_for_injection_region",
-          implementation: "Create VirtualDocumentUri type that encodes host URI + injection language + region ID into a unique URI scheme (e.g., tsls-virtual://lua/file.md/region-0)",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "09dcfd1e", message: "feat(bridge): add VirtualDocumentUri for injection region encoding", phase: "green" }],
-          notes: ["Foundation for URI transformation; downstream LS sees virtual URI, responses transformed back"],
-        },
-        // Subtask 2: Position mapping host -> virtual
-        {
-          test: "position_maps_host_markdown_line_to_virtual_lua_line",
-          implementation: "Use CacheableInjectionRegion.translate_host_to_virtual() to map hover position from markdown coordinates to Lua code block coordinates",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "e4dbb8f8", message: "feat(bridge): add build_bridge_hover_request for request construction", phase: "green" }],
-          notes: ["AC3: position correctly mapped; existing translate_host_to_virtual in injection.rs; test: test_cacheable_injection_region_translate_host_to_virtual"],
-        },
-        // Subtask 3: Position mapping virtual -> host (for response ranges)
-        {
-          test: "position_maps_virtual_lua_line_back_to_host_markdown_line",
-          implementation: "Use CacheableInjectionRegion.translate_virtual_to_host() to map hover response ranges back to markdown coordinates",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "50d7f096", message: "feat(bridge): add transform_hover_response_to_host for response transformation", phase: "green" }],
-          notes: ["AC4: response transformed back; existing translate_virtual_to_host in injection.rs; test: test_cacheable_injection_region_translate_virtual_to_host"],
-        },
-        // Subtask 4: Bridge hover request construction
-        {
-          test: "bridge_hover_request_uses_virtual_uri_and_mapped_position",
-          implementation: "Construct textDocument/hover JSON-RPC request with virtual URI and transformed position for downstream LS",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "e4dbb8f8", message: "feat(bridge): add build_bridge_hover_request for request construction", phase: "green" }],
-          notes: ["Builds on subtasks 1-2; uses PBI-301 write_message(); build_bridge_hover_request()"],
-        },
-        // Subtask 5: Bridge hover response parsing
-        {
-          test: "bridge_hover_response_transforms_range_to_host_coordinates",
-          implementation: "Parse hover response, transform any Range in the result back to host document coordinates using subtask 3",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "50d7f096", message: "feat(bridge): add transform_hover_response_to_host for response transformation", phase: "green" }],
-          notes: ["Hover response may contain Range; must transform for client; transform_hover_response_to_host()"],
-        },
-        // Subtask 6: Integration - hover_impl calls bridge
-        {
-          test: "hover_impl_returns_bridge_response_for_lua_injection",
-          implementation: "Wire hover_impl to: detect injection -> get bridge connection -> send request -> await response -> transform and return",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "764e64d8", message: "feat(bridge): wire hover_impl to bridge for Lua injections", phase: "green" }],
-          notes: ["BridgeManager.send_hover_request() wired to hover_impl"],
-        },
-        // Subtask 7: E2E test - hover on local variable
-        {
-          test: "e2e_hover_on_lua_local_variable_shows_type",
-          implementation: "E2E test: markdown with Lua code block containing 'local x = 1', hover on x shows type annotation from lua-language-server",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "13941068", message: "test(e2e): verify Lua hover in markdown code blocks", phase: "green" }],
-          notes: ["AC1 verification; requires lua-language-server installed; test returns 'Workspace loading' during init which is valid"],
-        },
-        // Subtask 8: E2E test - hover on function call
-        {
-          test: "e2e_hover_on_lua_function_shows_signature",
-          implementation: "E2E test: markdown with Lua code block containing 'print(x)', hover on print shows function signature from lua-language-server",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "13941068", message: "test(e2e): verify Lua hover in markdown code blocks", phase: "green" }],
-          notes: ["AC2 verification; requires lua-language-server installed; test returns 'Workspace loading' during init which is valid"],
-        },
-        // Subtask 9 (structural): Monitor bridge.rs size per Sprint 144 retrospective
-        {
-          test: "bridge_module_size_under_600_lines",
-          implementation: "Split bridge.rs (was 1145 lines) into submodules: connection.rs (177), protocol.rs (277), manager.rs (174), bridge.rs (564 with tests)",
-          type: "structural",
-          status: "completed",
-          commits: [{ hash: "a475c413", message: "refactor(bridge): split into submodules for maintainability", phase: "refactoring" }],
-          notes: ["Sprint 144 retrospective action; split into 4 files, each under 600 lines; total: 1192 lines"],
-        },
-      ],
-    },
-  ],
+  completed: [],
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
@@ -264,42 +133,16 @@ const scrum: ScrumDashboard = {
       { name: "E2E tests pass", run: "make test_e2e" },
     ],
   },
-  // Retrospectives (recent 4) | Sprints 1-139: git log -- scrum.yaml, scrum.ts
+  // Retrospectives: Sprint 145 (perf regression, BrokenPipe, E2E robustness), Sprint 144 (bridge split done)
   retrospectives: [
-    {
-      sprint: 145,
-      improvements: [
-        {
-          action: "Address performance regression in test_incremental_tokenization_performance (29ms vs 20ms threshold)",
-          timing: "product",
-          status: "active",
-          outcome: null,
-        },
-        {
-          action: "Investigate and fix BrokenPipe error in e2e_lsp_didchange_updates_state test",
-          timing: "product",
-          status: "active",
-          outcome: null,
-        },
-      ],
-    },
-    {
-      sprint: 144,
-      improvements: [
-        {
-          action: "Monitor bridge.rs size; split into submodules (e.g., connection.rs, protocol.rs, routing.rs) if it exceeds ~600 lines during PBI-302 implementation",
-          timing: "sprint",
-          status: "completed",
-          outcome: "Split bridge.rs (1145 lines) into 4 submodules: connection.rs (177), protocol.rs (277), manager.rs (174), bridge.rs (564). All under 600 lines.",
-        },
-        {
-          action: "Investigate and fix BrokenPipe error in pre-existing E2E tests (non-blocking, deferred)",
-          timing: "product",
-          status: "active",
-          outcome: null,
-        },
-      ],
-    },
+    { sprint: 145, improvements: [
+      { action: "Perf regression: test_incremental_tokenization (29ms vs 20ms)", timing: "product", status: "active", outcome: null },
+      { action: "BrokenPipe in e2e_lsp_didchange_updates_state", timing: "product", status: "active", outcome: null },
+      { action: "E2E test infrastructure robustness", timing: "product", status: "active", outcome: null },
+    ]},
+    { sprint: 144, improvements: [
+      { action: "Bridge.rs split", timing: "sprint", status: "completed", outcome: "Split into 4 submodules" },
+    ]},
   ],
 };
 
