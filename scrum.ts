@@ -33,48 +33,9 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  // Completed: PBI-001-192 (1-143), PBI-301 (144), PBI-302 (145), PBI-303 (146 partial) | Deferred: PBI-091, PBI-107
-  // Walking Skeleton: PBI-304, PBI-305 (Ready)
+  // Completed: PBI-001-192 (1-143), PBI-301 (144), PBI-302 (145), PBI-303 (146 partial), PBI-304 (147) | Deferred: PBI-091, PBI-107
+  // Walking Skeleton: PBI-305 (Ready)
   product_backlog: [
-    // --- PBI-304: Non-Blocking Initialization ---
-    {
-      id: "PBI-304",
-      story: {
-        role: "Lua developer editing markdown",
-        capability:
-          "bridge server initialization never blocks treesitter-ls functionality",
-        benefit:
-          "I can edit markdown regardless of lua-language-server state",
-      },
-      acceptance_criteria: [
-        {
-          criterion:
-            "Given lua-language-server is starting up, when treesitter-ls receives any request, then treesitter-ls responds without blocking",
-          verification:
-            "Integration test: send requests during lua-ls startup, verify response time < 100ms",
-        },
-        {
-          criterion:
-            "Given lua-language-server is initializing, when hover/completion request is sent for Lua block, then an appropriate error response is returned (not timeout)",
-          verification:
-            "Unit test: verify error response with message indicating bridge not ready",
-        },
-        {
-          criterion:
-            "Given lua-language-server initialization completes, when bridge transitions to ready state, then subsequent requests are handled normally",
-          verification:
-            "Integration test: verify requests succeed after initialization completes",
-        },
-        {
-          criterion:
-            "Given user is editing markdown, when lua-language-server is initializing, then markdown editing features (syntax highlighting, folding) continue to work",
-          verification:
-            "E2E test: verify treesitter-ls native features work during bridge initialization",
-        },
-      ],
-      status: "ready",
-      refinement_notes: ["ADR-0018 init window; async handling; errors not hangs during init; builds on PBI-301/302/303"],
-    },
 
     // --- PBI-305: lua-language-server Workspace Configuration ---
     {
@@ -110,11 +71,17 @@ const scrum: ScrumDashboard = {
       refinement_notes: ["Blocking issue from PBI-303 Sprint 146; investigate lua-ls config requirements; may require ADR-0007 document materialization"],
     },
   ],
-  sprint: {
-    number: 147,
-    pbi_id: "PBI-304",
-    goal: "Ensure bridge initialization never blocks treesitter-ls by implementing ConnectionState tracking and state-gated request handling per ADR-0015",
-    status: "review",
+  sprint: null,
+  // Sprint 147 (PBI-304): 8 subtasks, commits: 34c5c4c7..efbdabf9
+  // Sprint 146 (PBI-303): 8/10 subtasks, commits: 55abb5e0..b5588476, 7845a679 (E2E blocked by lua-ls config)
+  // Sprint 145 (PBI-302): 9 subtasks, commits: 09dcfd1e..13941068
+  // Sprint 144 (PBI-301): 7 subtasks, commits: 1393ded9..525661d9
+  completed: [
+    {
+      number: 147,
+      pbi_id: "PBI-304",
+      goal: "Ensure bridge initialization never blocks treesitter-ls by implementing ConnectionState tracking and state-gated request handling per ADR-0015",
+      status: "done",
     subtasks: [
       {
         test: "ConnectionState enum has Initializing, Ready, Failed variants",
@@ -181,11 +148,8 @@ const scrum: ScrumDashboard = {
         notes: ["AC4 verification: selection range, semantic tokens pass; markdown injection works"],
       },
     ],
-  },
-  // Sprint 146 (PBI-303): 8/10 subtasks, commits: 55abb5e0..b5588476, 7845a679 (E2E blocked by lua-ls config)
-  // Sprint 145 (PBI-302): 9 subtasks, commits: 09dcfd1e..13941068
-  // Sprint 144 (PBI-301): 7 subtasks, commits: 1393ded9..525661d9
-  completed: [],
+    },
+  ],
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
