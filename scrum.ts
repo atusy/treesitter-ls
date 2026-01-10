@@ -136,8 +136,8 @@ const scrum: ScrumDashboard = {
         test: "Request during Initializing state returns REQUEST_FAILED error",
         implementation: "Check state before processing request in send_hover_request/send_completion_request",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "eccf6c09", message: "feat(bridge): add BridgeError for REQUEST_FAILED", phase: "green" }],
         notes: ["ADR-0015: REQUEST_FAILED (-32803) with message 'bridge: downstream server initializing'"],
       },
       {
