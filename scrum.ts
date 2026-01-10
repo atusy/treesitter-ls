@@ -257,8 +257,8 @@ const scrum: ScrumDashboard = {
         test: "Unit test that send_request() writes JSON-RPC message to stdin with proper Content-Length header",
         implementation: "Serialize LSP initialize request to JSON-RPC format, write to async stdin",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "4ff80258", message: "feat(bridge): implement write_message for JSON-RPC formatting", phase: "green" }],
         notes: ["LSP JSON-RPC format: Content-Length header + body"],
       },
       {
