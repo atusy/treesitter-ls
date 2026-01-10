@@ -180,8 +180,8 @@ const scrum: ScrumDashboard = {
         test: "Test that BridgeManager.send_completion_request returns CompletionItems from downstream",
         implementation: "Add send_completion_request method to BridgeManager",
         type: "behavioral",
-        status: "green",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "ecb997f9", message: "feat(bridge): add send_completion_request method to BridgeManager", phase: "green" }],
         notes: ["Integration: end-to-end bridge flow for completions"],
       },
       {
