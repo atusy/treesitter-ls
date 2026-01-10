@@ -235,7 +235,7 @@ const scrum: ScrumDashboard = {
     number: 144,
     pbi_id: "PBI-301",
     goal: "Establish the foundational bridge architecture by spawning lua-language-server as a child process and confirming successful initialization, proving the async bridge concept works",
-    status: "planning",
+    status: "in_progress",
     subtasks: [
       {
         test: "Unit test that src/lsp/bridge/mod.rs module compiles and exports AsyncBridgeConnection type",
