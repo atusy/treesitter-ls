@@ -3,7 +3,7 @@
 // ============================================================
 
 const userStoryRoles = [
-  "Rustacean editing markdown",
+  "Lua developer editing markdown",
 ] as const satisfies readonly string[]; // Must have at least one role. Avoid generic roles like "user" or "admin". Remove obsolete roles freely.
 
 const scrum: ScrumDashboard = {
@@ -47,20 +47,40 @@ const scrum: ScrumDashboard = {
     {
       id: "PBI-301",
       story: {
-        role: "Rustacean editing markdown",
+        role: "Lua developer editing markdown",
         capability:
-          "notice rust-analyzer is attached to Rust code block in markdown",
+          "notice lua-language-server is attached to Lua code block in markdown",
         benefit:
-          "I can expect rust-analyzer features",
+          "I can expect lua-language-server features",
       },
-      acceptance_criteria: [], // Draft - AC to be added during refinement
-      status: "draft",
+      acceptance_criteria: [
+        {
+          criterion:
+            "Given a markdown file with Lua code block, when treesitter-ls opens the file, then lua-language-server process is spawned as a child process",
+          verification:
+            "Unit test: verify child process spawned with correct command (lua-language-server)",
+        },
+        {
+          criterion:
+            "Given lua-language-server is spawned, when initialization completes, then treesitter-ls logs 'lua-language-server initialized' or similar confirmation",
+          verification:
+            "Integration test: check log output contains initialization confirmation",
+        },
+        {
+          criterion:
+            "Given lua-language-server is running, when treesitter-ls terminates, then lua-language-server child process is also terminated",
+          verification:
+            "Integration test: verify no orphan lua-language-server processes after treesitter-ls exit",
+        },
+      ],
+      status: "ready",
       refinement_notes: [
         "Thinnest possible slice - just spawn the server and confirm it's running",
+        "lua-language-server chosen over rust-analyzer: faster init, simpler config, common use case (Neovim docs)",
         "No initialization window required (assume notifications/requests start after initialized)",
-        "No shutdown required (assume child process rust-analyzer is killed by termination of parent process treesitter-ls)",
+        "No shutdown required (assume child process lua-language-server is killed by termination of parent process treesitter-ls)",
         "Assume single language server support. No need of language server pool yet",
-        "Editor shows 'rust-analyzer spawned'",
+        "Editor shows 'lua-language-server spawned' or similar in logs",
         "No useful features yet (no hover, no completions, ...)",
         "Proves the architecture works",
       ],
@@ -70,17 +90,44 @@ const scrum: ScrumDashboard = {
     {
       id: "PBI-302",
       story: {
-        role: "Rustacean editing markdown",
+        role: "Lua developer editing markdown",
         capability:
-          "hover from rust-analyzer in Rust code block in markdown",
+          "hover from lua-language-server in Lua code block in markdown",
         benefit:
-          "I understand the details of objects",
+          "I understand the details of variables and functions",
       },
-      acceptance_criteria: [], // Draft - AC to be added during refinement
-      status: "draft",
+      acceptance_criteria: [
+        {
+          criterion:
+            "Given a Lua code block with a local variable, when I hover over the variable name, then I see type information from lua-language-server",
+          verification:
+            "E2E test: hover on 'local x = 1' variable shows type annotation",
+        },
+        {
+          criterion:
+            "Given a Lua code block with a function call, when I hover over the function name, then I see function signature from lua-language-server",
+          verification:
+            "E2E test: hover on 'print' shows function signature",
+        },
+        {
+          criterion:
+            "Given cursor position in host markdown, when hover request is sent, then position is correctly mapped to virtual Lua document",
+          verification:
+            "Unit test: verify position transformation from markdown line/col to Lua line/col",
+        },
+        {
+          criterion:
+            "Given hover response from lua-language-server, when response is returned to client, then URI is transformed back to original markdown URI",
+          verification:
+            "Unit test: verify URI transformation from virtual Lua URI to markdown URI",
+        },
+      ],
+      status: "ready",
       refinement_notes: [
         "First actual LSP feature on top of the basic bridge",
-        "Proves request/response flow works",
+        "Proves request/response flow works (textDocument/hover)",
+        "Requires position mapping: host markdown position -> virtual Lua document position",
+        "Requires URI transformation: markdown URI <-> virtual Lua URI",
         "Builds on PBI-301 (basic bridge attachment)",
       ],
     },
@@ -89,18 +136,51 @@ const scrum: ScrumDashboard = {
     {
       id: "PBI-303",
       story: {
-        role: "Rustacean editing markdown",
+        role: "Lua developer editing markdown",
         capability:
-          "completions from rust-analyzer in Rust code block in markdown",
+          "completions from lua-language-server in Lua code block in markdown",
         benefit:
-          "I can write faster",
+          "I can write Lua code faster with autocomplete",
       },
-      acceptance_criteria: [], // Draft - AC to be added during refinement
-      status: "draft",
+      acceptance_criteria: [
+        {
+          criterion:
+            "Given a Lua code block, when I type a partial identifier, then I see completion suggestions from lua-language-server",
+          verification:
+            "E2E test: typing 'pri' in Lua block shows 'print' completion",
+        },
+        {
+          criterion:
+            "Given a Lua code block with a table variable, when I type the table name followed by dot, then I see member completions",
+          verification:
+            "E2E test: typing 'string.' shows string library methods",
+        },
+        {
+          criterion:
+            "Given document changes in markdown, when textDocument/didOpen is sent, then virtual Lua document is synced to lua-language-server",
+          verification:
+            "Unit test: verify didOpen notification sent with correct virtual document content",
+        },
+        {
+          criterion:
+            "Given document changes in markdown, when textDocument/didChange is sent, then virtual Lua document is updated in lua-language-server",
+          verification:
+            "Unit test: verify didChange notification sent with correct incremental changes",
+        },
+        {
+          criterion:
+            "Given completion items from lua-language-server, when items are returned to client, then they are relevant to the Lua context",
+          verification:
+            "E2E test: completions include Lua-specific items (local, function, table, etc.)",
+        },
+      ],
+      status: "ready",
       refinement_notes: [
-        "Second LSP feature",
-        "Proves notifications work",
-        "Builds on PBI-301 and PBI-302",
+        "Second LSP feature after hover",
+        "Proves notifications work (textDocument/didOpen, textDocument/didChange)",
+        "Requires document synchronization between host markdown and virtual Lua document",
+        "Completion items should be filtered/relevant to Lua context",
+        "Builds on PBI-301 (bridge) and PBI-302 (position/URI mapping)",
       ],
     },
 
@@ -108,19 +188,45 @@ const scrum: ScrumDashboard = {
     {
       id: "PBI-304",
       story: {
-        role: "Rustacean editing markdown",
+        role: "Lua developer editing markdown",
         capability:
           "bridge server initialization never blocks treesitter-ls functionality",
         benefit:
-          "I can edit regardless of rust-analyzer state",
+          "I can edit markdown regardless of lua-language-server state",
       },
-      acceptance_criteria: [], // Draft - AC to be added during refinement
-      status: "draft",
+      acceptance_criteria: [
+        {
+          criterion:
+            "Given lua-language-server is starting up, when treesitter-ls receives any request, then treesitter-ls responds without blocking",
+          verification:
+            "Integration test: send requests during lua-ls startup, verify response time < 100ms",
+        },
+        {
+          criterion:
+            "Given lua-language-server is initializing, when hover/completion request is sent for Lua block, then an appropriate error response is returned (not timeout)",
+          verification:
+            "Unit test: verify error response with message indicating bridge not ready",
+        },
+        {
+          criterion:
+            "Given lua-language-server initialization completes, when bridge transitions to ready state, then subsequent requests are handled normally",
+          verification:
+            "Integration test: verify requests succeed after initialization completes",
+        },
+        {
+          criterion:
+            "Given user is editing markdown, when lua-language-server is initializing, then markdown editing features (syntax highlighting, folding) continue to work",
+          verification:
+            "E2E test: verify treesitter-ls native features work during bridge initialization",
+        },
+      ],
+      status: "ready",
       refinement_notes: [
-        "Add initialization window",
-        "treesitter-ls remains responsive during rust-analyzer startup",
-        "Requests during initialization return appropriate errors (not hang)",
-        "Improves user experience",
+        "Add initialization window handling per ADR-0018",
+        "lua-language-server has faster init than rust-analyzer, but still needs async handling",
+        "treesitter-ls remains responsive during lua-language-server startup",
+        "Requests to Lua bridge during initialization return appropriate errors (not hang/timeout)",
+        "Improves user experience - no perceived lag when opening files",
         "Builds on PBI-301, PBI-302, PBI-303",
       ],
     },
