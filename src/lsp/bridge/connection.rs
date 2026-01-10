@@ -54,6 +54,78 @@ impl ConnectionState {
     }
 }
 
+/// LSP JSON-RPC error code for REQUEST_FAILED.
+///
+/// Per ADR-0015: Used when requests cannot be processed due to connection state.
+/// Value -32803 is from LSP spec reserved range for implementation errors.
+const REQUEST_FAILED_CODE: i32 = -32803;
+
+/// Bridge-specific error type for state-gated request handling.
+///
+/// Per ADR-0015, requests during non-Ready states return REQUEST_FAILED (-32803)
+/// with state-specific messages.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub(crate) struct BridgeError {
+    code: i32,
+    message: String,
+}
+
+impl BridgeError {
+    /// Create a REQUEST_FAILED error with the given message.
+    #[allow(dead_code)]
+    pub(crate) fn request_failed(message: &str) -> Self {
+        Self {
+            code: REQUEST_FAILED_CODE,
+            message: message.to_string(),
+        }
+    }
+
+    /// Get the error code.
+    #[allow(dead_code)]
+    pub(crate) fn code(&self) -> i32 {
+        self.code
+    }
+
+    /// Get the error message.
+    #[allow(dead_code)]
+    pub(crate) fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// Create an error for the given connection state, or None if state allows requests.
+    ///
+    /// Per ADR-0015:
+    /// - `Initializing` -> REQUEST_FAILED ("bridge: downstream server initializing")
+    /// - `Ready` -> None (requests allowed)
+    /// - `Failed` -> REQUEST_FAILED ("bridge: downstream server failed")
+    #[allow(dead_code)]
+    pub(crate) fn for_state(state: ConnectionState) -> Option<Self> {
+        match state {
+            ConnectionState::Initializing => Some(Self::request_failed(
+                "bridge: downstream server initializing",
+            )),
+            ConnectionState::Ready => None,
+            ConnectionState::Failed => {
+                Some(Self::request_failed("bridge: downstream server failed"))
+            }
+        }
+    }
+
+    /// Convert to a JSON-RPC error response.
+    #[allow(dead_code)]
+    pub(crate) fn to_json_response(&self, id: i64) -> serde_json::Value {
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": {
+                "code": self.code,
+                "message": self.message
+            }
+        })
+    }
+}
+
 /// Thread-safe connection state holder.
 ///
 /// Wraps connection state in an atomic for safe access across async tasks.
@@ -283,6 +355,44 @@ mod tests {
         let state_holder = StatefulBridgeConnection::new_initializing();
         state_holder.set_failed();
         assert_eq!(state_holder.state(), ConnectionState::Failed);
+    }
+
+    #[test]
+    fn bridge_error_request_failed_has_correct_code() {
+        // Per ADR-0015: REQUEST_FAILED error code is -32803
+        let error = BridgeError::request_failed("bridge: downstream server initializing");
+        assert_eq!(error.code(), -32803);
+        assert_eq!(error.message(), "bridge: downstream server initializing");
+    }
+
+    #[test]
+    fn bridge_error_for_initializing_state() {
+        // Per ADR-0015: Requests during Initializing state return REQUEST_FAILED
+        let state = ConnectionState::Initializing;
+        let error = BridgeError::for_state(state);
+        assert!(error.is_some());
+        let error = error.unwrap();
+        assert_eq!(error.code(), -32803);
+        assert!(error.message().contains("initializing"));
+    }
+
+    #[test]
+    fn bridge_error_for_ready_state_returns_none() {
+        // Ready state allows requests - no error
+        let state = ConnectionState::Ready;
+        let error = BridgeError::for_state(state);
+        assert!(error.is_none());
+    }
+
+    #[test]
+    fn bridge_error_for_failed_state() {
+        // Per ADR-0015: Requests during Failed state return REQUEST_FAILED
+        let state = ConnectionState::Failed;
+        let error = BridgeError::for_state(state);
+        assert!(error.is_some());
+        let error = error.unwrap();
+        assert_eq!(error.code(), -32803);
+        assert!(error.message().contains("failed"));
     }
 }
 
