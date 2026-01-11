@@ -56,6 +56,12 @@ const scrum: ScrumDashboard = {
     ],
   },
   retrospectives: [
+    { sprint: 160, improvements: [
+      { action: "Design data structures in conversation before implementation", timing: "immediate", status: "completed", outcome: "Upfront discussion of OpenedVirtualDoc structure clarified requirements - implementation became straightforward with clear field ownership (virtual_uri, host_uri, region_id)" },
+      { action: "Store computed values rather than recomputing", timing: "immediate", status: "completed", outcome: "virtual_uri stored directly in OpenedVirtualDoc instead of reconstructing from host_uri + region_id - simpler code, safer access pattern, single source of truth" },
+      { action: "Best-effort cleanup pattern for non-critical operations", timing: "immediate", status: "completed", outcome: "didClose errors don't block cleanup of other virtual docs - continue_on_error pattern prevents cascading failures during document lifecycle management" },
+      { action: "Separate document lifecycle from connection lifecycle", timing: "immediate", status: "completed", outcome: "didClose removes virtual doc but keeps connection open - enables efficient server reuse across multiple code blocks, established clear responsibility boundaries" },
+    ]},
     { sprint: 159, improvements: [
       { action: "User conversation as refinement tool", timing: "immediate", status: "completed", outcome: "Discussing didChange forwarding implementation revealed hidden technical debt in region_id calculation - conversation-driven discovery led to clear User Story and acceptance criteria" },
       { action: "Fix foundational issues before building on them", timing: "immediate", status: "completed", outcome: "Stable region_id is prerequisite for didClose forwarding - addressing technical debt enables future features rather than accumulating workarounds" },
