@@ -34,7 +34,40 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "PBI-DIDCLOSE-FORWARDING",
+      story: {
+        role: "Lua developer editing markdown",
+        capability: "I want to propagate close of the host document to the virtual documents attached to bridged downstream language servers",
+        benefit: "So that I do not suffer from memory leaks",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "didClose sent for all virtual documents when host closes",
+          verification: "E2E test: close host document and verify downstream servers receive didClose for each virtual document",
+        },
+        {
+          criterion: "host to virtual mapping recorded during didOpen",
+          verification: "Unit test: after didOpen, host_to_virtual contains entry mapping host URI to OpenedVirtualDoc with language and virtual_uri",
+        },
+        {
+          criterion: "document_versions tracking cleaned up",
+          verification: "Unit test: after didClose, document_versions no longer contains entries for closed virtual documents",
+        },
+        {
+          criterion: "Connection remains open after didClose",
+          verification: "E2E test: after closing one host document, other host documents can still send requests to the same downstream server",
+        },
+      ],
+      status: "ready",
+      refinement_notes: [
+        "Data structure: OpenedVirtualDoc { language: String, virtual_uri: String }",
+        "Add host_to_virtual: Mutex<HashMap<Url, Vec<OpenedVirtualDoc>>> to LanguageServerPool",
+        "Do not close connection because other host documents may need it",
+      ],
+    },
+  ],
   sprint: null,
   completed: [
     { number: 159, pbi_id: "PBI-STABLE-REGION-ID", goal: "Implement stable region_id for shared virtual document URIs across bridge features", status: "done", subtasks: [] },
