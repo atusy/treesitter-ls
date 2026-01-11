@@ -34,82 +34,12 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  product_backlog: [
-    {
-      id: "PBI-REFACTOR-DIDCHANGE-MODULE",
-      story: {
-        role: "Lua developer editing markdown",
-        capability: "I want didChange logic organized in src/lsp/bridge/text_document/did_change.rs",
-        benefit: "So that the codebase follows consistent modular architecture matching lsp_impl structure",
-      },
-      acceptance_criteria: [
-        { criterion: "didChange logic extracted to text_document/did_change.rs", verification: "File exists with forward_didchange_to_opened_docs and send_didchange_for_virtual_doc logic" },
-        { criterion: "pool.rs imports and delegates to did_change module", verification: "pool.rs uses pub(super) functions from did_change.rs" },
-        { criterion: "All existing tests pass unchanged", verification: "make test && make test_e2e pass" },
-      ],
-      status: "ready",
-    },
-  ],
-  sprint: {
-    number: 163,
-    pbi_id: "PBI-REFACTOR-DIDCHANGE-MODULE",
-    goal: "Extract didChange logic to text_document/did_change.rs module for consistent architecture",
-    status: "planning",
-    subtasks: [
-      {
-        test: "Verify did_change.rs module exists and exports forward_didchange_to_opened_docs function",
-        implementation: "Create src/lsp/bridge/text_document/did_change.rs with forward_didchange_to_opened_docs moved from pool.rs",
-        type: "structural",
-        status: "pending",
-        commits: [],
-        notes: ["Extract as impl LanguageServerPool block following did_close.rs pattern"],
-      },
-      {
-        test: "Verify send_didchange_for_virtual_doc helper exists in did_change.rs module",
-        implementation: "Move send_didchange_for_virtual_doc from pool.rs to did_change.rs as impl method",
-        type: "structural",
-        status: "pending",
-        commits: [],
-        notes: ["Private helper method for sending individual didChange notifications"],
-      },
-      {
-        test: "Verify pool.rs provides get_host_virtual_docs accessor for did_change module",
-        implementation: "Add get_host_virtual_docs() helper method to pool.rs with pub(super) visibility",
-        type: "structural",
-        status: "pending",
-        commits: [],
-        notes: ["Accessor returns cloned Vec<OpenedVirtualDoc> without removing - unlike remove_host_virtual_docs in did_close"],
-      },
-      {
-        test: "Verify text_document.rs includes did_change module",
-        implementation: "Add 'mod did_change;' to text_document.rs",
-        type: "structural",
-        status: "pending",
-        commits: [],
-        notes: ["Module organization matches did_close, hover, completion, signature_help pattern"],
-      },
-      {
-        test: "All existing unit tests pass (make test)",
-        implementation: "Run make test to verify no behavioral changes",
-        type: "structural",
-        status: "pending",
-        commits: [],
-        notes: ["Pure structural refactoring - all tests must pass unchanged"],
-      },
-      {
-        test: "All E2E tests pass (make test_e2e)",
-        implementation: "Run make test_e2e to verify end-to-end functionality preserved",
-        type: "structural",
-        status: "pending",
-        commits: [],
-        notes: ["E2E tests including e2e_didchange_forwarding must pass"],
-      },
-    ],
-  },
+  product_backlog: [],
+  sprint: null,
   completed: [
+    { number: 163, pbi_id: "PBI-REFACTOR-DIDCHANGE-MODULE", goal: "Extract didChange logic to text_document/did_change.rs module for consistent architecture", status: "done", subtasks: [] },
     { number: 162, pbi_id: "PBI-REFACTOR-DIDCLOSE-MODULE", goal: "Extract didClose logic to text_document/did_close.rs module for consistent architecture", status: "done", subtasks: [] },
     { number: 161, pbi_id: "PBI-DIDCHANGE-FORWARDING", goal: "Forward didChange notifications from host documents to opened virtual documents", status: "done", subtasks: [] },
-    { number: 160, pbi_id: "PBI-DIDCLOSE-FORWARDING", goal: "Propagate didClose from host documents to virtual documents ensuring proper cleanup without closing connections", status: "done", subtasks: [] },
   ],
   definition_of_done: {
     checks: [
@@ -119,14 +49,11 @@ const scrum: ScrumDashboard = {
     ],
   },
   retrospectives: [
+    { sprint: 163, improvements: [
+      { action: "Paired accessors with read vs consume semantics", timing: "immediate", status: "completed", outcome: "get_host_virtual_docs (read) vs remove_host_virtual_docs (consume) - clear semantic naming enables correct usage for different module needs (didChange reads, didClose consumes)" },
+    ]},
     { sprint: 162, improvements: [
-      { action: "Use pub(super) accessor pattern for module extraction", timing: "immediate", status: "completed", outcome: "connections(), remove_host_virtual_docs(), remove_document_version() accessors enable did_close.rs to access pool.rs private fields while maintaining encapsulation - reusable pattern for upcoming did_change.rs extraction" },
-    ]},
-    { sprint: 161, improvements: [
-      { action: "Build dependency chains incrementally for cohesive delivery", timing: "immediate", status: "completed", outcome: "Sprints 159→160→161 chain (region_id → didClose → didChange) enabled incremental delivery" },
-    ]},
-    { sprint: 160, improvements: [
-      { action: "Separate document lifecycle from connection lifecycle", timing: "immediate", status: "completed", outcome: "didClose removes virtual doc but keeps connection open - enables efficient server reuse" },
+      { action: "Use pub(super) accessor pattern for module extraction", timing: "immediate", status: "completed", outcome: "Accessor methods enable submodules to access private fields while maintaining encapsulation - pattern reused in Sprint 163" },
     ]},
   ],
 };
