@@ -33,55 +33,20 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  product_backlog: [
+  product_backlog: [],
+  sprint: null,
+  completed: [
     {
-      id: "PBI-WIRE-FAILED-STATE",
-      story: {
-        role: "Lua developer editing markdown",
-        capability: "receive a clear error message when the downstream language server has failed to initialize",
-        benefit: "I understand the server is broken rather than experiencing silent failures or hangs",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "Request during Failed state returns REQUEST_FAILED with message 'bridge: downstream server failed'",
-          verification: "Unit test: manually set state to Failed, verify send_hover_request returns io::Error with exact message",
-        },
-        {
-          criterion: "Completion request during Failed state returns same error",
-          verification: "Unit test: manually set state to Failed, verify send_completion_request returns io::Error with exact message",
-        },
-        {
-          criterion: "State check uses match expression covering Initializing and Failed",
-          verification: "Code review: verify match arms for both states in send_hover_request and send_completion_request",
-        },
-        {
-          criterion: "Requests proceed normally when state is Ready or absent",
-          verification: "Existing tests continue to pass (regression)",
-        },
-      ],
+      number: 153,
+      pbi_id: "PBI-WIRE-FAILED-STATE",
+      goal: "Return REQUEST_FAILED when downstream server has failed initialization",
       status: "done",
-      refinement_notes: [
-        "BUGFIX: ConnectionState::Failed is set (pool.rs:207,215) but never checked in request handlers",
-        "ADR-0015 requires: Initializing->REQUEST_FAILED, Ready->forward, Failed->REQUEST_FAILED",
-        "Current code only checks Initializing (pool.rs:253,335), missing Failed check",
-        "Fix: Change 'if let Some(ConnectionState::Initializing)' to match expression with both states",
-        "Scope: send_hover_request and send_completion_request in pool.rs",
-        "Estimated effort: Small (pattern change + 2 unit tests)",
+      subtasks: [
+        { test: "Failed state returns error for hover", implementation: "Change if-let to match in send_hover_request", type: "behavioral", status: "completed", commits: [{ hash: "4f0674c5", message: "feat(lsp): check Failed state in send_hover_request", phase: "green" }], notes: [] },
+        { test: "Failed state returns error for completion", implementation: "Change if-let to match in send_completion_request", type: "behavioral", status: "completed", commits: [{ hash: "8d3afda6", message: "feat(lsp): check Failed state in send_completion_request", phase: "green" }], notes: [] },
+        { test: "N/A (structural)", implementation: "Update comment to reflect both states", type: "structural", status: "completed", commits: [{ hash: "5b680b65", message: "docs(lsp): update doc comments for Failed state check", phase: "refactoring" }], notes: [] },
       ],
     },
-  ],
-  sprint: {
-    number: 153,
-    pbi_id: "PBI-WIRE-FAILED-STATE",
-    goal: "Return REQUEST_FAILED when downstream server has failed initialization",
-    status: "in_progress",
-    subtasks: [
-      { test: "Failed state returns error for hover", implementation: "Change if-let to match in send_hover_request", type: "behavioral", status: "completed", commits: [{ hash: "4f0674c5", message: "feat(lsp): check Failed state in send_hover_request", phase: "green" }], notes: [] },
-      { test: "Failed state returns error for completion", implementation: "Change if-let to match in send_completion_request", type: "behavioral", status: "completed", commits: [{ hash: "8d3afda6", message: "feat(lsp): check Failed state in send_completion_request", phase: "green" }], notes: [] },
-      { test: "N/A (structural)", implementation: "Update comment to reflect both states", type: "structural", status: "pending", commits: [], notes: [] },
-    ],
-  },
-  completed: [
     {
       number: 152,
       pbi_id: "PBI-REQUEST-FAILED-INIT",
