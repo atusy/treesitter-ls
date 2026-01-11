@@ -403,4 +403,48 @@ mod tests {
         // Should return an error
         assert!(result.is_err(), "Connection should fail with timeout error");
     }
+
+    /// Test that timeout returns io::Error with io::ErrorKind::TimedOut.
+    ///
+    /// This verifies the error is properly typed so callers can distinguish
+    /// timeout errors from other I/O errors.
+    #[tokio::test]
+    async fn init_timeout_returns_timed_out_error_kind() {
+        let pool = LanguageServerPool::new();
+        let config = BridgeServerConfig {
+            cmd: vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "cat > /dev/null".to_string(),
+            ],
+            languages: vec!["test".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        let result = pool
+            .get_or_create_connection_with_timeout("test", &config, Duration::from_millis(100))
+            .await;
+
+        match result {
+            Ok(_) => panic!("Should return an error"),
+            Err(err) => {
+                // Verify error kind is TimedOut
+                assert_eq!(
+                    err.kind(),
+                    io::ErrorKind::TimedOut,
+                    "Error kind should be TimedOut, got: {:?}",
+                    err.kind()
+                );
+
+                // Verify error message is descriptive
+                let msg = err.to_string();
+                assert!(
+                    msg.contains("timeout") || msg.contains("unresponsive"),
+                    "Error message should mention timeout: {}",
+                    msg
+                );
+            }
+        }
+    }
 }
