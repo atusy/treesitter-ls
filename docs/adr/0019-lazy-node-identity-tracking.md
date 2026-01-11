@@ -114,6 +114,7 @@ More text
 
 - **ULID choice**: Sortable and unique; could use UUID instead
 - **Thread safety**: Requires synchronization (same as `Document` access)
+- **Multiple edits**: This architecture extends naturally to batch edits by applying the same logic per edit
 
 ## Alternatives Considered
 
