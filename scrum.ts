@@ -51,7 +51,46 @@ const scrum: ScrumDashboard = {
       refinement_notes: ["Depends on PBI-INIT-TIMEOUT", "ADR-0015 Operation Gating"],
     },
   ],
-  sprint: null,
+  sprint: {
+    number: 152,
+    pbi_id: "PBI-REQUEST-FAILED-INIT",
+    goal: "Return REQUEST_FAILED immediately during initialization instead of blocking",
+    status: "planning",
+    subtasks: [
+      {
+        test: "ConnectionState starts as Initializing, transitions to Ready after init",
+        implementation: "Add ConnectionState enum, store state alongside connection",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["ADR-0015 defines: Initializing -> Ready -> Failed/Closing -> Closed"],
+      },
+      {
+        test: "Request during init returns error code -32803 (REQUEST_FAILED)",
+        implementation: "Check state before forwarding request, return REQUEST_FAILED if not Ready",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Gate at send_hover_request and send_completion_request entry points"],
+      },
+      {
+        test: "Error message is 'bridge: downstream server initializing'",
+        implementation: "Return proper JSON-RPC error structure with message",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Per ADR-0015: REQUEST_FAILED with this specific message"],
+      },
+      {
+        test: "After init completes, requests work normally",
+        implementation: "Verify existing flow still works when state is Ready",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Ensure no regression in happy path"],
+      },
+    ],
+  },
   completed: [
     {
       number: 151,
