@@ -18,6 +18,22 @@ use tokio::sync::Mutex;
 /// within this duration, the connection attempt fails with a timeout error.
 const INIT_TIMEOUT_SECS: u64 = 30;
 
+/// State of a downstream language server connection.
+///
+/// Tracks the lifecycle of the LSP handshake per ADR-0015:
+/// - Initializing: spawn started, awaiting initialize response
+/// - Ready: initialize/initialized handshake complete, can accept requests
+/// - Failed: initialization failed (timeout, error, etc.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConnectionState {
+    /// Server spawned, initialize request sent, awaiting response
+    Initializing,
+    /// Initialize/initialized handshake complete, ready for requests
+    Ready,
+    /// Initialization failed (timeout, error, server crash)
+    Failed,
+}
+
 use super::connection::AsyncBridgeConnection;
 use super::protocol::{
     VirtualDocumentUri, build_bridge_completion_request, build_bridge_didchange_notification,
@@ -35,6 +51,8 @@ use super::protocol::{
 pub(crate) struct LanguageServerPool {
     /// Map of language -> initialized connection
     connections: Mutex<HashMap<String, Arc<Mutex<AsyncBridgeConnection>>>>,
+    /// Map of language -> connection state (Initializing, Ready, Failed)
+    connection_states: Mutex<HashMap<String, ConnectionState>>,
     /// Map of language -> (virtual document URI -> version)
     /// Tracks which documents have been opened and their current version number
     document_versions: Mutex<HashMap<String, HashMap<String, i32>>>,
@@ -47,6 +65,7 @@ impl LanguageServerPool {
     pub(crate) fn new() -> Self {
         Self {
             connections: Mutex::new(HashMap::new()),
+            connection_states: Mutex::new(HashMap::new()),
             document_versions: Mutex::new(HashMap::new()),
             next_request_id: std::sync::atomic::AtomicI64::new(1),
         }
@@ -116,6 +135,12 @@ impl LanguageServerPool {
             return Ok(Arc::clone(conn));
         }
 
+        // Set state to Initializing before spawning
+        {
+            let mut states = self.connection_states.lock().await;
+            states.insert(language.to_string(), ConnectionState::Initializing);
+        }
+
         // Spawn new connection
         let mut conn = AsyncBridgeConnection::spawn(server_config.cmd.clone()).await?;
 
@@ -166,17 +191,29 @@ impl LanguageServerPool {
         // Handle timeout
         match init_result {
             Ok(Ok(())) => {
-                // Init succeeded
+                // Init succeeded - set state to Ready
+                {
+                    let mut states = self.connection_states.lock().await;
+                    states.insert(language.to_string(), ConnectionState::Ready);
+                }
                 let conn = Arc::new(Mutex::new(conn));
                 connections.insert(language.to_string(), Arc::clone(&conn));
                 Ok(conn)
             }
             Ok(Err(e)) => {
-                // Init failed with io::Error
+                // Init failed with io::Error - set state to Failed
+                {
+                    let mut states = self.connection_states.lock().await;
+                    states.insert(language.to_string(), ConnectionState::Failed);
+                }
                 Err(e)
             }
             Err(_elapsed) => {
-                // Timeout occurred
+                // Timeout occurred - set state to Failed
+                {
+                    let mut states = self.connection_states.lock().await;
+                    states.insert(language.to_string(), ConnectionState::Failed);
+                }
                 Err(io::Error::new(
                     io::ErrorKind::TimedOut,
                     "Initialize timeout: downstream server unresponsive",
@@ -362,6 +399,53 @@ mod tests {
     use super::*;
     use crate::config::settings::BridgeServerConfig;
     use std::time::Duration;
+
+    /// Test that ConnectionState enum exists and has expected variants.
+    /// State should start as Initializing, transition to Ready after successful init.
+    #[tokio::test]
+    async fn connection_state_starts_as_initializing_then_transitions_to_ready() {
+        let pool = LanguageServerPool::new();
+
+        // Verify initial state: no connection states exist
+        let states = pool.connection_states.lock().await;
+        assert!(
+            states.is_empty(),
+            "States map should exist and be empty initially"
+        );
+        assert!(
+            !states.contains_key("test"),
+            "State should not exist before connection attempt"
+        );
+    }
+
+    /// Test that ConnectionState transitions to Failed on timeout
+    #[tokio::test]
+    async fn connection_state_transitions_to_failed_on_timeout() {
+        let pool = LanguageServerPool::new();
+        let config = BridgeServerConfig {
+            cmd: vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "cat > /dev/null".to_string(),
+            ],
+            languages: vec!["test".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        // Attempt connection with short timeout (will fail)
+        let _ = pool
+            .get_or_create_connection_with_timeout("test", &config, Duration::from_millis(100))
+            .await;
+
+        // After timeout, state should be Failed
+        let states = pool.connection_states.lock().await;
+        assert_eq!(
+            states.get("test"),
+            Some(&ConnectionState::Failed),
+            "State should be Failed after timeout"
+        );
+    }
 
     /// Test that initialization times out when downstream server doesn't respond.
     ///
