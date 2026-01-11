@@ -372,81 +372,10 @@ mod tests {
         handle
     }
 
-    /// Test that request during Initializing state returns error immediately (non-blocking).
-    /// This test simulates a slow-to-initialize server and verifies that hover/completion
-    /// requests during initialization return an error instead of blocking.
+    /// Test that requests during Initializing state return error immediately (non-blocking).
+    /// Verifies both hover and completion fail fast with exact error message per ADR-0015.
     #[tokio::test]
     async fn request_during_init_returns_error_immediately() {
-        use std::sync::Arc;
-        use tower_lsp::lsp_types::{Position, Url};
-
-        let pool = Arc::new(LanguageServerPool::new());
-        let config = BridgeServerConfig {
-            // This server reads stdin but never responds (slow init)
-            cmd: vec![
-                "sh".to_string(),
-                "-c".to_string(),
-                "cat > /dev/null".to_string(),
-            ],
-            languages: vec!["lua".to_string()],
-            initialization_options: None,
-            workspace_type: None,
-        };
-
-        // Insert a ConnectionHandle with Initializing state (simulating init in progress)
-        {
-            let handle = create_handle_with_state(ConnectionState::Initializing).await;
-            let mut connections = pool.connections.lock().await;
-            connections.insert("lua".to_string(), handle);
-        }
-
-        let host_uri = Url::parse("file:///test/doc.md").unwrap();
-        let host_position = Position {
-            line: 3,
-            character: 5,
-        };
-
-        // Try to send hover request while state is Initializing
-        let start = std::time::Instant::now();
-        let result = pool
-            .send_hover_request(
-                &config,
-                &host_uri,
-                host_position,
-                "lua",
-                "region-0",
-                3,
-                "print('hello')",
-            )
-            .await;
-        let elapsed = start.elapsed();
-
-        // Request should fail immediately (not block waiting for init)
-        assert!(
-            elapsed < Duration::from_millis(100),
-            "Request should return immediately, not block. Elapsed: {:?}",
-            elapsed
-        );
-
-        // Should return an error (not succeed)
-        assert!(
-            result.is_err(),
-            "Request during Initializing should return error"
-        );
-
-        let err = result.unwrap_err();
-        // The error message should indicate server is initializing
-        assert!(
-            err.to_string().contains("initializing"),
-            "Error should mention 'initializing': {}",
-            err
-        );
-    }
-
-    /// Test that error message is exactly "bridge: downstream server initializing".
-    /// This verifies the specific error message format per ADR-0015.
-    #[tokio::test]
-    async fn request_during_init_returns_exact_error_message() {
         use std::sync::Arc;
         use tower_lsp::lsp_types::{Position, Url};
 
@@ -465,8 +394,10 @@ mod tests {
         // Insert a ConnectionHandle with Initializing state
         {
             let handle = create_handle_with_state(ConnectionState::Initializing).await;
-            let mut connections = pool.connections.lock().await;
-            connections.insert("lua".to_string(), handle);
+            pool.connections
+                .lock()
+                .await
+                .insert("lua".to_string(), handle);
         }
 
         let host_uri = Url::parse("file:///test/doc.md").unwrap();
@@ -475,7 +406,8 @@ mod tests {
             character: 5,
         };
 
-        // Test hover request error message
+        // Test hover request - should fail immediately
+        let start = std::time::Instant::now();
         let result = pool
             .send_hover_request(
                 &config,
@@ -487,14 +419,16 @@ mod tests {
                 "print('hello')",
             )
             .await;
-        let err = result.unwrap_err();
+        assert!(
+            start.elapsed() < Duration::from_millis(100),
+            "Should not block"
+        );
         assert_eq!(
-            err.to_string(),
-            "bridge: downstream server initializing",
-            "Hover error message should match exactly"
+            result.unwrap_err().to_string(),
+            "bridge: downstream server initializing"
         );
 
-        // Test completion request error message
+        // Test completion request - same behavior
         let result = pool
             .send_completion_request(
                 &config,
@@ -506,18 +440,16 @@ mod tests {
                 "print('hello')",
             )
             .await;
-        let err = result.unwrap_err();
         assert_eq!(
-            err.to_string(),
-            "bridge: downstream server initializing",
-            "Completion error message should match exactly"
+            result.unwrap_err().to_string(),
+            "bridge: downstream server initializing"
         );
     }
 
-    /// Test that hover request during Failed state returns error immediately.
-    /// This verifies the exact error message per ADR-0015.
+    /// Test that requests during Failed state return error immediately (non-blocking).
+    /// Verifies both hover and completion fail fast with exact error message per ADR-0015.
     #[tokio::test]
-    async fn hover_request_during_failed_returns_error() {
+    async fn request_during_failed_returns_error_immediately() {
         use std::sync::Arc;
         use tower_lsp::lsp_types::{Position, Url};
 
@@ -533,11 +465,13 @@ mod tests {
             workspace_type: None,
         };
 
-        // Insert a ConnectionHandle with Failed state (simulating failed initialization)
+        // Insert a ConnectionHandle with Failed state
         {
             let handle = create_handle_with_state(ConnectionState::Failed).await;
-            let mut connections = pool.connections.lock().await;
-            connections.insert("lua".to_string(), handle);
+            pool.connections
+                .lock()
+                .await
+                .insert("lua".to_string(), handle);
         }
 
         let host_uri = Url::parse("file:///test/doc.md").unwrap();
@@ -546,7 +480,7 @@ mod tests {
             character: 5,
         };
 
-        // Try to send hover request while state is Failed
+        // Test hover request - should fail immediately
         let start = std::time::Instant::now();
         let result = pool
             .send_hover_request(
@@ -559,60 +493,16 @@ mod tests {
                 "print('hello')",
             )
             .await;
-        let elapsed = start.elapsed();
-
-        // Request should fail immediately (not block)
         assert!(
-            elapsed < Duration::from_millis(100),
-            "Request should return immediately, not block. Elapsed: {:?}",
-            elapsed
+            start.elapsed() < Duration::from_millis(100),
+            "Should not block"
         );
-
-        // Should return an error with exact message
-        assert!(result.is_err(), "Request during Failed should return error");
-
-        let err = result.unwrap_err();
         assert_eq!(
-            err.to_string(),
-            "bridge: downstream server failed",
-            "Error message should indicate server failed"
+            result.unwrap_err().to_string(),
+            "bridge: downstream server failed"
         );
-    }
 
-    /// Test that completion request during Failed state returns error immediately.
-    /// This verifies the exact error message per ADR-0015.
-    #[tokio::test]
-    async fn completion_request_during_failed_returns_error() {
-        use std::sync::Arc;
-        use tower_lsp::lsp_types::{Position, Url};
-
-        let pool = Arc::new(LanguageServerPool::new());
-        let config = BridgeServerConfig {
-            cmd: vec![
-                "sh".to_string(),
-                "-c".to_string(),
-                "cat > /dev/null".to_string(),
-            ],
-            languages: vec!["lua".to_string()],
-            initialization_options: None,
-            workspace_type: None,
-        };
-
-        // Insert a ConnectionHandle with Failed state (simulating failed initialization)
-        {
-            let handle = create_handle_with_state(ConnectionState::Failed).await;
-            let mut connections = pool.connections.lock().await;
-            connections.insert("lua".to_string(), handle);
-        }
-
-        let host_uri = Url::parse("file:///test/doc.md").unwrap();
-        let host_position = Position {
-            line: 3,
-            character: 5,
-        };
-
-        // Try to send completion request while state is Failed
-        let start = std::time::Instant::now();
+        // Test completion request - same behavior
         let result = pool
             .send_completion_request(
                 &config,
@@ -624,23 +514,9 @@ mod tests {
                 "print('hello')",
             )
             .await;
-        let elapsed = start.elapsed();
-
-        // Request should fail immediately (not block)
-        assert!(
-            elapsed < Duration::from_millis(100),
-            "Request should return immediately, not block. Elapsed: {:?}",
-            elapsed
-        );
-
-        // Should return an error with exact message
-        assert!(result.is_err(), "Request during Failed should return error");
-
-        let err = result.unwrap_err();
         assert_eq!(
-            err.to_string(),
-            "bridge: downstream server failed",
-            "Error message should indicate server failed"
+            result.unwrap_err().to_string(),
+            "bridge: downstream server failed"
         );
     }
 

@@ -359,3 +359,309 @@ fn transform_range(range: &mut serde_json::Value, region_start_line: u32) {
         *line = serde_json::json!(line_num + region_start_line as u64);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tower_lsp::lsp_types::{Position, Url};
+
+    // ==========================================================================
+    // VirtualDocumentUri tests
+    // ==========================================================================
+
+    #[test]
+    fn virtual_uri_uses_treesitter_ls_path_prefix() {
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
+
+        let uri_string = virtual_uri.to_uri_string();
+        assert!(
+            uri_string.starts_with("file:///.treesitter-ls/"),
+            "URI should use file:///.treesitter-ls/ path: {}",
+            uri_string
+        );
+    }
+
+    #[test]
+    fn virtual_uri_includes_language_extension() {
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
+
+        let uri_string = virtual_uri.to_uri_string();
+        assert!(
+            uri_string.ends_with(".lua"),
+            "URI should have .lua extension: {}",
+            uri_string
+        );
+    }
+
+    // ==========================================================================
+    // Hover request/response transformation tests
+    // ==========================================================================
+
+    #[test]
+    fn hover_request_uses_virtual_uri() {
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        let host_position = Position {
+            line: 5,
+            character: 10,
+        };
+
+        let request =
+            build_bridge_hover_request(&host_uri, host_position, "lua", "region-0", 3, 42);
+
+        let uri_str = request["params"]["textDocument"]["uri"].as_str().unwrap();
+        assert!(
+            uri_str.starts_with("file:///.treesitter-ls/") && uri_str.ends_with(".lua"),
+            "Request should use virtual URI: {}",
+            uri_str
+        );
+    }
+
+    #[test]
+    fn hover_request_translates_position_to_virtual_coordinates() {
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        // Host line 5, region starts at line 3 -> virtual line 2
+        let host_position = Position {
+            line: 5,
+            character: 10,
+        };
+        let region_start_line = 3;
+
+        let request = build_bridge_hover_request(
+            &host_uri,
+            host_position,
+            "lua",
+            "region-0",
+            region_start_line,
+            42,
+        );
+
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], 42);
+        assert_eq!(request["method"], "textDocument/hover");
+        assert_eq!(
+            request["params"]["position"]["line"], 2,
+            "Position line should be translated (5 - 3 = 2)"
+        );
+        assert_eq!(
+            request["params"]["position"]["character"], 10,
+            "Character should remain unchanged"
+        );
+    }
+
+    #[test]
+    fn hover_response_transforms_range_to_host_coordinates() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "contents": { "kind": "markdown", "value": "docs" },
+                "range": {
+                    "start": { "line": 0, "character": 9 },
+                    "end": { "line": 0, "character": 14 }
+                }
+            }
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_hover_response_to_host(response, region_start_line);
+
+        assert_eq!(
+            transformed["result"]["range"]["start"]["line"], 3,
+            "Start line should be translated (0 + 3 = 3)"
+        );
+        assert_eq!(
+            transformed["result"]["range"]["end"]["line"], 3,
+            "End line should be translated (0 + 3 = 3)"
+        );
+        // Characters unchanged
+        assert_eq!(transformed["result"]["range"]["start"]["character"], 9);
+        assert_eq!(transformed["result"]["range"]["end"]["character"], 14);
+    }
+
+    #[test]
+    fn hover_response_without_range_passes_through() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": { "contents": "Simple hover text" }
+        });
+
+        let transformed = transform_hover_response_to_host(response.clone(), 5);
+        assert_eq!(transformed, response);
+    }
+
+    #[test]
+    fn hover_response_with_null_result_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+
+        let transformed = transform_hover_response_to_host(response.clone(), 5);
+        assert_eq!(transformed, response);
+    }
+
+    // ==========================================================================
+    // didChange notification tests
+    // ==========================================================================
+
+    #[test]
+    fn didchange_notification_uses_virtual_uri() {
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        let notification =
+            build_bridge_didchange_notification(&host_uri, "lua", "region-0", "local x = 42", 2);
+
+        assert_eq!(notification["jsonrpc"], "2.0");
+        assert_eq!(notification["method"], "textDocument/didChange");
+        assert!(
+            notification.get("id").is_none(),
+            "Notification should not have id"
+        );
+
+        let uri_str = notification["params"]["textDocument"]["uri"]
+            .as_str()
+            .unwrap();
+        assert!(
+            uri_str.starts_with("file:///.treesitter-ls/") && uri_str.ends_with(".lua"),
+            "didChange should use virtual URI: {}",
+            uri_str
+        );
+        assert_eq!(notification["params"]["textDocument"]["version"], 2);
+    }
+
+    #[test]
+    fn didchange_notification_contains_full_text() {
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        let content = "local x = 42\nprint(x)";
+        let notification =
+            build_bridge_didchange_notification(&host_uri, "lua", "region-0", content, 1);
+
+        let changes = notification["params"]["contentChanges"].as_array().unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0]["text"], content);
+    }
+
+    // ==========================================================================
+    // Completion request/response transformation tests
+    // ==========================================================================
+
+    #[test]
+    fn completion_request_uses_virtual_uri() {
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        let host_position = Position {
+            line: 5,
+            character: 6,
+        };
+
+        let request =
+            build_bridge_completion_request(&host_uri, host_position, "lua", "region-0", 3, 42);
+
+        let uri_str = request["params"]["textDocument"]["uri"].as_str().unwrap();
+        assert!(
+            uri_str.starts_with("file:///.treesitter-ls/") && uri_str.ends_with(".lua"),
+            "Request should use virtual URI: {}",
+            uri_str
+        );
+    }
+
+    #[test]
+    fn completion_request_translates_position_to_virtual_coordinates() {
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        let host_position = Position {
+            line: 5,
+            character: 6,
+        };
+        let region_start_line = 3;
+
+        let request = build_bridge_completion_request(
+            &host_uri,
+            host_position,
+            "lua",
+            "region-0",
+            region_start_line,
+            42,
+        );
+
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], 42);
+        assert_eq!(request["method"], "textDocument/completion");
+        assert_eq!(
+            request["params"]["position"]["line"], 2,
+            "Position line should be translated (5 - 3 = 2)"
+        );
+        assert_eq!(
+            request["params"]["position"]["character"], 6,
+            "Character should remain unchanged"
+        );
+    }
+
+    #[test]
+    fn completion_response_transforms_textedit_ranges() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "isIncomplete": false,
+                "items": [
+                    {
+                        "label": "print",
+                        "kind": 3,
+                        "textEdit": {
+                            "range": {
+                                "start": { "line": 1, "character": 0 },
+                                "end": { "line": 1, "character": 3 }
+                            },
+                            "newText": "print"
+                        }
+                    },
+                    { "label": "pairs", "kind": 3 }
+                ]
+            }
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_completion_response_to_host(response, region_start_line);
+
+        let items = transformed["result"]["items"].as_array().unwrap();
+        // Item with textEdit has transformed range
+        assert_eq!(items[0]["textEdit"]["range"]["start"]["line"], 4);
+        assert_eq!(items[0]["textEdit"]["range"]["end"]["line"], 4);
+        // Item without textEdit unchanged
+        assert_eq!(items[1]["label"], "pairs");
+        assert!(items[1].get("textEdit").is_none());
+    }
+
+    #[test]
+    fn completion_response_with_null_result_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+
+        let transformed = transform_completion_response_to_host(response.clone(), 3);
+        assert_eq!(transformed, response);
+    }
+
+    #[test]
+    fn completion_response_handles_array_format() {
+        // Some servers return array directly instead of CompletionList
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "label": "print",
+                "textEdit": {
+                    "range": {
+                        "start": { "line": 0, "character": 0 },
+                        "end": { "line": 0, "character": 2 }
+                    },
+                    "newText": "print"
+                }
+            }]
+        });
+        let region_start_line = 5;
+
+        let transformed = transform_completion_response_to_host(response, region_start_line);
+
+        let items = transformed["result"].as_array().unwrap();
+        assert_eq!(items[0]["textEdit"]["range"]["start"]["line"], 5);
+        assert_eq!(items[0]["textEdit"]["range"]["end"]["line"], 5);
+    }
+}

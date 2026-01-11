@@ -132,3 +132,114 @@ impl Drop for AsyncBridgeConnection {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn spawn_creates_child_process_with_stdio() {
+        // Use `cat` as a simple test process that echoes stdin to stdout
+        let cmd = vec!["cat".to_string()];
+        let _conn = AsyncBridgeConnection::spawn(cmd)
+            .await
+            .expect("spawn should succeed");
+
+        // If spawn succeeded, we have a valid connection
+    }
+
+    #[tokio::test]
+    async fn read_message_parses_content_length_and_body() {
+        use serde_json::json;
+
+        // Use `cat` to echo what we write back to us
+        let cmd = vec!["cat".to_string()];
+        let mut conn = AsyncBridgeConnection::spawn(cmd)
+            .await
+            .expect("spawn should succeed");
+
+        // Write a JSON-RPC response message
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": { "capabilities": {} }
+        });
+
+        conn.write_message(&response)
+            .await
+            .expect("write should succeed");
+
+        // Read it back using the reader task's parsing logic
+        let parsed = conn.read_message().await.expect("read should succeed");
+
+        // Verify the parsed message matches what we sent
+        assert_eq!(parsed["jsonrpc"], "2.0");
+        assert_eq!(parsed["id"], 1);
+        assert!(parsed["result"].is_object());
+    }
+
+    /// Integration test: Initialize lua-language-server and verify response
+    #[tokio::test]
+    async fn initialize_lua_language_server() {
+        use serde_json::json;
+
+        // Skip test if lua-language-server is not available
+        if std::process::Command::new("lua-language-server")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping test: lua-language-server not found");
+            return;
+        }
+
+        let cmd = vec!["lua-language-server".to_string()];
+        let mut conn = AsyncBridgeConnection::spawn(cmd)
+            .await
+            .expect("should spawn lua-language-server");
+
+        // Send initialize request
+        let init_request = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "processId": std::process::id(),
+                "rootUri": null,
+                "capabilities": {}
+            }
+        });
+
+        conn.write_message(&init_request)
+            .await
+            .expect("should write initialize request");
+
+        // Read initialize response (may need to skip notifications)
+        let response = loop {
+            let msg = conn.read_message().await.expect("should read message");
+            if msg.get("id").is_some() {
+                break msg;
+            }
+            // Skip notifications
+        };
+
+        // Verify the response indicates successful initialization
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], 1);
+        assert!(response["result"].is_object(), "should have result object");
+        assert!(
+            response["result"]["capabilities"].is_object(),
+            "should have capabilities"
+        );
+
+        // Send initialized notification
+        let initialized = json!({
+            "jsonrpc": "2.0",
+            "method": "initialized",
+            "params": {}
+        });
+        conn.write_message(&initialized)
+            .await
+            .expect("should write initialized notification");
+    }
+}
