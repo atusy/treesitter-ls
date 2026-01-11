@@ -129,6 +129,33 @@ impl LanguageServerPool {
         }
     }
 
+    /// Get access to the connections map.
+    ///
+    /// Used by text_document submodules that need to access connections.
+    pub(super) async fn connections(
+        &self,
+    ) -> tokio::sync::MutexGuard<'_, HashMap<String, Arc<ConnectionHandle>>> {
+        self.connections.lock().await
+    }
+
+    /// Remove and return all virtual documents for a host URI.
+    ///
+    /// Used by did_close module for cleanup.
+    pub(super) async fn remove_host_virtual_docs(&self, host_uri: &Url) -> Vec<OpenedVirtualDoc> {
+        let mut host_map = self.host_to_virtual.lock().await;
+        host_map.remove(host_uri).unwrap_or_default()
+    }
+
+    /// Remove a document from the version tracking.
+    ///
+    /// Used by did_close module for cleanup.
+    pub(super) async fn remove_document_version(&self, language: &str, virtual_uri: &str) {
+        let mut versions = self.document_versions.lock().await;
+        if let Some(docs) = versions.get_mut(language) {
+            docs.remove(virtual_uri);
+        }
+    }
+
     /// Increment the version of a virtual document and return the new version.
     ///
     /// Returns None if the document has not been opened.
@@ -190,6 +217,9 @@ impl LanguageServerPool {
     /// # Arguments
     /// * `host_uri` - The host document URI
     /// * `injections` - List of (language, region_id, content) tuples for all injection regions
+    ///
+    // TODO: Support incremental didChange (TextDocumentSyncKind::Incremental) for better
+    // performance with large documents. Currently uses full sync for simplicity.
     pub(crate) async fn forward_didchange_to_opened_docs(
         &self,
         host_uri: &Url,
@@ -271,93 +301,6 @@ impl LanguageServerPool {
                         "text": content
                     }
                 ]
-            }
-        });
-
-        let mut conn = handle.connection().await;
-        conn.write_message(&notification).await
-    }
-
-    /// Close all virtual documents associated with a host document.
-    ///
-    /// When a host document (e.g., markdown file) is closed, this method:
-    /// 1. Looks up all virtual documents that were opened for the host
-    /// 2. Sends didClose notification for each virtual document
-    /// 3. Removes the virtual documents from document_versions tracking
-    /// 4. Removes the host entry from host_to_virtual
-    ///
-    /// The connection to downstream language servers remains open - only the
-    /// virtual documents are closed.
-    ///
-    /// Returns the list of closed virtual documents (useful for logging).
-    pub(crate) async fn close_host_document(&self, host_uri: &Url) -> Vec<OpenedVirtualDoc> {
-        // 1. Remove and get all virtual docs for this host
-        let virtual_docs = {
-            let mut host_map = self.host_to_virtual.lock().await;
-            host_map.remove(host_uri).unwrap_or_default()
-        };
-
-        if virtual_docs.is_empty() {
-            return vec![];
-        }
-
-        // 2. For each virtual doc: send didClose and remove from document_versions
-        for doc in &virtual_docs {
-            // Send didClose notification (best effort - ignore errors)
-            let _ = self
-                .send_didclose_notification(&doc.language, &doc.virtual_uri)
-                .await;
-
-            // Remove from document_versions
-            let mut versions = self.document_versions.lock().await;
-            if let Some(docs) = versions.get_mut(&doc.language) {
-                docs.remove(&doc.virtual_uri);
-            }
-        }
-
-        virtual_docs
-    }
-
-    /// Send a didClose notification for a virtual document.
-    ///
-    /// This method sends a didClose notification to the downstream language server
-    /// for the specified virtual document URI. The connection is NOT closed after
-    /// sending - it remains available for other documents.
-    ///
-    /// Returns Ok(()) if the notification was sent successfully, or if no connection
-    /// exists for the language (nothing to do).
-    ///
-    /// # Arguments
-    /// * `language` - The injection language (e.g., "lua")
-    /// * `virtual_uri` - The virtual document URI string to close
-    pub(crate) async fn send_didclose_notification(
-        &self,
-        language: &str,
-        virtual_uri: &str,
-    ) -> io::Result<()> {
-        // Get the connection for this language (if it exists and is Ready)
-        let connections = self.connections.lock().await;
-        let Some(handle) = connections.get(language) else {
-            // No connection for this language - nothing to do
-            return Ok(());
-        };
-
-        // Only send if connection is Ready
-        if handle.state() != ConnectionState::Ready {
-            return Ok(());
-        }
-
-        let handle = Arc::clone(handle);
-        drop(connections); // Release lock before I/O
-
-        // Build and send the didClose notification
-        let notification = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "textDocument/didClose",
-            "params": {
-                "textDocument": {
-                    "uri": virtual_uri
-                }
             }
         });
 
