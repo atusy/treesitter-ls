@@ -34,40 +34,10 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  product_backlog: [
-    {
-      id: "PBI-DIDCHANGE-FORWARDING",
-      story: {
-        role: "Lua developer editing markdown",
-        capability: "I want to propagate change of the host document to the virtual documents attached to bridged downstream language servers",
-        benefit: "So that I can use features with fresh content",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "didChange sent only for opened virtual documents",
-          verification: "Skip notification if virtual doc not in host_to_virtual map",
-        },
-        {
-          criterion: "Full content sync used (not incremental)",
-          verification: "Use build_bridge_didchange_notification() with TextDocumentSyncKind::Full",
-        },
-        {
-          criterion: "Features work with fresh content after host change",
-          verification: "E2E test: edit Lua block, verify completion reflects changes",
-        },
-        {
-          criterion: "TODO comment for incremental sync optimization",
-          verification: "Code contains TODO comment noting future incremental didChange support",
-        },
-      ],
-      status: "ready",
-    },
-  ],
-  sprint: {
-    number: 161,
-    pbi_id: "PBI-DIDCHANGE-FORWARDING",
-    goal: "Forward didChange notifications from host documents to opened virtual documents ensuring downstream language servers receive fresh content",
-    status: "in_progress",
+  product_backlog: [],
+  sprint: null,
+  completed: [
+    { number: 161, pbi_id: "PBI-DIDCHANGE-FORWARDING", goal: "Forward didChange notifications from host documents to opened virtual documents ensuring downstream language servers receive fresh content", status: "done",
     subtasks: [
       {
         test: "Test forward_didchange_to_opened_docs sends didChange only for opened virtual documents",
@@ -109,9 +79,7 @@ const scrum: ScrumDashboard = {
         commits: [],
         notes: ["Full sync is simpler but less efficient", "Incremental sync requires tracking content deltas per injection region"],
       },
-    ],
-  },
-  completed: [
+    ] },
     { number: 160, pbi_id: "PBI-DIDCLOSE-FORWARDING", goal: "Propagate didClose from host documents to virtual documents ensuring proper cleanup without closing connections", status: "done", subtasks: [] },
     { number: 159, pbi_id: "PBI-STABLE-REGION-ID", goal: "Implement stable region_id for shared virtual document URIs across bridge features", status: "done", subtasks: [] },
     { number: 158, pbi_id: "PBI-SIGNATURE-HELP-BRIDGE", goal: "Enable signature help bridging for Lua code blocks in markdown documents", status: "done", subtasks: [] },
