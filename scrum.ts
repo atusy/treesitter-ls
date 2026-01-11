@@ -82,7 +82,7 @@ const scrum: ScrumDashboard = {
     number: 156,
     pbi_id: "PBI-REQUEST-ID-PASSTHROUGH",
     goal: "Pass upstream request IDs to downstream servers per ADR-0016",
-    status: "done",
+    status: "review",
     subtasks: [
       {
         test: "Investigate tower-lsp request ID exposure",
