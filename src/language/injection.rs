@@ -1072,4 +1072,68 @@ mod tests {
         let region_id = calculate_region_id(&regions, 0);
         assert_eq!(region_id, "lua-0", "First lua injection should be lua-0");
     }
+
+    #[test]
+    fn test_calculate_region_id_lua_python_lua_produces_correct_ordinals() {
+        // Test that Lua-Python-Lua blocks produce lua-0, python-0, lua-1
+        // This verifies ordinal is per-language, not global
+        //
+        // We simulate multiple injections by creating InjectionRegionInfo structs directly
+        // since parsing multiple distinct language injections is complex with Rust grammar.
+
+        let mut parser = create_rust_parser();
+        let text = r#"fn main() { let a = "lua1"; let b = "python"; let c = "lua2"; }"#;
+        let tree = parse_rust_code(&mut parser, text);
+        let root = tree.root_node();
+
+        // Find all string_literal nodes manually using StreamingIterator
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let query_str = r#"(string_literal) @str"#;
+        let language = tree_sitter_rust::LANGUAGE.into();
+        let query = Query::new(&language, query_str).expect("valid query");
+
+        let mut matches_iter = cursor.matches(&query, root, text.as_bytes());
+        let mut nodes = Vec::new();
+        while let Some(m) = matches_iter.next() {
+            nodes.push(m.captures[0].node);
+        }
+
+        assert_eq!(nodes.len(), 3, "Should find 3 strings");
+
+        // Create injection regions manually: lua, python, lua
+        let injections = vec![
+            InjectionRegionInfo {
+                language: "lua".to_string(),
+                content_node: nodes[0],
+                pattern_index: 0,
+            },
+            InjectionRegionInfo {
+                language: "python".to_string(),
+                content_node: nodes[1],
+                pattern_index: 0,
+            },
+            InjectionRegionInfo {
+                language: "lua".to_string(),
+                content_node: nodes[2],
+                pattern_index: 0,
+            },
+        ];
+
+        // Verify region_ids
+        assert_eq!(
+            calculate_region_id(&injections, 0),
+            "lua-0",
+            "First lua should be lua-0"
+        );
+        assert_eq!(
+            calculate_region_id(&injections, 1),
+            "python-0",
+            "Python should be python-0"
+        );
+        assert_eq!(
+            calculate_region_id(&injections, 2),
+            "lua-1",
+            "Second lua should be lua-1"
+        );
+    }
 }
