@@ -33,7 +33,43 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "PBI-REQUEST-ID-SERVICE-WRAPPER",
+      story: {
+        role: "Lua developer editing markdown",
+        capability: "have upstream request IDs flow through to downstream servers unchanged",
+        benefit: "I get consistent request ID tracing across client, bridge, and server as specified in ADR-0016",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Tower Service wrapper captures request IDs from req.id()",
+          verification: "Unit test verifies RequestIdCapture middleware extracts ID from tower-lsp Request",
+        },
+        {
+          criterion: "Captured IDs flow to bridge layer via task-local storage or request context",
+          verification: "Unit test verifies ID is accessible in send_hover_request and send_completion_request",
+        },
+        {
+          criterion: "Downstream servers receive the upstream request ID unchanged",
+          verification: "Integration test sends hover request with ID=42, verifies downstream receives ID=42",
+        },
+        {
+          criterion: "Internal next_request_id counter is removed from LanguageServerPool",
+          verification: "Code review confirms counter removal and all request IDs come from upstream",
+        },
+      ],
+      status: "ready",
+      refinement_notes: [
+        "Sprint 156 concluded tower-lsp doesn't expose request IDs, but Service wrapper CAN access them",
+        "Implementation approach: Create RequestIdCapture<S> wrapper implementing tower Service trait",
+        "In Service::call(), extract req.id() before delegating to inner service",
+        "Thread ID to bridge via tokio::task_local! or explicit RequestContext parameter",
+        "Key code pattern: impl<S> Service<Request> for RequestIdCapture<S> { fn call(&mut self, req: Request) { if let Some(id) = req.id() { ... } } }",
+        "This supersedes Sprint 156 finding - actual implementation path now validated",
+      ],
+    },
+  ],
   sprint: null,
   completed: [
     { number: 156, pbi_id: "PBI-REQUEST-ID-PASSTHROUGH", goal: "Validate ADR-0016 request ID semantics (research sprint)", status: "done", subtasks: [] },
@@ -52,9 +88,9 @@ const scrum: ScrumDashboard = {
   },
   retrospectives: [
     { sprint: 156, improvements: [
-      { action: "Investigate framework constraints before planning", timing: "immediate", status: "completed", outcome: "tower-lsp doesn't expose request IDs" },
-      { action: "Distinguish ADR intent vs literal interpretation", timing: "immediate", status: "completed", outcome: "Existing impl satisfied ADR-0016 intent" },
-      { action: "Research sprints are valid outcomes", timing: "immediate", status: "completed", outcome: "Validated current implementation" },
+      { action: "Investigate framework constraints before planning", timing: "immediate", status: "completed", outcome: "tower-lsp LanguageServer trait doesn't expose IDs, but Service wrapper can" },
+      { action: "Distinguish ADR intent vs literal interpretation", timing: "immediate", status: "completed", outcome: "ADR-0016 intent achievable via Service wrapper pattern" },
+      { action: "Research sprints are valid outcomes", timing: "immediate", status: "completed", outcome: "Research led to Service wrapper discovery - PBI-REQUEST-ID-SERVICE-WRAPPER created" },
     ]},
     { sprint: 155, improvements: [
       { action: "Box::pin for recursive async calls", timing: "immediate", status: "completed", outcome: "Recursive retry compiles" },
