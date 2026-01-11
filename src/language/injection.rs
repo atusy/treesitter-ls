@@ -1136,4 +1136,115 @@ mod tests {
             "Second lua should be lua-1"
         );
     }
+
+    #[test]
+    fn test_calculate_region_id_inserting_python_preserves_lua_ordinals() {
+        // Test that inserting a Python block between Lua blocks preserves lua ordinals
+        //
+        // Before: lua-0, lua-1 (just two Lua blocks)
+        // After:  lua-0, python-0, lua-1 (Python inserted between)
+        //
+        // The key insight: Lua ordinals should NOT shift when Python is inserted
+
+        let mut parser = create_rust_parser();
+        let text = r#"fn main() { let a = "lua1"; let b = "lua2"; }"#;
+        let tree = parse_rust_code(&mut parser, text);
+        let root = tree.root_node();
+
+        // Find all string_literal nodes
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let query_str = r#"(string_literal) @str"#;
+        let language = tree_sitter_rust::LANGUAGE.into();
+        let query = Query::new(&language, query_str).expect("valid query");
+
+        let mut matches_iter = cursor.matches(&query, root, text.as_bytes());
+        let mut nodes = Vec::new();
+        while let Some(m) = matches_iter.next() {
+            nodes.push(m.captures[0].node);
+        }
+
+        assert_eq!(nodes.len(), 2, "Should find 2 strings");
+
+        // BEFORE: Just two Lua blocks
+        let injections_before = vec![
+            InjectionRegionInfo {
+                language: "lua".to_string(),
+                content_node: nodes[0],
+                pattern_index: 0,
+            },
+            InjectionRegionInfo {
+                language: "lua".to_string(),
+                content_node: nodes[1],
+                pattern_index: 0,
+            },
+        ];
+
+        assert_eq!(
+            calculate_region_id(&injections_before, 0),
+            "lua-0",
+            "Before: first lua is lua-0"
+        );
+        assert_eq!(
+            calculate_region_id(&injections_before, 1),
+            "lua-1",
+            "Before: second lua is lua-1"
+        );
+
+        // AFTER: Python block inserted between (simulated with different node for Python)
+        // In real usage, we'd re-parse with the new content, but here we simulate
+        // by using the same nodes but with Python in between
+        //
+        // We reuse nodes[0] for first Lua, nodes[1] for Python (pretend it's Python),
+        // and we need a third node for second Lua - we'll just reuse nodes[1] for demo.
+        // The key point is that ordinals are per-language.
+
+        // Re-parse with 3 strings to have proper node positions
+        let text_after = r#"fn main() { let a = "lua1"; let p = "py"; let b = "lua2"; }"#;
+        let tree_after = parse_rust_code(&mut parser, text_after);
+        let root_after = tree_after.root_node();
+
+        let mut cursor_after = tree_sitter::QueryCursor::new();
+        let mut matches_after = cursor_after.matches(&query, root_after, text_after.as_bytes());
+        let mut nodes_after = Vec::new();
+        while let Some(m) = matches_after.next() {
+            nodes_after.push(m.captures[0].node);
+        }
+
+        assert_eq!(nodes_after.len(), 3, "Should find 3 strings after");
+
+        let injections_after = vec![
+            InjectionRegionInfo {
+                language: "lua".to_string(),
+                content_node: nodes_after[0],
+                pattern_index: 0,
+            },
+            InjectionRegionInfo {
+                language: "python".to_string(),
+                content_node: nodes_after[1],
+                pattern_index: 0,
+            },
+            InjectionRegionInfo {
+                language: "lua".to_string(),
+                content_node: nodes_after[2],
+                pattern_index: 0,
+            },
+        ];
+
+        // Verify Lua ordinals are PRESERVED despite Python insertion
+        assert_eq!(
+            calculate_region_id(&injections_after, 0),
+            "lua-0",
+            "After: first lua is still lua-0"
+        );
+        assert_eq!(
+            calculate_region_id(&injections_after, 1),
+            "python-0",
+            "After: Python is python-0"
+        );
+        assert_eq!(
+            calculate_region_id(&injections_after, 2),
+            "lua-1",
+            "After: second lua is still lua-1 (not shifted)"
+        );
+    }
 }
