@@ -70,7 +70,104 @@ const scrum: ScrumDashboard = {
       ],
     },
   ],
-  sprint: null,
+  sprint: {
+    number: 157,
+    pbi_id: "PBI-REQUEST-ID-SERVICE-WRAPPER",
+    goal: "Pass upstream request IDs to downstream servers via tower Service wrapper per ADR-0016",
+    status: "in_progress",
+    subtasks: [
+      // Subtask 1: Create RequestIdCapture tower Service wrapper
+      {
+        test: "Unit test: RequestIdCapture middleware extracts request ID from tower-lsp Request and stores in task-local",
+        implementation: "Create RequestIdCapture<S> struct implementing tower::Service<Request> that extracts req.id() and stores via tokio::task_local!",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "tower-lsp Request has id() method returning Option<Id>",
+          "Use tokio::task_local! for CURRENT_REQUEST_ID storage",
+          "Service::call() extracts ID before delegating to inner service",
+        ],
+      },
+      // Subtask 2: Add upstream_request_id parameter to send_hover_request
+      {
+        test: "Existing hover tests continue to pass (refactoring safety)",
+        implementation: "Add upstream_request_id: i64 parameter to send_hover_request, use it instead of next_request_id()",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Structural change: adding parameter is pure refactoring",
+          "Update callers to pass dummy ID initially for compilation",
+          "Replace self.next_request_id() call with the parameter",
+        ],
+      },
+      // Subtask 3: Add upstream_request_id parameter to send_completion_request
+      {
+        test: "Existing completion tests continue to pass (refactoring safety)",
+        implementation: "Add upstream_request_id: i64 parameter to send_completion_request, use it instead of next_request_id()",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Structural change: adding parameter is pure refactoring",
+          "Update callers to pass dummy ID initially for compilation",
+          "Replace self.next_request_id() call with the parameter",
+        ],
+      },
+      // Subtask 4: Remove next_request_id counter from LanguageServerPool
+      {
+        test: "Compilation succeeds without next_request_id field (dead code removal)",
+        implementation: "Remove next_request_id AtomicI64 field and next_request_id() method from LanguageServerPool",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Dead code removal after previous subtasks eliminate usage",
+          "Verify no other callers via grep before removal",
+        ],
+      },
+      // Subtask 5: Wire Service wrapper into tower-lsp server setup
+      {
+        test: "Unit test: verify RequestIdCapture is invoked in request flow via mock inner service",
+        implementation: "Wrap LspService with RequestIdCapture layer in main.rs server setup",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "LspService::new returns (service, socket)",
+          "Wrap service with RequestIdCapture before passing to Server::new",
+          "Bridge layer reads ID from task-local CURRENT_REQUEST_ID",
+        ],
+      },
+      // Subtask 6: Connect task-local to bridge layer
+      {
+        test: "Unit test: send_hover_request retrieves upstream ID from task-local context",
+        implementation: "Update hover/completion handlers to read CURRENT_REQUEST_ID and pass to pool methods",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Handler reads CURRENT_REQUEST_ID.with(|id| *id)",
+          "Pass retrieved ID to send_hover_request/send_completion_request",
+          "Fallback to 0 if no ID in context (edge case)",
+        ],
+      },
+      // Subtask 7: Integration test verifying ID flows unchanged
+      {
+        test: "Integration test: send hover request with ID=42, verify downstream receives ID=42",
+        implementation: "Create test that validates request ID consistency across client -> bridge -> downstream",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Use mock downstream server that echoes received request ID",
+          "Verify response contains same ID as original request",
+          "This validates the full ADR-0016 request ID semantics",
+        ],
+      },
+    ],
+  },
   completed: [
     { number: 156, pbi_id: "PBI-REQUEST-ID-PASSTHROUGH", goal: "Validate ADR-0016 request ID semantics (research sprint)", status: "done", subtasks: [] },
     { number: 155, pbi_id: "PBI-RETRY-FAILED-CONNECTION", goal: "Enable automatic retry when downstream server connection has failed", status: "done", subtasks: [] },
