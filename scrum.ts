@@ -55,7 +55,7 @@ const scrum: ScrumDashboard = {
           verification: "Integration test: timeout followed by successful connection on retry",
         },
       ],
-      status: "ready",
+      status: "done",
       refinement_notes: [
         "Problem: Once ConnectionState::Failed, the pool returns error forever",
         "Current behavior at pool.rs:191-192 returns immediate error without retry",
@@ -70,14 +70,14 @@ const scrum: ScrumDashboard = {
     number: 155,
     pbi_id: "PBI-RETRY-FAILED-CONNECTION",
     goal: "Enable automatic retry when downstream server connection has failed",
-    status: "planning",
+    status: "done",
     subtasks: [
       {
         test: "Failed connection retry removes cached entry and spawns new server",
         implementation: "Remove failed connection from cache, recursively call get_or_create_connection_with_timeout",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "cf8a69c7", message: "feat(lsp): auto-retry failed downstream server connections", phase: "green" }],
         notes: [
           "Modify ConnectionState::Failed branch in get_or_create_connection_with_timeout",
           "Pattern: connections.remove(language); drop(connections); return self.get_or_create_connection_with_timeout(...).await",
@@ -87,8 +87,8 @@ const scrum: ScrumDashboard = {
         test: "Recovery works after initialization timeout",
         implementation: "Verify timeout followed by successful connection on retry",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "fd740e96", message: "test(lsp): add integration test for recovery after initialization timeout", phase: "green" }],
         notes: [
           "Integration test: first request times out, second request succeeds with working server",
           "Requires swapping server config between calls to simulate recovery",
