@@ -97,7 +97,7 @@ const scrum: ScrumDashboard = {
         test: "E2E test: edit Lua block in markdown and verify completion reflects changes",
         implementation: "Add E2E test that modifies Lua code block content and verifies subsequent LSP features use fresh content",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: ["Validates end-to-end flow: host edit -> virtual doc update -> downstream LS response", "Use retry_for_lsp_indexing pattern for async operations"],
       },
