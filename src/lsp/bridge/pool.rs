@@ -642,10 +642,7 @@ mod tests {
         );
 
         // Should return an error with exact message
-        assert!(
-            result.is_err(),
-            "Request during Failed should return error"
-        );
+        assert!(result.is_err(), "Request during Failed should return error");
 
         let err = result.unwrap_err();
         assert_eq!(
@@ -709,10 +706,7 @@ mod tests {
         );
 
         // Should return an error with exact message
-        assert!(
-            result.is_err(),
-            "Request during Failed should return error"
-        );
+        assert!(result.is_err(), "Request during Failed should return error");
 
         let err = result.unwrap_err();
         assert_eq!(
