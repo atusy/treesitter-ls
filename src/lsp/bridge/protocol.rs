@@ -154,6 +154,51 @@ pub(crate) fn build_bridge_hover_request(
     })
 }
 
+/// Build a JSON-RPC signature help request for a downstream language server.
+///
+/// Transforms the host document position and URI to virtual document coordinates
+/// for the injection region.
+///
+/// # Arguments
+/// * `host_uri` - The URI of the host document
+/// * `host_position` - The position in the host document
+/// * `injection_language` - The injection language (e.g., "lua")
+/// * `region_id` - The unique region ID for this injection
+/// * `region_start_line` - The starting line of the injection region in the host document
+/// * `request_id` - The JSON-RPC request ID
+pub(crate) fn build_bridge_signature_help_request(
+    host_uri: &tower_lsp::lsp_types::Url,
+    host_position: tower_lsp::lsp_types::Position,
+    injection_language: &str,
+    region_id: &str,
+    region_start_line: u32,
+    request_id: i64,
+) -> serde_json::Value {
+    // Create virtual document URI
+    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+
+    // Translate position from host to virtual coordinates
+    let virtual_position = tower_lsp::lsp_types::Position {
+        line: host_position.line - region_start_line,
+        character: host_position.character,
+    };
+
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/signatureHelp",
+        "params": {
+            "textDocument": {
+                "uri": virtual_uri.to_uri_string()
+            },
+            "position": {
+                "line": virtual_position.line,
+                "character": virtual_position.character
+            }
+        }
+    })
+}
+
 /// Build a JSON-RPC completion request for a downstream language server.
 ///
 /// Transforms the host document position and URI to virtual document coordinates
@@ -358,6 +403,27 @@ fn transform_range(range: &mut serde_json::Value, region_start_line: u32) {
     {
         *line = serde_json::json!(line_num + region_start_line as u64);
     }
+}
+
+/// Transform a signature help response from virtual to host document coordinates.
+///
+/// SignatureHelp responses don't contain ranges that need transformation.
+/// This function passes through the response unchanged, preserving:
+/// - signatures array with label, documentation, and parameters
+/// - activeSignature index
+/// - activeParameter index
+///
+/// # Arguments
+/// * `response` - The JSON-RPC response from the downstream language server
+/// * `_region_start_line` - The starting line (unused for signature help, kept for API consistency)
+pub(crate) fn transform_signature_help_response_to_host(
+    response: serde_json::Value,
+    _region_start_line: u32,
+) -> serde_json::Value {
+    // SignatureHelp doesn't have ranges that need transformation.
+    // activeSignature and activeParameter are indices, not coordinates.
+    // Pass through unchanged.
+    response
 }
 
 #[cfg(test)]
@@ -663,5 +729,125 @@ mod tests {
         let items = transformed["result"].as_array().unwrap();
         assert_eq!(items[0]["textEdit"]["range"]["start"]["line"], 5);
         assert_eq!(items[0]["textEdit"]["range"]["end"]["line"], 5);
+    }
+
+    // ==========================================================================
+    // SignatureHelp request/response transformation tests
+    // ==========================================================================
+
+    #[test]
+    fn signature_help_request_uses_virtual_uri() {
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        let host_position = Position {
+            line: 5,
+            character: 10,
+        };
+
+        let request =
+            build_bridge_signature_help_request(&host_uri, host_position, "lua", "region-0", 3, 42);
+
+        let uri_str = request["params"]["textDocument"]["uri"].as_str().unwrap();
+        assert!(
+            uri_str.starts_with("file:///.treesitter-ls/") && uri_str.ends_with(".lua"),
+            "Request should use virtual URI: {}",
+            uri_str
+        );
+    }
+
+    #[test]
+    fn signature_help_request_translates_position_to_virtual_coordinates() {
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        // Host line 5, region starts at line 3 -> virtual line 2
+        let host_position = Position {
+            line: 5,
+            character: 10,
+        };
+        let region_start_line = 3;
+
+        let request = build_bridge_signature_help_request(
+            &host_uri,
+            host_position,
+            "lua",
+            "region-0",
+            region_start_line,
+            42,
+        );
+
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], 42);
+        assert_eq!(request["method"], "textDocument/signatureHelp");
+        assert_eq!(
+            request["params"]["position"]["line"], 2,
+            "Position line should be translated (5 - 3 = 2)"
+        );
+        assert_eq!(
+            request["params"]["position"]["character"], 10,
+            "Character should remain unchanged"
+        );
+    }
+
+    #[test]
+    fn signature_help_response_with_null_result_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+
+        let transformed = transform_signature_help_response_to_host(response.clone(), 5);
+        assert_eq!(transformed, response);
+    }
+
+    #[test]
+    fn signature_help_response_preserves_active_parameter_and_signature() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "signatures": [
+                    {
+                        "label": "string.format(formatstring, ...)",
+                        "documentation": "Formats a string",
+                        "parameters": [
+                            { "label": "formatstring" },
+                            { "label": "..." }
+                        ]
+                    }
+                ],
+                "activeSignature": 0,
+                "activeParameter": 1
+            }
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_signature_help_response_to_host(response.clone(), region_start_line);
+
+        // activeSignature and activeParameter must be preserved unchanged
+        assert_eq!(
+            transformed["result"]["activeSignature"], 0,
+            "activeSignature must be preserved"
+        );
+        assert_eq!(
+            transformed["result"]["activeParameter"], 1,
+            "activeParameter must be preserved"
+        );
+        // signatures array must be preserved
+        assert_eq!(
+            transformed["result"]["signatures"][0]["label"],
+            "string.format(formatstring, ...)"
+        );
+    }
+
+    #[test]
+    fn signature_help_response_without_metadata_passes_through() {
+        // Some servers may return minimal response without activeSignature/activeParameter
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "signatures": [
+                    { "label": "print(...)" }
+                ]
+            }
+        });
+
+        let transformed = transform_signature_help_response_to_host(response.clone(), 5);
+        assert_eq!(transformed, response);
     }
 }
