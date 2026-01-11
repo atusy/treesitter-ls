@@ -193,9 +193,11 @@ impl LanguageServerPool {
                     connections.remove(language);
                     drop(connections);
                     // Recursive call to spawn fresh connection (boxed to avoid infinite future size)
-                    return Box::pin(
-                        self.get_or_create_connection_with_timeout(language, server_config, timeout),
-                    )
+                    return Box::pin(self.get_or_create_connection_with_timeout(
+                        language,
+                        server_config,
+                        timeout,
+                    ))
                     .await;
                 }
                 ConnectionState::Ready => {
@@ -822,6 +824,106 @@ mod tests {
                 cached_handle.state(),
                 ConnectionState::Ready,
                 "Cached handle should be the new Ready one"
+            );
+        }
+    }
+
+    /// Test recovery after initialization timeout.
+    ///
+    /// This integration test verifies the full recovery flow:
+    /// 1. First attempt uses unresponsive server -> times out, enters Failed state
+    /// 2. Second attempt with working server -> retry removes failed entry, spawns new server
+    /// 3. New server initializes successfully -> connection becomes Ready
+    ///
+    /// This simulates real-world scenario where a language server crashes or hangs,
+    /// and user's subsequent request triggers recovery with a working server.
+    #[tokio::test]
+    async fn recovery_works_after_initialization_timeout() {
+        // Skip test if lua-language-server is not available
+        if std::process::Command::new("lua-language-server")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping test: lua-language-server not found");
+            return;
+        }
+
+        let pool = LanguageServerPool::new();
+
+        // Phase 1: First attempt with unresponsive server - should timeout
+        let unresponsive_config = BridgeServerConfig {
+            cmd: vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "cat > /dev/null".to_string(),
+            ],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        let result = pool
+            .get_or_create_connection_with_timeout(
+                "lua",
+                &unresponsive_config,
+                Duration::from_millis(100),
+            )
+            .await;
+        assert!(result.is_err(), "First attempt should timeout");
+        let err = result.err().expect("Should have error");
+        assert_eq!(
+            err.kind(),
+            io::ErrorKind::TimedOut,
+            "Error should be TimedOut"
+        );
+
+        // Verify Failed state is cached
+        {
+            let connections = pool.connections.lock().await;
+            let handle = connections.get("lua").expect("Should have cached handle");
+            assert_eq!(
+                handle.state(),
+                ConnectionState::Failed,
+                "Should be Failed after timeout"
+            );
+        }
+
+        // Phase 2: Second attempt with working server - should recover
+        let working_config = BridgeServerConfig {
+            cmd: vec!["lua-language-server".to_string()],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        let result = pool
+            .get_or_create_connection_with_timeout("lua", &working_config, Duration::from_secs(30))
+            .await;
+
+        // Should succeed - retry removed failed entry and spawned new server
+        assert!(
+            result.is_ok(),
+            "Second attempt should succeed after recovery: {:?}",
+            result.err()
+        );
+
+        // Verify new connection is Ready
+        let handle = result.unwrap();
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Ready,
+            "Recovered connection should be Ready"
+        );
+
+        // Verify cache contains the Ready connection
+        {
+            let connections = pool.connections.lock().await;
+            let cached_handle = connections.get("lua").expect("Should have cached handle");
+            assert_eq!(
+                cached_handle.state(),
+                ConnectionState::Ready,
+                "Cached handle should be Ready after recovery"
             );
         }
     }
