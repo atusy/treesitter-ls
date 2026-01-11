@@ -1,9 +1,10 @@
 //! Completion method for TreeSitterLs.
 
-use tower_lsp::jsonrpc::Result;
+use tower_lsp::jsonrpc::{Id, Result};
 use tower_lsp::lsp_types::*;
 
 use crate::language::injection::CacheableInjectionRegion;
+use crate::lsp::get_current_request_id;
 use crate::text::PositionMapper;
 
 use super::super::TreeSitterLs;
@@ -108,6 +109,12 @@ impl TreeSitterLs {
         let virtual_content = cacheable_region.extract_content(&text).to_string();
 
         // Send completion request via language server pool
+        // Get upstream request ID from task-local storage (set by RequestIdCapture middleware)
+        let upstream_request_id = match get_current_request_id() {
+            Some(Id::Number(n)) => n,
+            // For string IDs or no ID, use 0 as fallback
+            _ => 0,
+        };
         let response = self
             .language_server_pool
             .send_completion_request(
@@ -118,6 +125,7 @@ impl TreeSitterLs {
                 &cacheable_region.result_id,
                 cacheable_region.line_range.start,
                 &virtual_content,
+                upstream_request_id,
             )
             .await;
 

@@ -99,8 +99,6 @@ pub(crate) struct LanguageServerPool {
     /// Map of language -> (virtual document URI -> version)
     /// Tracks which documents have been opened and their current version number
     document_versions: Mutex<HashMap<String, HashMap<String, i32>>>,
-    /// Counter for generating unique request IDs
-    next_request_id: std::sync::atomic::AtomicI64,
 }
 
 impl LanguageServerPool {
@@ -109,7 +107,6 @@ impl LanguageServerPool {
         Self {
             connections: Mutex::new(HashMap::new()),
             document_versions: Mutex::new(HashMap::new()),
-            next_request_id: std::sync::atomic::AtomicI64::new(1),
         }
     }
 
@@ -221,10 +218,12 @@ impl LanguageServerPool {
         let mut conn_guard = handle.connection().await;
 
         // Perform LSP initialize handshake with timeout
+        // Note: The initialize request ID is internal (not client-facing),
+        // so we use a fixed value rather than the upstream request ID.
         let init_result = tokio::time::timeout(timeout, async {
             let init_request = serde_json::json!({
                 "jsonrpc": "2.0",
-                "id": self.next_request_id(),
+                "id": 0,
                 "method": "initialize",
                 "params": {
                     "processId": std::process::id(),
@@ -289,12 +288,6 @@ impl LanguageServerPool {
                 ))
             }
         }
-    }
-
-    /// Generate a unique request ID.
-    pub(super) fn next_request_id(&self) -> i64 {
-        self.next_request_id
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
 }
 
@@ -426,6 +419,7 @@ mod tests {
                 "region-0",
                 3,
                 "print('hello')",
+                1, // upstream_request_id
             )
             .await;
         assert!(
@@ -447,6 +441,7 @@ mod tests {
                 "region-0",
                 3,
                 "print('hello')",
+                1, // upstream_request_id
             )
             .await;
         assert_eq!(
@@ -511,6 +506,7 @@ mod tests {
                 "region-0",
                 3,
                 "print('hello')",
+                1, // upstream_request_id
             )
             .await;
         assert!(
@@ -540,6 +536,7 @@ mod tests {
                 "region-0",
                 3,
                 "print('hello')",
+                2, // upstream_request_id
             )
             .await;
         assert!(
@@ -591,6 +588,7 @@ mod tests {
                 "region-0",
                 3,
                 "print('hello')",
+                1, // upstream_request_id
             )
             .await;
 
@@ -622,6 +620,7 @@ mod tests {
                 "region-0",
                 3,
                 "print('world')",
+                2, // upstream_request_id
             )
             .await;
 

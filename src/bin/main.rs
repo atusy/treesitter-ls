@@ -522,7 +522,7 @@ async fn run_lsp_server() {
     use env_logger::Builder;
     use tokio::io::{stdin, stdout};
     use tower_lsp::{LspService, Server};
-    use treesitter_ls::lsp::TreeSitterLs;
+    use treesitter_ls::lsp::{RequestIdCapture, TreeSitterLs};
 
     // Initialize logging to stderr (CRITICAL: stdout is used for LSP JSON-RPC)
     // Configure via RUST_LOG, e.g.: RUST_LOG=treesitter_ls=debug
@@ -534,5 +534,10 @@ async fn run_lsp_server() {
     let stdout = stdout();
 
     let (service, socket) = LspService::new(TreeSitterLs::new);
+
+    // Wrap service with RequestIdCapture to capture upstream request IDs
+    // This enables downstream bridge requests to use the same ID per ADR-0016
+    let service = RequestIdCapture::new(service);
+
     Server::new(stdin, stdout, socket).serve(service).await;
 }

@@ -21,6 +21,9 @@ impl LanguageServerPool {
     /// 2. Send a textDocument/didOpen notification if needed
     /// 3. Send the hover request
     /// 4. Wait for and return the response
+    ///
+    /// The `upstream_request_id` parameter is the request ID from the upstream client,
+    /// passed through unchanged to the downstream server per ADR-0016.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn send_hover_request(
         &self,
@@ -31,6 +34,7 @@ impl LanguageServerPool {
         region_id: &str,
         region_start_line: u32,
         virtual_content: &str,
+        upstream_request_id: i64,
     ) -> io::Result<serde_json::Value> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
@@ -62,8 +66,8 @@ impl LanguageServerPool {
             conn.write_message(&did_open).await?;
         }
 
-        // Build and send hover request
-        let request_id = self.next_request_id();
+        // Build and send hover request using upstream ID (ADR-0016)
+        let request_id = upstream_request_id;
         let hover_request = build_bridge_hover_request(
             host_uri,
             host_position,
