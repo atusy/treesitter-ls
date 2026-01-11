@@ -1442,53 +1442,6 @@ mod tests {
         assert!(tracker.try_start_install("lua")); // After finish, can start again
     }
 
-    #[test]
-    fn test_get_languages_needing_install_filters_loaded_languages() {
-        // Test the helper method that filters injected languages to only those
-        // that need installation (not already loaded).
-        //
-        // This tests get_languages_needing_install() which takes a set of injected
-        // language names and returns only those where ensure_language_loaded fails.
-
-        use crate::language::LanguageCoordinator;
-
-        let coordinator = LanguageCoordinator::new();
-
-        // Create a set of injected languages (simulating what get_injected_languages returns)
-        let mut injected_languages = HashSet::new();
-        injected_languages.insert("lua".to_string());
-        injected_languages.insert("python".to_string());
-        injected_languages.insert("rust".to_string());
-
-        // Call the helper method to filter to only languages needing install
-        let languages_needing_install =
-            get_languages_needing_install(&coordinator, &injected_languages);
-
-        // Since no languages are configured in the coordinator, all should need install
-        assert_eq!(languages_needing_install.len(), 3);
-        assert!(languages_needing_install.contains(&"lua".to_string()));
-        assert!(languages_needing_install.contains(&"python".to_string()));
-        assert!(languages_needing_install.contains(&"rust".to_string()));
-    }
-
-    /// Helper function that filters a set of injected languages to only those
-    /// that need installation (where ensure_language_loaded fails).
-    ///
-    /// This is the core logic used by check_injected_languages_auto_install.
-    fn get_languages_needing_install(
-        coordinator: &crate::language::LanguageCoordinator,
-        injected_languages: &HashSet<String>,
-    ) -> Vec<String> {
-        injected_languages
-            .iter()
-            .filter(|lang| {
-                let load_result = coordinator.ensure_language_loaded(lang);
-                !load_result.success
-            })
-            .cloned()
-            .collect()
-    }
-
     // Note: Large integration tests for auto-install are in tests/test_auto_install_integration.rs
 
     /// PBI-155 Subtask 2: Test wildcard language config inheritance
