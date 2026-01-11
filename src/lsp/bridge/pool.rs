@@ -189,7 +189,14 @@ impl LanguageServerPool {
                     return Err(io::Error::other("bridge: downstream server initializing"));
                 }
                 ConnectionState::Failed => {
-                    return Err(io::Error::other("bridge: downstream server failed"));
+                    // Remove failed connection, allow respawn on next attempt
+                    connections.remove(language);
+                    drop(connections);
+                    // Recursive call to spawn fresh connection (boxed to avoid infinite future size)
+                    return Box::pin(
+                        self.get_or_create_connection_with_timeout(language, server_config, timeout),
+                    )
+                    .await;
                 }
                 ConnectionState::Ready => {
                     return Ok(Arc::clone(handle));
@@ -446,20 +453,32 @@ mod tests {
         );
     }
 
-    /// Test that requests during Failed state return error immediately (non-blocking).
-    /// Verifies both hover and completion fail fast with exact error message per ADR-0015.
+    /// Test that requests during Failed state trigger retry with a new server.
+    ///
+    /// When a connection is in Failed state and a request comes in, the retry mechanism:
+    /// 1. Removes the failed connection from cache
+    /// 2. Spawns a fresh server process
+    /// 3. Succeeds if the new server initializes correctly
+    ///
+    /// This test uses lua-language-server which should initialize successfully.
     #[tokio::test]
-    async fn request_during_failed_returns_error_immediately() {
+    async fn request_during_failed_triggers_retry_with_new_server() {
         use std::sync::Arc;
         use tower_lsp::lsp_types::{Position, Url};
 
+        // Skip test if lua-language-server is not available
+        if std::process::Command::new("lua-language-server")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping test: lua-language-server not found");
+            return;
+        }
+
         let pool = Arc::new(LanguageServerPool::new());
         let config = BridgeServerConfig {
-            cmd: vec![
-                "sh".to_string(),
-                "-c".to_string(),
-                "cat > /dev/null".to_string(),
-            ],
+            cmd: vec!["lua-language-server".to_string()],
             languages: vec!["lua".to_string()],
             initialization_options: None,
             workspace_type: None,
@@ -480,8 +499,7 @@ mod tests {
             character: 5,
         };
 
-        // Test hover request - should fail immediately
-        let start = std::time::Instant::now();
+        // Test hover request - should trigger retry and succeed with new server
         let result = pool
             .send_hover_request(
                 &config,
@@ -494,15 +512,23 @@ mod tests {
             )
             .await;
         assert!(
-            start.elapsed() < Duration::from_millis(100),
-            "Should not block"
-        );
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "bridge: downstream server failed"
+            result.is_ok(),
+            "Request should succeed after retry spawns new server: {:?}",
+            result.err()
         );
 
-        // Test completion request - same behavior
+        // Verify the connection is now Ready
+        {
+            let connections = pool.connections.lock().await;
+            let handle = connections.get("lua").expect("Should have connection");
+            assert_eq!(
+                handle.state(),
+                ConnectionState::Ready,
+                "Connection should be Ready after retry"
+            );
+        }
+
+        // Test completion request - should also succeed (connection is now Ready)
         let result = pool
             .send_completion_request(
                 &config,
@@ -514,9 +540,10 @@ mod tests {
                 "print('hello')",
             )
             .await;
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "bridge: downstream server failed"
+        assert!(
+            result.is_ok(),
+            "Completion request should succeed: {:?}",
+            result.err()
         );
     }
 
@@ -717,6 +744,85 @@ mod tests {
                     msg
                 );
             }
+        }
+    }
+
+    /// Test that failed connection is removed from cache and new server is spawned on retry.
+    ///
+    /// When a connection is in Failed state, the next request should:
+    /// 1. Remove the failed connection from the cache
+    /// 2. Spawn a fresh server process
+    /// 3. Return success if the new server initializes correctly
+    ///
+    /// This test verifies the retry mechanism using a two-phase approach:
+    /// - Phase 1: Insert a Failed connection handle for "lua"
+    /// - Phase 2: Call get_or_create_connection, expect it to spawn new server
+    #[tokio::test]
+    async fn failed_connection_retry_removes_cache_and_spawns_new_server() {
+        // Skip test if lua-language-server is not available
+        if std::process::Command::new("lua-language-server")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping test: lua-language-server not found");
+            return;
+        }
+
+        let pool = LanguageServerPool::new();
+
+        // Phase 1: Insert a Failed connection handle
+        {
+            let handle = create_handle_with_state(ConnectionState::Failed).await;
+            pool.connections
+                .lock()
+                .await
+                .insert("lua".to_string(), handle);
+        }
+
+        // Verify Failed state is in cache
+        {
+            let connections = pool.connections.lock().await;
+            let handle = connections.get("lua").expect("Should have cached handle");
+            assert_eq!(handle.state(), ConnectionState::Failed, "Should be Failed");
+        }
+
+        // Phase 2: Request connection - should remove failed entry and spawn new server
+        let config = BridgeServerConfig {
+            cmd: vec!["lua-language-server".to_string()],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        let result = pool
+            .get_or_create_connection_with_timeout("lua", &config, Duration::from_secs(30))
+            .await;
+
+        // Should succeed with a new Ready connection
+        assert!(
+            result.is_ok(),
+            "Should spawn new server after failed entry removed: {:?}",
+            result.err()
+        );
+
+        // Verify new connection is Ready (not Failed)
+        let handle = result.unwrap();
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Ready,
+            "New connection should be Ready"
+        );
+
+        // Verify the old Failed handle was replaced in cache
+        {
+            let connections = pool.connections.lock().await;
+            let cached_handle = connections.get("lua").expect("Should have cached handle");
+            assert_eq!(
+                cached_handle.state(),
+                ConnectionState::Ready,
+                "Cached handle should be the new Ready one"
+            );
         }
     }
 
