@@ -111,7 +111,6 @@ impl AsyncBridgeConnection {
         let body = self.read_message_bytes().await?;
         serde_json::from_slice(&body).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
-
 }
 
 impl Drop for AsyncBridgeConnection {
