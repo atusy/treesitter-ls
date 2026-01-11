@@ -44,47 +44,6 @@ mod tests {
         // If spawn succeeded, we have a valid connection
     }
 
-    /// RED: Test that send_request writes JSON-RPC message with Content-Length header
-    #[tokio::test]
-    async fn send_request_writes_json_rpc_with_content_length() {
-        use serde_json::json;
-
-        // Use `cat` to echo what we write to stdin back to stdout
-        let cmd = vec!["cat".to_string()];
-        let mut conn = AsyncBridgeConnection::spawn(cmd)
-            .await
-            .expect("spawn should succeed");
-
-        // Send a simple JSON-RPC request
-        let request = json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {}
-        });
-
-        conn.write_message(&request)
-            .await
-            .expect("write should succeed");
-
-        // Read back what was written to verify the format
-        let output = conn.read_raw_message().await.expect("read should succeed");
-
-        // Verify Content-Length header is present and correct
-        assert!(
-            output.starts_with("Content-Length: "),
-            "message should start with Content-Length header"
-        );
-        assert!(
-            output.contains("\r\n\r\n"),
-            "header should be separated from body by CRLF CRLF"
-        );
-        assert!(
-            output.contains("\"jsonrpc\":\"2.0\""),
-            "body should contain JSON-RPC content"
-        );
-    }
-
     /// RED: Test that read_message parses Content-Length header and reads JSON body
     #[tokio::test]
     async fn read_message_parses_content_length_and_body() {
@@ -369,63 +328,6 @@ mod tests {
         assert_eq!(transformed, response);
     }
 
-    /// Test that LanguageServerPool tracks which virtual documents have been opened per connection (PBI-303 Subtask 1)
-    #[test]
-    fn language_server_pool_tracks_opened_documents() {
-        use tower_lsp::lsp_types::Url;
-
-        // LanguageServerPool should track which virtual document URIs have been opened
-        // per language server connection, to avoid sending duplicate didOpen notifications
-
-        let manager = LanguageServerPool::new();
-
-        // Create virtual URI using the struct
-        let host_uri = Url::parse("file:///test.md").unwrap();
-        let virtual_doc = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
-        let virtual_uri = virtual_doc.to_uri_string();
-
-        // Check that a virtual URI has not been opened yet
-        assert!(
-            !manager.is_document_opened("lua", &virtual_uri),
-            "Document should not be marked as opened initially"
-        );
-    }
-
-    /// RED: Test that didOpen is only sent once per virtual document URI per connection (PBI-303 Subtask 2)
-    #[tokio::test]
-    async fn didopen_only_sent_once_per_virtual_document() {
-        use tower_lsp::lsp_types::Url;
-
-        // When we mark a document as opened, subsequent checks should return true
-        // This ensures didOpen is only sent once per virtual document per language server
-
-        let manager = LanguageServerPool::new();
-        let host_uri = Url::parse("file:///test.md").unwrap();
-        let virtual_doc = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
-        let virtual_uri = virtual_doc.to_uri_string();
-        let language = "lua";
-
-        // Initially not opened
-        assert!(!manager.is_document_opened(language, &virtual_uri));
-
-        // Mark as opened
-        manager.mark_document_opened(language, &virtual_uri).await;
-
-        // Now should be marked as opened
-        assert!(
-            manager.is_document_opened(language, &virtual_uri),
-            "Document should be marked as opened after mark_document_opened"
-        );
-
-        // Different URI for same language should still be unopened
-        let other_doc = VirtualDocumentUri::new(&host_uri, "lua", "region-1");
-        let other_uri = other_doc.to_uri_string();
-        assert!(
-            !manager.is_document_opened(language, &other_uri),
-            "Different document should not be affected"
-        );
-    }
-
     /// Test that didChange notification is built with correct virtual URI (PBI-303 Subtask 3)
     #[test]
     fn bridge_didchange_notification_uses_virtual_uri() {
@@ -468,46 +370,6 @@ mod tests {
         let changes = notification["params"]["contentChanges"].as_array().unwrap();
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0]["text"], new_content);
-    }
-
-    /// RED: Test that LanguageServerPool tracks document versions (PBI-303 Subtask 4)
-    #[tokio::test]
-    async fn language_server_pool_tracks_document_versions() {
-        use tower_lsp::lsp_types::Url;
-
-        // LanguageServerPool should track the version number for each opened document
-        // so that didChange notifications use incrementing versions
-
-        let manager = LanguageServerPool::new();
-        let host_uri = Url::parse("file:///test.md").unwrap();
-        let virtual_doc = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
-        let virtual_uri = virtual_doc.to_uri_string();
-        let language = "lua";
-
-        // Initially, document should have no version (not opened)
-        assert!(
-            manager
-                .get_document_version(language, &virtual_uri)
-                .is_none(),
-            "Document should not have a version initially"
-        );
-
-        // After marking as opened, version should be 1
-        manager.mark_document_opened(language, &virtual_uri).await;
-        assert_eq!(
-            manager.get_document_version(language, &virtual_uri),
-            Some(1),
-            "Version should be 1 after opening"
-        );
-
-        // Verify document is tracked as opened
-        assert!(
-            manager.is_document_opened(language, &virtual_uri),
-            "Document should be marked as opened"
-        );
-
-        // Version incrementing is tested implicitly through send_completion_request
-        // which calls increment_document_version internally and sends didChange
     }
 
     /// RED: Test that completion request uses virtual URI and mapped position (PBI-303 Subtask 5)

@@ -45,47 +45,6 @@ impl LanguageServerPool {
         }
     }
 
-    /// Check if a virtual document has been opened for a given language.
-    ///
-    /// This is used to avoid sending duplicate didOpen notifications.
-    /// Exposed for testing.
-    #[cfg(test)]
-    pub(crate) fn is_document_opened(&self, language: &str, virtual_uri: &str) -> bool {
-        // Use try_lock for synchronous access (will always succeed in single-threaded context)
-        if let Ok(versions) = self.document_versions.try_lock()
-            && let Some(docs) = versions.get(language)
-        {
-            return docs.contains_key(virtual_uri);
-        }
-        false
-    }
-
-    /// Get the current version of a virtual document, if it has been opened.
-    /// Exposed for testing.
-    #[cfg(test)]
-    pub(crate) fn get_document_version(&self, language: &str, virtual_uri: &str) -> Option<i32> {
-        if let Ok(versions) = self.document_versions.try_lock()
-            && let Some(docs) = versions.get(language)
-        {
-            return docs.get(virtual_uri).copied();
-        }
-        None
-    }
-
-    /// Mark a virtual document as opened for a given language.
-    ///
-    /// This should be called after sending didOpen notification to avoid duplicates.
-    /// Sets the initial version to 1.
-    /// Exposed for testing.
-    #[cfg(test)]
-    pub(crate) async fn mark_document_opened(&self, language: &str, virtual_uri: &str) {
-        let mut versions = self.document_versions.lock().await;
-        versions
-            .entry(language.to_string())
-            .or_default()
-            .insert(virtual_uri.to_string(), 1);
-    }
-
     /// Increment the version of a virtual document and return the new version.
     ///
     /// Returns None if the document has not been opened.

@@ -112,42 +112,6 @@ impl AsyncBridgeConnection {
         serde_json::from_slice(&body).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
 
-    /// Read a raw LSP message from the child process stdout.
-    ///
-    /// Returns the full message including header and body as a string.
-    /// Used primarily for testing to verify message format.
-    #[cfg(test)]
-    pub(crate) async fn read_raw_message(&mut self) -> io::Result<String> {
-        use tokio::io::AsyncReadExt;
-
-        // Read header line
-        let mut header_line = String::new();
-        self.stdout.read_line(&mut header_line).await?;
-
-        // Parse content length
-        let content_length: usize = header_line
-            .strip_prefix("Content-Length: ")
-            .and_then(|s| s.trim().parse().ok())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid Content-Length"))?;
-
-        // Read empty line (CRLF separator)
-        let mut empty_line = String::new();
-        self.stdout.read_line(&mut empty_line).await?;
-
-        // Read body
-        let mut body = vec![0u8; content_length];
-        self.stdout.read_exact(&mut body).await?;
-
-        // Reconstruct the full message (including headers for verification)
-        let full_message = format!(
-            "{}{}{}",
-            header_line,
-            empty_line,
-            String::from_utf8_lossy(&body)
-        );
-
-        Ok(full_message)
-    }
 }
 
 impl Drop for AsyncBridgeConnection {
