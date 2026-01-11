@@ -63,12 +63,14 @@ const scrum: ScrumDashboard = {
       status: "done",
     },
   ],
-  sprint: {
-    number: 159,
-    pbi_id: "PBI-STABLE-REGION-ID",
-    goal: "Implement stable region_id calculation for shared virtual document URIs across bridge features",
-    status: "done",
-    subtasks: [
+  sprint: null,
+  completed: [
+    {
+      number: 159,
+      pbi_id: "PBI-STABLE-REGION-ID",
+      goal: "Implement stable region_id calculation for shared virtual document URIs across bridge features",
+      status: "done",
+      subtasks: [
       {
         test: "Unit test: calculate_region_id returns {language}-{ordinal} format",
         implementation: "Create calculate_region_id function in src/language/injection.rs that takes list of injections and target injection, returns ordinal based on same-language count",
@@ -125,9 +127,7 @@ const scrum: ScrumDashboard = {
         commits: [{ hash: "e03a175b", message: "test(e2e): verify stable region_id across hover and completion", phase: "green" }],
         notes: ["First access (hover): didOpen sent to downstream", "Second access (completion): didChange sent (not didOpen)", "Same region_id ensures same virtual URI"],
       },
-    ],
-  },
-  completed: [
+    ]},
     { number: 158, pbi_id: "PBI-SIGNATURE-HELP-BRIDGE", goal: "Enable signature help bridging for Lua code blocks in markdown documents", status: "done", subtasks: [] },
     { number: 157, pbi_id: "PBI-REQUEST-ID-SERVICE-WRAPPER", goal: "Pass upstream request IDs to downstream servers via tower Service wrapper per ADR-0016", status: "done", subtasks: [] },
     { number: 156, pbi_id: "PBI-REQUEST-ID-PASSTHROUGH", goal: "Validate ADR-0016 request ID semantics (research sprint)", status: "done", subtasks: [] },
