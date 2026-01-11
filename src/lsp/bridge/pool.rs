@@ -8,8 +8,15 @@
 use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::Mutex;
+
+/// Timeout for LSP initialize handshake (ADR-0018 Tier 0: 30-60s recommended).
+///
+/// If a downstream language server does not respond to the initialize request
+/// within this duration, the connection attempt fails with a timeout error.
+const INIT_TIMEOUT_SECS: u64 = 30;
 
 use super::connection::AsyncBridgeConnection;
 use super::protocol::{
@@ -77,11 +84,30 @@ impl LanguageServerPool {
     /// Get or create a connection for the specified language.
     ///
     /// If no connection exists, spawns the language server and performs
-    /// the LSP initialize/initialized handshake.
+    /// the LSP initialize/initialized handshake with default timeout.
     async fn get_or_create_connection(
         &self,
         language: &str,
         server_config: &crate::config::settings::BridgeServerConfig,
+    ) -> io::Result<Arc<Mutex<AsyncBridgeConnection>>> {
+        self.get_or_create_connection_with_timeout(
+            language,
+            server_config,
+            Duration::from_secs(INIT_TIMEOUT_SECS),
+        )
+        .await
+    }
+
+    /// Get or create a connection for the specified language with custom timeout.
+    ///
+    /// If no connection exists, spawns the language server and performs
+    /// the LSP initialize/initialized handshake. The timeout applies to the
+    /// entire initialization process (write request + read response loop).
+    async fn get_or_create_connection_with_timeout(
+        &self,
+        language: &str,
+        server_config: &crate::config::settings::BridgeServerConfig,
+        timeout: Duration,
     ) -> io::Result<Arc<Mutex<AsyncBridgeConnection>>> {
         let mut connections = self.connections.lock().await;
 
@@ -93,48 +119,70 @@ impl LanguageServerPool {
         // Spawn new connection
         let mut conn = AsyncBridgeConnection::spawn(server_config.cmd.clone()).await?;
 
-        // Perform LSP initialize handshake
-        let init_request = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": self.next_request_id(),
-            "method": "initialize",
-            "params": {
-                "processId": std::process::id(),
-                "rootUri": null,
-                "capabilities": {},
-                "initializationOptions": server_config.initialization_options
-            }
-        });
-
-        conn.write_message(&init_request).await?;
-
-        // Read initialize response (skip any notifications)
-        loop {
-            let msg = conn.read_message().await?;
-            if msg.get("id").is_some() {
-                // Got the initialize response
-                if msg.get("error").is_some() {
-                    return Err(io::Error::other(format!(
-                        "Initialize failed: {:?}",
-                        msg.get("error")
-                    )));
+        // Perform LSP initialize handshake with timeout
+        let init_result = tokio::time::timeout(timeout, async {
+            let init_request = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": self.next_request_id(),
+                "method": "initialize",
+                "params": {
+                    "processId": std::process::id(),
+                    "rootUri": null,
+                    "capabilities": {},
+                    "initializationOptions": server_config.initialization_options
                 }
-                break;
+            });
+
+            conn.write_message(&init_request).await?;
+
+            // Read initialize response (skip any notifications)
+            loop {
+                let msg = conn.read_message().await?;
+                if msg.get("id").is_some() {
+                    // Got the initialize response
+                    if msg.get("error").is_some() {
+                        return Err(io::Error::other(format!(
+                            "Initialize failed: {:?}",
+                            msg.get("error")
+                        )));
+                    }
+                    break;
+                }
+                // Skip notifications
             }
-            // Skip notifications
+
+            // Send initialized notification
+            let initialized = serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "initialized",
+                "params": {}
+            });
+            conn.write_message(&initialized).await?;
+
+            Ok::<_, io::Error>(())
+        })
+        .await;
+
+        // Handle timeout
+        match init_result {
+            Ok(Ok(())) => {
+                // Init succeeded
+                let conn = Arc::new(Mutex::new(conn));
+                connections.insert(language.to_string(), Arc::clone(&conn));
+                Ok(conn)
+            }
+            Ok(Err(e)) => {
+                // Init failed with io::Error
+                Err(e)
+            }
+            Err(_elapsed) => {
+                // Timeout occurred
+                Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "Initialize timeout: downstream server unresponsive",
+                ))
+            }
         }
-
-        // Send initialized notification
-        let initialized = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "initialized",
-            "params": {}
-        });
-        conn.write_message(&initialized).await?;
-
-        let conn = Arc::new(Mutex::new(conn));
-        connections.insert(language.to_string(), Arc::clone(&conn));
-        Ok(conn)
     }
 
     /// Generate a unique request ID.
@@ -306,5 +354,53 @@ impl LanguageServerPool {
             }
             // Skip notifications and other responses
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::settings::BridgeServerConfig;
+    use std::time::Duration;
+
+    /// Test that initialization times out when downstream server doesn't respond.
+    ///
+    /// This test uses a mock server that reads input but never writes output,
+    /// simulating an unresponsive downstream language server.
+    /// The initialization handshake should timeout.
+    #[tokio::test]
+    async fn init_times_out_when_server_unresponsive() {
+        let pool = LanguageServerPool::new();
+        let config = BridgeServerConfig {
+            // sh -c 'cat > /dev/null': reads stdin but writes nothing to stdout
+            // This simulates an unresponsive server that never sends a response
+            cmd: vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "cat > /dev/null".to_string(),
+            ],
+            languages: vec!["test".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        let start = std::time::Instant::now();
+
+        // Use get_or_create_connection_with_timeout for testing with short timeout
+        let result = pool
+            .get_or_create_connection_with_timeout("test", &config, Duration::from_millis(100))
+            .await;
+
+        let elapsed = start.elapsed();
+
+        // Should timeout quickly (within our 100ms timeout + buffer)
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "Should timeout quickly. Elapsed: {:?}",
+            elapsed
+        );
+
+        // Should return an error
+        assert!(result.is_err(), "Connection should fail with timeout error");
     }
 }
