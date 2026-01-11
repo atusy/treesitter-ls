@@ -34,105 +34,10 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  product_backlog: [
-    {
-      id: "PBI-DIDCLOSE-FORWARDING",
-      story: {
-        role: "Lua developer editing markdown",
-        capability: "I want to propagate close of the host document to the virtual documents attached to bridged downstream language servers",
-        benefit: "So that I do not suffer from memory leaks",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "didClose sent for all virtual documents when host closes",
-          verification: "E2E test: close host document and verify downstream servers receive didClose for each virtual document",
-        },
-        {
-          criterion: "host to virtual mapping recorded during didOpen",
-          verification: "Unit test: after didOpen, host_to_virtual contains entry mapping host URI to OpenedVirtualDoc with language and virtual_uri",
-        },
-        {
-          criterion: "document_versions tracking cleaned up",
-          verification: "Unit test: after didClose, document_versions no longer contains entries for closed virtual documents",
-        },
-        {
-          criterion: "Connection remains open after didClose",
-          verification: "E2E test: after closing one host document, other host documents can still send requests to the same downstream server",
-        },
-      ],
-      status: "ready",
-      refinement_notes: [
-        "Data structure: OpenedVirtualDoc { language: String, virtual_uri: String }",
-        "Add host_to_virtual: Mutex<HashMap<Url, Vec<OpenedVirtualDoc>>> to LanguageServerPool",
-        "Do not close connection because other host documents may need it",
-      ],
-    },
-  ],
-  sprint: {
-    number: 160,
-    pbi_id: "PBI-DIDCLOSE-FORWARDING",
-    goal: "Propagate didClose from host documents to virtual documents ensuring proper cleanup without closing connections",
-    status: "review",
-    subtasks: [
-      {
-        test: "Unit test: OpenedVirtualDoc struct and host_to_virtual field exist in LanguageServerPool",
-        implementation: "Add OpenedVirtualDoc struct with language and virtual_uri fields; add host_to_virtual: Mutex<HashMap<Url, Vec<OpenedVirtualDoc>>> to LanguageServerPool; initialize in new()",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "e427c42b", message: "feat(bridge): propagate didClose to downstream language servers", phase: "green" }],
-        notes: ["Data structure foundation for tracking host→virtual mappings"],
-      },
-      {
-        test: "Unit test: should_send_didopen records host→virtual mapping when didOpen is sent",
-        implementation: "Add host_uri parameter to should_send_didopen; record mapping in host_to_virtual when returning true; update callers in hover.rs, completion.rs, signature_help.rs",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "e427c42b", message: "feat(bridge): propagate didClose to downstream language servers", phase: "green" }],
-        notes: ["Maps host document to its virtual documents for later cleanup"],
-      },
-      {
-        test: "Unit test: build_bridge_didclose_notification creates valid DidCloseTextDocumentParams",
-        implementation: "Add build_bridge_didclose_notification function in protocol.rs similar to existing didOpen/didChange builders",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Protocol helper not needed - send_didclose_notification builds notification inline from virtual_uri directly"],
-      },
-      {
-        test: "Unit test: send_didclose_notification sends notification to correct language server",
-        implementation: "Add send_didclose_notification method to LanguageServerPool that sends didClose without closing connection",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "e427c42b", message: "feat(bridge): propagate didClose to downstream language servers", phase: "green" }],
-        notes: ["Low-level sending mechanism; connection must remain open"],
-      },
-      {
-        test: "Unit test: close_host_document looks up virtual docs, sends didClose for each, and cleans up tracking",
-        implementation: "Add close_host_document method that looks up host_to_virtual, sends didClose for each virtual doc, removes entries from document_versions and host_to_virtual",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "e427c42b", message: "feat(bridge): propagate didClose to downstream language servers", phase: "green" }],
-        notes: ["Orchestration method for full cleanup flow"],
-      },
-      {
-        test: "E2E test: closing host document triggers didClose to downstream servers for all virtual documents",
-        implementation: "Wire close_host_document call in lsp_impl.rs::did_close; verify downstream servers receive didClose",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "e427c42b", message: "feat(bridge): propagate didClose to downstream language servers", phase: "green" }],
-        notes: ["Full integration from Neovim to downstream server", "e2e_didclose_forwarded_to_downstream_server test passes"],
-      },
-      {
-        test: "E2E test: connection remains open after didClose allowing other host documents to use same server",
-        implementation: "Verify that after closing one markdown file with Lua blocks, another markdown file can still use lua-language-server",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "e427c42b", message: "feat(bridge): propagate didClose to downstream language servers", phase: "green" }],
-        notes: ["Critical: connection lifecycle is independent of document lifecycle", "e2e_connection_remains_open_after_didclose test passes"],
-      },
-    ],
-  },
+  product_backlog: [],
+  sprint: null,
   completed: [
+    { number: 160, pbi_id: "PBI-DIDCLOSE-FORWARDING", goal: "Propagate didClose from host documents to virtual documents ensuring proper cleanup without closing connections", status: "done", subtasks: [] },
     { number: 159, pbi_id: "PBI-STABLE-REGION-ID", goal: "Implement stable region_id for shared virtual document URIs across bridge features", status: "done", subtasks: [] },
     { number: 158, pbi_id: "PBI-SIGNATURE-HELP-BRIDGE", goal: "Enable signature help bridging for Lua code blocks in markdown documents", status: "done", subtasks: [] },
     { number: 157, pbi_id: "PBI-REQUEST-ID-SERVICE-WRAPPER", goal: "Pass upstream request IDs to downstream servers via tower Service wrapper per ADR-0016", status: "done", subtasks: [] },
