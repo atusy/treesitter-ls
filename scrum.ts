@@ -33,8 +33,72 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  product_backlog: [],
-  sprint: null,
+  product_backlog: [
+    {
+      id: "PBI-INIT-TIMEOUT",
+      story: {
+        role: "Lua developer editing markdown",
+        capability: "have the language server respond with a timeout error when lua-language-server fails to initialize within 30 seconds",
+        benefit: "I am not stuck waiting indefinitely when the downstream language server hangs during startup",
+      },
+      acceptance_criteria: [
+        { criterion: "Initialization timeout triggers after 30 seconds", verification: "Unit test with tokio::time::timeout wrapping init loop" },
+        { criterion: "Timeout returns io::Error propagated to LSP response", verification: "E2E test: verify error response within 35s" },
+        { criterion: "Connection not cached after timeout (Failed state)", verification: "Unit test: pool.connections empty after timeout" },
+        { criterion: "Timeout duration is configurable constant", verification: "Code review: const INIT_TIMEOUT_SECS = 30" },
+      ],
+      status: "ready",
+      refinement_notes: ["Wrap pool.rs:112-125 with tokio::time::timeout", "ADR-0014/0018 Tier 0: 30-60s"],
+    },
+    {
+      id: "PBI-REQUEST-FAILED-INIT",
+      story: {
+        role: "Lua developer editing markdown",
+        capability: "receive an immediate error response when requesting hover/completion during downstream server initialization",
+        benefit: "I get fast feedback instead of the editor appearing frozen",
+      },
+      acceptance_criteria: [
+        { criterion: "Requests during Initializing return REQUEST_FAILED (-32803)", verification: "E2E test with error code check" },
+        { criterion: "Error message is 'bridge: downstream server initializing'", verification: "E2E test message verification" },
+        { criterion: "ConnectionState enum with Initializing/Ready/Failed", verification: "grep enum ConnectionState src/lsp/bridge/" },
+        { criterion: "Requests succeed after Ready state", verification: "E2E test: request after init completes" },
+      ],
+      status: "ready",
+      refinement_notes: ["Depends on PBI-INIT-TIMEOUT", "ADR-0015 Operation Gating"],
+    },
+  ],
+  sprint: {
+    number: 151,
+    pbi_id: "PBI-INIT-TIMEOUT",
+    goal: "Add timeout to initialization to prevent infinite hang when downstream server is unresponsive",
+    status: "planning",
+    subtasks: [
+      {
+        test: "Unit test that verifies timeout fires after configured duration (tokio::time::timeout wraps init loop)",
+        implementation: "Add const INIT_TIMEOUT_SECS: u64 = 30 and wrap loop at pool.rs:112-125 with tokio::time::timeout",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["ADR-0018 Tier 0: 30-60s recommended", "Target file: src/lsp/bridge/pool.rs lines 109-125"],
+      },
+      {
+        test: "Unit test that timeout returns io::Error with io::ErrorKind::TimedOut",
+        implementation: "Map tokio::time::error::Elapsed to io::Error::new(io::ErrorKind::TimedOut, 'Initialize timeout: downstream server unresponsive')",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["LSP compliant: explicit error response, not silent hang"],
+      },
+      {
+        test: "Unit test that pool.connections does not contain entry after timeout (Failed state behavior)",
+        implementation: "Only insert into connections HashMap after successful init (current code already does this - verify behavior)",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Connection not cached on timeout ensures retry on next request", "ADR-0015 connection state machine"],
+      },
+    ],
+  },
   completed: [],
   definition_of_done: {
     checks: [
