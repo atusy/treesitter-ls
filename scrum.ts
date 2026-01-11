@@ -35,22 +35,6 @@ const scrum: ScrumDashboard = {
 
   product_backlog: [
     {
-      id: "PBI-INIT-TIMEOUT",
-      story: {
-        role: "Lua developer editing markdown",
-        capability: "have the language server respond with a timeout error when lua-language-server fails to initialize within 30 seconds",
-        benefit: "I am not stuck waiting indefinitely when the downstream language server hangs during startup",
-      },
-      acceptance_criteria: [
-        { criterion: "Initialization timeout triggers after 30 seconds", verification: "Unit test with tokio::time::timeout wrapping init loop" },
-        { criterion: "Timeout returns io::Error propagated to LSP response", verification: "E2E test: verify error response within 35s" },
-        { criterion: "Connection not cached after timeout (Failed state)", verification: "Unit test: pool.connections empty after timeout" },
-        { criterion: "Timeout duration is configurable constant", verification: "Code review: const INIT_TIMEOUT_SECS = 30" },
-      ],
-      status: "ready",
-      refinement_notes: ["Wrap pool.rs:112-125 with tokio::time::timeout", "ADR-0014/0018 Tier 0: 30-60s"],
-    },
-    {
       id: "PBI-REQUEST-FAILED-INIT",
       story: {
         role: "Lua developer editing markdown",
@@ -67,39 +51,20 @@ const scrum: ScrumDashboard = {
       refinement_notes: ["Depends on PBI-INIT-TIMEOUT", "ADR-0015 Operation Gating"],
     },
   ],
-  sprint: {
-    number: 151,
-    pbi_id: "PBI-INIT-TIMEOUT",
-    goal: "Add timeout to initialization to prevent infinite hang when downstream server is unresponsive",
-    status: "review",
-    subtasks: [
-      {
-        test: "Unit test that verifies timeout fires after configured duration (tokio::time::timeout wraps init loop)",
-        implementation: "Add const INIT_TIMEOUT_SECS: u64 = 30 and wrap loop at pool.rs:112-125 with tokio::time::timeout",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "adfbac9b", message: "feat(lsp): add timeout to initialization handshake", phase: "green" }],
-        notes: ["ADR-0018 Tier 0: 30-60s recommended", "Target file: src/lsp/bridge/pool.rs lines 109-125"],
-      },
-      {
-        test: "Unit test that timeout returns io::Error with io::ErrorKind::TimedOut",
-        implementation: "Map tokio::time::error::Elapsed to io::Error::new(io::ErrorKind::TimedOut, 'Initialize timeout: downstream server unresponsive')",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "6e5d27e2", message: "test(lsp): add test for TimedOut error kind on init timeout", phase: "green" }],
-        notes: ["LSP compliant: explicit error response, not silent hang", "Implementation included in subtask 1"],
-      },
-      {
-        test: "Unit test that pool.connections does not contain entry after timeout (Failed state behavior)",
-        implementation: "Only insert into connections HashMap after successful init (current code already does this - verify behavior)",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "d8379259", message: "test(lsp): verify connection not cached after init timeout", phase: "green" }],
-        notes: ["Connection not cached on timeout ensures retry on next request", "ADR-0015 connection state machine"],
-      },
-    ],
-  },
-  completed: [],
+  sprint: null,
+  completed: [
+    {
+      number: 151,
+      pbi_id: "PBI-INIT-TIMEOUT",
+      goal: "Add timeout to initialization to prevent infinite hang when downstream server is unresponsive",
+      status: "done",
+      subtasks: [
+        { test: "Timeout fires after duration", implementation: "tokio::time::timeout wrapper", type: "behavioral", status: "completed", commits: [{ hash: "adfbac9b", message: "feat(lsp): add timeout to initialization handshake", phase: "green" }], notes: [] },
+        { test: "TimedOut error kind", implementation: "Map Elapsed to io::Error", type: "behavioral", status: "completed", commits: [{ hash: "6e5d27e2", message: "test(lsp): add test for TimedOut error kind", phase: "green" }], notes: [] },
+        { test: "Connection not cached", implementation: "Verify existing behavior", type: "behavioral", status: "completed", commits: [{ hash: "d8379259", message: "test(lsp): verify connection not cached after timeout", phase: "green" }], notes: [] },
+      ],
+    },
+  ],
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
@@ -107,7 +72,14 @@ const scrum: ScrumDashboard = {
       { name: "E2E tests pass", run: "make test_e2e" },
     ],
   },
-  retrospectives: [],
+  retrospectives: [
+    {
+      sprint: 151,
+      improvements: [
+        { action: "get_or_create_connection_with_timeout pattern enables testability", timing: "immediate", status: "completed", outcome: "Timeout duration injectable for unit tests" },
+      ],
+    },
+  ],
 };
 
 // Type Definitions (DO NOT MODIFY) =============================================
