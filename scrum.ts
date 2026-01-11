@@ -69,8 +69,8 @@ const scrum: ScrumDashboard = {
         test: "Request during init returns error code -32803 (REQUEST_FAILED)",
         implementation: "Check state before forwarding request, return REQUEST_FAILED if not Ready",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "9a2c06d0", message: "feat(lsp): return REQUEST_FAILED immediately during downstream init", phase: "green" }],
         notes: ["Gate at send_hover_request and send_completion_request entry points"],
       },
       {
