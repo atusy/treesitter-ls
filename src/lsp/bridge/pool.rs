@@ -447,4 +447,38 @@ mod tests {
             }
         }
     }
+
+    /// Test that connection is NOT cached in pool after timeout.
+    ///
+    /// When initialization times out, the connection should not be stored
+    /// in the pool. This ensures that:
+    /// 1. Next request will attempt a fresh connection (retry behavior)
+    /// 2. No broken/half-initialized connections are cached
+    #[tokio::test]
+    async fn connection_not_cached_after_timeout() {
+        let pool = LanguageServerPool::new();
+        let config = BridgeServerConfig {
+            cmd: vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "cat > /dev/null".to_string(),
+            ],
+            languages: vec!["test".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        // First attempt - should timeout
+        let result = pool
+            .get_or_create_connection_with_timeout("test", &config, Duration::from_millis(100))
+            .await;
+        assert!(result.is_err(), "First attempt should fail with timeout");
+
+        // Check that pool has no connections cached for "test"
+        let connections = pool.connections.lock().await;
+        assert!(
+            !connections.contains_key("test"),
+            "Connection should NOT be cached after timeout failure"
+        );
+    }
 }
