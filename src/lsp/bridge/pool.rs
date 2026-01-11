@@ -41,6 +41,53 @@ use super::protocol::{
     transform_hover_response_to_host,
 };
 
+/// Handle wrapping a connection with its state (ADR-0015 per-connection state).
+///
+/// Each connection has its own lifecycle state that transitions:
+/// - Initializing: spawn started, awaiting initialize response
+/// - Ready: initialize/initialized handshake complete
+/// - Failed: initialization failed (timeout, error, etc.)
+///
+/// This design ensures state is atomically tied to the connection,
+/// preventing race conditions between state checks and connection access.
+pub(crate) struct ConnectionHandle {
+    /// Connection state - uses std::sync::RwLock for fast, synchronous state checks
+    state: std::sync::RwLock<ConnectionState>,
+    /// Async connection to downstream language server
+    connection: tokio::sync::Mutex<AsyncBridgeConnection>,
+}
+
+impl ConnectionHandle {
+    /// Create a new ConnectionHandle with initial Initializing state.
+    pub(crate) fn new(connection: AsyncBridgeConnection) -> Self {
+        Self {
+            state: std::sync::RwLock::new(ConnectionState::Initializing),
+            connection: tokio::sync::Mutex::new(connection),
+        }
+    }
+
+    /// Get the current connection state.
+    ///
+    /// Uses std::sync::RwLock for fast, non-blocking read access.
+    pub(crate) fn state(&self) -> ConnectionState {
+        *self.state.read().expect("state lock poisoned")
+    }
+
+    /// Set the connection state.
+    ///
+    /// Used during initialization to transition to Ready or Failed.
+    pub(crate) fn set_state(&self, state: ConnectionState) {
+        *self.state.write().expect("state lock poisoned") = state;
+    }
+
+    /// Get access to the underlying async connection.
+    ///
+    /// Returns the tokio::sync::MutexGuard for async I/O operations.
+    pub(crate) async fn connection(&self) -> tokio::sync::MutexGuard<'_, AsyncBridgeConnection> {
+        self.connection.lock().await
+    }
+}
+
 /// Pool of connections to downstream language servers (ADR-0016).
 ///
 /// Implements Phase 1: Single-LS-per-Language routing where each injection
@@ -48,11 +95,12 @@ use super::protocol::{
 ///
 /// Provides lazy initialization of connections and handles the LSP handshake
 /// (initialize/initialized) for each language server.
+///
+/// Connection state is embedded in each ConnectionHandle (ADR-0015 per-connection state),
+/// eliminating the previous architectural flaw of having a separate state map.
 pub(crate) struct LanguageServerPool {
-    /// Map of language -> initialized connection
-    connections: Mutex<HashMap<String, Arc<Mutex<AsyncBridgeConnection>>>>,
-    /// Map of language -> connection state (Initializing, Ready, Failed)
-    connection_states: Mutex<HashMap<String, ConnectionState>>,
+    /// Map of language -> connection handle (wraps connection with its state)
+    connections: Mutex<HashMap<String, Arc<ConnectionHandle>>>,
     /// Map of language -> (virtual document URI -> version)
     /// Tracks which documents have been opened and their current version number
     document_versions: Mutex<HashMap<String, HashMap<String, i32>>>,
@@ -65,7 +113,6 @@ impl LanguageServerPool {
     pub(crate) fn new() -> Self {
         Self {
             connections: Mutex::new(HashMap::new()),
-            connection_states: Mutex::new(HashMap::new()),
             document_versions: Mutex::new(HashMap::new()),
             next_request_id: std::sync::atomic::AtomicI64::new(1),
         }
@@ -104,11 +151,13 @@ impl LanguageServerPool {
     ///
     /// If no connection exists, spawns the language server and performs
     /// the LSP initialize/initialized handshake with default timeout.
+    ///
+    /// Returns the ConnectionHandle which wraps both the connection and its state.
     async fn get_or_create_connection(
         &self,
         language: &str,
         server_config: &crate::config::settings::BridgeServerConfig,
-    ) -> io::Result<Arc<Mutex<AsyncBridgeConnection>>> {
+    ) -> io::Result<Arc<ConnectionHandle>> {
         self.get_or_create_connection_with_timeout(
             language,
             server_config,
@@ -122,27 +171,46 @@ impl LanguageServerPool {
     /// If no connection exists, spawns the language server and performs
     /// the LSP initialize/initialized handshake. The timeout applies to the
     /// entire initialization process (write request + read response loop).
+    ///
+    /// Returns the ConnectionHandle which wraps both the connection and its state.
+    /// State transitions are atomic with connection creation (ADR-0015).
     async fn get_or_create_connection_with_timeout(
         &self,
         language: &str,
         server_config: &crate::config::settings::BridgeServerConfig,
         timeout: Duration,
-    ) -> io::Result<Arc<Mutex<AsyncBridgeConnection>>> {
+    ) -> io::Result<Arc<ConnectionHandle>> {
         let mut connections = self.connections.lock().await;
 
         // Check if we already have a connection for this language
-        if let Some(conn) = connections.get(language) {
-            return Ok(Arc::clone(conn));
+        if let Some(handle) = connections.get(language) {
+            // Check state atomically with connection lookup (fixes race condition)
+            match handle.state() {
+                ConnectionState::Initializing => {
+                    return Err(io::Error::other("bridge: downstream server initializing"));
+                }
+                ConnectionState::Failed => {
+                    return Err(io::Error::other("bridge: downstream server failed"));
+                }
+                ConnectionState::Ready => {
+                    return Ok(Arc::clone(handle));
+                }
+            }
         }
 
-        // Set state to Initializing before spawning
-        {
-            let mut states = self.connection_states.lock().await;
-            states.insert(language.to_string(), ConnectionState::Initializing);
-        }
+        // Spawn new connection - state starts as Initializing via ConnectionHandle::new()
+        let conn = AsyncBridgeConnection::spawn(server_config.cmd.clone()).await?;
+        let handle = Arc::new(ConnectionHandle::new(conn));
 
-        // Spawn new connection
-        let mut conn = AsyncBridgeConnection::spawn(server_config.cmd.clone()).await?;
+        // Insert handle into map while still initializing
+        // This allows other requests to see the Initializing state
+        connections.insert(language.to_string(), Arc::clone(&handle));
+
+        // Drop the connections lock before doing I/O
+        drop(connections);
+
+        // Get mutable access to connection for initialization handshake
+        let mut conn_guard = handle.connection().await;
 
         // Perform LSP initialize handshake with timeout
         let init_result = tokio::time::timeout(timeout, async {
@@ -158,11 +226,11 @@ impl LanguageServerPool {
                 }
             });
 
-            conn.write_message(&init_request).await?;
+            conn_guard.write_message(&init_request).await?;
 
             // Read initialize response (skip any notifications)
             loop {
-                let msg = conn.read_message().await?;
+                let msg = conn_guard.read_message().await?;
                 if msg.get("id").is_some() {
                     // Got the initialize response
                     if msg.get("error").is_some() {
@@ -182,38 +250,31 @@ impl LanguageServerPool {
                 "method": "initialized",
                 "params": {}
             });
-            conn.write_message(&initialized).await?;
+            conn_guard.write_message(&initialized).await?;
 
             Ok::<_, io::Error>(())
         })
         .await;
 
-        // Handle timeout
+        // Drop the connection guard before handling result
+        // This is required by the borrow checker - we can't return handle while conn_guard exists
+        drop(conn_guard);
+
+        // Handle initialization result
         match init_result {
             Ok(Ok(())) => {
-                // Init succeeded - set state to Ready
-                {
-                    let mut states = self.connection_states.lock().await;
-                    states.insert(language.to_string(), ConnectionState::Ready);
-                }
-                let conn = Arc::new(Mutex::new(conn));
-                connections.insert(language.to_string(), Arc::clone(&conn));
-                Ok(conn)
+                // Init succeeded - set state to Ready (atomic with handle)
+                handle.set_state(ConnectionState::Ready);
+                Ok(handle)
             }
             Ok(Err(e)) => {
                 // Init failed with io::Error - set state to Failed
-                {
-                    let mut states = self.connection_states.lock().await;
-                    states.insert(language.to_string(), ConnectionState::Failed);
-                }
+                handle.set_state(ConnectionState::Failed);
                 Err(e)
             }
             Err(_elapsed) => {
                 // Timeout occurred - set state to Failed
-                {
-                    let mut states = self.connection_states.lock().await;
-                    states.insert(language.to_string(), ConnectionState::Failed);
-                }
+                handle.set_state(ConnectionState::Failed);
                 Err(io::Error::new(
                     io::ErrorKind::TimedOut,
                     "Initialize timeout: downstream server unresponsive",
@@ -231,11 +292,10 @@ impl LanguageServerPool {
     /// Send a hover request and wait for the response.
     ///
     /// This is a convenience method that handles the full request/response cycle:
-    /// 1. Check connection state - return error if Initializing or Failed (non-blocking)
-    /// 2. Get or create a connection to the language server
-    /// 3. Send a textDocument/didOpen notification if needed
-    /// 4. Send the hover request
-    /// 5. Wait for and return the response
+    /// 1. Get or create a connection (state check is atomic with lookup - ADR-0015)
+    /// 2. Send a textDocument/didOpen notification if needed
+    /// 3. Send the hover request
+    /// 4. Wait for and return the response
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn send_hover_request(
         &self,
@@ -247,25 +307,11 @@ impl LanguageServerPool {
         region_start_line: u32,
         virtual_content: &str,
     ) -> io::Result<serde_json::Value> {
-        // Check if server is still initializing or failed - return error immediately (non-blocking)
-        {
-            let states = self.connection_states.lock().await;
-            match states.get(injection_language) {
-                Some(ConnectionState::Initializing) => {
-                    return Err(io::Error::other("bridge: downstream server initializing"));
-                }
-                Some(ConnectionState::Failed) => {
-                    return Err(io::Error::other("bridge: downstream server failed"));
-                }
-                _ => {} // Ready or not present - proceed
-            }
-        }
-
-        // Get or create connection
-        let conn = self
+        // Get or create connection - state check is atomic with lookup (ADR-0015)
+        let handle = self
             .get_or_create_connection(injection_language, server_config)
             .await?;
-        let mut conn = conn.lock().await;
+        let mut conn = handle.connection().await;
 
         // Build virtual document URI
         let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
@@ -319,11 +365,10 @@ impl LanguageServerPool {
     /// Send a completion request and wait for the response.
     ///
     /// This is a convenience method that handles the full request/response cycle:
-    /// 1. Check connection state - return error if Initializing or Failed (non-blocking)
-    /// 2. Get or create a connection to the language server
-    /// 3. Send a textDocument/didOpen notification if not opened, or didChange if already opened
-    /// 4. Send the completion request
-    /// 5. Wait for and return the response with transformed coordinates
+    /// 1. Get or create a connection (state check is atomic with lookup - ADR-0015)
+    /// 2. Send a textDocument/didOpen notification if not opened, or didChange if already opened
+    /// 3. Send the completion request
+    /// 4. Wait for and return the response with transformed coordinates
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn send_completion_request(
         &self,
@@ -335,25 +380,11 @@ impl LanguageServerPool {
         region_start_line: u32,
         virtual_content: &str,
     ) -> io::Result<serde_json::Value> {
-        // Check if server is still initializing or failed - return error immediately (non-blocking)
-        {
-            let states = self.connection_states.lock().await;
-            match states.get(injection_language) {
-                Some(ConnectionState::Initializing) => {
-                    return Err(io::Error::other("bridge: downstream server initializing"));
-                }
-                Some(ConnectionState::Failed) => {
-                    return Err(io::Error::other("bridge: downstream server failed"));
-                }
-                _ => {} // Ready or not present - proceed
-            }
-        }
-
-        // Get or create connection
-        let conn = self
+        // Get or create connection - state check is atomic with lookup (ADR-0015)
+        let handle = self
             .get_or_create_connection(injection_language, server_config)
             .await?;
-        let mut conn = conn.lock().await;
+        let mut conn = handle.connection().await;
 
         // Build virtual document URI
         let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
@@ -430,22 +461,81 @@ mod tests {
     use crate::config::settings::BridgeServerConfig;
     use std::time::Duration;
 
-    /// Test that ConnectionState enum exists and has expected variants.
-    /// State should start as Initializing, transition to Ready after successful init.
+    /// Test that ConnectionHandle wraps connection with state (ADR-0015).
+    /// State should start as Initializing, and can transition via set_state().
     #[tokio::test]
-    async fn connection_state_starts_as_initializing_then_transitions_to_ready() {
+    async fn connection_handle_wraps_connection_with_state() {
+        // Create a mock server process to get a real connection
+        let conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat".to_string(),
+        ])
+        .await
+        .expect("should spawn cat process");
+
+        // Wrap in ConnectionHandle
+        let handle = ConnectionHandle::new(conn);
+
+        // Initial state should be Initializing
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Initializing,
+            "Initial state should be Initializing"
+        );
+
+        // Can transition to Ready
+        handle.set_state(ConnectionState::Ready);
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Ready,
+            "State should transition to Ready"
+        );
+
+        // Can transition to Failed
+        handle.set_state(ConnectionState::Failed);
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Failed,
+            "State should transition to Failed"
+        );
+
+        // Can access connection
+        let _conn_guard = handle.connection().await;
+        // Connection is accessible (test passes if no panic)
+    }
+
+    /// Test that LanguageServerPool starts with no connections.
+    /// Connections (and their states) are created lazily on first request.
+    #[tokio::test]
+    async fn pool_starts_with_no_connections() {
         let pool = LanguageServerPool::new();
 
-        // Verify initial state: no connection states exist
-        let states = pool.connection_states.lock().await;
+        // Verify initial state: no connections exist
+        let connections = pool.connections.lock().await;
         assert!(
-            states.is_empty(),
-            "States map should exist and be empty initially"
+            connections.is_empty(),
+            "Connections map should exist and be empty initially"
         );
         assert!(
-            !states.contains_key("test"),
-            "State should not exist before connection attempt"
+            !connections.contains_key("test"),
+            "Connection should not exist before connection attempt"
         );
+    }
+
+    /// Helper to create a ConnectionHandle in a specific state for testing.
+    async fn create_handle_with_state(state: ConnectionState) -> Arc<ConnectionHandle> {
+        // Create a mock server process to get a real connection
+        let conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat".to_string(),
+        ])
+        .await
+        .expect("should spawn cat process");
+        let handle = Arc::new(ConnectionHandle::new(conn));
+        handle.set_state(state);
+        handle
     }
 
     /// Test that request during Initializing state returns error immediately (non-blocking).
@@ -469,10 +559,11 @@ mod tests {
             workspace_type: None,
         };
 
-        // Manually set state to Initializing (simulating init in progress)
+        // Insert a ConnectionHandle with Initializing state (simulating init in progress)
         {
-            let mut states = pool.connection_states.lock().await;
-            states.insert("lua".to_string(), ConnectionState::Initializing);
+            let handle = create_handle_with_state(ConnectionState::Initializing).await;
+            let mut connections = pool.connections.lock().await;
+            connections.insert("lua".to_string(), handle);
         }
 
         let host_uri = Url::parse("file:///test/doc.md").unwrap();
@@ -537,10 +628,11 @@ mod tests {
             workspace_type: None,
         };
 
-        // Set state to Initializing
+        // Insert a ConnectionHandle with Initializing state
         {
-            let mut states = pool.connection_states.lock().await;
-            states.insert("lua".to_string(), ConnectionState::Initializing);
+            let handle = create_handle_with_state(ConnectionState::Initializing).await;
+            let mut connections = pool.connections.lock().await;
+            connections.insert("lua".to_string(), handle);
         }
 
         let host_uri = Url::parse("file:///test/doc.md").unwrap();
@@ -607,10 +699,11 @@ mod tests {
             workspace_type: None,
         };
 
-        // Set state to Failed (simulating failed initialization)
+        // Insert a ConnectionHandle with Failed state (simulating failed initialization)
         {
-            let mut states = pool.connection_states.lock().await;
-            states.insert("lua".to_string(), ConnectionState::Failed);
+            let handle = create_handle_with_state(ConnectionState::Failed).await;
+            let mut connections = pool.connections.lock().await;
+            connections.insert("lua".to_string(), handle);
         }
 
         let host_uri = Url::parse("file:///test/doc.md").unwrap();
@@ -671,10 +764,11 @@ mod tests {
             workspace_type: None,
         };
 
-        // Set state to Failed (simulating failed initialization)
+        // Insert a ConnectionHandle with Failed state (simulating failed initialization)
         {
-            let mut states = pool.connection_states.lock().await;
-            states.insert("lua".to_string(), ConnectionState::Failed);
+            let handle = create_handle_with_state(ConnectionState::Failed).await;
+            let mut connections = pool.connections.lock().await;
+            connections.insert("lua".to_string(), handle);
         }
 
         let host_uri = Url::parse("file:///test/doc.md").unwrap();
@@ -768,12 +862,13 @@ mod tests {
             result.err()
         );
 
-        // Verify state is Ready after successful init
+        // Verify state is Ready after successful init (via ConnectionHandle)
         {
-            let states = pool.connection_states.lock().await;
+            let connections = pool.connections.lock().await;
+            let handle = connections.get("lua").expect("Connection should exist");
             assert_eq!(
-                states.get("lua"),
-                Some(&ConnectionState::Ready),
+                handle.state(),
+                ConnectionState::Ready,
                 "State should be Ready after successful init"
             );
         }
@@ -818,11 +913,14 @@ mod tests {
             .get_or_create_connection_with_timeout("test", &config, Duration::from_millis(100))
             .await;
 
-        // After timeout, state should be Failed
-        let states = pool.connection_states.lock().await;
+        // After timeout, state should be Failed (via ConnectionHandle)
+        let connections = pool.connections.lock().await;
+        let handle = connections
+            .get("test")
+            .expect("Connection handle should exist after timeout");
         assert_eq!(
-            states.get("test"),
-            Some(&ConnectionState::Failed),
+            handle.state(),
+            ConnectionState::Failed,
             "State should be Failed after timeout"
         );
     }
@@ -912,14 +1010,13 @@ mod tests {
         }
     }
 
-    /// Test that connection is NOT cached in pool after timeout.
+    /// Test that ConnectionHandle IS cached after timeout with Failed state.
     ///
-    /// When initialization times out, the connection should not be stored
-    /// in the pool. This ensures that:
-    /// 1. Next request will attempt a fresh connection (retry behavior)
-    /// 2. No broken/half-initialized connections are cached
+    /// When initialization times out, the ConnectionHandle is stored in the pool
+    /// with Failed state. This allows subsequent requests to fail fast without
+    /// attempting to spawn a new connection.
     #[tokio::test]
-    async fn connection_not_cached_after_timeout() {
+    async fn connection_handle_cached_with_failed_state_after_timeout() {
         let pool = LanguageServerPool::new();
         let config = BridgeServerConfig {
             cmd: vec![
@@ -938,11 +1035,17 @@ mod tests {
             .await;
         assert!(result.is_err(), "First attempt should fail with timeout");
 
-        // Check that pool has no connections cached for "test"
+        // ConnectionHandle should be cached with Failed state
         let connections = pool.connections.lock().await;
         assert!(
-            !connections.contains_key("test"),
-            "Connection should NOT be cached after timeout failure"
+            connections.contains_key("test"),
+            "ConnectionHandle should be cached after timeout"
+        );
+        let handle = connections.get("test").unwrap();
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Failed,
+            "Cached handle should have Failed state"
         );
     }
 }
