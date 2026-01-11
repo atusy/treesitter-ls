@@ -182,6 +182,102 @@ impl LanguageServerPool {
         }
     }
 
+    /// Forward didChange notifications to opened virtual documents.
+    ///
+    /// Only sends didChange for virtual documents that have been opened (exist in host_to_virtual).
+    /// Uses full content sync (TextDocumentSyncKind::Full).
+    ///
+    /// # Arguments
+    /// * `host_uri` - The host document URI
+    /// * `injections` - List of (language, region_id, content) tuples for all injection regions
+    pub(crate) async fn forward_didchange_to_opened_docs(
+        &self,
+        host_uri: &Url,
+        injections: &[(String, String, String)], // (language, region_id, content)
+    ) {
+        use super::protocol::VirtualDocumentUri;
+
+        // Get opened virtual docs for this host
+        let opened_docs = {
+            let host_map = self.host_to_virtual.lock().await;
+            host_map.get(host_uri).cloned().unwrap_or_default()
+        };
+
+        // For each injection, check if it's opened and send didChange
+        for (language, region_id, content) in injections {
+            let virtual_uri =
+                VirtualDocumentUri::new(host_uri, language, region_id).to_uri_string();
+
+            // Check if this virtual doc is opened
+            if opened_docs.iter().any(|doc| doc.virtual_uri == virtual_uri) {
+                // Get version and send didChange
+                if let Some(version) = self
+                    .increment_document_version(language, &virtual_uri)
+                    .await
+                {
+                    // Send didChange notification (best effort, ignore errors)
+                    let _ = self
+                        .send_didchange_for_virtual_doc(language, &virtual_uri, content, version)
+                        .await;
+                }
+            }
+            // If not opened, skip - didOpen will be sent on first request
+        }
+    }
+
+    /// Send a didChange notification for a virtual document.
+    ///
+    /// This method sends a didChange notification to the downstream language server
+    /// for the specified virtual document URI. Uses full content sync.
+    ///
+    /// # Arguments
+    /// * `language` - The injection language (e.g., "lua")
+    /// * `virtual_uri` - The virtual document URI string
+    /// * `content` - The new content for the virtual document
+    /// * `version` - The document version number
+    async fn send_didchange_for_virtual_doc(
+        &self,
+        language: &str,
+        virtual_uri: &str,
+        content: &str,
+        version: i32,
+    ) -> std::io::Result<()> {
+        // Get the connection for this language (if it exists and is Ready)
+        let connections = self.connections.lock().await;
+        let Some(handle) = connections.get(language) else {
+            // No connection for this language - nothing to do
+            return Ok(());
+        };
+
+        // Only send if connection is Ready
+        if handle.state() != ConnectionState::Ready {
+            return Ok(());
+        }
+
+        let handle = std::sync::Arc::clone(handle);
+        drop(connections); // Release lock before I/O
+
+        // Build and send the didChange notification
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/didChange",
+            "params": {
+                "textDocument": {
+                    "uri": virtual_uri,
+                    "version": version
+                },
+                "contentChanges": [
+                    {
+                        "text": content
+                    }
+                ]
+            }
+        });
+
+        let mut conn = handle.connection().await;
+        conn.write_message(&notification).await
+    }
+
     /// Close all virtual documents associated with a host document.
     ///
     /// When a host document (e.g., markdown file) is closed, this method:
@@ -1357,6 +1453,178 @@ mod tests {
                 handle.state(),
                 ConnectionState::Ready,
                 "Connection should remain Ready after close_host_document"
+            );
+        }
+    }
+
+    /// Test that forward_didchange_to_opened_docs sends didChange only for opened virtual documents.
+    ///
+    /// When a host document changes, we should only send didChange notifications
+    /// for virtual documents that have been opened (via didOpen). This test:
+    /// 1. Opens a virtual document (by calling should_send_didopen)
+    /// 2. Calls forward_didchange_to_opened_docs with injections including the opened doc
+    /// 3. Verifies didChange is sent only for opened docs
+    #[tokio::test]
+    async fn forward_didchange_to_opened_docs_sends_for_opened_docs() {
+        use super::super::protocol::VirtualDocumentUri;
+
+        let pool = LanguageServerPool::new();
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+
+        // Generate the virtual URI the same way forward_didchange_to_opened_docs does
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "lua-0").to_uri_string();
+
+        // Open a virtual document (simulate first hover/completion request)
+        let opened = pool
+            .should_send_didopen(&host_uri, "lua", &virtual_uri)
+            .await;
+        assert!(opened, "First call should open the document");
+
+        // Verify document is tracked
+        {
+            let host_map = pool.host_to_virtual.lock().await;
+            let docs = host_map.get(&host_uri).expect("Should have host entry");
+            assert_eq!(docs.len(), 1);
+            assert_eq!(docs[0].virtual_uri, virtual_uri);
+        }
+
+        // Now call forward_didchange_to_opened_docs
+        // The injection tuple is (language, region_id, content)
+        let injections = vec![(
+            "lua".to_string(),
+            "lua-0".to_string(),
+            "local x = 42".to_string(),
+        )];
+
+        // Call the method - it should find the opened doc and attempt to send didChange
+        pool.forward_didchange_to_opened_docs(&host_uri, &injections)
+            .await;
+
+        // Verify the document version was incremented (indicating didChange was attempted)
+        {
+            let versions = pool.document_versions.lock().await;
+            if let Some(docs) = versions.get("lua") {
+                // Version should be 2 (1 from should_send_didopen, 1 from forward_didchange)
+                // Note: Without an actual connection, the didChange send may fail,
+                // but increment_document_version should still have been called
+                let version = docs.get(&virtual_uri);
+                assert!(
+                    version.is_some(),
+                    "Document should still be tracked after forward_didchange"
+                );
+                // Version should be incremented to 2
+                assert_eq!(
+                    *version.unwrap(),
+                    2,
+                    "Version should be incremented after forward_didchange"
+                );
+            } else {
+                panic!("Should have lua documents tracked");
+            }
+        }
+    }
+
+    /// Test that forward_didchange_to_opened_docs skips unopened virtual documents.
+    ///
+    /// When a host document changes, we should NOT send didChange notifications
+    /// for virtual documents that have NOT been opened (not in host_to_virtual).
+    /// This test:
+    /// 1. Calls forward_didchange_to_opened_docs with an injection that has no opened doc
+    /// 2. Verifies no version increment happens (document not in document_versions)
+    #[tokio::test]
+    async fn forward_didchange_to_opened_docs_skips_unopened_docs() {
+        let pool = LanguageServerPool::new();
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+
+        // Do NOT call should_send_didopen - document is unopened
+        // Now call forward_didchange_to_opened_docs with an injection
+        let injections = vec![(
+            "python".to_string(),
+            "python-0".to_string(),
+            "x = 42".to_string(),
+        )];
+
+        // Call the method - it should skip because no virtual doc is opened
+        pool.forward_didchange_to_opened_docs(&host_uri, &injections)
+            .await;
+
+        // Verify no document version was created (document was never opened)
+        {
+            let versions = pool.document_versions.lock().await;
+            // Should NOT have any python entries because document was never opened
+            assert!(
+                !versions.contains_key("python"),
+                "Should NOT have python documents because none were opened"
+            );
+        }
+
+        // Also verify host_to_virtual is empty
+        {
+            let host_map = pool.host_to_virtual.lock().await;
+            assert!(
+                !host_map.contains_key(&host_uri),
+                "Should NOT have host entry because no document was opened"
+            );
+        }
+    }
+
+    /// Test that forward_didchange_to_opened_docs only sends didChange for opened docs in mixed scenario.
+    ///
+    /// When a host document changes with multiple injections:
+    /// - Opened injections should get didChange (version incremented)
+    /// - Unopened injections should be skipped (no version entry)
+    #[tokio::test]
+    async fn forward_didchange_mixed_opened_and_unopened_docs() {
+        use super::super::protocol::VirtualDocumentUri;
+
+        let pool = LanguageServerPool::new();
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+
+        // Open only the first Lua block
+        let lua_virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "lua-0").to_uri_string();
+        let opened = pool
+            .should_send_didopen(&host_uri, "lua", &lua_virtual_uri)
+            .await;
+        assert!(opened, "First call should open the document");
+
+        // Do NOT open python-0
+
+        // Now call forward_didchange_to_opened_docs with both injections
+        let injections = vec![
+            (
+                "lua".to_string(),
+                "lua-0".to_string(),
+                "local x = 42".to_string(),
+            ),
+            (
+                "python".to_string(),
+                "python-0".to_string(),
+                "x = 42".to_string(),
+            ),
+        ];
+
+        pool.forward_didchange_to_opened_docs(&host_uri, &injections)
+            .await;
+
+        // Verify:
+        // 1. Lua document version was incremented (was opened)
+        // 2. Python document version does NOT exist (was not opened)
+        {
+            let versions = pool.document_versions.lock().await;
+
+            // Lua should have version 2
+            let lua_docs = versions.get("lua").expect("Should have lua documents");
+            let lua_version = lua_docs.get(&lua_virtual_uri);
+            assert_eq!(
+                lua_version,
+                Some(&2),
+                "Lua version should be 2 (1 from open, 1 from didChange)"
+            );
+
+            // Python should NOT exist
+            assert!(
+                !versions.contains_key("python"),
+                "Should NOT have python documents because none were opened"
             );
         }
     }

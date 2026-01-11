@@ -818,6 +818,67 @@ impl TreeSitterLs {
         }
     }
 
+    /// Forward didChange notifications to opened virtual documents in bridges.
+    ///
+    /// This method collects all injection regions from the parsed document and
+    /// forwards didChange notifications to downstream language servers for any
+    /// virtual documents that have been opened (via didOpen during hover/completion).
+    ///
+    /// Called after parse_document() in did_change() to propagate host document
+    /// changes to downstream language servers.
+    async fn forward_didchange_to_bridges(&self, uri: &Url, text: &str) {
+        // Get the host language for this document
+        let host_language = match self.get_language_for_document(uri) {
+            Some(lang) => lang,
+            None => return, // No language detected, nothing to forward
+        };
+
+        // Get the injection query for this language
+        let injection_query = match self.language.get_injection_query(&host_language) {
+            Some(q) => q,
+            None => return, // No injection query = no injections
+        };
+
+        // Get the document's parse tree
+        let doc = match self.documents.get(uri) {
+            Some(d) => d,
+            None => return, // Document not found
+        };
+
+        let tree = match doc.tree() {
+            Some(t) => t,
+            None => return, // No parse tree
+        };
+
+        // Collect all injection regions
+        let regions =
+            match collect_all_injections(&tree.root_node(), text, Some(injection_query.as_ref())) {
+                Some(r) => r,
+                None => return, // No injections
+            };
+
+        if regions.is_empty() {
+            return;
+        }
+
+        // Build (language, region_id, content) tuples for each injection
+        let injections: Vec<(String, String, String)> = regions
+            .iter()
+            .enumerate()
+            .map(|(index, region)| {
+                // Calculate stable region_id using per-language ordinal
+                let region_id = crate::language::injection::calculate_region_id(&regions, index);
+                let content = &text[region.content_node.byte_range()];
+                (region.language.clone(), region_id, content.to_string())
+            })
+            .collect();
+
+        // Forward didChange to opened virtual documents
+        self.language_server_pool
+            .forward_didchange_to_opened_docs(uri, &injections)
+            .await;
+    }
+
     /// Check injected languages and handle missing parsers.
     ///
     /// This function:
@@ -1249,12 +1310,19 @@ impl LanguageServer for TreeSitterLs {
         // Must be called BEFORE parse_document which updates the injection_map
         self.invalidate_overlapping_injection_caches(&uri, &edits);
 
+        // Clone text before parse_document consumes it (needed for forward_didchange_to_bridges)
+        let text_for_bridge = text.clone();
+
         // Parse the updated document with edit information
         self.parse_document(uri.clone(), text, language_id.as_deref(), edits)
             .await;
 
         // Invalidate semantic token cache to ensure fresh tokens for delta calculations
         self.semantic_cache.remove(&uri);
+
+        // Forward didChange to opened virtual documents in bridge
+        self.forward_didchange_to_bridges(&uri, &text_for_bridge)
+            .await;
 
         // Check for injected languages and trigger auto-install for missing parsers
         // This must be called AFTER parse_document so we have access to the updated AST
