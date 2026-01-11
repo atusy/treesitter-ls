@@ -506,6 +506,76 @@ mod tests {
         );
     }
 
+    /// Test that error message is exactly "bridge: downstream server initializing".
+    /// This verifies the specific error message format per ADR-0015.
+    #[tokio::test]
+    async fn request_during_init_returns_exact_error_message() {
+        use std::sync::Arc;
+        use tower_lsp::lsp_types::{Position, Url};
+
+        let pool = Arc::new(LanguageServerPool::new());
+        let config = BridgeServerConfig {
+            cmd: vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "cat > /dev/null".to_string(),
+            ],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        // Set state to Initializing
+        {
+            let mut states = pool.connection_states.lock().await;
+            states.insert("lua".to_string(), ConnectionState::Initializing);
+        }
+
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let host_position = Position {
+            line: 3,
+            character: 5,
+        };
+
+        // Test hover request error message
+        let result = pool
+            .send_hover_request(
+                &config,
+                &host_uri,
+                host_position,
+                "lua",
+                "region-0",
+                3,
+                "print('hello')",
+            )
+            .await;
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "bridge: downstream server initializing",
+            "Hover error message should match exactly"
+        );
+
+        // Test completion request error message
+        let result = pool
+            .send_completion_request(
+                &config,
+                &host_uri,
+                host_position,
+                "lua",
+                "region-0",
+                3,
+                "print('hello')",
+            )
+            .await;
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "bridge: downstream server initializing",
+            "Completion error message should match exactly"
+        );
+    }
+
     /// Test that ConnectionState transitions to Failed on timeout
     #[tokio::test]
     async fn connection_state_transitions_to_failed_on_timeout() {
