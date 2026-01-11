@@ -231,7 +231,7 @@ impl LanguageServerPool {
     /// Send a hover request and wait for the response.
     ///
     /// This is a convenience method that handles the full request/response cycle:
-    /// 1. Check connection state - return error if Initializing (non-blocking)
+    /// 1. Check connection state - return error if Initializing or Failed (non-blocking)
     /// 2. Get or create a connection to the language server
     /// 3. Send a textDocument/didOpen notification if needed
     /// 4. Send the hover request
@@ -319,7 +319,7 @@ impl LanguageServerPool {
     /// Send a completion request and wait for the response.
     ///
     /// This is a convenience method that handles the full request/response cycle:
-    /// 1. Check connection state - return error if Initializing (non-blocking)
+    /// 1. Check connection state - return error if Initializing or Failed (non-blocking)
     /// 2. Get or create a connection to the language server
     /// 3. Send a textDocument/didOpen notification if not opened, or didChange if already opened
     /// 4. Send the completion request
