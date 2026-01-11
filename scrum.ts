@@ -52,6 +52,12 @@ const scrum: ScrumDashboard = {
     ],
   },
   retrospectives: [
+    { sprint: 157, improvements: [
+      { action: "Tower Service middleware pattern for cross-cutting concerns", timing: "immediate", status: "completed", outcome: "RequestIdCapture wrapper injects behavior without modifying core handler logic" },
+      { action: "Task-local storage for request-scoped context", timing: "immediate", status: "completed", outcome: "tokio::task_local! provides clean request-scoped state without parameter threading" },
+      { action: "Validate framework capabilities before concluding 'impossible'", timing: "immediate", status: "completed", outcome: "Sprint 156 prematurely concluded tower-lsp limitations; Service layer approach discovered via user feedback" },
+      { action: "Fixed ID for internal requests", timing: "immediate", status: "completed", outcome: "Initialize handshake uses ID=0 for bridge-originated requests vs upstream-originated" },
+    ]},
     { sprint: 156, improvements: [
       { action: "Investigate framework constraints before planning", timing: "immediate", status: "completed", outcome: "tower-lsp LanguageServer trait doesn't expose IDs, but Service wrapper can" },
       { action: "Distinguish ADR intent vs literal interpretation", timing: "immediate", status: "completed", outcome: "ADR-0016 intent achievable via Service wrapper pattern" },
