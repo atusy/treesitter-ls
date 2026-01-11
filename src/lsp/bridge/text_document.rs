@@ -7,3 +7,4 @@
 
 mod completion;
 mod hover;
+mod signature_help;
