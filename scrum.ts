@@ -34,52 +34,39 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "PBI-REFACTOR-DIDCLOSE-MODULE",
+      story: {
+        role: "Lua developer editing markdown",
+        capability: "I want didClose logic organized in src/lsp/bridge/text_document/did_close.rs",
+        benefit: "So that the codebase follows consistent modular architecture matching lsp_impl structure",
+      },
+      acceptance_criteria: [
+        { criterion: "didClose logic extracted to text_document/did_close.rs", verification: "File exists with send_didclose_notification and close_host_document logic" },
+        { criterion: "pool.rs imports and delegates to did_close module", verification: "pool.rs uses pub(super) functions from did_close.rs" },
+        { criterion: "All existing tests pass unchanged", verification: "make test && make test_e2e pass" },
+      ],
+      status: "ready",
+    },
+    {
+      id: "PBI-REFACTOR-DIDCHANGE-MODULE",
+      story: {
+        role: "Lua developer editing markdown",
+        capability: "I want didChange logic organized in src/lsp/bridge/text_document/did_change.rs",
+        benefit: "So that the codebase follows consistent modular architecture matching lsp_impl structure",
+      },
+      acceptance_criteria: [
+        { criterion: "didChange logic extracted to text_document/did_change.rs", verification: "File exists with forward_didchange_to_opened_docs and send_didchange_for_virtual_doc logic" },
+        { criterion: "pool.rs imports and delegates to did_change module", verification: "pool.rs uses pub(super) functions from did_change.rs" },
+        { criterion: "All existing tests pass unchanged", verification: "make test && make test_e2e pass" },
+      ],
+      status: "ready",
+    },
+  ],
   sprint: null,
   completed: [
-    { number: 161, pbi_id: "PBI-DIDCHANGE-FORWARDING", goal: "Forward didChange notifications from host documents to opened virtual documents ensuring downstream language servers receive fresh content", status: "done",
-    subtasks: [
-      {
-        test: "Test forward_didchange_to_opened_docs sends didChange only for opened virtual documents",
-        implementation: "Add forward_didchange_to_opened_docs method to LanguageServerPool that checks host_to_virtual and sends didChange only for opened docs",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "cb8d5776", message: "feat(bridge): forward didChange notifications to opened virtual documents", phase: "green" }],
-        notes: ["Use build_bridge_didchange_notification with TextDocumentSyncKind::Full", "Skip notification if virtual doc not in host_to_virtual map"],
-      },
-      {
-        test: "Test forward_didchange_to_opened_docs skips unopened virtual documents",
-        implementation: "Verify that virtual documents not yet opened (no didOpen sent) are not sent didChange notifications",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "cb8d5776", message: "feat(bridge): forward didChange notifications to opened virtual documents", phase: "green" }],
-        notes: ["Important: only opened docs should receive didChange", "Prevents sending updates to unknown documents"],
-      },
-      {
-        test: "Test lsp_impl::did_change collects injection regions and forwards changes",
-        implementation: "Wire forward_didchange_to_opened_docs in lsp_impl.rs after parse_document, collecting injection regions with content",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "cb8d5776", message: "feat(bridge): forward didChange notifications to opened virtual documents", phase: "green" }],
-        notes: ["Data flow: parse_document -> collect injections -> forward_didchange_to_opened_docs", "Each injection has: language, region_id, content"],
-      },
-      {
-        test: "E2E test: edit Lua block in markdown and verify completion reflects changes",
-        implementation: "Add E2E test that modifies Lua code block content and verifies subsequent LSP features use fresh content",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "fdfa2425", message: "test(e2e): add didChange forwarding test", phase: "green" }],
-        notes: ["Validates end-to-end flow: host edit -> virtual doc update -> downstream LS response", "Use retry_for_lsp_indexing pattern for async operations"],
-      },
-      {
-        test: "Verify TODO comment exists for incremental sync optimization",
-        implementation: "Add TODO comment noting future opportunity to support incremental didChange instead of full sync",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Full sync is simpler but less efficient", "Incremental sync requires tracking content deltas per injection region"],
-      },
-    ] },
+    { number: 161, pbi_id: "PBI-DIDCHANGE-FORWARDING", goal: "Forward didChange notifications from host documents to opened virtual documents", status: "done", subtasks: [] },
     { number: 160, pbi_id: "PBI-DIDCLOSE-FORWARDING", goal: "Propagate didClose from host documents to virtual documents ensuring proper cleanup without closing connections", status: "done", subtasks: [] },
     { number: 159, pbi_id: "PBI-STABLE-REGION-ID", goal: "Implement stable region_id for shared virtual document URIs across bridge features", status: "done", subtasks: [] },
     { number: 158, pbi_id: "PBI-SIGNATURE-HELP-BRIDGE", goal: "Enable signature help bridging for Lua code blocks in markdown documents", status: "done", subtasks: [] },
@@ -99,6 +86,12 @@ const scrum: ScrumDashboard = {
     ],
   },
   retrospectives: [
+    { sprint: 161, improvements: [
+      { action: "Build dependency chains incrementally for cohesive delivery", timing: "immediate", status: "completed", outcome: "Sprints 159→160→161 chain (region_id → didClose → didChange) enabled incremental delivery - each sprint addressed specific concern while building stable foundation for next feature" },
+      { action: "Use skip-if-not-opened pattern for LSP protocol compliance", timing: "immediate", status: "completed", outcome: "forward_didchange_to_opened_docs checks host_to_virtual before sending - prevents protocol violations (didChange without didOpen), ensures downstream servers receive valid notification sequences" },
+      { action: "Document deferred optimizations with TODO comments", timing: "immediate", status: "completed", outcome: "TODO comment for incremental sync documents trade-off decision - full sync is simpler/pragmatic choice now, TODO preserves optimization opportunity for future without blocking current delivery" },
+      { action: "Leverage stable foundations to accelerate implementation", timing: "immediate", status: "completed", outcome: "Building on Sprint 160's host_to_virtual map made didChange straightforward - stable infrastructure enables rapid feature addition with minimal complexity" },
+    ]},
     { sprint: 160, improvements: [
       { action: "Design data structures in conversation before implementation", timing: "immediate", status: "completed", outcome: "Upfront discussion of OpenedVirtualDoc structure clarified requirements - implementation became straightforward with clear field ownership (virtual_uri, host_uri, region_id)" },
       { action: "Store computed values rather than recomputing", timing: "immediate", status: "completed", outcome: "virtual_uri stored directly in OpenedVirtualDoc instead of reconstructing from host_uri + region_id - simpler code, safer access pattern, single source of truth" },
