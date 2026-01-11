@@ -576,6 +576,88 @@ mod tests {
         );
     }
 
+    /// Test that requests succeed when ConnectionState is Ready.
+    /// This is a regression test to ensure the init check doesn't block valid requests.
+    #[tokio::test]
+    async fn request_succeeds_when_state_is_ready() {
+        use std::sync::Arc;
+        use tower_lsp::lsp_types::{Position, Url};
+
+        // Skip test if lua-language-server is not available
+        if std::process::Command::new("lua-language-server")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping test: lua-language-server not found");
+            return;
+        }
+
+        let pool = Arc::new(LanguageServerPool::new());
+        let config = BridgeServerConfig {
+            cmd: vec!["lua-language-server".to_string()],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let host_position = Position {
+            line: 3,
+            character: 5,
+        };
+
+        // First request triggers initialization
+        // After init completes, state should be Ready and request should succeed
+        let result = pool
+            .send_hover_request(
+                &config,
+                &host_uri,
+                host_position,
+                "lua",
+                "region-0",
+                3,
+                "print('hello')",
+            )
+            .await;
+
+        // Verify request succeeded (not blocked by init check)
+        assert!(
+            result.is_ok(),
+            "Request should succeed after init completes: {:?}",
+            result.err()
+        );
+
+        // Verify state is Ready after successful init
+        {
+            let states = pool.connection_states.lock().await;
+            assert_eq!(
+                states.get("lua"),
+                Some(&ConnectionState::Ready),
+                "State should be Ready after successful init"
+            );
+        }
+
+        // Second request should also succeed (state remains Ready)
+        let result = pool
+            .send_hover_request(
+                &config,
+                &host_uri,
+                host_position,
+                "lua",
+                "region-0",
+                3,
+                "print('world')",
+            )
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "Subsequent request should also succeed: {:?}",
+            result.err()
+        );
+    }
+
     /// Test that ConnectionState transitions to Failed on timeout
     #[tokio::test]
     async fn connection_state_transitions_to_failed_on_timeout() {
