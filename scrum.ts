@@ -66,7 +66,36 @@ const scrum: ScrumDashboard = {
       ],
     },
   ],
-  sprint: null,
+  sprint: {
+    number: 155,
+    pbi_id: "PBI-RETRY-FAILED-CONNECTION",
+    goal: "Enable automatic retry when downstream server connection has failed",
+    status: "planning",
+    subtasks: [
+      {
+        test: "Failed connection retry removes cached entry and spawns new server",
+        implementation: "Remove failed connection from cache, recursively call get_or_create_connection_with_timeout",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Modify ConnectionState::Failed branch in get_or_create_connection_with_timeout",
+          "Pattern: connections.remove(language); drop(connections); return self.get_or_create_connection_with_timeout(...).await",
+        ],
+      },
+      {
+        test: "Recovery works after initialization timeout",
+        implementation: "Verify timeout followed by successful connection on retry",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Integration test: first request times out, second request succeeds with working server",
+          "Requires swapping server config between calls to simulate recovery",
+        ],
+      },
+    ],
+  },
   completed: [
     {
       number: 154,
