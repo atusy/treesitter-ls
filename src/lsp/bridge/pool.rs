@@ -335,11 +335,17 @@ impl LanguageServerPool {
         region_start_line: u32,
         virtual_content: &str,
     ) -> io::Result<serde_json::Value> {
-        // Check if server is still initializing - return error immediately (non-blocking)
+        // Check if server is still initializing or failed - return error immediately (non-blocking)
         {
             let states = self.connection_states.lock().await;
-            if let Some(ConnectionState::Initializing) = states.get(injection_language) {
-                return Err(io::Error::other("bridge: downstream server initializing"));
+            match states.get(injection_language) {
+                Some(ConnectionState::Initializing) => {
+                    return Err(io::Error::other("bridge: downstream server initializing"));
+                }
+                Some(ConnectionState::Failed) => {
+                    return Err(io::Error::other("bridge: downstream server failed"));
+                }
+                _ => {} // Ready or not present - proceed
             }
         }
 
@@ -617,6 +623,73 @@ mod tests {
         let start = std::time::Instant::now();
         let result = pool
             .send_hover_request(
+                &config,
+                &host_uri,
+                host_position,
+                "lua",
+                "region-0",
+                3,
+                "print('hello')",
+            )
+            .await;
+        let elapsed = start.elapsed();
+
+        // Request should fail immediately (not block)
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "Request should return immediately, not block. Elapsed: {:?}",
+            elapsed
+        );
+
+        // Should return an error with exact message
+        assert!(
+            result.is_err(),
+            "Request during Failed should return error"
+        );
+
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "bridge: downstream server failed",
+            "Error message should indicate server failed"
+        );
+    }
+
+    /// Test that completion request during Failed state returns error immediately.
+    /// This verifies the exact error message per ADR-0015.
+    #[tokio::test]
+    async fn completion_request_during_failed_returns_error() {
+        use std::sync::Arc;
+        use tower_lsp::lsp_types::{Position, Url};
+
+        let pool = Arc::new(LanguageServerPool::new());
+        let config = BridgeServerConfig {
+            cmd: vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "cat > /dev/null".to_string(),
+            ],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        // Set state to Failed (simulating failed initialization)
+        {
+            let mut states = pool.connection_states.lock().await;
+            states.insert("lua".to_string(), ConnectionState::Failed);
+        }
+
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let host_position = Position {
+            line: 3,
+            character: 5,
+        };
+
+        // Try to send completion request while state is Failed
+        let start = std::time::Instant::now();
+        let result = pool
+            .send_completion_request(
                 &config,
                 &host_uri,
                 host_position,
