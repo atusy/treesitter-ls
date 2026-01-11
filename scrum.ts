@@ -37,6 +37,15 @@ const scrum: ScrumDashboard = {
   sprint: null,
   completed: [
     {
+      number: 154,
+      pbi_id: "PBI-STATE-PER-CONNECTION",
+      goal: "Move ConnectionState to per-connection ownership fixing race condition",
+      status: "done",
+      subtasks: [
+        { test: "N/A (structural refactor)", implementation: "Create ConnectionHandle wrapper struct with state and connection fields", type: "structural", status: "completed", commits: [{ hash: "ddf6e08d", message: "refactor(lsp): move ConnectionState to per-connection via ConnectionHandle", phase: "refactoring" }], notes: ["Single structural commit as this is pure refactoring with no behavior change"] },
+      ],
+    },
+    {
       number: 153,
       pbi_id: "PBI-WIRE-FAILED-STATE",
       goal: "Return REQUEST_FAILED when downstream server has failed initialization",
@@ -90,6 +99,13 @@ const scrum: ScrumDashboard = {
       improvements: [
         { action: "ConnectionState enum provides foundation for ADR-0015 state machine", timing: "immediate", status: "completed", outcome: "State tracking enables non-blocking request gating" },
         { action: "Separate state map from connection map enables checking state before blocking", timing: "immediate", status: "completed", outcome: "connection_states HashMap decouples state check from connection acquisition" },
+      ],
+    },
+    {
+      sprint: 154,
+      improvements: [
+        { action: "Per-connection state prevents race conditions - always ask 'what owns this state?' when adding shared mutable state", timing: "immediate", status: "completed", outcome: "ConnectionHandle wrapper makes state ownership explicit and atomic" },
+        { action: "std::sync::RwLock for fast sync state checks, tokio::sync::Mutex only for async I/O - choose lock type based on operation type", timing: "immediate", status: "completed", outcome: "Fast state checks don't require .await, enabling atomic check-and-set patterns" },
       ],
     },
     {
