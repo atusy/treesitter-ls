@@ -816,7 +816,8 @@ mod tests {
         });
         let region_start_line = 3;
 
-        let transformed = transform_signature_help_response_to_host(response.clone(), region_start_line);
+        let transformed =
+            transform_signature_help_response_to_host(response.clone(), region_start_line);
 
         // activeSignature and activeParameter must be preserved unchanged
         assert_eq!(

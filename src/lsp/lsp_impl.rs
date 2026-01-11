@@ -1329,7 +1329,7 @@ impl LanguageServer for TreeSitterLs {
 mod tests {
     use super::*;
     use crate::config::settings::BridgeLanguageConfig;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
 
     #[test]
     fn should_create_valid_url_from_file_path() {

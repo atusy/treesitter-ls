@@ -10,7 +10,8 @@ use tower_lsp::lsp_types::{Position, Url};
 
 use super::super::pool::LanguageServerPool;
 use super::super::protocol::{
-    VirtualDocumentUri, build_bridge_signature_help_request, transform_signature_help_response_to_host,
+    VirtualDocumentUri, build_bridge_signature_help_request,
+    transform_signature_help_response_to_host,
 };
 
 impl LanguageServerPool {
@@ -85,7 +86,10 @@ impl LanguageServerPool {
                 && id.as_i64() == Some(request_id)
             {
                 // Transform response to host coordinates
-                return Ok(transform_signature_help_response_to_host(msg, region_start_line));
+                return Ok(transform_signature_help_response_to_host(
+                    msg,
+                    region_start_line,
+                ));
             }
             // Skip notifications and other responses
         }
