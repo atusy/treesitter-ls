@@ -33,65 +33,21 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  product_backlog: [
-    {
-      id: "PBI-REQUEST-FAILED-INIT",
-      story: {
-        role: "Lua developer editing markdown",
-        capability: "receive an immediate error response when requesting hover/completion during downstream server initialization",
-        benefit: "I get fast feedback instead of the editor appearing frozen",
-      },
-      acceptance_criteria: [
-        { criterion: "Requests during Initializing return REQUEST_FAILED (-32803)", verification: "E2E test with error code check" },
-        { criterion: "Error message is 'bridge: downstream server initializing'", verification: "E2E test message verification" },
-        { criterion: "ConnectionState enum with Initializing/Ready/Failed", verification: "grep enum ConnectionState src/lsp/bridge/" },
-        { criterion: "Requests succeed after Ready state", verification: "E2E test: request after init completes" },
-      ],
-      status: "done",
-      refinement_notes: ["Depends on PBI-INIT-TIMEOUT", "ADR-0015 Operation Gating"],
-    },
-  ],
-  sprint: {
-    number: 152,
-    pbi_id: "PBI-REQUEST-FAILED-INIT",
-    goal: "Return REQUEST_FAILED immediately during initialization instead of blocking",
-    status: "done",
-    subtasks: [
-      {
-        test: "ConnectionState starts as Initializing, transitions to Ready after init",
-        implementation: "Add ConnectionState enum, store state alongside connection",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "a54b2c05", message: "feat(lsp): add ConnectionState enum for tracking downstream server lifecycle", phase: "green" }],
-        notes: ["ADR-0015 defines: Initializing -> Ready -> Failed/Closing -> Closed"],
-      },
-      {
-        test: "Request during init returns error code -32803 (REQUEST_FAILED)",
-        implementation: "Check state before forwarding request, return REQUEST_FAILED if not Ready",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "9a2c06d0", message: "feat(lsp): return REQUEST_FAILED immediately during downstream init", phase: "green" }],
-        notes: ["Gate at send_hover_request and send_completion_request entry points"],
-      },
-      {
-        test: "Error message is 'bridge: downstream server initializing'",
-        implementation: "Return proper JSON-RPC error structure with message",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "cc7fc6e7", message: "test(lsp): verify exact error message for init-during-request", phase: "green" }],
-        notes: ["Per ADR-0015: REQUEST_FAILED with this specific message"],
-      },
-      {
-        test: "After init completes, requests work normally",
-        implementation: "Verify existing flow still works when state is Ready",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "33293e08", message: "test(lsp): add regression test for requests after init completes", phase: "green" }],
-        notes: ["Ensure no regression in happy path"],
-      },
-    ],
-  },
+  product_backlog: [],
+  sprint: null,
   completed: [
+    {
+      number: 152,
+      pbi_id: "PBI-REQUEST-FAILED-INIT",
+      goal: "Return REQUEST_FAILED immediately during initialization instead of blocking",
+      status: "done",
+      subtasks: [
+        { test: "ConnectionState transitions", implementation: "Add enum + state tracking", type: "behavioral", status: "completed", commits: [{ hash: "a54b2c05", message: "feat(lsp): add ConnectionState enum", phase: "green" }], notes: [] },
+        { test: "REQUEST_FAILED during init", implementation: "Gate on Ready state", type: "behavioral", status: "completed", commits: [{ hash: "9a2c06d0", message: "feat(lsp): return REQUEST_FAILED immediately", phase: "green" }], notes: [] },
+        { test: "Exact error message", implementation: "bridge: downstream server initializing", type: "behavioral", status: "completed", commits: [{ hash: "cc7fc6e7", message: "test(lsp): verify exact error message", phase: "green" }], notes: [] },
+        { test: "Requests work after Ready", implementation: "Regression test", type: "behavioral", status: "completed", commits: [{ hash: "33293e08", message: "test(lsp): regression test for ready state", phase: "green" }], notes: [] },
+      ],
+    },
     {
       number: 151,
       pbi_id: "PBI-INIT-TIMEOUT",
@@ -116,6 +72,13 @@ const scrum: ScrumDashboard = {
       sprint: 151,
       improvements: [
         { action: "get_or_create_connection_with_timeout pattern enables testability", timing: "immediate", status: "completed", outcome: "Timeout duration injectable for unit tests" },
+      ],
+    },
+    {
+      sprint: 152,
+      improvements: [
+        { action: "ConnectionState enum provides foundation for ADR-0015 state machine", timing: "immediate", status: "completed", outcome: "State tracking enables non-blocking request gating" },
+        { action: "Separate state map from connection map enables checking state before blocking", timing: "immediate", status: "completed", outcome: "connection_states HashMap decouples state check from connection acquisition" },
       ],
     },
   ],
