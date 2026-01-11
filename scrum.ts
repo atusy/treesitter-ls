@@ -92,6 +92,12 @@ const scrum: ScrumDashboard = {
         { action: "Separate state map from connection map enables checking state before blocking", timing: "immediate", status: "completed", outcome: "connection_states HashMap decouples state check from connection acquisition" },
       ],
     },
+    {
+      sprint: 153,
+      improvements: [
+        { action: "Code review identified unwired ConnectionState::Failed - always review state machines for completeness", timing: "immediate", status: "completed", outcome: "Failed state now wired to return REQUEST_FAILED" },
+      ],
+    },
   ],
 };
 
