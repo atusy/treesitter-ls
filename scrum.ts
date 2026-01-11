@@ -33,7 +33,39 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "PBI-RETRY-FAILED-CONNECTION",
+      story: {
+        role: "Lua developer editing markdown",
+        capability: "have failed downstream server connections automatically retry on the next request",
+        benefit: "I can recover from transient initialization failures without restarting my editor",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Failed connection is removed from cache on next request",
+          verification: "Unit test: get_or_create_connection with Failed state removes entry and spawns fresh server",
+        },
+        {
+          criterion: "Subsequent request spawns a new server process",
+          verification: "Unit test: verify new ConnectionHandle is created after Failed entry removal",
+        },
+        {
+          criterion: "Recovery works after initialization timeout",
+          verification: "Integration test: timeout followed by successful connection on retry",
+        },
+      ],
+      status: "ready",
+      refinement_notes: [
+        "Problem: Once ConnectionState::Failed, the pool returns error forever",
+        "Current behavior at pool.rs:191-192 returns immediate error without retry",
+        "Root cause: Failed ConnectionHandle is cached, blocking respawn",
+        "Solution: Remove failed connection from cache, recursively call get_or_create_connection",
+        "Implementation ~10 lines: connections.remove(language); drop(connections); return self.get_or_create_connection(...).await",
+        "Related: Sprint 151 added timeout, Sprint 152 added Failed state, Sprint 153 wired Failed state",
+      ],
+    },
+  ],
   sprint: null,
   completed: [
     {
