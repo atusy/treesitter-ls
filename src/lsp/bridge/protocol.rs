@@ -1,12 +1,7 @@
 //! LSP protocol types and transformations for bridge communication.
 //!
-//! This module provides types for virtual document URIs, request tracking,
-//! and message transformation between host and virtual document coordinates.
-
-use std::sync::Arc;
-
-use dashmap::DashMap;
-use tokio::sync::oneshot;
+//! This module provides types for virtual document URIs and message
+//! transformation between host and virtual document coordinates.
 
 /// Virtual document URI for injection regions.
 ///
@@ -43,110 +38,6 @@ impl VirtualDocumentUri {
             language: language.to_string(),
             region_id: region_id.to_string(),
         }
-    }
-
-    /// Parse a virtual document URI from a URI string.
-    ///
-    /// Returns None if the URI is not a valid treesitter-ls virtual URI.
-    /// Format: `file:///.treesitter-ls/{host_hash}/{region_id}.{ext}`
-    ///
-    /// Note: This method cannot fully reconstruct the original host_uri since only
-    /// the hash is stored. It returns a placeholder host_uri for testing purposes.
-    #[allow(dead_code)]
-    pub(crate) fn parse(uri_str: &str) -> Option<Self> {
-        use tower_lsp::lsp_types::Url;
-
-        let url = Url::parse(uri_str).ok()?;
-
-        // Check scheme and path prefix
-        if url.scheme() != "file" {
-            return None;
-        }
-
-        let path = url.path();
-        if !path.starts_with("/.treesitter-ls/") {
-            return None;
-        }
-
-        // Parse path: /.treesitter-ls/{host_hash}/{region_id}.{ext}
-        let path_without_prefix = path.strip_prefix("/.treesitter-ls/")?;
-        let (_host_hash, filename) = path_without_prefix.split_once('/')?;
-
-        // Extract region_id and extension from filename
-        let (region_id, ext) = if let Some(dot_pos) = filename.rfind('.') {
-            (&filename[..dot_pos], &filename[dot_pos + 1..])
-        } else {
-            return None;
-        };
-
-        // Infer language from extension
-        let language = Self::extension_to_language(ext)?.to_string();
-
-        // Create a placeholder host_uri since we can't recover it from the hash
-        let host_uri = Url::parse("file:///unknown").ok()?;
-
-        Some(Self {
-            host_uri,
-            language,
-            region_id: region_id.to_string(),
-        })
-    }
-
-    /// Map file extension back to language name.
-    fn extension_to_language(ext: &str) -> Option<&'static str> {
-        match ext {
-            "lua" => Some("lua"),
-            "py" => Some("python"),
-            "rs" => Some("rust"),
-            "js" => Some("javascript"),
-            "ts" => Some("typescript"),
-            "go" => Some("go"),
-            "c" => Some("c"),
-            "cpp" => Some("cpp"),
-            "java" => Some("java"),
-            "rb" => Some("ruby"),
-            "php" => Some("php"),
-            "swift" => Some("swift"),
-            "kt" => Some("kotlin"),
-            "scala" => Some("scala"),
-            "hs" => Some("haskell"),
-            "ml" => Some("ocaml"),
-            "ex" => Some("elixir"),
-            "erl" => Some("erlang"),
-            "clj" => Some("clojure"),
-            "r" => Some("r"),
-            "jl" => Some("julia"),
-            "sql" => Some("sql"),
-            "html" => Some("html"),
-            "css" => Some("css"),
-            "json" => Some("json"),
-            "yaml" => Some("yaml"),
-            "toml" => Some("toml"),
-            "xml" => Some("xml"),
-            "md" => Some("markdown"),
-            "sh" => Some("bash"),
-            "ps1" => Some("powershell"),
-            "txt" => None, // Default extension, language unknown
-            _ => None,
-        }
-    }
-
-    /// Get the host document URI.
-    #[allow(dead_code)]
-    pub(crate) fn host_uri(&self) -> &tower_lsp::lsp_types::Url {
-        &self.host_uri
-    }
-
-    /// Get the injection language.
-    #[allow(dead_code)]
-    pub(crate) fn language(&self) -> &str {
-        &self.language
-    }
-
-    /// Get the region ID.
-    #[allow(dead_code)]
-    pub(crate) fn region_id(&self) -> &str {
-        &self.region_id
     }
 
     /// Convert to a URI string.
@@ -230,7 +121,6 @@ impl VirtualDocumentUri {
 /// * `region_id` - The unique region ID for this injection
 /// * `region_start_line` - The starting line of the injection region in the host document
 /// * `request_id` - The JSON-RPC request ID
-#[allow(dead_code)]
 pub(crate) fn build_bridge_hover_request(
     host_uri: &tower_lsp::lsp_types::Url,
     host_position: tower_lsp::lsp_types::Position,
@@ -467,70 +357,5 @@ fn transform_range(range: &mut serde_json::Value, region_start_line: u32) {
         && let Some(line_num) = line.as_u64()
     {
         *line = serde_json::json!(line_num + region_start_line as u64);
-    }
-}
-
-/// Request ID type for JSON-RPC messages.
-///
-/// LSP spec allows either integer or string IDs.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum RequestId {
-    Int(i64),
-    String(String),
-}
-
-impl RequestId {
-    /// Extract request ID from a JSON-RPC message.
-    pub(crate) fn from_json(value: &serde_json::Value) -> Option<Self> {
-        match &value["id"] {
-            serde_json::Value::Number(n) => n.as_i64().map(RequestId::Int),
-            serde_json::Value::String(s) => Some(RequestId::String(s.clone())),
-            _ => None,
-        }
-    }
-}
-
-/// Tracks pending requests waiting for responses.
-///
-/// Uses `DashMap` for concurrent access from writer and reader tasks.
-/// Each pending request is associated with a `oneshot::Sender` to deliver
-/// the response back to the caller.
-#[derive(Clone)]
-pub(crate) struct PendingRequests {
-    inner: Arc<DashMap<RequestId, oneshot::Sender<serde_json::Value>>>,
-}
-
-impl PendingRequests {
-    /// Create a new pending request tracker.
-    #[allow(dead_code)]
-    pub(crate) fn new() -> Self {
-        Self {
-            inner: Arc::new(DashMap::new()),
-        }
-    }
-
-    /// Register a pending request and return a receiver for the response.
-    ///
-    /// Returns a tuple of (response_receiver, request_id).
-    #[allow(dead_code)]
-    pub(crate) fn register(&self, id: i64) -> (oneshot::Receiver<serde_json::Value>, RequestId) {
-        let request_id = RequestId::Int(id);
-        let (tx, rx) = oneshot::channel();
-        self.inner.insert(request_id.clone(), tx);
-        (rx, request_id)
-    }
-
-    /// Complete a pending request by routing the response to its sender.
-    ///
-    /// Extracts the request ID from the response and sends it to the
-    /// corresponding pending request, if one exists.
-    #[allow(dead_code)]
-    pub(crate) fn complete(&self, response: &serde_json::Value) {
-        if let Some(id) = RequestId::from_json(response)
-            && let Some((_, sender)) = self.inner.remove(&id)
-        {
-            // Ignore send error - receiver may have been dropped
-            let _ = sender.send(response.clone());
-        }
     }
 }

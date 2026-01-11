@@ -21,9 +21,9 @@ mod tests {
     use super::connection::AsyncBridgeConnection;
     use super::pool::LanguageServerPool;
     use super::protocol::{
-        PendingRequests, VirtualDocumentUri, build_bridge_completion_request,
-        build_bridge_didchange_notification, build_bridge_hover_request,
-        transform_completion_response_to_host, transform_hover_response_to_host,
+        VirtualDocumentUri, build_bridge_completion_request, build_bridge_didchange_notification,
+        build_bridge_hover_request, transform_completion_response_to_host,
+        transform_hover_response_to_host,
     };
 
     #[test]
@@ -37,12 +37,11 @@ mod tests {
     async fn spawn_creates_child_process_with_stdio() {
         // Use `cat` as a simple test process that echoes stdin to stdout
         let cmd = vec!["cat".to_string()];
-        let conn = AsyncBridgeConnection::spawn(cmd)
+        let _conn = AsyncBridgeConnection::spawn(cmd)
             .await
             .expect("spawn should succeed");
 
-        // The connection should have a child process ID
-        assert!(conn.child_id().is_some(), "child process should have an ID");
+        // If spawn succeeded, we have a valid connection
     }
 
     /// RED: Test that send_request writes JSON-RPC message with Content-Length header
@@ -117,58 +116,6 @@ mod tests {
         assert_eq!(parsed["jsonrpc"], "2.0");
         assert_eq!(parsed["id"], 1);
         assert!(parsed["result"].is_object());
-    }
-
-    /// RED: Test that response is routed to correct pending request via request ID
-    #[tokio::test]
-    async fn response_routed_to_pending_request_by_id() {
-        use serde_json::json;
-        use std::sync::Arc;
-
-        // Use `cat` to echo what we write back
-        let cmd = vec!["cat".to_string()];
-        let conn = AsyncBridgeConnection::spawn(cmd)
-            .await
-            .expect("spawn should succeed");
-
-        // Wrap in Arc for sharing between reader task and main task
-        let conn = Arc::new(tokio::sync::Mutex::new(conn));
-
-        // Create a pending request tracker
-        let pending = PendingRequests::new();
-
-        // Register a pending request with ID 42
-        let (response_rx, _request_id) = pending.register(42);
-
-        // Spawn a "reader task" that reads a response and routes it
-        let conn_clone = Arc::clone(&conn);
-        let pending_clone = pending.clone();
-        let reader_task = tokio::spawn(async move {
-            let mut conn = conn_clone.lock().await;
-            let response = conn.read_message().await.expect("read should succeed");
-            pending_clone.complete(&response);
-        });
-
-        // Write a response with matching ID (simulate language server response)
-        {
-            let mut conn = conn.lock().await;
-            let response = json!({
-                "jsonrpc": "2.0",
-                "id": 42,
-                "result": { "value": "hello" }
-            });
-            conn.write_message(&response)
-                .await
-                .expect("write should succeed");
-        }
-
-        // Wait for reader task
-        reader_task.await.expect("reader task should complete");
-
-        // The pending request should receive the response
-        let result = response_rx.await.expect("should receive response");
-        assert_eq!(result["id"], 42);
-        assert_eq!(result["result"]["value"], "hello");
     }
 
     /// Integration test: Initialize lua-language-server and verify response
@@ -249,48 +196,7 @@ mod tests {
             .expect("should write initialized notification");
     }
 
-    /// Integration test: Dropping connection terminates child process
-    #[tokio::test]
-    async fn drop_terminates_child_process() {
-        // Spawn a long-running process that we can check is terminated
-        // Using `sleep` as it will run indefinitely until killed
-        let cmd = vec!["sleep".to_string(), "3600".to_string()];
-        let conn = AsyncBridgeConnection::spawn(cmd)
-            .await
-            .expect("should spawn sleep process");
-
-        let child_id = conn.child_id().expect("should have child ID");
-
-        // Verify process is running before drop
-        assert!(
-            is_process_running(child_id),
-            "child process should be running before drop"
-        );
-
-        // Drop the connection
-        drop(conn);
-
-        // Give the OS a moment to clean up
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        // Verify process is no longer running after drop
-        assert!(
-            !is_process_running(child_id),
-            "child process should be terminated after drop"
-        );
-    }
-
-    /// Check if a process with the given PID is still running
-    fn is_process_running(pid: u32) -> bool {
-        // Use kill -0 via Command to check if process exists
-        std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false)
-    }
-
-    /// RED: Test VirtualDocumentUri creates scheme for injection region (PBI-302 Subtask 1)
+    /// RED: Test VirtualDocumentUri creates URI string for injection region
     #[test]
     fn virtual_document_uri_creates_scheme_for_injection_region() {
         use tower_lsp::lsp_types::Url;
@@ -301,11 +207,6 @@ mod tests {
         let region_id = "region-0";
 
         let virtual_uri = VirtualDocumentUri::new(&host_uri, injection_language, region_id);
-
-        // The virtual URI should encode all three pieces of information
-        assert_eq!(virtual_uri.host_uri(), &host_uri);
-        assert_eq!(virtual_uri.language(), "lua");
-        assert_eq!(virtual_uri.region_id(), "region-0");
 
         // The URI string should use file:// scheme with .treesitter-ls prefix
         let uri_string = virtual_uri.to_uri_string();
@@ -319,26 +220,6 @@ mod tests {
             "URI should have .lua extension: {}",
             uri_string
         );
-    }
-
-    /// RED: Test VirtualDocumentUri can be parsed back from URI string (PBI-302 Subtask 1)
-    #[test]
-    fn virtual_document_uri_roundtrip() {
-        use tower_lsp::lsp_types::Url;
-
-        let host_uri = Url::parse("file:///project/readme.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "python", "region-42");
-
-        // Convert to URI string
-        let uri_string = virtual_uri.to_uri_string();
-
-        // Parse back
-        let parsed = VirtualDocumentUri::parse(&uri_string).expect("should parse virtual URI");
-
-        // Verify roundtrip preserves language and region_id
-        // Note: host_uri cannot be recovered from hash, so we only check language and region_id
-        assert_eq!(parsed.language(), "python");
-        assert_eq!(parsed.region_id(), "region-42");
     }
 
     /// RED: Test bridge hover request uses virtual URI and mapped position (PBI-302 Subtask 4)

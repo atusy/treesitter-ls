@@ -18,7 +18,6 @@ use serde_json::json;
 use std::time::Instant;
 
 /// Maximum acceptable response time for non-blocking operations (100ms).
-#[allow(dead_code)]
 const MAX_NONBLOCKING_RESPONSE_MS: u128 = 100;
 
 /// Helper to check if lua-language-server is available

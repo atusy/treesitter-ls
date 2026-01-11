@@ -119,8 +119,7 @@ impl LanguageServerPool {
     ///
     /// If no connection exists, spawns the language server and performs
     /// the LSP initialize/initialized handshake.
-    #[allow(dead_code)]
-    pub(crate) async fn get_or_create_connection(
+    async fn get_or_create_connection(
         &self,
         language: &str,
         server_config: &crate::config::settings::BridgeServerConfig,
