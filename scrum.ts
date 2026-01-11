@@ -77,8 +77,8 @@ const scrum: ScrumDashboard = {
         test: "Error message is 'bridge: downstream server initializing'",
         implementation: "Return proper JSON-RPC error structure with message",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "cc7fc6e7", message: "test(lsp): verify exact error message for init-during-request", phase: "green" }],
         notes: ["Per ADR-0015: REQUEST_FAILED with this specific message"],
       },
       {
