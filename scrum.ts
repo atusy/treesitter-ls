@@ -4,6 +4,7 @@
 
 const userStoryRoles = [
   "Lua developer editing markdown",
+  "lua/python developer editing markdown",
 ] as const satisfies readonly string[]; // Must have at least one role. Avoid generic roles like "user" or "admin". Remove obsolete roles freely.
 
 const scrum: ScrumDashboard = {
@@ -33,7 +34,35 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "PBI-STABLE-REGION-ID",
+      story: {
+        role: "lua/python developer editing markdown",
+        capability: "I want bridge feature to open virtual documents with a stable URI across the features",
+        benefit: "So that I experience more performant features",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Hover and completion use the same virtual URI for the same injection region",
+          verification: "E2E test: hover then complete on same Lua block uses same document URI",
+        },
+        {
+          criterion: "First access sends didOpen, subsequent access sends didChange (not didOpen again)",
+          verification: "Unit test: verify protocol message sequence for repeated accesses",
+        },
+        {
+          criterion: "region_id format is {language}-{ordinal} where ordinal is per-language count",
+          verification: "Unit test: Lua-Lua-Python blocks produce lua-0, lua-1, python-0",
+        },
+        {
+          criterion: "Ordinal is stable: adding Python injection does not shift Lua ordinals",
+          verification: "Unit test: inserting Python block between Lua blocks preserves lua-0, lua-1",
+        },
+      ],
+      status: "ready",
+    },
+  ],
   sprint: null,
   completed: [
     { number: 158, pbi_id: "PBI-SIGNATURE-HELP-BRIDGE", goal: "Enable signature help bridging for Lua code blocks in markdown documents", status: "done", subtasks: [] },
