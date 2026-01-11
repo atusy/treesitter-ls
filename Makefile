@@ -49,6 +49,7 @@ test_all:
 # Check code formatting and linting
 .PHONY: check
 check:
+	! git grep --quiet -E '#\[allow\(dead_code\)\]'
 	$(CARGO) check
 	$(CARGO) clippy -- -D warnings
 	$(CARGO) fmt --check
