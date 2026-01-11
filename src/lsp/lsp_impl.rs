@@ -1143,6 +1143,18 @@ impl LanguageServer for TreeSitterLs {
         // Cancel any pending semantic token requests for this document
         self.semantic_request_tracker.cancel_all_for_uri(&uri);
 
+        // Close all virtual documents associated with this host document
+        // This sends didClose notifications to downstream language servers
+        let closed_docs = self.language_server_pool.close_host_document(&uri).await;
+        if !closed_docs.is_empty() {
+            log::debug!(
+                target: "treesitter_ls::bridge",
+                "Closed {} virtual documents for host {}",
+                closed_docs.len(),
+                uri
+            );
+        }
+
         self.client
             .log_message(MessageType::INFO, "file closed!")
             .await;

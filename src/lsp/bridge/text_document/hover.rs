@@ -48,7 +48,7 @@ impl LanguageServerPool {
 
         // Send didOpen notification only if document hasn't been opened yet
         if self
-            .should_send_didopen(injection_language, &virtual_uri_string)
+            .should_send_didopen(host_uri, injection_language, &virtual_uri_string)
             .await
         {
             let did_open = serde_json::json!({

@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::Mutex;
+use tower_lsp::lsp_types::Url;
 
 /// Timeout for LSP initialize handshake (ADR-0018 Tier 0: 30-60s recommended).
 ///
@@ -35,6 +36,19 @@ pub(crate) enum ConnectionState {
 }
 
 use super::connection::AsyncBridgeConnection;
+
+/// Represents an opened virtual document for tracking.
+///
+/// Used for didClose propagation when host document closes.
+/// Each OpenedVirtualDoc represents a virtual document that was opened
+/// via didOpen on a downstream language server.
+#[derive(Debug, Clone)]
+pub(crate) struct OpenedVirtualDoc {
+    /// The injection language (e.g., "lua", "python")
+    pub(crate) language: String,
+    /// The virtual document URI string
+    pub(crate) virtual_uri: String,
+}
 
 /// Handle wrapping a connection with its state (ADR-0015 per-connection state).
 ///
@@ -99,6 +113,10 @@ pub(crate) struct LanguageServerPool {
     /// Map of language -> (virtual document URI -> version)
     /// Tracks which documents have been opened and their current version number
     document_versions: Mutex<HashMap<String, HashMap<String, i32>>>,
+    /// Tracks which virtual documents were opened for each host document.
+    /// Key: host document URI, Value: list of opened virtual documents
+    /// Used for didClose propagation when host document closes.
+    host_to_virtual: Mutex<HashMap<Url, Vec<OpenedVirtualDoc>>>,
 }
 
 impl LanguageServerPool {
@@ -107,6 +125,7 @@ impl LanguageServerPool {
         Self {
             connections: Mutex::new(HashMap::new()),
             document_versions: Mutex::new(HashMap::new()),
+            host_to_virtual: Mutex::new(HashMap::new()),
         }
     }
 
@@ -132,15 +151,122 @@ impl LanguageServerPool {
     ///
     /// Returns true if the document was NOT previously opened (i.e., didOpen should be sent).
     /// Returns false if the document was already opened (i.e., skip didOpen).
-    pub(super) async fn should_send_didopen(&self, language: &str, virtual_uri: &str) -> bool {
+    ///
+    /// When returning true, also records the mapping from host_uri to the virtual document
+    /// in host_to_virtual. This mapping is used for didClose propagation when the host
+    /// document is closed.
+    pub(super) async fn should_send_didopen(
+        &self,
+        host_uri: &Url,
+        language: &str,
+        virtual_uri: &str,
+    ) -> bool {
         let mut versions = self.document_versions.lock().await;
         let docs = versions.entry(language.to_string()).or_default();
         if docs.contains_key(virtual_uri) {
             false
         } else {
             docs.insert(virtual_uri.to_string(), 1);
+
+            // Record the host -> virtual mapping for didClose propagation
+            let mut host_map = self.host_to_virtual.lock().await;
+            host_map
+                .entry(host_uri.clone())
+                .or_default()
+                .push(OpenedVirtualDoc {
+                    language: language.to_string(),
+                    virtual_uri: virtual_uri.to_string(),
+                });
+
             true
         }
+    }
+
+    /// Close all virtual documents associated with a host document.
+    ///
+    /// When a host document (e.g., markdown file) is closed, this method:
+    /// 1. Looks up all virtual documents that were opened for the host
+    /// 2. Sends didClose notification for each virtual document
+    /// 3. Removes the virtual documents from document_versions tracking
+    /// 4. Removes the host entry from host_to_virtual
+    ///
+    /// The connection to downstream language servers remains open - only the
+    /// virtual documents are closed.
+    ///
+    /// Returns the list of closed virtual documents (useful for logging).
+    pub(crate) async fn close_host_document(&self, host_uri: &Url) -> Vec<OpenedVirtualDoc> {
+        // 1. Remove and get all virtual docs for this host
+        let virtual_docs = {
+            let mut host_map = self.host_to_virtual.lock().await;
+            host_map.remove(host_uri).unwrap_or_default()
+        };
+
+        if virtual_docs.is_empty() {
+            return vec![];
+        }
+
+        // 2. For each virtual doc: send didClose and remove from document_versions
+        for doc in &virtual_docs {
+            // Send didClose notification (best effort - ignore errors)
+            let _ = self
+                .send_didclose_notification(&doc.language, &doc.virtual_uri)
+                .await;
+
+            // Remove from document_versions
+            let mut versions = self.document_versions.lock().await;
+            if let Some(docs) = versions.get_mut(&doc.language) {
+                docs.remove(&doc.virtual_uri);
+            }
+        }
+
+        virtual_docs
+    }
+
+    /// Send a didClose notification for a virtual document.
+    ///
+    /// This method sends a didClose notification to the downstream language server
+    /// for the specified virtual document URI. The connection is NOT closed after
+    /// sending - it remains available for other documents.
+    ///
+    /// Returns Ok(()) if the notification was sent successfully, or if no connection
+    /// exists for the language (nothing to do).
+    ///
+    /// # Arguments
+    /// * `language` - The injection language (e.g., "lua")
+    /// * `virtual_uri` - The virtual document URI string to close
+    pub(crate) async fn send_didclose_notification(
+        &self,
+        language: &str,
+        virtual_uri: &str,
+    ) -> io::Result<()> {
+        // Get the connection for this language (if it exists and is Ready)
+        let connections = self.connections.lock().await;
+        let Some(handle) = connections.get(language) else {
+            // No connection for this language - nothing to do
+            return Ok(());
+        };
+
+        // Only send if connection is Ready
+        if handle.state() != ConnectionState::Ready {
+            return Ok(());
+        }
+
+        let handle = Arc::clone(handle);
+        drop(connections); // Release lock before I/O
+
+        // Build and send the didClose notification
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/didClose",
+            "params": {
+                "textDocument": {
+                    "uri": virtual_uri
+                }
+            }
+        });
+
+        let mut conn = handle.connection().await;
+        conn.write_message(&notification).await
     }
 
     /// Get or create a connection for the specified language.
@@ -923,6 +1049,314 @@ mod tests {
                 cached_handle.state(),
                 ConnectionState::Ready,
                 "Cached handle should be Ready after recovery"
+            );
+        }
+    }
+
+    /// Test that OpenedVirtualDoc struct exists with required fields.
+    ///
+    /// The struct should have:
+    /// - language: String (the injection language, e.g., "lua")
+    /// - virtual_uri: String (the virtual document URI)
+    #[tokio::test]
+    async fn opened_virtual_doc_struct_has_required_fields() {
+        use super::OpenedVirtualDoc;
+
+        let doc = OpenedVirtualDoc {
+            language: "lua".to_string(),
+            virtual_uri: "file:///.treesitter-ls/abc123/lua-0.lua".to_string(),
+        };
+
+        assert_eq!(doc.language, "lua");
+        assert_eq!(doc.virtual_uri, "file:///.treesitter-ls/abc123/lua-0.lua");
+    }
+
+    /// Test that LanguageServerPool has host_to_virtual field.
+    ///
+    /// The field should be initialized as empty HashMap and accessible.
+    #[tokio::test]
+    async fn pool_has_host_to_virtual_field() {
+        let pool = LanguageServerPool::new();
+
+        // Access the host_to_virtual field to verify it exists
+        let host_map = pool.host_to_virtual.lock().await;
+        assert!(
+            host_map.is_empty(),
+            "host_to_virtual should be empty on new pool"
+        );
+    }
+
+    /// Test that should_send_didopen records host to virtual mapping.
+    ///
+    /// When should_send_didopen returns true (meaning didOpen should be sent),
+    /// it should also record the mapping from host URI to the opened virtual document.
+    #[tokio::test]
+    async fn should_send_didopen_records_host_to_virtual_mapping() {
+        let pool = LanguageServerPool::new();
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        let virtual_uri = "file:///.treesitter-ls/abc123/lua-0.lua";
+
+        // First call should return true (document not opened yet)
+        let result = pool
+            .should_send_didopen(&host_uri, "lua", virtual_uri)
+            .await;
+        assert!(result, "First call should return true");
+
+        // Verify the host_to_virtual mapping was recorded
+        let host_map = pool.host_to_virtual.lock().await;
+        let virtual_docs = host_map
+            .get(&host_uri)
+            .expect("host_uri should have entry in host_to_virtual");
+        assert_eq!(virtual_docs.len(), 1);
+        assert_eq!(virtual_docs[0].language, "lua");
+        assert_eq!(virtual_docs[0].virtual_uri, virtual_uri);
+    }
+
+    /// Test that should_send_didopen records multiple virtual docs for same host.
+    ///
+    /// A markdown file may have multiple Lua code blocks, each creating a separate
+    /// virtual document. All should be tracked under the same host URI.
+    #[tokio::test]
+    async fn should_send_didopen_records_multiple_virtual_docs_for_same_host() {
+        let pool = LanguageServerPool::new();
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+
+        // Open first Lua block
+        let result = pool
+            .should_send_didopen(&host_uri, "lua", "file:///.treesitter-ls/abc123/lua-0.lua")
+            .await;
+        assert!(result, "First Lua block should return true");
+
+        // Open second Lua block
+        let result = pool
+            .should_send_didopen(&host_uri, "lua", "file:///.treesitter-ls/abc123/lua-1.lua")
+            .await;
+        assert!(result, "Second Lua block should return true");
+
+        // Verify both are tracked under the same host
+        let host_map = pool.host_to_virtual.lock().await;
+        let virtual_docs = host_map
+            .get(&host_uri)
+            .expect("host_uri should have entry in host_to_virtual");
+        assert_eq!(virtual_docs.len(), 2);
+        assert_eq!(
+            virtual_docs[0].virtual_uri,
+            "file:///.treesitter-ls/abc123/lua-0.lua"
+        );
+        assert_eq!(
+            virtual_docs[1].virtual_uri,
+            "file:///.treesitter-ls/abc123/lua-1.lua"
+        );
+    }
+
+    /// Test that should_send_didopen does not duplicate mapping on second call.
+    ///
+    /// When should_send_didopen returns false (document already opened),
+    /// it should NOT add a duplicate entry to host_to_virtual.
+    #[tokio::test]
+    async fn should_send_didopen_does_not_duplicate_mapping() {
+        let pool = LanguageServerPool::new();
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        let virtual_uri = "file:///.treesitter-ls/abc123/lua-0.lua";
+
+        // First call - should return true and record mapping
+        let result = pool
+            .should_send_didopen(&host_uri, "lua", virtual_uri)
+            .await;
+        assert!(result, "First call should return true");
+
+        // Second call for same virtual doc - should return false
+        let result = pool
+            .should_send_didopen(&host_uri, "lua", virtual_uri)
+            .await;
+        assert!(!result, "Second call should return false");
+
+        // Verify only one entry exists (no duplicate)
+        let host_map = pool.host_to_virtual.lock().await;
+        let virtual_docs = host_map
+            .get(&host_uri)
+            .expect("host_uri should have entry in host_to_virtual");
+        assert_eq!(
+            virtual_docs.len(),
+            1,
+            "Should only have one entry, not duplicates"
+        );
+    }
+
+    /// Test that send_didclose_notification sends notification without closing connection.
+    ///
+    /// After sending didClose, the connection should still be in Ready state and
+    /// can be used for other requests.
+    #[tokio::test]
+    async fn send_didclose_notification_keeps_connection_open() {
+        // Skip test if lua-language-server is not available
+        if std::process::Command::new("lua-language-server")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping test: lua-language-server not found");
+            return;
+        }
+
+        let pool = std::sync::Arc::new(LanguageServerPool::new());
+        let config = BridgeServerConfig {
+            cmd: vec!["lua-language-server".to_string()],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        let host_position = tower_lsp::lsp_types::Position {
+            line: 3,
+            character: 5,
+        };
+
+        // First, send a hover request to establish connection and open a virtual doc
+        let result = pool
+            .send_hover_request(
+                &config,
+                &host_uri,
+                host_position,
+                "lua",
+                "lua-0",
+                3,
+                "print('hello')",
+                1,
+            )
+            .await;
+        assert!(result.is_ok(), "Hover request should succeed");
+
+        // Get the virtual URI that was opened
+        let virtual_uri = "file:///.treesitter-ls/abc123/lua-0.lua";
+
+        // Send didClose notification
+        let result = pool.send_didclose_notification("lua", virtual_uri).await;
+        assert!(
+            result.is_ok(),
+            "send_didclose_notification should succeed: {:?}",
+            result.err()
+        );
+
+        // Verify connection is still Ready
+        {
+            let connections = pool.connections.lock().await;
+            let handle = connections.get("lua").expect("Connection should exist");
+            assert_eq!(
+                handle.state(),
+                ConnectionState::Ready,
+                "Connection should remain Ready after didClose"
+            );
+        }
+    }
+
+    /// Test that close_host_document sends didClose for all virtual documents.
+    ///
+    /// When a host document is closed, all its virtual documents should receive
+    /// didClose notifications and be cleaned up from tracking structures.
+    #[tokio::test]
+    async fn close_host_document_sends_didclose_for_all_virtual_docs() {
+        // Skip test if lua-language-server is not available
+        if std::process::Command::new("lua-language-server")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping test: lua-language-server not found");
+            return;
+        }
+
+        let pool = std::sync::Arc::new(LanguageServerPool::new());
+        let config = BridgeServerConfig {
+            cmd: vec!["lua-language-server".to_string()],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+
+        // First, send hover requests to establish connection and open virtual docs
+        // Use positions that are within the code block (position.line >= region_start_line)
+        let result = pool
+            .send_hover_request(
+                &config,
+                &host_uri,
+                tower_lsp::lsp_types::Position {
+                    line: 4,
+                    character: 5,
+                },
+                "lua",
+                "lua-0",
+                3, // region starts at line 3, position is at line 4, so virtual line = 1
+                "print('hello')",
+                1,
+            )
+            .await;
+        assert!(result.is_ok(), "First hover request should succeed");
+
+        let result = pool
+            .send_hover_request(
+                &config,
+                &host_uri,
+                tower_lsp::lsp_types::Position {
+                    line: 8,
+                    character: 5,
+                },
+                "lua",
+                "lua-1",
+                7, // region starts at line 7, position is at line 8, so virtual line = 1
+                "print('world')",
+                2,
+            )
+            .await;
+        assert!(result.is_ok(), "Second hover request should succeed");
+
+        // Verify we have 2 virtual docs tracked for this host
+        {
+            let host_map = pool.host_to_virtual.lock().await;
+            let virtual_docs = host_map.get(&host_uri).expect("Should have virtual docs");
+            assert_eq!(virtual_docs.len(), 2, "Should have 2 virtual docs");
+        }
+
+        // Close the host document
+        let closed_docs = pool.close_host_document(&host_uri).await;
+
+        // Verify we got back the closed docs
+        assert_eq!(closed_docs.len(), 2, "Should return 2 closed docs");
+
+        // Verify host_to_virtual is cleaned up
+        {
+            let host_map = pool.host_to_virtual.lock().await;
+            assert!(
+                !host_map.contains_key(&host_uri),
+                "host_to_virtual should be cleaned up"
+            );
+        }
+
+        // Verify document_versions is cleaned up
+        {
+            let versions = pool.document_versions.lock().await;
+            if let Some(docs) = versions.get("lua") {
+                for doc in &closed_docs {
+                    assert!(
+                        !docs.contains_key(&doc.virtual_uri),
+                        "document_versions should not contain closed doc: {}",
+                        doc.virtual_uri
+                    );
+                }
+            }
+        }
+
+        // Verify connection is still Ready (not closed)
+        {
+            let connections = pool.connections.lock().await;
+            let handle = connections.get("lua").expect("Connection should exist");
+            assert_eq!(
+                handle.state(),
+                ConnectionState::Ready,
+                "Connection should remain Ready after close_host_document"
             );
         }
     }

@@ -49,7 +49,7 @@ impl LanguageServerPool {
 
         // Send didOpen or didChange depending on whether document is already opened
         if self
-            .should_send_didopen(injection_language, &virtual_uri_string)
+            .should_send_didopen(host_uri, injection_language, &virtual_uri_string)
             .await
         {
             // First time: send didOpen
