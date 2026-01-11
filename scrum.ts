@@ -53,6 +53,12 @@ const scrum: ScrumDashboard = {
     ],
   },
   retrospectives: [
+    { sprint: 158, improvements: [
+      { action: "Well-established patterns accelerate implementation", timing: "immediate", status: "completed", outcome: "Following hover.rs and completion.rs patterns made signature_help.rs straightforward - consistent structure across text_document/ features" },
+      { action: "Simpler features validate pattern robustness", timing: "immediate", status: "completed", outcome: "SignatureHelp required no range transformation (unlike completion), proving pattern handles varying complexity levels" },
+      { action: "Pattern template for remaining bridge features", timing: "immediate", status: "completed", outcome: "Established pattern: pool method + protocol helpers + lsp_impl integration + E2E test - ready for codeAction and definition" },
+      { action: "TDD catches integration issues early", timing: "immediate", status: "completed", outcome: "E2E tests verified full bridge wiring including request ID passthrough from Sprint 157" },
+    ]},
     { sprint: 157, improvements: [
       { action: "Tower Service middleware pattern for cross-cutting concerns", timing: "immediate", status: "completed", outcome: "RequestIdCapture wrapper injects behavior without modifying core handler logic" },
       { action: "Task-local storage for request-scoped context", timing: "immediate", status: "completed", outcome: "tokio::task_local! provides clean request-scoped state without parameter threading" },
