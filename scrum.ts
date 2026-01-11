@@ -34,7 +34,35 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "PBI-DIDCHANGE-FORWARDING",
+      story: {
+        role: "Lua developer editing markdown",
+        capability: "I want to propagate change of the host document to the virtual documents attached to bridged downstream language servers",
+        benefit: "So that I can use features with fresh content",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "didChange sent only for opened virtual documents",
+          verification: "Skip notification if virtual doc not in host_to_virtual map",
+        },
+        {
+          criterion: "Full content sync used (not incremental)",
+          verification: "Use build_bridge_didchange_notification() with TextDocumentSyncKind::Full",
+        },
+        {
+          criterion: "Features work with fresh content after host change",
+          verification: "E2E test: edit Lua block, verify completion reflects changes",
+        },
+        {
+          criterion: "TODO comment for incremental sync optimization",
+          verification: "Code contains TODO comment noting future incremental didChange support",
+        },
+      ],
+      status: "ready",
+    },
+  ],
   sprint: null,
   completed: [
     { number: 160, pbi_id: "PBI-DIDCLOSE-FORWARDING", goal: "Propagate didClose from host documents to virtual documents ensuring proper cleanup without closing connections", status: "done", subtasks: [] },
