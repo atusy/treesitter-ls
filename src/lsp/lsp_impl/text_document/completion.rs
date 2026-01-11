@@ -3,7 +3,9 @@
 use tower_lsp::jsonrpc::{Id, Result};
 use tower_lsp::lsp_types::*;
 
-use crate::language::injection::CacheableInjectionRegion;
+use crate::language::injection::{
+    CacheableInjectionRegion, calculate_region_id, find_injection_at_position,
+};
 use crate::lsp::get_current_request_id;
 use crate::text::PositionMapper;
 
@@ -73,20 +75,18 @@ impl TreeSitterLs {
         };
 
         // Find which injection region (if any) contains this position
-        let matching_region = injections.iter().find(|inj| {
-            let start = inj.content_node.start_byte();
-            let end = inj.content_node.end_byte();
-            byte_offset >= start && byte_offset < end
-        });
-
-        let Some(region) = matching_region else {
+        let Some((region_index, region)) = find_injection_at_position(&injections, byte_offset)
+        else {
             // Not in an injection region - return None
             return Ok(None);
         };
 
+        // Calculate stable region_id for virtual document URI
+        let region_id = calculate_region_id(&injections, region_index);
+
         // Convert to CacheableInjectionRegion to get line_range for position mapping
         let cacheable_region =
-            CacheableInjectionRegion::from_region_info(region, "completion-temp", &text);
+            CacheableInjectionRegion::from_region_info(region, &region_id, &text);
 
         // Get bridge server config for this language
         // The bridge filter is checked inside get_bridge_config_for_language
