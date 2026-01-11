@@ -33,7 +33,47 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "PBI-REQUEST-ID-PASSTHROUGH",
+      story: {
+        role: "Lua developer editing markdown",
+        capability: "have my LSP requests use consistent IDs across client, bridge, and downstream server",
+        benefit: "I get simpler debugging and state management as documented in ADR-0016",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "next_request_id counter removed from LanguageServerPool",
+          verification: "grep for 'next_request_id' in pool.rs returns no matches",
+        },
+        {
+          criterion: "send_hover_request accepts upstream request ID as parameter",
+          verification: "Function signature includes request_id: i64 parameter; grep shows no self.next_request_id() call in hover.rs",
+        },
+        {
+          criterion: "send_completion_request accepts upstream request ID as parameter",
+          verification: "Function signature includes request_id: i64 parameter; grep shows no self.next_request_id() call in completion.rs",
+        },
+        {
+          criterion: "Upstream request ID flows through to downstream server unchanged",
+          verification: "Integration test verifies request ID=42 from client appears in downstream request as ID=42",
+        },
+        {
+          criterion: "ADR-0016 Phase 1 Request ID Semantics diagram matches implementation",
+          verification: "Code review confirms: Client (ID=42) -> bridge -> downstream (ID=42) with no transformation",
+        },
+      ],
+      status: "ready",
+      refinement_notes: [
+        "ADR-0016 lines 77-91 explicitly require upstream IDs: 'Use upstream request IDs directly for downstream servers'",
+        "Current violation: pool.rs:102-113 has next_request_id counter generating new IDs",
+        "Current violation: hover.rs:66 calls self.next_request_id() instead of using upstream ID",
+        "Current violation: completion.rs:83 calls self.next_request_id() instead of using upstream ID",
+        "Fix scope: Remove counter, thread upstream ID through send_hover_request/send_completion_request",
+        "Callers (lsp_impl.rs) already have access to upstream request ID from tower-lsp handler",
+      ],
+    },
+  ],
   sprint: null,
   completed: [
     {
