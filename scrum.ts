@@ -74,7 +74,96 @@ const scrum: ScrumDashboard = {
       ],
     },
   ],
-  sprint: null,
+  sprint: {
+    number: 156,
+    pbi_id: "PBI-REQUEST-ID-PASSTHROUGH",
+    goal: "Pass upstream request IDs to downstream servers per ADR-0016",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "Integration test: request ID=42 from upstream appears as ID=42 in downstream request",
+        implementation: "Add test verifying request ID passthrough from caller to downstream server",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Test should verify the exact ID flows through unchanged",
+          "May need mock server to capture the request ID received",
+        ],
+      },
+      {
+        test: "N/A (structural refactor)",
+        implementation: "Add request_id: i64 parameter to send_hover_request signature",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Update hover.rs function signature",
+          "Update all callers to pass a placeholder ID temporarily",
+          "Existing tests will need request_id parameter added",
+        ],
+      },
+      {
+        test: "N/A (structural refactor)",
+        implementation: "Add request_id: i64 parameter to send_completion_request signature",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Update completion.rs function signature",
+          "Update all callers to pass a placeholder ID temporarily",
+          "Existing tests will need request_id parameter added",
+        ],
+      },
+      {
+        test: "send_hover_request uses provided request_id instead of self.next_request_id()",
+        implementation: "Replace self.next_request_id() call with request_id parameter in hover.rs",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Pass request_id to build_bridge_hover_request",
+          "Verify response matching uses same ID",
+        ],
+      },
+      {
+        test: "send_completion_request uses provided request_id instead of self.next_request_id()",
+        implementation: "Replace self.next_request_id() call with request_id parameter in completion.rs",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Pass request_id to build_bridge_completion_request",
+          "Verify response matching uses same ID",
+        ],
+      },
+      {
+        test: "N/A (structural refactor)",
+        implementation: "Remove next_request_id field and method from LanguageServerPool",
+        type: "structural",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Delete next_request_id: AtomicI64 field from pool.rs",
+          "Delete pub(super) fn next_request_id() method",
+          "Verify no remaining callers of next_request_id()",
+          "Note: initialize handshake still needs an ID - consider using fixed ID=0 for init",
+        ],
+      },
+      {
+        test: "lsp_impl callers pass upstream request ID to bridge methods",
+        implementation: "Update hover_impl and completion_impl to pass request ID from tower-lsp",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Investigate how to access request ID from tower-lsp handlers",
+          "If tower-lsp doesn't expose IDs, document alternative approach",
+          "May need to use tower-lsp custom handler or middleware",
+        ],
+      },
+    ],
+  },
   completed: [
     {
       number: 155,
