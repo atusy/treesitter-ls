@@ -12,6 +12,7 @@
 mod connection;
 mod pool;
 mod protocol;
+mod text_document;
 
 // Re-export public types
 pub(crate) use pool::LanguageServerPool;
