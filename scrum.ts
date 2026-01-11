@@ -76,8 +76,8 @@ const scrum: ScrumDashboard = {
     goal: "Return REQUEST_FAILED when downstream server has failed initialization",
     status: "in_progress",
     subtasks: [
-      { test: "Failed state returns error for hover", implementation: "Change if-let to match in send_hover_request", type: "behavioral", status: "red", commits: [], notes: [] },
-      { test: "Failed state returns error for completion", implementation: "Change if-let to match in send_completion_request", type: "behavioral", status: "pending", commits: [], notes: [] },
+      { test: "Failed state returns error for hover", implementation: "Change if-let to match in send_hover_request", type: "behavioral", status: "completed", commits: [{ hash: "4f0674c5", message: "feat(lsp): check Failed state in send_hover_request", phase: "green" }], notes: [] },
+      { test: "Failed state returns error for completion", implementation: "Change if-let to match in send_completion_request", type: "behavioral", status: "red", commits: [], notes: [] },
       { test: "N/A (structural)", implementation: "Update comment to reflect both states", type: "structural", status: "pending", commits: [], notes: [] },
     ],
   },
