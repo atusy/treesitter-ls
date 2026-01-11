@@ -231,10 +231,11 @@ impl LanguageServerPool {
     /// Send a hover request and wait for the response.
     ///
     /// This is a convenience method that handles the full request/response cycle:
-    /// 1. Get or create a connection to the language server
-    /// 2. Send a textDocument/didOpen notification if needed
-    /// 3. Send the hover request
-    /// 4. Wait for and return the response
+    /// 1. Check connection state - return error if Initializing (non-blocking)
+    /// 2. Get or create a connection to the language server
+    /// 3. Send a textDocument/didOpen notification if needed
+    /// 4. Send the hover request
+    /// 5. Wait for and return the response
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn send_hover_request(
         &self,
@@ -246,6 +247,14 @@ impl LanguageServerPool {
         region_start_line: u32,
         virtual_content: &str,
     ) -> io::Result<serde_json::Value> {
+        // Check if server is still initializing - return error immediately (non-blocking)
+        {
+            let states = self.connection_states.lock().await;
+            if let Some(ConnectionState::Initializing) = states.get(injection_language) {
+                return Err(io::Error::other("bridge: downstream server initializing"));
+            }
+        }
+
         // Get or create connection
         let conn = self
             .get_or_create_connection(injection_language, server_config)
@@ -304,10 +313,11 @@ impl LanguageServerPool {
     /// Send a completion request and wait for the response.
     ///
     /// This is a convenience method that handles the full request/response cycle:
-    /// 1. Get or create a connection to the language server
-    /// 2. Send a textDocument/didOpen notification if not opened, or didChange if already opened
-    /// 3. Send the completion request
-    /// 4. Wait for and return the response with transformed coordinates
+    /// 1. Check connection state - return error if Initializing (non-blocking)
+    /// 2. Get or create a connection to the language server
+    /// 3. Send a textDocument/didOpen notification if not opened, or didChange if already opened
+    /// 4. Send the completion request
+    /// 5. Wait for and return the response with transformed coordinates
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn send_completion_request(
         &self,
@@ -319,6 +329,14 @@ impl LanguageServerPool {
         region_start_line: u32,
         virtual_content: &str,
     ) -> io::Result<serde_json::Value> {
+        // Check if server is still initializing - return error immediately (non-blocking)
+        {
+            let states = self.connection_states.lock().await;
+            if let Some(ConnectionState::Initializing) = states.get(injection_language) {
+                return Err(io::Error::other("bridge: downstream server initializing"));
+            }
+        }
+
         // Get or create connection
         let conn = self
             .get_or_create_connection(injection_language, server_config)
@@ -415,6 +433,76 @@ mod tests {
         assert!(
             !states.contains_key("test"),
             "State should not exist before connection attempt"
+        );
+    }
+
+    /// Test that request during Initializing state returns error immediately (non-blocking).
+    /// This test simulates a slow-to-initialize server and verifies that hover/completion
+    /// requests during initialization return an error instead of blocking.
+    #[tokio::test]
+    async fn request_during_init_returns_error_immediately() {
+        use std::sync::Arc;
+        use tower_lsp::lsp_types::{Position, Url};
+
+        let pool = Arc::new(LanguageServerPool::new());
+        let config = BridgeServerConfig {
+            // This server reads stdin but never responds (slow init)
+            cmd: vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "cat > /dev/null".to_string(),
+            ],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        // Manually set state to Initializing (simulating init in progress)
+        {
+            let mut states = pool.connection_states.lock().await;
+            states.insert("lua".to_string(), ConnectionState::Initializing);
+        }
+
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let host_position = Position {
+            line: 3,
+            character: 5,
+        };
+
+        // Try to send hover request while state is Initializing
+        let start = std::time::Instant::now();
+        let result = pool
+            .send_hover_request(
+                &config,
+                &host_uri,
+                host_position,
+                "lua",
+                "region-0",
+                3,
+                "print('hello')",
+            )
+            .await;
+        let elapsed = start.elapsed();
+
+        // Request should fail immediately (not block waiting for init)
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "Request should return immediately, not block. Elapsed: {:?}",
+            elapsed
+        );
+
+        // Should return an error (not succeed)
+        assert!(
+            result.is_err(),
+            "Request during Initializing should return error"
+        );
+
+        let err = result.unwrap_err();
+        // The error message should indicate server is initializing
+        assert!(
+            err.to_string().contains("initializing"),
+            "Error should mention 'initializing': {}",
+            err
         );
     }
 
