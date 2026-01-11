@@ -479,6 +479,28 @@ fn extract_content_and_language<'a>(
     None
 }
 
+/// Find the injection region containing the given byte offset.
+///
+/// Returns the index and reference to the matching region, or None if the position
+/// is not within any injection region.
+///
+/// # Arguments
+/// * `injections` - All injection regions in document order
+/// * `byte_offset` - The byte offset to search for
+///
+/// # Returns
+/// Option of (index, reference to region) for use with calculate_region_id
+pub fn find_injection_at_position<'a>(
+    injections: &'a [InjectionRegionInfo<'a>],
+    byte_offset: usize,
+) -> Option<(usize, &'a InjectionRegionInfo<'a>)> {
+    injections.iter().enumerate().find(|(_, inj)| {
+        let start = inj.content_node.start_byte();
+        let end = inj.content_node.end_byte();
+        byte_offset >= start && byte_offset < end
+    })
+}
+
 /// Calculate a stable region_id for an injection based on its language and position.
 /// Format: `{language}-{ordinal}` where ordinal is the 0-indexed count of same-language injections.
 ///
@@ -1245,6 +1267,82 @@ mod tests {
             calculate_region_id(&injections_after, 2),
             "lua-1",
             "After: second lua is still lua-1 (not shifted)"
+        );
+    }
+
+    #[test]
+    fn test_find_injection_at_position_returns_correct_region_and_index() {
+        // Test that find_injection_at_position returns the correct region and its index
+        // for use with calculate_region_id
+
+        let mut parser = create_rust_parser();
+        let text = r#"fn main() { let a = "lua1"; let b = "py"; let c = "lua2"; }"#;
+        let tree = parse_rust_code(&mut parser, text);
+        let root = tree.root_node();
+
+        // Find all string_literal nodes
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let query_str = r#"(string_literal) @str"#;
+        let language = tree_sitter_rust::LANGUAGE.into();
+        let query = Query::new(&language, query_str).expect("valid query");
+
+        let mut matches_iter = cursor.matches(&query, root, text.as_bytes());
+        let mut nodes = Vec::new();
+        while let Some(m) = matches_iter.next() {
+            nodes.push(m.captures[0].node);
+        }
+
+        assert_eq!(nodes.len(), 3, "Should find 3 strings");
+
+        // Create injection regions: lua, python, lua
+        let injections = vec![
+            InjectionRegionInfo {
+                language: "lua".to_string(),
+                content_node: nodes[0],
+                pattern_index: 0,
+            },
+            InjectionRegionInfo {
+                language: "python".to_string(),
+                content_node: nodes[1],
+                pattern_index: 0,
+            },
+            InjectionRegionInfo {
+                language: "lua".to_string(),
+                content_node: nodes[2],
+                pattern_index: 0,
+            },
+        ];
+
+        // Test finding position inside first Lua block
+        let lua1_byte = nodes[0].start_byte() + 1; // Inside first string
+        let result = find_injection_at_position(&injections, lua1_byte);
+        assert!(result.is_some(), "Should find injection at lua1 position");
+        let (idx, region) = result.unwrap();
+        assert_eq!(idx, 0, "Should be at index 0");
+        assert_eq!(region.language, "lua", "Should be lua region");
+
+        // Test finding position inside Python block
+        let py_byte = nodes[1].start_byte() + 1;
+        let result = find_injection_at_position(&injections, py_byte);
+        assert!(result.is_some(), "Should find injection at python position");
+        let (idx, region) = result.unwrap();
+        assert_eq!(idx, 1, "Should be at index 1");
+        assert_eq!(region.language, "python", "Should be python region");
+
+        // Test finding position inside second Lua block
+        let lua2_byte = nodes[2].start_byte() + 1;
+        let result = find_injection_at_position(&injections, lua2_byte);
+        assert!(result.is_some(), "Should find injection at lua2 position");
+        let (idx, region) = result.unwrap();
+        assert_eq!(idx, 2, "Should be at index 2");
+        assert_eq!(region.language, "lua", "Should be lua region");
+
+        // Test position outside all injections
+        let outside_byte = 5; // Position before any string
+        let result = find_injection_at_position(&injections, outside_byte);
+        assert!(
+            result.is_none(),
+            "Should not find injection outside regions"
         );
     }
 }
