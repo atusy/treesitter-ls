@@ -55,14 +55,14 @@ const scrum: ScrumDashboard = {
     number: 152,
     pbi_id: "PBI-REQUEST-FAILED-INIT",
     goal: "Return REQUEST_FAILED immediately during initialization instead of blocking",
-    status: "planning",
+    status: "in_progress",
     subtasks: [
       {
         test: "ConnectionState starts as Initializing, transitions to Ready after init",
         implementation: "Add ConnectionState enum, store state alongside connection",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "a54b2c05", message: "feat(lsp): add ConnectionState enum for tracking downstream server lifecycle", phase: "green" }],
         notes: ["ADR-0015 defines: Initializing -> Ready -> Failed/Closing -> Closed"],
       },
       {
