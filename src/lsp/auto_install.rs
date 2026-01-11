@@ -63,7 +63,7 @@ impl Default for InstallingLanguages {
 }
 
 /// Get the language for a document from path or stored language_id.
-pub fn get_language_for_document(
+pub(crate) fn get_language_for_document(
     uri: &Url,
     language: &LanguageCoordinator,
     documents: &DocumentStore,
@@ -142,7 +142,7 @@ pub fn get_injected_languages(
 /// # Arguments
 /// * `language` - The language name to check
 /// * `options` - FetchOptions for metadata caching (use with data_dir and use_cache: true)
-pub async fn should_skip_unsupported_language(
+pub(crate) async fn should_skip_unsupported_language(
     language: &str,
     options: Option<&FetchOptions<'_>>,
 ) -> (bool, Option<SkipReason>) {
@@ -156,7 +156,7 @@ pub async fn should_skip_unsupported_language(
 }
 
 #[derive(Debug)]
-pub enum SkipReason {
+pub(crate) enum SkipReason {
     UnsupportedLanguage {
         language: String,
     },
@@ -167,7 +167,7 @@ pub enum SkipReason {
 }
 
 impl SkipReason {
-    pub fn message(&self) -> String {
+    pub(crate) fn message(&self) -> String {
         match self {
             SkipReason::UnsupportedLanguage { language } => format!(
                 "Language '{}' is not supported by nvim-treesitter. Skipping auto-install.",
@@ -180,7 +180,7 @@ impl SkipReason {
         }
     }
 
-    pub fn message_type(&self) -> MessageType {
+    pub(crate) fn message_type(&self) -> MessageType {
         match self {
             SkipReason::UnsupportedLanguage { .. } => MessageType::INFO,
             SkipReason::MetadataUnavailable { .. } => MessageType::WARNING,
