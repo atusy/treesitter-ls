@@ -47,7 +47,7 @@ const scrum: ScrumDashboard = {
         { criterion: "ConnectionState enum with Initializing/Ready/Failed", verification: "grep enum ConnectionState src/lsp/bridge/" },
         { criterion: "Requests succeed after Ready state", verification: "E2E test: request after init completes" },
       ],
-      status: "ready",
+      status: "done",
       refinement_notes: ["Depends on PBI-INIT-TIMEOUT", "ADR-0015 Operation Gating"],
     },
   ],
@@ -55,7 +55,7 @@ const scrum: ScrumDashboard = {
     number: 152,
     pbi_id: "PBI-REQUEST-FAILED-INIT",
     goal: "Return REQUEST_FAILED immediately during initialization instead of blocking",
-    status: "in_progress",
+    status: "done",
     subtasks: [
       {
         test: "ConnectionState starts as Initializing, transitions to Ready after init",
@@ -85,8 +85,8 @@ const scrum: ScrumDashboard = {
         test: "After init completes, requests work normally",
         implementation: "Verify existing flow still works when state is Ready",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "33293e08", message: "test(lsp): add regression test for requests after init completes", phase: "green" }],
         notes: ["Ensure no regression in happy path"],
       },
     ],
