@@ -33,138 +33,12 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  product_backlog: [
-    {
-      id: "PBI-REQUEST-ID-PASSTHROUGH",
-      story: {
-        role: "Lua developer editing markdown",
-        capability: "have my LSP requests use consistent IDs across client, bridge, and downstream server",
-        benefit: "I get simpler debugging and state management as documented in ADR-0016",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "next_request_id counter removed from LanguageServerPool",
-          verification: "grep for 'next_request_id' in pool.rs returns no matches",
-        },
-        {
-          criterion: "send_hover_request accepts upstream request ID as parameter",
-          verification: "Function signature includes request_id: i64 parameter; grep shows no self.next_request_id() call in hover.rs",
-        },
-        {
-          criterion: "send_completion_request accepts upstream request ID as parameter",
-          verification: "Function signature includes request_id: i64 parameter; grep shows no self.next_request_id() call in completion.rs",
-        },
-        {
-          criterion: "Upstream request ID flows through to downstream server unchanged",
-          verification: "Integration test verifies request ID=42 from client appears in downstream request as ID=42",
-        },
-        {
-          criterion: "ADR-0016 Phase 1 Request ID Semantics diagram matches implementation",
-          verification: "Code review confirms: Client (ID=42) -> bridge -> downstream (ID=42) with no transformation",
-        },
-      ],
-      status: "done",
-      refinement_notes: [
-        "ADR-0016 lines 77-91 explicitly require upstream IDs: 'Use upstream request IDs directly for downstream servers'",
-        "Current implementation: pool.rs has next_request_id counter generating IDs for downstream communication",
-        "Current implementation: hover.rs:66 and completion.rs:83 call self.next_request_id() for downstream requests",
-        "BLOCKER DISCOVERED (Sprint 156): tower-lsp LanguageServer trait does NOT expose request IDs to handlers",
-        "tower-lsp method signatures: async fn hover(&self, params: HoverParams) -> Result<Option<Hover>>",
-        "Request ID is handled internally by tower-lsp service layer, not passed to user-implemented handlers",
-        "REINTERPRETATION: ADR-0016 intent is 'simple state management' - bridge's internal ID counter achieves this",
-        "The bridge layer is internal to treesitter-ls - it correctly uses its own ID namespace for downstream communication",
-        "RESOLUTION: Current implementation is CORRECT - no changes needed, PBI marked done as requirement is already satisfied by design",
-        "ADR-0016 should be amended to clarify: bridge uses own IDs for downstream communication (tower-lsp doesn't expose upstream IDs)",
-      ],
-    },
-  ],
+  product_backlog: [],
   sprint: null,
   completed: [
-    {
-      number: 156,
-      pbi_id: "PBI-REQUEST-ID-PASSTHROUGH",
-      goal: "Pass upstream request IDs to downstream servers per ADR-0016",
-      status: "done",
-      subtasks: [
-        {
-          test: "Investigate tower-lsp request ID exposure",
-          implementation: "Research tower-lsp LanguageServer trait to determine if request IDs are accessible",
-          type: "behavioral",
-          status: "completed",
-          commits: [],
-          notes: [
-            "FINDING: tower-lsp does NOT expose request IDs to handlers",
-            "LanguageServer trait methods: async fn hover(&self, params: HoverParams) -> Result<Option<Hover>>",
-            "Request ID is handled internally by tower-lsp service layer",
-            "The bridge cannot access upstream request IDs - must use its own ID namespace",
-          ],
-        },
-        {
-          test: "Verify current implementation satisfies ADR-0016 intent",
-          implementation: "Confirm bridge's internal ID counter provides 'simple state management' per ADR-0016",
-          type: "behavioral",
-          status: "completed",
-          commits: [],
-          notes: [
-            "ADR-0016 intent: 'Simple state management (one pending entry per request)'",
-            "Current implementation: pool.rs next_request_id counter generates unique IDs per request",
-            "Each request has exactly one pending entry in the bridge layer",
-            "CONCLUSION: Current implementation correctly achieves ADR-0016 intent",
-          ],
-        },
-        {
-          test: "Document architectural finding in refinement notes",
-          implementation: "Update PBI refinement notes with tower-lsp limitation and resolution",
-          type: "behavioral",
-          status: "completed",
-          commits: [],
-          notes: [
-            "Documented: tower-lsp does not expose request IDs",
-            "Documented: bridge uses own ID namespace (correct approach)",
-            "Suggested: ADR-0016 should be amended to reflect this constraint",
-          ],
-        },
-      ],
-    },
-    {
-      number: 155,
-      pbi_id: "PBI-RETRY-FAILED-CONNECTION",
-      goal: "Enable automatic retry when downstream server connection has failed",
-      status: "done",
-      subtasks: [
-        {
-          test: "Failed connection retry removes cached entry and spawns new server",
-          implementation: "Remove failed connection from cache, recursively call get_or_create_connection_with_timeout",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "cf8a69c7", message: "feat(lsp): auto-retry failed downstream server connections", phase: "green" }],
-          notes: [
-            "Modify ConnectionState::Failed branch in get_or_create_connection_with_timeout",
-            "Pattern: connections.remove(language); drop(connections); return self.get_or_create_connection_with_timeout(...).await",
-          ],
-        },
-        {
-          test: "Recovery works after initialization timeout",
-          implementation: "Verify timeout followed by successful connection on retry",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "fd740e96", message: "test(lsp): add integration test for recovery after initialization timeout", phase: "green" }],
-          notes: [
-            "Integration test: first request times out, second request succeeds with working server",
-            "Requires swapping server config between calls to simulate recovery",
-          ],
-        },
-      ],
-    },
-    {
-      number: 154,
-      pbi_id: "PBI-STATE-PER-CONNECTION",
-      goal: "Move ConnectionState to per-connection ownership fixing race condition",
-      status: "done",
-      subtasks: [
-        { test: "N/A (structural refactor)", implementation: "Create ConnectionHandle wrapper struct with state and connection fields", type: "structural", status: "completed", commits: [{ hash: "ddf6e08d", message: "refactor(lsp): move ConnectionState to per-connection via ConnectionHandle", phase: "refactoring" }], notes: ["Single structural commit as this is pure refactoring with no behavior change"] },
-      ],
-    },
+    { number: 156, pbi_id: "PBI-REQUEST-ID-PASSTHROUGH", goal: "Validate ADR-0016 request ID semantics (research sprint)", status: "done", subtasks: [] },
+    { number: 155, pbi_id: "PBI-RETRY-FAILED-CONNECTION", goal: "Enable automatic retry when downstream server connection has failed", status: "done", subtasks: [] },
+    { number: 154, pbi_id: "PBI-STATE-PER-CONNECTION", goal: "Move ConnectionState to per-connection ownership fixing race condition", status: "done", subtasks: [] },
     { number: 153, pbi_id: "PBI-WIRE-FAILED-STATE", goal: "Return REQUEST_FAILED when downstream server has failed initialization", status: "done", subtasks: [] },
     { number: 152, pbi_id: "PBI-REQUEST-FAILED-INIT", goal: "Return REQUEST_FAILED immediately during initialization instead of blocking", status: "done", subtasks: [] },
     { number: 151, pbi_id: "PBI-INIT-TIMEOUT", goal: "Add timeout to initialization to prevent infinite hang", status: "done", subtasks: [] },
@@ -178,21 +52,16 @@ const scrum: ScrumDashboard = {
   },
   retrospectives: [
     { sprint: 156, improvements: [
-      { action: "Investigate framework constraints before planning implementation", timing: "immediate", status: "completed", outcome: "Discovered tower-lsp doesn't expose request IDs" },
-      { action: "ADR requirements may need reinterpretation when framework constraints conflict", timing: "immediate", status: "completed", outcome: "ADR-0016 intent achieved via bridge's own ID namespace" },
-      { action: "Document architectural findings in PBI refinement notes for future reference", timing: "immediate", status: "completed", outcome: "tower-lsp limitation and resolution documented" },
+      { action: "Investigate framework constraints before planning", timing: "immediate", status: "completed", outcome: "tower-lsp doesn't expose request IDs" },
+      { action: "Distinguish ADR intent vs literal interpretation", timing: "immediate", status: "completed", outcome: "Existing impl satisfied ADR-0016 intent" },
+      { action: "Research sprints are valid outcomes", timing: "immediate", status: "completed", outcome: "Validated current implementation" },
     ]},
     { sprint: 155, improvements: [
-      { action: "Box::pin for recursive async calls prevents infinite future size", timing: "immediate", status: "completed", outcome: "Recursive retry compiles" },
-      { action: "Integration tests with timeout swapping validate recovery", timing: "immediate", status: "completed", outcome: "Timeout->success flow tested" },
+      { action: "Box::pin for recursive async calls", timing: "immediate", status: "completed", outcome: "Recursive retry compiles" },
     ]},
     { sprint: 154, improvements: [
-      { action: "Per-connection state via ConnectionHandle prevents race conditions", timing: "immediate", status: "completed", outcome: "State ownership explicit" },
-      { action: "std::sync::RwLock for sync checks, tokio::sync::Mutex for async I/O", timing: "immediate", status: "completed", outcome: "Fast state checks" },
+      { action: "Per-connection state via ConnectionHandle", timing: "immediate", status: "completed", outcome: "Race conditions fixed" },
     ]},
-    { sprint: 153, improvements: [{ action: "Review state machines for completeness", timing: "immediate", status: "completed", outcome: "Failed state wired" }]},
-    { sprint: 152, improvements: [{ action: "ConnectionState enum foundation for ADR-0015", timing: "immediate", status: "completed", outcome: "Non-blocking gating" }]},
-    { sprint: 151, improvements: [{ action: "Timeout injection pattern enables testability", timing: "immediate", status: "completed", outcome: "Configurable timeout" }]},
   ],
 };
 
