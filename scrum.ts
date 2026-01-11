@@ -33,7 +33,43 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "PBI-SIGNATURE-HELP-BRIDGE",
+      story: {
+        role: "Lua developer editing markdown",
+        capability: "see function parameter hints when typing function calls in Lua code blocks",
+        benefit: "I can quickly understand what arguments a function expects without leaving my markdown document",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Typing '(' after a Lua function name in a markdown code block triggers signature help from lua-language-server",
+          verification: "cargo test --test e2e_lsp_lua_signature_help --features e2e",
+        },
+        {
+          criterion: "Typing ',' between function arguments re-triggers signature help highlighting the next parameter",
+          verification: "Manual test: open markdown with ```lua block, type 'string.format(' and verify signature appears, type ',' and verify active parameter advances",
+        },
+        {
+          criterion: "Position coordinates are correctly transformed between host markdown and virtual Lua document",
+          verification: "cargo test bridge_signature_help --lib -- tests in src/lsp/bridge/protocol.rs",
+        },
+        {
+          criterion: "SignatureHelp response includes activeParameter and activeSignature fields when provided by downstream server",
+          verification: "cargo test transform_signature_help --lib",
+        },
+      ],
+      status: "ready",
+      refinement_notes: [
+        "Bridge architecture pattern established: handler -> pool -> protocol (see hover.rs, completion.rs)",
+        "Capability already advertised in lsp_impl.rs with trigger_characters ['(', ',']",
+        "Stub exists at src/lsp/lsp_impl/text_document/signature_help.rs (returns Ok(None))",
+        "Implementation files needed: bridge/text_document/signature_help.rs, protocol additions",
+        "E2E test pattern: see tests/e2e_lsp_lua_hover.rs for reference",
+        "SignatureHelp response may contain ranges that need coordinate transformation",
+      ],
+    },
+  ],
   sprint: null,
   completed: [
     { number: 157, pbi_id: "PBI-REQUEST-ID-SERVICE-WRAPPER", goal: "Pass upstream request IDs to downstream servers via tower Service wrapper per ADR-0016", status: "done", subtasks: [] },
