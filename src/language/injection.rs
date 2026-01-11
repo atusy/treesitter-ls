@@ -479,6 +479,25 @@ fn extract_content_and_language<'a>(
     None
 }
 
+/// Calculate a stable region_id for an injection based on its language and position.
+/// Format: `{language}-{ordinal}` where ordinal is the 0-indexed count of same-language injections.
+///
+/// # Arguments
+/// * `injections` - All injection regions in document order
+/// * `target_index` - Index of the target injection in the list
+///
+/// # Returns
+/// A stable region_id string like "lua-0", "python-1", etc.
+pub fn calculate_region_id(injections: &[InjectionRegionInfo], target_index: usize) -> String {
+    let target = &injections[target_index];
+    let ordinal = injections[..=target_index]
+        .iter()
+        .filter(|inj| inj.language == target.language)
+        .count()
+        - 1;
+    format!("{}-{}", target.language, ordinal)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1021,5 +1040,36 @@ mod tests {
             "Line should be virtual_line + region_start_line"
         );
         assert_eq!(host_pos.character, 3, "Character should remain unchanged");
+    }
+
+    // ============================================================
+    // Tests for calculate_region_id
+    // ============================================================
+
+    #[test]
+    fn test_calculate_region_id_returns_language_ordinal_format() {
+        // Test that calculate_region_id returns {language}-{ordinal} format
+        // For a single Lua injection, it should return "lua-0"
+        let mut parser = create_rust_parser();
+        let text = r#"fn main() { let s = "hello"; }"#;
+        let tree = parse_rust_code(&mut parser, text);
+        let root = tree.root_node();
+
+        // Create an injection query that matches the string as "lua"
+        let query_str = r#"
+            ((string_literal) @injection.content
+              (#set! injection.language "lua"))
+        "#;
+        let language = tree_sitter_rust::LANGUAGE.into();
+        let query = Query::new(&language, query_str).expect("valid query");
+
+        // Get injection regions
+        let regions = collect_all_injections(&root, text, Some(&query));
+        let regions = regions.expect("Should find injections");
+        assert_eq!(regions.len(), 1, "Should find exactly one injection");
+
+        // Calculate region_id for the first (and only) injection
+        let region_id = calculate_region_id(&regions, 0);
+        assert_eq!(region_id, "lua-0", "First lua injection should be lua-0");
     }
 }
