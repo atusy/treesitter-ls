@@ -74,12 +74,14 @@ const scrum: ScrumDashboard = {
       ],
     },
   ],
-  sprint: {
-    number: 164,
-    pbi_id: "PBI-BRIDGE-DEFINITION",
-    goal: "Implement textDocument/definition bridging with coordinate transformation for Location and LocationLink response formats",
-    status: "done",
-    subtasks: [
+  sprint: null,
+  completed: [
+    {
+      number: 164,
+      pbi_id: "PBI-BRIDGE-DEFINITION",
+      goal: "Implement textDocument/definition bridging with coordinate transformation for Location and LocationLink response formats",
+      status: "done",
+      subtasks: [
       {
         test: "Unit test: build_bridge_definition_request subtracts region_start_line from position and uses virtual URI",
         implementation: "Add build_bridge_definition_request to protocol.rs following hover/completion pattern",
@@ -136,9 +138,7 @@ const scrum: ScrumDashboard = {
         commits: [],
         notes: ["Similar to E2E tests for hover/completion; verify Location line numbers are in host coordinates"],
       },
-    ],
-  },
-  completed: [
+    ]},
     { number: 163, pbi_id: "PBI-REFACTOR-DIDCHANGE-MODULE", goal: "Extract didChange logic to text_document/did_change.rs module for consistent architecture", status: "done", subtasks: [] },
     { number: 162, pbi_id: "PBI-REFACTOR-DIDCLOSE-MODULE", goal: "Extract didClose logic to text_document/did_close.rs module for consistent architecture", status: "done", subtasks: [] },
     { number: 161, pbi_id: "PBI-DIDCHANGE-FORWARDING", goal: "Forward didChange notifications from host documents to opened virtual documents", status: "done", subtasks: [] },
