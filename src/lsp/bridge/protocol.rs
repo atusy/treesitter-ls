@@ -471,6 +471,64 @@ pub(crate) fn transform_signature_help_response_to_host(
     response
 }
 
+/// Transform a definition response from virtual to host document coordinates.
+///
+/// Definition responses can be in multiple formats per LSP spec:
+/// - null (no definition found)
+/// - Location (single location with uri + range)
+/// - Location[] (array of locations)
+/// - LocationLink[] (array of location links with target ranges)
+///
+/// This function transforms all range line numbers from virtual document
+/// coordinates back to host document coordinates by adding region_start_line.
+///
+/// # Arguments
+/// * `response` - The JSON-RPC response from the downstream language server
+/// * `region_start_line` - The starting line of the injection region in the host document
+pub(crate) fn transform_definition_response_to_host(
+    mut response: serde_json::Value,
+    region_start_line: u32,
+) -> serde_json::Value {
+    // Get mutable reference to result
+    let Some(result) = response.get_mut("result") else {
+        return response;
+    };
+
+    // Null result - pass through unchanged
+    if result.is_null() {
+        return response;
+    }
+
+    // Array format: Location[] or LocationLink[]
+    if let Some(arr) = result.as_array_mut() {
+        for item in arr.iter_mut() {
+            transform_definition_item(item, region_start_line);
+        }
+    } else if result.is_object() {
+        // Single Location or LocationLink
+        transform_definition_item(result, region_start_line);
+    }
+
+    response
+}
+
+/// Transform a single Location or LocationLink item to host coordinates.
+fn transform_definition_item(item: &mut serde_json::Value, region_start_line: u32) {
+    // Check if this is a Location (has uri + range)
+    if let Some(range) = item.get_mut("range") {
+        transform_range(range, region_start_line);
+    }
+
+    // Check if this is a LocationLink (has targetUri + targetRange + targetSelectionRange)
+    if let Some(target_range) = item.get_mut("targetRange") {
+        transform_range(target_range, region_start_line);
+    }
+    if let Some(target_selection_range) = item.get_mut("targetSelectionRange") {
+        transform_range(target_selection_range, region_start_line);
+    }
+    // Note: originSelectionRange stays in host coordinates (it's already correct)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -950,5 +1008,70 @@ mod tests {
             request["params"]["position"]["character"], 10,
             "Character should remain unchanged"
         );
+    }
+
+    #[test]
+    fn definition_response_transforms_location_array_ranges() {
+        // Definition response as Location[] format
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "uri": "file:///.treesitter-ls/abc123/region-0.lua",
+                    "range": {
+                        "start": { "line": 0, "character": 9 },
+                        "end": { "line": 0, "character": 14 }
+                    }
+                },
+                {
+                    "uri": "file:///.treesitter-ls/abc123/region-0.lua",
+                    "range": {
+                        "start": { "line": 2, "character": 0 },
+                        "end": { "line": 2, "character": 10 }
+                    }
+                }
+            ]
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_definition_response_to_host(response, region_start_line);
+
+        let result = transformed["result"].as_array().unwrap();
+        // First location: line 0 -> 3
+        assert_eq!(result[0]["range"]["start"]["line"], 3);
+        assert_eq!(result[0]["range"]["end"]["line"], 3);
+        // Second location: line 2 -> 5
+        assert_eq!(result[1]["range"]["start"]["line"], 5);
+        assert_eq!(result[1]["range"]["end"]["line"], 5);
+        // Characters unchanged
+        assert_eq!(result[0]["range"]["start"]["character"], 9);
+        assert_eq!(result[0]["range"]["end"]["character"], 14);
+    }
+
+    #[test]
+    fn definition_response_transforms_single_location() {
+        // Definition response as single Location (not array)
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "uri": "file:///.treesitter-ls/abc123/region-0.lua",
+                "range": {
+                    "start": { "line": 1, "character": 5 },
+                    "end": { "line": 1, "character": 15 }
+                }
+            }
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_definition_response_to_host(response, region_start_line);
+
+        // Single location: line 1 -> 4
+        assert_eq!(transformed["result"]["range"]["start"]["line"], 4);
+        assert_eq!(transformed["result"]["range"]["end"]["line"], 4);
+        // Characters unchanged
+        assert_eq!(transformed["result"]["range"]["start"]["character"], 5);
+        assert_eq!(transformed["result"]["range"]["end"]["character"], 15);
     }
 }
