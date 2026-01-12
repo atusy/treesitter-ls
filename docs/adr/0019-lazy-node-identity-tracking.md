@@ -67,7 +67,7 @@ Node F: |←──→|                             ✓ KEEP (unchanged)
 
 All "KEEP" cases preserve the node's ULID. Position/size adjustments are applied as needed.
 
-**Rule**: Using the **old tree** coordinates, if a node's START is **outside** the old edit range, its identity is preserved. Invalidate only nodes whose START is inside `[edit.start, edit.old_end)`. This preserves nodes before **and after** the edit range (e.g., Node E).
+**Rule**: Using the **old tree** coordinates, a node's identity is preserved unless its START boundary **changes**. Invalidate only nodes whose START is inside `[edit.start, edit.old_end)` (i.e., nodes whose START is directly touched by the old edit range). This preserves nodes before **and after** the edit range (e.g., Node E), and avoids invalidating nodes when an edit occurs *at* their START but does not move it.
 
 This matches AST semantics: a `fenced_code_block` remains the "same" block when you edit its contents, because the opening ``` marker (START) defines the block's identity.
 
