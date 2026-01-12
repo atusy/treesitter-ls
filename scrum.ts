@@ -82,13 +82,13 @@ const scrum: ScrumDashboard = {
     number: 169,
     pbi_id: "PBI-BRIDGE-REFERENCES",
     goal: "Implement textDocument/references bridging to enable finding all usages of symbols in injected code blocks",
-    status: "planning",
+    status: "review",
     subtasks: [
       {
         test: "Test build_bridge_references_request builds correct JSON-RPC request with textDocument/references method, virtual URI, translated position, and context.includeDeclaration parameter",
         implementation: "Add build_bridge_references_request function to protocol.rs following existing request builder pattern but including ReferenceContext with includeDeclaration boolean",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
         notes: [
           "Key difference from goto-family: references request requires context.includeDeclaration param",
@@ -100,7 +100,7 @@ const scrum: ScrumDashboard = {
         test: "Test transform_definition_response_to_host handles Location[] format correctly (reuse existing tests)",
         implementation: "Verify existing transform_definition_response_to_host works for references - no new code needed since references uses same Location[] format",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
         notes: [
           "References response is Location[] | null - simpler than definition which also supports LocationLink",
@@ -112,7 +112,7 @@ const scrum: ScrumDashboard = {
         test: "Test send_references_request method in text_document/references.rs sends didOpen if needed, sends request, waits for response with transform",
         implementation: "Create references.rs module with send_references_request following definition.rs pattern; add include_declaration parameter",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
         notes: [
           "Follow definition.rs pattern: get_or_create_connection, should_send_didopen check, write didOpen, write request, loop read until matching id",
@@ -124,7 +124,7 @@ const scrum: ScrumDashboard = {
         test: "Test Bridge.references method delegates to LanguageServerPool.send_references_request",
         implementation: "Add references method to Bridge struct in bridge.rs that delegates to pool.send_references_request",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
         notes: [
           "Follow existing pattern from definition/typeDefinition/implementation/declaration",
@@ -136,7 +136,7 @@ const scrum: ScrumDashboard = {
         test: "Test lsp_impl.rs textDocument/references handler routes to bridge.references for injected regions",
         implementation: "Wire textDocument/references in lsp_impl.rs to call bridge.references when position is in injection region",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
         notes: [
           "Check if position is in injection region using existing infrastructure",
@@ -148,7 +148,7 @@ const scrum: ScrumDashboard = {
         test: "E2E test: find references to local variable in markdown Lua code block, verify host line coordinates in response",
         implementation: "Add E2E test in tests/ that opens markdown with Lua block, requests references on variable, verifies Location array has correct host URIs and line numbers",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
         notes: [
           "Follow existing E2E test patterns with retry_for_lsp_indexing helper",
