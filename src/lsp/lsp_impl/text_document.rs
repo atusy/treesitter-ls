@@ -3,6 +3,7 @@
 mod completion;
 mod definition;
 mod hover;
+mod implementation;
 mod selection_range;
 mod semantic_tokens;
 mod signature_help;

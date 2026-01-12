@@ -10,5 +10,6 @@ mod definition;
 mod did_change;
 mod did_close;
 mod hover;
+mod implementation;
 mod signature_help;
 mod type_definition;
