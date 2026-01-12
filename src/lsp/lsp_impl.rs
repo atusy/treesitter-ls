@@ -1058,6 +1058,7 @@ impl LanguageServer for TreeSitterLs {
                     retrigger_characters: Some(vec![",".to_string()]),
                     ..Default::default()
                 }),
+                references_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
         })
@@ -1430,6 +1431,10 @@ impl LanguageServer for TreeSitterLs {
 
     async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
         self.signature_help_impl(params).await
+    }
+
+    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        self.references_impl(params).await
     }
 }
 

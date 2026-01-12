@@ -5,6 +5,7 @@ mod declaration;
 mod definition;
 mod hover;
 mod implementation;
+mod references;
 mod selection_range;
 mod semantic_tokens;
 mod signature_help;
