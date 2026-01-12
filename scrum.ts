@@ -124,7 +124,7 @@ const scrum: ScrumDashboard = {
         test: "Verify bridge.rs and lsp_impl.rs compile with definition wiring",
         implementation: "Wire send_definition_request through bridge.rs to lsp_impl.rs goto_definition handler",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
         notes: ["Check existing hover/completion wiring in bridge.rs and lsp_impl.rs for pattern"],
       },
