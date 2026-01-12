@@ -7,7 +7,7 @@ use std::io;
 use std::sync::Arc;
 use tower_lsp::lsp_types::Url;
 
-use super::super::pool::{ConnectionState, LanguageServerPool};
+use super::super::pool::{ConnectionHandle, ConnectionState, LanguageServerPool};
 use super::super::protocol::VirtualDocumentUri;
 
 impl LanguageServerPool {
@@ -46,10 +46,33 @@ impl LanguageServerPool {
                     .increment_document_version(language, &virtual_uri)
                     .await
                 {
-                    // Send didChange notification (best effort, ignore errors)
-                    let _ = self
-                        .send_didchange_for_virtual_doc(language, &virtual_uri, content, version)
+                    let handle = {
+                        let connections = self.connections().await;
+                        let Some(handle) = connections.get(language) else {
+                            continue;
+                        };
+
+                        if handle.state() != ConnectionState::Ready {
+                            continue;
+                        }
+
+                        Arc::clone(handle)
+                    };
+
+                    let virtual_uri = virtual_uri.clone();
+                    let content = content.clone();
+
+                    // Fire-and-forget to avoid blocking didChange on downstream I/O.
+                    // TODO: Replace with ADR-0015 single-writer loop for ordered, non-blocking sends.
+                    tokio::spawn(async move {
+                        let _ = Self::send_didchange_for_virtual_doc(
+                            handle,
+                            virtual_uri,
+                            content,
+                            version,
+                        )
                         .await;
+                    });
                 }
             }
             // If not opened, skip - didOpen will be sent on first request
@@ -67,27 +90,11 @@ impl LanguageServerPool {
     /// * `content` - The new content for the virtual document
     /// * `version` - The document version number
     async fn send_didchange_for_virtual_doc(
-        &self,
-        language: &str,
-        virtual_uri: &str,
-        content: &str,
+        handle: Arc<ConnectionHandle>,
+        virtual_uri: String,
+        content: String,
         version: i32,
     ) -> io::Result<()> {
-        // Get the connection for this language (if it exists and is Ready)
-        let connections = self.connections().await;
-        let Some(handle) = connections.get(language) else {
-            // No connection for this language - nothing to do
-            return Ok(());
-        };
-
-        // Only send if connection is Ready
-        if handle.state() != ConnectionState::Ready {
-            return Ok(());
-        }
-
-        let handle = Arc::clone(handle);
-        drop(connections); // Release lock before I/O
-
         // Build and send the didChange notification
         let notification = serde_json::json!({
             "jsonrpc": "2.0",

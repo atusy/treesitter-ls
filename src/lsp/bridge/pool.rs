@@ -1376,6 +1376,49 @@ mod tests {
         }
     }
 
+    /// Test that forward_didchange_to_opened_docs does not block on a busy connection.
+    ///
+    /// When a downstream request is in-flight (holding the connection lock),
+    /// didChange forwarding should return quickly and enqueue the send in the background.
+    #[tokio::test]
+    async fn forward_didchange_does_not_block_on_busy_connection() {
+        use super::super::protocol::VirtualDocumentUri;
+        use std::sync::Arc;
+        use std::time::{Duration, Instant};
+
+        let pool = LanguageServerPool::new();
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "lua-0").to_uri_string();
+        let opened = pool
+            .should_send_didopen(&host_uri, "lua", &virtual_uri)
+            .await;
+        assert!(opened, "First call should open the document");
+
+        let handle = create_handle_with_state(ConnectionState::Ready).await;
+        pool.connections
+            .lock()
+            .await
+            .insert("lua".to_string(), Arc::clone(&handle));
+
+        // Hold the connection lock to simulate an in-flight request.
+        let _conn_guard = handle.connection().await;
+
+        let injections = vec![(
+            "lua".to_string(),
+            "lua-0".to_string(),
+            "local x = 42".to_string(),
+        )];
+
+        let start = Instant::now();
+        pool.forward_didchange_to_opened_docs(&host_uri, &injections)
+            .await;
+        assert!(
+            start.elapsed() < Duration::from_millis(100),
+            "forward_didchange_to_opened_docs should not block on connection lock"
+        );
+    }
+
     /// Test that forward_didchange_to_opened_docs skips unopened virtual documents.
     ///
     /// When a host document changes, we should NOT send didChange notifications
