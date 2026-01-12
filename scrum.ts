@@ -20,7 +20,7 @@ const scrum: ScrumDashboard = {
       {
         metric: "Bridge coverage",
         target:
-          "Support completion, signatureHelp, codeAction, definition, typeDefinition, implementation, declaration, hover, references",
+          "Support completion, signatureHelp, codeAction, definition, typeDefinition, implementation, declaration, hover, references, rename",
       },
       {
         metric: "Modular architecture",
@@ -34,7 +34,51 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "PBI-BRIDGE-RENAME",
+      story: {
+        role: "Lua developer editing markdown",
+        capability: "rename symbols in Lua code blocks within markdown files",
+        benefit: "I can refactor variable and function names consistently across all usages in injected code",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "build_bridge_rename_request creates valid JSON-RPC request with position + newName",
+          verification: "Unit test: request includes textDocument.uri, position (transformed to virtual coordinates), and newName parameter",
+        },
+        {
+          criterion: "transform_rename_response_to_host handles WorkspaceEdit.changes format",
+          verification: "Unit test: transforms URI keys from virtual to host and all TextEdit.range coordinates",
+        },
+        {
+          criterion: "transform_rename_response_to_host handles WorkspaceEdit.documentChanges format",
+          verification: "Unit test: transforms TextDocumentEdit.textDocument.uri and all TextEdit.range coordinates in edits array",
+        },
+        {
+          criterion: "send_rename_request in text_document/rename.rs follows established module pattern",
+          verification: "Code review: module structure matches definition.rs, references.rs patterns",
+        },
+        {
+          criterion: "lsp_impl.rs rename handler integrates bridge for injection regions",
+          verification: "Integration test: rename request to injection region returns transformed WorkspaceEdit",
+        },
+        {
+          criterion: "E2E test verifies rename works in markdown Lua code blocks",
+          verification: "E2E test: vim.lsp.buf.rename in Lua code block renames all occurrences with correct positions",
+        },
+      ],
+      status: "ready",
+      refinement_notes: [
+        "WorkspaceEdit response format is more complex than Location[]: requires URI key transformation in changes object and URI field transformation in documentChanges array",
+        "Response can contain either 'changes' (uri -> TextEdit[]) or 'documentChanges' (TextDocumentEdit[] | mixed resource operations)",
+        "transform_rename_response_to_host is NEW - cannot reuse transform_definition_response_to_host",
+        "Pattern: build_bridge_rename_request (protocol.rs) + transform_rename_response_to_host (protocol.rs) + send_rename_request (text_document/rename.rs)",
+        "Request params include position (needs transformation) and newName string (pass through)",
+        "Reference files: definition.rs for module pattern, protocol.rs for transform function patterns",
+      ],
+    },
+  ],
   sprint: null,
   completed: [
     { number: 169, pbi_id: "PBI-BRIDGE-REFERENCES", goal: "Implement textDocument/references bridging to enable finding all usages of symbols in injected code blocks", status: "done", subtasks: [] },
