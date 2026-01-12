@@ -210,7 +210,10 @@ More text.
         }),
     );
 
-    println!("Definition on local variable response: {:?}", definition_response);
+    println!(
+        "Definition on local variable response: {:?}",
+        definition_response
+    );
 
     // Verify no error
     assert!(
@@ -227,7 +230,10 @@ More text.
         println!("Note: lua-ls returned null (may still be loading or cannot resolve)");
         println!("✓ E2E: Bridge infrastructure working (request succeeded)");
     } else {
-        println!("✓ E2E: Got definition result for local variable: {:?}", result);
+        println!(
+            "✓ E2E: Got definition result for local variable: {:?}",
+            result
+        );
         // Verify we got a location back
         let has_location = if result.is_array() {
             !result.as_array().unwrap().is_empty()
