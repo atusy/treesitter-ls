@@ -20,7 +20,7 @@ const scrum: ScrumDashboard = {
       {
         metric: "Bridge coverage",
         target:
-          "Support completion, signatureHelp, codeAction, definition, hover",
+          "Support completion, signatureHelp, codeAction, definition, typeDefinition, implementation, declaration, hover",
       },
       {
         metric: "Modular architecture",
@@ -34,7 +34,125 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "PBI-BRIDGE-TYPE-DEFINITION",
+      story: {
+        role: "Lua developer editing markdown",
+        capability: "use textDocument/typeDefinition to navigate to type definitions in injected code blocks",
+        benefit: "I can explore type hierarchies without leaving my markdown documentation",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "textDocument/typeDefinition requests in injection regions are forwarded to downstream LS",
+          verification: "Unit test: send_type_definition_request forwards to downstream with virtual URI and transformed position",
+        },
+        {
+          criterion: "Response position coordinates are transformed from virtual to host (ADR-0015 inbound position mapping)",
+          verification: "Unit test: transform_definition_response_to_host transforms Location/LocationLink ranges correctly",
+        },
+        {
+          criterion: "Response URIs are transformed from virtual to host (ADR-0015 inbound URI transformation)",
+          verification: "Unit test: Location.uri and LocationLink.targetUri are replaced with host URI",
+        },
+        {
+          criterion: "Both Location and LocationLink response formats are handled",
+          verification: "Unit tests cover: null result, single Location, Location[], LocationLink[]",
+        },
+        {
+          criterion: "typeDefinitionProvider capability is advertised in server capabilities",
+          verification: "Integration test: initialize response includes typeDefinitionProvider: true",
+        },
+      ],
+      status: "ready",
+      refinement_notes: [
+        "Follow exact pattern from Sprint 164/165 definition implementation",
+        "Reuse transform_definition_response_to_host from protocol.rs (same Location/LocationLink format)",
+        "Create text_document/type_definition.rs with send_type_definition_request",
+        "Add build_bridge_type_definition_request to protocol.rs (or generalize existing builder)",
+        "Wire through bridge.rs mod declaration and lsp_impl.rs goto_type_definition method",
+        "Key lesson from Sprint 165: Include URI transformation from the start, not just position transformation",
+      ],
+    },
+    {
+      id: "PBI-BRIDGE-IMPLEMENTATION",
+      story: {
+        role: "Lua developer editing markdown",
+        capability: "use textDocument/implementation to find implementations of interfaces/traits in injected code blocks",
+        benefit: "I can navigate to concrete implementations without leaving my markdown documentation",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "textDocument/implementation requests in injection regions are forwarded to downstream LS",
+          verification: "Unit test: send_implementation_request forwards to downstream with virtual URI and transformed position",
+        },
+        {
+          criterion: "Response position coordinates are transformed from virtual to host (ADR-0015 inbound position mapping)",
+          verification: "Unit test: transform_definition_response_to_host transforms Location/LocationLink ranges correctly",
+        },
+        {
+          criterion: "Response URIs are transformed from virtual to host (ADR-0015 inbound URI transformation)",
+          verification: "Unit test: Location.uri and LocationLink.targetUri are replaced with host URI",
+        },
+        {
+          criterion: "Both Location and LocationLink response formats are handled",
+          verification: "Unit tests cover: null result, single Location, Location[], LocationLink[]",
+        },
+        {
+          criterion: "implementationProvider capability is advertised in server capabilities",
+          verification: "Integration test: initialize response includes implementationProvider: true",
+        },
+      ],
+      status: "ready",
+      refinement_notes: [
+        "Follow exact pattern from Sprint 164/165 definition implementation",
+        "Reuse transform_definition_response_to_host from protocol.rs (same Location/LocationLink format)",
+        "Create text_document/implementation.rs with send_implementation_request",
+        "Add build_bridge_implementation_request to protocol.rs (or generalize existing builder)",
+        "Wire through bridge.rs mod declaration and lsp_impl.rs goto_implementation method",
+        "Key lesson from Sprint 165: Include URI transformation from the start, not just position transformation",
+      ],
+    },
+    {
+      id: "PBI-BRIDGE-DECLARATION",
+      story: {
+        role: "Lua developer editing markdown",
+        capability: "use textDocument/declaration to navigate to declarations in injected code blocks",
+        benefit: "I can find where symbols are declared without leaving my markdown documentation",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "textDocument/declaration requests in injection regions are forwarded to downstream LS",
+          verification: "Unit test: send_declaration_request forwards to downstream with virtual URI and transformed position",
+        },
+        {
+          criterion: "Response position coordinates are transformed from virtual to host (ADR-0015 inbound position mapping)",
+          verification: "Unit test: transform_definition_response_to_host transforms Location/LocationLink ranges correctly",
+        },
+        {
+          criterion: "Response URIs are transformed from virtual to host (ADR-0015 inbound URI transformation)",
+          verification: "Unit test: Location.uri and LocationLink.targetUri are replaced with host URI",
+        },
+        {
+          criterion: "Both Location and LocationLink response formats are handled",
+          verification: "Unit tests cover: null result, single Location, Location[], LocationLink[]",
+        },
+        {
+          criterion: "declarationProvider capability is advertised in server capabilities",
+          verification: "Integration test: initialize response includes declarationProvider: true",
+        },
+      ],
+      status: "ready",
+      refinement_notes: [
+        "Follow exact pattern from Sprint 164/165 definition implementation",
+        "Reuse transform_definition_response_to_host from protocol.rs (same Location/LocationLink format)",
+        "Create text_document/declaration.rs with send_declaration_request",
+        "Add build_bridge_declaration_request to protocol.rs (or generalize existing builder)",
+        "Wire through bridge.rs mod declaration and lsp_impl.rs goto_declaration method",
+        "Key lesson from Sprint 165: Include URI transformation from the start, not just position transformation",
+      ],
+    },
+  ],
   sprint: null,
   completed: [
     { number: 165, pbi_id: "PBI-BUGFIX-DEFINITION-URI-TRANSFORM", goal: "Fix virtual URI to host URI transformation in definition responses so users see correct document paths", status: "done", subtasks: [] },
