@@ -54,14 +54,11 @@ const scrum: ScrumDashboard = {
     ],
   },
   retrospectives: [
-    { sprint: 167, improvements: [
-      { action: "Consider extracting duplicated goto-family method implementations to generic function", timing: "product", status: "active", outcome: "Third consecutive sprint with identical pattern (definition/typeDefinition/implementation) - duplication acceptable for now, defer generalization until declaration completes to ensure pattern stability" },
-    ]},
-    { sprint: 166, improvements: [
-      { action: "Reuse pattern-compatible transformation functions across similar LSP methods", timing: "immediate", status: "completed", outcome: "Successfully reused transform_definition_response_to_host for typeDefinition - LSP spec groups goto-family methods with identical response schemas" },
+    { sprint: 168, improvements: [
+      { action: "Goto-family pattern complete: 4 methods (definition/typeDefinition/implementation/declaration) with identical pattern", timing: "immediate", status: "completed", outcome: "LSP goto-family methods share Location/LocationLink response schema - single transform_definition_response_to_host serves all. Template established for future position-based LSP methods (references, documentSymbol)" },
     ]},
     { sprint: 165, improvements: [
-      { action: "Include URI transformation from the start (not just position transformation)", timing: "immediate", status: "completed", outcome: "Documented as explicit checklist item in refinement notes to prevent Sprint 164-style oversight" },
+      { action: "Include URI transformation from the start (not just position transformation)", timing: "immediate", status: "completed", outcome: "Critical fix applied to all subsequent goto-family implementations" },
     ]},
   ],
 };
