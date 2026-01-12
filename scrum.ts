@@ -64,7 +64,7 @@ const scrum: ScrumDashboard = {
           verification: "Unit tests: transform_definition_response_to_host handles Location[], LocationLink[], and null responses",
         },
       ],
-      status: "ready",
+      status: "done",
       refinement_notes: [
         "Pattern reference: hover.rs, completion.rs in src/lsp/bridge/text_document/",
         "Protocol helpers needed: build_bridge_definition_request, transform_definition_response_to_host in protocol.rs",
@@ -78,7 +78,7 @@ const scrum: ScrumDashboard = {
     number: 164,
     pbi_id: "PBI-BRIDGE-DEFINITION",
     goal: "Implement textDocument/definition bridging with coordinate transformation for Location and LocationLink response formats",
-    status: "in_progress",
+    status: "done",
     subtasks: [
       {
         test: "Unit test: build_bridge_definition_request subtracts region_start_line from position and uses virtual URI",
@@ -132,7 +132,7 @@ const scrum: ScrumDashboard = {
         test: "E2E test: definition in Lua code block returns transformed Location",
         implementation: "Add E2E test verifying end-to-end definition flow with lua-language-server",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
         notes: ["Similar to E2E tests for hover/completion; verify Location line numbers are in host coordinates"],
       },
