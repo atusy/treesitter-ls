@@ -43,7 +43,7 @@ The question is: how do we assign stable identifiers to Tree-sitter nodes that s
 
 1. **Lazy assignment**: IDs are assigned only when requested (e.g., `node.id()`)
 2. **ULID format**: Universally Unique Lexicographically Sortable Identifiers
-3. **START-priority invalidation**: Only nodes whose START position falls within the edit range are invalidated
+3. **START-priority invalidation**: Only nodes whose START position changes (inside the old edit range) are invalidated
 4. **Container preservation**: Parent nodes that contain the edit range retain their ID
 5. **Per-document storage**: `NodeTracker` lifecycle matches `Document` for easy `didClose` cleanup
 
