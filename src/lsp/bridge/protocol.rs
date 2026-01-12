@@ -1117,4 +1117,12 @@ mod tests {
         assert_eq!(result[0]["targetSelectionRange"]["start"]["character"], 9);
         assert_eq!(result[0]["targetSelectionRange"]["end"]["character"], 14);
     }
+
+    #[test]
+    fn definition_response_with_null_result_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+
+        let transformed = transform_definition_response_to_host(response.clone(), 3);
+        assert_eq!(transformed, response);
+    }
 }
