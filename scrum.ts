@@ -78,13 +78,13 @@ const scrum: ScrumDashboard = {
     number: 164,
     pbi_id: "PBI-BRIDGE-DEFINITION",
     goal: "Implement textDocument/definition bridging with coordinate transformation for Location and LocationLink response formats",
-    status: "planning",
+    status: "in_progress",
     subtasks: [
       {
         test: "Unit test: build_bridge_definition_request subtracts region_start_line from position and uses virtual URI",
         implementation: "Add build_bridge_definition_request to protocol.rs following hover/completion pattern",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
         notes: ["Pattern: build_bridge_hover_request in protocol.rs", "Position translation: host_line - region_start_line"],
       },
