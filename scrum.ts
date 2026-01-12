@@ -34,111 +34,10 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  product_backlog: [
-    {
-      id: "PBI-BRIDGE-DEFINITION",
-      story: {
-        role: "Lua developer editing markdown",
-        capability: "navigate to Lua function definitions from within markdown code blocks using goto definition",
-        benefit: "I can explore Lua code structure without leaving my markdown documentation",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "textDocument/definition request in Lua code block returns definition location from lua-language-server",
-          verification: "E2E test: open markdown with Lua code block, send definition request on function call, verify Location response with transformed line numbers",
-        },
-        {
-          criterion: "Definition response ranges are transformed from virtual to host document coordinates",
-          verification: "Unit test: verify transform_definition_response_to_host adds region_start_line to Location/LocationLink ranges",
-        },
-        {
-          criterion: "Definition request position is transformed from host to virtual document coordinates",
-          verification: "Unit test: verify build_bridge_definition_request subtracts region_start_line from position",
-        },
-        {
-          criterion: "Bridge module follows text_document/<feature>.rs pattern",
-          verification: "Code review: src/lsp/bridge/text_document/definition.rs exists with send_definition_request method on LanguageServerPool",
-        },
-        {
-          criterion: "Handles both Location and LocationLink response formats per LSP spec",
-          verification: "Unit tests: transform_definition_response_to_host handles Location[], LocationLink[], and null responses",
-        },
-      ],
-      status: "done",
-      refinement_notes: [
-        "Pattern reference: hover.rs, completion.rs in src/lsp/bridge/text_document/",
-        "Protocol helpers needed: build_bridge_definition_request, transform_definition_response_to_host in protocol.rs",
-        "Definition responses may contain: Location (uri + range) or LocationLink (originSelectionRange + targetUri + targetRange + targetSelectionRange)",
-        "Only targetRange and targetSelectionRange need transformation in LocationLink; originSelectionRange is already in host coordinates",
-        "ADR alignment: Phase 1 of ADR-0013 scope, uses ADR-0014 async connection, ADR-0015 request ID passthrough, ADR-0016 pool coordination",
-      ],
-    },
-  ],
+  product_backlog: [],
   sprint: null,
   completed: [
-    {
-      number: 164,
-      pbi_id: "PBI-BRIDGE-DEFINITION",
-      goal: "Implement textDocument/definition bridging with coordinate transformation for Location and LocationLink response formats",
-      status: "done",
-      subtasks: [
-      {
-        test: "Unit test: build_bridge_definition_request subtracts region_start_line from position and uses virtual URI",
-        implementation: "Add build_bridge_definition_request to protocol.rs following hover/completion pattern",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Pattern: build_bridge_hover_request in protocol.rs", "Position translation: host_line - region_start_line"],
-      },
-      {
-        test: "Unit test: transform_definition_response_to_host handles Location[] with range transformation",
-        implementation: "Add transform_definition_response_to_host to protocol.rs for Location array format",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Location has uri + range; only range.start.line and range.end.line need +region_start_line"],
-      },
-      {
-        test: "Unit test: transform_definition_response_to_host handles LocationLink[] with targetRange and targetSelectionRange transformation",
-        implementation: "Extend transform_definition_response_to_host for LocationLink format",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["LocationLink: originSelectionRange stays unchanged (host coords), targetRange and targetSelectionRange need transformation"],
-      },
-      {
-        test: "Unit test: transform_definition_response_to_host handles null result",
-        implementation: "Add null handling branch to transform_definition_response_to_host",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Follow pattern from transform_completion_response_to_host for null handling"],
-      },
-      {
-        test: "Verify definition.rs module compiles with send_definition_request signature",
-        implementation: "Create src/lsp/bridge/text_document/definition.rs with send_definition_request on LanguageServerPool",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Follow hover.rs pattern: get_or_create_connection, should_send_didopen, write_message loop"],
-      },
-      {
-        test: "Verify bridge.rs and lsp_impl.rs compile with definition wiring",
-        implementation: "Wire send_definition_request through bridge.rs to lsp_impl.rs goto_definition handler",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Check existing hover/completion wiring in bridge.rs and lsp_impl.rs for pattern"],
-      },
-      {
-        test: "E2E test: definition in Lua code block returns transformed Location",
-        implementation: "Add E2E test verifying end-to-end definition flow with lua-language-server",
-        type: "behavioral",
-        status: "completed",
-        commits: [],
-        notes: ["Similar to E2E tests for hover/completion; verify Location line numbers are in host coordinates"],
-      },
-    ]},
+    { number: 164, pbi_id: "PBI-BRIDGE-DEFINITION", goal: "Implement textDocument/definition bridging with coordinate transformation for Location and LocationLink response formats", status: "done", subtasks: [] },
     { number: 163, pbi_id: "PBI-REFACTOR-DIDCHANGE-MODULE", goal: "Extract didChange logic to text_document/did_change.rs module for consistent architecture", status: "done", subtasks: [] },
     { number: 162, pbi_id: "PBI-REFACTOR-DIDCLOSE-MODULE", goal: "Extract didClose logic to text_document/did_close.rs module for consistent architecture", status: "done", subtasks: [] },
     { number: 161, pbi_id: "PBI-DIDCHANGE-FORWARDING", goal: "Forward didChange notifications from host documents to opened virtual documents", status: "done", subtasks: [] },
@@ -151,6 +50,11 @@ const scrum: ScrumDashboard = {
     ],
   },
   retrospectives: [
+    { sprint: 164, improvements: [
+      { action: "Create ADR for dual-format LSP response patterns (Location vs LocationLink, CompletionItem vs CompletionList)", timing: "product", status: "active", outcome: null },
+      { action: "Extract helper functions early when implementing dual-format transformations (pattern: transform_definition_item for handling Location/LocationLink)", timing: "immediate", status: "completed", outcome: "Helper function transform_definition_item cleanly separates single-item transformation logic from array/object handling - apply this pattern in future response transformations from the start of TDD cycle" },
+      { action: "Add checklist item for E2E tests: verify both response format variants when LSP spec allows alternatives", timing: "sprint", status: "active", outcome: null },
+    ]},
     { sprint: 163, improvements: [
       { action: "Paired accessors with read vs consume semantics", timing: "immediate", status: "completed", outcome: "get_host_virtual_docs (read) vs remove_host_virtual_docs (consume) - clear semantic naming enables correct usage for different module needs (didChange reads, didClose consumes)" },
     ]},
