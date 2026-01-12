@@ -6,6 +6,7 @@
 //! The structure mirrors `lsp_impl/text_document/` for consistency.
 
 mod completion;
+mod declaration;
 mod definition;
 mod did_change;
 mod did_close;

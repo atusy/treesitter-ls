@@ -3,8 +3,8 @@ mod text_document;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::notification::Progress;
 use tower_lsp::lsp_types::request::{
-    GotoImplementationParams, GotoImplementationResponse, GotoTypeDefinitionParams,
-    GotoTypeDefinitionResponse,
+    GotoDeclarationParams, GotoDeclarationResponse, GotoImplementationParams,
+    GotoImplementationResponse, GotoTypeDefinitionParams, GotoTypeDefinitionResponse,
 };
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
@@ -1044,6 +1044,7 @@ impl LanguageServer for TreeSitterLs {
                     ),
                 ),
                 selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
+                declaration_provider: Some(DeclarationCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
                 type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
                 implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
@@ -1389,6 +1390,13 @@ impl LanguageServer for TreeSitterLs {
         params: SelectionRangeParams,
     ) -> Result<Option<Vec<SelectionRange>>> {
         self.selection_range_impl(params).await
+    }
+
+    async fn goto_declaration(
+        &self,
+        params: GotoDeclarationParams,
+    ) -> Result<Option<GotoDeclarationResponse>> {
+        self.goto_declaration_impl(params).await
     }
 
     async fn goto_definition(

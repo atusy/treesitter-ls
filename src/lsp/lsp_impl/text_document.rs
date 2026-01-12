@@ -1,6 +1,7 @@
 //! Text document related LSP methods.
 
 mod completion;
+mod declaration;
 mod definition;
 mod hover;
 mod implementation;
