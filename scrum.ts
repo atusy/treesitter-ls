@@ -34,7 +34,46 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "PBI-BRIDGE-DEFINITION",
+      story: {
+        role: "Lua developer editing markdown",
+        capability: "navigate to Lua function definitions from within markdown code blocks using goto definition",
+        benefit: "I can explore Lua code structure without leaving my markdown documentation",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "textDocument/definition request in Lua code block returns definition location from lua-language-server",
+          verification: "E2E test: open markdown with Lua code block, send definition request on function call, verify Location response with transformed line numbers",
+        },
+        {
+          criterion: "Definition response ranges are transformed from virtual to host document coordinates",
+          verification: "Unit test: verify transform_definition_response_to_host adds region_start_line to Location/LocationLink ranges",
+        },
+        {
+          criterion: "Definition request position is transformed from host to virtual document coordinates",
+          verification: "Unit test: verify build_bridge_definition_request subtracts region_start_line from position",
+        },
+        {
+          criterion: "Bridge module follows text_document/<feature>.rs pattern",
+          verification: "Code review: src/lsp/bridge/text_document/definition.rs exists with send_definition_request method on LanguageServerPool",
+        },
+        {
+          criterion: "Handles both Location and LocationLink response formats per LSP spec",
+          verification: "Unit tests: transform_definition_response_to_host handles Location[], LocationLink[], and null responses",
+        },
+      ],
+      status: "ready",
+      refinement_notes: [
+        "Pattern reference: hover.rs, completion.rs in src/lsp/bridge/text_document/",
+        "Protocol helpers needed: build_bridge_definition_request, transform_definition_response_to_host in protocol.rs",
+        "Definition responses may contain: Location (uri + range) or LocationLink (originSelectionRange + targetUri + targetRange + targetSelectionRange)",
+        "Only targetRange and targetSelectionRange need transformation in LocationLink; originSelectionRange is already in host coordinates",
+        "ADR alignment: Phase 1 of ADR-0013 scope, uses ADR-0014 async connection, ADR-0015 request ID passthrough, ADR-0016 pool coordination",
+      ],
+    },
+  ],
   sprint: null,
   completed: [
     { number: 163, pbi_id: "PBI-REFACTOR-DIDCHANGE-MODULE", goal: "Extract didChange logic to text_document/did_change.rs module for consistent architecture", status: "done", subtasks: [] },
