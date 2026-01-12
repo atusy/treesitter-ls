@@ -1074,4 +1074,47 @@ mod tests {
         assert_eq!(transformed["result"]["range"]["start"]["character"], 5);
         assert_eq!(transformed["result"]["range"]["end"]["character"], 15);
     }
+
+    #[test]
+    fn definition_response_transforms_location_link_array() {
+        // Definition response as LocationLink[] format
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "originSelectionRange": {
+                        "start": { "line": 5, "character": 0 },
+                        "end": { "line": 5, "character": 10 }
+                    },
+                    "targetUri": "file:///.treesitter-ls/abc123/region-0.lua",
+                    "targetRange": {
+                        "start": { "line": 0, "character": 0 },
+                        "end": { "line": 2, "character": 3 }
+                    },
+                    "targetSelectionRange": {
+                        "start": { "line": 0, "character": 9 },
+                        "end": { "line": 0, "character": 14 }
+                    }
+                }
+            ]
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_definition_response_to_host(response, region_start_line);
+
+        let result = transformed["result"].as_array().unwrap();
+        // originSelectionRange should NOT be transformed (it's in host coordinates)
+        assert_eq!(result[0]["originSelectionRange"]["start"]["line"], 5);
+        assert_eq!(result[0]["originSelectionRange"]["end"]["line"], 5);
+        // targetRange should be transformed: line 0 -> 3, line 2 -> 5
+        assert_eq!(result[0]["targetRange"]["start"]["line"], 3);
+        assert_eq!(result[0]["targetRange"]["end"]["line"], 5);
+        // targetSelectionRange should be transformed: line 0 -> 3
+        assert_eq!(result[0]["targetSelectionRange"]["start"]["line"], 3);
+        assert_eq!(result[0]["targetSelectionRange"]["end"]["line"], 3);
+        // Characters unchanged
+        assert_eq!(result[0]["targetSelectionRange"]["start"]["character"], 9);
+        assert_eq!(result[0]["targetSelectionRange"]["end"]["character"], 14);
+    }
 }
