@@ -51,6 +51,8 @@ The question is: how do we assign stable identifiers to Tree-sitter nodes that s
 
 The key insight is that a node's **identity** is primarily tied to its **START boundary**. The START position defines "where this node begins" and is the primary anchor for identity. The END boundary can shift as contents change.
 
+**Coordinate requirement**: `edit.start`/`edit.old_end` and `node.start` must be in the **same old-tree coordinate system** (e.g., Tree-sitter byte offsets). When edits originate in a different coordinate system (e.g., LSP positions), they must be converted before applying this rule.
+
 ```
                       edit range
                       |←──────→|
@@ -68,6 +70,8 @@ Node F: |←──→|                             ✓ KEEP (unchanged)
 All "KEEP" cases preserve the node's ULID. Position/size adjustments are applied as needed.
 
 **Rule**: Using the **old tree** coordinates, a node's identity is preserved unless its START boundary **changes**. Invalidate only nodes whose START is inside `[edit.start, edit.old_end)` (i.e., nodes whose START is directly touched by the old edit range). This preserves nodes before **and after** the edit range (e.g., Node E), and avoids invalidating nodes when an edit occurs *at* their START but does not move it.
+
+**Position sync requirement**: When identities are preserved, the node's positional data must be re-synchronized with the **new tree** rather than reusing stale old-tree coordinates.
 
 This matches AST semantics: a `fenced_code_block` remains the "same" block when you edit its contents, because the opening ``` marker (START) defines the block's identity.
 
