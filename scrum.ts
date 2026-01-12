@@ -116,7 +116,7 @@ const scrum: ScrumDashboard = {
         test: "Verify definition.rs module compiles with send_definition_request signature",
         implementation: "Create src/lsp/bridge/text_document/definition.rs with send_definition_request on LanguageServerPool",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
         notes: ["Follow hover.rs pattern: get_or_create_connection, should_send_didopen, write_message loop"],
       },
