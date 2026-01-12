@@ -92,7 +92,7 @@ const scrum: ScrumDashboard = {
         test: "Unit test: transform_definition_response_to_host handles Location[] with range transformation",
         implementation: "Add transform_definition_response_to_host to protocol.rs for Location array format",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
         notes: ["Location has uri + range; only range.start.line and range.end.line need +region_start_line"],
       },
