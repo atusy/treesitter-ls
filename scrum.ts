@@ -34,100 +34,10 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  product_backlog: [
-    {
-      id: "PBI-BRIDGE-DECLARATION",
-      story: {
-        role: "Lua developer editing markdown",
-        capability: "use textDocument/declaration to navigate to declarations in injected code blocks",
-        benefit: "I can find where symbols are declared without leaving my markdown documentation",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "textDocument/declaration requests in injection regions are forwarded to downstream LS",
-          verification: "Unit test: send_declaration_request forwards to downstream with virtual URI and transformed position",
-        },
-        {
-          criterion: "Response position coordinates are transformed from virtual to host (ADR-0015 inbound position mapping)",
-          verification: "Unit test: transform_definition_response_to_host transforms Location/LocationLink ranges correctly",
-        },
-        {
-          criterion: "Response URIs are transformed from virtual to host (ADR-0015 inbound URI transformation)",
-          verification: "Unit test: Location.uri and LocationLink.targetUri are replaced with host URI",
-        },
-        {
-          criterion: "Both Location and LocationLink response formats are handled",
-          verification: "Unit tests cover: null result, single Location, Location[], LocationLink[]",
-        },
-        {
-          criterion: "declarationProvider capability is advertised in server capabilities",
-          verification: "Integration test: initialize response includes declarationProvider: true",
-        },
-      ],
-      status: "done",
-      refinement_notes: [
-        "Follow exact pattern from Sprint 164/165 definition implementation",
-        "Reuse transform_definition_response_to_host from protocol.rs (same Location/LocationLink format)",
-        "Create text_document/declaration.rs with send_declaration_request",
-        "Add build_bridge_declaration_request to protocol.rs (or generalize existing builder)",
-        "Wire through bridge.rs mod declaration and lsp_impl.rs goto_declaration method",
-        "Key lesson from Sprint 165: Include URI transformation from the start, not just position transformation",
-      ],
-    },
-  ],
-  sprint: {
-    number: 168,
-    pbi_id: "PBI-BRIDGE-DECLARATION",
-    goal: "Implement textDocument/declaration bridging to enable navigation to symbol declarations in injected code blocks",
-    status: "done",
-    subtasks: [
-      {
-        test: "Test build_bridge_declaration_request uses virtual URI and translates position",
-        implementation: "Add build_bridge_declaration_request to protocol.rs (mirrors definition request)",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "32fff816", message: "feat(bridge): implement textDocument/declaration bridging", phase: "green" }],
-        notes: ["Pattern: copy build_bridge_definition_request, change method to textDocument/declaration"],
-      },
-      {
-        test: "Test send_declaration_request forwards to downstream and transforms response",
-        implementation: "Create text_document/declaration.rs with send_declaration_request method",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "32fff816", message: "feat(bridge): implement textDocument/declaration bridging", phase: "green" }],
-        notes: [
-          "Follow definition.rs pattern exactly",
-          "Reuse transform_definition_response_to_host (same Location/LocationLink format per LSP spec)",
-          "Include URI transformation from the start (Sprint 165 lesson)",
-        ],
-      },
-      {
-        test: "Verify declaration module is wired to text_document.rs",
-        implementation: "Add mod declaration to text_document.rs",
-        type: "structural",
-        status: "completed",
-        commits: [{ hash: "32fff816", message: "feat(bridge): implement textDocument/declaration bridging", phase: "green" }],
-        notes: ["Simple mod declaration following existing pattern"],
-      },
-      {
-        test: "Test goto_declaration delegates to bridge pool for injection regions",
-        implementation: "Wire send_declaration_request to lsp_impl.rs goto_declaration method",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "32fff816", message: "feat(bridge): implement textDocument/declaration bridging", phase: "green" }],
-        notes: ["Follow goto_definition pattern in lsp_impl.rs"],
-      },
-      {
-        test: "E2E test: textDocument/declaration in Lua code block returns host coordinates",
-        implementation: "Add Neovim E2E test for declaration in embedded code blocks",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "d6f7d65f", message: "test(e2e): add declaration bridging E2E test", phase: "green" }],
-        notes: ["Verify full flow: request -> bridge -> downstream LS -> response transformation", "This is the final goto-family method to implement"],
-      },
-    ],
-  },
+  product_backlog: [],
+  sprint: null,
   completed: [
+    { number: 168, pbi_id: "PBI-BRIDGE-DECLARATION", goal: "Implement textDocument/declaration bridging to enable navigation to symbol declarations in injected code blocks", status: "done", subtasks: [] },
     { number: 167, pbi_id: "PBI-BRIDGE-IMPLEMENTATION", goal: "Implement textDocument/implementation bridging to enable navigation to concrete implementations in injected code blocks", status: "done", subtasks: [] },
     { number: 166, pbi_id: "PBI-BRIDGE-TYPE-DEFINITION", goal: "Implement textDocument/typeDefinition bridging to enable type navigation in injected code blocks", status: "done", subtasks: [] },
     { number: 165, pbi_id: "PBI-BUGFIX-DEFINITION-URI-TRANSFORM", goal: "Fix virtual URI to host URI transformation in definition responses so users see correct document paths", status: "done", subtasks: [] },
