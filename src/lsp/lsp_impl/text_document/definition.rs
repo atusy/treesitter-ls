@@ -1,8 +1,12 @@
 //! Goto definition method for TreeSitterLs.
 
-use tower_lsp::jsonrpc::Result;
+use tower_lsp::jsonrpc::{Id, Result};
 use tower_lsp::lsp_types::*;
 
+use crate::language::injection::{
+    CacheableInjectionRegion, calculate_region_id, find_injection_at_position,
+};
+use crate::lsp::get_current_request_id;
 use crate::text::PositionMapper;
 
 use super::super::TreeSitterLs;
@@ -32,99 +36,125 @@ impl TreeSitterLs {
                 .await;
             return Ok(None);
         };
-        let text = doc.text();
+        let text = doc.text().to_string();
 
         // Get the language for this document
         let Some(language_name) = self.get_language_for_document(&uri) else {
             log::debug!(target: "treesitter_ls::definition", "No language detected");
             return Ok(None);
         };
-        log::debug!(target: "treesitter_ls::definition", "Language: {}", language_name);
 
         // Get injection query to detect injection regions
         let Some(injection_query) = self.language.get_injection_query(&language_name) else {
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    format!("No injection query for {}", language_name),
-                )
-                .await;
             return Ok(None);
         };
 
         // Get the parse tree
-        let Some(tree) = doc.tree() else {
-            log::debug!(target: "treesitter_ls::definition", "No parse tree");
+        let Some(tree) = doc.tree().cloned() else {
             return Ok(None);
         };
+
+        // Drop the document reference to avoid holding it across await
+        drop(doc);
 
         // Collect all injection regions
         let injections = crate::language::injection::collect_all_injections(
             &tree.root_node(),
-            text,
+            &text,
             Some(injection_query.as_ref()),
         );
 
         let Some(injections) = injections else {
-            self.client
-                .log_message(MessageType::INFO, "No injections found")
-                .await;
             return Ok(None);
         };
-        self.client
-            .log_message(
-                MessageType::INFO,
-                format!("Found {} injection regions", injections.len()),
-            )
-            .await;
 
         // Convert Position to byte offset
-        let mapper = PositionMapper::new(text);
+        let mapper = PositionMapper::new(&text);
         let Some(byte_offset) = mapper.position_to_byte(position) else {
-            log::debug!(target: "treesitter_ls::definition", "Failed to convert position to byte");
             return Ok(None);
         };
-        log::debug!(target: "treesitter_ls::definition", "Byte offset: {}", byte_offset);
 
         // Find which injection region (if any) contains this position
-        // Log all regions for debugging
-        for inj in &injections {
-            let start = inj.content_node.start_byte();
-            let end = inj.content_node.end_byte();
+        let Some((region_index, region)) = find_injection_at_position(&injections, byte_offset)
+        else {
+            // Not in an injection region - return None
+            return Ok(None);
+        };
+
+        // Calculate stable region_id for virtual document URI
+        let region_id = calculate_region_id(&injections, region_index);
+
+        // Convert to CacheableInjectionRegion to get line_range for position mapping
+        let cacheable_region =
+            CacheableInjectionRegion::from_region_info(region, &region_id, &text);
+
+        // Get bridge server config for this language
+        // The bridge filter is checked inside get_bridge_config_for_language
+        let Some(server_config) =
+            self.get_bridge_config_for_language(&language_name, &region.language)
+        else {
             self.client
                 .log_message(
                     MessageType::INFO,
                     format!(
-                        "Region {} bytes {}..{}, contains {}? {}",
-                        inj.language,
-                        start,
-                        end,
-                        byte_offset,
-                        byte_offset >= start && byte_offset < end
+                        "No bridge server configured for language: {} (host: {})",
+                        region.language, language_name
                     ),
                 )
                 .await;
-        }
-        let matching_region = injections.iter().find(|inj| {
-            let start = inj.content_node.start_byte();
-            let end = inj.content_node.end_byte();
-            byte_offset >= start && byte_offset < end
-        });
-
-        let Some(region) = matching_region else {
-            // Not in an injection region
-            self.client
-                .log_message(MessageType::INFO, "Position not in any injection region")
-                .await;
             return Ok(None);
         };
-        self.client
-            .log_message(
-                MessageType::INFO,
-                format!("Found matching region: {}", region.language),
+
+        // Extract the virtual document content (just the injection region)
+        let virtual_content = cacheable_region.extract_content(&text).to_string();
+
+        // Send definition request via language server pool
+        // Get upstream request ID from task-local storage (set by RequestIdCapture middleware)
+        let upstream_request_id = match get_current_request_id() {
+            Some(Id::Number(n)) => n,
+            // For string IDs or no ID, use 0 as fallback
+            _ => 0,
+        };
+        let response = self
+            .language_server_pool
+            .send_definition_request(
+                &server_config,
+                &uri,
+                position,
+                &region.language,
+                &cacheable_region.result_id,
+                cacheable_region.line_range.start,
+                &virtual_content,
+                upstream_request_id,
             )
             .await;
 
-        Ok(None)
+        match response {
+            Ok(json_response) => {
+                // Parse the definition response
+                if let Some(result) = json_response.get("result") {
+                    if result.is_null() {
+                        return Ok(None);
+                    }
+
+                    // Parse the result into a GotoDefinitionResponse
+                    if let Ok(definition) =
+                        serde_json::from_value::<GotoDefinitionResponse>(result.clone())
+                    {
+                        return Ok(Some(definition));
+                    }
+                }
+                Ok(None)
+            }
+            Err(e) => {
+                self.client
+                    .log_message(
+                        MessageType::ERROR,
+                        format!("Bridge definition request failed: {}", e),
+                    )
+                    .await;
+                Ok(None)
+            }
+        }
     }
 }
