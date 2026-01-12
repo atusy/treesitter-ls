@@ -36,45 +36,6 @@ const scrum: ScrumDashboard = {
 
   product_backlog: [
     {
-      id: "PBI-BRIDGE-IMPLEMENTATION",
-      story: {
-        role: "Lua developer editing markdown",
-        capability: "use textDocument/implementation to find implementations of interfaces/traits in injected code blocks",
-        benefit: "I can navigate to concrete implementations without leaving my markdown documentation",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "textDocument/implementation requests in injection regions are forwarded to downstream LS",
-          verification: "Unit test: send_implementation_request forwards to downstream with virtual URI and transformed position",
-        },
-        {
-          criterion: "Response position coordinates are transformed from virtual to host (ADR-0015 inbound position mapping)",
-          verification: "Unit test: transform_definition_response_to_host transforms Location/LocationLink ranges correctly",
-        },
-        {
-          criterion: "Response URIs are transformed from virtual to host (ADR-0015 inbound URI transformation)",
-          verification: "Unit test: Location.uri and LocationLink.targetUri are replaced with host URI",
-        },
-        {
-          criterion: "Both Location and LocationLink response formats are handled",
-          verification: "Unit tests cover: null result, single Location, Location[], LocationLink[]",
-        },
-        {
-          criterion: "implementationProvider capability is advertised in server capabilities",
-          verification: "Integration test: initialize response includes implementationProvider: true",
-        },
-      ],
-      status: "done",
-      refinement_notes: [
-        "Follow exact pattern from Sprint 164/165 definition implementation",
-        "Reuse transform_definition_response_to_host from protocol.rs (same Location/LocationLink format)",
-        "Create text_document/implementation.rs with send_implementation_request",
-        "Add build_bridge_implementation_request to protocol.rs (or generalize existing builder)",
-        "Wire through bridge.rs mod declaration and lsp_impl.rs goto_implementation method",
-        "Key lesson from Sprint 165: Include URI transformation from the start, not just position transformation",
-      ],
-    },
-    {
       id: "PBI-BRIDGE-DECLARATION",
       story: {
         role: "Lua developer editing markdown",
@@ -132,6 +93,9 @@ const scrum: ScrumDashboard = {
     ],
   },
   retrospectives: [
+    { sprint: 167, improvements: [
+      { action: "Consider extracting duplicated goto-family method implementations to generic function", timing: "product", status: "active", outcome: "Third consecutive sprint with identical pattern (definition/typeDefinition/implementation) - duplication acceptable for now, defer generalization until declaration completes to ensure pattern stability" },
+    ]},
     { sprint: 166, improvements: [
       { action: "Reuse pattern-compatible transformation functions across similar LSP methods", timing: "immediate", status: "completed", outcome: "Successfully reused transform_definition_response_to_host for typeDefinition - LSP spec groups goto-family methods with identical response schemas" },
     ]},
