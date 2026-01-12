@@ -118,7 +118,7 @@ const scrum: ScrumDashboard = {
     number: 167,
     pbi_id: "PBI-BRIDGE-IMPLEMENTATION",
     goal: "Implement textDocument/implementation bridging to enable navigation to concrete implementations in injected code blocks",
-    status: "in_progress",
+    status: "review",
     subtasks: [
       {
         test: "Test build_bridge_implementation_request uses virtual URI and translates position",
@@ -160,7 +160,7 @@ const scrum: ScrumDashboard = {
         test: "E2E test: textDocument/implementation in Lua code block returns host coordinates",
         implementation: "Add Neovim E2E test for implementation in embedded code blocks",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
         notes: ["Verify full flow: request -> bridge -> downstream LS -> response transformation"],
       },
