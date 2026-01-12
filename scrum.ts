@@ -57,6 +57,7 @@ const scrum: ScrumDashboard = {
   retrospectives: [
     { sprint: 169, improvements: [
       { action: "References completes LSP navigation feature set - pattern from Sprints 164-168 applies directly", timing: "immediate", status: "completed", outcome: "All 5 navigation methods (definition, typeDefinition, implementation, declaration, references) now support injected code blocks with coordinate and URI transformation. References uses same transform_definition_response_to_host since Location[] format is identical." },
+      { action: "Context parameters (includeDeclaration) pass through seamlessly - no special handling needed beyond signature", timing: "immediate", status: "completed", outcome: "LSP methods with context parameters require only signature extension, not new transformation logic. Pattern: accept extra params in send_*_request(), pass to build_bridge_*_request(), include in JSON payload. Future methods with context (documentSymbol, etc.) follow same approach." },
     ]},
     { sprint: 168, improvements: [
       { action: "Goto-family pattern complete: 4 methods (definition/typeDefinition/implementation/declaration) with identical pattern", timing: "immediate", status: "completed", outcome: "LSP goto-family methods share Location/LocationLink response schema - single transform_definition_response_to_host serves all. Template established for future position-based LSP methods (references, documentSymbol)" },
