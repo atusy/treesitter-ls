@@ -67,7 +67,7 @@ Node F: |←──→|                             ✓ KEEP (unchanged)
 
 All "KEEP" cases preserve the node's ULID. Position/size adjustments are applied as needed.
 
-**Rule**: If a node's START is outside (before) the edit range, its identity is preserved.
+**Rule**: Using the **old tree** coordinates, if a node's START is **outside** the old edit range, its identity is preserved. Invalidate only nodes whose START is inside `[edit.start, edit.old_end)`. This preserves nodes before **and after** the edit range (e.g., Node E).
 
 This matches AST semantics: a `fenced_code_block` remains the "same" block when you edit its contents, because the opening ``` marker (START) defines the block's identity.
 
@@ -100,7 +100,7 @@ More text
 
 - **Memory efficient**: Only requested nodes are tracked (O(k) where k = tracked nodes)
 - **Container stability**: Parent nodes retain ID when contents change
-- **Correct invalidation**: Nodes with changed START boundaries are explicitly removed
+- **Correct invalidation**: Nodes whose START lies inside the old edit range are explicitly removed
 - **Clean lifecycle**: `NodeTracker` dies with `Document` on `didClose`
 - **AST-aligned semantics**: START-based identity matches structural intuition
 
@@ -109,6 +109,7 @@ More text
 - **Lookup table rebuild**: After edit, reverse lookup must be rebuilt
 - **Nested nodes**: Multiple nodes at same position require `(start, end, kind)` tuple for uniqueness
 - **START edits invalidate**: Editing a code block's opening delimiter invalidates its ID
+- **START shifts outside range**: Nodes whose START shifts due to earlier edits are preserved
 
 ### Neutral
 
@@ -154,4 +155,4 @@ Invalidate any node whose range overlaps with the edit range.
 | **Identifier** | ULID |
 | **Invalidation** | START-priority boundary-based |
 | **Storage** | Per-document |
-| **Core rule** | `node.start < edit.start` → identity preserved |
+| **Core rule** | `node.start ∉ [edit.start, edit.old_end)` → identity preserved |
