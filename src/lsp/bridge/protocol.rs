@@ -244,6 +244,51 @@ pub(crate) fn build_bridge_completion_request(
     })
 }
 
+/// Build a JSON-RPC definition request for a downstream language server.
+///
+/// Transforms the host document position and URI to virtual document coordinates
+/// for the injection region.
+///
+/// # Arguments
+/// * `host_uri` - The URI of the host document
+/// * `host_position` - The position in the host document
+/// * `injection_language` - The injection language (e.g., "lua")
+/// * `region_id` - The unique region ID for this injection
+/// * `region_start_line` - The starting line of the injection region in the host document
+/// * `request_id` - The JSON-RPC request ID
+pub(crate) fn build_bridge_definition_request(
+    host_uri: &tower_lsp::lsp_types::Url,
+    host_position: tower_lsp::lsp_types::Position,
+    injection_language: &str,
+    region_id: &str,
+    region_start_line: u32,
+    request_id: i64,
+) -> serde_json::Value {
+    // Create virtual document URI
+    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+
+    // Translate position from host to virtual coordinates
+    let virtual_position = tower_lsp::lsp_types::Position {
+        line: host_position.line - region_start_line,
+        character: host_position.character,
+    };
+
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/definition",
+        "params": {
+            "textDocument": {
+                "uri": virtual_uri.to_uri_string()
+            },
+            "position": {
+                "line": virtual_position.line,
+                "character": virtual_position.character
+            }
+        }
+    })
+}
+
 /// Build a JSON-RPC didChange notification for a downstream language server.
 ///
 /// Uses full text sync (TextDocumentSyncKind::Full) which sends the entire
@@ -850,5 +895,60 @@ mod tests {
 
         let transformed = transform_signature_help_response_to_host(response.clone(), 5);
         assert_eq!(transformed, response);
+    }
+
+    // ==========================================================================
+    // Definition request/response transformation tests
+    // ==========================================================================
+
+    #[test]
+    fn definition_request_uses_virtual_uri() {
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        let host_position = Position {
+            line: 5,
+            character: 10,
+        };
+
+        let request =
+            build_bridge_definition_request(&host_uri, host_position, "lua", "region-0", 3, 42);
+
+        let uri_str = request["params"]["textDocument"]["uri"].as_str().unwrap();
+        assert!(
+            uri_str.starts_with("file:///.treesitter-ls/") && uri_str.ends_with(".lua"),
+            "Request should use virtual URI: {}",
+            uri_str
+        );
+    }
+
+    #[test]
+    fn definition_request_translates_position_to_virtual_coordinates() {
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        // Host line 5, region starts at line 3 -> virtual line 2
+        let host_position = Position {
+            line: 5,
+            character: 10,
+        };
+        let region_start_line = 3;
+
+        let request = build_bridge_definition_request(
+            &host_uri,
+            host_position,
+            "lua",
+            "region-0",
+            region_start_line,
+            42,
+        );
+
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], 42);
+        assert_eq!(request["method"], "textDocument/definition");
+        assert_eq!(
+            request["params"]["position"]["line"], 2,
+            "Position line should be translated (5 - 3 = 2)"
+        );
+        assert_eq!(
+            request["params"]["position"]["character"], 10,
+            "Character should remain unchanged"
+        );
     }
 }
