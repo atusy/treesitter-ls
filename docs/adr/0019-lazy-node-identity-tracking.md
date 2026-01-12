@@ -71,6 +71,10 @@ All "KEEP" cases preserve the node's ULID. Position/size adjustments are applied
 
 **Rule**: Using the **old tree** coordinates, a node's identity is preserved unless its START boundary **changes**. Invalidate only nodes whose START is inside `[edit.start, edit.old_end)` (i.e., nodes whose START is directly touched by the old edit range). This preserves nodes before **and after** the edit range (e.g., Node E), and avoids invalidating nodes when an edit occurs *at* their START but does not move it.
 
+**Zero-length edits**: When `edit.start == edit.old_end`, preserve identity **only if** the node's START in the new tree is unchanged from the old tree.
+
+**Kind stability**: If a node's kind changes (even with the same START), invalidate the identity.
+
 **Position sync requirement**: When identities are preserved, the node's positional data must be re-synchronized with the **new tree** rather than reusing stale old-tree coordinates.
 
 This matches AST semantics: a `fenced_code_block` remains the "same" block when you edit its contents, because the opening ``` marker (START) defines the block's identity.
@@ -97,6 +101,8 @@ More text
 | `paragraph` ("More text") | after edit | ✓ KEEP (position adjusted) |
 
 **The code block's ID is preserved** even though its contents changed.
+
+**Zero-length insert example**: Inserting text at the exact START of `code_fence_content` preserves identity only if the START in the new tree is unchanged.
 
 ## Consequences
 
