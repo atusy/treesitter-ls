@@ -34,86 +34,10 @@ const scrum: ScrumDashboard = {
     ],
   },
 
-  product_backlog: [
-    {
-      id: "PBI-BUGFIX-DEFINITION-URI-TRANSFORM",
-      story: {
-        role: "Lua developer editing markdown",
-        capability: "go to definition within injection regions and see the correct host document URI",
-        benefit: "I can navigate to definitions without seeing confusing virtual document paths like /.treesitter-ls/41ca8324e35c1615/lua-0.lua",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "Location responses have uri field transformed from virtual URI to host URI",
-          verification: "Unit test: transform_definition_response_to_host replaces virtual URI with host URI in Location format",
-        },
-        {
-          criterion: "LocationLink responses have targetUri field transformed from virtual URI to host URI",
-          verification: "Unit test: transform_definition_response_to_host replaces virtual URI with host URI in LocationLink format",
-        },
-        {
-          criterion: "transform_definition_response_to_host receives host_uri parameter",
-          verification: "Function signature updated to accept host_uri; callers pass host_uri through",
-        },
-        {
-          criterion: "Existing line number transformations continue to work",
-          verification: "Existing unit tests for range transformation still pass",
-        },
-      ],
-      status: "done" as PBIStatus,
-      refinement_notes: [
-        "Bug: Definition response shows virtual document URIs instead of host document URIs",
-        "Root cause: transform_definition_response_to_host transforms line numbers but not URIs",
-        "ADR-0015/0016 specify 'Inbound: Transform virtual URI -> host URI' but this was not implemented",
-        "Affected fields: Location.uri, LocationLink.targetUri",
-        "NOT affected: LocationLink.originSelectionRange (already in host coordinates)",
-        "Implementation: Add host_uri parameter to transform function and replace matching virtual URIs",
-        "Pattern: Virtual URIs match pattern file:///.treesitter-ls/{hash}/{region}.{ext}",
-        "Scope: Only definition.rs and protocol.rs need changes; hover/completion don't return URIs",
-      ],
-    },
-  ],
-  sprint: {
-    number: 165,
-    pbi_id: "PBI-BUGFIX-DEFINITION-URI-TRANSFORM",
-    goal: "Fix virtual URI to host URI transformation in definition responses so users see correct document paths",
-    status: "done" as SprintStatus,
-    subtasks: [
-      {
-        test: "Unit test: transform_definition_response_to_host replaces virtual URI with host URI in Location.uri field",
-        implementation: "Update transform_definition_response_to_host signature to accept host_uri parameter and transform Location.uri",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [{ hash: "b082093d", message: "fix(bridge): transform virtual URIs to host URIs in definition responses", phase: "green" as CommitPhase }],
-        notes: ["Location format: { uri, range } - need to replace uri when it matches virtual pattern"],
-      },
-      {
-        test: "Unit test: transform_definition_response_to_host replaces virtual URI with host URI in LocationLink.targetUri field",
-        implementation: "Extend transform_definition_item to also transform targetUri field in LocationLink format",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [{ hash: "b082093d", message: "fix(bridge): transform virtual URIs to host URIs in definition responses", phase: "green" as CommitPhase }],
-        notes: ["LocationLink format: { targetUri, targetRange, targetSelectionRange, originSelectionRange }"],
-      },
-      {
-        test: "Verify existing range transformation tests still pass",
-        implementation: "Update test assertions to include host_uri parameter in all transform_definition_response_to_host calls",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [{ hash: "b082093d", message: "fix(bridge): transform virtual URIs to host URIs in definition responses", phase: "green" as CommitPhase }],
-        notes: ["Existing tests: definition_response_transforms_location_array_ranges, definition_response_transforms_single_location, definition_response_transforms_location_link_array, definition_response_with_null_result_passes_through"],
-      },
-      {
-        test: "Integration: definition.rs caller passes host_uri to transform function",
-        implementation: "Update send_definition_request to pass host_uri to transform_definition_response_to_host",
-        type: "behavioral" as SubtaskType,
-        status: "completed" as SubtaskStatus,
-        commits: [{ hash: "b082093d", message: "fix(bridge): transform virtual URIs to host URIs in definition responses", phase: "green" as CommitPhase }],
-        notes: ["definition.rs line 88: transform_definition_response_to_host(msg, region_start_line) needs host_uri"],
-      },
-    ],
-  },
+  product_backlog: [],
+  sprint: null,
   completed: [
+    { number: 165, pbi_id: "PBI-BUGFIX-DEFINITION-URI-TRANSFORM", goal: "Fix virtual URI to host URI transformation in definition responses so users see correct document paths", status: "done", subtasks: [] },
     { number: 164, pbi_id: "PBI-BRIDGE-DEFINITION", goal: "Implement textDocument/definition bridging with coordinate transformation for Location and LocationLink response formats", status: "done", subtasks: [] },
     { number: 163, pbi_id: "PBI-REFACTOR-DIDCHANGE-MODULE", goal: "Extract didChange logic to text_document/did_change.rs module for consistent architecture", status: "done", subtasks: [] },
     { number: 162, pbi_id: "PBI-REFACTOR-DIDCLOSE-MODULE", goal: "Extract didClose logic to text_document/did_close.rs module for consistent architecture", status: "done", subtasks: [] },
@@ -127,6 +51,11 @@ const scrum: ScrumDashboard = {
     ],
   },
   retrospectives: [
+    { sprint: 165, improvements: [
+      { action: "Create ADR requirements checklist in scrum.ts for tracking specification-to-implementation alignment", timing: "sprint", status: "active", outcome: null },
+      { action: "Add explicit test cases for all transformation requirements documented in ADRs (pattern: ADR-0015 specifies 'Transform virtual URI → host URI' but Sprint 164 only tested line number transformation)", timing: "immediate", status: "completed", outcome: "Added URI transformation tests (test_definition_response_transforms_location_uri_to_host, test_definition_response_transforms_location_link_target_uri_to_host) - ensure test suite covers ALL ADR requirements, not just the primary use case" },
+      { action: "During Sprint Planning, explicitly list ADR requirements as acceptance criteria to prevent oversight", timing: "immediate", status: "completed", outcome: "Pattern: When implementing ADR-0015 § Bridge Responsibilities, create acceptance criteria: (1) Outbound URI transformation, (2) Inbound URI transformation, (3) Outbound position mapping, (4) Inbound position mapping - systematic enumeration prevents partial implementation" },
+    ]},
     { sprint: 164, improvements: [
       { action: "Create ADR for dual-format LSP response patterns (Location vs LocationLink, CompletionItem vs CompletionList)", timing: "product", status: "active", outcome: null },
       { action: "Extract helper functions early when implementing dual-format transformations (pattern: transform_definition_item for handling Location/LocationLink)", timing: "immediate", status: "completed", outcome: "Helper function transform_definition_item cleanly separates single-item transformation logic from array/object handling - apply this pattern in future response transformations from the start of TDD cycle" },
