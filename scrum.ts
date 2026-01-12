@@ -64,7 +64,7 @@ const scrum: ScrumDashboard = {
           verification: "Integration test: initialize response includes typeDefinitionProvider: true",
         },
       ],
-      status: "ready",
+      status: "done",
       refinement_notes: [
         "Follow exact pattern from Sprint 164/165 definition implementation",
         "Reuse transform_definition_response_to_host from protocol.rs (same Location/LocationLink format)",
@@ -157,7 +157,7 @@ const scrum: ScrumDashboard = {
     number: 166,
     pbi_id: "PBI-BRIDGE-TYPE-DEFINITION",
     goal: "Implement textDocument/typeDefinition bridging to enable type navigation in injected code blocks",
-    status: "in_progress",
+    status: "done",
     subtasks: [
       {
         test: "Test build_bridge_type_definition_request uses virtual URI and translates position",
@@ -199,13 +199,14 @@ const scrum: ScrumDashboard = {
         test: "E2E test: textDocument/typeDefinition in Lua code block returns host coordinates",
         implementation: "Add Neovim E2E test for type definition in embedded code blocks",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: ["Verify full flow: request -> bridge -> downstream LS -> response transformation"],
       },
     ],
   },
   completed: [
+    { number: 166, pbi_id: "PBI-BRIDGE-TYPE-DEFINITION", goal: "Implement textDocument/typeDefinition bridging to enable type navigation in injected code blocks", status: "done", subtasks: [] },
     { number: 165, pbi_id: "PBI-BUGFIX-DEFINITION-URI-TRANSFORM", goal: "Fix virtual URI to host URI transformation in definition responses so users see correct document paths", status: "done", subtasks: [] },
     { number: 164, pbi_id: "PBI-BRIDGE-DEFINITION", goal: "Implement textDocument/definition bridging with coordinate transformation for Location and LocationLink response formats", status: "done", subtasks: [] },
     { number: 163, pbi_id: "PBI-REFACTOR-DIDCHANGE-MODULE", goal: "Extract didChange logic to text_document/did_change.rs module for consistent architecture", status: "done", subtasks: [] },
