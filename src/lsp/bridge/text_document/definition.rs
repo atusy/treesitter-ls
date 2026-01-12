@@ -84,10 +84,11 @@ impl LanguageServerPool {
             if let Some(id) = msg.get("id")
                 && id.as_i64() == Some(request_id)
             {
-                // Transform response to host coordinates
+                // Transform response to host coordinates and URI
                 return Ok(transform_definition_response_to_host(
                     msg,
                     region_start_line,
+                    host_uri.as_str(),
                 ));
             }
             // Skip notifications and other responses

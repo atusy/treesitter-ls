@@ -479,15 +479,19 @@ pub(crate) fn transform_signature_help_response_to_host(
 /// - Location[] (array of locations)
 /// - LocationLink[] (array of location links with target ranges)
 ///
-/// This function transforms all range line numbers from virtual document
-/// coordinates back to host document coordinates by adding region_start_line.
+/// This function transforms:
+/// - All range line numbers from virtual to host coordinates (adding region_start_line)
+/// - Location.uri from virtual URI to host URI
+/// - LocationLink.targetUri from virtual URI to host URI
 ///
 /// # Arguments
 /// * `response` - The JSON-RPC response from the downstream language server
 /// * `region_start_line` - The starting line of the injection region in the host document
+/// * `host_uri` - The URI of the host document to replace virtual URIs with
 pub(crate) fn transform_definition_response_to_host(
     mut response: serde_json::Value,
     region_start_line: u32,
+    host_uri: &str,
 ) -> serde_json::Value {
     // Get mutable reference to result
     let Some(result) = response.get_mut("result") else {
@@ -502,21 +506,25 @@ pub(crate) fn transform_definition_response_to_host(
     // Array format: Location[] or LocationLink[]
     if let Some(arr) = result.as_array_mut() {
         for item in arr.iter_mut() {
-            transform_definition_item(item, region_start_line);
+            transform_definition_item(item, region_start_line, host_uri);
         }
     } else if result.is_object() {
         // Single Location or LocationLink
-        transform_definition_item(result, region_start_line);
+        transform_definition_item(result, region_start_line, host_uri);
     }
 
     response
 }
 
 /// Transform a single Location or LocationLink item to host coordinates.
-fn transform_definition_item(item: &mut serde_json::Value, region_start_line: u32) {
+fn transform_definition_item(item: &mut serde_json::Value, region_start_line: u32, host_uri: &str) {
     // Check if this is a Location (has uri + range)
     if let Some(range) = item.get_mut("range") {
         transform_range(range, region_start_line);
+    }
+    // Transform Location.uri to host URI
+    if item.get("uri").is_some() {
+        item["uri"] = serde_json::json!(host_uri);
     }
 
     // Check if this is a LocationLink (has targetUri + targetRange + targetSelectionRange)
@@ -525,6 +533,10 @@ fn transform_definition_item(item: &mut serde_json::Value, region_start_line: u3
     }
     if let Some(target_selection_range) = item.get_mut("targetSelectionRange") {
         transform_range(target_selection_range, region_start_line);
+    }
+    // Transform LocationLink.targetUri to host URI
+    if item.get("targetUri").is_some() {
+        item["targetUri"] = serde_json::json!(host_uri);
     }
     // Note: originSelectionRange stays in host coordinates (it's already correct)
 }
@@ -1034,8 +1046,10 @@ mod tests {
             ]
         });
         let region_start_line = 3;
+        let host_uri = "file:///project/doc.md";
 
-        let transformed = transform_definition_response_to_host(response, region_start_line);
+        let transformed =
+            transform_definition_response_to_host(response, region_start_line, host_uri);
 
         let result = transformed["result"].as_array().unwrap();
         // First location: line 0 -> 3
@@ -1064,8 +1078,10 @@ mod tests {
             }
         });
         let region_start_line = 3;
+        let host_uri = "file:///project/doc.md";
 
-        let transformed = transform_definition_response_to_host(response, region_start_line);
+        let transformed =
+            transform_definition_response_to_host(response, region_start_line, host_uri);
 
         // Single location: line 1 -> 4
         assert_eq!(transformed["result"]["range"]["start"]["line"], 4);
@@ -1100,8 +1116,10 @@ mod tests {
             ]
         });
         let region_start_line = 3;
+        let host_uri = "file:///project/doc.md";
 
-        let transformed = transform_definition_response_to_host(response, region_start_line);
+        let transformed =
+            transform_definition_response_to_host(response, region_start_line, host_uri);
 
         let result = transformed["result"].as_array().unwrap();
         // originSelectionRange should NOT be transformed (it's in host coordinates)
@@ -1121,8 +1139,82 @@ mod tests {
     #[test]
     fn definition_response_with_null_result_passes_through() {
         let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+        let host_uri = "file:///project/doc.md";
 
-        let transformed = transform_definition_response_to_host(response.clone(), 3);
+        let transformed = transform_definition_response_to_host(response.clone(), 3, host_uri);
         assert_eq!(transformed, response);
+    }
+
+    #[test]
+    fn definition_response_transforms_location_uri_to_host_uri() {
+        // Definition response with virtual URI should be transformed to host URI
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "uri": "file:///.treesitter-ls/abc123/region-0.lua",
+                    "range": {
+                        "start": { "line": 0, "character": 9 },
+                        "end": { "line": 0, "character": 14 }
+                    }
+                }
+            ]
+        });
+        let region_start_line = 3;
+        let host_uri = "file:///project/doc.md";
+
+        let transformed =
+            transform_definition_response_to_host(response, region_start_line, host_uri);
+
+        let result = transformed["result"].as_array().unwrap();
+        // URI should be transformed to host URI
+        assert_eq!(
+            result[0]["uri"], host_uri,
+            "Location.uri should be transformed to host URI"
+        );
+        // Range transformation still works
+        assert_eq!(result[0]["range"]["start"]["line"], 3);
+    }
+
+    #[test]
+    fn definition_response_transforms_location_link_target_uri_to_host_uri() {
+        // Definition response as LocationLink[] with virtual targetUri should be transformed
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "originSelectionRange": {
+                        "start": { "line": 5, "character": 0 },
+                        "end": { "line": 5, "character": 10 }
+                    },
+                    "targetUri": "file:///.treesitter-ls/abc123/region-0.lua",
+                    "targetRange": {
+                        "start": { "line": 0, "character": 0 },
+                        "end": { "line": 2, "character": 3 }
+                    },
+                    "targetSelectionRange": {
+                        "start": { "line": 0, "character": 9 },
+                        "end": { "line": 0, "character": 14 }
+                    }
+                }
+            ]
+        });
+        let region_start_line = 3;
+        let host_uri = "file:///project/doc.md";
+
+        let transformed =
+            transform_definition_response_to_host(response, region_start_line, host_uri);
+
+        let result = transformed["result"].as_array().unwrap();
+        // targetUri should be transformed to host URI
+        assert_eq!(
+            result[0]["targetUri"], host_uri,
+            "LocationLink.targetUri should be transformed to host URI"
+        );
+        // Range transformations still work
+        assert_eq!(result[0]["targetRange"]["start"]["line"], 3);
+        assert_eq!(result[0]["targetSelectionRange"]["start"]["line"], 3);
     }
 }
