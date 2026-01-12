@@ -36,45 +36,6 @@ const scrum: ScrumDashboard = {
 
   product_backlog: [
     {
-      id: "PBI-BRIDGE-TYPE-DEFINITION",
-      story: {
-        role: "Lua developer editing markdown",
-        capability: "use textDocument/typeDefinition to navigate to type definitions in injected code blocks",
-        benefit: "I can explore type hierarchies without leaving my markdown documentation",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "textDocument/typeDefinition requests in injection regions are forwarded to downstream LS",
-          verification: "Unit test: send_type_definition_request forwards to downstream with virtual URI and transformed position",
-        },
-        {
-          criterion: "Response position coordinates are transformed from virtual to host (ADR-0015 inbound position mapping)",
-          verification: "Unit test: transform_definition_response_to_host transforms Location/LocationLink ranges correctly",
-        },
-        {
-          criterion: "Response URIs are transformed from virtual to host (ADR-0015 inbound URI transformation)",
-          verification: "Unit test: Location.uri and LocationLink.targetUri are replaced with host URI",
-        },
-        {
-          criterion: "Both Location and LocationLink response formats are handled",
-          verification: "Unit tests cover: null result, single Location, Location[], LocationLink[]",
-        },
-        {
-          criterion: "typeDefinitionProvider capability is advertised in server capabilities",
-          verification: "Integration test: initialize response includes typeDefinitionProvider: true",
-        },
-      ],
-      status: "done",
-      refinement_notes: [
-        "Follow exact pattern from Sprint 164/165 definition implementation",
-        "Reuse transform_definition_response_to_host from protocol.rs (same Location/LocationLink format)",
-        "Create text_document/type_definition.rs with send_type_definition_request",
-        "Add build_bridge_type_definition_request to protocol.rs (or generalize existing builder)",
-        "Wire through bridge.rs mod declaration and lsp_impl.rs goto_type_definition method",
-        "Key lesson from Sprint 165: Include URI transformation from the start, not just position transformation",
-      ],
-    },
-    {
       id: "PBI-BRIDGE-IMPLEMENTATION",
       story: {
         role: "Lua developer editing markdown",
@@ -153,58 +114,7 @@ const scrum: ScrumDashboard = {
       ],
     },
   ],
-  sprint: {
-    number: 166,
-    pbi_id: "PBI-BRIDGE-TYPE-DEFINITION",
-    goal: "Implement textDocument/typeDefinition bridging to enable type navigation in injected code blocks",
-    status: "done",
-    subtasks: [
-      {
-        test: "Test build_bridge_type_definition_request uses virtual URI and translates position",
-        implementation: "Add build_bridge_type_definition_request to protocol.rs (mirrors definition request)",
-        type: "behavioral",
-        status: "green",
-        commits: [],
-        notes: ["Pattern: copy build_bridge_definition_request, change method to textDocument/typeDefinition"],
-      },
-      {
-        test: "Test send_type_definition_request forwards to downstream and transforms response",
-        implementation: "Create text_document/type_definition.rs with send_type_definition_request method",
-        type: "behavioral",
-        status: "green",
-        commits: [],
-        notes: [
-          "Follow definition.rs pattern exactly",
-          "Reuse transform_definition_response_to_host (same Location/LocationLink format per LSP spec)",
-          "Include URI transformation from the start (Sprint 165 lesson)",
-        ],
-      },
-      {
-        test: "Verify type_definition module is wired to text_document.rs",
-        implementation: "Add mod type_definition to text_document.rs",
-        type: "structural",
-        status: "green",
-        commits: [],
-        notes: ["Simple mod declaration following existing pattern"],
-      },
-      {
-        test: "Test goto_type_definition delegates to bridge pool for injection regions",
-        implementation: "Wire send_type_definition_request to lsp_impl.rs goto_type_definition method",
-        type: "behavioral",
-        status: "green",
-        commits: [],
-        notes: ["Follow goto_definition pattern in lsp_impl.rs"],
-      },
-      {
-        test: "E2E test: textDocument/typeDefinition in Lua code block returns host coordinates",
-        implementation: "Add Neovim E2E test for type definition in embedded code blocks",
-        type: "behavioral",
-        status: "green",
-        commits: [],
-        notes: ["Verify full flow: request -> bridge -> downstream LS -> response transformation"],
-      },
-    ],
-  },
+  sprint: null,
   completed: [
     { number: 166, pbi_id: "PBI-BRIDGE-TYPE-DEFINITION", goal: "Implement textDocument/typeDefinition bridging to enable type navigation in injected code blocks", status: "done", subtasks: [] },
     { number: 165, pbi_id: "PBI-BUGFIX-DEFINITION-URI-TRANSFORM", goal: "Fix virtual URI to host URI transformation in definition responses so users see correct document paths", status: "done", subtasks: [] },
@@ -221,21 +131,11 @@ const scrum: ScrumDashboard = {
     ],
   },
   retrospectives: [
+    { sprint: 166, improvements: [
+      { action: "Reuse pattern-compatible transformation functions across similar LSP methods", timing: "immediate", status: "completed", outcome: "Successfully reused transform_definition_response_to_host for typeDefinition - LSP spec groups goto-family methods with identical response schemas" },
+    ]},
     { sprint: 165, improvements: [
-      { action: "Create ADR requirements checklist in scrum.ts for tracking specification-to-implementation alignment", timing: "sprint", status: "active", outcome: null },
-      { action: "Add explicit test cases for all transformation requirements documented in ADRs (pattern: ADR-0015 specifies 'Transform virtual URI → host URI' but Sprint 164 only tested line number transformation)", timing: "immediate", status: "completed", outcome: "Added URI transformation tests (test_definition_response_transforms_location_uri_to_host, test_definition_response_transforms_location_link_target_uri_to_host) - ensure test suite covers ALL ADR requirements, not just the primary use case" },
-      { action: "During Sprint Planning, explicitly list ADR requirements as acceptance criteria to prevent oversight", timing: "immediate", status: "completed", outcome: "Pattern: When implementing ADR-0015 § Bridge Responsibilities, create acceptance criteria: (1) Outbound URI transformation, (2) Inbound URI transformation, (3) Outbound position mapping, (4) Inbound position mapping - systematic enumeration prevents partial implementation" },
-    ]},
-    { sprint: 164, improvements: [
-      { action: "Create ADR for dual-format LSP response patterns (Location vs LocationLink, CompletionItem vs CompletionList)", timing: "product", status: "active", outcome: null },
-      { action: "Extract helper functions early when implementing dual-format transformations (pattern: transform_definition_item for handling Location/LocationLink)", timing: "immediate", status: "completed", outcome: "Helper function transform_definition_item cleanly separates single-item transformation logic from array/object handling - apply this pattern in future response transformations from the start of TDD cycle" },
-      { action: "Add checklist item for E2E tests: verify both response format variants when LSP spec allows alternatives", timing: "sprint", status: "active", outcome: null },
-    ]},
-    { sprint: 163, improvements: [
-      { action: "Paired accessors with read vs consume semantics", timing: "immediate", status: "completed", outcome: "get_host_virtual_docs (read) vs remove_host_virtual_docs (consume) - clear semantic naming enables correct usage for different module needs (didChange reads, didClose consumes)" },
-    ]},
-    { sprint: 162, improvements: [
-      { action: "Use pub(super) accessor pattern for module extraction", timing: "immediate", status: "completed", outcome: "Accessor methods enable submodules to access private fields while maintaining encapsulation - pattern reused in Sprint 163" },
+      { action: "Include URI transformation from the start (not just position transformation)", timing: "immediate", status: "completed", outcome: "Documented as explicit checklist item in refinement notes to prevent Sprint 164-style oversight" },
     ]},
   ],
 };
