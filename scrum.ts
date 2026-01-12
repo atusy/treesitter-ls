@@ -100,7 +100,7 @@ const scrum: ScrumDashboard = {
         test: "Unit test: transform_definition_response_to_host handles LocationLink[] with targetRange and targetSelectionRange transformation",
         implementation: "Extend transform_definition_response_to_host for LocationLink format",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
         notes: ["LocationLink: originSelectionRange stays unchanged (host coords), targetRange and targetSelectionRange need transformation"],
       },
