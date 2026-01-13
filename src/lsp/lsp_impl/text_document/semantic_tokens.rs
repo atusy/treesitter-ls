@@ -2,6 +2,7 @@
 
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::analysis::{
     IncrementalDecision, compute_incremental_tokens, decide_tokenization_strategy,
@@ -129,7 +130,11 @@ impl TreeSitterLs {
 
                         // Parse in spawn_blocking to avoid blocking tokio worker thread
                         let result = tokio::task::spawn_blocking(move || {
-                            let parse_result = parser.parse(&text_clone, None);
+                            let parse_result = catch_unwind(AssertUnwindSafe(|| {
+                                parser.parse(&text_clone, None)
+                            }))
+                            .ok()
+                            .flatten();
                             (parser, parse_result)
                         })
                         .await
@@ -173,7 +178,11 @@ impl TreeSitterLs {
                                             let language_name_clone = language_name.clone();
 
                                             let result = tokio::task::spawn_blocking(move || {
-                                                let parse_result = parser.parse(&text_clone, None);
+                                                let parse_result = catch_unwind(AssertUnwindSafe(|| {
+                                                    parser.parse(&text_clone, None)
+                                                }))
+                                                .ok()
+                                                .flatten();
                                                 (parser, parse_result)
                                             })
                                             .await
@@ -409,7 +418,11 @@ impl TreeSitterLs {
 
                         // Parse in spawn_blocking to avoid blocking tokio worker thread
                         let result = tokio::task::spawn_blocking(move || {
-                            let parse_result = parser.parse(&text_clone, None);
+                            let parse_result = catch_unwind(AssertUnwindSafe(|| {
+                                parser.parse(&text_clone, None)
+                            }))
+                            .ok()
+                            .flatten();
                             (parser, parse_result)
                         })
                         .await
