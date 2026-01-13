@@ -1,13 +1,23 @@
 use crate::document::Document;
 use dashmap::DashMap;
+use dashmap::mapref::entry::Entry;
 use dashmap::mapref::one::Ref;
 use std::ops::Deref;
+use tokio::sync::watch;
 use tree_sitter::{InputEdit, Tree};
 use url::Url;
 
 // The central store for all document-related information.
 pub struct DocumentStore {
     documents: DashMap<Url, Document>,
+    parse_states: DashMap<Url, watch::Sender<ParseState>>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ParseState {
+    generation: u64,
+    in_progress: bool,
+    has_tree: bool,
 }
 
 pub struct DocumentHandle<'a> {
@@ -32,6 +42,7 @@ impl Default for DocumentStore {
     fn default() -> Self {
         Self {
             documents: DashMap::new(),
+            parse_states: DashMap::new(),
         }
     }
 }
@@ -41,15 +52,81 @@ impl DocumentStore {
         Self::default()
     }
 
+    /// Update tree availability without affecting parse-in-progress tracking.
+    /// The `in_progress` state is owned exclusively by mark_parse_started/mark_parse_finished.
+    fn update_tree_availability(&self, uri: &Url, has_tree: bool) {
+        let sender = self.parse_sender(uri);
+        let mut state = *sender.borrow();
+        state.has_tree = has_tree;
+        sender.send_replace(state);
+    }
+
+    fn parse_sender(&self, uri: &Url) -> watch::Sender<ParseState> {
+        match self.parse_states.entry(uri.clone()) {
+            Entry::Occupied(entry) => entry.get().clone(),
+            Entry::Vacant(entry) => {
+                let (sender, _receiver) = watch::channel(ParseState::default());
+                entry.insert(sender.clone());
+                sender
+            }
+        }
+    }
+
+    pub fn mark_parse_started(&self, uri: &Url) -> u64 {
+        let sender = self.parse_sender(uri);
+        let mut state = *sender.borrow();
+        state.generation = state.generation.saturating_add(1);
+        state.in_progress = true;
+        state.has_tree = false;
+        sender.send_replace(state);
+        state.generation
+    }
+
+    pub fn mark_parse_finished(&self, uri: &Url, generation: u64, has_tree: bool) {
+        let sender = self.parse_sender(uri);
+        let mut state = *sender.borrow();
+        if state.generation != generation {
+            return;
+        }
+        state.in_progress = false;
+        state.has_tree = has_tree;
+        sender.send_replace(state);
+    }
+
+    pub async fn wait_for_parse_completion(&self, uri: &Url, timeout: std::time::Duration) {
+        let mut receiver = self.parse_sender(uri).subscribe();
+
+        let wait_future = async {
+            loop {
+                let state = *receiver.borrow();
+
+                // Already have a tree - done waiting
+                if state.has_tree {
+                    return;
+                }
+
+                // No tree yet - wait for state change
+                // (either parse starts, or parse finishes with a tree)
+                if receiver.changed().await.is_err() {
+                    return; // Channel closed
+                }
+            }
+        };
+
+        let _ = tokio::time::timeout(timeout, wait_future).await;
+    }
+
     // Lock safety: Single insert() call - no read lock held before or during write
     pub fn insert(&self, uri: Url, text: String, language_id: Option<String>, tree: Option<Tree>) {
+        let has_tree = tree.is_some();
         let document = match (language_id, tree) {
             (Some(lang), Some(t)) => Document::with_tree(text, lang, t),
             (Some(lang), None) => Document::with_language(text, lang),
             _ => Document::new(text),
         };
 
-        self.documents.insert(uri, document);
+        self.documents.insert(uri.clone(), document);
+        self.update_tree_availability(&uri, has_tree);
     }
 
     // Lock safety: Returns DocumentHandle wrapping Ref - caller holds read lock until drop
@@ -66,13 +143,17 @@ impl DocumentStore {
             // Lock safety: get_mut() acquires write lock directly - safe for in-place update
             if let Some(mut doc) = self.documents.get_mut(&uri) {
                 doc.update_tree_and_text(tree, text);
+                self.update_tree_availability(&uri, true);
                 return;
             }
 
             // Document doesn't exist - create new one with language_id if available
             // (This is a race condition edge case - document may have been removed)
-            self.documents
-                .insert(uri, Document::with_tree(text, "unknown".to_string(), tree));
+            self.documents.insert(
+                uri.clone(),
+                Document::with_tree(text, "unknown".to_string(), tree),
+            );
+            self.update_tree_availability(&uri, true);
             return;
         }
 
@@ -89,13 +170,16 @@ impl DocumentStore {
                 let existing_tree = self.documents.get(&uri).and_then(|doc| doc.tree().cloned());
                 if let Some(tree) = existing_tree {
                     self.documents
-                        .insert(uri, Document::with_tree(text, lang, tree));
+                        .insert(uri.clone(), Document::with_tree(text, lang, tree));
+                    self.update_tree_availability(&uri, true);
                 } else {
-                    self.documents.insert(uri, Document::new(text));
+                    self.documents.insert(uri.clone(), Document::new(text));
+                    self.update_tree_availability(&uri, false);
                 }
             }
             None => {
-                self.documents.insert(uri, Document::new(text));
+                self.documents.insert(uri.clone(), Document::new(text));
+                self.update_tree_availability(&uri, false);
             }
         }
     }
@@ -122,6 +206,7 @@ impl DocumentStore {
 
     // Lock safety: Single remove() call - no read lock held before or during write
     pub fn remove(&self, uri: &Url) -> Option<Document> {
+        self.parse_states.remove(uri);
         self.documents.remove(uri).map(|(_, doc)| doc)
     }
 }
@@ -132,6 +217,7 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
+    use tokio::time::timeout;
 
     #[test]
     fn test_concurrent_update_and_get_no_deadlock() {
@@ -294,5 +380,54 @@ mod tests {
         let doc = store.get(&uri).unwrap();
         assert_eq!(doc.text(), new_text);
         assert!(doc.tree().is_some());
+    }
+
+    #[tokio::test]
+    async fn wait_for_parse_completion_blocks_until_finished() {
+        let store = DocumentStore::new();
+        let uri = Url::parse("file:///parse-wait.lua").unwrap();
+
+        let generation = store.mark_parse_started(&uri);
+        let wait_future = store.wait_for_parse_completion(&uri, Duration::from_secs(1));
+        let mut wait_future = Box::pin(wait_future);
+
+        assert!(
+            timeout(Duration::from_millis(10), &mut wait_future)
+                .await
+                .is_err(),
+            "wait should block while parse is in progress"
+        );
+
+        store.mark_parse_finished(&uri, generation, true);
+
+        assert!(
+            timeout(Duration::from_millis(200), wait_future)
+                .await
+                .is_ok(),
+            "wait should complete after parse finishes"
+        );
+    }
+
+    #[tokio::test]
+    async fn wait_for_parse_completion_returns_when_tree_available() {
+        let store = DocumentStore::new();
+        let uri = Url::parse("file:///parse-ready.rs").unwrap();
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
+        let text = "fn main() {}".to_string();
+        let tree = parser.parse(&text, None).unwrap();
+
+        store.insert(uri.clone(), text, Some("rust".to_string()), Some(tree));
+
+        let wait_future = store.wait_for_parse_completion(&uri, Duration::from_secs(1));
+        assert!(
+            timeout(Duration::from_millis(10), wait_future)
+                .await
+                .is_ok(),
+            "wait should return immediately when a tree is already available"
+        );
     }
 }
