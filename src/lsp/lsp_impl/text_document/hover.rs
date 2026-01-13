@@ -26,14 +26,20 @@ impl TreeSitterLs {
             )
             .await;
 
-        // Get document
-        let Some(doc) = self.documents.get(&uri) else {
-            self.client
-                .log_message(MessageType::INFO, "No document found")
-                .await;
-            return Ok(None);
+        // Get document snapshot (minimizes lock duration)
+        let (snapshot, missing_message) = match self.documents.get(&uri) {
+            None => (None, Some("No document found")),
+            Some(doc) => match doc.snapshot() {
+                None => (None, Some("Document not fully initialized")),
+                Some(snapshot) => (Some(snapshot), None),
+            },
+            // doc automatically dropped here, lock released
         };
-        let text = doc.text().to_string();
+        if let Some(message) = missing_message {
+            self.client.log_message(MessageType::INFO, message).await;
+            return Ok(None);
+        }
+        let snapshot = snapshot.expect("snapshot set when missing_message is None");
 
         // Get the language for this document
         let Some(language_name) = self.get_language_for_document(&uri) else {
@@ -46,18 +52,10 @@ impl TreeSitterLs {
             return Ok(None);
         };
 
-        // Get the parse tree
-        let Some(tree) = doc.tree().cloned() else {
-            return Ok(None);
-        };
-
-        // Drop the document reference to avoid holding it across await
-        drop(doc);
-
         // Collect all injection regions
         let injections = crate::language::injection::collect_all_injections(
-            &tree.root_node(),
-            &text,
+            &snapshot.tree().root_node(),
+            snapshot.text(),
             Some(injection_query.as_ref()),
         );
 
@@ -66,7 +64,7 @@ impl TreeSitterLs {
         };
 
         // Convert Position to byte offset
-        let mapper = PositionMapper::new(&text);
+        let mapper = PositionMapper::new(snapshot.text());
         let Some(byte_offset) = mapper.position_to_byte(position) else {
             return Ok(None);
         };
@@ -83,7 +81,7 @@ impl TreeSitterLs {
 
         // Convert to CacheableInjectionRegion to get line_range for position mapping
         let cacheable_region =
-            CacheableInjectionRegion::from_region_info(region, &region_id, &text);
+            CacheableInjectionRegion::from_region_info(region, &region_id, snapshot.text());
 
         // Get bridge server config for this language
         // The bridge filter is checked inside get_bridge_config_for_language
@@ -103,7 +101,9 @@ impl TreeSitterLs {
         };
 
         // Extract the virtual document content (just the injection region)
-        let virtual_content = cacheable_region.extract_content(&text).to_string();
+        let virtual_content = cacheable_region
+            .extract_content(snapshot.text())
+            .to_string();
 
         // Send hover request via language server pool
         // Get upstream request ID from task-local storage (set by RequestIdCapture middleware)
