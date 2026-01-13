@@ -330,6 +330,9 @@ mod tests {
 
         // Verify snapshot is independent (different addresses would be ideal, but we can verify content)
         assert_eq!(snapshot.text(), doc.text());
-        assert_eq!(snapshot.tree().root_node().kind(), doc.tree().unwrap().root_node().kind());
+        assert_eq!(
+            snapshot.tree().root_node().kind(),
+            doc.tree().unwrap().root_node().kind()
+        );
     }
 }
