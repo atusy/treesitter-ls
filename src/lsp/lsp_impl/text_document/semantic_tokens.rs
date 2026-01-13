@@ -35,35 +35,25 @@ impl TreeSitterLs {
     ///
     /// This handles the race condition where semantic tokens are requested before
     /// `didOpen`/`didChange` finishes parsing. Strategy:
-    /// 1. If tree already available, return it immediately
-    /// 2. Wait up to 200ms for in-flight parse to complete
-    /// 3. If still no tree, parse on-demand as fallback
+    /// 1. Wait up to 200ms for any in-flight parse to complete
+    /// 2. Parse on-demand with validation to ensure tree+text consistency
     ///
-    /// Returns `(tree, text)` tuple to ensure the text and tree are consistent,
+    /// Note: We always use `try_parse_and_update_document` rather than reading
+    /// trees directly from the document store, because the store may contain
+    /// stale trees (old tree preserved with new text when parsing fails).
+    /// Only `try_parse_and_update_document` validates that tree matches text.
+    ///
+    /// Returns `(tree, text)` tuple where tree was verified to be parsed from text,
     /// or `None` if the document is missing or parsing failed.
     async fn get_tree_with_wait(&self, uri: &Url, language_name: &str) -> Option<(Tree, String)> {
-        // First check: maybe tree is already available
-        let doc = self.documents.get(uri)?;
-        let text = doc.text().to_string();
-        if let Some(tree) = doc.tree().cloned() {
-            return Some((tree, text));
-        }
-        drop(doc);
-
-        // Wait for in-flight parse to complete
+        // Wait for any in-flight parse to complete
         self.documents
             .wait_for_parse_completion(uri, Duration::from_millis(200))
             .await;
 
-        // Second check: tree may now be available after waiting
-        let doc = self.documents.get(uri)?;
-        let text = doc.text().to_string();
-        if let Some(tree) = doc.tree().cloned() {
-            return Some((tree, text));
-        }
-        drop(doc);
-
-        // Fallback: parse on-demand (returns validated tree+text pair)
+        // Always parse on-demand with validation to ensure tree+text consistency.
+        // This is necessary because document store may preserve stale trees
+        // (old tree with new text) when parsing fails.
         self.try_parse_and_update_document(uri, language_name).await
     }
 
