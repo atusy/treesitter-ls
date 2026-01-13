@@ -30,15 +30,6 @@ Full LSP features in injection regions by bridging to language-specific servers.
 - Go to Definition / Type Definition / Implementation / Declaration
 - Hover
 - Find References
-- Document Highlight
-- Rename
-- Code Actions
-- Formatting
-- Inlay Hints
-- Call Hierarchy
-- Type Hierarchy
-- Document Link
-- Folding Range
 
 See [Configuration: Bridge](#bridge) for setup instructions.
 
@@ -190,7 +181,6 @@ Configure language servers for bridging LSP requests in injection regions.
     "rust-analyzer": {
       "cmd": ["rust-analyzer"],
       "languages": ["rust"],
-      "workspaceType": "cargo"
     },
     "pyright": {
       "cmd": ["pyright-langserver", "--stdio"],
@@ -220,7 +210,6 @@ Configure language servers for bridging LSP requests in injection regions.
 |-------|-------------|
 | `cmd` | Command and arguments to start the language server |
 | `languages` | Languages this server handles |
-| `workspaceType` | Optional workspace type (`cargo` for Rust projects) |
 
 **Bridge Filter Semantics:**
 
@@ -317,7 +306,6 @@ vim.lsp.config.treesitter_ls = {
         ["rust-analyzer"] = {
           cmd = { "rust-analyzer" },
           languages = { "rust" },
-          workspaceType = "cargo",
         },
         pyright = {
           cmd = { "pyright-langserver", "--stdio" },
