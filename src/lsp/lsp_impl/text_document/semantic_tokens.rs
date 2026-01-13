@@ -31,7 +31,16 @@ impl TreeSitterLs {
         }
     }
 
-    async fn parse_on_demand(&self, uri: &Url, language_name: &str) -> Option<Tree> {
+    /// Parse the document on-demand and update the store if successful.
+    ///
+    /// This is a fallback path when the normal parse pipeline hasn't completed.
+    /// Side effects:
+    /// - Updates the document store with the parsed tree (if text unchanged)
+    /// - Clears any failed parser state for recovery
+    ///
+    /// Returns the parsed tree only if the document text hasn't changed since
+    /// we started parsing, to avoid returning stale results.
+    async fn try_parse_and_update_document(&self, uri: &Url, language_name: &str) -> Option<Tree> {
         let doc = self.documents.get(uri)?;
         let text = doc.text().to_string();
         drop(doc);
@@ -207,7 +216,10 @@ impl TreeSitterLs {
                         tree
                     } else {
                         drop(doc);
-                        let Some(tree) = self.parse_on_demand(&uri, &language_name).await else {
+                        let Some(tree) = self
+                            .try_parse_and_update_document(&uri, &language_name)
+                            .await
+                        else {
                             self.semantic_request_tracker
                                 .finish_request(&uri, request_id);
                             return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
@@ -399,7 +411,10 @@ impl TreeSitterLs {
                         tree
                     } else {
                         drop(doc);
-                        let Some(tree) = self.parse_on_demand(&uri, &language_name).await else {
+                        let Some(tree) = self
+                            .try_parse_and_update_document(&uri, &language_name)
+                            .await
+                        else {
                             self.semantic_request_tracker
                                 .finish_request(&uri, request_id);
                             return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
