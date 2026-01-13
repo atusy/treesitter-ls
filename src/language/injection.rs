@@ -367,7 +367,10 @@ pub fn collect_all_injections<'a>(
         }
     }
 
-    Some(injections_map.into_values().collect())
+    // Sort by start_byte to ensure deterministic ordering
+    let mut injections: Vec<_> = injections_map.into_values().collect();
+    injections.sort_by_key(|r| r.content_node.start_byte());
+    Some(injections)
 }
 
 /// Detects injection and returns both the language and the content node
