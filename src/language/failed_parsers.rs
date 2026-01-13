@@ -181,15 +181,6 @@ impl FailedParserRegistry {
             .map(|entry| entry.key().clone())
     }
 
-    /// Get all currently parsing languages (for testing).
-    #[cfg(test)]
-    pub(crate) fn current_parsing_languages(&self) -> Vec<String> {
-        self.parsing_counts
-            .iter()
-            .map(|entry| entry.key().clone())
-            .collect()
-    }
-
     /// Persist current parsing state to disk.
     ///
     /// This should be called on graceful shutdown to enable crash detection

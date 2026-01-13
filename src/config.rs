@@ -165,7 +165,7 @@ pub(crate) fn merge_all(configs: &[Option<TreeSitterSettings>]) -> Option<TreeSi
 }
 
 /// Merge two TreeSitterSettings, preferring values from `primary` over `fallback`
-pub fn merge_settings(
+pub(crate) fn merge_settings(
     fallback: Option<TreeSitterSettings>,
     primary: Option<TreeSitterSettings>,
 ) -> Option<TreeSitterSettings> {

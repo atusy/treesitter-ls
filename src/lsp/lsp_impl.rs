@@ -2,6 +2,10 @@ mod text_document;
 
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::notification::Progress;
+use tower_lsp::lsp_types::request::{
+    GotoDeclarationParams, GotoDeclarationResponse, GotoImplementationParams,
+    GotoImplementationResponse, GotoTypeDefinitionParams, GotoTypeDefinitionResponse,
+};
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 use tree_sitter::InputEdit;
@@ -18,6 +22,7 @@ use crate::document::DocumentStore;
 use crate::language::injection::{CacheableInjectionRegion, collect_all_injections};
 use crate::language::{DocumentParserPool, FailedParserRegistry, LanguageCoordinator};
 use crate::language::{LanguageEvent, LanguageLogLevel};
+use crate::lsp::bridge::LanguageServerPool;
 use crate::lsp::{SettingsEvent, SettingsEventKind, SettingsSource, load_settings};
 use crate::text::PositionMapper;
 use arc_swap::ArcSwap;
@@ -26,26 +31,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use super::auto_install::{InstallingLanguages, get_injected_languages};
-use super::bridge::TokioAsyncLanguageServerPool;
 use super::progress::{create_progress_begin, create_progress_end};
 use super::semantic_request_tracker::SemanticRequestTracker;
-
-/// Parse a JSON notification and extract ProgressParams if it's a $/progress notification.
-///
-/// Returns None if:
-/// - The notification is not a $/progress notification
-/// - The params field cannot be parsed as ProgressParams
-fn parse_progress_notification(notification: &serde_json::Value) -> Option<ProgressParams> {
-    // Check if this is a $/progress notification
-    let method = notification.get("method")?.as_str()?;
-    if method != "$/progress" {
-        return None;
-    }
-
-    // Extract and parse the params field
-    let params = notification.get("params")?;
-    serde_json::from_value::<ProgressParams>(params.clone()).ok()
-}
 
 fn lsp_legend_types() -> Vec<SemanticTokenType> {
     LEGEND_TYPES
@@ -79,14 +66,10 @@ pub struct TreeSitterLs {
     installing_languages: InstallingLanguages,
     /// Tracks parsers that have crashed
     failed_parsers: FailedParserRegistry,
-    /// Tokio-based async language server pool for fully async bridging
-    tokio_async_pool: TokioAsyncLanguageServerPool,
-    /// Receiver for progress notifications from tokio async pool.
-    /// Wrapped in Option so it can be taken once when starting the forwarder task.
-    tokio_notification_rx:
-        tokio::sync::Mutex<Option<tokio::sync::mpsc::Receiver<serde_json::Value>>>,
     /// Tracks active semantic token requests for cancellation support
     semantic_request_tracker: SemanticRequestTracker,
+    /// Pool of downstream language server connections (ADR-0016)
+    language_server_pool: LanguageServerPool,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -103,7 +86,7 @@ impl std::fmt::Debug for TreeSitterLs {
             .field("settings", &"ArcSwap<WorkspaceSettings>")
             .field("installing_languages", &"InstallingLanguages")
             .field("failed_parsers", &"FailedParserRegistry")
-            .field("tokio_async_pool", &"TokioAsyncLanguageServerPool")
+            .field("language_server_pool", &"LanguageServerPool")
             .finish_non_exhaustive()
     }
 }
@@ -116,11 +99,8 @@ impl TreeSitterLs {
         // Initialize failed parser registry with crash detection
         let failed_parsers = Self::init_failed_parser_registry();
 
-        // Clean up stale temp directories from previous sessions in the background
-        std::thread::spawn(super::bridge::startup_cleanup);
-
-        // Create notification channel for tokio async pool
-        let (tokio_notification_tx, tokio_notification_rx) = tokio::sync::mpsc::channel(256);
+        // Language server pool (ADR-0016: Server Pool Coordination)
+        let language_server_pool = LanguageServerPool::new();
 
         Self {
             client,
@@ -134,9 +114,8 @@ impl TreeSitterLs {
             settings: ArcSwap::new(Arc::new(WorkspaceSettings::default())),
             installing_languages: InstallingLanguages::new(),
             failed_parsers,
-            tokio_async_pool: TokioAsyncLanguageServerPool::new(tokio_notification_tx),
-            tokio_notification_rx: tokio::sync::Mutex::new(Some(tokio_notification_rx)),
             semantic_request_tracker: SemanticRequestTracker::new(),
+            language_server_pool,
         }
     }
 
@@ -541,53 +520,6 @@ impl TreeSitterLs {
         self.handle_language_events(&summary.events).await;
     }
 
-    /// Start the background task that forwards $/progress notifications to the LSP client.
-    ///
-    /// This takes ownership of the notification receiver and spawns a task that:
-    /// 1. Polls the receiver for notifications from the tokio async pool
-    /// 2. Parses each notification to extract ProgressParams
-    /// 3. Forwards valid progress notifications to the client
-    ///
-    /// This method is called once from `initialized()` after the LSP handshake completes.
-    async fn start_notification_forwarder(&self) {
-        // Take the receiver from the Option (can only be done once)
-        let mut rx_guard = self.tokio_notification_rx.lock().await;
-        let Some(mut rx) = rx_guard.take() else {
-            // Receiver already taken (shouldn't happen, but defensive)
-            log::warn!(
-                target: "treesitter_ls::notification_forwarder",
-                "Notification receiver already taken, forwarder not started"
-            );
-            return;
-        };
-        drop(rx_guard); // Release the lock before spawning
-
-        let client = self.client.clone();
-
-        // Spawn the forwarder task
-        tokio::spawn(async move {
-            log::debug!(
-                target: "treesitter_ls::notification_forwarder",
-                "Notification forwarder started"
-            );
-
-            while let Some(notification) = rx.recv().await {
-                if let Some(progress_params) = parse_progress_notification(&notification) {
-                    log::debug!(
-                        target: "treesitter_ls::notification_forwarder",
-                        "Forwarding $/progress notification"
-                    );
-                    client.send_notification::<Progress>(progress_params).await;
-                }
-            }
-
-            log::debug!(
-                target: "treesitter_ls::notification_forwarder",
-                "Notification forwarder stopped (channel closed)"
-            );
-        });
-    }
-
     async fn report_settings_events(&self, events: &[SettingsEvent]) {
         for event in events {
             let message_type = match event.kind {
@@ -890,6 +822,67 @@ impl TreeSitterLs {
         }
     }
 
+    /// Forward didChange notifications to opened virtual documents in bridges.
+    ///
+    /// This method collects all injection regions from the parsed document and
+    /// forwards didChange notifications to downstream language servers for any
+    /// virtual documents that have been opened (via didOpen during hover/completion).
+    ///
+    /// Called after parse_document() in did_change() to propagate host document
+    /// changes to downstream language servers.
+    async fn forward_didchange_to_bridges(&self, uri: &Url, text: &str) {
+        // Get the host language for this document
+        let host_language = match self.get_language_for_document(uri) {
+            Some(lang) => lang,
+            None => return, // No language detected, nothing to forward
+        };
+
+        // Get the injection query for this language
+        let injection_query = match self.language.get_injection_query(&host_language) {
+            Some(q) => q,
+            None => return, // No injection query = no injections
+        };
+
+        // Get the document's parse tree
+        let doc = match self.documents.get(uri) {
+            Some(d) => d,
+            None => return, // Document not found
+        };
+
+        let tree = match doc.tree() {
+            Some(t) => t,
+            None => return, // No parse tree
+        };
+
+        // Collect all injection regions
+        let regions =
+            match collect_all_injections(&tree.root_node(), text, Some(injection_query.as_ref())) {
+                Some(r) => r,
+                None => return, // No injections
+            };
+
+        if regions.is_empty() {
+            return;
+        }
+
+        // Build (language, region_id, content) tuples for each injection
+        let injections: Vec<(String, String, String)> = regions
+            .iter()
+            .enumerate()
+            .map(|(index, region)| {
+                // Calculate stable region_id using per-language ordinal
+                let region_id = crate::language::injection::calculate_region_id(&regions, index);
+                let content = &text[region.content_node.byte_range()];
+                (region.language.clone(), region_id, content.to_string())
+            })
+            .collect();
+
+        // Forward didChange to opened virtual documents
+        self.language_server_pool
+            .forward_didchange_to_opened_docs(uri, &injections)
+            .await;
+    }
+
     /// Check injected languages and handle missing parsers.
     ///
     /// This function:
@@ -1051,7 +1044,10 @@ impl LanguageServer for TreeSitterLs {
                     ),
                 ),
                 selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
+                declaration_provider: Some(DeclarationCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
+                type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
+                implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 completion_provider: Some(CompletionOptions {
                     trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
@@ -1062,15 +1058,13 @@ impl LanguageServer for TreeSitterLs {
                     retrigger_characters: Some(vec![",".to_string()]),
                     ..Default::default()
                 }),
+                references_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
         })
     }
 
     async fn initialized(&self, _: InitializedParams) {
-        // Start the background task that forwards $/progress notifications to the client
-        self.start_notification_forwarder().await;
-
         self.client
             .log_message(MessageType::INFO, "server is ready")
             .await;
@@ -1218,11 +1212,17 @@ impl LanguageServer for TreeSitterLs {
         // Cancel any pending semantic token requests for this document
         self.semantic_request_tracker.cancel_all_for_uri(&uri);
 
-        // Clean up bridge documents for this specific host document only
-        // This ensures other open documents continue to have working bridge features
-        self.tokio_async_pool
-            .close_documents_for_host(uri.as_str())
-            .await;
+        // Close all virtual documents associated with this host document
+        // This sends didClose notifications to downstream language servers
+        let closed_docs = self.language_server_pool.close_host_document(&uri).await;
+        if !closed_docs.is_empty() {
+            log::debug!(
+                target: "treesitter_ls::bridge",
+                "Closed {} virtual documents for host {}",
+                closed_docs.len(),
+                uri
+            );
+        }
 
         self.client
             .log_message(MessageType::INFO, "file closed!")
@@ -1318,12 +1318,19 @@ impl LanguageServer for TreeSitterLs {
         // Must be called BEFORE parse_document which updates the injection_map
         self.invalidate_overlapping_injection_caches(&uri, &edits);
 
+        // Clone text before parse_document consumes it (needed for forward_didchange_to_bridges)
+        let text_for_bridge = text.clone();
+
         // Parse the updated document with edit information
         self.parse_document(uri.clone(), text, language_id.as_deref(), edits)
             .await;
 
         // Invalidate semantic token cache to ensure fresh tokens for delta calculations
         self.semantic_cache.remove(&uri);
+
+        // Forward didChange to opened virtual documents in bridge
+        self.forward_didchange_to_bridges(&uri, &text_for_bridge)
+            .await;
 
         // Check for injected languages and trigger auto-install for missing parsers
         // This must be called AFTER parse_document so we have access to the updated AST
@@ -1386,11 +1393,32 @@ impl LanguageServer for TreeSitterLs {
         self.selection_range_impl(params).await
     }
 
+    async fn goto_declaration(
+        &self,
+        params: GotoDeclarationParams,
+    ) -> Result<Option<GotoDeclarationResponse>> {
+        self.goto_declaration_impl(params).await
+    }
+
     async fn goto_definition(
         &self,
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
         self.goto_definition_impl(params).await
+    }
+
+    async fn goto_type_definition(
+        &self,
+        params: GotoTypeDefinitionParams,
+    ) -> Result<Option<GotoTypeDefinitionResponse>> {
+        self.goto_type_definition_impl(params).await
+    }
+
+    async fn goto_implementation(
+        &self,
+        params: GotoImplementationParams,
+    ) -> Result<Option<GotoImplementationResponse>> {
+        self.goto_implementation_impl(params).await
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
@@ -1404,13 +1432,17 @@ impl LanguageServer for TreeSitterLs {
     async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
         self.signature_help_impl(params).await
     }
+
+    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        self.references_impl(params).await
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::settings::BridgeLanguageConfig;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
 
     #[test]
     fn should_create_valid_url_from_file_path() {
@@ -1523,136 +1555,7 @@ mod tests {
         assert!(tracker.try_start_install("lua")); // After finish, can start again
     }
 
-    #[test]
-    fn test_get_languages_needing_install_filters_loaded_languages() {
-        // Test the helper method that filters injected languages to only those
-        // that need installation (not already loaded).
-        //
-        // This tests get_languages_needing_install() which takes a set of injected
-        // language names and returns only those where ensure_language_loaded fails.
-
-        use crate::language::LanguageCoordinator;
-
-        let coordinator = LanguageCoordinator::new();
-
-        // Create a set of injected languages (simulating what get_injected_languages returns)
-        let mut injected_languages = HashSet::new();
-        injected_languages.insert("lua".to_string());
-        injected_languages.insert("python".to_string());
-        injected_languages.insert("rust".to_string());
-
-        // Call the helper method to filter to only languages needing install
-        let languages_needing_install =
-            get_languages_needing_install(&coordinator, &injected_languages);
-
-        // Since no languages are configured in the coordinator, all should need install
-        assert_eq!(languages_needing_install.len(), 3);
-        assert!(languages_needing_install.contains(&"lua".to_string()));
-        assert!(languages_needing_install.contains(&"python".to_string()));
-        assert!(languages_needing_install.contains(&"rust".to_string()));
-    }
-
-    /// Helper function that filters a set of injected languages to only those
-    /// that need installation (where ensure_language_loaded fails).
-    ///
-    /// This is the core logic used by check_injected_languages_auto_install.
-    fn get_languages_needing_install(
-        coordinator: &crate::language::LanguageCoordinator,
-        injected_languages: &HashSet<String>,
-    ) -> Vec<String> {
-        injected_languages
-            .iter()
-            .filter(|lang| {
-                let load_result = coordinator.ensure_language_loaded(lang);
-                !load_result.success
-            })
-            .cloned()
-            .collect()
-    }
-
     // Note: Large integration tests for auto-install are in tests/test_auto_install_integration.rs
-
-    /// Test that parse_progress_notification correctly extracts ProgressParams from JSON.
-    ///
-    /// This is the core logic used by the notification forwarder to parse
-    /// $/progress notifications before forwarding to the client.
-    #[test]
-    fn test_parse_progress_notification_extracts_params() {
-        // Create a mock $/progress notification as the reader task would receive
-        let notification = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "$/progress",
-            "params": {
-                "token": "rust-analyzer/indexing",
-                "value": {
-                    "kind": "begin",
-                    "title": "Indexing",
-                    "message": "0/100 crates"
-                }
-            }
-        });
-
-        // Parse using the same logic as the forwarder
-        let progress_params = parse_progress_notification(&notification);
-
-        // Verify the params were extracted correctly
-        assert!(
-            progress_params.is_some(),
-            "Should successfully parse $/progress notification"
-        );
-
-        let params = progress_params.unwrap();
-        match params.token {
-            NumberOrString::String(s) => {
-                assert_eq!(s, "rust-analyzer/indexing");
-            }
-            NumberOrString::Number(_) => {
-                panic!("Expected string token");
-            }
-        }
-    }
-
-    /// Test that parse_progress_notification returns None for non-progress notifications.
-    #[test]
-    fn test_parse_progress_notification_returns_none_for_other_methods() {
-        // Create a different notification (not $/progress)
-        let notification = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "textDocument/publishDiagnostics",
-            "params": {
-                "uri": "file:///test.rs",
-                "diagnostics": []
-            }
-        });
-
-        let progress_params = parse_progress_notification(&notification);
-
-        assert!(
-            progress_params.is_none(),
-            "Should return None for non-progress notifications"
-        );
-    }
-
-    /// Test that parse_progress_notification returns None for malformed params.
-    #[test]
-    fn test_parse_progress_notification_returns_none_for_malformed_params() {
-        // Create a $/progress notification with invalid params structure
-        let notification = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "$/progress",
-            "params": {
-                "invalid_field": "this is not a valid ProgressParams"
-            }
-        });
-
-        let progress_params = parse_progress_notification(&notification);
-
-        // ProgressParams requires 'token' and 'value' fields
-        assert!(
-            progress_params.is_none(),
-            "Should return None for malformed $/progress params"
-        );
-    }
 
     /// PBI-155 Subtask 2: Test wildcard language config inheritance
     ///

@@ -1,0 +1,94 @@
+//! didClose notification handling for bridge connections.
+//!
+//! This module provides didClose notification functionality for downstream language servers,
+//! handling cleanup when host documents are closed.
+
+use std::io;
+use std::sync::Arc;
+use tower_lsp::lsp_types::Url;
+
+use super::super::pool::{ConnectionState, LanguageServerPool, OpenedVirtualDoc};
+
+impl LanguageServerPool {
+    /// Send a didClose notification for a virtual document.
+    ///
+    /// This method sends a didClose notification to the downstream language server
+    /// for the specified virtual document URI. The connection is NOT closed after
+    /// sending - it remains available for other documents.
+    ///
+    /// Returns Ok(()) if the notification was sent successfully, or if no connection
+    /// exists for the language (nothing to do).
+    ///
+    /// # Arguments
+    /// * `language` - The injection language (e.g., "lua")
+    /// * `virtual_uri` - The virtual document URI string to close
+    pub(crate) async fn send_didclose_notification(
+        &self,
+        language: &str,
+        virtual_uri: &str,
+    ) -> io::Result<()> {
+        // Get the connection for this language (if it exists and is Ready)
+        let connections = self.connections().await;
+        let Some(handle) = connections.get(language) else {
+            // No connection for this language - nothing to do
+            return Ok(());
+        };
+
+        // Only send if connection is Ready
+        if handle.state() != ConnectionState::Ready {
+            return Ok(());
+        }
+
+        let handle = Arc::clone(handle);
+        drop(connections); // Release lock before I/O
+
+        // Build and send the didClose notification
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/didClose",
+            "params": {
+                "textDocument": {
+                    "uri": virtual_uri
+                }
+            }
+        });
+
+        let mut conn = handle.connection().await;
+        conn.write_message(&notification).await
+    }
+
+    /// Close all virtual documents associated with a host document.
+    ///
+    /// When a host document (e.g., markdown file) is closed, this method:
+    /// 1. Looks up all virtual documents that were opened for the host
+    /// 2. Sends didClose notification for each virtual document
+    /// 3. Removes the virtual documents from document_versions tracking
+    /// 4. Removes the host entry from host_to_virtual
+    ///
+    /// The connection to downstream language servers remains open - only the
+    /// virtual documents are closed.
+    ///
+    /// Returns the list of closed virtual documents (useful for logging).
+    pub(crate) async fn close_host_document(&self, host_uri: &Url) -> Vec<OpenedVirtualDoc> {
+        // 1. Remove and get all virtual docs for this host
+        let virtual_docs = self.remove_host_virtual_docs(host_uri).await;
+
+        if virtual_docs.is_empty() {
+            return vec![];
+        }
+
+        // 2. For each virtual doc: send didClose and remove from document_versions
+        for doc in &virtual_docs {
+            // Send didClose notification (best effort - ignore errors)
+            let _ = self
+                .send_didclose_notification(&doc.language, &doc.virtual_uri)
+                .await;
+
+            // Remove from document_versions
+            self.remove_document_version(&doc.language, &doc.virtual_uri)
+                .await;
+        }
+
+        virtual_docs
+    }
+}

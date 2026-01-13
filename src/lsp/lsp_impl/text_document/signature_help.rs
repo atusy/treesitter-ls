@@ -1,9 +1,12 @@
 //! Signature help method for TreeSitterLs.
 
-use tower_lsp::jsonrpc::Result;
+use tower_lsp::jsonrpc::{Id, Result};
 use tower_lsp::lsp_types::*;
 
-use crate::language::injection::CacheableInjectionRegion;
+use crate::language::injection::{
+    CacheableInjectionRegion, calculate_region_id, find_injection_at_position,
+};
+use crate::lsp::get_current_request_id;
 use crate::text::PositionMapper;
 
 use super::super::TreeSitterLs;
@@ -33,7 +36,7 @@ impl TreeSitterLs {
                 .await;
             return Ok(None);
         };
-        let text = doc.text();
+        let text = doc.text().to_string();
 
         // Get the language for this document
         let Some(language_name) = self.get_language_for_document(&uri) else {
@@ -47,14 +50,17 @@ impl TreeSitterLs {
         };
 
         // Get the parse tree
-        let Some(tree) = doc.tree() else {
+        let Some(tree) = doc.tree().cloned() else {
             return Ok(None);
         };
+
+        // Drop the document reference to avoid holding it across await
+        drop(doc);
 
         // Collect all injection regions
         let injections = crate::language::injection::collect_all_injections(
             &tree.root_node(),
-            text,
+            &text,
             Some(injection_query.as_ref()),
         );
 
@@ -63,22 +69,24 @@ impl TreeSitterLs {
         };
 
         // Convert Position to byte offset
-        let mapper = PositionMapper::new(text);
+        let mapper = PositionMapper::new(&text);
         let Some(byte_offset) = mapper.position_to_byte(position) else {
             return Ok(None);
         };
 
         // Find which injection region (if any) contains this position
-        let matching_region = injections.iter().find(|inj| {
-            let start = inj.content_node.start_byte();
-            let end = inj.content_node.end_byte();
-            byte_offset >= start && byte_offset < end
-        });
-
-        let Some(region) = matching_region else {
+        let Some((region_index, region)) = find_injection_at_position(&injections, byte_offset)
+        else {
             // Not in an injection region - return None
             return Ok(None);
         };
+
+        // Calculate stable region_id for virtual document URI
+        let region_id = calculate_region_id(&injections, region_index);
+
+        // Convert to CacheableInjectionRegion to get line_range for position mapping
+        let cacheable_region =
+            CacheableInjectionRegion::from_region_info(region, &region_id, &text);
 
         // Get bridge server config for this language
         // The bridge filter is checked inside get_bridge_config_for_language
@@ -97,49 +105,56 @@ impl TreeSitterLs {
             return Ok(None);
         };
 
-        // Create cacheable region for position translation
-        let cacheable = CacheableInjectionRegion::from_region_info(region, "temp", text);
+        // Extract the virtual document content (just the injection region)
+        let virtual_content = cacheable_region.extract_content(&text).to_string();
 
-        // Extract virtual document content
-        let virtual_content = cacheable.extract_content(text).to_owned();
-
-        // Translate host position to virtual position
-        let virtual_position = cacheable.translate_host_to_virtual(position);
-
-        // Get pool key from config
-        let pool_key = server_config.cmd.first().cloned().unwrap_or_default();
-
-        self.client
-            .log_message(
-                MessageType::LOG,
-                format!("[SIGNATURE_HELP] async bridge START pool_key={}", pool_key),
-            )
-            .await;
-
-        // Use fully async signature_help via TokioAsyncLanguageServerPool
-        // Pass the host document URI for tracking host-to-bridge mapping
-        let signature_help = self
-            .tokio_async_pool
-            .signature_help(
-                &pool_key,
+        // Send signature help request via language server pool
+        // Get upstream request ID from task-local storage (set by RequestIdCapture middleware)
+        let upstream_request_id = match get_current_request_id() {
+            Some(Id::Number(n)) => n,
+            // For string IDs or no ID, use 0 as fallback
+            _ => 0,
+        };
+        let response = self
+            .language_server_pool
+            .send_signature_help_request(
                 &server_config,
-                uri.as_str(),
+                &uri,
+                position,
                 &region.language,
+                &cacheable_region.result_id,
+                cacheable_region.line_range.start,
                 &virtual_content,
-                virtual_position,
+                upstream_request_id,
             )
             .await;
 
-        self.client
-            .log_message(
-                MessageType::LOG,
-                format!(
-                    "[SIGNATURE_HELP] async bridge DONE has_signature_help={}",
-                    signature_help.is_some()
-                ),
-            )
-            .await;
+        match response {
+            Ok(json_response) => {
+                // Parse the signature help response
+                if let Some(result) = json_response.get("result") {
+                    if result.is_null() {
+                        return Ok(None);
+                    }
 
-        Ok(signature_help)
+                    // Parse the result into a SignatureHelp
+                    if let Ok(signature_help) =
+                        serde_json::from_value::<SignatureHelp>(result.clone())
+                    {
+                        return Ok(Some(signature_help));
+                    }
+                }
+                Ok(None)
+            }
+            Err(e) => {
+                self.client
+                    .log_message(
+                        MessageType::ERROR,
+                        format!("Bridge signature help request failed: {}", e),
+                    )
+                    .await;
+                Ok(None)
+            }
+        }
     }
 }

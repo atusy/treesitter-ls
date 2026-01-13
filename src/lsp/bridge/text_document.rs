@@ -1,14 +1,17 @@
-//! Text document bridge types.
+//! Text document request handlers for bridge connections.
 //!
-//! This module contains types for bridging textDocument/* LSP requests
-//! to external language servers for injection regions.
+//! This module provides LSP text document request functionality (hover, completion, etc.)
+//! for downstream language servers via the bridge architecture.
+//!
+//! The structure mirrors `lsp_impl/text_document/` for consistency.
 
 mod completion;
+mod declaration;
 mod definition;
+mod did_change;
+mod did_close;
 mod hover;
+mod implementation;
+mod references;
 mod signature_help;
-
-pub use completion::CompletionWithNotifications;
-pub use definition::GotoDefinitionWithNotifications;
-pub use hover::HoverWithNotifications;
-pub use signature_help::SignatureHelpWithNotifications;
+mod type_definition;

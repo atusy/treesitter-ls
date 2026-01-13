@@ -29,14 +29,14 @@ expression: snapshot_tokens
     "line": 0,
     "modifiers": 0,
     "start": 10,
-    "type": "variable"
+    "type": "function"
   },
   {
     "length": 1,
     "line": 0,
     "modifiers": 0,
     "start": 11,
-    "type": "variable"
+    "type": "function"
   },
   {
     "length": 8,

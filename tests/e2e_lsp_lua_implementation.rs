@@ -1,0 +1,272 @@
+//! End-to-end test for Lua goto implementation in Markdown code blocks via treesitter-ls binary.
+//!
+//! This test verifies the full bridge infrastructure wiring for implementation:
+//! - treesitter-ls binary spawned via LspClient (not direct BridgeConnection)
+//! - Markdown document with Lua code block opened via didOpen
+//! - Implementation request at position in Lua block
+//! - treesitter-ls detects injection, translates position, spawns lua-ls
+//! - Implementation location received from lua-language-server with transformed coordinates
+//!
+//! Run with: `cargo test --test e2e_lsp_lua_implementation --features e2e`
+//!
+//! **Requirements**: lua-language-server must be installed and in PATH.
+
+#![cfg(feature = "e2e")]
+
+mod helpers;
+
+use helpers::lsp_client::LspClient;
+use serde_json::json;
+
+/// Helper to check if lua-language-server is available
+fn is_lua_ls_available() -> bool {
+    std::process::Command::new("lua-language-server")
+        .arg("--version")
+        .output()
+        .is_ok()
+}
+
+/// Helper to create a client with lua-language-server configured
+fn create_configured_client() -> LspClient {
+    let mut client = LspClient::new();
+
+    // Initialize handshake with language server configuration
+    let _init_response = client.send_request(
+        "initialize",
+        json!({
+            "processId": std::process::id(),
+            "rootUri": null,
+            "capabilities": {},
+            "initializationOptions": {
+                "languageServers": {
+                    "lua-language-server": {
+                        "cmd": ["lua-language-server"],
+                        "languages": ["lua"]
+                    }
+                }
+            }
+        }),
+    );
+    client.send_notification("initialized", json!({}));
+    client
+}
+
+/// E2E test: implementationProvider capability is advertised
+#[test]
+fn e2e_implementation_capability_advertised() {
+    let mut client = LspClient::new();
+
+    // Initialize handshake
+    let init_response = client.send_request(
+        "initialize",
+        json!({
+            "processId": std::process::id(),
+            "rootUri": null,
+            "capabilities": {}
+        }),
+    );
+
+    // Verify implementationProvider is in capabilities
+    let capabilities = init_response
+        .get("result")
+        .and_then(|r| r.get("capabilities"))
+        .expect("Should have capabilities in init response");
+
+    let impl_provider = capabilities.get("implementationProvider");
+    assert!(
+        impl_provider.is_some(),
+        "implementationProvider should be advertised in server capabilities"
+    );
+
+    println!("E2E: implementationProvider capability advertised");
+
+    // Clean shutdown
+    let _shutdown_response = client.send_request("shutdown", json!(null));
+    client.send_notification("exit", json!(null));
+}
+
+/// E2E test: goto implementation request is handled without error
+#[test]
+fn e2e_implementation_request_handled() {
+    if !is_lua_ls_available() {
+        eprintln!("SKIP: lua-language-server not found in PATH");
+        eprintln!("Install lua-language-server to run this test:");
+        eprintln!("  brew install lua-language-server");
+        return;
+    }
+
+    let mut client = create_configured_client();
+
+    // Open markdown document with Lua code block containing class/method pattern
+    // lua-language-server uses LuaCATS annotations for class definitions
+    let markdown_content = r#"# Test Document
+
+```lua
+---@class Animal
+---@field name string
+local Animal = {}
+
+function Animal:speak()
+    print("...")
+end
+
+---@class Dog : Animal
+local Dog = {}
+
+function Dog:speak()
+    print("Woof!")
+end
+
+local dog = Dog
+dog:speak()
+```
+
+More text.
+"#;
+
+    let markdown_uri = "file:///test_implementation.md";
+
+    client.send_notification(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": markdown_uri,
+                "languageId": "markdown",
+                "version": 1,
+                "text": markdown_content
+            }
+        }),
+    );
+
+    // Give lua-ls time to process
+    std::thread::sleep(std::time::Duration::from_millis(1000));
+
+    // Request implementation on "speak" method call at line 19 (dog:speak())
+    // The speak method is at character 4 on line 19
+    let impl_response = client.send_request(
+        "textDocument/implementation",
+        json!({
+            "textDocument": { "uri": markdown_uri },
+            "position": { "line": 19, "character": 4 }
+        }),
+    );
+
+    println!("Implementation response: {:?}", impl_response);
+
+    // Verify no error
+    assert!(
+        impl_response.get("error").is_none(),
+        "Implementation should not return error: {:?}",
+        impl_response.get("error")
+    );
+
+    let result = impl_response
+        .get("result")
+        .expect("Implementation should have result field");
+
+    if result.is_null() {
+        // lua-ls may return null if still loading or cannot find implementations
+        println!("Note: lua-ls returned null (may still be loading or cannot find implementation)");
+        println!("E2E: Bridge infrastructure working (request succeeded)");
+    } else if result.is_array() {
+        // Location[] format
+        let locations = result.as_array().unwrap();
+        if !locations.is_empty() {
+            let loc = &locations[0];
+            // Verify the location is in host coordinates
+            if let Some(range) = loc.get("range") {
+                let start_line = range["start"]["line"].as_u64().unwrap_or(0);
+                println!("Implementation found at line {}", start_line);
+                // The implementation should be in the Lua code block area (lines 3-20)
+                assert!(
+                    start_line >= 2 && start_line <= 20,
+                    "Implementation line should be in host coordinates (expected 2-20, got {})",
+                    start_line
+                );
+                println!("E2E: Implementation returns Location in host coordinates");
+            }
+        }
+    } else if result.is_object() {
+        // Single Location format
+        if let Some(range) = result.get("range") {
+            let start_line = range["start"]["line"].as_u64().unwrap_or(0);
+            println!("Implementation found at line {}", start_line);
+            assert!(
+                start_line >= 2 && start_line <= 20,
+                "Implementation line should be in host coordinates (expected 2-20, got {})",
+                start_line
+            );
+            println!("E2E: Implementation returns Location in host coordinates");
+        }
+    }
+
+    // Clean shutdown
+    let _shutdown_response = client.send_request("shutdown", json!(null));
+    client.send_notification("exit", json!(null));
+}
+
+/// E2E test: implementation returns null for position outside injection region
+#[test]
+fn e2e_implementation_outside_injection_returns_null() {
+    let mut client = create_configured_client();
+
+    // Open markdown document with Lua code block
+    let markdown_content = r#"# Test Document
+
+Some text before the code block.
+
+```lua
+local x = 42
+print(x)
+```
+
+More text after.
+"#;
+
+    let markdown_uri = "file:///test_impl_outside.md";
+
+    client.send_notification(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": markdown_uri,
+                "languageId": "markdown",
+                "version": 1,
+                "text": markdown_content
+            }
+        }),
+    );
+
+    // Request implementation on line 2 (outside the code block - "Some text before")
+    let impl_response = client.send_request(
+        "textDocument/implementation",
+        json!({
+            "textDocument": { "uri": markdown_uri },
+            "position": { "line": 2, "character": 5 }
+        }),
+    );
+
+    println!(
+        "Implementation outside injection response: {:?}",
+        impl_response
+    );
+
+    // Verify no error
+    assert!(
+        impl_response.get("error").is_none(),
+        "Implementation should not return error: {:?}",
+        impl_response.get("error")
+    );
+
+    let result = impl_response.get("result");
+    assert!(
+        result.is_some() && result.unwrap().is_null(),
+        "Implementation outside injection region should return null"
+    );
+
+    println!("E2E: Implementation outside injection region correctly returns null");
+
+    // Clean shutdown
+    let _shutdown_response = client.send_request("shutdown", json!(null));
+    client.send_notification("exit", json!(null));
+}
