@@ -876,6 +876,7 @@ impl TreeSitterLs {
 
         // Build (language, region_id, content) tuples for each injection
         // Track ordinals per language for region_id generation
+        // TODO: If region_id format changes, also update InjectionResolver::calculate_region_id
         let mut ordinals: HashMap<String, usize> = HashMap::new();
         let injections: Vec<(String, String, String)> = regions
             .iter()

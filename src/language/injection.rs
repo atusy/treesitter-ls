@@ -504,25 +504,6 @@ pub fn find_injection_at_position<'a>(
     })
 }
 
-/// Calculate a stable region_id for an injection based on its language and position.
-/// Format: `{language}-{ordinal}` where ordinal is the 0-indexed count of same-language injections.
-///
-/// # Arguments
-/// * `injections` - All injection regions in document order
-/// * `target_index` - Index of the target injection in the list
-///
-/// # Returns
-/// A stable region_id string like "lua-0", "python-1", etc.
-pub fn calculate_region_id(injections: &[InjectionRegionInfo], target_index: usize) -> String {
-    let target = &injections[target_index];
-    let ordinal = injections[..=target_index]
-        .iter()
-        .filter(|inj| inj.language == target.language)
-        .count()
-        - 1;
-    format!("{}-{}", target.language, ordinal)
-}
-
 /// Resolved injection region with all necessary context for LSP bridge requests
 pub struct ResolvedInjection {
     /// Cacheable injection region with line range information
@@ -570,7 +551,7 @@ impl InjectionResolver {
         let (region_index, region) = find_injection_at_position(&injections, byte_offset)?;
 
         // 3. Calculate stable region_id (language-ordinal format)
-        let region_id = calculate_region_id(&injections, region_index);
+        let region_id = Self::calculate_region_id(&injections, region_index);
 
         // 4. Build cacheable region with line range information
         let cacheable_region = CacheableInjectionRegion::from_region_info(region, &region_id, text);
@@ -584,6 +565,19 @@ impl InjectionResolver {
             injection_language: region.language.clone(),
             virtual_content,
         })
+    }
+
+    /// Calculate a stable region_id for an injection based on its language and position.
+    /// Format: `{language}-{ordinal}` where ordinal is the 0-indexed count of same-language injections.
+    // TODO: If region_id format changes, also update lsp_impl.rs forward_didchange_to_bridge
+    fn calculate_region_id(injections: &[InjectionRegionInfo], target_index: usize) -> String {
+        let target = &injections[target_index];
+        let ordinal = injections[..=target_index]
+            .iter()
+            .filter(|inj| inj.language == target.language)
+            .count()
+            - 1;
+        format!("{}-{}", target.language, ordinal)
     }
 }
 
