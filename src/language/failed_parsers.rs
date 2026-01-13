@@ -171,16 +171,6 @@ impl FailedParserRegistry {
         Ok(())
     }
 
-    /// Get the currently parsing languages (for testing).
-    #[cfg(test)]
-    pub(crate) fn current_parsing_language(&self) -> Option<String> {
-        // For backward compatibility with single-language tests, return first language
-        self.parsing_counts
-            .iter()
-            .next()
-            .map(|entry| entry.key().clone())
-    }
-
     /// Persist current parsing state to disk.
     ///
     /// This should be called on graceful shutdown to enable crash detection
@@ -220,6 +210,17 @@ impl FailedParserRegistry {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    impl FailedParserRegistry {
+        /// Get the currently parsing languages (test helper).
+        fn current_parsing_language(&self) -> Option<String> {
+            // For backward compatibility with single-language tests, return first language
+            self.parsing_counts
+                .iter()
+                .next()
+                .map(|entry| entry.key().clone())
+        }
+    }
 
     #[test]
     fn test_new_registry_has_no_failed_parsers() {

@@ -1,6 +1,6 @@
 pub mod store;
 
-mod model;
+pub(crate) mod model;
 
 // Re-export main types
 pub use model::Document;

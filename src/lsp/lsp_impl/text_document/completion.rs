@@ -3,9 +3,7 @@
 use tower_lsp::jsonrpc::{Id, Result};
 use tower_lsp::lsp_types::*;
 
-use crate::language::injection::{
-    CacheableInjectionRegion, calculate_region_id, find_injection_at_position,
-};
+use crate::language::InjectionResolver;
 use crate::lsp::get_current_request_id;
 use crate::text::PositionMapper;
 
@@ -29,14 +27,20 @@ impl TreeSitterLs {
             )
             .await;
 
-        // Get document
-        let Some(doc) = self.documents.get(&uri) else {
-            self.client
-                .log_message(MessageType::INFO, "No document found")
-                .await;
-            return Ok(None);
+        // Get document snapshot (minimizes lock duration)
+        let (snapshot, missing_message) = match self.documents.get(&uri) {
+            None => (None, Some("No document found")),
+            Some(doc) => match doc.snapshot() {
+                None => (None, Some("Document not fully initialized")),
+                Some(snapshot) => (Some(snapshot), None),
+            },
+            // doc automatically dropped here, lock released
         };
-        let text = doc.text().to_string();
+        if let Some(message) = missing_message {
+            self.client.log_message(MessageType::INFO, message).await;
+            return Ok(None);
+        }
+        let snapshot = snapshot.expect("snapshot set when missing_message is None");
 
         // Get the language for this document
         let Some(language_name) = self.get_language_for_document(&uri) else {
@@ -49,64 +53,38 @@ impl TreeSitterLs {
             return Ok(None);
         };
 
-        // Get the parse tree
-        let Some(tree) = doc.tree().cloned() else {
-            return Ok(None);
-        };
-
-        // Drop the document reference to avoid holding it across await
-        drop(doc);
-
-        // Collect all injection regions
-        let injections = crate::language::injection::collect_all_injections(
-            &tree.root_node(),
-            &text,
-            Some(injection_query.as_ref()),
-        );
-
-        let Some(injections) = injections else {
-            return Ok(None);
-        };
-
-        // Convert Position to byte offset
-        let mapper = PositionMapper::new(&text);
+        // Resolve injection region at position (centralizes 29-86 lines of duplication)
+        let mapper = PositionMapper::new(snapshot.text());
         let Some(byte_offset) = mapper.position_to_byte(position) else {
             return Ok(None);
         };
 
-        // Find which injection region (if any) contains this position
-        let Some((region_index, region)) = find_injection_at_position(&injections, byte_offset)
-        else {
+        let Some(resolved) = InjectionResolver::resolve_at_byte_offset(
+            snapshot.tree(),
+            snapshot.text(),
+            injection_query.as_ref(),
+            byte_offset,
+        ) else {
             // Not in an injection region - return None
             return Ok(None);
         };
 
-        // Calculate stable region_id for virtual document URI
-        let region_id = calculate_region_id(&injections, region_index);
-
-        // Convert to CacheableInjectionRegion to get line_range for position mapping
-        let cacheable_region =
-            CacheableInjectionRegion::from_region_info(region, &region_id, &text);
-
         // Get bridge server config for this language
         // The bridge filter is checked inside get_bridge_config_for_language
         let Some(server_config) =
-            self.get_bridge_config_for_language(&language_name, &region.language)
+            self.get_bridge_config_for_language(&language_name, &resolved.injection_language)
         else {
             self.client
                 .log_message(
                     MessageType::INFO,
                     format!(
                         "No bridge server configured for language: {} (host: {})",
-                        region.language, language_name
+                        resolved.injection_language, language_name
                     ),
                 )
                 .await;
             return Ok(None);
         };
-
-        // Extract the virtual document content (just the injection region)
-        let virtual_content = cacheable_region.extract_content(&text).to_string();
 
         // Send completion request via language server pool
         // Get upstream request ID from task-local storage (set by RequestIdCapture middleware)
@@ -121,10 +99,10 @@ impl TreeSitterLs {
                 &server_config,
                 &uri,
                 position,
-                &region.language,
-                &cacheable_region.result_id,
-                cacheable_region.line_range.start,
-                &virtual_content,
+                &resolved.injection_language,
+                &resolved.region.result_id,
+                resolved.region.line_range.start,
+                &resolved.virtual_content,
                 upstream_request_id,
             )
             .await;

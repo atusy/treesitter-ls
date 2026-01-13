@@ -79,6 +79,29 @@ All "KEEP" cases preserve the node's ULID. Position/size adjustments are applied
 
 This matches AST semantics: a `fenced_code_block` remains the "same" block when you edit its contents, because the opening ``` marker (START) defines the block's identity.
 
+### Node Uniqueness Key
+
+Multiple nodes can share the same START byte position (e.g., a `document` node, `section` node, and `paragraph` node all starting at byte 0). To ensure unique identification, the `NodeTracker` uses a composite key:
+
+```
+Key = (start_byte, end_byte, kind)
+```
+
+| Field | Purpose |
+|-------|---------|
+| `start_byte` | Primary identity anchor (per START-priority rule) |
+| `end_byte` | Disambiguates nested nodes at same start position |
+| `kind` | Disambiguates nodes with identical spans but different types |
+
+**Example**: At position 0-100, three nodes might exist:
+- `(0, 100, "document")` → ULID_A
+- `(0, 100, "section")` → ULID_B
+- `(0, 50, "paragraph")` → ULID_C
+
+All three have distinct keys and receive separate ULIDs.
+
+**Invalidation with composite keys**: The START-priority rule applies to the `start_byte` component. When `start_byte ∈ [edit.start, edit.old_end)`, all entries with that `start_byte` are invalidated regardless of their `end_byte` or `kind`.
+
 ## Example: Markdown Code Block
 
 ``````markdown
@@ -117,9 +140,10 @@ More text
 ### Negative
 
 - **Lookup table rebuild**: After edit, reverse lookup must be rebuilt
-- **Nested nodes**: Multiple nodes at same position require `(start, end, kind)` tuple for uniqueness
+- **Nested nodes**: Multiple nodes at same position require `(start, end, kind)` tuple for uniqueness (see [Node Uniqueness Key](#node-uniqueness-key))
 - **START edits invalidate**: Editing a code block's opening delimiter invalidates its ID
 - **START shifts outside range**: Nodes whose START shifts due to earlier edits are preserved
+- **Injection region reordering**: When code blocks are inserted or deleted above tracked injection regions, those regions' container nodes are preserved (START unchanged), but their ordinal position changes. Systems relying on positional region IDs (e.g., `region-0`, `region-1`) must handle URI changes via close/reopen cycles
 
 ### Neutral
 
@@ -163,6 +187,7 @@ Invalidate any node whose range overlaps with the edit range.
 |--------|----------|
 | **Assignment** | Lazy (on-demand) |
 | **Identifier** | ULID |
+| **Uniqueness key** | `(start_byte, end_byte, kind)` |
 | **Invalidation** | START-priority boundary-based |
 | **Storage** | Per-document |
 | **Core rule** | `node.start ∉ [edit.start, edit.old_end)` → identity preserved |

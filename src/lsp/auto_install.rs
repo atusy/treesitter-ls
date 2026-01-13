@@ -26,16 +26,6 @@ impl InstallingLanguages {
         }
     }
 
-    /// Check if a language is currently being installed.
-    #[cfg(test)]
-    fn is_installing(&self, language: &str) -> bool {
-        self.languages
-            .lock()
-            .recover_poison("InstallingLanguages::is_installing")
-            .unwrap()
-            .contains(language)
-    }
-
     /// Try to start installing a language. Returns true if this call started the install,
     /// false if it was already being installed.
     pub fn try_start_install(&self, language: &str) -> bool {
@@ -288,6 +278,17 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl InstallingLanguages {
+        /// Check if a language is currently being installed (test helper).
+        fn is_installing(&self, language: &str) -> bool {
+            self.languages
+                .lock()
+                .recover_poison("InstallingLanguages::is_installing")
+                .unwrap()
+                .contains(language)
+        }
+    }
 
     #[test]
     fn should_track_installing_languages() {

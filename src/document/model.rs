@@ -1,5 +1,23 @@
 use tree_sitter::Tree;
 
+/// Immutable snapshot of document state for lock-free processing
+pub(crate) struct DocumentSnapshot {
+    text: String,
+    tree: Tree,
+}
+
+impl DocumentSnapshot {
+    /// Get the text content
+    pub(crate) fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Get the parse tree
+    pub(crate) fn tree(&self) -> &Tree {
+        &self.tree
+    }
+}
+
 /// Unified document structure combining text, parsing, and LSP state
 pub struct Document {
     text: String,
@@ -94,6 +112,17 @@ impl Document {
     /// Get a position mapper for this document
     pub fn position_mapper(&self) -> crate::text::PositionMapper {
         crate::text::PositionMapper::new(self.text())
+    }
+
+    /// Create an immutable snapshot of current document state
+    ///
+    /// Returns None if document is not fully initialized (missing tree).
+    /// The snapshot clones text and tree to enable lock-free processing.
+    pub(crate) fn snapshot(&self) -> Option<DocumentSnapshot> {
+        Some(DocumentSnapshot {
+            text: self.text.clone(),
+            tree: self.tree.as_ref()?.clone(),
+        })
     }
 
     /// Get mutable tree
@@ -258,5 +287,52 @@ mod tests {
         assert_eq!(doc.text(), "fn main() { let x = 1; }");
         // Previous tree should also exist
         assert!(doc.previous_tree().is_some());
+    }
+
+    #[test]
+    fn test_document_snapshot() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse("fn main() {}", None).unwrap();
+
+        let doc = Document::with_tree("fn main() {}".to_string(), "rust".to_string(), tree);
+
+        // Snapshot should succeed for fully initialized document
+        let snapshot = doc.snapshot();
+        assert!(snapshot.is_some());
+
+        let snapshot = snapshot.unwrap();
+        assert_eq!(snapshot.text(), "fn main() {}");
+        assert_eq!(snapshot.tree().root_node().kind(), "source_file");
+    }
+
+    #[test]
+    fn test_document_snapshot_none_when_no_tree() {
+        let doc = Document::new("test".to_string());
+        // No tree, so snapshot should be None
+        assert!(doc.snapshot().is_none());
+    }
+
+    #[test]
+    fn test_document_snapshot_clones_independently() {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse("fn main() {}", None).unwrap();
+
+        let doc = Document::with_tree("fn main() {}".to_string(), "rust".to_string(), tree);
+
+        // Create snapshot
+        let snapshot = doc.snapshot().unwrap();
+
+        // Verify snapshot is independent (different addresses would be ideal, but we can verify content)
+        assert_eq!(snapshot.text(), doc.text());
+        assert_eq!(
+            snapshot.tree().root_node().kind(),
+            doc.tree().unwrap().root_node().kind()
+        );
     }
 }
