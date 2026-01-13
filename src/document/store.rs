@@ -52,10 +52,11 @@ impl DocumentStore {
         Self::default()
     }
 
-    fn sync_parse_state(&self, uri: &Url, has_tree: bool) {
+    /// Update tree availability without affecting parse-in-progress tracking.
+    /// The `in_progress` state is owned exclusively by mark_parse_started/mark_parse_finished.
+    fn update_tree_availability(&self, uri: &Url, has_tree: bool) {
         let sender = self.parse_sender(uri);
         let mut state = *sender.borrow();
-        state.in_progress = false;
         state.has_tree = has_tree;
         sender.send_replace(state);
     }
@@ -128,7 +129,7 @@ impl DocumentStore {
         };
 
         self.documents.insert(uri.clone(), document);
-        self.sync_parse_state(&uri, has_tree);
+        self.update_tree_availability(&uri, has_tree);
     }
 
     // Lock safety: Returns DocumentHandle wrapping Ref - caller holds read lock until drop
@@ -145,7 +146,7 @@ impl DocumentStore {
             // Lock safety: get_mut() acquires write lock directly - safe for in-place update
             if let Some(mut doc) = self.documents.get_mut(&uri) {
                 doc.update_tree_and_text(tree, text);
-                self.sync_parse_state(&uri, true);
+                self.update_tree_availability(&uri, true);
                 return;
             }
 
@@ -155,7 +156,7 @@ impl DocumentStore {
                 uri.clone(),
                 Document::with_tree(text, "unknown".to_string(), tree),
             );
-            self.sync_parse_state(&uri, true);
+            self.update_tree_availability(&uri, true);
             return;
         }
 
@@ -173,15 +174,15 @@ impl DocumentStore {
                 if let Some(tree) = existing_tree {
                     self.documents
                         .insert(uri.clone(), Document::with_tree(text, lang, tree));
-                    self.sync_parse_state(&uri, true);
+                    self.update_tree_availability(&uri, true);
                 } else {
                     self.documents.insert(uri.clone(), Document::new(text));
-                    self.sync_parse_state(&uri, false);
+                    self.update_tree_availability(&uri, false);
                 }
             }
             None => {
                 self.documents.insert(uri.clone(), Document::new(text));
-                self.sync_parse_state(&uri, false);
+                self.update_tree_availability(&uri, false);
             }
         }
     }
