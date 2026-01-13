@@ -26,6 +26,7 @@ use crate::lsp::bridge::LanguageServerPool;
 use crate::lsp::{SettingsEvent, SettingsEventKind, SettingsSource, load_settings};
 use crate::text::PositionMapper;
 use arc_swap::ArcSwap;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -874,12 +875,14 @@ impl TreeSitterLs {
         }
 
         // Build (language, region_id, content) tuples for each injection
+        // Track ordinals per language for region_id generation
+        let mut ordinals: HashMap<String, usize> = HashMap::new();
         let injections: Vec<(String, String, String)> = regions
             .iter()
-            .enumerate()
-            .map(|(index, region)| {
-                // Calculate stable region_id using per-language ordinal
-                let region_id = crate::language::injection::calculate_region_id(&regions, index);
+            .map(|region| {
+                let ordinal = ordinals.entry(region.language.clone()).or_insert(0);
+                let region_id = format!("{}-{}", region.language, *ordinal);
+                *ordinal += 1;
                 let content = &text[region.content_node.byte_range()];
                 (region.language.clone(), region_id, content.to_string())
             })
