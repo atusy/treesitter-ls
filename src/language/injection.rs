@@ -1,5 +1,5 @@
 use crate::language::predicate_accessor::{UnifiedPredicate, get_all_predicates};
-use tree_sitter::{Node, Query, QueryCursor, QueryMatch, StreamingIterator};
+use tree_sitter::{Node, Query, QueryCursor, QueryMatch, StreamingIterator, Tree};
 
 /// Represents offset adjustments for injection content boundaries
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -518,6 +518,70 @@ pub fn calculate_region_id(injections: &[InjectionRegionInfo], target_index: usi
         .count()
         - 1;
     format!("{}-{}", target.language, ordinal)
+}
+
+/// Resolved injection region with all necessary context for LSP bridge requests
+pub struct ResolvedInjection {
+    /// Cacheable injection region with line range information
+    pub region: CacheableInjectionRegion,
+    /// Stable region identifier (language-ordinal format)
+    pub region_id: String,
+    /// Language of the injection content
+    pub injection_language: String,
+    /// Extracted virtual document content
+    pub virtual_content: String,
+}
+
+/// Central service for resolving injection regions at LSP positions
+pub struct InjectionResolver;
+
+impl InjectionResolver {
+    /// Resolve injection region at the given byte offset
+    ///
+    /// This function centralizes the injection resolution logic that was previously
+    /// duplicated across 9 LSP handlers (hover, completion, definition, etc.).
+    ///
+    /// # Lock Safety
+    /// This function does not hold Document locks. All inputs (tree, text) must be
+    /// pre-cloned, typically via DocumentSnapshot.
+    ///
+    /// # Arguments
+    /// * `tree` - Parsed syntax tree
+    /// * `text` - Document text content
+    /// * `injection_query` - Query for finding injection regions
+    /// * `byte_offset` - Byte offset to resolve
+    ///
+    /// # Returns
+    /// `Some(ResolvedInjection)` if position is within an injection region,
+    /// `None` otherwise.
+    pub fn resolve_at_byte_offset(
+        tree: &Tree,
+        text: &str,
+        injection_query: &Query,
+        byte_offset: usize,
+    ) -> Option<ResolvedInjection> {
+        // 1. Collect all injection regions
+        let injections = collect_all_injections(&tree.root_node(), text, Some(injection_query))?;
+
+        // 2. Find injection region containing this position
+        let (region_index, region) = find_injection_at_position(&injections, byte_offset)?;
+
+        // 3. Calculate stable region_id (language-ordinal format)
+        let region_id = calculate_region_id(&injections, region_index);
+
+        // 4. Build cacheable region with line range information
+        let cacheable_region = CacheableInjectionRegion::from_region_info(region, &region_id, text);
+
+        // 5. Extract virtual document content
+        let virtual_content = cacheable_region.extract_content(text).to_string();
+
+        Some(ResolvedInjection {
+            region: cacheable_region,
+            region_id,
+            injection_language: region.language.clone(),
+            virtual_content,
+        })
+    }
 }
 
 #[cfg(test)]
