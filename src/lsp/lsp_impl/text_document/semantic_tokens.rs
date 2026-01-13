@@ -108,7 +108,7 @@ impl TreeSitterLs {
                     data: vec![],
                 })));
             };
-            let text = doc.text().to_string();
+            let mut text = doc.text().to_string();
             let tree = match doc.tree() {
                 Some(t) => t.clone(),
                 None => {
@@ -148,13 +148,73 @@ impl TreeSitterLs {
                     };
 
                     match sync_parse_result {
-                        Some(tree) => {
-                            // Update document with parsed tree
-                            self.documents.update_document(
-                                uri.clone(),
-                                text.clone(),
-                                Some(tree.clone()),
-                            );
+                        Some(mut tree) => {
+                            let mut should_update = true;
+
+                            if let Some(current_doc) = self.documents.get(&uri) {
+                                let current_text = current_doc.text();
+                                if current_text != text {
+                                    text = current_text.to_string();
+                                    if let Some(current_tree) = current_doc.tree() {
+                                        tree = current_tree.clone();
+                                        should_update = false;
+                                        drop(current_doc);
+                                    } else {
+                                        drop(current_doc);
+
+                                        // Re-parse latest text to avoid overwriting newer updates
+                                        let parser = {
+                                            let mut pool = self.parser_pool.lock().await;
+                                            pool.acquire(&language_name)
+                                        };
+
+                                        let sync_parse_result = if let Some(mut parser) = parser {
+                                            let text_clone = text.clone();
+                                            let language_name_clone = language_name.clone();
+
+                                            let result = tokio::task::spawn_blocking(move || {
+                                                let parse_result = parser.parse(&text_clone, None);
+                                                (parser, parse_result)
+                                            })
+                                            .await
+                                            .ok();
+
+                                            if let Some((parser, parse_result)) = result {
+                                                let mut pool = self.parser_pool.lock().await;
+                                                pool.release(language_name_clone, parser);
+                                                parse_result
+                                            } else {
+                                                None
+                                            }
+                                        } else {
+                                            None
+                                        };
+
+                                        if let Some(latest_tree) = sync_parse_result {
+                                            tree = latest_tree;
+                                        } else {
+                                            self.semantic_request_tracker
+                                                .finish_request(&uri, request_id);
+                                            return Ok(Some(SemanticTokensResult::Tokens(
+                                                SemanticTokens {
+                                                    result_id: None,
+                                                    data: vec![],
+                                                },
+                                            )));
+                                        }
+                                    }
+                                } else {
+                                    drop(current_doc);
+                                }
+                            }
+
+                            if should_update {
+                                self.documents.update_document(
+                                    uri.clone(),
+                                    text.clone(),
+                                    Some(tree.clone()),
+                                );
+                            }
                             tree
                         }
                         None => {
@@ -168,6 +228,20 @@ impl TreeSitterLs {
                     }
                 }
             };
+
+            // Early exit check after potential sync parse
+            if !self.semantic_request_tracker.is_active(&uri, request_id) {
+                self.client
+                    .log_message(
+                        MessageType::LOG,
+                        format!(
+                            "[SEMANTIC_TOKENS] CANCELLED uri={} req={} (after sync parse)",
+                            uri, request_id
+                        ),
+                    )
+                    .await;
+                return Ok(None);
+            }
 
             // Get capture mappings
             let capture_mappings = self.language.get_capture_mappings();
