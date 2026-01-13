@@ -1,8 +1,10 @@
 //! Semantic token methods for TreeSitterLs.
 
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use tokio::time::Duration;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
-use std::panic::{AssertUnwindSafe, catch_unwind};
+use tree_sitter::Tree;
 
 use crate::analysis::{
     IncrementalDecision, compute_incremental_tokens, decide_tokenization_strategy,
@@ -13,6 +15,68 @@ use crate::analysis::{
 use super::super::TreeSitterLs;
 
 impl TreeSitterLs {
+    async fn parse_on_demand(&self, uri: &Url, language_name: &str) -> Option<Tree> {
+        let doc = self.documents.get(uri)?;
+        let text = doc.text().to_string();
+        drop(doc);
+
+        let parser = {
+            let mut pool = self.parser_pool.lock().await;
+            pool.acquire(language_name)
+        };
+
+        let parse_result = if let Some(mut parser) = parser {
+            let text_clone = text.clone();
+            let language_name_clone = language_name.to_string();
+
+            let result = tokio::task::spawn_blocking(move || {
+                let parse_result =
+                    catch_unwind(AssertUnwindSafe(|| parser.parse(&text_clone, None)))
+                        .ok()
+                        .flatten();
+                (parser, parse_result)
+            })
+            .await
+            .ok();
+
+            if let Some((parser, parse_result)) = result {
+                let mut pool = self.parser_pool.lock().await;
+                pool.release(language_name_clone, parser);
+                parse_result
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(tree) = parse_result {
+            if let Some(current_doc) = self.documents.get(uri)
+                && current_doc.text() == text
+                && current_doc.tree().is_none()
+            {
+                drop(current_doc);
+                self.documents
+                    .update_document(uri.clone(), text.clone(), Some(tree.clone()));
+            }
+
+            if self.failed_parsers.is_failed(language_name)
+                && let Err(error) = self.failed_parsers.clear_failed(language_name)
+            {
+                log::warn!(
+                    target: "treesitter_ls::crash_recovery",
+                    "Failed to clear failed parser state for '{}': {}",
+                    language_name,
+                    error
+                );
+            }
+
+            return Some(tree);
+        }
+
+        None
+    }
+
     pub(crate) async fn semantic_tokens_full_impl(
         &self,
         params: SemanticTokensParams,
@@ -113,140 +177,42 @@ impl TreeSitterLs {
             let tree = match doc.tree() {
                 Some(t) => t.clone(),
                 None => {
-                    // Document has no tree yet - parse it now.
-                    // This handles the race condition where semantic tokens are
-                    // requested before didOpen finishes parsing.
-                    drop(doc); // Release lock before acquiring parser pool
-
-                    // Checkout parser (brief lock)
-                    let parser = {
-                        let mut pool = self.parser_pool.lock().await;
-                        pool.acquire(&language_name)
+                    drop(doc);
+                    self.documents
+                        .wait_for_parse_completion(&uri, Duration::from_millis(200))
+                        .await;
+                    let Some(doc) = self.documents.get(&uri) else {
+                        self.semantic_request_tracker
+                            .finish_request(&uri, request_id);
+                        return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+                            result_id: None,
+                            data: vec![],
+                        })));
                     };
-
-                    let sync_parse_result = if let Some(mut parser) = parser {
-                        let text_clone = text.clone();
-                        let language_name_clone = language_name.clone();
-
-                        // Parse in spawn_blocking to avoid blocking tokio worker thread
-                        let result = tokio::task::spawn_blocking(move || {
-                            let parse_result = catch_unwind(AssertUnwindSafe(|| {
-                                parser.parse(&text_clone, None)
-                            }))
-                            .ok()
-                            .flatten();
-                            (parser, parse_result)
-                        })
-                        .await
-                        .ok();
-
-                        if let Some((parser, parse_result)) = result {
-                            // Return parser to pool (brief lock)
-                            let mut pool = self.parser_pool.lock().await;
-                            pool.release(language_name_clone, parser);
-                            parse_result
-                        } else {
-                            None
-                        }
+                    text = doc.text().to_string();
+                    if let Some(tree) = doc.tree().cloned() {
+                        tree
                     } else {
-                        None
-                    };
-
-                    match sync_parse_result {
-                        Some(mut tree) => {
-                            let mut should_update = true;
-
-                            if let Some(current_doc) = self.documents.get(&uri) {
-                                let current_text = current_doc.text();
-                                if current_text != text {
-                                    text = current_text.to_string();
-                                    if let Some(current_tree) = current_doc.tree() {
-                                        tree = current_tree.clone();
-                                        should_update = false;
-                                        drop(current_doc);
-                                    } else {
-                                        drop(current_doc);
-
-                                        // Re-parse latest text to avoid overwriting newer updates
-                                        let parser = {
-                                            let mut pool = self.parser_pool.lock().await;
-                                            pool.acquire(&language_name)
-                                        };
-
-                                        let sync_parse_result = if let Some(mut parser) = parser {
-                                            let text_clone = text.clone();
-                                            let language_name_clone = language_name.clone();
-
-                                            let result = tokio::task::spawn_blocking(move || {
-                                                let parse_result = catch_unwind(AssertUnwindSafe(|| {
-                                                    parser.parse(&text_clone, None)
-                                                }))
-                                                .ok()
-                                                .flatten();
-                                                (parser, parse_result)
-                                            })
-                                            .await
-                                            .ok();
-
-                                            if let Some((parser, parse_result)) = result {
-                                                let mut pool = self.parser_pool.lock().await;
-                                                pool.release(language_name_clone, parser);
-                                                parse_result
-                                            } else {
-                                                None
-                                            }
-                                        } else {
-                                            None
-                                        };
-
-                                        if let Some(latest_tree) = sync_parse_result {
-                                            tree = latest_tree;
-                                        } else {
-                                            self.semantic_request_tracker
-                                                .finish_request(&uri, request_id);
-                                            return Ok(Some(SemanticTokensResult::Tokens(
-                                                SemanticTokens {
-                                                    result_id: None,
-                                                    data: vec![],
-                                                },
-                                            )));
-                                        }
-                                    }
-                                } else {
-                                    drop(current_doc);
-                                }
-                            }
-
-                            if should_update {
-                                self.documents.update_document(
-                                    uri.clone(),
-                                    text.clone(),
-                                    Some(tree.clone()),
-                                );
-                            }
-                            tree
-                        }
-                        None => {
+                        drop(doc);
+                        let Some(tree) = self.parse_on_demand(&uri, &language_name).await else {
                             self.semantic_request_tracker
                                 .finish_request(&uri, request_id);
                             return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                                 result_id: None,
                                 data: vec![],
                             })));
-                        }
+                        };
+                        tree
                     }
                 }
             };
 
-            // Early exit check after potential sync parse
+            // Early exit check after waiting for parse completion
             if !self.semantic_request_tracker.is_active(&uri, request_id) {
                 self.client
                     .log_message(
                         MessageType::LOG,
-                        format!(
-                            "[SEMANTIC_TOKENS] CANCELLED uri={} req={} (after sync parse)",
-                            uri, request_id
-                        ),
+                        format!("[SEMANTIC_TOKENS] CANCELLED uri={} req={}", uri, request_id),
                     )
                     .await;
                 return Ok(None);
@@ -397,128 +363,26 @@ impl TreeSitterLs {
             let tree = match doc.tree() {
                 Some(t) => t.clone(),
                 None => {
-                    // Document has no tree yet - parse it now.
-                    // This handles the race condition where semantic tokens delta is
-                    // requested before didChange finishes parsing.
-                    //
-                    // TODO: A cleaner approach would be to add a notification mechanism
-                    // (e.g., tokio::sync::watch) to DocumentStore so we can await the
-                    // parse completion from did_open/did_change instead of re-parsing here.
-                    drop(doc); // Release lock before acquiring parser pool
-
-                    // Checkout parser (brief lock)
-                    let parser = {
-                        let mut pool = self.parser_pool.lock().await;
-                        pool.acquire(&language_name)
+                    drop(doc);
+                    self.documents
+                        .wait_for_parse_completion(&uri, Duration::from_millis(200))
+                        .await;
+                    let Some(doc) = self.documents.get(&uri) else {
+                        self.semantic_request_tracker
+                            .finish_request(&uri, request_id);
+                        return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
+                            SemanticTokens {
+                                result_id: None,
+                                data: vec![],
+                            },
+                        )));
                     };
-
-                    let sync_parse_result = if let Some(mut parser) = parser {
-                        let text_clone = text.clone();
-                        let language_name_clone = language_name.clone();
-
-                        // Parse in spawn_blocking to avoid blocking tokio worker thread
-                        let result = tokio::task::spawn_blocking(move || {
-                            let parse_result = catch_unwind(AssertUnwindSafe(|| {
-                                parser.parse(&text_clone, None)
-                            }))
-                            .ok()
-                            .flatten();
-                            (parser, parse_result)
-                        })
-                        .await
-                        .ok();
-
-                        if let Some((parser, parse_result)) = result {
-                            // Return parser to pool (brief lock)
-                            let mut pool = self.parser_pool.lock().await;
-                            pool.release(language_name_clone, parser);
-                            parse_result
-                        } else {
-                            None
-                        }
+                    text = doc.text().to_string();
+                    if let Some(tree) = doc.tree().cloned() {
+                        tree
                     } else {
-                        None
-                    };
-
-                    match sync_parse_result {
-                        Some(mut tree) => {
-                            let mut should_update = true;
-
-                            if let Some(current_doc) = self.documents.get(&uri) {
-                                let current_text = current_doc.text();
-                                if current_text != text {
-                                    text = current_text.to_string();
-                                    if let Some(current_tree) = current_doc.tree() {
-                                        tree = current_tree.clone();
-                                        should_update = false;
-                                        drop(current_doc);
-                                    } else {
-                                        drop(current_doc);
-
-                                        // Re-parse latest text to avoid overwriting newer updates
-                                        let parser = {
-                                            let mut pool = self.parser_pool.lock().await;
-                                            pool.acquire(&language_name)
-                                        };
-
-                                        let sync_parse_result = if let Some(mut parser) = parser {
-                                            let text_clone = text.clone();
-                                            let language_name_clone = language_name.clone();
-
-                                            let result = tokio::task::spawn_blocking(move || {
-                                                let parse_result =
-                                                    catch_unwind(AssertUnwindSafe(|| {
-                                                        parser.parse(&text_clone, None)
-                                                    }))
-                                                    .ok()
-                                                    .flatten();
-                                                (parser, parse_result)
-                                            })
-                                            .await
-                                            .ok();
-
-                                            if let Some((parser, parse_result)) = result {
-                                                let mut pool = self.parser_pool.lock().await;
-                                                pool.release(language_name_clone, parser);
-                                                parse_result
-                                            } else {
-                                                None
-                                            }
-                                        } else {
-                                            None
-                                        };
-
-                                        if let Some(latest_tree) = sync_parse_result {
-                                            tree = latest_tree;
-                                        } else {
-                                            self.semantic_request_tracker
-                                                .finish_request(&uri, request_id);
-                                            return Ok(Some(
-                                                SemanticTokensFullDeltaResult::Tokens(
-                                                    SemanticTokens {
-                                                        result_id: None,
-                                                        data: vec![],
-                                                    },
-                                                ),
-                                            ));
-                                        }
-                                    }
-                                } else {
-                                    drop(current_doc);
-                                }
-                            }
-
-                            if should_update {
-                                // Update document with parsed tree
-                                self.documents.update_document(
-                                    uri.clone(),
-                                    text.clone(),
-                                    Some(tree.clone()),
-                                );
-                            }
-                            tree
-                        }
-                        None => {
+                        drop(doc);
+                        let Some(tree) = self.parse_on_demand(&uri, &language_name).await else {
                             self.semantic_request_tracker
                                 .finish_request(&uri, request_id);
                             return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
@@ -527,18 +391,19 @@ impl TreeSitterLs {
                                     data: vec![],
                                 },
                             )));
-                        }
+                        };
+                        tree
                     }
                 }
             };
 
-            // Early exit check after potential sync parse
+            // Early exit check after waiting for parse completion
             if !self.semantic_request_tracker.is_active(&uri, request_id) {
                 self.client
                     .log_message(
                         MessageType::LOG,
                         format!(
-                            "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={} (after sync parse)",
+                            "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={}",
                             uri, request_id
                         ),
                     )
@@ -546,7 +411,7 @@ impl TreeSitterLs {
                 return Ok(None);
             }
 
-            // Re-acquire document reference after potential parsing
+            // Re-acquire document reference after potential waiting
             let doc = match self.documents.get(&uri) {
                 Some(d) => d,
                 None => {
@@ -817,8 +682,7 @@ mod tests {
     async fn semantic_tokens_delta_does_not_overwrite_newer_text() {
         let (service, _socket) = LspService::new(TreeSitterLs::new);
         let server = service.inner();
-        let uri = Url::parse("file:///semantic_delta_race.lua")
-            .expect("should construct test uri");
+        let uri = Url::parse("file:///semantic_delta_race.lua").expect("should construct test uri");
 
         let mut initial_text = String::from("local M = {}\n");
         for _ in 0..2000 {
@@ -826,12 +690,9 @@ mod tests {
         }
         initial_text.push_str("return M\n");
 
-        server.documents.insert(
-            uri.clone(),
-            initial_text,
-            Some("lua".to_string()),
-            None,
-        );
+        server
+            .documents
+            .insert(uri.clone(), initial_text, Some("lua".to_string()), None);
 
         let load_result = server.language.ensure_language_loaded("lua");
         if !load_result.success {
@@ -844,12 +705,9 @@ mod tests {
 
         let update_future = async {
             sleep(Duration::from_millis(10)).await;
-            server.documents.insert(
-                uri.clone(),
-                new_text_clone,
-                Some("lua".to_string()),
-                None,
-            );
+            server
+                .documents
+                .insert(uri.clone(), new_text_clone, Some("lua".to_string()), None);
         };
 
         let params = SemanticTokensDeltaParams {

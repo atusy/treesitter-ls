@@ -350,6 +350,7 @@ impl TreeSitterLs {
         language_id: Option<&str>,
         edits: Vec<InputEdit>,
     ) {
+        let parse_generation = self.documents.mark_parse_started(&uri);
         let mut events = Vec::new();
 
         // ADR-0005: Detection fallback chain via LanguageCoordinator
@@ -366,7 +367,10 @@ impl TreeSitterLs {
                     language_name
                 );
                 // Store document without parsing
-                self.documents.insert(uri, text, Some(language_name), None);
+                self.documents
+                    .insert(uri.clone(), text, Some(language_name), None);
+                self.documents
+                    .mark_parse_finished(&uri, parse_generation, false);
                 self.handle_language_events(&events).await;
                 return;
             }
@@ -440,13 +444,17 @@ impl TreeSitterLs {
                     );
                 }
 
+                self.documents
+                    .mark_parse_finished(&uri, parse_generation, true);
                 self.handle_language_events(&events).await;
                 return;
             }
         }
 
         // Store unparsed document
-        self.documents.insert(uri, text, None, None);
+        self.documents.insert(uri.clone(), text, None, None);
+        self.documents
+            .mark_parse_finished(&uri, parse_generation, false);
         self.handle_language_events(&events).await;
     }
 
