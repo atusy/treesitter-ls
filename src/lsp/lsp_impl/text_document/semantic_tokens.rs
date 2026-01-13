@@ -14,7 +14,23 @@ use crate::analysis::{
 
 use super::super::TreeSitterLs;
 
+/// Reason why a semantic token request was cancelled.
+#[derive(Debug, Clone, Copy)]
+enum CancellationReason {
+    StaleText,
+    DocumentMissing,
+}
+
 impl TreeSitterLs {
+    /// Check if the document text matches the expected text, returning the cancellation reason if not.
+    fn check_text_staleness(&self, uri: &Url, expected_text: &str) -> Option<CancellationReason> {
+        match self.documents.get(uri) {
+            Some(doc) if doc.text() == expected_text => None,
+            Some(_) => Some(CancellationReason::StaleText),
+            None => Some(CancellationReason::DocumentMissing),
+        }
+    }
+
     async fn parse_on_demand(&self, uri: &Url, language_name: &str) -> Option<Tree> {
         let doc = self.documents.get(uri)?;
         let text = doc.text().to_string();
@@ -214,34 +230,14 @@ impl TreeSitterLs {
                 }
             };
 
-            if let Some(current_doc) = self.documents.get(&uri) {
-                if current_doc.text() != text {
-                    self.semantic_request_tracker
-                        .finish_request(&uri, request_id);
-                    drop(current_doc);
-                    self.client
-                        .log_message(
-                            MessageType::LOG,
-                            format!(
-                                "[SEMANTIC_TOKENS] CANCELLED uri={} req={} (stale text)",
-                                uri, request_id
-                            ),
-                        )
-                        .await;
-                    return Ok(None);
-                }
-            } else {
+            if let Some(reason) = self.check_text_staleness(&uri, &text) {
                 self.semantic_request_tracker
                     .finish_request(&uri, request_id);
-                self.client
-                    .log_message(
-                        MessageType::LOG,
-                        format!(
-                            "[SEMANTIC_TOKENS] CANCELLED uri={} req={} (document missing)",
-                            uri, request_id
-                        ),
-                    )
-                    .await;
+                log::debug!(
+                    target: "treesitter_ls::semantic",
+                    "[SEMANTIC_TOKENS] CANCELLED uri={} req={} ({:?})",
+                    uri, request_id, reason
+                );
                 return Ok(None);
             }
 
@@ -273,34 +269,14 @@ impl TreeSitterLs {
             (result, text)
         }; // doc reference is dropped here
 
-        if let Some(current_doc) = self.documents.get(&uri) {
-            if current_doc.text() != text_used {
-                self.semantic_request_tracker
-                    .finish_request(&uri, request_id);
-                drop(current_doc);
-                self.client
-                    .log_message(
-                        MessageType::LOG,
-                        format!(
-                            "[SEMANTIC_TOKENS] CANCELLED uri={} req={} (stale text)",
-                            uri, request_id
-                        ),
-                    )
-                    .await;
-                return Ok(None);
-            }
-        } else {
+        if let Some(reason) = self.check_text_staleness(&uri, &text_used) {
             self.semantic_request_tracker
                 .finish_request(&uri, request_id);
-            self.client
-                .log_message(
-                    MessageType::LOG,
-                    format!(
-                        "[SEMANTIC_TOKENS] CANCELLED uri={} req={} (document missing)",
-                        uri, request_id
-                    ),
-                )
-                .await;
+            log::debug!(
+                target: "treesitter_ls::semantic",
+                "[SEMANTIC_TOKENS] CANCELLED uri={} req={} ({:?})",
+                uri, request_id, reason
+            );
             return Ok(None);
         }
 
@@ -467,34 +443,14 @@ impl TreeSitterLs {
                 }
             };
 
-            if let Some(current_doc) = self.documents.get(&uri) {
-                if current_doc.text() != text {
-                    self.semantic_request_tracker
-                        .finish_request(&uri, request_id);
-                    drop(current_doc);
-                    self.client
-                        .log_message(
-                            MessageType::LOG,
-                            format!(
-                                "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={} (stale text)",
-                                uri, request_id
-                            ),
-                        )
-                        .await;
-                    return Ok(None);
-                }
-            } else {
+            if let Some(reason) = self.check_text_staleness(&uri, &text) {
                 self.semantic_request_tracker
                     .finish_request(&uri, request_id);
-                self.client
-                    .log_message(
-                        MessageType::LOG,
-                        format!(
-                            "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={} (document missing)",
-                            uri, request_id
-                        ),
-                    )
-                    .await;
+                log::debug!(
+                    target: "treesitter_ls::semantic",
+                    "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={} ({:?})",
+                    uri, request_id, reason
+                );
                 return Ok(None);
             }
 
@@ -675,42 +631,20 @@ impl TreeSitterLs {
         self.semantic_request_tracker
             .finish_request(&uri, request_id);
 
-        if let Some(current_doc) = self.documents.get(&uri) {
-            if current_doc.text() != text_used {
-                drop(current_doc);
-                self.client
-                    .log_message(
-                        MessageType::LOG,
-                        format!(
-                            "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={} (stale text)",
-                            uri, request_id
-                        ),
-                    )
-                    .await;
-                return Ok(None);
-            }
-        } else {
-            self.client
-                .log_message(
-                    MessageType::LOG,
-                    format!(
-                        "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={} (document missing)",
-                        uri, request_id
-                    ),
-                )
-                .await;
+        if let Some(reason) = self.check_text_staleness(&uri, &text_used) {
+            log::debug!(
+                target: "treesitter_ls::semantic",
+                "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={} ({:?})",
+                uri, request_id, reason
+            );
             return Ok(None);
         }
 
-        self.client
-            .log_message(
-                MessageType::LOG,
-                format!(
-                    "[SEMANTIC_TOKENS_DELTA] DONE uri={} req={}",
-                    uri, request_id
-                ),
-            )
-            .await;
+        log::debug!(
+            target: "treesitter_ls::semantic",
+            "[SEMANTIC_TOKENS_DELTA] DONE uri={} req={}",
+            uri, request_id
+        );
 
         match domain_result {
             tower_lsp::lsp_types::SemanticTokensFullDeltaResult::Tokens(tokens) => {
