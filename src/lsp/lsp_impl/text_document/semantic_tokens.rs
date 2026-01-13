@@ -31,6 +31,48 @@ impl TreeSitterLs {
         }
     }
 
+    /// Get the syntax tree for a document, waiting for parse completion or parsing on-demand.
+    ///
+    /// This handles the race condition where semantic tokens are requested before
+    /// `didOpen`/`didChange` finishes parsing. Strategy:
+    /// 1. If tree already available, return it immediately
+    /// 2. Wait up to 200ms for in-flight parse to complete
+    /// 3. If still no tree, parse on-demand as fallback
+    ///
+    /// Returns `(tree, text)` tuple to ensure the text and tree are consistent,
+    /// or `None` if the document is missing or parsing failed.
+    async fn get_tree_with_wait(&self, uri: &Url, language_name: &str) -> Option<(Tree, String)> {
+        // First check: maybe tree is already available
+        let doc = self.documents.get(uri)?;
+        let text = doc.text().to_string();
+        if let Some(tree) = doc.tree().cloned() {
+            return Some((tree, text));
+        }
+        drop(doc);
+
+        // Wait for in-flight parse to complete
+        self.documents
+            .wait_for_parse_completion(uri, Duration::from_millis(200))
+            .await;
+
+        // Second check: tree may now be available after waiting
+        let doc = self.documents.get(uri)?;
+        let text = doc.text().to_string();
+        if let Some(tree) = doc.tree().cloned() {
+            return Some((tree, text));
+        }
+        drop(doc);
+
+        // Fallback: parse on-demand
+        let tree = self
+            .try_parse_and_update_document(uri, language_name)
+            .await?;
+        // Re-fetch text to ensure consistency
+        let doc = self.documents.get(uri)?;
+        let text = doc.text().to_string();
+        Some((tree, text))
+    }
+
     /// Parse the document on-demand and update the store if successful.
     ///
     /// This is a fallback path when the normal parse pipeline hasn't completed.
@@ -185,53 +227,18 @@ impl TreeSitterLs {
             return Ok(None);
         }
 
-        // Get document data and compute tokens, then drop the reference
-        let (result, text_used) = {
-            let Some(doc) = self.documents.get(&uri) else {
-                self.semantic_request_tracker
-                    .finish_request(&uri, request_id);
-                return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
-                    result_id: None,
-                    data: vec![],
-                })));
-            };
-            let mut text = doc.text().to_string();
-            let tree = match doc.tree() {
-                Some(t) => t.clone(),
-                None => {
-                    drop(doc);
-                    self.documents
-                        .wait_for_parse_completion(&uri, Duration::from_millis(200))
-                        .await;
-                    let Some(doc) = self.documents.get(&uri) else {
-                        self.semantic_request_tracker
-                            .finish_request(&uri, request_id);
-                        return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
-                            result_id: None,
-                            data: vec![],
-                        })));
-                    };
-                    text = doc.text().to_string();
-                    if let Some(tree) = doc.tree().cloned() {
-                        tree
-                    } else {
-                        drop(doc);
-                        let Some(tree) = self
-                            .try_parse_and_update_document(&uri, &language_name)
-                            .await
-                        else {
-                            self.semantic_request_tracker
-                                .finish_request(&uri, request_id);
-                            return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
-                                result_id: None,
-                                data: vec![],
-                            })));
-                        };
-                        tree
-                    }
-                }
-            };
+        // Get tree and text, waiting for parse completion or parsing on-demand
+        let Some((tree, text)) = self.get_tree_with_wait(&uri, &language_name).await else {
+            self.semantic_request_tracker
+                .finish_request(&uri, request_id);
+            return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+                result_id: None,
+                data: vec![],
+            })));
+        };
 
+        // Get document data and compute tokens
+        let (result, text_used) = {
             if let Some(reason) = self.check_text_staleness(&uri, &text) {
                 self.semantic_request_tracker
                     .finish_request(&uri, request_id);
@@ -375,60 +382,20 @@ impl TreeSitterLs {
             return Ok(None);
         }
 
-        // Get document data and compute delta, then drop the reference
+        // Get tree and text, waiting for parse completion or parsing on-demand
+        let Some((tree, text)) = self.get_tree_with_wait(&uri, &language_name).await else {
+            self.semantic_request_tracker
+                .finish_request(&uri, request_id);
+            return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
+                SemanticTokens {
+                    result_id: None,
+                    data: vec![],
+                },
+            )));
+        };
+
+        // Get document data and compute delta
         let (result, text_used) = {
-            let Some(doc) = self.documents.get(&uri) else {
-                self.semantic_request_tracker
-                    .finish_request(&uri, request_id);
-                return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
-                    SemanticTokens {
-                        result_id: None,
-                        data: vec![],
-                    },
-                )));
-            };
-
-            let mut text = doc.text().to_string();
-            let tree = match doc.tree() {
-                Some(t) => t.clone(),
-                None => {
-                    drop(doc);
-                    self.documents
-                        .wait_for_parse_completion(&uri, Duration::from_millis(200))
-                        .await;
-                    let Some(doc) = self.documents.get(&uri) else {
-                        self.semantic_request_tracker
-                            .finish_request(&uri, request_id);
-                        return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
-                            SemanticTokens {
-                                result_id: None,
-                                data: vec![],
-                            },
-                        )));
-                    };
-                    text = doc.text().to_string();
-                    if let Some(tree) = doc.tree().cloned() {
-                        tree
-                    } else {
-                        drop(doc);
-                        let Some(tree) = self
-                            .try_parse_and_update_document(&uri, &language_name)
-                            .await
-                        else {
-                            self.semantic_request_tracker
-                                .finish_request(&uri, request_id);
-                            return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
-                                SemanticTokens {
-                                    result_id: None,
-                                    data: vec![],
-                                },
-                            )));
-                        };
-                        tree
-                    }
-                }
-            };
-
             if let Some(reason) = self.check_text_staleness(&uri, &text) {
                 self.semantic_request_tracker
                     .finish_request(&uri, request_id);
@@ -450,7 +417,7 @@ impl TreeSitterLs {
                 return Ok(None);
             }
 
-            // Re-acquire document reference after potential waiting
+            // Get document reference for delta computation
             let doc = match self.documents.get(&uri) {
                 Some(d) => d,
                 None => {
