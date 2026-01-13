@@ -36,10 +36,7 @@ impl TreeSitterLs {
                     format!("[SEMANTIC_TOKENS] CANCELLED uri={} req={}", uri, request_id),
                 )
                 .await;
-            return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
-                result_id: None,
-                data: vec![],
-            })));
+            return Ok(None);
         }
 
         let Some(language_name) = self.get_language_for_document(&uri) else {
@@ -75,10 +72,7 @@ impl TreeSitterLs {
                     ),
                 )
                 .await;
-            return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
-                result_id: None,
-                data: vec![],
-            })));
+            return Ok(None);
         }
 
         let Some(query) = self.language.get_highlight_query(&language_name) else {
@@ -101,10 +95,7 @@ impl TreeSitterLs {
                     ),
                 )
                 .await;
-            return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
-                result_id: None,
-                data: vec![],
-            })));
+            return Ok(None);
         }
 
         // Get document data and compute tokens, then drop the reference
@@ -267,12 +258,7 @@ impl TreeSitterLs {
                     ),
                 )
                 .await;
-            return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
-                SemanticTokens {
-                    result_id: None,
-                    data: vec![],
-                },
-            )));
+            return Ok(None);
         }
 
         let Some(language_name) = self.get_language_for_document(&uri) else {
@@ -308,12 +294,7 @@ impl TreeSitterLs {
                     ),
                 )
                 .await;
-            return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
-                SemanticTokens {
-                    result_id: None,
-                    data: vec![],
-                },
-            )));
+            return Ok(None);
         }
 
         // Get document data and compute delta, then drop the reference
