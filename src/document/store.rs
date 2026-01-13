@@ -95,24 +95,21 @@ impl DocumentStore {
 
     pub async fn wait_for_parse_completion(&self, uri: &Url, timeout: std::time::Duration) {
         let mut receiver = self.parse_sender(uri).subscribe();
-        let mut state = *receiver.borrow();
 
         let wait_future = async {
-            // If not parsing and no tree, wait for a parse to start.
-            if !state.in_progress && !state.has_tree {
-                if receiver.changed().await.is_err() {
-                    return; // Channel closed, can't wait.
-                }
-                state = *receiver.borrow();
-            }
+            loop {
+                let state = *receiver.borrow();
 
-            // Now, if a parse is in progress, wait for it to finish.
-            // If we already have a tree, this loop will be skipped.
-            while state.in_progress {
-                if receiver.changed().await.is_err() {
-                    break; // Channel closed.
+                // Already have a tree - done waiting
+                if state.has_tree {
+                    return;
                 }
-                state = *receiver.borrow();
+
+                // No tree yet - wait for state change
+                // (either parse starts, or parse finishes with a tree)
+                if receiver.changed().await.is_err() {
+                    return; // Channel closed
+                }
             }
         };
 
