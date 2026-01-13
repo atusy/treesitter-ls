@@ -310,16 +310,100 @@ impl TreeSitterLs {
                 )));
             };
 
-            let text = doc.text();
-            let Some(tree) = doc.tree() else {
-                self.semantic_request_tracker
-                    .finish_request(&uri, request_id);
-                return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
-                    SemanticTokens {
-                        result_id: None,
-                        data: vec![],
-                    },
-                )));
+            let text = doc.text().to_string();
+            let tree = match doc.tree() {
+                Some(t) => t.clone(),
+                None => {
+                    // Document has no tree yet - parse it now.
+                    // This handles the race condition where semantic tokens delta is
+                    // requested before didChange finishes parsing.
+                    //
+                    // TODO: A cleaner approach would be to add a notification mechanism
+                    // (e.g., tokio::sync::watch) to DocumentStore so we can await the
+                    // parse completion from did_open/did_change instead of re-parsing here.
+                    drop(doc); // Release lock before acquiring parser pool
+
+                    // Checkout parser (brief lock)
+                    let parser = {
+                        let mut pool = self.parser_pool.lock().await;
+                        pool.acquire(&language_name)
+                    };
+
+                    let sync_parse_result = if let Some(mut parser) = parser {
+                        let text_clone = text.clone();
+                        let language_name_clone = language_name.clone();
+
+                        // Parse in spawn_blocking to avoid blocking tokio worker thread
+                        let result = tokio::task::spawn_blocking(move || {
+                            let parse_result = parser.parse(&text_clone, None);
+                            (parser, parse_result)
+                        })
+                        .await
+                        .ok();
+
+                        if let Some((parser, parse_result)) = result {
+                            // Return parser to pool (brief lock)
+                            let mut pool = self.parser_pool.lock().await;
+                            pool.release(language_name_clone, parser);
+                            parse_result
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    match sync_parse_result {
+                        Some(tree) => {
+                            // Update document with parsed tree
+                            self.documents.update_document(
+                                uri.clone(),
+                                text.clone(),
+                                Some(tree.clone()),
+                            );
+                            tree
+                        }
+                        None => {
+                            self.semantic_request_tracker
+                                .finish_request(&uri, request_id);
+                            return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
+                                SemanticTokens {
+                                    result_id: None,
+                                    data: vec![],
+                                },
+                            )));
+                        }
+                    }
+                }
+            };
+
+            // Early exit check after potential sync parse
+            if !self.semantic_request_tracker.is_active(&uri, request_id) {
+                self.client
+                    .log_message(
+                        MessageType::LOG,
+                        format!(
+                            "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={} (after sync parse)",
+                            uri, request_id
+                        ),
+                    )
+                    .await;
+                return Ok(None);
+            }
+
+            // Re-acquire document reference after potential parsing
+            let doc = match self.documents.get(&uri) {
+                Some(d) => d,
+                None => {
+                    self.semantic_request_tracker
+                        .finish_request(&uri, request_id);
+                    return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
+                        SemanticTokens {
+                            result_id: None,
+                            data: vec![],
+                        },
+                    )));
+                }
             };
 
             // Get previous tokens from cache with result_id validation
@@ -329,7 +413,7 @@ impl TreeSitterLs {
             let previous_text = doc.previous_text().map(|s| s.to_string());
 
             // Decide tokenization strategy based on change size
-            let strategy = decide_tokenization_strategy(doc.previous_tree(), tree, text.len());
+            let strategy = decide_tokenization_strategy(doc.previous_tree(), &tree, text.len());
 
             // Get capture mappings
             let capture_mappings = self.language.get_capture_mappings();
@@ -369,8 +453,8 @@ impl TreeSitterLs {
 
                 // Get new tokens via full computation (still needed for changed region)
                 let new_tokens_result = handle_semantic_tokens_full_delta(
-                    text,
-                    tree,
+                    &text,
+                    &tree,
                     &query,
                     &previous_result_id,
                     None, // Don't pass previous - we'll merge ourselves
@@ -403,9 +487,9 @@ impl TreeSitterLs {
                     let merge_result = compute_incremental_tokens(
                         &old_absolute,
                         prev_tree,
-                        tree,
+                        &tree,
                         prev_text,
-                        text,
+                        &text,
                         &new_absolute,
                     );
 
@@ -443,8 +527,8 @@ impl TreeSitterLs {
 
                 // Delegate to handler with injection support
                 handle_semantic_tokens_full_delta(
-                    text,
-                    tree,
+                    &text,
+                    &tree,
                     &query,
                     &previous_result_id,
                     previous_tokens.as_ref(),
