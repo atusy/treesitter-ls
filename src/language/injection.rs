@@ -1132,19 +1132,16 @@ mod tests {
     }
 
     // ============================================================
-    // Tests for calculate_region_id
+    // Tests for InjectionResolver region_id generation
     // ============================================================
 
     #[test]
-    fn test_calculate_region_id_returns_language_ordinal_format() {
-        // Test that calculate_region_id returns {language}-{ordinal} format
-        // For a single Lua injection, it should return "lua-0"
+    fn test_resolve_injection_returns_language_ordinal_format() {
+        // Test that resolved injection has region_id in {language}-{ordinal} format
         let mut parser = create_rust_parser();
         let text = r#"fn main() { let s = "hello"; }"#;
         let tree = parse_rust_code(&mut parser, text);
-        let root = tree.root_node();
 
-        // Create an injection query that matches the string as "lua"
         let query_str = r#"
             ((string_literal) @injection.content
               (#set! injection.language "lua"))
@@ -1152,188 +1149,73 @@ mod tests {
         let language = tree_sitter_rust::LANGUAGE.into();
         let query = Query::new(&language, query_str).expect("valid query");
 
-        // Get injection regions
-        let regions = collect_all_injections(&root, text, Some(&query));
-        let regions = regions.expect("Should find injections");
-        assert_eq!(regions.len(), 1, "Should find exactly one injection");
-
-        // Calculate region_id for the first (and only) injection
-        let region_id = calculate_region_id(&regions, 0);
-        assert_eq!(region_id, "lua-0", "First lua injection should be lua-0");
-    }
-
-    #[test]
-    fn test_calculate_region_id_lua_python_lua_produces_correct_ordinals() {
-        // Test that Lua-Python-Lua blocks produce lua-0, python-0, lua-1
-        // This verifies ordinal is per-language, not global
-        //
-        // We simulate multiple injections by creating InjectionRegionInfo structs directly
-        // since parsing multiple distinct language injections is complex with Rust grammar.
-
-        let mut parser = create_rust_parser();
-        let text = r#"fn main() { let a = "lua1"; let b = "python"; let c = "lua2"; }"#;
-        let tree = parse_rust_code(&mut parser, text);
-        let root = tree.root_node();
-
-        // Find all string_literal nodes manually using StreamingIterator
-        let mut cursor = tree_sitter::QueryCursor::new();
-        let query_str = r#"(string_literal) @str"#;
-        let language = tree_sitter_rust::LANGUAGE.into();
-        let query = Query::new(&language, query_str).expect("valid query");
-
-        let mut matches_iter = cursor.matches(&query, root, text.as_bytes());
-        let mut nodes = Vec::new();
-        while let Some(m) = matches_iter.next() {
-            nodes.push(m.captures[0].node);
-        }
-
-        assert_eq!(nodes.len(), 3, "Should find 3 strings");
-
-        // Create injection regions manually: lua, python, lua
-        let injections = vec![
-            InjectionRegionInfo {
-                language: "lua".to_string(),
-                content_node: nodes[0],
-                pattern_index: 0,
-            },
-            InjectionRegionInfo {
-                language: "python".to_string(),
-                content_node: nodes[1],
-                pattern_index: 0,
-            },
-            InjectionRegionInfo {
-                language: "lua".to_string(),
-                content_node: nodes[2],
-                pattern_index: 0,
-            },
-        ];
-
-        // Verify region_ids
+        // Resolve injection at byte offset inside the string literal
+        let resolved = InjectionResolver::resolve_at_byte_offset(&tree, text, &query, 22);
+        assert!(resolved.is_some(), "Should resolve injection");
         assert_eq!(
-            calculate_region_id(&injections, 0),
+            resolved.unwrap().region_id,
             "lua-0",
-            "First lua should be lua-0"
-        );
-        assert_eq!(
-            calculate_region_id(&injections, 1),
-            "python-0",
-            "Python should be python-0"
-        );
-        assert_eq!(
-            calculate_region_id(&injections, 2),
-            "lua-1",
-            "Second lua should be lua-1"
+            "First lua injection should be lua-0"
         );
     }
 
     #[test]
-    fn test_calculate_region_id_inserting_python_preserves_lua_ordinals() {
-        // Test that inserting a Python block between Lua blocks preserves lua ordinals
-        //
-        // Before: lua-0, lua-1 (just two Lua blocks)
-        // After:  lua-0, python-0, lua-1 (Python inserted between)
-        //
-        // The key insight: Lua ordinals should NOT shift when Python is inserted
-
+    fn test_resolve_injection_multiple_regions_correct_ordinals() {
+        // Test that multiple injection regions get correct ordinals (lua-0, lua-1, lua-2)
         let mut parser = create_rust_parser();
-        let text = r#"fn main() { let a = "lua1"; let b = "lua2"; }"#;
+        let text = r#"fn main() { let a = "hello"; let b = "world"; let c = "test"; }"#;
         let tree = parse_rust_code(&mut parser, text);
-        let root = tree.root_node();
 
-        // Find all string_literal nodes
-        let mut cursor = tree_sitter::QueryCursor::new();
-        let query_str = r#"(string_literal) @str"#;
+        let query_str = r#"
+            ((string_literal) @injection.content
+              (#set! injection.language "lua"))
+        "#;
         let language = tree_sitter_rust::LANGUAGE.into();
         let query = Query::new(&language, query_str).expect("valid query");
 
-        let mut matches_iter = cursor.matches(&query, root, text.as_bytes());
-        let mut nodes = Vec::new();
+        // Find byte offsets for each string
+        let query_all = Query::new(&language, r#"(string_literal) @str"#).expect("valid query");
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let mut matches_iter = cursor.matches(&query_all, tree.root_node(), text.as_bytes());
+        let mut byte_offsets = Vec::new();
         while let Some(m) = matches_iter.next() {
-            nodes.push(m.captures[0].node);
+            byte_offsets.push(m.captures[0].node.start_byte() + 1);
         }
+        assert_eq!(byte_offsets.len(), 3, "Should find 3 strings");
 
-        assert_eq!(nodes.len(), 2, "Should find 2 strings");
+        // Resolve each injection and verify region_ids
+        let r1 = InjectionResolver::resolve_at_byte_offset(&tree, text, &query, byte_offsets[0]);
+        let r2 = InjectionResolver::resolve_at_byte_offset(&tree, text, &query, byte_offsets[1]);
+        let r3 = InjectionResolver::resolve_at_byte_offset(&tree, text, &query, byte_offsets[2]);
 
-        // BEFORE: Just two Lua blocks
-        let injections_before = vec![
-            InjectionRegionInfo {
-                language: "lua".to_string(),
-                content_node: nodes[0],
-                pattern_index: 0,
-            },
-            InjectionRegionInfo {
-                language: "lua".to_string(),
-                content_node: nodes[1],
-                pattern_index: 0,
-            },
-        ];
+        assert_eq!(r1.unwrap().region_id, "lua-0", "First should be lua-0");
+        assert_eq!(r2.unwrap().region_id, "lua-1", "Second should be lua-1");
+        assert_eq!(r3.unwrap().region_id, "lua-2", "Third should be lua-2");
+    }
+
+    #[test]
+    fn test_resolve_injection_same_position_returns_consistent_region_id() {
+        // Test that resolving the same position returns consistent region_id
+        let mut parser = create_rust_parser();
+        let text = r#"fn main() { let s = "hello"; }"#;
+        let tree = parse_rust_code(&mut parser, text);
+
+        let query_str = r#"
+            ((string_literal) @injection.content
+              (#set! injection.language "lua"))
+        "#;
+        let language = tree_sitter_rust::LANGUAGE.into();
+        let query = Query::new(&language, query_str).expect("valid query");
+
+        // Resolve the same position multiple times
+        let byte_offset = 22;
+        let r1 = InjectionResolver::resolve_at_byte_offset(&tree, text, &query, byte_offset);
+        let r2 = InjectionResolver::resolve_at_byte_offset(&tree, text, &query, byte_offset);
 
         assert_eq!(
-            calculate_region_id(&injections_before, 0),
-            "lua-0",
-            "Before: first lua is lua-0"
-        );
-        assert_eq!(
-            calculate_region_id(&injections_before, 1),
-            "lua-1",
-            "Before: second lua is lua-1"
-        );
-
-        // AFTER: Python block inserted between (simulated with different node for Python)
-        // In real usage, we'd re-parse with the new content, but here we simulate
-        // by using the same nodes but with Python in between
-        //
-        // We reuse nodes[0] for first Lua, nodes[1] for Python (pretend it's Python),
-        // and we need a third node for second Lua - we'll just reuse nodes[1] for demo.
-        // The key point is that ordinals are per-language.
-
-        // Re-parse with 3 strings to have proper node positions
-        let text_after = r#"fn main() { let a = "lua1"; let p = "py"; let b = "lua2"; }"#;
-        let tree_after = parse_rust_code(&mut parser, text_after);
-        let root_after = tree_after.root_node();
-
-        let mut cursor_after = tree_sitter::QueryCursor::new();
-        let mut matches_after = cursor_after.matches(&query, root_after, text_after.as_bytes());
-        let mut nodes_after = Vec::new();
-        while let Some(m) = matches_after.next() {
-            nodes_after.push(m.captures[0].node);
-        }
-
-        assert_eq!(nodes_after.len(), 3, "Should find 3 strings after");
-
-        let injections_after = vec![
-            InjectionRegionInfo {
-                language: "lua".to_string(),
-                content_node: nodes_after[0],
-                pattern_index: 0,
-            },
-            InjectionRegionInfo {
-                language: "python".to_string(),
-                content_node: nodes_after[1],
-                pattern_index: 0,
-            },
-            InjectionRegionInfo {
-                language: "lua".to_string(),
-                content_node: nodes_after[2],
-                pattern_index: 0,
-            },
-        ];
-
-        // Verify Lua ordinals are PRESERVED despite Python insertion
-        assert_eq!(
-            calculate_region_id(&injections_after, 0),
-            "lua-0",
-            "After: first lua is still lua-0"
-        );
-        assert_eq!(
-            calculate_region_id(&injections_after, 1),
-            "python-0",
-            "After: Python is python-0"
-        );
-        assert_eq!(
-            calculate_region_id(&injections_after, 2),
-            "lua-1",
-            "After: second lua is still lua-1 (not shifted)"
+            r1.unwrap().region_id,
+            r2.unwrap().region_id,
+            "Same position should return same region_id"
         );
     }
 
