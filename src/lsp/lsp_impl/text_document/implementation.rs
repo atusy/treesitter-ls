@@ -56,7 +56,6 @@ impl TreeSitterLs {
             return Ok(None);
         };
 
-
         // Collect all injection regions
         let injections = crate::language::injection::collect_all_injections(
             &snapshot.tree().root_node(),
@@ -106,7 +105,9 @@ impl TreeSitterLs {
         };
 
         // Extract the virtual document content (just the injection region)
-        let virtual_content = cacheable_region.extract_content(snapshot.text()).to_string();
+        let virtual_content = cacheable_region
+            .extract_content(snapshot.text())
+            .to_string();
 
         // Send implementation request via language server pool
         // Get upstream request ID from task-local storage (set by RequestIdCapture middleware)
