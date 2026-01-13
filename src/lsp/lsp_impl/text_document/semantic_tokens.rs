@@ -63,14 +63,8 @@ impl TreeSitterLs {
         }
         drop(doc);
 
-        // Fallback: parse on-demand
-        let tree = self
-            .try_parse_and_update_document(uri, language_name)
-            .await?;
-        // Re-fetch text to ensure consistency
-        let doc = self.documents.get(uri)?;
-        let text = doc.text().to_string();
-        Some((tree, text))
+        // Fallback: parse on-demand (returns validated tree+text pair)
+        self.try_parse_and_update_document(uri, language_name).await
     }
 
     /// Parse the document on-demand and update the store if successful.
@@ -80,9 +74,14 @@ impl TreeSitterLs {
     /// - Updates the document store with the parsed tree (if text unchanged)
     /// - Clears any failed parser state for recovery
     ///
-    /// Returns the parsed tree only if the document text hasn't changed since
-    /// we started parsing, to avoid returning stale results.
-    async fn try_parse_and_update_document(&self, uri: &Url, language_name: &str) -> Option<Tree> {
+    /// Returns `(tree, text)` tuple where `text` is the exact text the tree was
+    /// parsed from (and verified unchanged). This prevents race conditions where
+    /// the document changes after parsing but before the caller captures text.
+    async fn try_parse_and_update_document(
+        &self,
+        uri: &Url,
+        language_name: &str,
+    ) -> Option<(Tree, String)> {
         let doc = self.documents.get(uri)?;
         let text = doc.text().to_string();
         drop(doc);
@@ -144,7 +143,8 @@ impl TreeSitterLs {
             }
 
             if doc_is_current {
-                return Some(tree);
+                // Return both tree and the validated text to prevent TOCTOU race
+                return Some((tree, text));
             }
         }
 
