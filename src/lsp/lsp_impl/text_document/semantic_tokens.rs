@@ -121,18 +121,17 @@ impl TreeSitterLs {
                     .update_document(uri.clone(), text.clone(), Some(tree.clone()));
             }
 
-            if self.failed_parsers.is_failed(language_name)
-                && let Err(error) = self.failed_parsers.clear_failed(language_name)
-            {
-                log::warn!(
-                    target: "treesitter_ls::crash_recovery",
-                    "Failed to clear failed parser state for '{}': {}",
-                    language_name,
-                    error
-                );
-            }
-
             if doc_is_current {
+                if self.failed_parsers.is_failed(language_name)
+                    && let Err(error) = self.failed_parsers.clear_failed(language_name)
+                {
+                    log::warn!(
+                        target: "treesitter_ls::crash_recovery",
+                        "Failed to clear failed parser state for '{}': {}",
+                        language_name,
+                        error
+                    );
+                }
                 // Return both tree and the validated text to prevent TOCTOU race
                 return Some((tree, text));
             }
