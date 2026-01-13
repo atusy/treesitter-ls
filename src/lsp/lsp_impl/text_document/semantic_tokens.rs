@@ -393,7 +393,7 @@ impl TreeSitterLs {
                 )));
             };
 
-            let text = doc.text().to_string();
+            let mut text = doc.text().to_string();
             let tree = match doc.tree() {
                 Some(t) => t.clone(),
                 None => {
@@ -441,13 +441,81 @@ impl TreeSitterLs {
                     };
 
                     match sync_parse_result {
-                        Some(tree) => {
-                            // Update document with parsed tree
-                            self.documents.update_document(
-                                uri.clone(),
-                                text.clone(),
-                                Some(tree.clone()),
-                            );
+                        Some(mut tree) => {
+                            let mut should_update = true;
+
+                            if let Some(current_doc) = self.documents.get(&uri) {
+                                let current_text = current_doc.text();
+                                if current_text != text {
+                                    text = current_text.to_string();
+                                    if let Some(current_tree) = current_doc.tree() {
+                                        tree = current_tree.clone();
+                                        should_update = false;
+                                        drop(current_doc);
+                                    } else {
+                                        drop(current_doc);
+
+                                        // Re-parse latest text to avoid overwriting newer updates
+                                        let parser = {
+                                            let mut pool = self.parser_pool.lock().await;
+                                            pool.acquire(&language_name)
+                                        };
+
+                                        let sync_parse_result = if let Some(mut parser) = parser {
+                                            let text_clone = text.clone();
+                                            let language_name_clone = language_name.clone();
+
+                                            let result = tokio::task::spawn_blocking(move || {
+                                                let parse_result =
+                                                    catch_unwind(AssertUnwindSafe(|| {
+                                                        parser.parse(&text_clone, None)
+                                                    }))
+                                                    .ok()
+                                                    .flatten();
+                                                (parser, parse_result)
+                                            })
+                                            .await
+                                            .ok();
+
+                                            if let Some((parser, parse_result)) = result {
+                                                let mut pool = self.parser_pool.lock().await;
+                                                pool.release(language_name_clone, parser);
+                                                parse_result
+                                            } else {
+                                                None
+                                            }
+                                        } else {
+                                            None
+                                        };
+
+                                        if let Some(latest_tree) = sync_parse_result {
+                                            tree = latest_tree;
+                                        } else {
+                                            self.semantic_request_tracker
+                                                .finish_request(&uri, request_id);
+                                            return Ok(Some(
+                                                SemanticTokensFullDeltaResult::Tokens(
+                                                    SemanticTokens {
+                                                        result_id: None,
+                                                        data: vec![],
+                                                    },
+                                                ),
+                                            ));
+                                        }
+                                    }
+                                } else {
+                                    drop(current_doc);
+                                }
+                            }
+
+                            if should_update {
+                                // Update document with parsed tree
+                                self.documents.update_document(
+                                    uri.clone(),
+                                    text.clone(),
+                                    Some(tree.clone()),
+                                );
+                            }
                             tree
                         }
                         None => {
@@ -736,5 +804,80 @@ impl TreeSitterLs {
         };
 
         Ok(Some(domain_range_result))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::time::{Duration, sleep};
+    use tower_lsp::LspService;
+
+    #[tokio::test]
+    async fn semantic_tokens_delta_does_not_overwrite_newer_text() {
+        let (service, _socket) = LspService::new(TreeSitterLs::new);
+        let server = service.inner();
+        let uri = Url::parse("file:///semantic_delta_race.lua")
+            .expect("should construct test uri");
+
+        let mut initial_text = String::from("local M = {}\n");
+        for _ in 0..2000 {
+            initial_text.push_str("local x = 1\n");
+        }
+        initial_text.push_str("return M\n");
+
+        server.documents.insert(
+            uri.clone(),
+            initial_text,
+            Some("lua".to_string()),
+            None,
+        );
+
+        let load_result = server.language.ensure_language_loaded("lua");
+        if !load_result.success {
+            eprintln!("Skipping: lua language parser not available for semantic tokens test");
+            return;
+        }
+
+        let new_text = "local LONG_NAME = {}\nreturn LONG_NAME\n".to_string();
+        let new_text_clone = new_text.clone();
+
+        let update_future = async {
+            sleep(Duration::from_millis(10)).await;
+            server.documents.insert(
+                uri.clone(),
+                new_text_clone,
+                Some("lua".to_string()),
+                None,
+            );
+        };
+
+        let params = SemanticTokensDeltaParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            previous_result_id: "0".to_string(),
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+
+        let (result, _) = tokio::join!(
+            server.semantic_tokens_full_delta_impl(params),
+            update_future
+        );
+
+        assert!(
+            result.is_ok(),
+            "semantic tokens delta request should complete without error"
+        );
+
+        let doc = server
+            .documents
+            .get(&uri)
+            .expect("document should still exist after delta request");
+
+        assert_eq!(
+            doc.text(),
+            new_text,
+            "delta path should not overwrite newer document text"
+        );
     }
 }
