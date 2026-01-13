@@ -109,21 +109,19 @@ impl TreeSitterLs {
         // Start tracking this request - supersedes any previous request for this URI
         let request_id = self.semantic_request_tracker.start_request(&uri);
 
-        self.client
-            .log_message(
-                MessageType::LOG,
-                format!("[SEMANTIC_TOKENS] START uri={} req={}", uri, request_id),
-            )
-            .await;
+        log::debug!(
+            target: "treesitter_ls::semantic",
+            "[SEMANTIC_TOKENS] START uri={} req={}",
+            uri, request_id
+        );
 
         // Early exit if request was superseded
         if !self.semantic_request_tracker.is_active(&uri, request_id) {
-            self.client
-                .log_message(
-                    MessageType::LOG,
-                    format!("[SEMANTIC_TOKENS] CANCELLED uri={} req={}", uri, request_id),
-                )
-                .await;
+            log::debug!(
+                target: "treesitter_ls::semantic",
+                "[SEMANTIC_TOKENS] CANCELLED uri={} req={}",
+                uri, request_id
+            );
             return Ok(None);
         }
 
@@ -151,15 +149,11 @@ impl TreeSitterLs {
 
         // Early exit check after loading language
         if !self.semantic_request_tracker.is_active(&uri, request_id) {
-            self.client
-                .log_message(
-                    MessageType::LOG,
-                    format!(
-                        "[SEMANTIC_TOKENS] CANCELLED uri={} req={} (after language load)",
-                        uri, request_id
-                    ),
-                )
-                .await;
+            log::debug!(
+                target: "treesitter_ls::semantic",
+                "[SEMANTIC_TOKENS] CANCELLED uri={} req={} (after language load)",
+                uri, request_id
+            );
             return Ok(None);
         }
 
@@ -174,15 +168,11 @@ impl TreeSitterLs {
 
         // Early exit check before expensive computation
         if !self.semantic_request_tracker.is_active(&uri, request_id) {
-            self.client
-                .log_message(
-                    MessageType::LOG,
-                    format!(
-                        "[SEMANTIC_TOKENS] CANCELLED uri={} req={} (before compute)",
-                        uri, request_id
-                    ),
-                )
-                .await;
+            log::debug!(
+                target: "treesitter_ls::semantic",
+                "[SEMANTIC_TOKENS] CANCELLED uri={} req={} (before compute)",
+                uri, request_id
+            );
             return Ok(None);
         }
 
@@ -243,12 +233,11 @@ impl TreeSitterLs {
 
             // Early exit check after waiting for parse completion
             if !self.semantic_request_tracker.is_active(&uri, request_id) {
-                self.client
-                    .log_message(
-                        MessageType::LOG,
-                        format!("[SEMANTIC_TOKENS] CANCELLED uri={} req={}", uri, request_id),
-                    )
-                    .await;
+                log::debug!(
+                    target: "treesitter_ls::semantic",
+                    "[SEMANTIC_TOKENS] CANCELLED uri={} req={}",
+                    uri, request_id
+                );
                 return Ok(None);
             }
 
@@ -307,17 +296,11 @@ impl TreeSitterLs {
         self.semantic_request_tracker
             .finish_request(&uri, request_id);
 
-        self.client
-            .log_message(
-                MessageType::LOG,
-                format!(
-                    "[SEMANTIC_TOKENS] DONE uri={} req={} tokens={}",
-                    uri,
-                    request_id,
-                    lsp_tokens.data.len()
-                ),
-            )
-            .await;
+        log::debug!(
+            target: "treesitter_ls::semantic",
+            "[SEMANTIC_TOKENS] DONE uri={} req={} tokens={}",
+            uri, request_id, lsp_tokens.data.len()
+        );
 
         Ok(Some(SemanticTokensResult::Tokens(lsp_tokens)))
     }
@@ -332,27 +315,19 @@ impl TreeSitterLs {
         // Start tracking this request - supersedes any previous request for this URI
         let request_id = self.semantic_request_tracker.start_request(&uri);
 
-        self.client
-            .log_message(
-                MessageType::LOG,
-                format!(
-                    "[SEMANTIC_TOKENS_DELTA] START uri={} req={}",
-                    uri, request_id
-                ),
-            )
-            .await;
+        log::debug!(
+            target: "treesitter_ls::semantic",
+            "[SEMANTIC_TOKENS_DELTA] START uri={} req={}",
+            uri, request_id
+        );
 
         // Early exit if request was superseded
         if !self.semantic_request_tracker.is_active(&uri, request_id) {
-            self.client
-                .log_message(
-                    MessageType::LOG,
-                    format!(
-                        "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={}",
-                        uri, request_id
-                    ),
-                )
-                .await;
+            log::debug!(
+                target: "treesitter_ls::semantic",
+                "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={}",
+                uri, request_id
+            );
             return Ok(None);
         }
 
@@ -380,15 +355,11 @@ impl TreeSitterLs {
 
         // Early exit check before expensive computation
         if !self.semantic_request_tracker.is_active(&uri, request_id) {
-            self.client
-                .log_message(
-                    MessageType::LOG,
-                    format!(
-                        "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={} (before compute)",
-                        uri, request_id
-                    ),
-                )
-                .await;
+            log::debug!(
+                target: "treesitter_ls::semantic",
+                "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={} (before compute)",
+                uri, request_id
+            );
             return Ok(None);
         }
 
@@ -456,15 +427,11 @@ impl TreeSitterLs {
 
             // Early exit check after waiting for parse completion
             if !self.semantic_request_tracker.is_active(&uri, request_id) {
-                self.client
-                    .log_message(
-                        MessageType::LOG,
-                        format!(
-                            "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={}",
-                            uri, request_id
-                        ),
-                    )
-                    .await;
+                log::debug!(
+                    target: "treesitter_ls::semantic",
+                    "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={}",
+                    uri, request_id
+                );
                 return Ok(None);
             }
 
