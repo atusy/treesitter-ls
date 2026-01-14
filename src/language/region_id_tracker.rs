@@ -80,6 +80,38 @@ fn apply_delta(position: usize, delta: i64) -> usize {
     (position as i64).saturating_add(delta).max(0) as usize
 }
 
+/// Adjust a position key based on an edit operation (ADR-0019 position adjustment).
+///
+/// Returns the adjusted PositionKey, or None if the range collapsed
+/// (indicating the node should be invalidated).
+///
+/// # Position Cases (ADR-0019)
+/// - **Node E**: AFTER edit (`start >= edit.old_end`) → shift both start and end
+/// - **Node A/B**: CONTAINS edit (`end > edit.start`) → adjust end only
+/// - **Node F**: BEFORE edit → unchanged
+fn adjust_position_for_edit(key: PositionKey, edit: &EditInfo, delta: i64) -> Option<PositionKey> {
+    if key.start_byte >= edit.old_end_byte {
+        // Node E: AFTER edit → shift both start and end
+        Some(PositionKey::with_positions(
+            apply_delta(key.start_byte, delta),
+            apply_delta(key.end_byte, delta),
+            key.kind,
+        ))
+    } else if key.end_byte > edit.start_byte {
+        // Node A/B: CONTAINS edit → adjust end only
+        let new_end = apply_delta(key.end_byte, delta);
+        // Guard: If range collapses (start >= end), return None to invalidate
+        if new_end <= key.start_byte {
+            None // Range collapsed to zero or negative
+        } else {
+            Some(PositionKey::with_positions(key.start_byte, new_end, key.kind))
+        }
+    } else {
+        // Node F: BEFORE edit → unchanged
+        Some(key)
+    }
+}
+
 impl RegionIdTracker {
     /// Create a new empty tracker.
     pub(crate) fn new() -> Self {
@@ -228,25 +260,9 @@ impl RegionIdTracker {
                 continue; // INVALIDATE
             }
 
-            // Position adjustment
-            let new_key = if key.start_byte >= edit.old_end_byte {
-                // Node E: AFTER edit → shift both start and end
-                PositionKey::with_positions(
-                    apply_delta(key.start_byte, delta),
-                    apply_delta(key.end_byte, delta),
-                    key.kind,
-                )
-            } else if key.end_byte > edit.start_byte {
-                // Node A/B: CONTAINS edit → adjust end only
-                let new_end = apply_delta(key.end_byte, delta);
-                // Guard: If range collapses (start >= end), invalidate instead
-                if new_end <= key.start_byte {
-                    continue; // INVALIDATE: range collapsed to zero or negative
-                }
-                PositionKey::with_positions(key.start_byte, new_end, key.kind)
-            } else {
-                // Node F: BEFORE edit → unchanged
-                key
+            // Position adjustment (returns None if range collapsed)
+            let Some(new_key) = adjust_position_for_edit(key, edit, delta) else {
+                continue; // INVALIDATE: range collapsed
             };
 
             // Handle potential position collision after adjustment
