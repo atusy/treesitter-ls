@@ -511,7 +511,7 @@ pub fn find_injection_at_position<'a>(
 pub struct ResolvedInjection {
     /// Cacheable injection region with line range information
     pub region: CacheableInjectionRegion,
-    /// Stable region identifier (language-ordinal format)
+    /// Stable region identifier (ULID format, 26 alphanumeric characters)
     pub region_id: String,
     /// Language of the injection content
     pub injection_language: String,
