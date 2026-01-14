@@ -142,6 +142,41 @@ impl RegionIdTracker {
         })
     }
 
+    /// Determine if a node should be invalidated based on START-priority rule (ADR-0019).
+    ///
+    /// # ADR-0019 START-Priority Rule
+    ///
+    /// A node is invalidated if its START position falls inside the edit range
+    /// `[edit.start, edit.old_end)` (half-open interval: start inclusive, end exclusive).
+    ///
+    /// # Zero-Length Edit Handling
+    ///
+    /// ADR-0019 line 74: "Zero-length edits: When edit.start == edit.old_end,
+    /// preserve identity only if the node's START in the new tree is unchanged."
+    ///
+    /// ## Conservative Simplification
+    ///
+    /// ADR-0019 strictly requires comparing old-tree START vs new-tree START.
+    /// However, RegionIdTracker doesn't have access to the parsed tree
+    /// (separation of concerns). We use a conservative approximation:
+    ///
+    /// - Zero-length insert AT node's START → always INVALIDATE
+    ///   (Rationale: insert shifts node down, so START changes in new tree)
+    /// - Zero-length insert BEFORE/AFTER node's START → KEEP
+    ///
+    /// This may over-invalidate in rare cases where the node's START
+    /// happens to remain unchanged despite being at the insert point,
+    /// but it's safe (never preserves stale identity).
+    fn should_invalidate_node(key: &PositionKey, edit: &EditInfo) -> bool {
+        if edit.start_byte == edit.old_end_byte {
+            // Zero-length insert: invalidate if insert is AT node's START
+            key.start_byte == edit.start_byte
+        } else {
+            // Normal edit: invalidate if START is inside [edit.start, edit.old_end)
+            key.start_byte >= edit.start_byte && key.start_byte < edit.old_end_byte
+        }
+    }
+
     /// Apply a single edit operation with START-priority invalidation (ADR-0019).
     fn apply_single_edit(&self, uri: &Url, edit: &EditInfo) {
         let delta = edit.new_end_byte as i64 - edit.old_end_byte as i64;
@@ -153,35 +188,7 @@ impl RegionIdTracker {
         let mut new_entries = HashMap::new();
 
         for (key, ulid) in entries.drain() {
-            // START-priority rule with zero-length edit handling (ADR-0019)
-            //
-            // ADR-0019 line 74: "Zero-length edits: When edit.start == edit.old_end,
-            // preserve identity only if the node's START in the new tree is unchanged."
-            //
-            // ## Conservative Simplification
-            //
-            // ADR-0019 strictly requires comparing old-tree START vs new-tree START.
-            // However, RegionIdTracker doesn't have access to the parsed tree
-            // (separation of concerns). We use a conservative approximation:
-            //
-            // - Zero-length insert AT node's START → always INVALIDATE
-            //   (Rationale: insert shifts node down, so START changes in new tree)
-            // - Zero-length insert BEFORE/AFTER node's START → KEEP
-            //
-            // This may over-invalidate in rare cases where the node's START
-            // happens to remain unchanged despite being at the insert point,
-            // but it's safe (never preserves stale identity).
-            let should_invalidate = if edit.start_byte == edit.old_end_byte {
-                // Zero-length insert: invalidate if insert is AT node's START
-                // (conservative: node likely shifts down in new tree)
-                key.start_byte == edit.start_byte
-            } else {
-                // Normal edit: invalidate if START is inside [edit.start, edit.old_end)
-                // Note: Half-open interval - start is inclusive, old_end is exclusive
-                key.start_byte >= edit.start_byte && key.start_byte < edit.old_end_byte
-            };
-
-            if should_invalidate {
+            if Self::should_invalidate_node(&key, edit) {
                 continue; // INVALIDATE
             }
 
