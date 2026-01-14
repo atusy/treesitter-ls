@@ -59,6 +59,7 @@ const scrum: ScrumDashboard = {
         "Reuse transform_definition_response_to_host pattern for Location-like ranges",
         "Protocol function: build_bridge_document_highlight_request",
       ],
+      completed_sprint: 1,
     },
     {
       id: "pbi-rename",
@@ -255,12 +256,14 @@ const scrum: ScrumDashboard = {
       ],
     },
   ],
-  sprint: {
-    number: 1,
-    pbi_id: "pbi-document-highlight",
-    goal: "Enable users to highlight all occurrences of a symbol within a Lua code block by bridging textDocument/documentHighlight to downstream language servers",
-    status: "review",
-    subtasks: [
+  sprint: null,
+  completed: [
+    {
+      number: 1,
+      pbi_id: "pbi-document-highlight",
+      goal: "Enable users to highlight all occurrences of a symbol within a Lua code block by bridging textDocument/documentHighlight to downstream language servers",
+      status: "done",
+      subtasks: [
       {
         test: "Unit test: build_bridge_document_highlight_request creates valid JSON-RPC request with virtual URI and translated position",
         implementation: "Add build_bridge_document_highlight_request function in protocol.rs using build_position_based_request helper",
@@ -338,8 +341,8 @@ const scrum: ScrumDashboard = {
         ],
       },
     ],
-  },
-  completed: [],
+    },
+  ],
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
