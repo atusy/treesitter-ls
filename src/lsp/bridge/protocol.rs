@@ -32,6 +32,14 @@ impl VirtualDocumentUri {
     /// # Panics (debug builds only)
     /// Panics if `language` or `region_id` is empty. These are programming errors
     /// as callers should always provide valid identifiers.
+    ///
+    /// # Upstream Guarantees
+    /// In practice, these parameters are guaranteed valid by upstream sources:
+    /// - `region_id` comes from ULID generation (26-char alphanumeric strings)
+    /// - `language` comes from Tree-sitter injection queries (non-empty language names)
+    ///
+    /// In release builds, invalid inputs are accepted without validation to avoid
+    /// runtime overhead. Unknown languages produce `.txt` extensions as a safe fallback.
     pub(crate) fn new(
         host_uri: &tower_lsp::lsp_types::Url,
         language: &str,
