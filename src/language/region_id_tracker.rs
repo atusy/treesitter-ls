@@ -194,6 +194,54 @@ impl RegionIdTracker {
         }
     }
 
+    /// Apply multiple edits individually for precise invalidation.
+    ///
+    /// Each edit is applied sequentially in array order. The tracker updates
+    /// its internal node positions after each edit, so subsequent edits'
+    /// running coordinates naturally align with the tracker's state.
+    ///
+    /// # Why No Coordinate Conversion?
+    ///
+    /// LSP sends edits in "running coordinates" - each edit's positions are
+    /// relative to the document state after previous edits. The tracker's
+    /// `apply_single_edit` updates internal node positions after each call,
+    /// keeping them synchronized with the running coordinate space.
+    ///
+    /// # Edit Ordering
+    ///
+    /// **IMPORTANT**: LSP does NOT guarantee edits are in ascending position order.
+    /// VSCode sends multi-cursor edits in reverse order (bottom-to-top).
+    /// This method processes edits in **array order** as the LSP spec requires:
+    /// > "Apply the TextDocumentContentChangeEvents in the order you receive them."
+    ///
+    /// # Arguments
+    /// * `uri` - Document URI
+    /// * `edits` - EditInfo slice in application order (as received from LSP)
+    ///
+    /// # Returns
+    /// All ULIDs invalidated across all edits.
+    pub(crate) fn apply_edits(&self, uri: &Url, edits: &[EditInfo]) -> Vec<Ulid> {
+        let mut all_invalidated = Vec::new();
+
+        for edit in edits {
+            // Defensive: skip invalid edits (old_end < start is malformed)
+            if edit.old_end_byte < edit.start_byte {
+                warn!(
+                    target: "treesitter_ls::region_tracker",
+                    "Skipping invalid edit: old_end_byte ({}) < start_byte ({})",
+                    edit.old_end_byte, edit.start_byte
+                );
+                continue;
+            }
+
+            // apply_single_edit updates tracker's internal positions
+            // So next edit's running coords will match
+            all_invalidated.extend(self.apply_single_edit(uri, edit));
+        }
+
+        all_invalidated
+    }
+
     /// Reconstruct a single merged edit from character-level diff.
     ///
     /// Returns None if texts are identical (no edit needed).
