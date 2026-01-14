@@ -1339,6 +1339,12 @@ impl LanguageServer for TreeSitterLs {
             }
         }
 
+        // Phase 2 (ADR-0019): Apply START-priority invalidation to region ID tracker
+        // This must be called AFTER content changes are applied (so we have new text)
+        // but BEFORE parse_document (so position sync happens before new tree is built)
+        self.region_id_tracker
+            .apply_text_change(&uri, &old_text, &text);
+
         // Invalidate injection caches for regions overlapping with edits (AC4/AC5)
         // Must be called BEFORE parse_document which updates the injection_map
         self.invalidate_overlapping_injection_caches(&uri, &edits);
