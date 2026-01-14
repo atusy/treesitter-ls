@@ -858,18 +858,22 @@ impl TreeSitterLs {
             None => return, // No injection query = no injections
         };
 
-        // Get the document's parse tree
-        let doc = match self.documents.get(uri) {
-            Some(d) => d,
-            None => return, // Document not found
+        // Extract tree from document with minimal lock duration
+        // IMPORTANT: Clone the tree to release document lock immediately
+        let tree = {
+            let doc = match self.documents.get(uri) {
+                Some(d) => d,
+                None => return, // Document not found
+            };
+
+            match doc.tree() {
+                Some(t) => t.clone(),
+                None => return, // No parse tree
+            }
+            // Document lock released here when `doc` guard drops
         };
 
-        let tree = match doc.tree() {
-            Some(t) => t,
-            None => return, // No parse tree
-        };
-
-        // Collect all injection regions
+        // Collect all injection regions (no locks held)
         let regions =
             match collect_all_injections(&tree.root_node(), text, Some(injection_query.as_ref())) {
                 Some(r) => r,
@@ -882,6 +886,7 @@ impl TreeSitterLs {
 
         // Build (language, region_id, content) tuples for each injection
         // Phase 2 (ADR-0019): Use RegionIdTracker with position-based keys
+        // No document lock held here - safe to access region_id_tracker
         let injections: Vec<(String, String, String)> = regions
             .iter()
             .map(|region| {
