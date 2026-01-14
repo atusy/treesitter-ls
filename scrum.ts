@@ -328,8 +328,8 @@ const scrum: ScrumDashboard = {
         test: "E2E test: textDocument/documentHighlight in Lua code block returns highlights for variable occurrences",
         implementation: "Add E2E test in tests/test_e2e_bridge.rs verifying end-to-end document highlight flow",
         type: "behavioral",
-        status: "green",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "87d51ac1", message: "test(e2e): add document highlight E2E tests", phase: "green" }],
         notes: [
           "Test markdown file with Lua code block containing variable used multiple times",
           "Send documentHighlight request at variable position",
