@@ -628,8 +628,8 @@ fn transform_definition_item(item: &mut serde_json::Value, region_start_line: u3
         transform_range(range, region_start_line);
     }
     // Transform Location.uri to host URI
-    if item.get("uri").is_some() {
-        item["uri"] = serde_json::json!(host_uri);
+    if let Some(uri) = item.get_mut("uri") {
+        *uri = serde_json::json!(host_uri);
     }
 
     // Check if this is a LocationLink (has targetUri + targetRange + targetSelectionRange)
@@ -640,8 +640,8 @@ fn transform_definition_item(item: &mut serde_json::Value, region_start_line: u3
         transform_range(target_selection_range, region_start_line);
     }
     // Transform LocationLink.targetUri to host URI
-    if item.get("targetUri").is_some() {
-        item["targetUri"] = serde_json::json!(host_uri);
+    if let Some(target_uri) = item.get_mut("targetUri") {
+        *target_uri = serde_json::json!(host_uri);
     }
     // Note: originSelectionRange stays in host coordinates (it's already correct)
 }
