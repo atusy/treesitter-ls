@@ -850,6 +850,106 @@ fn transform_location_link_target(
     false
 }
 
+/// Transform a WorkspaceEdit response from virtual to host document coordinates.
+///
+/// WorkspaceEdit can have two formats per LSP spec:
+/// 1. `changes: { [uri: string]: TextEdit[] }` - A map from URI to text edits
+/// 2. `documentChanges: (TextDocumentEdit | CreateFile | RenameFile | DeleteFile)[]`
+///
+/// This function handles three cases for each URI in the response:
+/// 1. **Real file URI** (not a virtual URI): Preserved as-is with original coordinates
+/// 2. **Same virtual URI as request**: Transformed using request's context
+/// 3. **Different virtual URI** (cross-region): Filtered out from results
+///
+/// # Arguments
+/// * `response` - The JSON-RPC response from the downstream language server
+/// * `context` - The transformation context with request information
+pub(crate) fn transform_workspace_edit_to_host(
+    mut response: serde_json::Value,
+    context: &ResponseTransformContext,
+) -> serde_json::Value {
+    // Get mutable reference to result
+    let Some(result) = response.get_mut("result") else {
+        return response;
+    };
+
+    // Null result - pass through unchanged
+    if result.is_null() {
+        return response;
+    }
+
+    // Handle changes format: { [uri: string]: TextEdit[] }
+    if let Some(changes) = result.get_mut("changes") {
+        if let Some(changes_obj) = changes.as_object_mut() {
+            transform_workspace_edit_changes(changes_obj, context);
+        }
+    }
+
+    // Handle documentChanges format (will be implemented in subtask 3)
+    if let Some(document_changes) = result.get_mut("documentChanges") {
+        if let Some(document_changes_arr) = document_changes.as_array_mut() {
+            transform_workspace_edit_document_changes(document_changes_arr, context);
+        }
+    }
+
+    response
+}
+
+/// Transform the changes map in a WorkspaceEdit.
+///
+/// Processes each URI in the changes map:
+/// - Real file URIs: Keep as-is
+/// - Request's virtual URI: Replace key with host URI and transform ranges
+/// - Other virtual URIs: Remove (cross-region filtering)
+fn transform_workspace_edit_changes(
+    changes: &mut serde_json::Map<String, serde_json::Value>,
+    context: &ResponseTransformContext,
+) {
+    // Collect URIs to process (we need to modify the map while iterating)
+    let uris_to_process: Vec<String> = changes.keys().cloned().collect();
+
+    for uri in uris_to_process {
+        let Some(edits) = changes.remove(&uri) else {
+            continue;
+        };
+
+        // Case 1: NOT a virtual URI (real file reference) → preserve as-is
+        if !is_virtual_uri(&uri) {
+            changes.insert(uri, edits);
+            continue;
+        }
+
+        // Case 2: Same virtual URI as request → transform
+        if uri == context.request_virtual_uri {
+            let mut edits = edits;
+            // Transform ranges in each TextEdit
+            if let Some(edits_arr) = edits.as_array_mut() {
+                for edit in edits_arr.iter_mut() {
+                    if let Some(range) = edit.get_mut("range") {
+                        transform_range(range, context.request_region_start_line);
+                    }
+                }
+            }
+            // Insert with host URI as key
+            changes.insert(context.request_host_uri.clone(), edits);
+            continue;
+        }
+
+        // Case 3: Different virtual URI (cross-region) → filter out
+        // Don't re-insert the edits
+    }
+}
+
+/// Transform documentChanges array in a WorkspaceEdit.
+///
+/// Stub implementation - will be completed in subtask 3.
+fn transform_workspace_edit_document_changes(
+    _document_changes: &mut [serde_json::Value],
+    _context: &ResponseTransformContext,
+) {
+    // TODO: Implement in subtask 3
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2703,5 +2803,68 @@ mod tests {
             request["params"]["newName"], "renamedVariable",
             "Request should include newName parameter"
         );
+    }
+
+    // ==========================================================================
+    // WorkspaceEdit transformation tests (for rename response)
+    // ==========================================================================
+
+    #[test]
+    fn workspace_edit_transforms_textedit_ranges_in_changes_map() {
+        // WorkspaceEdit with changes format: { [uri: string]: TextEdit[] }
+        let virtual_uri = "file:///.treesitter-ls/abc123/region-0.lua";
+        let host_uri = "file:///project/doc.md";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "changes": {
+                    virtual_uri: [
+                        {
+                            "range": {
+                                "start": { "line": 0, "character": 6 },
+                                "end": { "line": 0, "character": 9 }
+                            },
+                            "newText": "newVar"
+                        },
+                        {
+                            "range": {
+                                "start": { "line": 2, "character": 10 },
+                                "end": { "line": 2, "character": 13 }
+                            },
+                            "newText": "newVar"
+                        }
+                    ]
+                }
+            }
+        });
+        let region_start_line = 3;
+        let context = ResponseTransformContext {
+            request_virtual_uri: virtual_uri.to_string(),
+            request_host_uri: host_uri.to_string(),
+            request_region_start_line: region_start_line,
+        };
+
+        let transformed = transform_workspace_edit_to_host(response, &context);
+
+        // The changes map key should be transformed from virtual URI to host URI
+        let changes = transformed["result"]["changes"].as_object().unwrap();
+        assert!(
+            changes.contains_key(host_uri),
+            "Changes should have host URI as key"
+        );
+        assert!(
+            !changes.contains_key(virtual_uri),
+            "Changes should not have virtual URI as key"
+        );
+
+        // Check that ranges are transformed
+        let edits = changes[host_uri].as_array().unwrap();
+        // First edit: line 0 + 3 = line 3
+        assert_eq!(edits[0]["range"]["start"]["line"], 3);
+        assert_eq!(edits[0]["range"]["end"]["line"], 3);
+        // Second edit: line 2 + 3 = line 5
+        assert_eq!(edits[1]["range"]["start"]["line"], 5);
+        assert_eq!(edits[1]["range"]["end"]["line"], 5);
     }
 }
