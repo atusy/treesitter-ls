@@ -942,12 +942,57 @@ fn transform_workspace_edit_changes(
 
 /// Transform documentChanges array in a WorkspaceEdit.
 ///
-/// Stub implementation - will be completed in subtask 3.
+/// Processes each item in the documentChanges array. Items can be:
+/// - TextDocumentEdit: Has textDocument.uri and edits[]
+/// - CreateFile, RenameFile, DeleteFile: File operations (preserved as-is)
+///
+/// For TextDocumentEdit items:
+/// - Real file URIs: Keep as-is
+/// - Request's virtual URI: Replace textDocument.uri with host URI and transform ranges
+/// - Other virtual URIs: Remove (cross-region filtering)
 fn transform_workspace_edit_document_changes(
-    _document_changes: &mut [serde_json::Value],
-    _context: &ResponseTransformContext,
+    document_changes: &mut Vec<serde_json::Value>,
+    context: &ResponseTransformContext,
 ) {
-    // TODO: Implement in subtask 3
+    document_changes.retain_mut(|item| {
+        // Check if this is a TextDocumentEdit (has textDocument field)
+        let Some(text_document) = item.get_mut("textDocument") else {
+            // Not a TextDocumentEdit (could be CreateFile, RenameFile, DeleteFile)
+            // Keep file operations as-is
+            return true;
+        };
+
+        // Get the URI from textDocument
+        let Some(uri_str) = text_document.get("uri").and_then(|v| v.as_str()).map(|s| s.to_string()) else {
+            return true; // No URI, keep the item
+        };
+
+        // Case 1: NOT a virtual URI (real file reference) → preserve as-is
+        if !is_virtual_uri(&uri_str) {
+            return true;
+        }
+
+        // Case 2: Same virtual URI as request → transform
+        if uri_str == context.request_virtual_uri {
+            // Update textDocument.uri to host URI
+            text_document["uri"] = serde_json::json!(&context.request_host_uri);
+
+            // Transform ranges in each TextEdit
+            if let Some(edits) = item.get_mut("edits") {
+                if let Some(edits_arr) = edits.as_array_mut() {
+                    for edit in edits_arr.iter_mut() {
+                        if let Some(range) = edit.get_mut("range") {
+                            transform_range(range, context.request_region_start_line);
+                        }
+                    }
+                }
+            }
+            return true;
+        }
+
+        // Case 3: Different virtual URI (cross-region) → filter out
+        false
+    });
 }
 
 #[cfg(test)]
@@ -2860,6 +2905,70 @@ mod tests {
 
         // Check that ranges are transformed
         let edits = changes[host_uri].as_array().unwrap();
+        // First edit: line 0 + 3 = line 3
+        assert_eq!(edits[0]["range"]["start"]["line"], 3);
+        assert_eq!(edits[0]["range"]["end"]["line"], 3);
+        // Second edit: line 2 + 3 = line 5
+        assert_eq!(edits[1]["range"]["start"]["line"], 5);
+        assert_eq!(edits[1]["range"]["end"]["line"], 5);
+    }
+
+    #[test]
+    fn workspace_edit_transforms_textedit_ranges_in_document_changes() {
+        // WorkspaceEdit with documentChanges format: TextDocumentEdit[]
+        let virtual_uri = "file:///.treesitter-ls/abc123/region-0.lua";
+        let host_uri = "file:///project/doc.md";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "documentChanges": [
+                    {
+                        "textDocument": {
+                            "uri": virtual_uri,
+                            "version": 1
+                        },
+                        "edits": [
+                            {
+                                "range": {
+                                    "start": { "line": 0, "character": 6 },
+                                    "end": { "line": 0, "character": 9 }
+                                },
+                                "newText": "newVar"
+                            },
+                            {
+                                "range": {
+                                    "start": { "line": 2, "character": 10 },
+                                    "end": { "line": 2, "character": 13 }
+                                },
+                                "newText": "newVar"
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+        let region_start_line = 3;
+        let context = ResponseTransformContext {
+            request_virtual_uri: virtual_uri.to_string(),
+            request_host_uri: host_uri.to_string(),
+            request_region_start_line: region_start_line,
+        };
+
+        let transformed = transform_workspace_edit_to_host(response, &context);
+
+        // Check the documentChanges array
+        let document_changes = transformed["result"]["documentChanges"].as_array().unwrap();
+        assert_eq!(document_changes.len(), 1);
+
+        // textDocument.uri should be transformed to host URI
+        assert_eq!(
+            document_changes[0]["textDocument"]["uri"], host_uri,
+            "textDocument.uri should be transformed to host URI"
+        );
+
+        // Check that ranges are transformed
+        let edits = document_changes[0]["edits"].as_array().unwrap();
         // First edit: line 0 + 3 = line 3
         assert_eq!(edits[0]["range"]["start"]["line"], 3);
         assert_eq!(edits[0]["range"]["end"]["line"], 3);
