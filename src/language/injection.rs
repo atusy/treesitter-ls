@@ -1340,9 +1340,18 @@ mod tests {
         let ulid_2 = InjectionResolver::calculate_region_id(&tracker, &uri, &injections[2]);
 
         // All different because they have different byte positions
-        assert_ne!(ulid_0, ulid_1, "Different positions should have different ULIDs");
-        assert_ne!(ulid_1, ulid_2, "Different positions should have different ULIDs");
-        assert_ne!(ulid_0, ulid_2, "Different positions should have different ULIDs");
+        assert_ne!(
+            ulid_0, ulid_1,
+            "Different positions should have different ULIDs"
+        );
+        assert_ne!(
+            ulid_1, ulid_2,
+            "Different positions should have different ULIDs"
+        );
+        assert_ne!(
+            ulid_0, ulid_2,
+            "Different positions should have different ULIDs"
+        );
 
         // Same position returns same ULID (stability)
         let ulid_0_again = InjectionResolver::calculate_region_id(&tracker, &uri, &injections[0]);
