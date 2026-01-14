@@ -22,7 +22,7 @@ use crate::document::DocumentStore;
 use crate::language::injection::{
     CacheableInjectionRegion, InjectionResolver, collect_all_injections,
 };
-use crate::language::region_id_tracker::RegionIdTracker;
+use crate::language::region_id_tracker::{EditInfo, RegionIdTracker};
 use crate::language::{DocumentParserPool, FailedParserRegistry, LanguageCoordinator};
 use crate::language::{LanguageEvent, LanguageLogLevel};
 use crate::lsp::bridge::LanguageServerPool;
@@ -1383,13 +1383,22 @@ impl LanguageServer for TreeSitterLs {
         // Apply content changes and build tree-sitter edits
         let (text, edits) = apply_content_changes_with_edits(&old_text, params.content_changes);
 
-        // Phase 2 (ADR-0019): Apply START-priority invalidation to region ID tracker
+        // Phase 4 (ADR-0019): Apply START-priority invalidation to region ID tracker
+        // Use InputEdits directly for precise invalidation when available,
+        // fall back to diff-based approach for full document sync.
+        //
         // This must be called AFTER content changes are applied (so we have new text)
-        // but BEFORE parse_document (so position sync happens before new tree is built)
-        // Returns ULIDs that were invalidated (Phase 3)
-        let invalidated_ulids = self
-            .region_id_tracker
-            .apply_text_change(&uri, &old_text, &text);
+        // but BEFORE parse_document (so position sync happens before new tree is built).
+        // Returns ULIDs that were invalidated (Phase 3).
+        let invalidated_ulids = if edits.is_empty() {
+            // Full document sync: no InputEdits available, reconstruct from diff
+            self.region_id_tracker
+                .apply_text_change(&uri, &old_text, &text)
+        } else {
+            // Incremental sync: use InputEdits directly (precise, no over-invalidation)
+            let edit_infos: Vec<EditInfo> = edits.iter().map(EditInfo::from).collect();
+            self.region_id_tracker.apply_edits(&uri, &edit_infos)
+        };
 
         // Invalidate injection caches for regions overlapping with edits (AC4/AC5)
         // Must be called BEFORE parse_document which updates the injection_map
