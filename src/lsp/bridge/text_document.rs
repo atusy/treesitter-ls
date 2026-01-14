@@ -14,5 +14,6 @@ mod document_highlight;
 mod hover;
 mod implementation;
 mod references;
+mod rename;
 mod signature_help;
 mod type_definition;
