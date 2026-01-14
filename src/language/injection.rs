@@ -1,5 +1,8 @@
 use crate::language::predicate_accessor::{UnifiedPredicate, get_all_predicates};
+use crate::language::region_id_tracker::RegionIdTracker;
 use tree_sitter::{Node, Query, QueryCursor, QueryMatch, StreamingIterator, Tree};
+use ulid::Ulid;
+use url::Url;
 
 /// Represents offset adjustments for injection content boundaries
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -530,6 +533,8 @@ impl InjectionResolver {
     /// pre-cloned, typically via DocumentSnapshot.
     ///
     /// # Arguments
+    /// * `tracker` - Region ID tracker for stable ULID generation
+    /// * `uri` - Host document URI
     /// * `tree` - Parsed syntax tree
     /// * `text` - Document text content
     /// * `injection_query` - Query for finding injection regions
@@ -539,6 +544,8 @@ impl InjectionResolver {
     /// `Some(ResolvedInjection)` if position is within an injection region,
     /// `None` otherwise.
     pub fn resolve_at_byte_offset(
+        tracker: &RegionIdTracker,
+        uri: &Url,
         tree: &Tree,
         text: &str,
         injection_query: &Query,
@@ -550,34 +557,51 @@ impl InjectionResolver {
         // 2. Find injection region containing this position
         let (region_index, region) = find_injection_at_position(&injections, byte_offset)?;
 
-        // 3. Calculate stable region_id (language-ordinal format)
-        let region_id = Self::calculate_region_id(&injections, region_index);
+        // 3. Calculate stable ULID-based region_id (Phase 1: ordinal-based)
+        let region_id = Self::calculate_region_id(tracker, uri, &injections, region_index);
+        let region_id_str = region_id.to_string();
 
         // 4. Build cacheable region with line range information
-        let cacheable_region = CacheableInjectionRegion::from_region_info(region, &region_id, text);
+        let cacheable_region =
+            CacheableInjectionRegion::from_region_info(region, &region_id_str, text);
 
         // 5. Extract virtual document content
         let virtual_content = cacheable_region.extract_content(text).to_string();
 
         Some(ResolvedInjection {
             region: cacheable_region,
-            region_id,
+            region_id: region_id_str,
             injection_language: region.language.clone(),
             virtual_content,
         })
     }
 
-    /// Calculate a stable region_id for an injection based on its language and position.
-    /// Format: `{language}-{ordinal}` where ordinal is the 0-indexed count of same-language injections.
-    // TODO: If region_id format changes, also update lsp_impl.rs forward_didchange_to_bridge
-    fn calculate_region_id(injections: &[InjectionRegionInfo], target_index: usize) -> String {
+    /// Calculate a stable ULID-based region_id for an injection.
+    ///
+    /// Phase 1 (ADR-0019): Uses ordinal-based key (language, ordinal) for ULID lookup.
+    /// The ordinal is the 0-indexed count of same-language injections up to this position.
+    ///
+    /// # Arguments
+    /// * `tracker` - The region ID tracker for ULID generation/lookup
+    /// * `uri` - The host document URI
+    /// * `injections` - All injection regions in document order
+    /// * `target_index` - Index of the target injection in the slice
+    ///
+    /// # Returns
+    /// A stable ULID that remains constant for the same (uri, language, ordinal) key.
+    pub fn calculate_region_id(
+        tracker: &RegionIdTracker,
+        uri: &Url,
+        injections: &[InjectionRegionInfo],
+        target_index: usize,
+    ) -> Ulid {
         let target = &injections[target_index];
         let ordinal = injections[..=target_index]
             .iter()
             .filter(|inj| inj.language == target.language)
             .count()
             - 1;
-        format!("{}-{}", target.language, ordinal)
+        tracker.get_or_create(uri, &target.language, ordinal)
     }
 }
 
@@ -1129,9 +1153,15 @@ mod tests {
     // Tests for InjectionResolver region_id generation
     // ============================================================
 
+    use crate::language::region_id_tracker::RegionIdTracker;
+
+    fn test_uri(name: &str) -> Url {
+        Url::parse(&format!("file:///test/{}.rs", name)).unwrap()
+    }
+
     #[test]
-    fn test_resolve_injection_returns_language_ordinal_format() {
-        // Test that resolved injection has region_id in {language}-{ordinal} format
+    fn test_resolve_injection_returns_ulid_format() {
+        // Test that resolved injection has region_id in ULID format (26 chars)
         let mut parser = create_rust_parser();
         let text = r#"fn main() { let s = "hello"; }"#;
         let tree = parse_rust_code(&mut parser, text);
@@ -1143,19 +1173,25 @@ mod tests {
         let language = tree_sitter_rust::LANGUAGE.into();
         let query = Query::new(&language, query_str).expect("valid query");
 
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("ulid_format");
+
         // Resolve injection at byte offset inside the string literal
-        let resolved = InjectionResolver::resolve_at_byte_offset(&tree, text, &query, 22);
+        let resolved =
+            InjectionResolver::resolve_at_byte_offset(&tracker, &uri, &tree, text, &query, 22);
         assert!(resolved.is_some(), "Should resolve injection");
+        let region_id = resolved.unwrap().region_id;
         assert_eq!(
-            resolved.unwrap().region_id,
-            "lua-0",
-            "First lua injection should be lua-0"
+            region_id.len(),
+            26,
+            "ULID should be 26 characters, got: {}",
+            region_id
         );
     }
 
     #[test]
-    fn test_resolve_injection_multiple_regions_correct_ordinals() {
-        // Test that multiple injection regions get correct ordinals (lua-0, lua-1, lua-2)
+    fn test_resolve_injection_multiple_regions_stable_ulids() {
+        // Test that multiple injection regions get stable ULIDs for same ordinal
         let mut parser = create_rust_parser();
         let text = r#"fn main() { let a = "hello"; let b = "world"; let c = "test"; }"#;
         let tree = parse_rust_code(&mut parser, text);
@@ -1167,6 +1203,9 @@ mod tests {
         let language = tree_sitter_rust::LANGUAGE.into();
         let query = Query::new(&language, query_str).expect("valid query");
 
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("multiple");
+
         // Find byte offsets for each string
         let query_all = Query::new(&language, r#"(string_literal) @str"#).expect("valid query");
         let mut cursor = tree_sitter::QueryCursor::new();
@@ -1177,14 +1216,39 @@ mod tests {
         }
         assert_eq!(byte_offsets.len(), 3, "Should find 3 strings");
 
-        // Resolve each injection and verify region_ids
-        let r1 = InjectionResolver::resolve_at_byte_offset(&tree, text, &query, byte_offsets[0]);
-        let r2 = InjectionResolver::resolve_at_byte_offset(&tree, text, &query, byte_offsets[1]);
-        let r3 = InjectionResolver::resolve_at_byte_offset(&tree, text, &query, byte_offsets[2]);
+        // Resolve each injection
+        let r1 = InjectionResolver::resolve_at_byte_offset(
+            &tracker,
+            &uri,
+            &tree,
+            text,
+            &query,
+            byte_offsets[0],
+        );
+        let r2 = InjectionResolver::resolve_at_byte_offset(
+            &tracker,
+            &uri,
+            &tree,
+            text,
+            &query,
+            byte_offsets[1],
+        );
+        let r3 = InjectionResolver::resolve_at_byte_offset(
+            &tracker,
+            &uri,
+            &tree,
+            text,
+            &query,
+            byte_offsets[2],
+        );
 
-        assert_eq!(r1.unwrap().region_id, "lua-0", "First should be lua-0");
-        assert_eq!(r2.unwrap().region_id, "lua-1", "Second should be lua-1");
-        assert_eq!(r3.unwrap().region_id, "lua-2", "Third should be lua-2");
+        // Each should have different ULIDs (different ordinals)
+        let id1 = r1.unwrap().region_id;
+        let id2 = r2.unwrap().region_id;
+        let id3 = r3.unwrap().region_id;
+        assert_ne!(id1, id2, "Different ordinals should have different ULIDs");
+        assert_ne!(id2, id3, "Different ordinals should have different ULIDs");
+        assert_ne!(id1, id3, "Different ordinals should have different ULIDs");
     }
 
     #[test]
@@ -1201,10 +1265,27 @@ mod tests {
         let language = tree_sitter_rust::LANGUAGE.into();
         let query = Query::new(&language, query_str).expect("valid query");
 
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("consistent");
+
         // Resolve the same position multiple times
         let byte_offset = 22;
-        let r1 = InjectionResolver::resolve_at_byte_offset(&tree, text, &query, byte_offset);
-        let r2 = InjectionResolver::resolve_at_byte_offset(&tree, text, &query, byte_offset);
+        let r1 = InjectionResolver::resolve_at_byte_offset(
+            &tracker,
+            &uri,
+            &tree,
+            text,
+            &query,
+            byte_offset,
+        );
+        let r2 = InjectionResolver::resolve_at_byte_offset(
+            &tracker,
+            &uri,
+            &tree,
+            text,
+            &query,
+            byte_offset,
+        );
 
         assert_eq!(
             r1.unwrap().region_id,
@@ -1214,8 +1295,8 @@ mod tests {
     }
 
     #[test]
-    fn test_calculate_region_id_mixed_languages_correct_ordinals() {
-        // Test that Lua-Python-Lua blocks produce lua-0, python-0, lua-1
+    fn test_calculate_region_id_mixed_languages_different_ulids() {
+        // Test that Lua-Python-Lua blocks produce different ULIDs per ordinal
         // This verifies ordinals are per-language, not global
         let mut parser = create_rust_parser();
         let text = r#"fn main() { let a = "lua1"; let b = "python"; let c = "lua2"; }"#;
@@ -1253,21 +1334,25 @@ mod tests {
             },
         ];
 
-        // Verify region_ids are calculated per-language
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("mixed");
+
+        // Verify each language/ordinal gets a different ULID
+        let ulid_lua_0 = InjectionResolver::calculate_region_id(&tracker, &uri, &injections, 0);
+        let ulid_python_0 = InjectionResolver::calculate_region_id(&tracker, &uri, &injections, 1);
+        let ulid_lua_1 = InjectionResolver::calculate_region_id(&tracker, &uri, &injections, 2);
+
+        // All different
+        assert_ne!(ulid_lua_0, ulid_python_0, "lua-0 != python-0");
+        assert_ne!(ulid_lua_0, ulid_lua_1, "lua-0 != lua-1");
+        assert_ne!(ulid_python_0, ulid_lua_1, "python-0 != lua-1");
+
+        // Same ordinal+language returns same ULID (stability)
+        let ulid_lua_0_again =
+            InjectionResolver::calculate_region_id(&tracker, &uri, &injections, 0);
         assert_eq!(
-            InjectionResolver::calculate_region_id(&injections, 0),
-            "lua-0",
-            "First lua should be lua-0"
-        );
-        assert_eq!(
-            InjectionResolver::calculate_region_id(&injections, 1),
-            "python-0",
-            "Python should be python-0"
-        );
-        assert_eq!(
-            InjectionResolver::calculate_region_id(&injections, 2),
-            "lua-1",
-            "Second lua should be lua-1"
+            ulid_lua_0, ulid_lua_0_again,
+            "Same key should return same ULID"
         );
     }
 
