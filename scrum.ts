@@ -64,7 +64,7 @@ const scrum: ScrumDashboard = {
     number: 3,
     pbi_id: "pbi-document-link",
     goal: "Bridge textDocument/documentLink with range transformation to host coordinates",
-    status: "in_progress",
+    status: "review",
     subtasks: [
       {
         test: "Test build_bridge_document_link_request creates valid JSON-RPC request with virtual URI",
@@ -94,8 +94,8 @@ const scrum: ScrumDashboard = {
         test: "E2E test: document link request returns links with host coordinates",
         implementation: "Wire document_link handler in lsp_impl to use bridge for injection regions",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "8ddda377", message: "feat(lsp): wire document link handler with E2E tests", phase: "green" }],
         notes: ["Create E2E test with Lua code block containing require statements"],
       },
     ],
