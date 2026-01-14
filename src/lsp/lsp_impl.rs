@@ -881,16 +881,14 @@ impl TreeSitterLs {
         }
 
         // Build (language, region_id, content) tuples for each injection
-        // Phase 1 (ADR-0019): Use RegionIdTracker for stable ULID-based region IDs
+        // Phase 2 (ADR-0019): Use RegionIdTracker with position-based keys
         let injections: Vec<(String, String, String)> = regions
             .iter()
-            .enumerate()
-            .map(|(idx, region)| {
+            .map(|region| {
                 let region_id = InjectionResolver::calculate_region_id(
                     &self.region_id_tracker,
                     uri,
-                    &regions,
-                    idx,
+                    region,
                 );
                 let content = &text[region.content_node.byte_range()];
                 (
