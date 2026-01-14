@@ -66,12 +66,10 @@ const scrum: ScrumDashboard = {
         { criterion: "Request position transformed to virtual coordinates", verification: "Unit test" },
       ], status: "ready", refinement_notes: ["Response has no position data", "Pass-through response"] },
   ],
-  sprint: {
-    number: 2,
-    pbi_id: "pbi-rename",
-    goal: "Enable symbol renaming in Lua code blocks by bridging textDocument/rename to downstream LS with proper WorkspaceEdit transformation",
-    status: "done",
-    subtasks: [
+  sprint: null,
+  completed: [
+    { number: 1, pbi_id: "pbi-document-highlight", goal: "Bridge textDocument/documentHighlight to downstream LS", status: "done", subtasks: [] },
+    { number: 2, pbi_id: "pbi-rename", goal: "Enable symbol renaming in Lua code blocks by bridging textDocument/rename to downstream LS with proper WorkspaceEdit transformation", status: "done", subtasks: [
       {
         test: "Unit test: build_bridge_rename_request creates valid JSON-RPC request with position, textDocument, and newName",
         implementation: "Add build_bridge_rename_request function to protocol.rs",
@@ -136,10 +134,7 @@ const scrum: ScrumDashboard = {
         commits: [{ hash: "64ae2a66", message: "feat(lsp): wire textDocument/rename handler with E2E tests", phase: "green" }],
         notes: ["Test renaming local variable", "Verify all occurrences have correct positions"],
       },
-    ],
-  },
-  completed: [
-    { number: 1, pbi_id: "pbi-document-highlight", goal: "Bridge textDocument/documentHighlight to downstream LS", status: "done", subtasks: [] },
+    ] },
   ],
   definition_of_done: {
     checks: [
