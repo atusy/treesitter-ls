@@ -12,7 +12,7 @@ use url::Url;
 ///
 /// Phase 1: Uses ordinal-based keys (language, ordinal).
 /// Phase 2: Will migrate to position-based keys.
-pub struct RegionIdTracker {
+pub(crate) struct RegionIdTracker {
     entries: DashMap<Url, HashMap<OrdinalKey, Ulid>>,
 }
 

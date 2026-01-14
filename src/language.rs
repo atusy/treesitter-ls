@@ -12,7 +12,7 @@ pub mod predicate_accessor;
 pub mod query_loader;
 pub mod query_predicates;
 pub mod query_store;
-pub mod region_id_tracker;
+pub(crate) mod region_id_tracker;
 pub mod registry;
 pub mod shebang;
 

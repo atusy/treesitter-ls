@@ -543,7 +543,7 @@ impl InjectionResolver {
     /// # Returns
     /// `Some(ResolvedInjection)` if position is within an injection region,
     /// `None` otherwise.
-    pub fn resolve_at_byte_offset(
+    pub(crate) fn resolve_at_byte_offset(
         tracker: &RegionIdTracker,
         uri: &Url,
         tree: &Tree,
@@ -589,7 +589,7 @@ impl InjectionResolver {
     ///
     /// # Returns
     /// A stable ULID that remains constant for the same (uri, language, ordinal) key.
-    pub fn calculate_region_id(
+    pub(crate) fn calculate_region_id(
         tracker: &RegionIdTracker,
         uri: &Url,
         injections: &[InjectionRegionInfo],
