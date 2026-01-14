@@ -367,9 +367,9 @@ pub fn collect_all_injections<'a>(
         }
     }
 
-    // Sort by start_byte to ensure deterministic ordering
+    // Sort by start_byte (primary) and end_byte (secondary) to ensure deterministic ordering
     let mut injections: Vec<_> = injections_map.into_values().collect();
-    injections.sort_by_key(|r| r.content_node.start_byte());
+    injections.sort_by_key(|r| (r.content_node.start_byte(), r.content_node.end_byte()));
     Some(injections)
 }
 
