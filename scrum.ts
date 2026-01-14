@@ -29,12 +29,6 @@ const scrum: ScrumDashboard = {
   },
 
   product_backlog: [
-    { id: "pbi-rename", story: { role: "Lua developer editing markdown", capability: "rename a symbol across all occurrences in a Lua code block", benefit: "refactor safely" },
-      acceptance_criteria: [
-        { criterion: "Bridge forwards textDocument/rename to downstream LS", verification: "E2E test" },
-        { criterion: "WorkspaceEdit positions transformed to host coordinates", verification: "Unit test" },
-        { criterion: "Only edits for current virtual URI included", verification: "Unit test: filter other URIs" },
-      ], status: "done", refinement_notes: ["Returns WorkspaceEdit with documentChanges/changes map", "Need transform for WorkspaceEdit"] },
     { id: "pbi-document-link", story: { role: "Lua developer editing markdown", capability: "follow links in Lua code blocks", benefit: "navigate to modules" },
       acceptance_criteria: [
         { criterion: "Bridge forwards textDocument/documentLink to downstream LS", verification: "E2E test" },
@@ -69,72 +63,7 @@ const scrum: ScrumDashboard = {
   sprint: null,
   completed: [
     { number: 1, pbi_id: "pbi-document-highlight", goal: "Bridge textDocument/documentHighlight to downstream LS", status: "done", subtasks: [] },
-    { number: 2, pbi_id: "pbi-rename", goal: "Enable symbol renaming in Lua code blocks by bridging textDocument/rename to downstream LS with proper WorkspaceEdit transformation", status: "done", subtasks: [
-      {
-        test: "Unit test: build_bridge_rename_request creates valid JSON-RPC request with position, textDocument, and newName",
-        implementation: "Add build_bridge_rename_request function to protocol.rs",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "da62b878", message: "feat(bridge): add build_bridge_rename_request function", phase: "green" }],
-        notes: ["Similar to references but with newName instead of context"],
-      },
-      {
-        test: "Unit test: transform_workspace_edit_to_host transforms TextEdit ranges in changes map",
-        implementation: "Add transform_workspace_edit_to_host function handling changes format",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "99e8bb85", message: "feat(bridge): add transform_workspace_edit_to_host for changes map", phase: "green" }],
-        notes: ["WorkspaceEdit.changes is Map<URI, TextEdit[]>", "Each TextEdit has range field"],
-      },
-      {
-        test: "Unit test: transform_workspace_edit_to_host transforms TextDocumentEdit in documentChanges",
-        implementation: "Extend transform_workspace_edit_to_host to handle documentChanges format",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "227b922d", message: "feat(bridge): implement documentChanges transformation in WorkspaceEdit", phase: "green" }],
-        notes: ["documentChanges is array of TextDocumentEdit", "Each has textDocument.uri and edits[]"],
-      },
-      {
-        test: "Unit test: transform_workspace_edit_to_host filters out cross-region virtual URIs",
-        implementation: "Apply same virtual URI filtering as definition response",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "430466d4", message: "test(bridge): add cross-region virtual URI filtering tests for WorkspaceEdit", phase: "green" }],
-        notes: ["Only keep edits for request's virtual URI", "Cross-file renames not supported in injection regions"],
-      },
-      {
-        test: "Unit test: transform_workspace_edit_to_host replaces virtual URI with host URI",
-        implementation: "Transform URI field in changes keys and documentChanges textDocument",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "dd7a5920", message: "test(bridge): add virtual URI to host URI replacement tests", phase: "green" }],
-        notes: ["Same pattern as transform_definition_response_to_host"],
-      },
-      {
-        test: "Unit test: transform_workspace_edit_to_host preserves real file URIs unchanged",
-        implementation: "Skip transformation for non-virtual URIs",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "b3c33dd5", message: "test(bridge): add real file URI preservation tests for WorkspaceEdit", phase: "green" }],
-        notes: ["Real file edits (external dependencies) should pass through"],
-      },
-      {
-        test: "Integration test: send_rename_request returns transformed WorkspaceEdit",
-        implementation: "Add send_rename_request method to LanguageServerPool in text_document/rename.rs",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "5bc5d347", message: "feat(bridge): add send_rename_request to LanguageServerPool", phase: "green" }],
-        notes: ["Follow pattern from references.rs", "Use ResponseTransformContext"],
-      },
-      {
-        test: "E2E test: textDocument/rename in Lua code block returns host-coordinate edits",
-        implementation: "Wire up rename handler in lsp_impl to call bridge",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "64ae2a66", message: "feat(lsp): wire textDocument/rename handler with E2E tests", phase: "green" }],
-        notes: ["Test renaming local variable", "Verify all occurrences have correct positions"],
-      },
-    ] },
+    { number: 2, pbi_id: "pbi-rename", goal: "Bridge textDocument/rename with WorkspaceEdit transformation", status: "done", subtasks: [] },
   ],
   definition_of_done: {
     checks: [
