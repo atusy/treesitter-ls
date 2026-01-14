@@ -14,6 +14,8 @@ use log::warn;
 use tokio::sync::Mutex;
 use tower_lsp::lsp_types::Url;
 
+use super::protocol::VirtualDocumentUri;
+
 /// Timeout for LSP initialize handshake (ADR-0018 Tier 0: 30-60s recommended).
 ///
 /// If a downstream language server does not respond to the initialize request
@@ -45,10 +47,8 @@ use super::connection::AsyncBridgeConnection;
 /// via didOpen on a downstream language server.
 #[derive(Debug, Clone)]
 pub(crate) struct OpenedVirtualDoc {
-    /// The injection language (e.g., "lua", "python")
-    pub(crate) language: String,
-    /// The virtual document URI string
-    pub(crate) virtual_uri: String,
+    /// The virtual document URI (contains language and region_id)
+    pub(crate) virtual_uri: VirtualDocumentUri,
 }
 
 /// Handle wrapping a connection with its state (ADR-0015 per-connection state).
@@ -207,11 +207,8 @@ impl LanguageServerPool {
         // Partition: matching docs to return, non-matching to keep
         let mut to_close = Vec::new();
         docs.retain(|doc| {
-            // Check if any ULID string is contained in the virtual_uri
-            let should_close =
-                super::protocol::VirtualDocumentUri::extract_region_id(&doc.virtual_uri)
-                    .map(|region_id| ulid_strs.contains(region_id))
-                    .unwrap_or(false);
+            // Match region_id directly from VirtualDocumentUri
+            let should_close = ulid_strs.contains(doc.virtual_uri.region_id());
             if should_close {
                 to_close.push(doc.clone());
                 false // Remove from host_to_virtual
@@ -227,10 +224,13 @@ impl LanguageServerPool {
     ///
     /// Used by did_close module for cleanup, and by Phase 3
     /// close_invalidated_virtual_docs for invalidated region cleanup.
-    pub(crate) async fn remove_document_version(&self, language: &str, virtual_uri: &str) {
+    pub(crate) async fn remove_document_version(&self, virtual_uri: &VirtualDocumentUri) {
+        let uri_string = virtual_uri.to_uri_string();
+        let language = virtual_uri.language();
+
         let mut versions = self.document_versions.lock().await;
         if let Some(docs) = versions.get_mut(language) {
-            docs.remove(virtual_uri);
+            docs.remove(&uri_string);
         }
     }
 
@@ -239,12 +239,14 @@ impl LanguageServerPool {
     /// Returns None if the document has not been opened.
     pub(super) async fn increment_document_version(
         &self,
-        language: &str,
-        virtual_uri: &str,
+        virtual_uri: &VirtualDocumentUri,
     ) -> Option<i32> {
+        let uri_string = virtual_uri.to_uri_string();
+        let language = virtual_uri.language();
+
         let mut versions = self.document_versions.lock().await;
         if let Some(docs) = versions.get_mut(language)
-            && let Some(version) = docs.get_mut(virtual_uri)
+            && let Some(version) = docs.get_mut(&uri_string)
         {
             *version += 1;
             return Some(*version);
@@ -263,15 +265,18 @@ impl LanguageServerPool {
     pub(super) async fn should_send_didopen(
         &self,
         host_uri: &Url,
-        language: &str,
-        virtual_uri: &str,
+        virtual_uri: &VirtualDocumentUri,
     ) -> bool {
+        use std::collections::hash_map::Entry;
+
+        let uri_string = virtual_uri.to_uri_string();
+        let language = virtual_uri.language();
+
         let mut versions = self.document_versions.lock().await;
         let docs = versions.entry(language.to_string()).or_default();
-        if docs.contains_key(virtual_uri) {
-            false
-        } else {
-            docs.insert(virtual_uri.to_string(), 1);
+
+        if let Entry::Vacant(e) = docs.entry(uri_string) {
+            e.insert(1);
 
             // Record the host -> virtual mapping for didClose propagation
             let mut host_map = self.host_to_virtual.lock().await;
@@ -279,11 +284,12 @@ impl LanguageServerPool {
                 .entry(host_uri.clone())
                 .or_default()
                 .push(OpenedVirtualDoc {
-                    language: language.to_string(),
-                    virtual_uri: virtual_uri.to_string(),
+                    virtual_uri: virtual_uri.clone(),
                 });
 
             true
+        } else {
+            false
         }
     }
 
@@ -1077,22 +1083,23 @@ mod tests {
         }
     }
 
-    /// Test that OpenedVirtualDoc struct exists with required fields.
+    /// Test that OpenedVirtualDoc struct stores VirtualDocumentUri.
     ///
     /// The struct should have:
-    /// - language: String (the injection language, e.g., "lua")
-    /// - virtual_uri: String (the virtual document URI)
+    /// - virtual_uri: VirtualDocumentUri (typed URI with language and region_id)
     #[tokio::test]
     async fn opened_virtual_doc_struct_has_required_fields() {
+        use super::super::protocol::VirtualDocumentUri;
         use super::OpenedVirtualDoc;
 
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
         let doc = OpenedVirtualDoc {
-            language: "lua".to_string(),
-            virtual_uri: "file:///.treesitter-ls/abc123/lua-0.lua".to_string(),
+            virtual_uri: virtual_uri.clone(),
         };
 
-        assert_eq!(doc.language, "lua");
-        assert_eq!(doc.virtual_uri, "file:///.treesitter-ls/abc123/lua-0.lua");
+        assert_eq!(doc.virtual_uri.language(), "lua");
+        assert_eq!(doc.virtual_uri.region_id(), "region-0");
     }
 
     /// Test that LanguageServerPool has host_to_virtual field.
@@ -1116,14 +1123,14 @@ mod tests {
     /// it should also record the mapping from host URI to the opened virtual document.
     #[tokio::test]
     async fn should_send_didopen_records_host_to_virtual_mapping() {
+        use super::super::protocol::VirtualDocumentUri;
+
         let pool = LanguageServerPool::new();
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
-        let virtual_uri = "file:///.treesitter-ls/abc123/lua-0.lua";
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "lua-0");
 
         // First call should return true (document not opened yet)
-        let result = pool
-            .should_send_didopen(&host_uri, "lua", virtual_uri)
-            .await;
+        let result = pool.should_send_didopen(&host_uri, &virtual_uri).await;
         assert!(result, "First call should return true");
 
         // Verify the host_to_virtual mapping was recorded
@@ -1132,8 +1139,8 @@ mod tests {
             .get(&host_uri)
             .expect("host_uri should have entry in host_to_virtual");
         assert_eq!(virtual_docs.len(), 1);
-        assert_eq!(virtual_docs[0].language, "lua");
-        assert_eq!(virtual_docs[0].virtual_uri, virtual_uri);
+        assert_eq!(virtual_docs[0].virtual_uri.language(), "lua");
+        assert_eq!(virtual_docs[0].virtual_uri.region_id(), "lua-0");
     }
 
     /// Test that should_send_didopen records multiple virtual docs for same host.
@@ -1142,19 +1149,19 @@ mod tests {
     /// virtual document. All should be tracked under the same host URI.
     #[tokio::test]
     async fn should_send_didopen_records_multiple_virtual_docs_for_same_host() {
+        use super::super::protocol::VirtualDocumentUri;
+
         let pool = LanguageServerPool::new();
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
 
         // Open first Lua block
-        let result = pool
-            .should_send_didopen(&host_uri, "lua", "file:///.treesitter-ls/abc123/lua-0.lua")
-            .await;
+        let virtual_uri_0 = VirtualDocumentUri::new(&host_uri, "lua", "lua-0");
+        let result = pool.should_send_didopen(&host_uri, &virtual_uri_0).await;
         assert!(result, "First Lua block should return true");
 
         // Open second Lua block
-        let result = pool
-            .should_send_didopen(&host_uri, "lua", "file:///.treesitter-ls/abc123/lua-1.lua")
-            .await;
+        let virtual_uri_1 = VirtualDocumentUri::new(&host_uri, "lua", "lua-1");
+        let result = pool.should_send_didopen(&host_uri, &virtual_uri_1).await;
         assert!(result, "Second Lua block should return true");
 
         // Verify both are tracked under the same host
@@ -1163,14 +1170,8 @@ mod tests {
             .get(&host_uri)
             .expect("host_uri should have entry in host_to_virtual");
         assert_eq!(virtual_docs.len(), 2);
-        assert_eq!(
-            virtual_docs[0].virtual_uri,
-            "file:///.treesitter-ls/abc123/lua-0.lua"
-        );
-        assert_eq!(
-            virtual_docs[1].virtual_uri,
-            "file:///.treesitter-ls/abc123/lua-1.lua"
-        );
+        assert_eq!(virtual_docs[0].virtual_uri.region_id(), "lua-0");
+        assert_eq!(virtual_docs[1].virtual_uri.region_id(), "lua-1");
     }
 
     /// Test that should_send_didopen does not duplicate mapping on second call.
@@ -1179,20 +1180,18 @@ mod tests {
     /// it should NOT add a duplicate entry to host_to_virtual.
     #[tokio::test]
     async fn should_send_didopen_does_not_duplicate_mapping() {
+        use super::super::protocol::VirtualDocumentUri;
+
         let pool = LanguageServerPool::new();
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
-        let virtual_uri = "file:///.treesitter-ls/abc123/lua-0.lua";
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "lua-0");
 
         // First call - should return true and record mapping
-        let result = pool
-            .should_send_didopen(&host_uri, "lua", virtual_uri)
-            .await;
+        let result = pool.should_send_didopen(&host_uri, &virtual_uri).await;
         assert!(result, "First call should return true");
 
         // Second call for same virtual doc - should return false
-        let result = pool
-            .should_send_didopen(&host_uri, "lua", virtual_uri)
-            .await;
+        let result = pool.should_send_didopen(&host_uri, &virtual_uri).await;
         assert!(!result, "Second call should return false");
 
         // Verify only one entry exists (no duplicate)
@@ -1252,11 +1251,11 @@ mod tests {
             .await;
         assert!(result.is_ok(), "Hover request should succeed");
 
-        // Get the virtual URI that was opened (using hardcoded path for simplicity)
-        let virtual_uri = "file:///.treesitter-ls/abc123/lua-0.lua";
+        // Get the virtual URI that was opened
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
 
         // Send didClose notification
-        let result = pool.send_didclose_notification("lua", virtual_uri).await;
+        let result = pool.send_didclose_notification(&virtual_uri).await;
         assert!(
             result.is_ok(),
             "send_didclose_notification should succeed: {:?}",
@@ -1364,10 +1363,11 @@ mod tests {
             let versions = pool.document_versions.lock().await;
             if let Some(docs) = versions.get("lua") {
                 for doc in &closed_docs {
+                    let uri_string = doc.virtual_uri.to_uri_string();
                     assert!(
-                        !docs.contains_key(&doc.virtual_uri),
+                        !docs.contains_key(&uri_string),
                         "document_versions should not contain closed doc: {}",
-                        doc.virtual_uri
+                        uri_string
                     );
                 }
             }
@@ -1400,13 +1400,10 @@ mod tests {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
 
         // Generate the virtual URI the same way forward_didchange_to_opened_docs does
-        let virtual_uri =
-            VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0).to_uri_string();
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
 
         // Open a virtual document (simulate first hover/completion request)
-        let opened = pool
-            .should_send_didopen(&host_uri, "lua", &virtual_uri)
-            .await;
+        let opened = pool.should_send_didopen(&host_uri, &virtual_uri).await;
         assert!(opened, "First call should open the document");
 
         // Verify document is tracked
@@ -1414,7 +1411,7 @@ mod tests {
             let host_map = pool.host_to_virtual.lock().await;
             let docs = host_map.get(&host_uri).expect("Should have host entry");
             assert_eq!(docs.len(), 1);
-            assert_eq!(docs[0].virtual_uri, virtual_uri);
+            assert_eq!(docs[0].virtual_uri.region_id(), TEST_ULID_LUA_0);
         }
 
         // Now call forward_didchange_to_opened_docs
@@ -1436,7 +1433,8 @@ mod tests {
                 // Version should be 2 (1 from should_send_didopen, 1 from forward_didchange)
                 // Note: Without an actual connection, the didChange send may fail,
                 // but increment_document_version should still have been called
-                let version = docs.get(&virtual_uri);
+                let uri_string = virtual_uri.to_uri_string();
+                let version = docs.get(&uri_string);
                 assert!(
                     version.is_some(),
                     "Document should still be tracked after forward_didchange"
@@ -1466,11 +1464,8 @@ mod tests {
         let pool = LanguageServerPool::new();
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
 
-        let virtual_uri =
-            VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0).to_uri_string();
-        let opened = pool
-            .should_send_didopen(&host_uri, "lua", &virtual_uri)
-            .await;
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+        let opened = pool.should_send_didopen(&host_uri, &virtual_uri).await;
         assert!(opened, "First call should open the document");
 
         let handle = create_handle_with_state(ConnectionState::Ready).await;
@@ -1554,11 +1549,8 @@ mod tests {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
 
         // Open only the first Lua block
-        let lua_virtual_uri =
-            VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0).to_uri_string();
-        let opened = pool
-            .should_send_didopen(&host_uri, "lua", &lua_virtual_uri)
-            .await;
+        let lua_virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+        let opened = pool.should_send_didopen(&host_uri, &lua_virtual_uri).await;
         assert!(opened, "First call should open the document");
 
         // Do NOT open python
@@ -1588,7 +1580,8 @@ mod tests {
 
             // Lua should have version 2
             let lua_docs = versions.get("lua").expect("Should have lua documents");
-            let lua_version = lua_docs.get(&lua_virtual_uri);
+            let lua_uri_string = lua_virtual_uri.to_uri_string();
+            let lua_version = lua_docs.get(&lua_uri_string);
             assert_eq!(
                 lua_version,
                 Some(&2),
@@ -1658,16 +1651,12 @@ mod tests {
         let host_uri = test_host_uri("phase3_take");
 
         // Register some virtual docs using should_send_didopen
-        // Use VirtualDocumentUri to generate URIs in the correct format
-        let virtual_uri_1 =
-            VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0).to_uri_string();
-        let virtual_uri_2 =
-            VirtualDocumentUri::new(&host_uri, "python", TEST_ULID_PYTHON_0).to_uri_string();
+        // Use VirtualDocumentUri for proper type safety
+        let virtual_uri_1 = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+        let virtual_uri_2 = VirtualDocumentUri::new(&host_uri, "python", TEST_ULID_PYTHON_0);
 
-        pool.should_send_didopen(&host_uri, "lua", &virtual_uri_1)
-            .await;
-        pool.should_send_didopen(&host_uri, "python", &virtual_uri_2)
-            .await;
+        pool.should_send_didopen(&host_uri, &virtual_uri_1).await;
+        pool.should_send_didopen(&host_uri, &virtual_uri_2).await;
 
         // Parse the ULIDs for matching
         let ulid_lua: ulid::Ulid = TEST_ULID_LUA_0.parse().unwrap();
@@ -1679,17 +1668,26 @@ mod tests {
 
         // Should return the Lua doc
         assert_eq!(taken.len(), 1, "Should take exactly one doc");
-        assert_eq!(taken[0].language, "lua", "Should be the Lua doc");
-        assert!(
-            taken[0].virtual_uri.contains(TEST_ULID_LUA_0),
-            "Should contain the Lua ULID"
+        assert_eq!(
+            taken[0].virtual_uri.language(),
+            "lua",
+            "Should be the Lua doc"
+        );
+        assert_eq!(
+            taken[0].virtual_uri.region_id(),
+            TEST_ULID_LUA_0,
+            "Should have the Lua ULID"
         );
 
         // Verify remaining docs in host_to_virtual
         let host_map = pool.host_to_virtual.lock().await;
         let remaining = host_map.get(&host_uri).unwrap();
         assert_eq!(remaining.len(), 1, "Should have one remaining doc");
-        assert_eq!(remaining[0].language, "python", "Python doc should remain");
+        assert_eq!(
+            remaining[0].virtual_uri.language(),
+            "python",
+            "Python doc should remain"
+        );
     }
 
     #[tokio::test]
@@ -1700,10 +1698,8 @@ mod tests {
         let host_uri = test_host_uri("phase3_no_match");
 
         // Register a virtual doc
-        let virtual_uri =
-            VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0).to_uri_string();
-        pool.should_send_didopen(&host_uri, "lua", &virtual_uri)
-            .await;
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+        pool.should_send_didopen(&host_uri, &virtual_uri).await;
 
         // Try to take a different ULID
         let other_ulid: ulid::Ulid = TEST_ULID_LUA_1.parse().unwrap();
@@ -1738,10 +1734,8 @@ mod tests {
         let host_uri = test_host_uri("phase3_empty_ulids");
 
         // Register a virtual doc
-        let virtual_uri =
-            VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0).to_uri_string();
-        pool.should_send_didopen(&host_uri, "lua", &virtual_uri)
-            .await;
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+        pool.should_send_didopen(&host_uri, &virtual_uri).await;
 
         // Take with empty ULID list (fast path)
         let taken = pool.remove_matching_virtual_docs(&host_uri, &[]).await;
@@ -1761,20 +1755,14 @@ mod tests {
         let pool = LanguageServerPool::new();
         let host_uri = test_host_uri("phase3_multiple");
 
-        // Register multiple virtual docs using VirtualDocumentUri for proper URI format
-        let virtual_uri_1 =
-            VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0).to_uri_string();
-        let virtual_uri_2 =
-            VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_1).to_uri_string();
-        let virtual_uri_3 =
-            VirtualDocumentUri::new(&host_uri, "python", TEST_ULID_PYTHON_0).to_uri_string();
+        // Register multiple virtual docs using VirtualDocumentUri for proper type safety
+        let virtual_uri_1 = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+        let virtual_uri_2 = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_1);
+        let virtual_uri_3 = VirtualDocumentUri::new(&host_uri, "python", TEST_ULID_PYTHON_0);
 
-        pool.should_send_didopen(&host_uri, "lua", &virtual_uri_1)
-            .await;
-        pool.should_send_didopen(&host_uri, "lua", &virtual_uri_2)
-            .await;
-        pool.should_send_didopen(&host_uri, "python", &virtual_uri_3)
-            .await;
+        pool.should_send_didopen(&host_uri, &virtual_uri_1).await;
+        pool.should_send_didopen(&host_uri, &virtual_uri_2).await;
+        pool.should_send_didopen(&host_uri, &virtual_uri_3).await;
 
         // Take both Lua ULIDs
         let ulid_1: ulid::Ulid = TEST_ULID_LUA_0.parse().unwrap();
@@ -1791,7 +1779,8 @@ mod tests {
         let remaining = host_map.get(&host_uri).unwrap();
         assert_eq!(remaining.len(), 1, "Python doc should remain");
         assert_eq!(
-            remaining[0].language, "python",
+            remaining[0].virtual_uri.language(),
+            "python",
             "Remaining doc should be Python"
         );
     }

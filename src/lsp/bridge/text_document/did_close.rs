@@ -9,6 +9,7 @@ use tower_lsp::lsp_types::Url;
 use ulid::Ulid;
 
 use super::super::pool::{ConnectionState, LanguageServerPool, OpenedVirtualDoc};
+use super::super::protocol::VirtualDocumentUri;
 
 impl LanguageServerPool {
     /// Send a didClose notification for a virtual document.
@@ -19,15 +20,13 @@ impl LanguageServerPool {
     ///
     /// Returns Ok(()) if the notification was sent successfully, or if no connection
     /// exists for the language (nothing to do).
-    ///
-    /// # Arguments
-    /// * `language` - The injection language (e.g., "lua")
-    /// * `virtual_uri` - The virtual document URI string to close
     pub(crate) async fn send_didclose_notification(
         &self,
-        language: &str,
-        virtual_uri: &str,
+        virtual_uri: &VirtualDocumentUri,
     ) -> io::Result<()> {
+        let language = virtual_uri.language();
+        let uri_string = virtual_uri.to_uri_string();
+
         // Get the connection for this language (if it exists and is Ready)
         let connections = self.connections().await;
         let Some(handle) = connections.get(language) else {
@@ -49,7 +48,7 @@ impl LanguageServerPool {
             "method": "textDocument/didClose",
             "params": {
                 "textDocument": {
-                    "uri": virtual_uri
+                    "uri": uri_string
                 }
             }
         });
@@ -64,18 +63,14 @@ impl LanguageServerPool {
     /// and `close_invalidated_docs`. Errors are logged but do not prevent
     /// cleanup of the document_versions tracking.
     async fn close_single_virtual_doc(&self, doc: &OpenedVirtualDoc) {
-        if let Err(e) = self
-            .send_didclose_notification(&doc.language, &doc.virtual_uri)
-            .await
-        {
+        if let Err(e) = self.send_didclose_notification(&doc.virtual_uri).await {
             log::warn!(
                 target: "treesitter_ls::bridge",
                 "Failed to send didClose for {}: {}",
-                doc.virtual_uri, e
+                doc.virtual_uri.to_uri_string(), e
             );
         }
-        self.remove_document_version(&doc.language, &doc.virtual_uri)
-            .await;
+        self.remove_document_version(&doc.virtual_uri).await;
     }
 
     /// Close all virtual documents associated with a host document.
