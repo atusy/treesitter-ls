@@ -256,4 +256,60 @@ mod tests {
             "Response should contain the upstream request ID"
         );
     }
+
+    /// Integration test: LanguageServerPool sends document link request to lua-language-server
+    #[tokio::test]
+    async fn pool_document_link_request_succeeds_with_lua_server() {
+        // Skip test if lua-language-server is not available
+        if std::process::Command::new("lua-language-server")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping test: lua-language-server not found");
+            return;
+        }
+
+        let pool = LanguageServerPool::new();
+        let server_config = BridgeServerConfig {
+            cmd: vec!["lua-language-server".to_string()],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        // Lua code with require statement - lua-ls may return document links for requires
+        let virtual_content = "local mod = require(\"mymodule\")\nprint(mod)";
+
+        let response = pool
+            .send_document_link_request(
+                &server_config,
+                &host_uri,
+                "lua",
+                "region-0",
+                3, // region_start_line
+                virtual_content,
+                1, // upstream_request_id
+            )
+            .await;
+
+        assert!(
+            response.is_ok(),
+            "Document link request should succeed: {:?}",
+            response.err()
+        );
+
+        let json_response = response.unwrap();
+        assert_eq!(json_response["jsonrpc"], "2.0");
+        assert!(json_response.get("id").is_some());
+        // Result can be null, empty array, array of DocumentLink, or error
+        // lua-ls may or may not return links depending on configuration
+        // The important thing is the request succeeded and we got a valid JSON-RPC response
+        assert!(
+            json_response.get("result").is_some() || json_response.get("error").is_some(),
+            "Document link response should have result or error field: {:?}",
+            json_response
+        );
+    }
 }

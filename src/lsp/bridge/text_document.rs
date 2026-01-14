@@ -11,6 +11,7 @@ mod definition;
 mod did_change;
 mod did_close;
 mod document_highlight;
+mod document_link;
 mod hover;
 mod implementation;
 mod references;
