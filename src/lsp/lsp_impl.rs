@@ -316,6 +316,37 @@ impl TreeSitterLs {
         }
     }
 
+    /// Send didClose for invalidated virtual documents (Phase 3).
+    ///
+    /// When region IDs are invalidated (e.g., due to edits touching their START),
+    /// the corresponding virtual documents become orphaned in downstream LSs.
+    /// This method cleans them up by:
+    ///
+    /// 1. Clearing injection token cache for invalidated ULIDs
+    /// 2. Delegating to LanguageServerPool for tracking cleanup and didClose
+    ///
+    /// Documents that were never opened (not in host_to_virtual) are automatically
+    /// skipped - they don't need didClose since didOpen was never sent.
+    async fn close_invalidated_virtual_docs(
+        &self,
+        host_uri: &Url,
+        invalidated_ulids: &[ulid::Ulid],
+    ) {
+        if invalidated_ulids.is_empty() {
+            return;
+        }
+
+        // Clear injection token cache for invalidated ULIDs
+        for ulid in invalidated_ulids {
+            self.injection_token_cache.remove(host_uri, &ulid.to_string());
+        }
+
+        // Delegate to pool for tracking cleanup and didClose notifications
+        self.language_server_pool
+            .close_invalidated_docs(host_uri, invalidated_ulids)
+            .await;
+    }
+
     /// Populate InjectionMap with injection regions from the parsed tree.
     ///
     /// This enables targeted cache invalidation (PBI-083): when an edit occurs,

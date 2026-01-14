@@ -1,11 +1,12 @@
 //! didClose notification handling for bridge connections.
 //!
 //! This module provides didClose notification functionality for downstream language servers,
-//! handling cleanup when host documents are closed.
+//! handling cleanup when host documents are closed or regions are invalidated.
 
 use std::io;
 use std::sync::Arc;
 use tower_lsp::lsp_types::Url;
+use ulid::Ulid;
 
 use super::super::pool::{ConnectionState, LanguageServerPool, OpenedVirtualDoc};
 
@@ -90,5 +91,54 @@ impl LanguageServerPool {
         }
 
         virtual_docs
+    }
+
+    /// Close invalidated virtual documents (Phase 3).
+    ///
+    /// When region IDs are invalidated by edits, their corresponding virtual
+    /// documents become orphaned in downstream LSs. This method:
+    ///
+    /// 1. Atomically removes matching docs from host_to_virtual tracking
+    /// 2. Sends didClose notifications for each (best effort)
+    /// 3. Removes from document_versions tracking
+    ///
+    /// Documents that were never opened are automatically skipped.
+    ///
+    /// # Arguments
+    /// * `host_uri` - The host document URI
+    /// * `invalidated_ulids` - ULIDs that were invalidated by edits
+    pub(crate) async fn close_invalidated_docs(
+        &self,
+        host_uri: &Url,
+        invalidated_ulids: &[Ulid],
+    ) {
+        // Atomically remove matching docs from host_to_virtual
+        let to_close = self
+            .take_virtual_docs_matching(host_uri, invalidated_ulids)
+            .await;
+
+        if to_close.is_empty() {
+            // All invalidated ULIDs were never opened - nothing to close
+            return;
+        }
+
+        // Send didClose and clean up tracking for each closed doc
+        for doc in to_close {
+            // Send didClose notification (best effort - ignore errors)
+            if let Err(e) = self
+                .send_didclose_notification(&doc.language, &doc.virtual_uri)
+                .await
+            {
+                log::warn!(
+                    target: "treesitter_ls::bridge",
+                    "Failed to send didClose for invalidated doc {}: {}",
+                    doc.virtual_uri, e
+                );
+            }
+
+            // Remove from document_versions
+            self.remove_document_version(&doc.language, &doc.virtual_uri)
+                .await;
+        }
     }
 }
