@@ -2548,7 +2548,8 @@ mod tests {
         });
         let region_start_line = 3;
 
-        let transformed = transform_document_highlight_response_to_host(response, region_start_line);
+        let transformed =
+            transform_document_highlight_response_to_host(response, region_start_line);
 
         let result = transformed["result"].as_array().unwrap();
         assert_eq!(result.len(), 3);
