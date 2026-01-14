@@ -840,6 +840,42 @@ mod tests {
     }
 
     #[test]
+    fn percent_encode_handles_multibyte_utf8() {
+        // UTF-8 multi-byte characters should have each byte percent-encoded
+        // "日" (U+65E5) = E6 97 A5 in UTF-8
+        let input = "日";
+        let encoded = VirtualDocumentUri::percent_encode_path_segment(input);
+        assert_eq!(
+            encoded, "%E6%97%A5",
+            "Multi-byte UTF-8 should encode each byte"
+        );
+    }
+
+    #[test]
+    fn percent_encode_handles_mixed_ascii_and_utf8() {
+        // Mix of ASCII alphanumerics (preserved) and UTF-8 (encoded)
+        let input = "region-日本語-test";
+        let encoded = VirtualDocumentUri::percent_encode_path_segment(input);
+        // "日" = E6 97 A5, "本" = E6 9C AC, "語" = E8 AA 9E
+        assert_eq!(
+            encoded, "region-%E6%97%A5%E6%9C%AC%E8%AA%9E-test",
+            "Mixed content should preserve ASCII and encode UTF-8"
+        );
+    }
+
+    #[test]
+    fn percent_encode_handles_emoji() {
+        // Emoji are 4-byte UTF-8 sequences
+        // "🦀" (U+1F980) = F0 9F A6 80 in UTF-8
+        let input = "rust🦀";
+        let encoded = VirtualDocumentUri::percent_encode_path_segment(input);
+        assert_eq!(
+            encoded, "rust%F0%9F%A6%80",
+            "4-byte UTF-8 (emoji) should encode all bytes"
+        );
+    }
+
+    #[test]
     fn to_uri_string_contains_region_id_in_filename() {
         // Verify that the region_id appears in the URI (partial round-trip)
         // Note: Full round-trip isn't possible since host_uri is hashed
