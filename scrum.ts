@@ -265,8 +265,8 @@ const scrum: ScrumDashboard = {
         test: "Unit test: build_bridge_document_highlight_request creates valid JSON-RPC request with virtual URI and translated position",
         implementation: "Add build_bridge_document_highlight_request function in protocol.rs using build_position_based_request helper",
         type: "behavioral",
-        status: "green",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "9f025f6e", message: "feat(protocol): add build_bridge_document_highlight_request function", phase: "green" }],
         notes: [
           "Follow same pattern as build_bridge_references_request",
           "Method name: textDocument/documentHighlight",
@@ -277,8 +277,8 @@ const scrum: ScrumDashboard = {
         test: "Unit test: transform_document_highlight_response_to_host transforms DocumentHighlight[] ranges by adding region_start_line offset",
         implementation: "Add transform_document_highlight_response_to_host function in protocol.rs that transforms ranges in DocumentHighlight array",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "f68b2526", message: "feat(protocol): add transform_document_highlight_response_to_host", phase: "green" }],
         notes: [
           "Response format: DocumentHighlight[] where each item has range and optional kind",
           "Transform each range.start.line and range.end.line by adding region_start_line",
@@ -288,15 +288,15 @@ const scrum: ScrumDashboard = {
       },
       {
         test: "Unit test: transform filters out DocumentHighlight items with cross-region virtual URIs",
-        implementation: "Extend transform_document_highlight_response_to_host to filter cross-region URIs",
+        implementation: "N/A - DocumentHighlight per LSP spec has no URI field, only range+kind. Cross-region filtering not applicable.",
         type: "behavioral",
-        status: "pending",
+        status: "completed",
         commits: [],
         notes: [
-          "DocumentHighlight typically does not include URI field (highlights are in same document)",
-          "However, some LSP servers might return results for different documents",
-          "Use is_virtual_uri check if URI field present, filter if different from request URI",
-          "This matches pattern from transform_definition_response_to_host",
+          "ANALYSIS: DocumentHighlight per LSP spec has NO URI field - only range and optional kind",
+          "Unlike Location[] (used by definition/references), DocumentHighlight[] cannot reference other documents",
+          "Cross-region filtering is therefore not applicable to document highlights",
+          "The existing transform_document_highlight_response_to_host is complete as-is",
         ],
       },
       {
