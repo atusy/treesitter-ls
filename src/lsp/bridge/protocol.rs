@@ -717,6 +717,44 @@ pub(crate) fn transform_document_highlight_response_to_host(
     response
 }
 
+/// Transform a document link response from virtual to host document coordinates.
+///
+/// DocumentLink responses are arrays of items with range, target, tooltip, and data fields.
+/// Only the range needs transformation - target, tooltip, and data are preserved unchanged.
+///
+/// # Arguments
+/// * `response` - The JSON-RPC response from the downstream language server
+/// * `region_start_line` - The starting line of the injection region in the host document
+pub(crate) fn transform_document_link_response_to_host(
+    mut response: serde_json::Value,
+    region_start_line: u32,
+) -> serde_json::Value {
+    // Get mutable reference to result
+    let Some(result) = response.get_mut("result") else {
+        return response;
+    };
+
+    // Null result - pass through unchanged
+    if result.is_null() {
+        return response;
+    }
+
+    // DocumentLink[] is an array
+    if let Some(items) = result.as_array_mut() {
+        for item in items.iter_mut() {
+            // Transform range in each DocumentLink
+            if let Some(range) = item.get_mut("range")
+                && range.is_object()
+            {
+                transform_range(range, region_start_line);
+            }
+            // target, tooltip, and data are preserved unchanged
+        }
+    }
+
+    response
+}
+
 /// Check if a URI string represents a virtual document.
 ///
 /// Virtual document URIs have the pattern `file:///.treesitter-ls/{hash}/{region_id}.{ext}`.
@@ -3399,5 +3437,125 @@ mod tests {
 
         assert!(lua_uri.ends_with(".lua"));
         assert!(python_uri.ends_with(".py"));
+    }
+
+    #[test]
+    fn document_link_response_transforms_ranges_to_host_coordinates() {
+        // DocumentLink[] with ranges that need transformation
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "range": {
+                        "start": { "line": 0, "character": 8 },
+                        "end": { "line": 0, "character": 20 }
+                    },
+                    "target": "file:///some/module.lua"
+                },
+                {
+                    "range": {
+                        "start": { "line": 2, "character": 8 },
+                        "end": { "line": 2, "character": 15 }
+                    },
+                    "target": "https://example.com/docs"
+                }
+            ]
+        });
+        let region_start_line = 5;
+
+        let transformed = transform_document_link_response_to_host(response, region_start_line);
+
+        let links = transformed["result"].as_array().unwrap();
+        assert_eq!(links.len(), 2);
+
+        // First link: line 0 + 5 = 5
+        assert_eq!(links[0]["range"]["start"]["line"], 5);
+        assert_eq!(links[0]["range"]["end"]["line"], 5);
+        assert_eq!(links[0]["range"]["start"]["character"], 8);
+        assert_eq!(links[0]["range"]["end"]["character"], 20);
+        assert_eq!(links[0]["target"], "file:///some/module.lua");
+
+        // Second link: line 2 + 5 = 7
+        assert_eq!(links[1]["range"]["start"]["line"], 7);
+        assert_eq!(links[1]["range"]["end"]["line"], 7);
+        assert_eq!(links[1]["target"], "https://example.com/docs");
+    }
+
+    #[test]
+    fn document_link_response_preserves_target_tooltip_data_unchanged() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "range": {
+                        "start": { "line": 1, "character": 0 },
+                        "end": { "line": 1, "character": 10 }
+                    },
+                    "target": "file:///some/path.lua",
+                    "tooltip": "Go to definition",
+                    "data": { "custom": "value", "number": 123 }
+                }
+            ]
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_document_link_response_to_host(response, region_start_line);
+
+        let link = &transformed["result"][0];
+        assert_eq!(link["target"], "file:///some/path.lua");
+        assert_eq!(link["tooltip"], "Go to definition");
+        assert_eq!(link["data"]["custom"], "value");
+        assert_eq!(link["data"]["number"], 123);
+    }
+
+    #[test]
+    fn document_link_response_with_null_result_passes_through() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": null
+        });
+
+        let transformed = transform_document_link_response_to_host(response.clone(), 5);
+        assert_eq!(transformed, response);
+    }
+
+    #[test]
+    fn document_link_response_with_empty_array_passes_through() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": []
+        });
+
+        let transformed = transform_document_link_response_to_host(response.clone(), 5);
+        assert_eq!(transformed, response);
+    }
+
+    #[test]
+    fn document_link_response_without_target_transforms_range() {
+        // DocumentLink without target (target is optional per LSP spec)
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "range": {
+                        "start": { "line": 0, "character": 5 },
+                        "end": { "line": 0, "character": 15 }
+                    }
+                }
+            ]
+        });
+        let region_start_line = 10;
+
+        let transformed = transform_document_link_response_to_host(response, region_start_line);
+
+        let link = &transformed["result"][0];
+        assert_eq!(link["range"]["start"]["line"], 10);
+        assert_eq!(link["range"]["end"]["line"], 10);
+        assert!(link.get("target").is_none() || link["target"].is_null());
     }
 }
