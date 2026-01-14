@@ -10,6 +10,7 @@ mod declaration;
 mod definition;
 mod did_change;
 mod did_close;
+mod document_highlight;
 mod hover;
 mod implementation;
 mod references;
