@@ -371,6 +371,12 @@ mod tests {
     use crate::config::settings::BridgeServerConfig;
     use std::time::Duration;
 
+    // Test ULID constants - valid 26-char alphanumeric strings matching ULID format.
+    // Using realistic ULIDs ensures tests reflect actual runtime behavior.
+    const TEST_ULID_LUA_0: &str = "01JPMQ8ZYYQA1W3AVPW4JDRZFR";
+    const TEST_ULID_LUA_1: &str = "01JPMQ8ZYYQA1W3AVPW4JDRZFS";
+    const TEST_ULID_PYTHON_0: &str = "01JPMQ8ZYYQA1W3AVPW4JDRZFT";
+
     /// Test that ConnectionHandle wraps connection with state (ADR-0015).
     /// State should start as Initializing, and can transition via set_state().
     #[tokio::test]
@@ -1168,7 +1174,7 @@ mod tests {
                 &host_uri,
                 host_position,
                 "lua",
-                "lua-0",
+                TEST_ULID_LUA_0,
                 3,
                 "print('hello')",
                 1,
@@ -1176,7 +1182,7 @@ mod tests {
             .await;
         assert!(result.is_ok(), "Hover request should succeed");
 
-        // Get the virtual URI that was opened
+        // Get the virtual URI that was opened (using hardcoded path for simplicity)
         let virtual_uri = "file:///.treesitter-ls/abc123/lua-0.lua";
 
         // Send didClose notification
@@ -1236,7 +1242,7 @@ mod tests {
                     character: 5,
                 },
                 "lua",
-                "lua-0",
+                TEST_ULID_LUA_0,
                 3, // region starts at line 3, position is at line 4, so virtual line = 1
                 "print('hello')",
                 1,
@@ -1253,7 +1259,7 @@ mod tests {
                     character: 5,
                 },
                 "lua",
-                "lua-1",
+                TEST_ULID_LUA_1,
                 7, // region starts at line 7, position is at line 8, so virtual line = 1
                 "print('world')",
                 2,
@@ -1324,7 +1330,8 @@ mod tests {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
 
         // Generate the virtual URI the same way forward_didchange_to_opened_docs does
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "lua-0").to_uri_string();
+        let virtual_uri =
+            VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0).to_uri_string();
 
         // Open a virtual document (simulate first hover/completion request)
         let opened = pool
@@ -1344,7 +1351,7 @@ mod tests {
         // The injection tuple is (language, region_id, content)
         let injections = vec![(
             "lua".to_string(),
-            "lua-0".to_string(),
+            TEST_ULID_LUA_0.to_string(),
             "local x = 42".to_string(),
         )];
 
@@ -1389,7 +1396,8 @@ mod tests {
         let pool = LanguageServerPool::new();
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
 
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "lua-0").to_uri_string();
+        let virtual_uri =
+            VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0).to_uri_string();
         let opened = pool
             .should_send_didopen(&host_uri, "lua", &virtual_uri)
             .await;
@@ -1406,7 +1414,7 @@ mod tests {
 
         let injections = vec![(
             "lua".to_string(),
-            "lua-0".to_string(),
+            TEST_ULID_LUA_0.to_string(),
             "local x = 42".to_string(),
         )];
 
@@ -1476,24 +1484,25 @@ mod tests {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
 
         // Open only the first Lua block
-        let lua_virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "lua-0").to_uri_string();
+        let lua_virtual_uri =
+            VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0).to_uri_string();
         let opened = pool
             .should_send_didopen(&host_uri, "lua", &lua_virtual_uri)
             .await;
         assert!(opened, "First call should open the document");
 
-        // Do NOT open python-0
+        // Do NOT open python
 
         // Now call forward_didchange_to_opened_docs with both injections
         let injections = vec![
             (
                 "lua".to_string(),
-                "lua-0".to_string(),
+                TEST_ULID_LUA_0.to_string(),
                 "local x = 42".to_string(),
             ),
             (
                 "python".to_string(),
-                "python-0".to_string(),
+                TEST_ULID_PYTHON_0.to_string(),
                 "x = 42".to_string(),
             ),
         ];
