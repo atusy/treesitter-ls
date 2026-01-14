@@ -303,7 +303,7 @@ const scrum: ScrumDashboard = {
         test: "Integration test: send_document_highlight_request returns transformed highlights from downstream LS",
         implementation: "Add document_highlight.rs module with send_document_highlight_request method on LanguageServerPool",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: [
           "Create src/lsp/bridge/text_document/document_highlight.rs",
