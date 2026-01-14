@@ -3094,4 +3094,84 @@ mod tests {
             "Remaining entry should have host URI"
         );
     }
+
+    #[test]
+    fn workspace_edit_replaces_virtual_uri_key_with_host_uri_in_changes() {
+        // Verify the virtual URI key is replaced with host URI
+        let virtual_uri = "file:///.treesitter-ls/abc123/region-0.lua";
+        let host_uri = "file:///project/doc.md";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "changes": {
+                    virtual_uri: [{
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 3 }
+                        },
+                        "newText": "foo"
+                    }]
+                }
+            }
+        });
+        let context = ResponseTransformContext {
+            request_virtual_uri: virtual_uri.to_string(),
+            request_host_uri: host_uri.to_string(),
+            request_region_start_line: 0,
+        };
+
+        let transformed = transform_workspace_edit_to_host(response, &context);
+
+        let changes = transformed["result"]["changes"].as_object().unwrap();
+        // Virtual URI key should be gone
+        assert!(
+            !changes.contains_key(virtual_uri),
+            "Virtual URI key should be removed"
+        );
+        // Host URI key should exist
+        assert!(
+            changes.contains_key(host_uri),
+            "Host URI key should be present"
+        );
+    }
+
+    #[test]
+    fn workspace_edit_replaces_virtual_uri_with_host_uri_in_document_changes() {
+        // Verify textDocument.uri is replaced with host URI
+        let virtual_uri = "file:///.treesitter-ls/abc123/region-0.lua";
+        let host_uri = "file:///project/doc.md";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "documentChanges": [{
+                    "textDocument": {
+                        "uri": virtual_uri,
+                        "version": 1
+                    },
+                    "edits": [{
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 3 }
+                        },
+                        "newText": "foo"
+                    }]
+                }]
+            }
+        });
+        let context = ResponseTransformContext {
+            request_virtual_uri: virtual_uri.to_string(),
+            request_host_uri: host_uri.to_string(),
+            request_region_start_line: 0,
+        };
+
+        let transformed = transform_workspace_edit_to_host(response, &context);
+
+        let document_changes = transformed["result"]["documentChanges"].as_array().unwrap();
+        assert_eq!(
+            document_changes[0]["textDocument"]["uri"], host_uri,
+            "textDocument.uri should be replaced with host URI"
+        );
+    }
 }
