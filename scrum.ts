@@ -29,12 +29,6 @@ const scrum: ScrumDashboard = {
   },
 
   product_backlog: [
-    { id: "pbi-document-link", story: { role: "Lua developer editing markdown", capability: "follow links in Lua code blocks", benefit: "navigate to modules" },
-      acceptance_criteria: [
-        { criterion: "Bridge forwards textDocument/documentLink to downstream LS", verification: "E2E test" },
-        { criterion: "Link ranges transformed to host coordinates", verification: "Unit test" },
-        { criterion: "Link targets unchanged (external URIs)", verification: "Unit test" },
-      ], status: "done", refinement_notes: ["Returns DocumentLink[] with range+target", "Only range needs transform"] },
     { id: "pbi-document-symbols", story: { role: "Lua developer editing markdown", capability: "see outline of symbols in Lua code block", benefit: "navigate to functions" },
       acceptance_criteria: [
         { criterion: "Bridge forwards textDocument/documentSymbol to downstream LS", verification: "E2E test" },
