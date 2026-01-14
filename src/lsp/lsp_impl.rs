@@ -80,9 +80,13 @@ fn apply_content_changes_with_edits(
             let last_line_len = lines.last().map(|l| l.len()).unwrap_or(0);
 
             // Get start position with proper byte column conversion
-            let start_point = mapper
-                .position_to_point(range.start)
-                .unwrap_or(tree_sitter::Point::new(range.start.line as usize, start_offset));
+            let start_point =
+                mapper
+                    .position_to_point(range.start)
+                    .unwrap_or(tree_sitter::Point::new(
+                        range.start.line as usize,
+                        start_offset,
+                    ));
 
             // Calculate new end Point (tree-sitter uses byte columns)
             let new_end_point = if line_count > 1 {
@@ -338,7 +342,8 @@ impl TreeSitterLs {
 
         // Clear injection token cache for invalidated ULIDs
         for ulid in invalidated_ulids {
-            self.injection_token_cache.remove(host_uri, &ulid.to_string());
+            self.injection_token_cache
+                .remove(host_uri, &ulid.to_string());
         }
 
         // Delegate to pool for tracking cleanup and didClose notifications

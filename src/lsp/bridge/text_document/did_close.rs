@@ -107,11 +107,7 @@ impl LanguageServerPool {
     /// # Arguments
     /// * `host_uri` - The host document URI
     /// * `invalidated_ulids` - ULIDs that were invalidated by edits
-    pub(crate) async fn close_invalidated_docs(
-        &self,
-        host_uri: &Url,
-        invalidated_ulids: &[Ulid],
-    ) {
+    pub(crate) async fn close_invalidated_docs(&self, host_uri: &Url, invalidated_ulids: &[Ulid]) {
         // Atomically remove matching docs from host_to_virtual
         let to_close = self
             .take_virtual_docs_matching(host_uri, invalidated_ulids)

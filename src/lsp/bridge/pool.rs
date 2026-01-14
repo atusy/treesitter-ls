@@ -1618,4 +1618,142 @@ mod tests {
             "Cached handle should have Failed state"
         );
     }
+
+    // ========================================
+    // Phase 3 Tests: take_virtual_docs_matching
+    // ========================================
+
+    fn test_host_uri(name: &str) -> Url {
+        Url::parse(&format!("file:///test/{}.md", name)).unwrap()
+    }
+
+    #[tokio::test]
+    async fn take_virtual_docs_matching_removes_matching_docs() {
+        let pool = LanguageServerPool::new();
+        let host_uri = test_host_uri("phase3_take");
+
+        // Register some virtual docs using should_send_didopen
+        let virtual_uri_1 = format!("file:///virt/{}/test.lua", TEST_ULID_LUA_0);
+        let virtual_uri_2 = format!("file:///virt/{}/test.py", TEST_ULID_PYTHON_0);
+
+        pool.should_send_didopen(&host_uri, "lua", &virtual_uri_1)
+            .await;
+        pool.should_send_didopen(&host_uri, "python", &virtual_uri_2)
+            .await;
+
+        // Parse the ULIDs for matching
+        let ulid_lua: ulid::Ulid = TEST_ULID_LUA_0.parse().unwrap();
+
+        // Take only the Lua ULID
+        let taken = pool
+            .take_virtual_docs_matching(&host_uri, &[ulid_lua])
+            .await;
+
+        // Should return the Lua doc
+        assert_eq!(taken.len(), 1, "Should take exactly one doc");
+        assert_eq!(taken[0].language, "lua", "Should be the Lua doc");
+        assert!(
+            taken[0].virtual_uri.contains(TEST_ULID_LUA_0),
+            "Should contain the Lua ULID"
+        );
+
+        // Verify remaining docs in host_to_virtual
+        let host_map = pool.host_to_virtual.lock().await;
+        let remaining = host_map.get(&host_uri).unwrap();
+        assert_eq!(remaining.len(), 1, "Should have one remaining doc");
+        assert_eq!(remaining[0].language, "python", "Python doc should remain");
+    }
+
+    #[tokio::test]
+    async fn take_virtual_docs_matching_returns_empty_for_no_match() {
+        let pool = LanguageServerPool::new();
+        let host_uri = test_host_uri("phase3_no_match");
+
+        // Register a virtual doc
+        let virtual_uri = format!("file:///virt/{}/test.lua", TEST_ULID_LUA_0);
+        pool.should_send_didopen(&host_uri, "lua", &virtual_uri)
+            .await;
+
+        // Try to take a different ULID
+        let other_ulid: ulid::Ulid = TEST_ULID_LUA_1.parse().unwrap();
+        let taken = pool
+            .take_virtual_docs_matching(&host_uri, &[other_ulid])
+            .await;
+
+        assert!(taken.is_empty(), "Should return empty when no ULIDs match");
+
+        // Original doc should still be there
+        let host_map = pool.host_to_virtual.lock().await;
+        let remaining = host_map.get(&host_uri).unwrap();
+        assert_eq!(remaining.len(), 1, "Original doc should remain");
+    }
+
+    #[tokio::test]
+    async fn take_virtual_docs_matching_returns_empty_for_unknown_host() {
+        let pool = LanguageServerPool::new();
+        let host_uri = test_host_uri("phase3_unknown_host");
+
+        let ulid: ulid::Ulid = TEST_ULID_LUA_0.parse().unwrap();
+        let taken = pool.take_virtual_docs_matching(&host_uri, &[ulid]).await;
+
+        assert!(taken.is_empty(), "Should return empty for unknown host URI");
+    }
+
+    #[tokio::test]
+    async fn take_virtual_docs_matching_returns_empty_for_empty_ulids() {
+        let pool = LanguageServerPool::new();
+        let host_uri = test_host_uri("phase3_empty_ulids");
+
+        // Register a virtual doc
+        let virtual_uri = format!("file:///virt/{}/test.lua", TEST_ULID_LUA_0);
+        pool.should_send_didopen(&host_uri, "lua", &virtual_uri)
+            .await;
+
+        // Take with empty ULID list (fast path)
+        let taken = pool.take_virtual_docs_matching(&host_uri, &[]).await;
+
+        assert!(taken.is_empty(), "Should return empty for empty ULID list");
+
+        // Original doc should still be there
+        let host_map = pool.host_to_virtual.lock().await;
+        let remaining = host_map.get(&host_uri).unwrap();
+        assert_eq!(remaining.len(), 1, "Original doc should remain");
+    }
+
+    #[tokio::test]
+    async fn take_virtual_docs_matching_takes_multiple_docs() {
+        let pool = LanguageServerPool::new();
+        let host_uri = test_host_uri("phase3_multiple");
+
+        // Register multiple virtual docs
+        let virtual_uri_1 = format!("file:///virt/{}/test1.lua", TEST_ULID_LUA_0);
+        let virtual_uri_2 = format!("file:///virt/{}/test2.lua", TEST_ULID_LUA_1);
+        let virtual_uri_3 = format!("file:///virt/{}/test.py", TEST_ULID_PYTHON_0);
+
+        pool.should_send_didopen(&host_uri, "lua", &virtual_uri_1)
+            .await;
+        pool.should_send_didopen(&host_uri, "lua", &virtual_uri_2)
+            .await;
+        pool.should_send_didopen(&host_uri, "python", &virtual_uri_3)
+            .await;
+
+        // Take both Lua ULIDs
+        let ulid_1: ulid::Ulid = TEST_ULID_LUA_0.parse().unwrap();
+        let ulid_2: ulid::Ulid = TEST_ULID_LUA_1.parse().unwrap();
+
+        let taken = pool
+            .take_virtual_docs_matching(&host_uri, &[ulid_1, ulid_2])
+            .await;
+
+        assert_eq!(taken.len(), 2, "Should take both Lua docs");
+
+        // Verify Python doc remains
+        let host_map = pool.host_to_virtual.lock().await;
+        let remaining = host_map.get(&host_uri).unwrap();
+        assert_eq!(remaining.len(), 1, "Python doc should remain");
+        assert_eq!(
+            remaining[0].language, "python",
+            "Remaining doc should be Python"
+        );
+    }
 }

@@ -5,8 +5,8 @@
 
 use dashmap::DashMap;
 use log::warn;
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use ulid::Ulid;
 use url::Url;
 
@@ -105,7 +105,11 @@ fn adjust_position_for_edit(key: PositionKey, edit: &EditInfo, delta: i64) -> Op
         if new_end <= key.start_byte {
             None // Range collapsed to zero or negative
         } else {
-            Some(PositionKey::with_positions(key.start_byte, new_end, key.kind))
+            Some(PositionKey::with_positions(
+                key.start_byte,
+                new_end,
+                key.kind,
+            ))
         }
     } else {
         // Node F: BEFORE edit → unchanged
@@ -154,12 +158,7 @@ impl RegionIdTracker {
     ///
     /// # Fast path
     /// If old_text == new_text, returns empty Vec without any processing.
-    pub(crate) fn apply_text_change(
-        &self,
-        uri: &Url,
-        old_text: &str,
-        new_text: &str,
-    ) -> Vec<Ulid> {
+    pub(crate) fn apply_text_change(&self, uri: &Url, old_text: &str, new_text: &str) -> Vec<Ulid> {
         // Fast path: identical texts need no processing
         if old_text == new_text {
             return Vec::new();
@@ -1259,6 +1258,134 @@ mod tests {
             tracker.get(&uri, 9, 14, "world"),
             Some(ulid_world),
             "Node after edit should shift by delta"
+        );
+    }
+
+    // ========================================
+    // Phase 3 Tests: Invalidated ULID Return Value
+    // ========================================
+
+    #[test]
+    fn test_apply_text_change_returns_invalidated_ulids() {
+        // Phase 3: Verify apply_text_change returns the invalidated ULIDs
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("phase3_return");
+
+        // Create node at [40, 60) - will be invalidated
+        let ulid_invalidated = tracker.get_or_create(&uri, 40, 60, "block");
+
+        // Edit overlaps start: [35, 45) → invalidates [40, 60)
+        let old_text = text_with_markers(100);
+        let mut new_text = old_text.clone();
+        new_text.replace_range(35..45, "");
+
+        let invalidated = tracker.apply_text_change(&uri, &old_text, &new_text);
+
+        assert_eq!(
+            invalidated.len(),
+            1,
+            "Should return exactly one invalidated ULID"
+        );
+        assert_eq!(
+            invalidated[0], ulid_invalidated,
+            "Returned ULID should match the invalidated node"
+        );
+    }
+
+    #[test]
+    fn test_apply_text_change_returns_multiple_invalidated_ulids() {
+        // Phase 3: Multiple nodes invalidated by a single edit
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("phase3_multiple");
+
+        // Create multiple nodes that will be invalidated by overlapping start
+        let ulid_1 = tracker.get_or_create(&uri, 40, 50, "block1");
+        let ulid_2 = tracker.get_or_create(&uri, 42, 55, "block2");
+        let ulid_3 = tracker.get_or_create(&uri, 70, 80, "block3"); // Not invalidated
+
+        // Edit [35, 50) invalidates nodes with START in [35, 50)
+        // ulid_1 at [40, 50): START 40 in [35, 50) → invalidated
+        // ulid_2 at [42, 55): START 42 in [35, 50) → invalidated
+        // ulid_3 at [70, 80): START 70 not in [35, 50) → kept (shifted)
+        let old_text = text_with_markers(100);
+        let mut new_text = old_text.clone();
+        new_text.replace_range(35..50, "xxxxx"); // Replace 15 chars with 5
+
+        let invalidated = tracker.apply_text_change(&uri, &old_text, &new_text);
+
+        assert_eq!(
+            invalidated.len(),
+            2,
+            "Should return exactly two invalidated ULIDs"
+        );
+        assert!(
+            invalidated.contains(&ulid_1),
+            "Should contain first invalidated ULID"
+        );
+        assert!(
+            invalidated.contains(&ulid_2),
+            "Should contain second invalidated ULID"
+        );
+        assert!(
+            !invalidated.contains(&ulid_3),
+            "Should NOT contain kept ULID"
+        );
+    }
+
+    #[test]
+    fn test_apply_text_change_returns_empty_when_no_invalidation() {
+        // Phase 3: Edit that doesn't invalidate any node
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("phase3_no_invalidation");
+
+        // Create node at [50, 60)
+        let _ulid = tracker.get_or_create(&uri, 50, 60, "block");
+
+        // Edit at [10, 15) - before the node, doesn't overlap START
+        let old_text = text_with_markers(100);
+        let mut new_text = old_text.clone();
+        new_text.replace_range(10..15, "xxx");
+
+        let invalidated = tracker.apply_text_change(&uri, &old_text, &new_text);
+
+        assert!(
+            invalidated.is_empty(),
+            "Should return empty when no nodes are invalidated"
+        );
+    }
+
+    #[test]
+    fn test_apply_text_change_returns_empty_for_identical_texts() {
+        // Phase 3: Fast path when texts are identical
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("phase3_identical");
+
+        let _ulid = tracker.get_or_create(&uri, 10, 20, "block");
+
+        let text = text_with_markers(50);
+        let invalidated = tracker.apply_text_change(&uri, &text, &text);
+
+        assert!(
+            invalidated.is_empty(),
+            "Should return empty for identical texts (fast path)"
+        );
+    }
+
+    #[test]
+    fn test_apply_text_change_returns_empty_for_unknown_uri() {
+        // Phase 3: Unknown URI returns empty (no entries to invalidate)
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("phase3_unknown");
+
+        let old_text = text_with_markers(50);
+        let mut new_text = old_text.clone();
+        new_text.replace_range(10..20, "");
+
+        let invalidated = tracker.apply_text_change(&uri, &old_text, &new_text);
+
+        assert!(
+            invalidated.is_empty(),
+            "Should return empty for URI with no tracked entries"
         );
     }
 }
