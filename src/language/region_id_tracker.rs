@@ -111,7 +111,9 @@ fn apply_delta(position: usize, delta: i64) -> usize {
 ///
 /// # Position Cases (ADR-0019)
 /// - **Node E**: AFTER edit (`start >= edit.old_end`) → shift both start and end
-/// - **Node A/B**: CONTAINS edit (`end > edit.start`) → adjust end only
+/// - **Node A/B**: CONTAINS/OVERLAPS edit (`end > edit.start`) → adjust end
+///   - End inside edit range (`end <= edit.old_end`) → clamp to `edit.new_end_byte`
+///   - End after edit range (`end > edit.old_end`) → apply delta
 /// - **Node F**: BEFORE edit → unchanged
 fn adjust_position_for_edit(key: PositionKey, edit: &EditInfo, delta: i64) -> Option<PositionKey> {
     if key.start_byte >= edit.old_end_byte {
@@ -122,9 +124,26 @@ fn adjust_position_for_edit(key: PositionKey, edit: &EditInfo, delta: i64) -> Op
             key.kind,
         ))
     } else if key.end_byte > edit.start_byte {
-        // Node A/B: CONTAINS edit → adjust end only
-        let new_end = apply_delta(key.end_byte, delta);
+        // Node A/B: CONTAINS or OVERLAPS edit
+        //
+        // Two sub-cases for end position:
+        // 1. End INSIDE edit range (absorbed): clamp to edit.new_end_byte
+        // 2. End AFTER edit range: apply delta normally
+        let new_end = if key.end_byte <= edit.old_end_byte {
+            // End absorbed: clamp to where the edit ends in the new document
+            // Example: Node [20, 30), Edit delete [25, 55) → Node becomes [20, 25)
+            edit.new_end_byte
+        } else {
+            // End after edit: apply delta
+            apply_delta(key.end_byte, delta)
+        };
+
         // Guard: If range collapses (start >= end), return None to invalidate
+        // NOTE: This is theoretically unreachable when end is clamped, because:
+        //   - For collapse: new_end <= key.start_byte
+        //   - If end absorbed: new_end = edit.new_end_byte >= edit.start_byte > key.start_byte
+        //     (since we're in Node A/B branch, key.start_byte < edit.start_byte)
+        // Kept as defense-in-depth against edge cases.
         if new_end <= key.start_byte {
             None // Range collapsed to zero or negative
         } else {
@@ -812,20 +831,20 @@ mod tests {
     fn test_node_b_start_before_edit_end_absorbed_keeps_ulid() {
         // ADR-0019 Node B: Node START before edit, END absorbed/overlaps with edit → KEEP
         //
-        // Proper Node B case: Edit partially overlaps node's end region,
-        // but the adjustment doesn't cause range collapse.
+        // Proper Node B case: Edit partially overlaps node's end region.
+        // With end clamping, the end is clamped to edit.new_end_byte.
         //
         // Example: Node [20, 50), edit deletes [40, 60)
         // - START 20 is NOT in [40, 60) → KEEP
-        // - END 50 is in (40, 60), adjusted: 50 + (40-60) = 30
-        // - New node: [20, 30) - valid range, ULID preserved
+        // - END 50 is inside [40, 60) → clamp to edit.new_end_byte = 40
+        // - New node: [20, 40) - valid range, ULID preserved
         let tracker = RegionIdTracker::new();
         let uri = test_uri("node_b");
 
         // Create node at [20, 50)
         let ulid_original = tracker.get_or_create(&uri, 20, 50, "block");
 
-        // Edit overlaps end: [40, 60) → delete 20 bytes (delta = -20)
+        // Edit overlaps end: [40, 60) → delete 20 bytes
         let old_text = text_with_markers(100);
         let mut new_text = old_text.clone();
         new_text.replace_range(40..60, "");
@@ -834,13 +853,13 @@ mod tests {
 
         // After edit, node should:
         // - START unchanged (20 not in [40, 60))
-        // - END adjusted: 50 + (-20) = 30
-        // - Range [20, 30) is valid (30 > 20), so ULID preserved
-        let ulid_after = tracker.get(&uri, 20, 30, "block");
+        // - END clamped to edit.new_end_byte = 40 (since 50 is inside [40, 60))
+        // - Range [20, 40) is valid (40 > 20), so ULID preserved
+        let ulid_after = tracker.get(&uri, 20, 40, "block");
         assert_eq!(
             Some(ulid_original),
             ulid_after,
-            "Node B should preserve ULID at adjusted position [20, 30)"
+            "Node B should preserve ULID at clamped position [20, 40)"
         );
 
         // Verify old position no longer exists
@@ -1108,29 +1127,31 @@ mod tests {
     }
 
     #[test]
-    fn test_range_collapse_invalidates() {
-        // Range collapse: Large delete causes end <= start → INVALIDATE
+    fn test_end_clamping_prevents_range_collapse() {
+        // With end clamping, range collapse is prevented for Node A/B cases.
+        // Previously large deletes could cause end <= start, but now end is
+        // clamped to edit.new_end_byte, keeping a valid range.
         let tracker = RegionIdTracker::new();
         let uri = test_uri("collapse");
 
         // Create node at [30, 50)
         let _ulid_original = tracker.get_or_create(&uri, 30, 50, "block");
 
-        // Large delete that collapses the range: [20, 45) → delete 25 bytes
+        // Large delete that includes node START: [20, 45) → delete 25 bytes
         let old_text = text_with_markers(100);
         let mut new_text = old_text.clone();
         new_text.replace_range(20..45, "");
 
         tracker.apply_text_change(&uri, &old_text, &new_text);
 
-        // Node at [30, 50): START 30 is in [20, 45) → INVALIDATED
-        // (Range collapse check wouldn't trigger because it's invalidated first)
+        // Node at [30, 50): START 30 is in [20, 45) → INVALIDATED by START-priority
 
-        // Let's test actual range collapse: START not invalidated but range collapses
-        // Create a node where START survives but END collapses
+        // Test end clamping: Node where START survives but END would collapse without clamping
         let ulid2 = tracker.get_or_create(&uri, 10, 40, "block2");
 
-        // Edit [20, 60): massive delete that would make end < start
+        // Edit [20, 60): massive delete
+        // Without clamping: END 40 adjusted to 40 + (20 - 60) = 0 → collapse
+        // With clamping: END 40 is inside [20, 60) → clamp to new_end = 20 → [10, 20)
         let old_text2 = text_with_markers(100);
         let mut new_text2 = old_text2.clone();
         new_text2.replace_range(20..60, "");
@@ -1138,14 +1159,15 @@ mod tests {
         tracker.apply_text_change(&uri, &old_text2, &new_text2);
 
         // Node at [10, 40): START 10 < 20 (not invalidated by START rule)
-        // But: end 40 in (20, 60), adjusted to 40 + (20 - 60) = 0
-        // Range becomes [10, 0) → collapsed → should be invalidated
+        // END 40 is inside [20, 60) → clamped to 20
+        // New range: [10, 20) - valid, ULID preserved
 
-        // Try to get it with any position - should be NEW ULID
-        let ulid2_after = tracker.get_or_create(&uri, 10, 20, "block2");
-        assert_ne!(
-            ulid2, ulid2_after,
-            "Node with collapsed range should be invalidated"
+        // ULID should be preserved at clamped position [10, 20)
+        let ulid2_after = tracker.get(&uri, 10, 20, "block2");
+        assert_eq!(
+            Some(ulid2),
+            ulid2_after,
+            "End clamping should prevent range collapse, preserving ULID at [10, 20)"
         );
     }
 
