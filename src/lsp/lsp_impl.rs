@@ -1236,6 +1236,9 @@ impl LanguageServer for TreeSitterLs {
         // Cancel any pending semantic token requests for this document
         self.semantic_request_tracker.cancel_all_for_uri(&uri);
 
+        // Clean up region ID mappings for this document (ADR-0019)
+        self.region_id_tracker.cleanup(&uri);
+
         // Close all virtual documents associated with this host document
         // This sends didClose notifications to downstream language servers
         let closed_docs = self.language_server_pool.close_host_document(&uri).await;
