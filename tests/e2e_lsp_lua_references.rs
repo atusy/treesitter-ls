@@ -17,8 +17,7 @@ mod helpers;
 
 use helpers::lsp_client::LspClient;
 use helpers::lua_bridge::{
-    create_lua_configured_client, is_lua_ls_available, shutdown_client,
-    skip_if_lua_ls_unavailable,
+    create_lua_configured_client, is_lua_ls_available, shutdown_client, skip_if_lua_ls_unavailable,
 };
 use serde_json::json;
 
