@@ -2976,4 +2976,122 @@ mod tests {
         assert_eq!(edits[1]["range"]["start"]["line"], 5);
         assert_eq!(edits[1]["range"]["end"]["line"], 5);
     }
+
+    #[test]
+    fn workspace_edit_filters_out_cross_region_virtual_uris_in_changes() {
+        // Cross-region virtual URIs should be filtered out (different region_id)
+        let request_virtual_uri = "file:///.treesitter-ls/abc123/region-0.lua";
+        let other_virtual_uri = "file:///.treesitter-ls/abc123/region-1.lua"; // Different region
+        let host_uri = "file:///project/doc.md";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "changes": {
+                    request_virtual_uri: [
+                        {
+                            "range": {
+                                "start": { "line": 0, "character": 6 },
+                                "end": { "line": 0, "character": 9 }
+                            },
+                            "newText": "newVar"
+                        }
+                    ],
+                    other_virtual_uri: [
+                        {
+                            "range": {
+                                "start": { "line": 5, "character": 0 },
+                                "end": { "line": 5, "character": 3 }
+                            },
+                            "newText": "newVar"
+                        }
+                    ]
+                }
+            }
+        });
+        let context = ResponseTransformContext {
+            request_virtual_uri: request_virtual_uri.to_string(),
+            request_host_uri: host_uri.to_string(),
+            request_region_start_line: 3,
+        };
+
+        let transformed = transform_workspace_edit_to_host(response, &context);
+
+        // Only the request's virtual URI edits should remain (transformed to host URI)
+        let changes = transformed["result"]["changes"].as_object().unwrap();
+        assert_eq!(
+            changes.len(),
+            1,
+            "Should only have one entry (cross-region filtered)"
+        );
+        assert!(
+            changes.contains_key(host_uri),
+            "Should have host URI entry"
+        );
+        assert!(
+            !changes.contains_key(other_virtual_uri),
+            "Cross-region virtual URI should be filtered out"
+        );
+    }
+
+    #[test]
+    fn workspace_edit_filters_out_cross_region_virtual_uris_in_document_changes() {
+        // Cross-region virtual URIs should be filtered out from documentChanges
+        let request_virtual_uri = "file:///.treesitter-ls/abc123/region-0.lua";
+        let other_virtual_uri = "file:///.treesitter-ls/abc123/region-1.lua"; // Different region
+        let host_uri = "file:///project/doc.md";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "documentChanges": [
+                    {
+                        "textDocument": {
+                            "uri": request_virtual_uri,
+                            "version": 1
+                        },
+                        "edits": [{
+                            "range": {
+                                "start": { "line": 0, "character": 6 },
+                                "end": { "line": 0, "character": 9 }
+                            },
+                            "newText": "newVar"
+                        }]
+                    },
+                    {
+                        "textDocument": {
+                            "uri": other_virtual_uri,
+                            "version": 1
+                        },
+                        "edits": [{
+                            "range": {
+                                "start": { "line": 5, "character": 0 },
+                                "end": { "line": 5, "character": 3 }
+                            },
+                            "newText": "newVar"
+                        }]
+                    }
+                ]
+            }
+        });
+        let context = ResponseTransformContext {
+            request_virtual_uri: request_virtual_uri.to_string(),
+            request_host_uri: host_uri.to_string(),
+            request_region_start_line: 3,
+        };
+
+        let transformed = transform_workspace_edit_to_host(response, &context);
+
+        // Only the request's virtual URI document change should remain
+        let document_changes = transformed["result"]["documentChanges"].as_array().unwrap();
+        assert_eq!(
+            document_changes.len(),
+            1,
+            "Should only have one entry (cross-region filtered)"
+        );
+        assert_eq!(
+            document_changes[0]["textDocument"]["uri"], host_uri,
+            "Remaining entry should have host URI"
+        );
+    }
 }
