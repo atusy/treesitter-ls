@@ -3,6 +3,7 @@
 mod completion;
 mod declaration;
 mod definition;
+mod document_highlight;
 mod hover;
 mod implementation;
 mod references;

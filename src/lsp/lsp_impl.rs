@@ -1186,6 +1186,7 @@ impl LanguageServer for TreeSitterLs {
                     ..Default::default()
                 }),
                 references_provider: Some(OneOf::Left(true)),
+                document_highlight_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
         })
@@ -1526,6 +1527,13 @@ impl LanguageServer for TreeSitterLs {
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         self.references_impl(params).await
+    }
+
+    async fn document_highlight(
+        &self,
+        params: DocumentHighlightParams,
+    ) -> Result<Option<Vec<DocumentHighlight>>> {
+        self.document_highlight_impl(params).await
     }
 }
 
