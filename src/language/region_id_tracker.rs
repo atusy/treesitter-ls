@@ -48,13 +48,7 @@ impl RegionIdTracker {
     ///
     /// Phase 2: Uses position-based lookup (ADR-0019 composite key).
     /// Same (uri, start_byte, end_byte, kind) always returns the same ULID.
-    pub(crate) fn get_or_create(
-        &self,
-        uri: &Url,
-        start: usize,
-        end: usize,
-        kind: &str,
-    ) -> Ulid {
+    pub(crate) fn get_or_create(&self, uri: &Url, start: usize, end: usize, kind: &str) -> Ulid {
         let key = PositionKey {
             start_byte: start,
             end_byte: end,
@@ -427,7 +421,10 @@ mod tests {
                 let uri = uri.clone();
                 let start = offset * 10;
                 thread::spawn(move || {
-                    (offset, tracker.get_or_create(&uri, start, start + 10, "code_block"))
+                    (
+                        offset,
+                        tracker.get_or_create(&uri, start, start + 10, "code_block"),
+                    )
                 })
             })
             .collect();

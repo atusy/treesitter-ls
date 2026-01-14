@@ -890,11 +890,8 @@ impl TreeSitterLs {
         let injections: Vec<(String, String, String)> = regions
             .iter()
             .map(|region| {
-                let region_id = InjectionResolver::calculate_region_id(
-                    &self.region_id_tracker,
-                    uri,
-                    region,
-                );
+                let region_id =
+                    InjectionResolver::calculate_region_id(&self.region_id_tracker, uri, region);
                 let content = &text[region.content_node.byte_range()];
                 (
                     region.language.clone(),
