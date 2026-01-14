@@ -156,8 +156,9 @@ impl LanguageServerPool {
 
     /// Remove a document from the version tracking.
     ///
-    /// Used by did_close module for cleanup.
-    pub(super) async fn remove_document_version(&self, language: &str, virtual_uri: &str) {
+    /// Used by did_close module for cleanup, and by Phase 3
+    /// close_invalidated_virtual_docs for invalidated region cleanup.
+    pub(crate) async fn remove_document_version(&self, language: &str, virtual_uri: &str) {
         let mut versions = self.document_versions.lock().await;
         if let Some(docs) = versions.get_mut(language) {
             docs.remove(virtual_uri);
