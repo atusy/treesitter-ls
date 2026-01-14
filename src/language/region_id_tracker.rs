@@ -1481,4 +1481,583 @@ mod tests {
             "Should return empty for URI with no tracked entries"
         );
     }
+
+    // ============================================================
+    // Phase 4 Tests: apply_edits for Precise LSP Edit Processing
+    // ============================================================
+    // These tests verify the apply_edits method that processes
+    // LSP InputEdits directly for precise invalidation.
+
+    #[test]
+    fn test_apply_edits_inside_node_keeps_with_adjusted_end() {
+        // ADR-0019 Node A case: Edit INSIDE node → KEEP (adjust end)
+        // Node [10, 20), Edit [15, 18) → [15, 25)
+        // START 10 NOT in [15, 18) → KEEP
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("edit_inside");
+
+        let ulid = tracker.get_or_create(&uri, 10, 20, "block");
+
+        let edits = vec![EditInfo::new(15, 18, 25)]; // delta = +7
+
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        // Should NOT be invalidated (Node A case)
+        assert!(
+            invalidated.is_empty(),
+            "Edit inside node should KEEP it, not invalidate"
+        );
+
+        // Verify ULID at adjusted position [10, 27)
+        assert_eq!(
+            tracker.get(&uri, 10, 27, "block"),
+            Some(ulid),
+            "Node should be at adjusted position [10, 27)"
+        );
+    }
+
+    #[test]
+    fn test_apply_edits_at_node_start_invalidates() {
+        // Edit starts at node's START → INVALIDATE
+        // Node [20, 40), Edit [20, 25) → [20, 30)
+        // START 20 in [20, 25) → INVALIDATE
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("edit_at_start");
+
+        let ulid = tracker.get_or_create(&uri, 20, 40, "block");
+
+        let edits = vec![EditInfo::new(20, 25, 30)];
+
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        assert!(
+            invalidated.contains(&ulid),
+            "Edit at node START should invalidate"
+        );
+    }
+
+    #[test]
+    fn test_apply_edits_exact_match_invalidates() {
+        // Delete exactly matching node range → INVALIDATE
+        // Node [30, 50), Edit [30, 50) delete all
+        // START 30 in [30, 50) → INVALIDATE
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("exact_match");
+
+        let ulid = tracker.get_or_create(&uri, 30, 50, "block");
+
+        let edits = vec![EditInfo::new(30, 50, 30)]; // delete 20 bytes
+
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        assert!(
+            invalidated.contains(&ulid),
+            "Edit exactly matching node should invalidate"
+        );
+    }
+
+    #[test]
+    fn test_apply_edits_before_node_shifts() {
+        // Edit BEFORE node → KEEP and shift
+        // Node [50, 70), Edit [20, 30) delete 10 bytes
+        // START 50 NOT in [20, 30) → KEEP, shift to [40, 60)
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("edit_before");
+
+        let ulid = tracker.get_or_create(&uri, 50, 70, "block");
+
+        let edits = vec![EditInfo::new(20, 30, 20)]; // delete 10 bytes, delta = -10
+
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        assert!(
+            invalidated.is_empty(),
+            "Edit before node should not invalidate"
+        );
+
+        // Node should shift from [50, 70) to [40, 60)
+        assert_eq!(
+            tracker.get(&uri, 40, 60, "block"),
+            Some(ulid),
+            "Node should shift to [40, 60)"
+        );
+    }
+
+    #[test]
+    fn test_apply_edits_node_at_edit_old_end_shifts() {
+        // Boundary: Node START exactly at edit.old_end → KEEP (shift)
+        // Node [50, 70), Edit [30, 50) delete
+        // START 50 NOT in [30, 50) because interval is [30, 50) exclusive
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("at_old_end");
+
+        let ulid = tracker.get_or_create(&uri, 50, 70, "block");
+
+        let edits = vec![EditInfo::new(30, 50, 30)]; // delete [30, 50), delta = -20
+
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        assert!(
+            invalidated.is_empty(),
+            "Node at edit.old_end (exclusive) should not invalidate"
+        );
+
+        // Node shifts from [50, 70) to [30, 50)
+        assert_eq!(
+            tracker.get(&uri, 30, 50, "block"),
+            Some(ulid),
+            "Node should shift to [30, 50)"
+        );
+    }
+
+    #[test]
+    fn test_apply_edits_multiple_sequential() {
+        // Two edits in sequence, both shifting nodes
+        //
+        // Initial state:
+        //   Node 1 [10, 20), Node 2 [50, 60)
+        //
+        // Edit 1: insert 5 bytes at [5, 5)
+        //   - Zero-length insert at 5
+        //   - Node 1 START 10 ≠ 5 → KEEP, shift to [15, 25)
+        //   - Node 2 START 50 ≠ 5 → KEEP, shift to [55, 65)
+        //
+        // Edit 2: delete [60, 63) in running coords (3 bytes, delta = -3)
+        //   - Node 1 at [15, 25): START 15 NOT in [60, 63) → KEEP unchanged
+        //   - Node 2 at [55, 65): START 55 NOT in [60, 63) → KEEP
+        //     - END 65 > 60, adjust end: 65 + (-3) = 62
+        //     - Final: [55, 62)
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("multi_edit");
+
+        let ulid1 = tracker.get_or_create(&uri, 10, 20, "block1");
+        let ulid2 = tracker.get_or_create(&uri, 50, 60, "block2");
+
+        let edits = vec![
+            EditInfo::new(5, 5, 10),   // insert 5 bytes at position 5
+            EditInfo::new(60, 63, 60), // delete 3 bytes (running coords after first edit)
+        ];
+
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        // Neither should be invalidated (edits don't touch STARTs)
+        assert!(
+            !invalidated.contains(&ulid1),
+            "Node 1 should not be invalidated"
+        );
+        assert!(
+            !invalidated.contains(&ulid2),
+            "Node 2 should not be invalidated"
+        );
+
+        // Verify final positions
+        assert_eq!(
+            tracker.get(&uri, 15, 25, "block1"),
+            Some(ulid1),
+            "Node 1 should be at [15, 25) after Edit 1"
+        );
+        assert_eq!(
+            tracker.get(&uri, 55, 62, "block2"),
+            Some(ulid2),
+            "Node 2 should be at [55, 62) after both edits"
+        );
+    }
+
+    #[test]
+    fn test_apply_edits_zero_length_insert_at_start_invalidates() {
+        // ADR-0019: Zero-length insert AT node START → INVALIDATE
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("zero_at_start");
+
+        let ulid = tracker.get_or_create(&uri, 20, 40, "block");
+
+        let edits = vec![EditInfo::new(20, 20, 25)]; // Zero-length insert 5 bytes
+
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        assert!(
+            invalidated.contains(&ulid),
+            "Zero-length insert at node START should invalidate"
+        );
+    }
+
+    #[test]
+    fn test_apply_edits_zero_length_insert_before_node_shifts() {
+        // Zero-length insert BEFORE node START → KEEP and shift
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("zero_before");
+
+        let ulid = tracker.get_or_create(&uri, 30, 50, "block");
+
+        let edits = vec![EditInfo::new(10, 10, 15)]; // Zero-length insert 5 bytes
+
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        assert!(
+            invalidated.is_empty(),
+            "Zero-length insert before node should not invalidate"
+        );
+
+        // Verify node shifted from [30, 50) to [35, 55)
+        assert_eq!(
+            tracker.get(&uri, 35, 55, "block"),
+            Some(ulid),
+            "Node should shift to [35, 55)"
+        );
+    }
+
+    #[test]
+    fn test_apply_edits_empty_slice() {
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("empty");
+
+        tracker.get_or_create(&uri, 10, 20, "block");
+
+        let invalidated = tracker.apply_edits(&uri, &[]);
+
+        assert!(
+            invalidated.is_empty(),
+            "Empty edits should return empty Vec"
+        );
+    }
+
+    #[test]
+    fn test_apply_edits_unknown_uri_returns_empty() {
+        // Unknown URI should return empty Vec (no entries to invalidate)
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("unknown");
+
+        let edits = vec![EditInfo::new(10, 20, 15)];
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        assert!(
+            invalidated.is_empty(),
+            "Unknown URI should return empty Vec"
+        );
+    }
+
+    #[test]
+    fn test_apply_edits_single_edit_spans_multiple_nodes() {
+        // Single edit that affects multiple nodes differently
+        // Nodes: A [20, 30), B [40, 50), C [60, 70)
+        // Edit: delete [35, 55) (delta = -20)
+        //
+        // START-priority analysis:
+        //   - Node A [20, 30): END 30 < edit.start 35 → completely before edit, KEEP unchanged
+        //   - Node B [40, 50): START 40 in [35, 55) → INVALIDATE
+        //   - Node C [60, 70): START 60 >= old_end 55 → KEEP, shift by delta -20
+        //
+        // Final positions:
+        //   - Node A: [20, 30) unchanged
+        //   - Node B: invalidated
+        //   - Node C: [60-20, 70-20) = [40, 50)
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("multi_node");
+
+        let ulid_a = tracker.get_or_create(&uri, 20, 30, "blockA");
+        let ulid_b = tracker.get_or_create(&uri, 40, 50, "blockB");
+        let ulid_c = tracker.get_or_create(&uri, 60, 70, "blockC");
+
+        let edits = vec![EditInfo::new(35, 55, 35)]; // delete [35, 55)
+
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        // Only Node B should be invalidated (START in edit range)
+        assert!(
+            !invalidated.contains(&ulid_a),
+            "Node A should NOT be invalidated"
+        );
+        assert!(
+            invalidated.contains(&ulid_b),
+            "Node B should be invalidated"
+        );
+        assert!(
+            !invalidated.contains(&ulid_c),
+            "Node C should NOT be invalidated"
+        );
+
+        // Verify final positions
+        assert_eq!(
+            tracker.get(&uri, 20, 30, "blockA"),
+            Some(ulid_a),
+            "Node A should remain at [20, 30) (before edit)"
+        );
+        assert_eq!(
+            tracker.get(&uri, 40, 50, "blockC"),
+            Some(ulid_c),
+            "Node C should shift to [40, 50)"
+        );
+    }
+
+    #[test]
+    fn test_apply_edits_end_absorbed_keeps_node() {
+        // Node's END is inside edit range → clamp end to edit.new_end_byte, KEEP node
+        // This is the "end absorbed" case from ADR-0019
+        //
+        // Node [20, 30), Edit: delete [25, 55) → [25, 25)
+        // - START 20 NOT in [25, 55) → KEEP (START-priority rule)
+        // - END 30 is inside [25, 55) → end absorbed, clamp to edit.new_end_byte (25)
+        // - Final: [20, 25)
+        //
+        // IMPORTANT: This requires adjust_position_for_edit to clamp end when:
+        //   edit.start_byte < node.end_byte <= edit.old_end_byte
+        // Instead of applying delta (which would cause range collapse).
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("end_absorbed");
+
+        let ulid = tracker.get_or_create(&uri, 20, 30, "block");
+
+        let edits = vec![EditInfo::new(25, 55, 25)]; // delete [25, 55)
+
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        // Node should NOT be invalidated (START not in edit range)
+        assert!(
+            invalidated.is_empty(),
+            "Node with absorbed end should be KEPT, not invalidated"
+        );
+
+        // End is clamped to edit.new_end_byte (25), so node becomes [20, 25)
+        assert_eq!(
+            tracker.get(&uri, 20, 25, "block"),
+            Some(ulid),
+            "Node should be at [20, 25) (end clamped to edit.new_end_byte)"
+        );
+    }
+
+    #[test]
+    fn test_apply_edits_larger_than_node_still_invalidates() {
+        // Edit range larger than node → should still invalidate
+        // Node [40, 50), Edit [30, 60) delete
+        // START 40 in [30, 60) → INVALIDATE
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("larger_edit");
+
+        let ulid = tracker.get_or_create(&uri, 40, 50, "block");
+
+        let edits = vec![EditInfo::new(30, 60, 30)]; // delete larger range
+
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        assert!(
+            invalidated.contains(&ulid),
+            "Edit larger than node should still invalidate"
+        );
+    }
+
+    #[test]
+    fn test_apply_edits_reverse_order_vscode_multicursor() {
+        // VSCode sends multi-cursor edits in REVERSE order (bottom-to-top)
+        // This test verifies we handle non-ascending edit order correctly
+        //
+        // Document: "line1\nline2\nline3\n" (bytes: 6, 12, 18)
+        // User types "X" at start of line3 (byte 12) and line1 (byte 0)
+        // VSCode sends: first line3 edit, then line1 edit (reverse position order)
+        //
+        // Nodes: A [0, 5), B [12, 17)
+        //
+        // Edit 1: insert at [12, 12) → [12, 13) (running coords)
+        //   - Node A [0, 5): START 0 < 12, KEEP unchanged
+        //   - Node B [12, 17): START 12 == 12 (zero-length at START) → INVALIDATE
+        //
+        // Edit 2: insert at [0, 0) → [0, 1) (running coords after Edit 1)
+        //   - Node A: already invalidated? No, A wasn't invalidated
+        //   - Node A [0, 5): START 0 == 0 (zero-length at START) → INVALIDATE
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("vscode_multicursor");
+
+        let ulid_a = tracker.get_or_create(&uri, 0, 5, "line1");
+        let ulid_b = tracker.get_or_create(&uri, 12, 17, "line3");
+
+        // VSCode sends reverse order: line3 first, then line1
+        let edits = vec![
+            EditInfo::new(12, 12, 13), // Insert at line3 (later position first)
+            EditInfo::new(0, 0, 1),    // Insert at line1 (earlier position second)
+        ];
+
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        // Both should be invalidated (zero-length insert at START)
+        assert!(
+            invalidated.contains(&ulid_a),
+            "Node A should be invalidated (insert at START)"
+        );
+        assert!(
+            invalidated.contains(&ulid_b),
+            "Node B should be invalidated (insert at START)"
+        );
+    }
+
+    #[test]
+    fn test_apply_edits_invalid_edit_skipped() {
+        // Invalid edit (old_end < start) should be skipped with warning
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("invalid_edit");
+
+        let ulid = tracker.get_or_create(&uri, 30, 50, "block");
+
+        let edits = vec![
+            EditInfo::new(50, 40, 50), // INVALID: old_end_byte 40 < start_byte 50
+            EditInfo::new(20, 25, 20), // Valid edit before node (shift)
+        ];
+
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        // Invalid edit skipped, valid edit processed
+        assert!(
+            invalidated.is_empty(),
+            "No invalidation (invalid edit skipped, valid edit shifts)"
+        );
+
+        // Node should shift from [30, 50) to [25, 45) due to valid delete
+        assert_eq!(
+            tracker.get(&uri, 25, 45, "block"),
+            Some(ulid),
+            "Node should shift after valid edit (invalid edit skipped)"
+        );
+    }
+
+    #[test]
+    fn test_apply_edits_start_inside_edit_range_invalidates() {
+        // Node whose START falls inside edit range → INVALIDATE by START-priority
+        //
+        // Node [10, 12), Edit: delete [5, 20) → [5, 5)
+        // - START 10 IS in [5, 20) (5 <= 10 < 20) → INVALIDATE
+        //
+        // NOTE: This tests START-priority invalidation, not range collapse.
+        // Range collapse via end clamping is theoretically unreachable because:
+        //   - For collapse: edit.new_end_byte <= node.start
+        //   - But if node.start < edit.start (required to pass START-priority),
+        //     then edit.new_end_byte >= edit.start > node.start
+        //   - Therefore collapse condition can never be satisfied
+        // The range collapse check in adjust_position_for_edit is kept
+        // as defense-in-depth against unexpected edge cases.
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("start_in_edit");
+
+        let ulid = tracker.get_or_create(&uri, 10, 12, "block");
+
+        let edits = vec![EditInfo::new(5, 20, 5)]; // delete [5, 20)
+
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        assert!(
+            invalidated.contains(&ulid),
+            "Node with START inside edit range should be invalidated"
+        );
+    }
+
+    #[test]
+    fn test_apply_edits_zero_length_insert_after_node_keeps_unchanged() {
+        // Zero-length insert AFTER node → KEEP unchanged
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("zero_after");
+
+        let ulid = tracker.get_or_create(&uri, 20, 40, "block");
+
+        let edits = vec![EditInfo::new(50, 50, 55)]; // Zero-length insert after node
+
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        assert!(
+            invalidated.is_empty(),
+            "Zero-length insert after node should not invalidate"
+        );
+
+        // Verify node unchanged at [20, 40)
+        assert_eq!(
+            tracker.get(&uri, 20, 40, "block"),
+            Some(ulid),
+            "Node should remain at [20, 40)"
+        );
+    }
+
+    // === Phase 4 Boundary Tests ===
+
+    #[test]
+    fn test_apply_edits_end_exactly_at_old_end_clamps() {
+        // Boundary: Node END exactly equals edit.old_end_byte
+        //
+        // Node [20, 55), Edit: delete [25, 55) → [25, 25)
+        // - START 20 NOT in [25, 55) → KEEP
+        // - END 55 == old_end 55 → condition (end <= old_end) is TRUE → clamp to 25
+        // - Final: [20, 25)
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("end_at_old_end");
+
+        let ulid = tracker.get_or_create(&uri, 20, 55, "block");
+
+        let edits = vec![EditInfo::new(25, 55, 25)]; // delete [25, 55)
+
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        assert!(
+            invalidated.is_empty(),
+            "Node with end at old_end should be KEPT (clamped)"
+        );
+
+        assert_eq!(
+            tracker.get(&uri, 20, 25, "block"),
+            Some(ulid),
+            "Node should be at [20, 25) (end clamped to new_end)"
+        );
+    }
+
+    #[test]
+    fn test_apply_edits_end_exactly_at_edit_start_unchanged() {
+        // Boundary: Node END exactly equals edit.start_byte
+        //
+        // Node [20, 25), Edit: delete [25, 55) → [25, 25)
+        // - Branch check: end > edit.start? → 25 > 25? NO
+        // - Falls to else branch (Node F) → unchanged
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("end_at_start");
+
+        let ulid = tracker.get_or_create(&uri, 20, 25, "block");
+
+        let edits = vec![EditInfo::new(25, 55, 25)]; // delete [25, 55)
+
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        assert!(
+            invalidated.is_empty(),
+            "Node ending at edit.start should be unchanged"
+        );
+
+        assert_eq!(
+            tracker.get(&uri, 20, 25, "block"),
+            Some(ulid),
+            "Node should remain at [20, 25) (completely before edit)"
+        );
+    }
+
+    #[test]
+    fn test_apply_edits_zero_length_insert_inside_node_expands() {
+        // Zero-length insert INSIDE node (not at boundaries)
+        //
+        // Node [20, 40), Edit: insert at [30, 30) → [30, 35) (5 bytes)
+        // - START 20 != 30 → KEEP (not zero-length at START)
+        // - END 40 > edit.start 30 → enters Node A/B branch
+        // - END 40 <= old_end 30? NO (40 > 30) → apply delta +5
+        // - Final: [20, 45)
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("insert_inside");
+
+        let ulid = tracker.get_or_create(&uri, 20, 40, "block");
+
+        let edits = vec![EditInfo::new(30, 30, 35)]; // insert 5 bytes at 30
+
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        assert!(
+            invalidated.is_empty(),
+            "Insert inside node should KEEP it (expand)"
+        );
+
+        assert_eq!(
+            tracker.get(&uri, 20, 45, "block"),
+            Some(ulid),
+            "Node should expand to [20, 45) (end shifted by +5)"
+        );
+    }
 }
