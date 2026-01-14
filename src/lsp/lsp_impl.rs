@@ -20,6 +20,7 @@ use crate::config::{
 };
 use crate::document::DocumentStore;
 use crate::language::injection::{CacheableInjectionRegion, collect_all_injections};
+use crate::language::region_id_tracker::RegionIdTracker;
 use crate::language::{DocumentParserPool, FailedParserRegistry, LanguageCoordinator};
 use crate::language::{LanguageEvent, LanguageLogLevel};
 use crate::lsp::bridge::LanguageServerPool;
@@ -71,6 +72,8 @@ pub struct TreeSitterLs {
     semantic_request_tracker: SemanticRequestTracker,
     /// Pool of downstream language server connections (ADR-0016)
     language_server_pool: LanguageServerPool,
+    /// Stable ULID-based region ID tracker (ADR-0019 Phase 1)
+    region_id_tracker: RegionIdTracker,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -88,6 +91,7 @@ impl std::fmt::Debug for TreeSitterLs {
             .field("installing_languages", &"InstallingLanguages")
             .field("failed_parsers", &"FailedParserRegistry")
             .field("language_server_pool", &"LanguageServerPool")
+            .field("region_id_tracker", &"RegionIdTracker")
             .finish_non_exhaustive()
     }
 }
@@ -117,6 +121,7 @@ impl TreeSitterLs {
             failed_parsers,
             semantic_request_tracker: SemanticRequestTracker::new(),
             language_server_pool,
+            region_id_tracker: RegionIdTracker::new(),
         }
     }
 
