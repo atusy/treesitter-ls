@@ -50,10 +50,10 @@ const scrum: ScrumDashboard = {
         {
           criterion: "Cross-region virtual URIs are filtered from response",
           verification:
-            "Unit test: highlights with different virtual URI prefix are excluded",
+            "N/A - DocumentHighlight per LSP spec has no URI field, only range+kind",
         },
       ],
-      status: "ready",
+      status: "done",
       refinement_notes: [
         "Similar pattern to references.rs - returns DocumentHighlight[] with ranges",
         "Reuse transform_definition_response_to_host pattern for Location-like ranges",
@@ -259,7 +259,7 @@ const scrum: ScrumDashboard = {
     number: 1,
     pbi_id: "pbi-document-highlight",
     goal: "Enable users to highlight all occurrences of a symbol within a Lua code block by bridging textDocument/documentHighlight to downstream language servers",
-    status: "in_progress",
+    status: "review",
     subtasks: [
       {
         test: "Unit test: build_bridge_document_highlight_request creates valid JSON-RPC request with virtual URI and translated position",
