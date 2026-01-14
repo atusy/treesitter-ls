@@ -764,6 +764,58 @@ mod tests {
     }
 
     #[test]
+    fn language_to_extension_maps_common_languages() {
+        // Test a representative sample of the supported languages
+        let test_cases = [
+            ("lua", "lua"),
+            ("python", "py"),
+            ("rust", "rs"),
+            ("javascript", "js"),
+            ("typescript", "ts"),
+            ("go", "go"),
+            ("c", "c"),
+            ("cpp", "cpp"),
+            ("java", "java"),
+            ("ruby", "rb"),
+            ("bash", "sh"),
+            ("sh", "sh"),
+        ];
+
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+
+        for (language, expected_ext) in test_cases {
+            let uri = VirtualDocumentUri::new(&host_uri, language, "region-0");
+            let uri_string = uri.to_uri_string();
+            assert!(
+                uri_string.ends_with(&format!(".{}", expected_ext)),
+                "Language '{}' should produce extension '{}', got: {}",
+                language,
+                expected_ext,
+                uri_string
+            );
+        }
+    }
+
+    #[test]
+    fn language_to_extension_falls_back_to_txt_for_unknown() {
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+
+        // Unknown languages should default to .txt
+        let unknown_cases = ["unknown-lang", "foobar", "notareallan"];
+
+        for language in unknown_cases {
+            let uri = VirtualDocumentUri::new(&host_uri, language, "region-0");
+            let uri_string = uri.to_uri_string();
+            assert!(
+                uri_string.ends_with(".txt"),
+                "Unknown language '{}' should produce .txt extension, got: {}",
+                language,
+                uri_string
+            );
+        }
+    }
+
+    #[test]
     fn virtual_uri_different_hosts_produce_different_hashes() {
         let host1 = Url::parse("file:///project/doc1.md").unwrap();
         let host2 = Url::parse("file:///project/doc2.md").unwrap();
