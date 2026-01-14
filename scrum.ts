@@ -34,7 +34,7 @@ const scrum: ScrumDashboard = {
         { criterion: "Bridge forwards textDocument/documentLink to downstream LS", verification: "E2E test" },
         { criterion: "Link ranges transformed to host coordinates", verification: "Unit test" },
         { criterion: "Link targets unchanged (external URIs)", verification: "Unit test" },
-      ], status: "ready", refinement_notes: ["Returns DocumentLink[] with range+target", "Only range needs transform"] },
+      ], status: "done", refinement_notes: ["Returns DocumentLink[] with range+target", "Only range needs transform"] },
     { id: "pbi-document-symbols", story: { role: "Lua developer editing markdown", capability: "see outline of symbols in Lua code block", benefit: "navigate to functions" },
       acceptance_criteria: [
         { criterion: "Bridge forwards textDocument/documentSymbol to downstream LS", verification: "E2E test" },
@@ -60,49 +60,11 @@ const scrum: ScrumDashboard = {
         { criterion: "Request position transformed to virtual coordinates", verification: "Unit test" },
       ], status: "ready", refinement_notes: ["Response has no position data", "Pass-through response"] },
   ],
-  sprint: {
-    number: 3,
-    pbi_id: "pbi-document-link",
-    goal: "Bridge textDocument/documentLink with range transformation to host coordinates",
-    status: "review",
-    subtasks: [
-      {
-        test: "Test build_bridge_document_link_request creates valid JSON-RPC request with virtual URI",
-        implementation: "Add build_bridge_document_link_request function to protocol.rs",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "1d82b1d6", message: "test(protocol): add unit tests for build_bridge_document_link_request", phase: "green" }],
-        notes: ["DocumentLinkParams has only textDocument field - simpler than position-based requests"],
-      },
-      {
-        test: "Test transform_document_link_response_to_host transforms ranges in DocumentLink[]",
-        implementation: "Add transform_document_link_response_to_host function to protocol.rs",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "a0ccba6e", message: "test(protocol): add unit tests for transform_document_link_response_to_host", phase: "green" }],
-        notes: ["Transform range field, preserve target/tooltip/data unchanged", "Handle null result and empty array cases"],
-      },
-      {
-        test: "Test LanguageServerPool::send_document_link_request orchestrates full request/response cycle",
-        implementation: "Add send_document_link_request method to bridge/text_document/document_link.rs",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "c4aac2a9", message: "feat(bridge): add send_document_link_request to LanguageServerPool", phase: "green" }],
-        notes: ["Follow document_highlight pattern: get connection, send didOpen if needed, send request, transform response"],
-      },
-      {
-        test: "E2E test: document link request returns links with host coordinates",
-        implementation: "Wire document_link handler in lsp_impl to use bridge for injection regions",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "8ddda377", message: "feat(lsp): wire document link handler with E2E tests", phase: "green" }],
-        notes: ["Create E2E test with Lua code block containing require statements"],
-      },
-    ],
-  },
+  sprint: null,
   completed: [
     { number: 1, pbi_id: "pbi-document-highlight", goal: "Bridge textDocument/documentHighlight to downstream LS", status: "done", subtasks: [] },
     { number: 2, pbi_id: "pbi-rename", goal: "Bridge textDocument/rename with WorkspaceEdit transformation", status: "done", subtasks: [] },
+    { number: 3, pbi_id: "pbi-document-link", goal: "Bridge textDocument/documentLink with range transformation to host coordinates", status: "done", subtasks: [] },
   ],
   definition_of_done: {
     checks: [
