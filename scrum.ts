@@ -78,8 +78,8 @@ const scrum: ScrumDashboard = {
         test: "Test transform_document_link_response_to_host transforms ranges in DocumentLink[]",
         implementation: "Add transform_document_link_response_to_host function to protocol.rs",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "a0ccba6e", message: "test(protocol): add unit tests for transform_document_link_response_to_host", phase: "green" }],
         notes: ["Transform range field, preserve target/tooltip/data unchanged", "Handle null result and empty array cases"],
       },
       {
