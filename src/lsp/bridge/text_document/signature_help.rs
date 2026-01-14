@@ -10,7 +10,7 @@ use tower_lsp::lsp_types::{Position, Url};
 
 use super::super::pool::LanguageServerPool;
 use super::super::protocol::{
-    VirtualDocumentUri, build_bridge_signature_help_request,
+    VirtualDocumentUri, build_bridge_didopen_notification, build_bridge_signature_help_request,
     transform_signature_help_response_to_host,
 };
 
@@ -52,18 +52,11 @@ impl LanguageServerPool {
             .should_send_didopen(host_uri, injection_language, &virtual_uri_string)
             .await
         {
-            let did_open = serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "textDocument/didOpen",
-                "params": {
-                    "textDocument": {
-                        "uri": virtual_uri_string,
-                        "languageId": injection_language,
-                        "version": 1,
-                        "text": virtual_content
-                    }
-                }
-            });
+            let did_open = build_bridge_didopen_notification(
+                &virtual_uri_string,
+                injection_language,
+                virtual_content,
+            );
             conn.write_message(&did_open).await?;
         }
 

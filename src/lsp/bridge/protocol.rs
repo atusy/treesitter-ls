@@ -332,17 +332,38 @@ pub(crate) fn build_bridge_references_request(
     request
 }
 
+/// Build a JSON-RPC didOpen notification for a downstream language server.
+///
+/// Sends the initial document content to the downstream language server when
+/// a virtual document is first opened.
+///
+/// # Arguments
+/// * `virtual_uri` - The virtual document URI string
+/// * `language_id` - The language identifier (e.g., "lua", "python")
+/// * `content` - The initial content of the virtual document
+pub(crate) fn build_bridge_didopen_notification(
+    virtual_uri: &str,
+    language_id: &str,
+    content: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": virtual_uri,
+                "languageId": language_id,
+                "version": 1,
+                "text": content
+            }
+        }
+    })
+}
+
 /// Build a JSON-RPC didChange notification for a downstream language server.
 ///
 /// Uses full text sync (TextDocumentSyncKind::Full) which sends the entire
 /// document content on each change. This is simpler and sufficient for bridge use.
-///
-/// # Arguments
-/// * `host_uri` - The URI of the host document
-/// * `injection_language` - The injection language (e.g., "lua")
-/// * `region_id` - The unique region ID for this injection
-/// * `new_content` - The new content of the virtual document
-/// * `version` - The document version number
 pub(crate) fn build_bridge_didchange_notification(
     host_uri: &tower_lsp::lsp_types::Url,
     injection_language: &str,
