@@ -40,17 +40,14 @@ impl VirtualDocumentUri {
         }
     }
 
-    /// Extract region_id from a virtual document URI string.
-    ///
-    /// This is the inverse of `to_uri_string()` for the region_id component.
-    /// URI format: `file:///.treesitter-ls/{host_hash}/{region_id}.{ext}`
-    ///
-    /// Returns `None` if the URI doesn't match the expected format.
-    pub(crate) fn extract_region_id(uri_string: &str) -> Option<&str> {
-        // Find the last '/' to get the filename
-        let filename = uri_string.rsplit('/').next()?;
-        // Remove the extension (find last '.')
-        filename.rsplit_once('.').map(|(name, _)| name)
+    /// Get the region_id.
+    pub(crate) fn region_id(&self) -> &str {
+        &self.region_id
+    }
+
+    /// Get the language.
+    pub(crate) fn language(&self) -> &str {
+        &self.language
     }
 
     /// Convert to a URI string.
@@ -351,12 +348,10 @@ pub(crate) fn build_bridge_references_request(
 /// a virtual document is first opened.
 ///
 /// # Arguments
-/// * `virtual_uri` - The virtual document URI string
-/// * `language_id` - The language identifier (e.g., "lua", "python")
+/// * `virtual_uri` - The virtual document URI
 /// * `content` - The initial content of the virtual document
 pub(crate) fn build_bridge_didopen_notification(
-    virtual_uri: &str,
-    language_id: &str,
+    virtual_uri: &VirtualDocumentUri,
     content: &str,
 ) -> serde_json::Value {
     serde_json::json!({
@@ -364,8 +359,8 @@ pub(crate) fn build_bridge_didopen_notification(
         "method": "textDocument/didOpen",
         "params": {
             "textDocument": {
-                "uri": virtual_uri,
-                "languageId": language_id,
+                "uri": virtual_uri.to_uri_string(),
+                "languageId": virtual_uri.language(),
                 "version": 1,
                 "text": content
             }

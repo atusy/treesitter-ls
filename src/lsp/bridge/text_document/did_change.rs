@@ -36,19 +36,18 @@ impl LanguageServerPool {
 
         // For each injection, check if it's opened and send didChange
         for (language, region_id, content) in injections {
-            let virtual_uri =
-                VirtualDocumentUri::new(host_uri, language, region_id).to_uri_string();
+            let virtual_uri = VirtualDocumentUri::new(host_uri, language, region_id);
 
-            // Check if this virtual doc is opened
-            if opened_docs.iter().any(|doc| doc.virtual_uri == virtual_uri) {
+            // Check if this virtual doc is opened (compare region_id)
+            if opened_docs
+                .iter()
+                .any(|doc| doc.virtual_uri.region_id() == region_id)
+            {
                 // Get version and send didChange
-                if let Some(version) = self
-                    .increment_document_version(language, &virtual_uri)
-                    .await
-                {
+                if let Some(version) = self.increment_document_version(&virtual_uri).await {
                     let handle = {
                         let connections = self.connections().await;
-                        let Some(handle) = connections.get(language) else {
+                        let Some(handle) = connections.get(language.as_str()) else {
                             continue;
                         };
 
@@ -59,7 +58,7 @@ impl LanguageServerPool {
                         Arc::clone(handle)
                     };
 
-                    let virtual_uri = virtual_uri.clone();
+                    let virtual_uri_string = virtual_uri.to_uri_string();
                     let content = content.clone();
 
                     // Fire-and-forget to avoid blocking didChange on downstream I/O.
@@ -67,7 +66,7 @@ impl LanguageServerPool {
                     tokio::spawn(async move {
                         let _ = Self::send_didchange_for_virtual_doc(
                             handle,
-                            virtual_uri,
+                            virtual_uri_string,
                             content,
                             version,
                         )

@@ -45,18 +45,10 @@ impl LanguageServerPool {
 
         // Build virtual document URI
         let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
-        let virtual_uri_string = virtual_uri.to_uri_string();
 
         // Send didOpen notification only if document hasn't been opened yet
-        if self
-            .should_send_didopen(host_uri, injection_language, &virtual_uri_string)
-            .await
-        {
-            let did_open = build_bridge_didopen_notification(
-                &virtual_uri_string,
-                injection_language,
-                virtual_content,
-            );
+        if self.should_send_didopen(host_uri, &virtual_uri).await {
+            let did_open = build_bridge_didopen_notification(&virtual_uri, virtual_content);
             conn.write_message(&did_open).await?;
         }
 

@@ -45,26 +45,15 @@ impl LanguageServerPool {
 
         // Build virtual document URI
         let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
-        let virtual_uri_string = virtual_uri.to_uri_string();
 
         // Send didOpen or didChange depending on whether document is already opened
-        if self
-            .should_send_didopen(host_uri, injection_language, &virtual_uri_string)
-            .await
-        {
+        if self.should_send_didopen(host_uri, &virtual_uri).await {
             // First time: send didOpen
-            let did_open = build_bridge_didopen_notification(
-                &virtual_uri_string,
-                injection_language,
-                virtual_content,
-            );
+            let did_open = build_bridge_didopen_notification(&virtual_uri, virtual_content);
             conn.write_message(&did_open).await?;
         } else {
             // Document already opened: send didChange with incremented version
-            if let Some(version) = self
-                .increment_document_version(injection_language, &virtual_uri_string)
-                .await
-            {
+            if let Some(version) = self.increment_document_version(&virtual_uri).await {
                 let did_change = build_bridge_didchange_notification(
                     host_uri,
                     injection_language,
