@@ -972,6 +972,108 @@ mod tests {
     }
 
     #[test]
+    fn position_translation_at_region_start_becomes_line_zero() {
+        // When cursor is at the first line of the region, virtual line should be 0
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        let host_position = Position {
+            line: 3, // Same as region_start_line
+            character: 5,
+        };
+        let region_start_line = 3;
+
+        let request = build_bridge_hover_request(
+            &host_uri,
+            host_position,
+            "lua",
+            "region-0",
+            region_start_line,
+            42,
+        );
+
+        assert_eq!(
+            request["params"]["position"]["line"], 0,
+            "Position at region start should translate to line 0"
+        );
+    }
+
+    #[test]
+    fn position_translation_with_zero_region_start() {
+        // Region starting at line 0 (e.g., first line of document)
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        let host_position = Position {
+            line: 5,
+            character: 0,
+        };
+        let region_start_line = 0;
+
+        let request = build_bridge_hover_request(
+            &host_uri,
+            host_position,
+            "lua",
+            "region-0",
+            region_start_line,
+            42,
+        );
+
+        assert_eq!(
+            request["params"]["position"]["line"], 5,
+            "With region_start_line=0, virtual line equals host line"
+        );
+    }
+
+    #[test]
+    fn response_transformation_with_zero_region_start() {
+        // Response transformation when region starts at line 0
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "contents": { "kind": "markdown", "value": "docs" },
+                "range": {
+                    "start": { "line": 2, "character": 0 },
+                    "end": { "line": 2, "character": 10 }
+                }
+            }
+        });
+        let region_start_line = 0;
+
+        let transformed = transform_hover_response_to_host(response, region_start_line);
+
+        assert_eq!(
+            transformed["result"]["range"]["start"]["line"], 2,
+            "With region_start_line=0, host line equals virtual line"
+        );
+    }
+
+    #[test]
+    fn response_transformation_at_line_zero() {
+        // Virtual document line 0 should map to region_start_line
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "contents": { "kind": "markdown", "value": "docs" },
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 5 }
+                }
+            }
+        });
+        let region_start_line = 10;
+
+        let transformed = transform_hover_response_to_host(response, region_start_line);
+
+        assert_eq!(
+            transformed["result"]["range"]["start"]["line"], 10,
+            "Virtual line 0 should map to region_start_line"
+        );
+        assert_eq!(
+            transformed["result"]["range"]["end"]["line"], 10,
+            "Virtual line 0 should map to region_start_line"
+        );
+    }
+
+    #[test]
     fn hover_response_transforms_range_to_host_coordinates() {
         let response = json!({
             "jsonrpc": "2.0",
