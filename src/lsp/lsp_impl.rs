@@ -1381,7 +1381,9 @@ impl LanguageServer for TreeSitterLs {
         // Phase 2 (ADR-0019): Apply START-priority invalidation to region ID tracker
         // This must be called AFTER content changes are applied (so we have new text)
         // but BEFORE parse_document (so position sync happens before new tree is built)
-        self.region_id_tracker
+        // Returns ULIDs that were invalidated (Phase 3)
+        let invalidated_ulids = self
+            .region_id_tracker
             .apply_text_change(&uri, &old_text, &text);
 
         // Invalidate injection caches for regions overlapping with edits (AC4/AC5)
@@ -1400,6 +1402,11 @@ impl LanguageServer for TreeSitterLs {
 
         // Forward didChange to opened virtual documents in bridge
         self.forward_didchange_to_bridges(&uri, &text_for_bridge)
+            .await;
+
+        // Phase 3 (ADR-0019): Close invalidated virtual documents
+        // Send didClose notifications to downstream LSs for orphaned docs
+        self.close_invalidated_virtual_docs(&uri, &invalidated_ulids)
             .await;
 
         // Check for injected languages and trigger auto-install for missing parsers
