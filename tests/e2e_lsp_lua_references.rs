@@ -16,40 +16,10 @@
 mod helpers;
 
 use helpers::lsp_client::LspClient;
+use helpers::lua_bridge::{
+    create_lua_configured_client, is_lua_ls_available, shutdown_client, skip_if_lua_ls_unavailable,
+};
 use serde_json::json;
-
-/// Helper to check if lua-language-server is available
-fn is_lua_ls_available() -> bool {
-    std::process::Command::new("lua-language-server")
-        .arg("--version")
-        .output()
-        .is_ok()
-}
-
-/// Helper to create a client with lua-language-server configured
-fn create_configured_client() -> LspClient {
-    let mut client = LspClient::new();
-
-    // Initialize handshake with language server configuration
-    let _init_response = client.send_request(
-        "initialize",
-        json!({
-            "processId": std::process::id(),
-            "rootUri": null,
-            "capabilities": {},
-            "initializationOptions": {
-                "languageServers": {
-                    "lua-language-server": {
-                        "cmd": ["lua-language-server"],
-                        "languages": ["lua"]
-                    }
-                }
-            }
-        }),
-    );
-    client.send_notification("initialized", json!({}));
-    client
-}
 
 /// E2E test: referencesProvider capability is advertised
 #[test]
@@ -81,21 +51,17 @@ fn e2e_references_capability_advertised() {
     println!("E2E: referencesProvider capability advertised");
 
     // Clean shutdown
-    let _shutdown_response = client.send_request("shutdown", json!(null));
-    client.send_notification("exit", json!(null));
+    shutdown_client(&mut client);
 }
 
 /// E2E test: references request is handled without error
 #[test]
 fn e2e_references_request_handled() {
-    if !is_lua_ls_available() {
-        eprintln!("SKIP: lua-language-server not found in PATH");
-        eprintln!("Install lua-language-server to run this test:");
-        eprintln!("  brew install lua-language-server");
+    if skip_if_lua_ls_unavailable() {
         return;
     }
 
-    let mut client = create_configured_client();
+    let mut client = create_lua_configured_client();
 
     // Open markdown document with Lua code block containing local variable with multiple references
     // The variable 'name' appears at:
@@ -192,14 +158,13 @@ More text.
     }
 
     // Clean shutdown
-    let _shutdown_response = client.send_request("shutdown", json!(null));
-    client.send_notification("exit", json!(null));
+    shutdown_client(&mut client);
 }
 
 /// E2E test: references returns null for position outside injection region
 #[test]
 fn e2e_references_outside_injection_returns_null() {
-    let mut client = create_configured_client();
+    let mut client = create_lua_configured_client();
 
     // Open markdown document with Lua code block
     let markdown_content = r#"# Test Document
@@ -256,8 +221,7 @@ More text after.
     println!("E2E: References outside injection region correctly returns null");
 
     // Clean shutdown
-    let _shutdown_response = client.send_request("shutdown", json!(null));
-    client.send_notification("exit", json!(null));
+    shutdown_client(&mut client);
 }
 
 /// E2E test: references with includeDeclaration=false excludes declaration
@@ -268,7 +232,7 @@ fn e2e_references_include_declaration_false() {
         return;
     }
 
-    let mut client = create_configured_client();
+    let mut client = create_lua_configured_client();
 
     // Open markdown document with Lua code block
     let markdown_content = r#"# Test Document
@@ -324,6 +288,5 @@ More text.
     println!("E2E: References with includeDeclaration=false handled correctly");
 
     // Clean shutdown
-    let _shutdown_response = client.send_request("shutdown", json!(null));
-    client.send_notification("exit", json!(null));
+    shutdown_client(&mut client);
 }

@@ -61,6 +61,8 @@ impl TreeSitterLs {
         };
 
         let Some(resolved) = InjectionResolver::resolve_at_byte_offset(
+            &self.region_id_tracker,
+            &uri,
             snapshot.tree(),
             snapshot.text(),
             injection_query.as_ref(),

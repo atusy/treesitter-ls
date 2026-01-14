@@ -19,7 +19,10 @@ use crate::config::{
     resolve_language_settings_with_wildcard,
 };
 use crate::document::DocumentStore;
-use crate::language::injection::{CacheableInjectionRegion, collect_all_injections};
+use crate::language::injection::{
+    CacheableInjectionRegion, InjectionResolver, collect_all_injections,
+};
+use crate::language::region_id_tracker::RegionIdTracker;
 use crate::language::{DocumentParserPool, FailedParserRegistry, LanguageCoordinator};
 use crate::language::{LanguageEvent, LanguageLogLevel};
 use crate::lsp::bridge::LanguageServerPool;
@@ -70,6 +73,8 @@ pub struct TreeSitterLs {
     semantic_request_tracker: SemanticRequestTracker,
     /// Pool of downstream language server connections (ADR-0016)
     language_server_pool: LanguageServerPool,
+    /// Stable ULID-based region ID tracker (ADR-0019 Phase 1)
+    region_id_tracker: RegionIdTracker,
 }
 
 impl std::fmt::Debug for TreeSitterLs {
@@ -87,6 +92,7 @@ impl std::fmt::Debug for TreeSitterLs {
             .field("installing_languages", &"InstallingLanguages")
             .field("failed_parsers", &"FailedParserRegistry")
             .field("language_server_pool", &"LanguageServerPool")
+            .field("region_id_tracker", &"RegionIdTracker")
             .finish_non_exhaustive()
     }
 }
@@ -116,6 +122,7 @@ impl TreeSitterLs {
             failed_parsers,
             semantic_request_tracker: SemanticRequestTracker::new(),
             language_server_pool,
+            region_id_tracker: RegionIdTracker::new(),
         }
     }
 
@@ -851,18 +858,22 @@ impl TreeSitterLs {
             None => return, // No injection query = no injections
         };
 
-        // Get the document's parse tree
-        let doc = match self.documents.get(uri) {
-            Some(d) => d,
-            None => return, // Document not found
+        // Extract tree from document with minimal lock duration
+        // IMPORTANT: Clone the tree to release document lock immediately
+        let tree = {
+            let doc = match self.documents.get(uri) {
+                Some(d) => d,
+                None => return, // Document not found
+            };
+
+            match doc.tree() {
+                Some(t) => t.clone(),
+                None => return, // No parse tree
+            }
+            // Document lock released here when `doc` guard drops
         };
 
-        let tree = match doc.tree() {
-            Some(t) => t,
-            None => return, // No parse tree
-        };
-
-        // Collect all injection regions
+        // Collect all injection regions (no locks held)
         let regions =
             match collect_all_injections(&tree.root_node(), text, Some(injection_query.as_ref())) {
                 Some(r) => r,
@@ -874,14 +885,19 @@ impl TreeSitterLs {
         }
 
         // Build (language, region_id, content) tuples for each injection
+        // Phase 2 (ADR-0019): Use RegionIdTracker with position-based keys
+        // No document lock held here - safe to access region_id_tracker
         let injections: Vec<(String, String, String)> = regions
             .iter()
-            .enumerate()
-            .map(|(index, region)| {
-                // Calculate stable region_id using per-language ordinal
-                let region_id = crate::language::injection::calculate_region_id(&regions, index);
+            .map(|region| {
+                let region_id =
+                    InjectionResolver::calculate_region_id(&self.region_id_tracker, uri, region);
                 let content = &text[region.content_node.byte_range()];
-                (region.language.clone(), region_id, content.to_string())
+                (
+                    region.language.clone(),
+                    region_id.to_string(),
+                    content.to_string(),
+                )
             })
             .collect();
 
@@ -1220,6 +1236,9 @@ impl LanguageServer for TreeSitterLs {
         // Cancel any pending semantic token requests for this document
         self.semantic_request_tracker.cancel_all_for_uri(&uri);
 
+        // Clean up region ID mappings for this document (ADR-0019)
+        self.region_id_tracker.cleanup(&uri);
+
         // Close all virtual documents associated with this host document
         // This sends didClose notifications to downstream language servers
         let closed_docs = self.language_server_pool.close_host_document(&uri).await;
@@ -1321,6 +1340,12 @@ impl LanguageServer for TreeSitterLs {
                 edits.clear(); // Clear any previous edits since it's a full replacement
             }
         }
+
+        // Phase 2 (ADR-0019): Apply START-priority invalidation to region ID tracker
+        // This must be called AFTER content changes are applied (so we have new text)
+        // but BEFORE parse_document (so position sync happens before new tree is built)
+        self.region_id_tracker
+            .apply_text_change(&uri, &old_text, &text);
 
         // Invalidate injection caches for regions overlapping with edits (AC4/AC5)
         // Must be called BEFORE parse_document which updates the injection_map

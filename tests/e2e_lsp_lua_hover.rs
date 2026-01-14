@@ -15,78 +15,20 @@
 
 mod helpers;
 
-use helpers::lsp_client::LspClient;
+use helpers::lua_bridge::{
+    create_lua_configured_client, shutdown_client, skip_if_lua_ls_unavailable,
+    verify_hover_has_content,
+};
 use serde_json::json;
-
-/// Helper to check if lua-language-server is available
-fn is_lua_ls_available() -> bool {
-    std::process::Command::new("lua-language-server")
-        .arg("--version")
-        .output()
-        .is_ok()
-}
-
-/// Helper to create a client with lua-language-server configured
-fn create_configured_client() -> LspClient {
-    let mut client = LspClient::new();
-
-    // Initialize handshake with language server configuration
-    let _init_response = client.send_request(
-        "initialize",
-        json!({
-            "processId": std::process::id(),
-            "rootUri": null,
-            "capabilities": {},
-            "initializationOptions": {
-                "languageServers": {
-                    "lua-language-server": {
-                        "cmd": ["lua-language-server"],
-                        "languages": ["lua"]
-                    }
-                }
-            }
-        }),
-    );
-    client.send_notification("initialized", json!({}));
-    client
-}
-
-/// Helper to verify hover response has content
-fn verify_hover_has_content(result: &serde_json::Value) -> bool {
-    if result.is_null() {
-        return false;
-    }
-
-    let contents = match result.get("contents") {
-        Some(c) => c,
-        None => return false,
-    };
-
-    if contents.is_string() {
-        !contents.as_str().unwrap().is_empty()
-    } else if contents.is_array() {
-        !contents.as_array().unwrap().is_empty()
-    } else if contents.is_object() {
-        contents
-            .get("value")
-            .map(|v| !v.as_str().unwrap_or("").is_empty())
-            .unwrap_or(false)
-    } else {
-        false
-    }
-}
 
 /// E2E test: hover on Lua function shows signature (AC2)
 #[test]
 fn e2e_hover_on_lua_function_shows_signature() {
-    if !is_lua_ls_available() {
-        eprintln!("SKIP: lua-language-server not found in PATH");
-        eprintln!("Install lua-language-server to run this test:");
-        eprintln!("  brew install lua-language-server");
+    if skip_if_lua_ls_unavailable() {
         return;
     }
 
-    let mut client = create_configured_client();
+    let mut client = create_lua_configured_client();
 
     // Open markdown document with Lua code block containing a function
     let markdown_content = r#"# Test Document
@@ -151,21 +93,17 @@ More text.
     }
 
     // Clean shutdown
-    let _shutdown_response = client.send_request("shutdown", json!(null));
-    client.send_notification("exit", json!(null));
+    shutdown_client(&mut client);
 }
 
 /// E2E test: hover on Lua local variable shows type (AC1)
 #[test]
 fn e2e_hover_on_lua_local_variable_shows_type() {
-    if !is_lua_ls_available() {
-        eprintln!("SKIP: lua-language-server not found in PATH");
-        eprintln!("Install lua-language-server to run this test:");
-        eprintln!("  brew install lua-language-server");
+    if skip_if_lua_ls_unavailable() {
         return;
     }
 
-    let mut client = create_configured_client();
+    let mut client = create_lua_configured_client();
 
     // Open markdown document with Lua code block containing a local variable
     let markdown_content = r#"# Test Document
@@ -231,8 +169,7 @@ More text.
     }
 
     // Clean shutdown
-    let _shutdown_response = client.send_request("shutdown", json!(null));
-    client.send_notification("exit", json!(null));
+    shutdown_client(&mut client);
 }
 
 /// Legacy test: backward compatibility with older test name

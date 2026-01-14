@@ -12,41 +12,10 @@
 
 mod helpers;
 
-use helpers::lsp_client::LspClient;
+use helpers::lua_bridge::{
+    create_lua_configured_client, shutdown_client, skip_if_lua_ls_unavailable,
+};
 use serde_json::json;
-
-/// Helper to check if lua-language-server is available
-fn is_lua_ls_available() -> bool {
-    std::process::Command::new("lua-language-server")
-        .arg("--version")
-        .output()
-        .is_ok()
-}
-
-/// Helper to create a client with lua-language-server configured
-fn create_configured_client() -> LspClient {
-    let mut client = LspClient::new();
-
-    // Initialize handshake with language server configuration
-    let _init_response = client.send_request(
-        "initialize",
-        json!({
-            "processId": std::process::id(),
-            "rootUri": null,
-            "capabilities": {},
-            "initializationOptions": {
-                "languageServers": {
-                    "lua-language-server": {
-                        "cmd": ["lua-language-server"],
-                        "languages": ["lua"]
-                    }
-                }
-            }
-        }),
-    );
-    client.send_notification("initialized", json!({}));
-    client
-}
 
 /// E2E test: connection remains open after closing host document
 ///
@@ -54,14 +23,11 @@ fn create_configured_client() -> LspClient {
 /// another markdown file can still use lua-language-server.
 #[test]
 fn e2e_connection_remains_open_after_didclose() {
-    if !is_lua_ls_available() {
-        eprintln!("SKIP: lua-language-server not found in PATH");
-        eprintln!("Install lua-language-server to run this test:");
-        eprintln!("  brew install lua-language-server");
+    if skip_if_lua_ls_unavailable() {
         return;
     }
 
-    let mut client = create_configured_client();
+    let mut client = create_lua_configured_client();
 
     // === Phase 1: Open first markdown document and trigger hover ===
     let markdown_uri_1 = "file:///test_didclose_1.md";
@@ -164,8 +130,7 @@ More text.
     println!("✓ E2E: Connection remained open after didClose - second document works");
 
     // Clean shutdown
-    let _shutdown_response = client.send_request("shutdown", json!(null));
-    client.send_notification("exit", json!(null));
+    shutdown_client(&mut client);
 }
 
 /// E2E test: didClose is forwarded to downstream server
@@ -174,14 +139,11 @@ More text.
 /// to downstream language servers for all virtual documents.
 #[test]
 fn e2e_didclose_forwarded_to_downstream_server() {
-    if !is_lua_ls_available() {
-        eprintln!("SKIP: lua-language-server not found in PATH");
-        eprintln!("Install lua-language-server to run this test:");
-        eprintln!("  brew install lua-language-server");
+    if skip_if_lua_ls_unavailable() {
         return;
     }
 
-    let mut client = create_configured_client();
+    let mut client = create_lua_configured_client();
 
     // Open markdown document with multiple Lua code blocks
     let markdown_uri = "file:///test_multi_lua.md";
@@ -262,6 +224,5 @@ More text.
     // (lua-language-server would error if it received malformed messages)
 
     // Clean shutdown
-    let _shutdown_response = client.send_request("shutdown", json!(null));
-    client.send_notification("exit", json!(null));
+    shutdown_client(&mut client);
 }
