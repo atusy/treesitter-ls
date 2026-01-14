@@ -186,7 +186,7 @@ impl LanguageServerPool {
     /// # Arguments
     /// * `host_uri` - The host document URI
     /// * `invalidated_ulids` - ULIDs to match against virtual document URIs
-    pub(crate) async fn take_virtual_docs_matching(
+    pub(crate) async fn remove_matching_virtual_docs(
         &self,
         host_uri: &Url,
         invalidated_ulids: &[ulid::Ulid],
@@ -1641,7 +1641,7 @@ mod tests {
     }
 
     // ========================================
-    // Phase 3 Tests: take_virtual_docs_matching
+    // Phase 3 Tests: remove_matching_virtual_docs
     // ========================================
 
     fn test_host_uri(name: &str) -> Url {
@@ -1649,7 +1649,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn take_virtual_docs_matching_removes_matching_docs() {
+    async fn remove_matching_virtual_docs_removes_matching_docs() {
         let pool = LanguageServerPool::new();
         let host_uri = test_host_uri("phase3_take");
 
@@ -1667,7 +1667,7 @@ mod tests {
 
         // Take only the Lua ULID
         let taken = pool
-            .take_virtual_docs_matching(&host_uri, &[ulid_lua])
+            .remove_matching_virtual_docs(&host_uri, &[ulid_lua])
             .await;
 
         // Should return the Lua doc
@@ -1686,7 +1686,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn take_virtual_docs_matching_returns_empty_for_no_match() {
+    async fn remove_matching_virtual_docs_returns_empty_for_no_match() {
         let pool = LanguageServerPool::new();
         let host_uri = test_host_uri("phase3_no_match");
 
@@ -1698,7 +1698,7 @@ mod tests {
         // Try to take a different ULID
         let other_ulid: ulid::Ulid = TEST_ULID_LUA_1.parse().unwrap();
         let taken = pool
-            .take_virtual_docs_matching(&host_uri, &[other_ulid])
+            .remove_matching_virtual_docs(&host_uri, &[other_ulid])
             .await;
 
         assert!(taken.is_empty(), "Should return empty when no ULIDs match");
@@ -1710,18 +1710,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn take_virtual_docs_matching_returns_empty_for_unknown_host() {
+    async fn remove_matching_virtual_docs_returns_empty_for_unknown_host() {
         let pool = LanguageServerPool::new();
         let host_uri = test_host_uri("phase3_unknown_host");
 
         let ulid: ulid::Ulid = TEST_ULID_LUA_0.parse().unwrap();
-        let taken = pool.take_virtual_docs_matching(&host_uri, &[ulid]).await;
+        let taken = pool.remove_matching_virtual_docs(&host_uri, &[ulid]).await;
 
         assert!(taken.is_empty(), "Should return empty for unknown host URI");
     }
 
     #[tokio::test]
-    async fn take_virtual_docs_matching_returns_empty_for_empty_ulids() {
+    async fn remove_matching_virtual_docs_returns_empty_for_empty_ulids() {
         let pool = LanguageServerPool::new();
         let host_uri = test_host_uri("phase3_empty_ulids");
 
@@ -1731,7 +1731,7 @@ mod tests {
             .await;
 
         // Take with empty ULID list (fast path)
-        let taken = pool.take_virtual_docs_matching(&host_uri, &[]).await;
+        let taken = pool.remove_matching_virtual_docs(&host_uri, &[]).await;
 
         assert!(taken.is_empty(), "Should return empty for empty ULID list");
 
@@ -1742,7 +1742,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn take_virtual_docs_matching_takes_multiple_docs() {
+    async fn remove_matching_virtual_docs_takes_multiple_docs() {
         let pool = LanguageServerPool::new();
         let host_uri = test_host_uri("phase3_multiple");
 
@@ -1763,7 +1763,7 @@ mod tests {
         let ulid_2: ulid::Ulid = TEST_ULID_LUA_1.parse().unwrap();
 
         let taken = pool
-            .take_virtual_docs_matching(&host_uri, &[ulid_1, ulid_2])
+            .remove_matching_virtual_docs(&host_uri, &[ulid_1, ulid_2])
             .await;
 
         assert_eq!(taken.len(), 2, "Should take both Lua docs");

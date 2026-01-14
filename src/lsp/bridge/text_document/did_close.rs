@@ -123,7 +123,7 @@ impl LanguageServerPool {
     pub(crate) async fn close_invalidated_docs(&self, host_uri: &Url, invalidated_ulids: &[Ulid]) {
         // Atomically remove matching docs from host_to_virtual
         let to_close = self
-            .take_virtual_docs_matching(host_uri, invalidated_ulids)
+            .remove_matching_virtual_docs(host_uri, invalidated_ulids)
             .await;
 
         if to_close.is_empty() {
