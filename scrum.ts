@@ -86,8 +86,8 @@ const scrum: ScrumDashboard = {
         test: "Test LanguageServerPool::send_document_link_request orchestrates full request/response cycle",
         implementation: "Add send_document_link_request method to bridge/text_document/document_link.rs",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "c4aac2a9", message: "feat(bridge): add send_document_link_request to LanguageServerPool", phase: "green" }],
         notes: ["Follow document_highlight pattern: get connection, send didOpen if needed, send request, transform response"],
       },
       {
