@@ -7,5 +7,6 @@
 pub mod lsp_client;
 pub mod lsp_init;
 pub mod lsp_polling;
+pub mod lua_bridge;
 pub mod sanitization;
 pub mod test_fixtures;

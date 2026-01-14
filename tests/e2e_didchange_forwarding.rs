@@ -13,40 +13,10 @@
 mod helpers;
 
 use helpers::lsp_client::LspClient;
+use helpers::lua_bridge::{
+    create_lua_configured_client, shutdown_client, skip_if_lua_ls_unavailable,
+};
 use serde_json::json;
-
-/// Helper to check if lua-language-server is available
-fn is_lua_ls_available() -> bool {
-    std::process::Command::new("lua-language-server")
-        .arg("--version")
-        .output()
-        .is_ok()
-}
-
-/// Helper to create a client with lua-language-server configured
-fn create_configured_client() -> LspClient {
-    let mut client = LspClient::new();
-
-    // Initialize handshake with language server configuration
-    let _init_response = client.send_request(
-        "initialize",
-        json!({
-            "processId": std::process::id(),
-            "rootUri": null,
-            "capabilities": {},
-            "initializationOptions": {
-                "languageServers": {
-                    "lua-language-server": {
-                        "cmd": ["lua-language-server"],
-                        "languages": ["lua"]
-                    }
-                }
-            }
-        }),
-    );
-    client.send_notification("initialized", json!({}));
-    client
-}
 
 /// Poll for completion results with retries to allow lua-ls time to index.
 fn poll_for_completions(
@@ -102,14 +72,11 @@ fn poll_for_completions(
 /// 5. Completion reflects the new content from the didChange
 #[test]
 fn e2e_didchange_forwarded_after_hover_opens_virtual_document() {
-    if !is_lua_ls_available() {
-        eprintln!("SKIP: lua-language-server not found in PATH");
-        eprintln!("Install lua-language-server to run this test:");
-        eprintln!("  brew install lua-language-server");
+    if skip_if_lua_ls_unavailable() {
         return;
     }
 
-    let mut client = create_configured_client();
+    let mut client = create_lua_configured_client();
 
     // Phase 1: Open markdown document with Lua code block
     let markdown_uri = "file:///test_didchange.md";
@@ -258,6 +225,5 @@ More text.
     }
 
     // Clean shutdown
-    let _shutdown_response = client.send_request("shutdown", json!(null));
-    client.send_notification("exit", json!(null));
+    shutdown_client(&mut client);
 }

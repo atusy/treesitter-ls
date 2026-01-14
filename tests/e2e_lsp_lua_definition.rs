@@ -15,53 +15,19 @@
 
 mod helpers;
 
-use helpers::lsp_client::LspClient;
+use helpers::lua_bridge::{
+    create_lua_configured_client, shutdown_client, skip_if_lua_ls_unavailable,
+};
 use serde_json::json;
-
-/// Helper to check if lua-language-server is available
-fn is_lua_ls_available() -> bool {
-    std::process::Command::new("lua-language-server")
-        .arg("--version")
-        .output()
-        .is_ok()
-}
-
-/// Helper to create a client with lua-language-server configured
-fn create_configured_client() -> LspClient {
-    let mut client = LspClient::new();
-
-    // Initialize handshake with language server configuration
-    let _init_response = client.send_request(
-        "initialize",
-        json!({
-            "processId": std::process::id(),
-            "rootUri": null,
-            "capabilities": {},
-            "initializationOptions": {
-                "languageServers": {
-                    "lua-language-server": {
-                        "cmd": ["lua-language-server"],
-                        "languages": ["lua"]
-                    }
-                }
-            }
-        }),
-    );
-    client.send_notification("initialized", json!({}));
-    client
-}
 
 /// E2E test: goto definition on Lua function call returns Location in host coordinates
 #[test]
 fn e2e_definition_on_lua_function_call_returns_location() {
-    if !is_lua_ls_available() {
-        eprintln!("SKIP: lua-language-server not found in PATH");
-        eprintln!("Install lua-language-server to run this test:");
-        eprintln!("  brew install lua-language-server");
+    if skip_if_lua_ls_unavailable() {
         return;
     }
 
-    let mut client = create_configured_client();
+    let mut client = create_lua_configured_client();
 
     // Open markdown document with Lua code block containing a function definition and call
     // Function defined at line 3 (0-indexed), called at line 6
@@ -157,21 +123,17 @@ More text.
     }
 
     // Clean shutdown
-    let _shutdown_response = client.send_request("shutdown", json!(null));
-    client.send_notification("exit", json!(null));
+    shutdown_client(&mut client);
 }
 
 /// E2E test: goto definition on local variable returns its declaration location
 #[test]
 fn e2e_definition_on_lua_local_variable_returns_declaration() {
-    if !is_lua_ls_available() {
-        eprintln!("SKIP: lua-language-server not found in PATH");
-        eprintln!("Install lua-language-server to run this test:");
-        eprintln!("  brew install lua-language-server");
+    if skip_if_lua_ls_unavailable() {
         return;
     }
 
-    let mut client = create_configured_client();
+    let mut client = create_lua_configured_client();
 
     // Open markdown document with Lua code block with local variable
     let markdown_content = r#"# Test Document
@@ -248,6 +210,5 @@ More text.
     }
 
     // Clean shutdown
-    let _shutdown_response = client.send_request("shutdown", json!(null));
-    client.send_notification("exit", json!(null));
+    shutdown_client(&mut client);
 }
