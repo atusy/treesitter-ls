@@ -252,13 +252,16 @@ impl RegionIdTracker {
             // Handle potential position collision after adjustment
             // Two nodes may collapse to same (start, end, kind) after large edits
             //
-            // Policy: "first wins" - deterministic based on HashMap iteration order.
-            // Collisions are rare and indicate extreme edits (e.g., massive deletion
-            // causing multiple nodes to collapse to same position).
+            // Policy: "first wins" - whichever ULID is encountered first during
+            // HashMap iteration is kept. Since HashMap order is non-deterministic,
+            // the surviving ULID is arbitrary in collision cases.
             //
-            // Note: Collisions may also indicate a bug in invalidation logic -
-            // if two nodes can reach the same position, one should have been
-            // invalidated earlier. Log at warn level for observability.
+            // This is acceptable because:
+            // 1. Collisions are rare (require extreme edits like massive deletions)
+            // 2. Either ULID is equally valid for the resulting position
+            // 3. Collisions may indicate a bug in invalidation logic anyway
+            //
+            // Log at warn level for observability and debugging.
             use std::collections::hash_map::Entry;
             match new_entries.entry(new_key.clone()) {
                 Entry::Vacant(e) => {
