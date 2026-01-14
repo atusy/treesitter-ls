@@ -82,7 +82,7 @@ fn apply_delta(position: usize, delta: i64) -> usize {
 
 impl RegionIdTracker {
     /// Create a new empty tracker.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             entries: DashMap::new(),
         }
