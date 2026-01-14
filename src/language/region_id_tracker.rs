@@ -496,34 +496,45 @@ mod tests {
 
     #[test]
     fn test_node_b_start_before_edit_end_absorbed_keeps_ulid() {
-        // ADR-0019 Node B: Node START before edit, END absorbed by edit → KEEP
+        // ADR-0019 Node B: Node START before edit, END absorbed/overlaps with edit → KEEP
+        //
+        // Proper Node B case: Edit partially overlaps node's end region,
+        // but the adjustment doesn't cause range collapse.
+        //
+        // Example: Node [20, 50), edit deletes [40, 60)
+        // - START 20 is NOT in [40, 60) → KEEP
+        // - END 50 is in (40, 60), adjusted: 50 + (40-60) = 30
+        // - New node: [20, 30) - valid range, ULID preserved
         let tracker = RegionIdTracker::new();
         let uri = test_uri("node_b");
 
-        // Create node at [30, 40)
-        let _ulid_original = tracker.get_or_create(&uri, 30, 40, "block");
+        // Create node at [20, 50)
+        let ulid_original = tracker.get_or_create(&uri, 20, 50, "block");
 
-        // Edit overlaps end: [35, 50) → delete 15 bytes
+        // Edit overlaps end: [40, 60) → delete 20 bytes (delta = -20)
         let old_text = text_with_markers(100);
         let mut new_text = old_text.clone();
-        new_text.replace_range(35..50, "");
+        new_text.replace_range(40..60, "");
 
         tracker.apply_text_change(&uri, &old_text, &new_text);
 
         // After edit, node should:
-        // - START unchanged (30 not in [35, 50))
-        // - END absorbed and adjusted: 40 - 15 = 25? No, end is 40 which is < 50
-        // Actually: end_byte is 40, edit is [35,50), so end is inside edit range
-        // But START is what matters for invalidation. END just gets adjusted.
-        // END adjustment: 40 is in (35, 50), so it's inside edit range
-        // Since 40 > 35 (edit start), we adjust: 40 + (35 - 50) = 40 - 15 = 25
-        // But that would make it less than START (30), causing range collapse
-        // Let me recalculate: delta = new_end - old_end = 35 - 50 = -15
-        // For Node B at [30, 40): end_byte (40) > edit.start (35), so adjust end
-        // new_end = 40 + (-15) = 25, which is < start (30) → INVALIDATED by range collapse
+        // - START unchanged (20 not in [40, 60))
+        // - END adjusted: 50 + (-20) = 30
+        // - Range [20, 30) is valid (30 > 20), so ULID preserved
+        let ulid_after = tracker.get(&uri, 20, 30, "block");
+        assert_eq!(
+            Some(ulid_original),
+            ulid_after,
+            "Node B should preserve ULID at adjusted position [20, 30)"
+        );
 
-        // This test is actually testing range collapse, not Node B preservation
-        // Let me fix this to properly test Node B case
+        // Verify old position no longer exists
+        assert_eq!(
+            tracker.get(&uri, 20, 50, "block"),
+            None,
+            "Old position [20, 50) should be removed"
+        );
     }
 
     #[test]
