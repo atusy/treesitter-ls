@@ -1916,6 +1916,206 @@ mod tests {
         );
     }
 
+    #[test]
+    fn definition_response_mixed_array_filters_only_cross_region() {
+        // CRITICAL TEST: Mixed array with real file, same virtual, and cross-region URIs
+        // Only cross-region virtual URIs should be filtered; others preserved
+        let request_virtual_uri = "file:///.treesitter-ls/abc/region-0.lua";
+        let cross_region_uri = "file:///.treesitter-ls/abc/region-1.lua";
+        let real_file_uri = "file:///real/utils.lua";
+
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "uri": real_file_uri,
+                    "range": { "start": { "line": 10, "character": 0 }, "end": { "line": 10, "character": 5 } }
+                },
+                {
+                    "uri": request_virtual_uri,
+                    "range": { "start": { "line": 2, "character": 0 }, "end": { "line": 2, "character": 8 } }
+                },
+                {
+                    "uri": cross_region_uri,
+                    "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 3 } }
+                }
+            ]
+        });
+
+        let host_uri = "file:///doc.md";
+        let context = test_context(request_virtual_uri, host_uri, 5);
+
+        let transformed = transform_definition_response_to_host(response, &context);
+
+        let result = transformed["result"].as_array().unwrap();
+        assert_eq!(
+            result.len(),
+            2,
+            "Should have 2 items (cross-region filtered out)"
+        );
+
+        // First item: real file URI preserved as-is
+        assert_eq!(result[0]["uri"], real_file_uri);
+        assert_eq!(
+            result[0]["range"]["start"]["line"], 10,
+            "Real file coordinates unchanged"
+        );
+
+        // Second item: same virtual URI transformed to host
+        assert_eq!(result[1]["uri"], host_uri);
+        assert_eq!(
+            result[1]["range"]["start"]["line"], 7,
+            "Virtual coordinates offset by 5"
+        );
+    }
+
+    #[test]
+    fn definition_response_single_location_filtered_becomes_null() {
+        // When a single Location (not array) is filtered, result should become null
+        let request_virtual_uri = "file:///.treesitter-ls/abc/region-0.lua";
+        let cross_region_uri = "file:///.treesitter-ls/abc/region-1.lua";
+
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "uri": cross_region_uri,
+                "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 5 } }
+            }
+        });
+
+        let host_uri = "file:///doc.md";
+        let context = test_context(request_virtual_uri, host_uri, 5);
+
+        let transformed = transform_definition_response_to_host(response, &context);
+
+        assert!(
+            transformed["result"].is_null(),
+            "Single filtered Location should become null result"
+        );
+    }
+
+    #[test]
+    fn definition_response_single_location_link_filtered_becomes_null() {
+        // When a single LocationLink (not array) is filtered, result should become null
+        let request_virtual_uri = "file:///.treesitter-ls/abc/region-0.lua";
+        let cross_region_uri = "file:///.treesitter-ls/abc/region-1.lua";
+
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "originSelectionRange": {
+                    "start": { "line": 5, "character": 0 },
+                    "end": { "line": 5, "character": 10 }
+                },
+                "targetUri": cross_region_uri,
+                "targetRange": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 2, "character": 0 }
+                },
+                "targetSelectionRange": {
+                    "start": { "line": 0, "character": 6 },
+                    "end": { "line": 0, "character": 12 }
+                }
+            }
+        });
+
+        let host_uri = "file:///doc.md";
+        let context = test_context(request_virtual_uri, host_uri, 5);
+
+        let transformed = transform_definition_response_to_host(response, &context);
+
+        assert!(
+            transformed["result"].is_null(),
+            "Single filtered LocationLink should become null result"
+        );
+    }
+
+    #[test]
+    fn definition_response_single_location_link_same_region_transforms() {
+        // Single LocationLink (not array) with same virtual URI should be transformed
+        let virtual_uri = "file:///.treesitter-ls/abc/region-0.lua";
+
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "originSelectionRange": {
+                    "start": { "line": 5, "character": 0 },
+                    "end": { "line": 5, "character": 10 }
+                },
+                "targetUri": virtual_uri,
+                "targetRange": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 2, "character": 0 }
+                },
+                "targetSelectionRange": {
+                    "start": { "line": 0, "character": 6 },
+                    "end": { "line": 0, "character": 12 }
+                }
+            }
+        });
+
+        let host_uri = "file:///doc.md";
+        let context = test_context(virtual_uri, host_uri, 10);
+
+        let transformed = transform_definition_response_to_host(response, &context);
+
+        let result = &transformed["result"];
+        assert!(result.is_object(), "Result should remain an object");
+
+        // targetUri transformed to host
+        assert_eq!(result["targetUri"], host_uri);
+        // targetRange transformed (0 + 10 = 10)
+        assert_eq!(result["targetRange"]["start"]["line"], 10);
+        // targetSelectionRange transformed (0 + 10 = 10)
+        assert_eq!(result["targetSelectionRange"]["start"]["line"], 10);
+        // originSelectionRange unchanged (already in host coordinates)
+        assert_eq!(result["originSelectionRange"]["start"]["line"], 5);
+    }
+
+    #[test]
+    fn definition_response_location_link_array_filters_cross_region() {
+        // LocationLink array should filter cross-region URIs
+        let request_virtual_uri = "file:///.treesitter-ls/abc/region-0.lua";
+        let cross_region_uri = "file:///.treesitter-ls/abc/region-1.lua";
+
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "originSelectionRange": { "start": { "line": 1, "character": 0 }, "end": { "line": 1, "character": 5 } },
+                    "targetUri": request_virtual_uri,
+                    "targetRange": { "start": { "line": 0, "character": 0 }, "end": { "line": 1, "character": 0 } },
+                    "targetSelectionRange": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 3 } }
+                },
+                {
+                    "originSelectionRange": { "start": { "line": 2, "character": 0 }, "end": { "line": 2, "character": 5 } },
+                    "targetUri": cross_region_uri,
+                    "targetRange": { "start": { "line": 5, "character": 0 }, "end": { "line": 6, "character": 0 } },
+                    "targetSelectionRange": { "start": { "line": 5, "character": 0 }, "end": { "line": 5, "character": 3 } }
+                }
+            ]
+        });
+
+        let host_uri = "file:///doc.md";
+        let context = test_context(request_virtual_uri, host_uri, 3);
+
+        let transformed = transform_definition_response_to_host(response, &context);
+
+        let result = transformed["result"].as_array().unwrap();
+        assert_eq!(
+            result.len(),
+            1,
+            "Cross-region LocationLink should be filtered"
+        );
+        assert_eq!(result[0]["targetUri"], host_uri);
+        assert_eq!(result[0]["targetRange"]["start"]["line"], 3);
+    }
+
     // ==========================================================================
     // TypeDefinition request/response transformation tests
     // ==========================================================================

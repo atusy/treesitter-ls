@@ -31,6 +31,9 @@ Full LSP features in injection regions by bridging to language-specific servers.
 - Hover
 - Find References
 
+**Limitations:**
+- **Same-region navigation only**: Cross-region jumps/edits (e.g., go to Definition, rename, ...) are not supported—these results are filtered out.
+
 See [Configuration: Bridge](#bridge) for setup instructions.
 
 ## Prerequisites
