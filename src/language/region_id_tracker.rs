@@ -247,22 +247,27 @@ impl RegionIdTracker {
     }
 
     /// Apply a single edit operation with START-priority invalidation (ADR-0019).
-    fn apply_single_edit(&self, uri: &Url, edit: &EditInfo) {
+    ///
+    /// Returns ULIDs that were invalidated by this edit (for Phase 3 cleanup).
+    fn apply_single_edit(&self, uri: &Url, edit: &EditInfo) -> Vec<Ulid> {
         let delta = edit.delta();
+        let mut invalidated = Vec::new();
 
         let Some(mut entries) = self.entries.get_mut(uri) else {
-            return;
+            return invalidated;
         };
 
         let mut new_entries = HashMap::new();
 
         for (key, ulid) in entries.drain() {
             if Self::should_invalidate_node(&key, edit) {
+                invalidated.push(ulid);
                 continue; // INVALIDATE
             }
 
             // Position adjustment (returns None if range collapsed)
             let Some(new_key) = adjust_position_for_edit(key, edit, delta) else {
+                invalidated.push(ulid);
                 continue; // INVALIDATE: range collapsed
             };
 
@@ -290,11 +295,14 @@ impl RegionIdTracker {
                         "Position collision after edit - ULID mapping dropped: ulid={}, start={}, end={}, kind={}",
                         ulid, new_key.start_byte, new_key.end_byte, new_key.kind
                     );
+                    // Note: Collided ULID is also invalidated (both nodes can't coexist)
+                    invalidated.push(ulid);
                 }
             }
         }
 
         *entries = new_entries;
+        invalidated
     }
 
     /// Remove all tracked regions for a document.
