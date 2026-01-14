@@ -19,7 +19,9 @@ use crate::config::{
     resolve_language_settings_with_wildcard,
 };
 use crate::document::DocumentStore;
-use crate::language::injection::{CacheableInjectionRegion, collect_all_injections};
+use crate::language::injection::{
+    CacheableInjectionRegion, InjectionResolver, collect_all_injections,
+};
 use crate::language::region_id_tracker::RegionIdTracker;
 use crate::language::{DocumentParserPool, FailedParserRegistry, LanguageCoordinator};
 use crate::language::{LanguageEvent, LanguageLogLevel};
@@ -27,7 +29,6 @@ use crate::lsp::bridge::LanguageServerPool;
 use crate::lsp::{SettingsEvent, SettingsEventKind, SettingsSource, load_settings};
 use crate::text::PositionMapper;
 use arc_swap::ArcSwap;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -880,17 +881,23 @@ impl TreeSitterLs {
         }
 
         // Build (language, region_id, content) tuples for each injection
-        // Track ordinals per language for region_id generation
-        // TODO: If region_id format changes, also update InjectionResolver::calculate_region_id
-        let mut ordinals: HashMap<String, usize> = HashMap::new();
+        // Phase 1 (ADR-0019): Use RegionIdTracker for stable ULID-based region IDs
         let injections: Vec<(String, String, String)> = regions
             .iter()
-            .map(|region| {
-                let ordinal = ordinals.entry(region.language.clone()).or_insert(0);
-                let region_id = format!("{}-{}", region.language, *ordinal);
-                *ordinal += 1;
+            .enumerate()
+            .map(|(idx, region)| {
+                let region_id = InjectionResolver::calculate_region_id(
+                    &self.region_id_tracker,
+                    uri,
+                    &regions,
+                    idx,
+                );
                 let content = &text[region.content_node.byte_range()];
-                (region.language.clone(), region_id, content.to_string())
+                (
+                    region.language.clone(),
+                    region_id.to_string(),
+                    content.to_string(),
+                )
             })
             .collect();
 
