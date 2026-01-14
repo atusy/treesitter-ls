@@ -303,8 +303,8 @@ const scrum: ScrumDashboard = {
         test: "Integration test: send_document_highlight_request returns transformed highlights from downstream LS",
         implementation: "Add document_highlight.rs module with send_document_highlight_request method on LanguageServerPool",
         type: "behavioral",
-        status: "green",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "63162a08", message: "feat(bridge): add send_document_highlight_request method", phase: "green" }],
         notes: [
           "Create src/lsp/bridge/text_document/document_highlight.rs",
           "Follow references.rs pattern: get connection, send didOpen if needed, send request, transform response",
@@ -315,7 +315,7 @@ const scrum: ScrumDashboard = {
         test: "Integration test: document_highlight_impl bridges request when cursor is in injection region",
         implementation: "Add document_highlight_impl method in lsp_impl/text_document and wire to LanguageServer trait",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: [
           "Add document_highlight_impl in lsp_impl/text_document/document_highlight.rs",
