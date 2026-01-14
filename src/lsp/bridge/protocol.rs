@@ -447,6 +447,38 @@ pub(crate) fn build_bridge_rename_request(
     request
 }
 
+/// Build a JSON-RPC document link request for a downstream language server.
+///
+/// Unlike position-based requests (hover, definition, etc.), DocumentLinkParams
+/// only has a textDocument field - no position. The request asks for all links
+/// in the entire document.
+///
+/// # Arguments
+/// * `host_uri` - The URI of the host document
+/// * `injection_language` - The injection language (e.g., "lua")
+/// * `region_id` - The unique region ID for this injection
+/// * `request_id` - The JSON-RPC request ID
+pub(crate) fn build_bridge_document_link_request(
+    host_uri: &tower_lsp::lsp_types::Url,
+    injection_language: &str,
+    region_id: &str,
+    request_id: i64,
+) -> serde_json::Value {
+    // Create virtual document URI
+    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/documentLink",
+        "params": {
+            "textDocument": {
+                "uri": virtual_uri.to_uri_string()
+            }
+        }
+    })
+}
+
 /// Build a JSON-RPC didOpen notification for a downstream language server.
 ///
 /// Sends the initial document content to the downstream language server when
@@ -3317,5 +3349,55 @@ mod tests {
 
         let transformed = transform_workspace_edit_to_host(response.clone(), &context);
         assert_eq!(transformed, response);
+    }
+
+    // ==========================================================================
+    // Document link request/response transformation tests
+    // ==========================================================================
+
+    #[test]
+    fn document_link_request_uses_virtual_uri() {
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+
+        let request = build_bridge_document_link_request(&host_uri, "lua", "region-0", 42);
+
+        let uri_str = request["params"]["textDocument"]["uri"].as_str().unwrap();
+        assert!(
+            uri_str.starts_with("file:///.treesitter-ls/") && uri_str.ends_with(".lua"),
+            "Request should use virtual URI: {}",
+            uri_str
+        );
+    }
+
+    #[test]
+    fn document_link_request_has_correct_method_and_structure() {
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+
+        let request = build_bridge_document_link_request(&host_uri, "lua", "region-0", 42);
+
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], 42);
+        assert_eq!(request["method"], "textDocument/documentLink");
+        // DocumentLinkParams only has textDocument field - no position
+        assert!(
+            request["params"].get("position").is_none(),
+            "DocumentLinkParams should not have position field"
+        );
+    }
+
+    #[test]
+    fn document_link_request_different_languages_produce_different_extensions() {
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+
+        let lua_request = build_bridge_document_link_request(&host_uri, "lua", "region-0", 1);
+        let python_request = build_bridge_document_link_request(&host_uri, "python", "region-0", 2);
+
+        let lua_uri = lua_request["params"]["textDocument"]["uri"].as_str().unwrap();
+        let python_uri = python_request["params"]["textDocument"]["uri"]
+            .as_str()
+            .unwrap();
+
+        assert!(lua_uri.ends_with(".lua"));
+        assert!(python_uri.ends_with(".py"));
     }
 }
