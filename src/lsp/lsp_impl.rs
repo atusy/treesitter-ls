@@ -51,6 +51,77 @@ fn lsp_legend_modifiers() -> Vec<SemanticTokenModifier> {
         .collect()
 }
 
+/// Apply content changes to text and build tree-sitter InputEdits.
+///
+/// Processes LSP TextDocumentContentChangeEvent items, handling both:
+/// - Incremental changes (with range) → builds InputEdit for tree-sitter
+/// - Full document changes (without range) → replaces entire text
+///
+/// Returns the updated text and collected edits for incremental parsing.
+fn apply_content_changes_with_edits(
+    old_text: &str,
+    content_changes: Vec<TextDocumentContentChangeEvent>,
+) -> (String, Vec<InputEdit>) {
+    let mut text = old_text.to_string();
+    let mut edits = Vec::new();
+
+    for change in content_changes {
+        if let Some(range) = change.range {
+            // Incremental change - create InputEdit for tree editing
+            let mapper = PositionMapper::new(&text);
+            let start_offset = mapper.position_to_byte(range.start).unwrap_or(text.len());
+            let end_offset = mapper.position_to_byte(range.end).unwrap_or(text.len());
+            let new_end_offset = start_offset + change.text.len();
+
+            // Calculate the new end position for tree-sitter (using byte columns)
+            let lines: Vec<&str> = change.text.split('\n').collect();
+            let line_count = lines.len();
+            // last_line_len is in BYTES (not UTF-16) because .len() on &str returns byte count
+            let last_line_len = lines.last().map(|l| l.len()).unwrap_or(0);
+
+            // Get start position with proper byte column conversion
+            let start_point =
+                mapper
+                    .position_to_point(range.start)
+                    .unwrap_or(tree_sitter::Point::new(
+                        range.start.line as usize,
+                        start_offset,
+                    ));
+
+            // Calculate new end Point (tree-sitter uses byte columns)
+            let new_end_point = if line_count > 1 {
+                // New content spans multiple lines
+                tree_sitter::Point::new(start_point.row + line_count - 1, last_line_len)
+            } else {
+                // New content is on same line as start
+                tree_sitter::Point::new(start_point.row, start_point.column + last_line_len)
+            };
+
+            // Create InputEdit for incremental parsing
+            let edit = InputEdit {
+                start_byte: start_offset,
+                old_end_byte: end_offset,
+                new_end_byte: new_end_offset,
+                start_position: start_point,
+                old_end_position: mapper
+                    .position_to_point(range.end)
+                    .unwrap_or(tree_sitter::Point::new(range.end.line as usize, end_offset)),
+                new_end_position: new_end_point,
+            };
+            edits.push(edit);
+
+            // Replace the range with new text
+            text.replace_range(start_offset..end_offset, &change.text);
+        } else {
+            // Full document change - no incremental parsing
+            text = change.text;
+            edits.clear(); // Clear any previous edits since it's a full replacement
+        }
+    }
+
+    (text, edits)
+}
+
 pub struct TreeSitterLs {
     client: Client,
     language: LanguageCoordinator,
@@ -247,6 +318,38 @@ impl TreeSitterLs {
                 }
             }
         }
+    }
+
+    /// Send didClose for invalidated virtual documents (Phase 3).
+    ///
+    /// When region IDs are invalidated (e.g., due to edits touching their START),
+    /// the corresponding virtual documents become orphaned in downstream LSs.
+    /// This method cleans them up by:
+    ///
+    /// 1. Clearing injection token cache for invalidated ULIDs
+    /// 2. Delegating to LanguageServerPool for tracking cleanup and didClose
+    ///
+    /// Documents that were never opened (not in host_to_virtual) are automatically
+    /// skipped - they don't need didClose since didOpen was never sent.
+    async fn close_invalidated_virtual_docs(
+        &self,
+        host_uri: &Url,
+        invalidated_ulids: &[ulid::Ulid],
+    ) {
+        if invalidated_ulids.is_empty() {
+            return;
+        }
+
+        // Clear injection token cache for invalidated ULIDs
+        for ulid in invalidated_ulids {
+            self.injection_token_cache
+                .remove(host_uri, &ulid.to_string());
+        }
+
+        // Delegate to pool for tracking cleanup and didClose notifications
+        self.language_server_pool
+            .close_invalidated_docs(host_uri, invalidated_ulids)
+            .await;
     }
 
     /// Populate InjectionMap with injection regions from the parsed tree.
@@ -1277,74 +1380,15 @@ impl LanguageServer for TreeSitterLs {
             }
         };
 
-        let mut text = old_text.clone();
-        let mut edits = Vec::new();
-
-        // Apply incremental changes to the text and collect edit information
-        for change in params.content_changes {
-            if let Some(range) = change.range {
-                // Incremental change - create InputEdit for tree editing
-                let mapper = PositionMapper::new(&text);
-                let start_offset = mapper.position_to_byte(range.start).unwrap_or(text.len());
-                let end_offset = mapper.position_to_byte(range.end).unwrap_or(text.len());
-                let new_end_offset = start_offset + change.text.len();
-
-                // Calculate the new end position for tree-sitter (using byte columns)
-                let lines: Vec<&str> = change.text.split('\n').collect();
-                let line_count = lines.len();
-                // last_line_len is in BYTES (not UTF-16) because .len() on &str returns byte count
-                let last_line_len = lines.last().map(|l| l.len()).unwrap_or(0);
-
-                // Get start position with proper byte column conversion
-                let start_point =
-                    mapper
-                        .position_to_point(range.start)
-                        .unwrap_or(tree_sitter::Point::new(
-                            range.start.line as usize,
-                            start_offset,
-                        ));
-
-                // Calculate new end Point (tree-sitter uses byte columns)
-                let new_end_point = if line_count > 1 {
-                    // New content spans multiple lines
-                    tree_sitter::Point::new(
-                        start_point.row + line_count - 1,
-                        last_line_len, // byte length of last line
-                    )
-                } else {
-                    // New content is on same line as start
-                    tree_sitter::Point::new(
-                        start_point.row,
-                        start_point.column + last_line_len, // add byte length
-                    )
-                };
-
-                // Create InputEdit for incremental parsing
-                let edit = InputEdit {
-                    start_byte: start_offset,
-                    old_end_byte: end_offset,
-                    new_end_byte: new_end_offset,
-                    start_position: start_point,
-                    old_end_position: mapper
-                        .position_to_point(range.end)
-                        .unwrap_or(tree_sitter::Point::new(range.end.line as usize, end_offset)),
-                    new_end_position: new_end_point,
-                };
-                edits.push(edit);
-
-                // Replace the range with new text
-                text.replace_range(start_offset..end_offset, &change.text);
-            } else {
-                // Full document change - no incremental parsing
-                text = change.text;
-                edits.clear(); // Clear any previous edits since it's a full replacement
-            }
-        }
+        // Apply content changes and build tree-sitter edits
+        let (text, edits) = apply_content_changes_with_edits(&old_text, params.content_changes);
 
         // Phase 2 (ADR-0019): Apply START-priority invalidation to region ID tracker
         // This must be called AFTER content changes are applied (so we have new text)
         // but BEFORE parse_document (so position sync happens before new tree is built)
-        self.region_id_tracker
+        // Returns ULIDs that were invalidated (Phase 3)
+        let invalidated_ulids = self
+            .region_id_tracker
             .apply_text_change(&uri, &old_text, &text);
 
         // Invalidate injection caches for regions overlapping with edits (AC4/AC5)
@@ -1363,6 +1407,11 @@ impl LanguageServer for TreeSitterLs {
 
         // Forward didChange to opened virtual documents in bridge
         self.forward_didchange_to_bridges(&uri, &text_for_bridge)
+            .await;
+
+        // Phase 3 (ADR-0019): Close invalidated virtual documents
+        // Send didClose notifications to downstream LSs for orphaned docs
+        self.close_invalidated_virtual_docs(&uri, &invalidated_ulids)
             .await;
 
         // Check for injected languages and trigger auto-install for missing parsers

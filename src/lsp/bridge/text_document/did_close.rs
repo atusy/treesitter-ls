@@ -1,11 +1,12 @@
 //! didClose notification handling for bridge connections.
 //!
 //! This module provides didClose notification functionality for downstream language servers,
-//! handling cleanup when host documents are closed.
+//! handling cleanup when host documents are closed or regions are invalidated.
 
 use std::io;
 use std::sync::Arc;
 use tower_lsp::lsp_types::Url;
+use ulid::Ulid;
 
 use super::super::pool::{ConnectionState, LanguageServerPool, OpenedVirtualDoc};
 
@@ -57,6 +58,26 @@ impl LanguageServerPool {
         conn.write_message(&notification).await
     }
 
+    /// Close a single virtual document: send didClose and remove from tracking.
+    ///
+    /// This is the core cleanup operation used by both `close_host_document`
+    /// and `close_invalidated_docs`. Errors are logged but do not prevent
+    /// cleanup of the document_versions tracking.
+    async fn close_single_virtual_doc(&self, doc: &OpenedVirtualDoc) {
+        if let Err(e) = self
+            .send_didclose_notification(&doc.language, &doc.virtual_uri)
+            .await
+        {
+            log::warn!(
+                target: "treesitter_ls::bridge",
+                "Failed to send didClose for {}: {}",
+                doc.virtual_uri, e
+            );
+        }
+        self.remove_document_version(&doc.language, &doc.virtual_uri)
+            .await;
+    }
+
     /// Close all virtual documents associated with a host document.
     ///
     /// When a host document (e.g., markdown file) is closed, this method:
@@ -79,16 +100,40 @@ impl LanguageServerPool {
 
         // 2. For each virtual doc: send didClose and remove from document_versions
         for doc in &virtual_docs {
-            // Send didClose notification (best effort - ignore errors)
-            let _ = self
-                .send_didclose_notification(&doc.language, &doc.virtual_uri)
-                .await;
-
-            // Remove from document_versions
-            self.remove_document_version(&doc.language, &doc.virtual_uri)
-                .await;
+            self.close_single_virtual_doc(doc).await;
         }
 
         virtual_docs
+    }
+
+    /// Close invalidated virtual documents (Phase 3).
+    ///
+    /// When region IDs are invalidated by edits, their corresponding virtual
+    /// documents become orphaned in downstream LSs. This method:
+    ///
+    /// 1. Atomically removes matching docs from host_to_virtual tracking
+    /// 2. Sends didClose notifications for each (best effort)
+    /// 3. Removes from document_versions tracking
+    ///
+    /// Documents that were never opened are automatically skipped.
+    ///
+    /// # Arguments
+    /// * `host_uri` - The host document URI
+    /// * `invalidated_ulids` - ULIDs that were invalidated by edits
+    pub(crate) async fn close_invalidated_docs(&self, host_uri: &Url, invalidated_ulids: &[Ulid]) {
+        // Atomically remove matching docs from host_to_virtual
+        let to_close = self
+            .remove_matching_virtual_docs(host_uri, invalidated_ulids)
+            .await;
+
+        if to_close.is_empty() {
+            // All invalidated ULIDs were never opened - nothing to close
+            return;
+        }
+
+        // Send didClose and clean up tracking for each closed doc
+        for doc in &to_close {
+            self.close_single_virtual_doc(doc).await;
+        }
     }
 }

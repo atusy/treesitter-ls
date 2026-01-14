@@ -40,6 +40,19 @@ impl VirtualDocumentUri {
         }
     }
 
+    /// Extract region_id from a virtual document URI string.
+    ///
+    /// This is the inverse of `to_uri_string()` for the region_id component.
+    /// URI format: `file:///.treesitter-ls/{host_hash}/{region_id}.{ext}`
+    ///
+    /// Returns `None` if the URI doesn't match the expected format.
+    pub(crate) fn extract_region_id(uri_string: &str) -> Option<&str> {
+        // Find the last '/' to get the filename
+        let filename = uri_string.rsplit('/').next()?;
+        // Remove the extension (find last '.')
+        filename.rsplit_once('.').map(|(name, _)| name)
+    }
+
     /// Convert to a URI string.
     ///
     /// Format: `file:///.treesitter-ls/{host_path_hash}/{region_id}.{ext}`

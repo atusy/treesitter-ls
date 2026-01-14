@@ -10,6 +10,7 @@ use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
+use log::warn;
 use tokio::sync::Mutex;
 use tower_lsp::lsp_types::Url;
 
@@ -78,15 +79,35 @@ impl ConnectionHandle {
     /// Get the current connection state.
     ///
     /// Uses std::sync::RwLock for fast, non-blocking read access.
+    /// Recovers from poisoned locks with logging per project convention.
     pub(crate) fn state(&self) -> ConnectionState {
-        *self.state.read().expect("state lock poisoned")
+        match self.state.read() {
+            Ok(guard) => *guard,
+            Err(poisoned) => {
+                warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned state lock in ConnectionHandle::state()"
+                );
+                *poisoned.into_inner()
+            }
+        }
     }
 
     /// Set the connection state.
     ///
     /// Used during initialization to transition to Ready or Failed.
-    pub(crate) fn set_state(&self, state: ConnectionState) {
-        *self.state.write().expect("state lock poisoned") = state;
+    /// Recovers from poisoned locks with logging per project convention.
+    pub(crate) fn set_state(&self, new_state: ConnectionState) {
+        match self.state.write() {
+            Ok(mut guard) => *guard = new_state,
+            Err(poisoned) => {
+                warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned state lock in ConnectionHandle::set_state()"
+                );
+                *poisoned.into_inner() = new_state;
+            }
+        }
     }
 
     /// Get access to the underlying async connection.
@@ -154,10 +175,59 @@ impl LanguageServerPool {
         host_map.get(host_uri).cloned().unwrap_or_default()
     }
 
+    /// Take virtual documents matching the given ULIDs, removing them from tracking.
+    ///
+    /// This is atomic: lookup and removal happen in a single lock acquisition,
+    /// preventing race conditions with concurrent didOpen requests.
+    ///
+    /// Returns the removed documents (for sending didClose). Documents that
+    /// were never opened (not in host_to_virtual) are not returned.
+    ///
+    /// # Arguments
+    /// * `host_uri` - The host document URI
+    /// * `invalidated_ulids` - ULIDs to match against virtual document URIs
+    pub(crate) async fn remove_matching_virtual_docs(
+        &self,
+        host_uri: &Url,
+        invalidated_ulids: &[ulid::Ulid],
+    ) -> Vec<OpenedVirtualDoc> {
+        if invalidated_ulids.is_empty() {
+            return Vec::new();
+        }
+
+        // Convert ULIDs to strings for matching
+        let ulid_strs: std::collections::HashSet<String> =
+            invalidated_ulids.iter().map(|u| u.to_string()).collect();
+
+        let mut host_map = self.host_to_virtual.lock().await;
+        let Some(docs) = host_map.get_mut(host_uri) else {
+            return Vec::new();
+        };
+
+        // Partition: matching docs to return, non-matching to keep
+        let mut to_close = Vec::new();
+        docs.retain(|doc| {
+            // Check if any ULID string is contained in the virtual_uri
+            let should_close =
+                super::protocol::VirtualDocumentUri::extract_region_id(&doc.virtual_uri)
+                    .map(|region_id| ulid_strs.contains(region_id))
+                    .unwrap_or(false);
+            if should_close {
+                to_close.push(doc.clone());
+                false // Remove from host_to_virtual
+            } else {
+                true // Keep in host_to_virtual
+            }
+        });
+
+        to_close
+    }
+
     /// Remove a document from the version tracking.
     ///
-    /// Used by did_close module for cleanup.
-    pub(super) async fn remove_document_version(&self, language: &str, virtual_uri: &str) {
+    /// Used by did_close module for cleanup, and by Phase 3
+    /// close_invalidated_virtual_docs for invalidated region cleanup.
+    pub(crate) async fn remove_document_version(&self, language: &str, virtual_uri: &str) {
         let mut versions = self.document_versions.lock().await;
         if let Some(docs) = versions.get_mut(language) {
             docs.remove(virtual_uri);
@@ -1569,6 +1639,160 @@ mod tests {
             handle.state(),
             ConnectionState::Failed,
             "Cached handle should have Failed state"
+        );
+    }
+
+    // ========================================
+    // Phase 3 Tests: remove_matching_virtual_docs
+    // ========================================
+
+    fn test_host_uri(name: &str) -> Url {
+        Url::parse(&format!("file:///test/{}.md", name)).unwrap()
+    }
+
+    #[tokio::test]
+    async fn remove_matching_virtual_docs_removes_matching_docs() {
+        use super::super::protocol::VirtualDocumentUri;
+
+        let pool = LanguageServerPool::new();
+        let host_uri = test_host_uri("phase3_take");
+
+        // Register some virtual docs using should_send_didopen
+        // Use VirtualDocumentUri to generate URIs in the correct format
+        let virtual_uri_1 =
+            VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0).to_uri_string();
+        let virtual_uri_2 =
+            VirtualDocumentUri::new(&host_uri, "python", TEST_ULID_PYTHON_0).to_uri_string();
+
+        pool.should_send_didopen(&host_uri, "lua", &virtual_uri_1)
+            .await;
+        pool.should_send_didopen(&host_uri, "python", &virtual_uri_2)
+            .await;
+
+        // Parse the ULIDs for matching
+        let ulid_lua: ulid::Ulid = TEST_ULID_LUA_0.parse().unwrap();
+
+        // Take only the Lua ULID
+        let taken = pool
+            .remove_matching_virtual_docs(&host_uri, &[ulid_lua])
+            .await;
+
+        // Should return the Lua doc
+        assert_eq!(taken.len(), 1, "Should take exactly one doc");
+        assert_eq!(taken[0].language, "lua", "Should be the Lua doc");
+        assert!(
+            taken[0].virtual_uri.contains(TEST_ULID_LUA_0),
+            "Should contain the Lua ULID"
+        );
+
+        // Verify remaining docs in host_to_virtual
+        let host_map = pool.host_to_virtual.lock().await;
+        let remaining = host_map.get(&host_uri).unwrap();
+        assert_eq!(remaining.len(), 1, "Should have one remaining doc");
+        assert_eq!(remaining[0].language, "python", "Python doc should remain");
+    }
+
+    #[tokio::test]
+    async fn remove_matching_virtual_docs_returns_empty_for_no_match() {
+        use super::super::protocol::VirtualDocumentUri;
+
+        let pool = LanguageServerPool::new();
+        let host_uri = test_host_uri("phase3_no_match");
+
+        // Register a virtual doc
+        let virtual_uri =
+            VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0).to_uri_string();
+        pool.should_send_didopen(&host_uri, "lua", &virtual_uri)
+            .await;
+
+        // Try to take a different ULID
+        let other_ulid: ulid::Ulid = TEST_ULID_LUA_1.parse().unwrap();
+        let taken = pool
+            .remove_matching_virtual_docs(&host_uri, &[other_ulid])
+            .await;
+
+        assert!(taken.is_empty(), "Should return empty when no ULIDs match");
+
+        // Original doc should still be there
+        let host_map = pool.host_to_virtual.lock().await;
+        let remaining = host_map.get(&host_uri).unwrap();
+        assert_eq!(remaining.len(), 1, "Original doc should remain");
+    }
+
+    #[tokio::test]
+    async fn remove_matching_virtual_docs_returns_empty_for_unknown_host() {
+        let pool = LanguageServerPool::new();
+        let host_uri = test_host_uri("phase3_unknown_host");
+
+        let ulid: ulid::Ulid = TEST_ULID_LUA_0.parse().unwrap();
+        let taken = pool.remove_matching_virtual_docs(&host_uri, &[ulid]).await;
+
+        assert!(taken.is_empty(), "Should return empty for unknown host URI");
+    }
+
+    #[tokio::test]
+    async fn remove_matching_virtual_docs_returns_empty_for_empty_ulids() {
+        use super::super::protocol::VirtualDocumentUri;
+
+        let pool = LanguageServerPool::new();
+        let host_uri = test_host_uri("phase3_empty_ulids");
+
+        // Register a virtual doc
+        let virtual_uri =
+            VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0).to_uri_string();
+        pool.should_send_didopen(&host_uri, "lua", &virtual_uri)
+            .await;
+
+        // Take with empty ULID list (fast path)
+        let taken = pool.remove_matching_virtual_docs(&host_uri, &[]).await;
+
+        assert!(taken.is_empty(), "Should return empty for empty ULID list");
+
+        // Original doc should still be there
+        let host_map = pool.host_to_virtual.lock().await;
+        let remaining = host_map.get(&host_uri).unwrap();
+        assert_eq!(remaining.len(), 1, "Original doc should remain");
+    }
+
+    #[tokio::test]
+    async fn remove_matching_virtual_docs_takes_multiple_docs() {
+        use super::super::protocol::VirtualDocumentUri;
+
+        let pool = LanguageServerPool::new();
+        let host_uri = test_host_uri("phase3_multiple");
+
+        // Register multiple virtual docs using VirtualDocumentUri for proper URI format
+        let virtual_uri_1 =
+            VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0).to_uri_string();
+        let virtual_uri_2 =
+            VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_1).to_uri_string();
+        let virtual_uri_3 =
+            VirtualDocumentUri::new(&host_uri, "python", TEST_ULID_PYTHON_0).to_uri_string();
+
+        pool.should_send_didopen(&host_uri, "lua", &virtual_uri_1)
+            .await;
+        pool.should_send_didopen(&host_uri, "lua", &virtual_uri_2)
+            .await;
+        pool.should_send_didopen(&host_uri, "python", &virtual_uri_3)
+            .await;
+
+        // Take both Lua ULIDs
+        let ulid_1: ulid::Ulid = TEST_ULID_LUA_0.parse().unwrap();
+        let ulid_2: ulid::Ulid = TEST_ULID_LUA_1.parse().unwrap();
+
+        let taken = pool
+            .remove_matching_virtual_docs(&host_uri, &[ulid_1, ulid_2])
+            .await;
+
+        assert_eq!(taken.len(), 2, "Should take both Lua docs");
+
+        // Verify Python doc remains
+        let host_map = pool.host_to_virtual.lock().await;
+        let remaining = host_map.get(&host_uri).unwrap();
+        assert_eq!(remaining.len(), 1, "Python doc should remain");
+        assert_eq!(
+            remaining[0].language, "python",
+            "Remaining doc should be Python"
         );
     }
 }
