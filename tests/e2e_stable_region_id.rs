@@ -24,41 +24,10 @@
 
 mod helpers;
 
-use helpers::lsp_client::LspClient;
+use helpers::lua_bridge::{
+    create_lua_configured_client, shutdown_client, skip_if_lua_ls_unavailable,
+};
 use serde_json::json;
-
-/// Helper to check if lua-language-server is available
-fn is_lua_ls_available() -> bool {
-    std::process::Command::new("lua-language-server")
-        .arg("--version")
-        .output()
-        .is_ok()
-}
-
-/// Helper to create a client with lua-language-server configured
-fn create_configured_client() -> LspClient {
-    let mut client = LspClient::new();
-
-    // Initialize handshake with language server configuration
-    let _init_response = client.send_request(
-        "initialize",
-        json!({
-            "processId": std::process::id(),
-            "rootUri": null,
-            "capabilities": {},
-            "initializationOptions": {
-                "languageServers": {
-                    "lua-language-server": {
-                        "cmd": ["lua-language-server"],
-                        "languages": ["lua"]
-                    }
-                }
-            }
-        }),
-    );
-    client.send_notification("initialized", json!({}));
-    client
-}
 
 /// E2E test: hover then complete on same Lua block shares virtual document URI
 ///
@@ -67,14 +36,11 @@ fn create_configured_client() -> LspClient {
 /// - First access sends didOpen, subsequent access sends didChange (not didOpen again)
 #[test]
 fn e2e_hover_then_completion_on_same_lua_block_shares_uri() {
-    if !is_lua_ls_available() {
-        eprintln!("SKIP: lua-language-server not found in PATH");
-        eprintln!("Install lua-language-server to run this test:");
-        eprintln!("  brew install lua-language-server");
+    if skip_if_lua_ls_unavailable() {
         return;
     }
 
-    let mut client = create_configured_client();
+    let mut client = create_lua_configured_client();
 
     // Open markdown document with a Lua code block containing a variable
     // We'll hover on and complete from this variable
@@ -161,8 +127,7 @@ More text.
     println!("Hover and completion share the same virtual document URI (stable region_id)");
 
     // Clean shutdown
-    let _shutdown_response = client.send_request("shutdown", json!(null));
-    client.send_notification("exit", json!(null));
+    shutdown_client(&mut client);
 }
 
 /// E2E test: multiple Lua blocks have different stable region_ids
@@ -170,14 +135,11 @@ More text.
 /// This verifies that lua-0 and lua-1 are correctly assigned to different blocks.
 #[test]
 fn e2e_multiple_lua_blocks_have_distinct_region_ids() {
-    if !is_lua_ls_available() {
-        eprintln!("SKIP: lua-language-server not found in PATH");
-        eprintln!("Install lua-language-server to run this test:");
-        eprintln!("  brew install lua-language-server");
+    if skip_if_lua_ls_unavailable() {
         return;
     }
 
-    let mut client = create_configured_client();
+    let mut client = create_lua_configured_client();
 
     // Open markdown document with TWO Lua code blocks
     let markdown_content = r#"# Test Document
@@ -254,6 +216,5 @@ More text.
     println!("Multiple Lua blocks have distinct stable region_ids (lua-0, lua-1)");
 
     // Clean shutdown
-    let _shutdown_response = client.send_request("shutdown", json!(null));
-    client.send_notification("exit", json!(null));
+    shutdown_client(&mut client);
 }
