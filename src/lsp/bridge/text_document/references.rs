@@ -10,8 +10,8 @@ use tower_lsp::lsp_types::{Position, Url};
 
 use super::super::pool::LanguageServerPool;
 use super::super::protocol::{
-    VirtualDocumentUri, build_bridge_didopen_notification, build_bridge_references_request,
-    transform_definition_response_to_host,
+    ResponseTransformContext, VirtualDocumentUri, build_bridge_didopen_notification,
+    build_bridge_references_request, transform_definition_response_to_host,
 };
 
 impl LanguageServerPool {
@@ -46,6 +46,7 @@ impl LanguageServerPool {
 
         // Build virtual document URI
         let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+        let virtual_uri_string = virtual_uri.to_uri_string();
 
         // Send didOpen notification only if document hasn't been opened yet
         if self.should_send_didopen(host_uri, &virtual_uri).await {
@@ -66,6 +67,13 @@ impl LanguageServerPool {
         );
         conn.write_message(&references_request).await?;
 
+        // Build transformation context for response handling
+        let context = ResponseTransformContext {
+            request_virtual_uri: virtual_uri_string,
+            request_host_uri: host_uri.as_str().to_string(),
+            request_region_start_line: region_start_line,
+        };
+
         // Wait for the references response (skip notifications)
         loop {
             let msg = conn.read_message().await?;
@@ -74,11 +82,8 @@ impl LanguageServerPool {
             {
                 // Transform response to host coordinates and URI
                 // Reuse transform_definition_response_to_host (same Location[] format per LSP spec)
-                return Ok(transform_definition_response_to_host(
-                    msg,
-                    region_start_line,
-                    host_uri.as_str(),
-                ));
+                // Cross-region virtual URIs are filtered out
+                return Ok(transform_definition_response_to_host(msg, &context));
             }
             // Skip notifications and other responses
         }
