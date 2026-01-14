@@ -1291,9 +1291,9 @@ mod tests {
     }
 
     #[test]
-    fn test_calculate_region_id_mixed_languages_different_ulids() {
-        // Test that Lua-Python-Lua blocks produce different ULIDs per ordinal
-        // This verifies ordinals are per-language, not global
+    fn test_calculate_region_id_different_positions_different_ulids() {
+        // Test that different injection positions produce different ULIDs
+        // Phase 2: Uses position-based keys (start_byte, end_byte, kind)
         let mut parser = create_rust_parser();
         let text = r#"fn main() { let a = "lua1"; let b = "python"; let c = "lua2"; }"#;
         let tree = parse_rust_code(&mut parser, text);
@@ -1333,22 +1333,22 @@ mod tests {
         let tracker = RegionIdTracker::new();
         let uri = test_uri("mixed");
 
-        // Verify each language/ordinal gets a different ULID
-        let ulid_lua_0 = InjectionResolver::calculate_region_id(&tracker, &uri, &injections, 0);
-        let ulid_python_0 = InjectionResolver::calculate_region_id(&tracker, &uri, &injections, 1);
-        let ulid_lua_1 = InjectionResolver::calculate_region_id(&tracker, &uri, &injections, 2);
+        // Phase 2: calculate_region_id uses position-based keys (not ordinals)
+        // Different positions → different ULIDs regardless of language
+        let ulid_0 = InjectionResolver::calculate_region_id(&tracker, &uri, &injections[0]);
+        let ulid_1 = InjectionResolver::calculate_region_id(&tracker, &uri, &injections[1]);
+        let ulid_2 = InjectionResolver::calculate_region_id(&tracker, &uri, &injections[2]);
 
-        // All different
-        assert_ne!(ulid_lua_0, ulid_python_0, "lua-0 != python-0");
-        assert_ne!(ulid_lua_0, ulid_lua_1, "lua-0 != lua-1");
-        assert_ne!(ulid_python_0, ulid_lua_1, "python-0 != lua-1");
+        // All different because they have different byte positions
+        assert_ne!(ulid_0, ulid_1, "Different positions should have different ULIDs");
+        assert_ne!(ulid_1, ulid_2, "Different positions should have different ULIDs");
+        assert_ne!(ulid_0, ulid_2, "Different positions should have different ULIDs");
 
-        // Same ordinal+language returns same ULID (stability)
-        let ulid_lua_0_again =
-            InjectionResolver::calculate_region_id(&tracker, &uri, &injections, 0);
+        // Same position returns same ULID (stability)
+        let ulid_0_again = InjectionResolver::calculate_region_id(&tracker, &uri, &injections[0]);
         assert_eq!(
-            ulid_lua_0, ulid_lua_0_again,
-            "Same key should return same ULID"
+            ulid_0, ulid_0_again,
+            "Same position key should return same ULID"
         );
     }
 
