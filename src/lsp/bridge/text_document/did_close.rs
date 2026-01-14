@@ -58,6 +58,26 @@ impl LanguageServerPool {
         conn.write_message(&notification).await
     }
 
+    /// Close a single virtual document: send didClose and remove from tracking.
+    ///
+    /// This is the core cleanup operation used by both `close_host_document`
+    /// and `close_invalidated_docs`. Errors are logged but do not prevent
+    /// cleanup of the document_versions tracking.
+    async fn close_single_virtual_doc(&self, doc: &OpenedVirtualDoc) {
+        if let Err(e) = self
+            .send_didclose_notification(&doc.language, &doc.virtual_uri)
+            .await
+        {
+            log::warn!(
+                target: "treesitter_ls::bridge",
+                "Failed to send didClose for {}: {}",
+                doc.virtual_uri, e
+            );
+        }
+        self.remove_document_version(&doc.language, &doc.virtual_uri)
+            .await;
+    }
+
     /// Close all virtual documents associated with a host document.
     ///
     /// When a host document (e.g., markdown file) is closed, this method:
@@ -80,14 +100,7 @@ impl LanguageServerPool {
 
         // 2. For each virtual doc: send didClose and remove from document_versions
         for doc in &virtual_docs {
-            // Send didClose notification (best effort - ignore errors)
-            let _ = self
-                .send_didclose_notification(&doc.language, &doc.virtual_uri)
-                .await;
-
-            // Remove from document_versions
-            self.remove_document_version(&doc.language, &doc.virtual_uri)
-                .await;
+            self.close_single_virtual_doc(doc).await;
         }
 
         virtual_docs
@@ -119,22 +132,8 @@ impl LanguageServerPool {
         }
 
         // Send didClose and clean up tracking for each closed doc
-        for doc in to_close {
-            // Send didClose notification (best effort - ignore errors)
-            if let Err(e) = self
-                .send_didclose_notification(&doc.language, &doc.virtual_uri)
-                .await
-            {
-                log::warn!(
-                    target: "treesitter_ls::bridge",
-                    "Failed to send didClose for invalidated doc {}: {}",
-                    doc.virtual_uri, e
-                );
-            }
-
-            // Remove from document_versions
-            self.remove_document_version(&doc.language, &doc.virtual_uri)
-                .await;
+        for doc in &to_close {
+            self.close_single_virtual_doc(doc).await;
         }
     }
 }
