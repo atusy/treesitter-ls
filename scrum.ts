@@ -64,7 +64,7 @@ const scrum: ScrumDashboard = {
     number: 3,
     pbi_id: "pbi-document-link",
     goal: "Bridge textDocument/documentLink with range transformation to host coordinates",
-    status: "planning",
+    status: "in_progress",
     subtasks: [
       {
         test: "Test build_bridge_document_link_request creates valid JSON-RPC request with virtual URI",
