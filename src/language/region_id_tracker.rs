@@ -184,4 +184,64 @@ mod tests {
             "ULID should be alphanumeric"
         );
     }
+
+    #[test]
+    fn test_concurrent_get_or_create_returns_same_ulid() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let tracker = Arc::new(RegionIdTracker::new());
+        let uri = test_uri("concurrent");
+
+        // Spawn 10 threads that all try to get_or_create the same key
+        let handles: Vec<_> = (0..10)
+            .map(|_| {
+                let tracker = Arc::clone(&tracker);
+                let uri = uri.clone();
+                thread::spawn(move || tracker.get_or_create(&uri, "lua", 0))
+            })
+            .collect();
+
+        // Collect all ULIDs
+        let ulids: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+
+        // All ULIDs should be identical (thread-safe get-or-create)
+        let first = &ulids[0];
+        assert!(
+            ulids.iter().all(|ulid| ulid == first),
+            "All concurrent get_or_create calls should return the same ULID"
+        );
+    }
+
+    #[test]
+    fn test_concurrent_different_keys_returns_different_ulids() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let tracker = Arc::new(RegionIdTracker::new());
+        let uri = test_uri("concurrent_diff");
+
+        // Spawn threads that get_or_create different ordinals
+        let handles: Vec<_> = (0..5)
+            .map(|ordinal| {
+                let tracker = Arc::clone(&tracker);
+                let uri = uri.clone();
+                thread::spawn(move || (ordinal, tracker.get_or_create(&uri, "lua", ordinal)))
+            })
+            .collect();
+
+        // Collect all (ordinal, ULID) pairs
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+
+        // All ULIDs should be different from each other
+        for i in 0..results.len() {
+            for j in (i + 1)..results.len() {
+                assert_ne!(
+                    results[i].1, results[j].1,
+                    "Different ordinals {} and {} should have different ULIDs",
+                    results[i].0, results[j].0
+                );
+            }
+        }
+    }
 }
