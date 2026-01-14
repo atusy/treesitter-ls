@@ -363,6 +363,26 @@ pub(crate) fn build_bridge_declaration_request(
     )
 }
 
+/// Build a JSON-RPC document highlight request for a downstream language server.
+pub(crate) fn build_bridge_document_highlight_request(
+    host_uri: &tower_lsp::lsp_types::Url,
+    host_position: tower_lsp::lsp_types::Position,
+    injection_language: &str,
+    region_id: &str,
+    region_start_line: u32,
+    request_id: i64,
+) -> serde_json::Value {
+    build_position_based_request(
+        host_uri,
+        host_position,
+        injection_language,
+        region_id,
+        region_start_line,
+        request_id,
+        "textDocument/documentHighlight",
+    )
+}
+
 /// Build a JSON-RPC references request for a downstream language server.
 ///
 /// Note: References request has an additional `context.includeDeclaration` parameter
@@ -2395,6 +2415,67 @@ mod tests {
         assert_eq!(
             request["params"]["context"]["includeDeclaration"], false,
             "Context should include includeDeclaration = false"
+        );
+    }
+
+    // ==========================================================================
+    // Document highlight request/response transformation tests
+    // ==========================================================================
+
+    #[test]
+    fn document_highlight_request_uses_virtual_uri() {
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        let host_position = Position {
+            line: 5,
+            character: 10,
+        };
+
+        let request = build_bridge_document_highlight_request(
+            &host_uri,
+            host_position,
+            "lua",
+            "region-0",
+            3,
+            42,
+        );
+
+        let uri_str = request["params"]["textDocument"]["uri"].as_str().unwrap();
+        assert!(
+            uri_str.starts_with("file:///.treesitter-ls/") && uri_str.ends_with(".lua"),
+            "Request should use virtual URI: {}",
+            uri_str
+        );
+    }
+
+    #[test]
+    fn document_highlight_request_translates_position_to_virtual_coordinates() {
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+        // Host line 5, region starts at line 3 -> virtual line 2
+        let host_position = Position {
+            line: 5,
+            character: 10,
+        };
+        let region_start_line = 3;
+
+        let request = build_bridge_document_highlight_request(
+            &host_uri,
+            host_position,
+            "lua",
+            "region-0",
+            region_start_line,
+            42,
+        );
+
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], 42);
+        assert_eq!(request["method"], "textDocument/documentHighlight");
+        assert_eq!(
+            request["params"]["position"]["line"], 2,
+            "Position line should be translated (5 - 3 = 2)"
+        );
+        assert_eq!(
+            request["params"]["position"]["character"], 10,
+            "Character should remain unchanged"
         );
     }
 }
