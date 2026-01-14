@@ -10,6 +10,7 @@ use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
+use log::warn;
 use tokio::sync::Mutex;
 use tower_lsp::lsp_types::Url;
 
@@ -78,15 +79,35 @@ impl ConnectionHandle {
     /// Get the current connection state.
     ///
     /// Uses std::sync::RwLock for fast, non-blocking read access.
+    /// Recovers from poisoned locks with logging per project convention.
     pub(crate) fn state(&self) -> ConnectionState {
-        *self.state.read().expect("state lock poisoned")
+        match self.state.read() {
+            Ok(guard) => *guard,
+            Err(poisoned) => {
+                warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned state lock in ConnectionHandle::state()"
+                );
+                *poisoned.into_inner()
+            }
+        }
     }
 
     /// Set the connection state.
     ///
     /// Used during initialization to transition to Ready or Failed.
-    pub(crate) fn set_state(&self, state: ConnectionState) {
-        *self.state.write().expect("state lock poisoned") = state;
+    /// Recovers from poisoned locks with logging per project convention.
+    pub(crate) fn set_state(&self, new_state: ConnectionState) {
+        match self.state.write() {
+            Ok(mut guard) => *guard = new_state,
+            Err(poisoned) => {
+                warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned state lock in ConnectionHandle::set_state()"
+                );
+                *poisoned.into_inner() = new_state;
+            }
+        }
     }
 
     /// Get access to the underlying async connection.
