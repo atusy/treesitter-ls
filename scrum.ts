@@ -9,18 +9,12 @@ const userStoryRoles = [
 
 const scrum: ScrumDashboard = {
   product_goal: {
-    statement:
-      "Implement LSP bridge to support essential language server features indirectly through bridging (ADR-0013, 0014, 0015, 0016, 0017, 0018)",
+    statement: "Improve LSP feature coverage via bridge",
     success_metrics: [
-      {
-        metric: "ADR alignment",
-        target:
-          "Must align with Phase 1 of ADR-0013, 0014, 0015, 0016, 0017, 0018 in @docs/adr",
-      },
       {
         metric: "Bridge coverage",
         target:
-          "Support completion, signatureHelp, codeAction, definition, typeDefinition, implementation, declaration, hover, references, rename",
+          "Support completion, signatureHelp, definition, typeDefinition, implementation, declaration, hover, references, document highlight, inlay hints, document link, document symbols, moniker, color presentation, rename",
       },
       {
         metric: "Modular architecture",
@@ -28,7 +22,7 @@ const scrum: ScrumDashboard = {
           "Bridge module organized with text_document/ subdirectory matching lsp_impl structure",
       },
       {
-        metric: "E2E test coverage",
+        metric: "E2E test coverage using treesitter-ls binary",
         target: "Each bridged feature has E2E test verifying end-to-end flow",
       },
     ],
