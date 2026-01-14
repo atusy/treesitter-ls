@@ -3174,4 +3174,143 @@ mod tests {
             "textDocument.uri should be replaced with host URI"
         );
     }
+
+    #[test]
+    fn workspace_edit_preserves_real_file_uris_in_changes() {
+        // Real file URIs (external dependencies) should pass through unchanged
+        let virtual_uri = "file:///.treesitter-ls/abc123/region-0.lua";
+        let real_file_uri = "file:///usr/share/lua/5.4/module.lua";
+        let host_uri = "file:///project/doc.md";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "changes": {
+                    virtual_uri: [{
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 3 }
+                        },
+                        "newText": "foo"
+                    }],
+                    real_file_uri: [{
+                        "range": {
+                            "start": { "line": 10, "character": 5 },
+                            "end": { "line": 10, "character": 8 }
+                        },
+                        "newText": "foo"
+                    }]
+                }
+            }
+        });
+        let context = ResponseTransformContext {
+            request_virtual_uri: virtual_uri.to_string(),
+            request_host_uri: host_uri.to_string(),
+            request_region_start_line: 3,
+        };
+
+        let transformed = transform_workspace_edit_to_host(response, &context);
+
+        let changes = transformed["result"]["changes"].as_object().unwrap();
+        // Real file URI should be preserved
+        assert!(
+            changes.contains_key(real_file_uri),
+            "Real file URI should be preserved"
+        );
+        // Real file URI ranges should NOT be transformed (different coordinate space)
+        let real_edits = changes[real_file_uri].as_array().unwrap();
+        assert_eq!(
+            real_edits[0]["range"]["start"]["line"], 10,
+            "Real file ranges should not be transformed"
+        );
+    }
+
+    #[test]
+    fn workspace_edit_preserves_real_file_uris_in_document_changes() {
+        // Real file URIs in documentChanges should pass through unchanged
+        let virtual_uri = "file:///.treesitter-ls/abc123/region-0.lua";
+        let real_file_uri = "file:///usr/share/lua/5.4/module.lua";
+        let host_uri = "file:///project/doc.md";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "documentChanges": [
+                    {
+                        "textDocument": {
+                            "uri": virtual_uri,
+                            "version": 1
+                        },
+                        "edits": [{
+                            "range": {
+                                "start": { "line": 0, "character": 0 },
+                                "end": { "line": 0, "character": 3 }
+                            },
+                            "newText": "foo"
+                        }]
+                    },
+                    {
+                        "textDocument": {
+                            "uri": real_file_uri,
+                            "version": 1
+                        },
+                        "edits": [{
+                            "range": {
+                                "start": { "line": 10, "character": 5 },
+                                "end": { "line": 10, "character": 8 }
+                            },
+                            "newText": "foo"
+                        }]
+                    }
+                ]
+            }
+        });
+        let context = ResponseTransformContext {
+            request_virtual_uri: virtual_uri.to_string(),
+            request_host_uri: host_uri.to_string(),
+            request_region_start_line: 3,
+        };
+
+        let transformed = transform_workspace_edit_to_host(response, &context);
+
+        let document_changes = transformed["result"]["documentChanges"].as_array().unwrap();
+        // Should have both entries
+        assert_eq!(document_changes.len(), 2, "Both entries should be preserved");
+
+        // Find the real file entry
+        let real_file_entry = document_changes
+            .iter()
+            .find(|dc| dc["textDocument"]["uri"] == real_file_uri)
+            .expect("Real file entry should exist");
+
+        // Real file URI should be preserved
+        assert_eq!(
+            real_file_entry["textDocument"]["uri"], real_file_uri,
+            "Real file URI should be preserved unchanged"
+        );
+
+        // Real file ranges should NOT be transformed
+        let real_edits = real_file_entry["edits"].as_array().unwrap();
+        assert_eq!(
+            real_edits[0]["range"]["start"]["line"], 10,
+            "Real file ranges should not be transformed"
+        );
+    }
+
+    #[test]
+    fn workspace_edit_with_null_result_passes_through() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": null
+        });
+        let context = ResponseTransformContext {
+            request_virtual_uri: "file:///.treesitter-ls/abc123/region-0.lua".to_string(),
+            request_host_uri: "file:///project/doc.md".to_string(),
+            request_region_start_line: 3,
+        };
+
+        let transformed = transform_workspace_edit_to_host(response.clone(), &context);
+        assert_eq!(transformed, response);
+    }
 }
