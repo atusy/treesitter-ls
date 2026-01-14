@@ -38,11 +38,8 @@ impl LanguageServerPool {
         for (language, region_id, content) in injections {
             let virtual_uri = VirtualDocumentUri::new(host_uri, language, region_id);
 
-            // Check if this virtual doc is opened (compare region_id)
-            if opened_docs
-                .iter()
-                .any(|doc| doc.virtual_uri.region_id() == region_id)
-            {
+            // Check if this virtual doc is opened (compare full virtual URI)
+            if opened_docs.iter().any(|doc| doc.virtual_uri == virtual_uri) {
                 // Get version and send didChange
                 if let Some(version) = self.increment_document_version(&virtual_uri).await {
                     let handle = {
