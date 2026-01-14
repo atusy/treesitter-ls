@@ -148,16 +148,27 @@ impl RegionIdTracker {
     /// This method reconstructs the edit operation from old and new text using
     /// character-level diff, then applies ADR-0019 invalidation rules.
     ///
+    /// Returns ULIDs that were invalidated by this edit (for Phase 3 cleanup).
+    /// The caller can use these to send didClose notifications for orphaned
+    /// virtual documents.
+    ///
     /// # Fast path
-    /// If old_text == new_text, returns immediately without any processing.
-    pub(crate) fn apply_text_change(&self, uri: &Url, old_text: &str, new_text: &str) {
+    /// If old_text == new_text, returns empty Vec without any processing.
+    pub(crate) fn apply_text_change(
+        &self,
+        uri: &Url,
+        old_text: &str,
+        new_text: &str,
+    ) -> Vec<Ulid> {
         // Fast path: identical texts need no processing
         if old_text == new_text {
-            return;
+            return Vec::new();
         }
 
         if let Some(edit) = Self::reconstruct_merged_edit(old_text, new_text) {
-            self.apply_single_edit(uri, &edit);
+            self.apply_single_edit(uri, &edit)
+        } else {
+            Vec::new()
         }
     }
 
