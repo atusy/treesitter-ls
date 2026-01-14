@@ -617,6 +617,43 @@ pub(crate) fn transform_signature_help_response_to_host(
     response
 }
 
+/// Transform a document highlight response from virtual to host document coordinates.
+///
+/// DocumentHighlight responses are arrays of items with range and optional kind.
+/// This function transforms each range's line numbers by adding region_start_line.
+///
+/// # Arguments
+/// * `response` - The JSON-RPC response from the downstream language server
+/// * `region_start_line` - The starting line of the injection region in the host document
+pub(crate) fn transform_document_highlight_response_to_host(
+    mut response: serde_json::Value,
+    region_start_line: u32,
+) -> serde_json::Value {
+    // Get mutable reference to result
+    let Some(result) = response.get_mut("result") else {
+        return response;
+    };
+
+    // Null result - pass through unchanged
+    if result.is_null() {
+        return response;
+    }
+
+    // DocumentHighlight[] is an array
+    if let Some(items) = result.as_array_mut() {
+        for item in items.iter_mut() {
+            // Transform range in each DocumentHighlight
+            if let Some(range) = item.get_mut("range")
+                && range.is_object()
+            {
+                transform_range(range, region_start_line);
+            }
+        }
+    }
+
+    response
+}
+
 /// Check if a URI string represents a virtual document.
 ///
 /// Virtual document URIs have the pattern `file:///.treesitter-ls/{hash}/{region_id}.{ext}`.
@@ -2477,5 +2514,75 @@ mod tests {
             request["params"]["position"]["character"], 10,
             "Character should remain unchanged"
         );
+    }
+
+    #[test]
+    fn document_highlight_response_transforms_ranges_to_host_coordinates() {
+        // DocumentHighlight response is an array of items with range and optional kind
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "range": {
+                        "start": { "line": 0, "character": 6 },
+                        "end": { "line": 0, "character": 11 }
+                    },
+                    "kind": 1  // Text
+                },
+                {
+                    "range": {
+                        "start": { "line": 2, "character": 0 },
+                        "end": { "line": 2, "character": 5 }
+                    },
+                    "kind": 2  // Read
+                },
+                {
+                    "range": {
+                        "start": { "line": 4, "character": 0 },
+                        "end": { "line": 4, "character": 5 }
+                    }
+                    // kind is optional
+                }
+            ]
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_document_highlight_response_to_host(response, region_start_line);
+
+        let result = transformed["result"].as_array().unwrap();
+        assert_eq!(result.len(), 3);
+
+        // First highlight: line 0 + 3 = line 3
+        assert_eq!(result[0]["range"]["start"]["line"], 3);
+        assert_eq!(result[0]["range"]["end"]["line"], 3);
+        assert_eq!(result[0]["range"]["start"]["character"], 6);
+        assert_eq!(result[0]["kind"], 1);
+
+        // Second highlight: line 2 + 3 = line 5
+        assert_eq!(result[1]["range"]["start"]["line"], 5);
+        assert_eq!(result[1]["range"]["end"]["line"], 5);
+        assert_eq!(result[1]["kind"], 2);
+
+        // Third highlight: line 4 + 3 = line 7
+        assert_eq!(result[2]["range"]["start"]["line"], 7);
+        assert_eq!(result[2]["range"]["end"]["line"], 7);
+    }
+
+    #[test]
+    fn document_highlight_response_with_null_result_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+
+        let transformed = transform_document_highlight_response_to_host(response.clone(), 5);
+        assert_eq!(transformed, response);
+    }
+
+    #[test]
+    fn document_highlight_response_with_empty_array_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": [] });
+
+        let transformed = transform_document_highlight_response_to_host(response.clone(), 5);
+        let result = transformed["result"].as_array().unwrap();
+        assert!(result.is_empty());
     }
 }
