@@ -823,4 +823,187 @@ mod tests {
             "Node with collapsed range should be invalidated"
         );
     }
+
+    // ============================================================
+    // UTF-8 Multi-byte Tests
+    // ============================================================
+    // These tests verify that position calculations correctly handle
+    // multi-byte UTF-8 characters (emoji, CJK, etc.)
+
+    #[test]
+    fn test_utf8_multibyte_edit_before_node_shifts_correctly() {
+        // Test: Delete multi-byte characters before a node
+        // Emoji 🦀 is 4 bytes, so deleting it should shift by 4, not 1
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("utf8_before");
+
+        // Text: "abc🦀def" where 🦀 is at bytes [3, 7)
+        // Node at bytes [7, 10) covering "def"
+        let old_text = "abc🦀def";
+        assert_eq!(old_text.len(), 10); // 3 + 4 + 3 = 10 bytes
+
+        let ulid_original = tracker.get_or_create(&uri, 7, 10, "block");
+
+        // Delete the emoji: "abc🦀def" → "abcdef"
+        let new_text = "abcdef";
+        assert_eq!(new_text.len(), 6);
+
+        tracker.apply_text_change(&uri, old_text, new_text);
+
+        // Node should shift from [7, 10) to [3, 6) (delta = -4 bytes)
+        let ulid_after = tracker.get(&uri, 3, 6, "block");
+        assert_eq!(
+            Some(ulid_original),
+            ulid_after,
+            "Node should preserve ULID and shift by 4 bytes (emoji size)"
+        );
+
+        // Old position should be gone
+        assert_eq!(
+            tracker.get(&uri, 7, 10, "block"),
+            None,
+            "Old position [7, 10) should be removed"
+        );
+    }
+
+    #[test]
+    fn test_utf8_multibyte_edit_inside_node_adjusts_end() {
+        // Test: Delete multi-byte characters inside a node
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("utf8_inside");
+
+        // Text: "start日本語end" where:
+        // - "start" at [0, 5)
+        // - "日" at [5, 8) - 3 bytes
+        // - "本" at [8, 11) - 3 bytes
+        // - "語" at [11, 14) - 3 bytes
+        // - "end" at [14, 17)
+        let old_text = "start日本語end";
+        assert_eq!(old_text.len(), 17); // 5 + 9 + 3 = 17 bytes
+
+        // Node spans entire content [0, 17)
+        let ulid_original = tracker.get_or_create(&uri, 0, 17, "block");
+
+        // Delete "本" (bytes [8, 11)): "start日本語end" → "start日語end"
+        let new_text = "start日語end";
+        assert_eq!(new_text.len(), 14); // 17 - 3 = 14 bytes
+
+        tracker.apply_text_change(&uri, old_text, new_text);
+
+        // Node should adjust end from 17 to 14 (delta = -3)
+        // START 0 is not in [8, 11), so preserved
+        let ulid_after = tracker.get(&uri, 0, 14, "block");
+        assert_eq!(
+            Some(ulid_original),
+            ulid_after,
+            "Node should preserve ULID with adjusted end (delta = -3 for 3-byte char)"
+        );
+    }
+
+    #[test]
+    fn test_utf8_multibyte_node_start_inside_edit_invalidates() {
+        // Test: Node START falls inside edit range containing multi-byte chars
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("utf8_start_inside");
+
+        // Text: "前🎉後text" where:
+        // - "前" at [0, 3) - 3 bytes
+        // - "🎉" at [3, 7) - 4 bytes
+        // - "後" at [7, 10) - 3 bytes
+        // - "text" at [10, 14)
+        let old_text = "前🎉後text";
+        assert_eq!(old_text.len(), 14);
+
+        // Node at [7, 14) covering "後text"
+        let ulid_original = tracker.get_or_create(&uri, 7, 14, "block");
+
+        // Delete "🎉後" (bytes [3, 10)): "前🎉後text" → "前text"
+        let new_text = "前text";
+        assert_eq!(new_text.len(), 7); // 3 + 4 = 7 bytes
+
+        tracker.apply_text_change(&uri, old_text, new_text);
+
+        // Node START 7 is in [3, 10) → INVALIDATED
+        // Try to get at adjusted position - should be NEW ULID
+        let ulid_after = tracker.get_or_create(&uri, 3, 7, "block");
+        assert_ne!(
+            ulid_original, ulid_after,
+            "Node with START inside edit should be invalidated"
+        );
+    }
+
+    #[test]
+    fn test_utf8_insert_multibyte_shifts_correctly() {
+        // Test: Insert multi-byte characters, verify shift
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("utf8_insert");
+
+        // Text: "abcdef"
+        let old_text = "abcdef";
+
+        // Node at [3, 6) covering "def"
+        let ulid_original = tracker.get_or_create(&uri, 3, 6, "block");
+
+        // Insert emoji at position 2: "abcdef" → "ab🚀cdef"
+        let new_text = "ab🚀cdef";
+        assert_eq!(new_text.len(), 10); // 6 + 4 = 10 bytes
+
+        tracker.apply_text_change(&uri, old_text, new_text);
+
+        // Node should shift from [3, 6) to [7, 10) (delta = +4)
+        let ulid_after = tracker.get(&uri, 7, 10, "block");
+        assert_eq!(
+            Some(ulid_original),
+            ulid_after,
+            "Node should shift by 4 bytes when 4-byte emoji inserted before it"
+        );
+    }
+
+    #[test]
+    fn test_utf8_mixed_ascii_and_multibyte() {
+        // Test: Complex edit with mixed ASCII and multi-byte
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("utf8_mixed");
+
+        // Text: "Hello世界World" where:
+        // - "Hello" at [0, 5)
+        // - "世" at [5, 8) - 3 bytes
+        // - "界" at [8, 11) - 3 bytes
+        // - "World" at [11, 16)
+        let old_text = "Hello世界World";
+        assert_eq!(old_text.len(), 16);
+
+        // Multiple nodes
+        let ulid_hello = tracker.get_or_create(&uri, 0, 5, "greeting");
+        let _ulid_cjk = tracker.get_or_create(&uri, 5, 11, "cjk");
+        let ulid_world = tracker.get_or_create(&uri, 11, 16, "world");
+
+        // Replace "世界" with "🌍" (6 bytes → 4 bytes, delta = -2)
+        let new_text = "Hello🌍World";
+        assert_eq!(new_text.len(), 14); // 5 + 4 + 5 = 14
+
+        tracker.apply_text_change(&uri, old_text, new_text);
+
+        // "Hello" [0, 5): START 0 not in [5, 11) → KEEP unchanged
+        assert_eq!(
+            tracker.get(&uri, 0, 5, "greeting"),
+            Some(ulid_hello),
+            "Node before edit should be unchanged"
+        );
+
+        // "世界" [5, 11): START 5 is in [5, 11) → INVALIDATED
+        assert_eq!(
+            tracker.get(&uri, 5, 11, "cjk"),
+            None,
+            "Node with START inside edit should be invalidated"
+        );
+
+        // "World" [11, 16): START 11 >= 11 (edit.old_end) → KEEP and shift
+        // New position: [11 + (-2), 16 + (-2)] = [9, 14)
+        assert_eq!(
+            tracker.get(&uri, 9, 14, "world"),
+            Some(ulid_world),
+            "Node after edit should shift by delta"
+        );
+    }
 }
