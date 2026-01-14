@@ -70,8 +70,8 @@ const scrum: ScrumDashboard = {
         test: "Test build_bridge_document_link_request creates valid JSON-RPC request with virtual URI",
         implementation: "Add build_bridge_document_link_request function to protocol.rs",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "1d82b1d6", message: "test(protocol): add unit tests for build_bridge_document_link_request", phase: "green" }],
         notes: ["DocumentLinkParams has only textDocument field - simpler than position-based requests"],
       },
       {
