@@ -259,13 +259,13 @@ const scrum: ScrumDashboard = {
     number: 1,
     pbi_id: "pbi-document-highlight",
     goal: "Enable users to highlight all occurrences of a symbol within a Lua code block by bridging textDocument/documentHighlight to downstream language servers",
-    status: "planning",
+    status: "in_progress",
     subtasks: [
       {
         test: "Unit test: build_bridge_document_highlight_request creates valid JSON-RPC request with virtual URI and translated position",
         implementation: "Add build_bridge_document_highlight_request function in protocol.rs using build_position_based_request helper",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: [
           "Follow same pattern as build_bridge_references_request",
