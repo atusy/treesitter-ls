@@ -36,6 +36,21 @@ struct EditInfo {
     new_end_byte: usize,
 }
 
+impl EditInfo {
+    /// Calculate the byte delta (positive for insertion, negative for deletion).
+    fn delta(&self) -> i64 {
+        self.new_end_byte as i64 - self.old_end_byte as i64
+    }
+
+    /// Check if this is a zero-length (insertion-only) edit.
+    ///
+    /// Zero-length edits have special handling in ADR-0019:
+    /// they insert content without deleting anything.
+    fn is_insertion_only(&self) -> bool {
+        self.start_byte == self.old_end_byte
+    }
+}
+
 impl RegionIdTracker {
     /// Create a new empty tracker.
     pub fn new() -> Self {
@@ -168,7 +183,7 @@ impl RegionIdTracker {
     /// happens to remain unchanged despite being at the insert point,
     /// but it's safe (never preserves stale identity).
     fn should_invalidate_node(key: &PositionKey, edit: &EditInfo) -> bool {
-        if edit.start_byte == edit.old_end_byte {
+        if edit.is_insertion_only() {
             // Zero-length insert: invalidate if insert is AT node's START
             key.start_byte == edit.start_byte
         } else {
@@ -179,7 +194,7 @@ impl RegionIdTracker {
 
     /// Apply a single edit operation with START-priority invalidation (ADR-0019).
     fn apply_single_edit(&self, uri: &Url, edit: &EditInfo) {
-        let delta = edit.new_end_byte as i64 - edit.old_end_byte as i64;
+        let delta = edit.delta();
 
         let Some(mut entries) = self.entries.get_mut(uri) else {
             return;
