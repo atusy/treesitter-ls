@@ -95,7 +95,14 @@ impl VirtualDocumentUri {
     /// Percent-encode a string for use in a URI path segment.
     ///
     /// Encodes all characters except RFC 3986 unreserved characters:
-    /// A-Z a-z 0-9 - . _ ~
+    /// `A-Z a-z 0-9 - . _ ~`
+    ///
+    /// Multi-byte UTF-8 characters are encoded byte-by-byte, producing valid
+    /// percent-encoded sequences (e.g., "日" → "%E6%97%A5").
+    ///
+    /// # Note
+    /// This function is primarily used for defense-in-depth since region_id values
+    /// are ULIDs (alphanumeric only), but it ensures URI safety if the format changes.
     fn percent_encode_path_segment(s: &str) -> String {
         let mut encoded = String::with_capacity(s.len());
         for byte in s.bytes() {
@@ -113,7 +120,13 @@ impl VirtualDocumentUri {
 
     /// Map language name to file extension.
     ///
-    /// Downstream language servers often use file extension to determine file type.
+    /// Downstream language servers (e.g., lua-language-server) often use file extension
+    /// to determine file type and enable appropriate language features.
+    ///
+    /// # Returns
+    /// The file extension (without leading dot) for the given language.
+    /// Returns "txt" for unknown languages as a safe fallback that won't
+    /// trigger any language-specific behavior in downstream servers.
     fn language_to_extension(language: &str) -> &'static str {
         match language {
             "lua" => "lua",
