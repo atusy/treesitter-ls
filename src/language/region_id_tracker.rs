@@ -50,11 +50,34 @@ impl PositionKey {
     }
 }
 
-/// Information about a single edit operation.
-struct EditInfo {
+/// Edit position information for region ID tracking.
+///
+/// Represents byte positions of a text edit. Used to decouple
+/// RegionIdTracker from tree_sitter::InputEdit.
+///
+/// Fields are intentionally private - use `new()` or `From<&InputEdit>`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct EditInfo {
     start_byte: usize,
     old_end_byte: usize,
     new_end_byte: usize,
+}
+
+impl EditInfo {
+    /// Create a new EditInfo with byte positions.
+    pub(crate) fn new(start_byte: usize, old_end_byte: usize, new_end_byte: usize) -> Self {
+        Self {
+            start_byte,
+            old_end_byte,
+            new_end_byte,
+        }
+    }
+}
+
+impl From<&tree_sitter::InputEdit> for EditInfo {
+    fn from(edit: &tree_sitter::InputEdit) -> Self {
+        Self::new(edit.start_byte, edit.old_end_byte, edit.new_end_byte)
+    }
 }
 
 impl EditInfo {
