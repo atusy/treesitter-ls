@@ -208,8 +208,10 @@ impl LanguageServerPool {
         let mut to_close = Vec::new();
         docs.retain(|doc| {
             // Check if any ULID string is contained in the virtual_uri
-            // ULIDs are 26-char alphanumeric, so substring matching is safe
-            let should_close = ulid_strs.iter().any(|u| doc.virtual_uri.contains(u));
+            let should_close =
+                super::protocol::VirtualDocumentUri::extract_region_id(&doc.virtual_uri)
+                    .map(|region_id| ulid_strs.contains(region_id))
+                    .unwrap_or(false);
             if should_close {
                 to_close.push(doc.clone());
                 false // Remove from host_to_virtual
@@ -1650,12 +1652,17 @@ mod tests {
 
     #[tokio::test]
     async fn remove_matching_virtual_docs_removes_matching_docs() {
+        use super::super::protocol::VirtualDocumentUri;
+
         let pool = LanguageServerPool::new();
         let host_uri = test_host_uri("phase3_take");
 
         // Register some virtual docs using should_send_didopen
-        let virtual_uri_1 = format!("file:///virt/{}/test.lua", TEST_ULID_LUA_0);
-        let virtual_uri_2 = format!("file:///virt/{}/test.py", TEST_ULID_PYTHON_0);
+        // Use VirtualDocumentUri to generate URIs in the correct format
+        let virtual_uri_1 =
+            VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0).to_uri_string();
+        let virtual_uri_2 =
+            VirtualDocumentUri::new(&host_uri, "python", TEST_ULID_PYTHON_0).to_uri_string();
 
         pool.should_send_didopen(&host_uri, "lua", &virtual_uri_1)
             .await;
@@ -1687,11 +1694,14 @@ mod tests {
 
     #[tokio::test]
     async fn remove_matching_virtual_docs_returns_empty_for_no_match() {
+        use super::super::protocol::VirtualDocumentUri;
+
         let pool = LanguageServerPool::new();
         let host_uri = test_host_uri("phase3_no_match");
 
         // Register a virtual doc
-        let virtual_uri = format!("file:///virt/{}/test.lua", TEST_ULID_LUA_0);
+        let virtual_uri =
+            VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0).to_uri_string();
         pool.should_send_didopen(&host_uri, "lua", &virtual_uri)
             .await;
 
@@ -1722,11 +1732,14 @@ mod tests {
 
     #[tokio::test]
     async fn remove_matching_virtual_docs_returns_empty_for_empty_ulids() {
+        use super::super::protocol::VirtualDocumentUri;
+
         let pool = LanguageServerPool::new();
         let host_uri = test_host_uri("phase3_empty_ulids");
 
         // Register a virtual doc
-        let virtual_uri = format!("file:///virt/{}/test.lua", TEST_ULID_LUA_0);
+        let virtual_uri =
+            VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0).to_uri_string();
         pool.should_send_didopen(&host_uri, "lua", &virtual_uri)
             .await;
 
@@ -1743,13 +1756,18 @@ mod tests {
 
     #[tokio::test]
     async fn remove_matching_virtual_docs_takes_multiple_docs() {
+        use super::super::protocol::VirtualDocumentUri;
+
         let pool = LanguageServerPool::new();
         let host_uri = test_host_uri("phase3_multiple");
 
-        // Register multiple virtual docs
-        let virtual_uri_1 = format!("file:///virt/{}/test1.lua", TEST_ULID_LUA_0);
-        let virtual_uri_2 = format!("file:///virt/{}/test2.lua", TEST_ULID_LUA_1);
-        let virtual_uri_3 = format!("file:///virt/{}/test.py", TEST_ULID_PYTHON_0);
+        // Register multiple virtual docs using VirtualDocumentUri for proper URI format
+        let virtual_uri_1 =
+            VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0).to_uri_string();
+        let virtual_uri_2 =
+            VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_1).to_uri_string();
+        let virtual_uri_3 =
+            VirtualDocumentUri::new(&host_uri, "python", TEST_ULID_PYTHON_0).to_uri_string();
 
         pool.should_send_didopen(&host_uri, "lua", &virtual_uri_1)
             .await;
