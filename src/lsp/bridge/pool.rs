@@ -154,6 +154,52 @@ impl LanguageServerPool {
         host_map.get(host_uri).cloned().unwrap_or_default()
     }
 
+    /// Take virtual documents matching the given ULIDs, removing them from tracking.
+    ///
+    /// This is atomic: lookup and removal happen in a single lock acquisition,
+    /// preventing race conditions with concurrent didOpen requests.
+    ///
+    /// Returns the removed documents (for sending didClose). Documents that
+    /// were never opened (not in host_to_virtual) are not returned.
+    ///
+    /// # Arguments
+    /// * `host_uri` - The host document URI
+    /// * `invalidated_ulids` - ULIDs to match against virtual document URIs
+    pub(crate) async fn take_virtual_docs_matching(
+        &self,
+        host_uri: &Url,
+        invalidated_ulids: &[ulid::Ulid],
+    ) -> Vec<OpenedVirtualDoc> {
+        if invalidated_ulids.is_empty() {
+            return Vec::new();
+        }
+
+        // Convert ULIDs to strings for matching
+        let ulid_strs: std::collections::HashSet<String> =
+            invalidated_ulids.iter().map(|u| u.to_string()).collect();
+
+        let mut host_map = self.host_to_virtual.lock().await;
+        let Some(docs) = host_map.get_mut(host_uri) else {
+            return Vec::new();
+        };
+
+        // Partition: matching docs to return, non-matching to keep
+        let mut to_close = Vec::new();
+        docs.retain(|doc| {
+            // Check if any ULID string is contained in the virtual_uri
+            // ULIDs are 26-char alphanumeric, so substring matching is safe
+            let should_close = ulid_strs.iter().any(|u| doc.virtual_uri.contains(u));
+            if should_close {
+                to_close.push(doc.clone());
+                false // Remove from host_to_virtual
+            } else {
+                true // Keep in host_to_virtual
+            }
+        });
+
+        to_close
+    }
+
     /// Remove a document from the version tracking.
     ///
     /// Used by did_close module for cleanup, and by Phase 3
