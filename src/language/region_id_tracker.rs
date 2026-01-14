@@ -29,6 +29,26 @@ struct PositionKey {
     kind: String,
 }
 
+impl PositionKey {
+    /// Create a new position key from byte range and node kind.
+    fn new(start: usize, end: usize, kind: &str) -> Self {
+        Self {
+            start_byte: start,
+            end_byte: end,
+            kind: kind.to_string(),
+        }
+    }
+
+    /// Create a position key with adjusted positions (for edit operations).
+    fn with_positions(start: usize, end: usize, kind: String) -> Self {
+        Self {
+            start_byte: start,
+            end_byte: end,
+            kind,
+        }
+    }
+}
+
 /// Information about a single edit operation.
 struct EditInfo {
     start_byte: usize,
@@ -73,11 +93,7 @@ impl RegionIdTracker {
     /// Phase 2: Uses position-based lookup (ADR-0019 composite key).
     /// Same (uri, start_byte, end_byte, kind) always returns the same ULID.
     pub(crate) fn get_or_create(&self, uri: &Url, start: usize, end: usize, kind: &str) -> Ulid {
-        let key = PositionKey {
-            start_byte: start,
-            end_byte: end,
-            kind: kind.to_string(),
-        };
+        let key = PositionKey::new(start, end, kind);
 
         // NOTE: Explicit two-step pattern to avoid DashMap lifetime ambiguity.
         let mut entry = self.entries.entry(uri.clone()).or_default();
@@ -90,11 +106,7 @@ impl RegionIdTracker {
     /// Used in tests to verify position adjustment without side effects.
     #[cfg(test)]
     fn get(&self, uri: &Url, start: usize, end: usize, kind: &str) -> Option<Ulid> {
-        let key = PositionKey {
-            start_byte: start,
-            end_byte: end,
-            kind: kind.to_string(),
-        };
+        let key = PositionKey::new(start, end, kind);
         self.entries.get(uri)?.get(&key).copied()
     }
 
@@ -219,11 +231,11 @@ impl RegionIdTracker {
             // Position adjustment
             let new_key = if key.start_byte >= edit.old_end_byte {
                 // Node E: AFTER edit → shift both start and end
-                PositionKey {
-                    start_byte: apply_delta(key.start_byte, delta),
-                    end_byte: apply_delta(key.end_byte, delta),
-                    kind: key.kind,
-                }
+                PositionKey::with_positions(
+                    apply_delta(key.start_byte, delta),
+                    apply_delta(key.end_byte, delta),
+                    key.kind,
+                )
             } else if key.end_byte > edit.start_byte {
                 // Node A/B: CONTAINS edit → adjust end only
                 let new_end = apply_delta(key.end_byte, delta);
@@ -231,11 +243,7 @@ impl RegionIdTracker {
                 if new_end <= key.start_byte {
                     continue; // INVALIDATE: range collapsed to zero or negative
                 }
-                PositionKey {
-                    start_byte: key.start_byte,
-                    end_byte: new_end,
-                    kind: key.kind,
-                }
+                PositionKey::with_positions(key.start_byte, new_end, key.kind)
             } else {
                 // Node F: BEFORE edit → unchanged
                 key
