@@ -555,10 +555,10 @@ impl InjectionResolver {
         let injections = collect_all_injections(&tree.root_node(), text, Some(injection_query))?;
 
         // 2. Find injection region containing this position
-        let (region_index, region) = find_injection_at_position(&injections, byte_offset)?;
+        let (_region_index, region) = find_injection_at_position(&injections, byte_offset)?;
 
-        // 3. Calculate stable ULID-based region_id (Phase 1: ordinal-based)
-        let region_id = Self::calculate_region_id(tracker, uri, &injections, region_index);
+        // 3. Calculate stable ULID-based region_id (Phase 2: position-based)
+        let region_id = Self::calculate_region_id(tracker, uri, region);
         let region_id_str = region_id.to_string();
 
         // 4. Build cacheable region with line range information
@@ -578,30 +578,26 @@ impl InjectionResolver {
 
     /// Calculate a stable ULID-based region_id for an injection.
     ///
-    /// Phase 1 (ADR-0019): Uses ordinal-based key (language, ordinal) for ULID lookup.
-    /// The ordinal is the 0-indexed count of same-language injections up to this position.
+    /// Phase 2 (ADR-0019): Uses position-based key (start_byte, end_byte, kind) for ULID lookup.
     ///
     /// # Arguments
     /// * `tracker` - The region ID tracker for ULID generation/lookup
     /// * `uri` - The host document URI
-    /// * `injections` - All injection regions in document order
-    /// * `target_index` - Index of the target injection in the slice
+    /// * `injection` - The injection region info
     ///
     /// # Returns
-    /// A stable ULID that remains constant for the same (uri, language, ordinal) key.
+    /// A stable ULID that remains constant for the same position key.
     pub(crate) fn calculate_region_id(
         tracker: &RegionIdTracker,
         uri: &Url,
-        injections: &[InjectionRegionInfo],
-        target_index: usize,
+        injection: &InjectionRegionInfo,
     ) -> Ulid {
-        let target = &injections[target_index];
-        let ordinal = injections[..=target_index]
-            .iter()
-            .filter(|inj| inj.language == target.language)
-            .count()
-            - 1;
-        tracker.get_or_create(uri, &target.language, ordinal)
+        tracker.get_or_create(
+            uri,
+            injection.content_node.start_byte(),
+            injection.content_node.end_byte(),
+            injection.content_node.kind(),
+        )
     }
 }
 
