@@ -14,19 +14,14 @@
 mod helpers;
 
 use helpers::lsp_client::LspClient;
+use helpers::lua_bridge::{
+    create_lua_configured_client, shutdown_client, skip_if_lua_ls_unavailable,
+};
 use serde_json::json;
 use std::time::Instant;
 
 /// Maximum acceptable response time for non-blocking operations (100ms).
 const MAX_NONBLOCKING_RESPONSE_MS: u128 = 100;
-
-/// Helper to check if lua-language-server is available
-fn is_lua_ls_available() -> bool {
-    std::process::Command::new("lua-language-server")
-        .arg("--version")
-        .output()
-        .is_ok()
-}
 
 /// Create a minimal client without bridge configuration
 fn create_minimal_client() -> LspClient {
@@ -38,30 +33,6 @@ fn create_minimal_client() -> LspClient {
             "processId": std::process::id(),
             "rootUri": null,
             "capabilities": {}
-        }),
-    );
-    client.send_notification("initialized", json!({}));
-    client
-}
-
-/// Create a client with lua-language-server configured for bridge
-fn create_bridge_configured_client() -> LspClient {
-    let mut client = LspClient::new();
-
-    let _init_response = client.send_request(
-        "initialize",
-        json!({
-            "processId": std::process::id(),
-            "rootUri": null,
-            "capabilities": {},
-            "initializationOptions": {
-                "languageServers": {
-                    "lua-language-server": {
-                        "cmd": ["lua-language-server"],
-                        "languages": ["lua"]
-                    }
-                }
-            }
         }),
     );
     client.send_notification("initialized", json!({}));
@@ -136,8 +107,7 @@ end
     println!("✓ E2E AC4: Native selection range works during bridge init");
 
     // Clean shutdown
-    let _shutdown_response = client.send_request("shutdown", json!(null));
-    client.send_notification("exit", json!(null));
+    shutdown_client(&mut client);
 }
 
 /// E2E test: Selection range in markdown with injection works (AC4 variant)
@@ -146,12 +116,11 @@ end
 /// even if those code blocks would trigger bridge initialization.
 #[test]
 fn e2e_native_selection_range_works_in_markdown_with_injection() {
-    if !is_lua_ls_available() {
-        eprintln!("SKIP: lua-language-server not found in PATH");
+    if skip_if_lua_ls_unavailable() {
         return;
     }
 
-    let mut client = create_bridge_configured_client();
+    let mut client = create_lua_configured_client();
 
     // Open markdown with Lua code block
     let markdown_content = r#"# Test Document
@@ -206,8 +175,7 @@ More text.
     println!("✓ E2E AC4: Selection range in markdown works during bridge init");
 
     // Clean shutdown
-    let _shutdown_response = client.send_request("shutdown", json!(null));
-    client.send_notification("exit", json!(null));
+    shutdown_client(&mut client);
 }
 
 /// E2E test: Semantic tokens work during bridge initialization (AC4)
@@ -263,6 +231,5 @@ end
     println!("✓ E2E AC4: Semantic tokens work during bridge init");
 
     // Clean shutdown
-    let _shutdown_response = client.send_request("shutdown", json!(null));
-    client.send_notification("exit", json!(null));
+    shutdown_client(&mut client);
 }

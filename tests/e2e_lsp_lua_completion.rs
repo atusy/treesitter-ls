@@ -16,6 +16,9 @@
 mod helpers;
 
 use helpers::lsp_client::LspClient;
+use helpers::lua_bridge::{
+    create_lua_configured_client, shutdown_client, skip_if_lua_ls_unavailable,
+};
 use serde_json::json;
 
 /// Poll for completion results with retries to allow lua-ls time to index.
@@ -67,39 +70,11 @@ fn poll_for_completions(
 
 #[test]
 fn test_lua_completion_in_markdown_code_block_via_binary() {
-    // Check if lua-language-server is available
-    let check = std::process::Command::new("lua-language-server")
-        .arg("--version")
-        .output();
-
-    if check.is_err() {
-        eprintln!("SKIP: lua-language-server not found in PATH");
-        eprintln!("Install lua-language-server to run this test:");
-        eprintln!("  brew install lua-language-server");
+    if skip_if_lua_ls_unavailable() {
         return;
     }
 
-    // Spawn treesitter-ls binary
-    let mut client = LspClient::new();
-
-    // Initialize handshake with bridge configuration for lua-language-server
-    let _init_response = client.send_request(
-        "initialize",
-        json!({
-            "processId": std::process::id(),
-            "rootUri": null,
-            "capabilities": {},
-            "initializationOptions": {
-                "languageServers": {
-                    "lua-language-server": {
-                        "cmd": ["lua-language-server"],
-                        "languages": ["lua"]
-                    }
-                }
-            }
-        }),
-    );
-    client.send_notification("initialized", json!({}));
+    let mut client = create_lua_configured_client();
 
     // Open markdown document with Lua code block
     // Use simple Lua code that triggers completions
@@ -222,6 +197,5 @@ More text.
     println!("✓ Completion items have valid labels");
 
     // Clean shutdown
-    let _shutdown_response = client.send_request("shutdown", json!(null));
-    client.send_notification("exit", json!(null));
+    shutdown_client(&mut client);
 }
