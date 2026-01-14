@@ -7,6 +7,7 @@ mod document_highlight;
 mod hover;
 mod implementation;
 mod references;
+mod rename;
 mod selection_range;
 mod semantic_tokens;
 mod signature_help;

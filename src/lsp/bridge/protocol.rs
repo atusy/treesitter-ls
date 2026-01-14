@@ -879,17 +879,17 @@ pub(crate) fn transform_workspace_edit_to_host(
     }
 
     // Handle changes format: { [uri: string]: TextEdit[] }
-    if let Some(changes) = result.get_mut("changes") {
-        if let Some(changes_obj) = changes.as_object_mut() {
-            transform_workspace_edit_changes(changes_obj, context);
-        }
+    if let Some(changes) = result.get_mut("changes")
+        && let Some(changes_obj) = changes.as_object_mut()
+    {
+        transform_workspace_edit_changes(changes_obj, context);
     }
 
-    // Handle documentChanges format (will be implemented in subtask 3)
-    if let Some(document_changes) = result.get_mut("documentChanges") {
-        if let Some(document_changes_arr) = document_changes.as_array_mut() {
-            transform_workspace_edit_document_changes(document_changes_arr, context);
-        }
+    // Handle documentChanges format
+    if let Some(document_changes) = result.get_mut("documentChanges")
+        && let Some(document_changes_arr) = document_changes.as_array_mut()
+    {
+        transform_workspace_edit_document_changes(document_changes_arr, context);
     }
 
     response
@@ -963,7 +963,11 @@ fn transform_workspace_edit_document_changes(
         };
 
         // Get the URI from textDocument
-        let Some(uri_str) = text_document.get("uri").and_then(|v| v.as_str()).map(|s| s.to_string()) else {
+        let Some(uri_str) = text_document
+            .get("uri")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+        else {
             return true; // No URI, keep the item
         };
 
@@ -978,12 +982,12 @@ fn transform_workspace_edit_document_changes(
             text_document["uri"] = serde_json::json!(&context.request_host_uri);
 
             // Transform ranges in each TextEdit
-            if let Some(edits) = item.get_mut("edits") {
-                if let Some(edits_arr) = edits.as_array_mut() {
-                    for edit in edits_arr.iter_mut() {
-                        if let Some(range) = edit.get_mut("range") {
-                            transform_range(range, context.request_region_start_line);
-                        }
+            if let Some(edits) = item.get_mut("edits")
+                && let Some(edits_arr) = edits.as_array_mut()
+            {
+                for edit in edits_arr.iter_mut() {
+                    if let Some(range) = edit.get_mut("range") {
+                        transform_range(range, context.request_region_start_line);
                     }
                 }
             }
@@ -3024,10 +3028,7 @@ mod tests {
             1,
             "Should only have one entry (cross-region filtered)"
         );
-        assert!(
-            changes.contains_key(host_uri),
-            "Should have host URI entry"
-        );
+        assert!(changes.contains_key(host_uri), "Should have host URI entry");
         assert!(
             !changes.contains_key(other_virtual_uri),
             "Cross-region virtual URI should be filtered out"
@@ -3275,7 +3276,11 @@ mod tests {
 
         let document_changes = transformed["result"]["documentChanges"].as_array().unwrap();
         // Should have both entries
-        assert_eq!(document_changes.len(), 2, "Both entries should be preserved");
+        assert_eq!(
+            document_changes.len(),
+            2,
+            "Both entries should be preserved"
+        );
 
         // Find the real file entry
         let real_file_entry = document_changes
