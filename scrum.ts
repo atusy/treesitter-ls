@@ -315,8 +315,8 @@ const scrum: ScrumDashboard = {
         test: "Integration test: document_highlight_impl bridges request when cursor is in injection region",
         implementation: "Add document_highlight_impl method in lsp_impl/text_document and wire to LanguageServer trait",
         type: "behavioral",
-        status: "green",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "ebfe2980", message: "feat(lsp): add document_highlight_impl method", phase: "green" }],
         notes: [
           "Add document_highlight_impl in lsp_impl/text_document/document_highlight.rs",
           "Wire document_highlight method in LanguageServer trait implementation",
@@ -328,7 +328,7 @@ const scrum: ScrumDashboard = {
         test: "E2E test: textDocument/documentHighlight in Lua code block returns highlights for variable occurrences",
         implementation: "Add E2E test in tests/test_e2e_bridge.rs verifying end-to-end document highlight flow",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
         notes: [
           "Test markdown file with Lua code block containing variable used multiple times",
