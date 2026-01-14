@@ -51,6 +51,15 @@ impl EditInfo {
     }
 }
 
+/// Apply a signed delta to a byte position with overflow protection.
+///
+/// Uses saturating arithmetic to prevent overflow/underflow:
+/// - Clamps result to 0 if delta would make it negative
+/// - Uses i64 internally to handle large negative deltas safely
+fn apply_delta(position: usize, delta: i64) -> usize {
+    (position as i64).saturating_add(delta).max(0) as usize
+}
+
 impl RegionIdTracker {
     /// Create a new empty tracker.
     pub fn new() -> Self {
@@ -207,17 +216,17 @@ impl RegionIdTracker {
                 continue; // INVALIDATE
             }
 
-            // Position adjustment with overflow protection (saturating arithmetic)
+            // Position adjustment
             let new_key = if key.start_byte >= edit.old_end_byte {
-                // Node E: AFTER edit → shift
+                // Node E: AFTER edit → shift both start and end
                 PositionKey {
-                    start_byte: (key.start_byte as i64).saturating_add(delta).max(0) as usize,
-                    end_byte: (key.end_byte as i64).saturating_add(delta).max(0) as usize,
+                    start_byte: apply_delta(key.start_byte, delta),
+                    end_byte: apply_delta(key.end_byte, delta),
                     kind: key.kind,
                 }
             } else if key.end_byte > edit.start_byte {
                 // Node A/B: CONTAINS edit → adjust end only
-                let new_end = (key.end_byte as i64).saturating_add(delta).max(0) as usize;
+                let new_end = apply_delta(key.end_byte, delta);
                 // Guard: If range collapses (start >= end), invalidate instead
                 if new_end <= key.start_byte {
                     continue; // INVALIDATE: range collapsed to zero or negative
