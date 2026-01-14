@@ -5,6 +5,7 @@
 
 use dashmap::DashMap;
 use log::warn;
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use ulid::Ulid;
 use url::Url;
@@ -278,7 +279,6 @@ impl RegionIdTracker {
             // 3. Collisions may indicate a bug in invalidation logic anyway
             //
             // Log at warn level for observability and debugging.
-            use std::collections::hash_map::Entry;
             match new_entries.entry(new_key.clone()) {
                 Entry::Vacant(e) => {
                     e.insert(ulid);
