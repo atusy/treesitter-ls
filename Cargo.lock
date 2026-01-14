@@ -2421,6 +2421,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serial_test",
+ "similar",
  "streaming-iterator",
  "tempfile",
  "thiserror 2.0.17",
