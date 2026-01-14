@@ -1187,6 +1187,10 @@ impl LanguageServer for TreeSitterLs {
                 }),
                 references_provider: Some(OneOf::Left(true)),
                 document_highlight_provider: Some(OneOf::Left(true)),
+                document_link_provider: Some(DocumentLinkOptions {
+                    resolve_provider: None,
+                    work_done_progress_options: WorkDoneProgressOptions::default(),
+                }),
                 rename_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
@@ -1535,6 +1539,10 @@ impl LanguageServer for TreeSitterLs {
         params: DocumentHighlightParams,
     ) -> Result<Option<Vec<DocumentHighlight>>> {
         self.document_highlight_impl(params).await
+    }
+
+    async fn document_link(&self, params: DocumentLinkParams) -> Result<Option<Vec<DocumentLink>>> {
+        self.document_link_impl(params).await
     }
 
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {

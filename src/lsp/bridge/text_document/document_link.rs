@@ -31,6 +31,7 @@ impl LanguageServerPool {
     ///
     /// The `upstream_request_id` parameter is the request ID from the upstream client,
     /// passed through unchanged to the downstream server per ADR-0016.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn send_document_link_request(
         &self,
         server_config: &BridgeServerConfig,
@@ -59,12 +60,8 @@ impl LanguageServerPool {
         // Build and send document link request using upstream ID (ADR-0016)
         // Note: document link doesn't need position - it operates on the whole document
         let request_id = upstream_request_id;
-        let request = build_bridge_document_link_request(
-            host_uri,
-            injection_language,
-            region_id,
-            request_id,
-        );
+        let request =
+            build_bridge_document_link_request(host_uri, injection_language, region_id, request_id);
         conn.write_message(&request).await?;
 
         // Wait for the document link response (skip notifications)

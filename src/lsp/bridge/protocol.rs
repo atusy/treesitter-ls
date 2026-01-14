@@ -3430,7 +3430,9 @@ mod tests {
         let lua_request = build_bridge_document_link_request(&host_uri, "lua", "region-0", 1);
         let python_request = build_bridge_document_link_request(&host_uri, "python", "region-0", 2);
 
-        let lua_uri = lua_request["params"]["textDocument"]["uri"].as_str().unwrap();
+        let lua_uri = lua_request["params"]["textDocument"]["uri"]
+            .as_str()
+            .unwrap();
         let python_uri = python_request["params"]["textDocument"]["uri"]
             .as_str()
             .unwrap();
