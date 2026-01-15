@@ -10,7 +10,7 @@ use tower_lsp::lsp_types::{Position, Url};
 
 use super::super::pool::LanguageServerPool;
 use super::super::protocol::{
-    VirtualDocumentUri, build_bridge_didopen_notification, build_bridge_moniker_request,
+    RequestId, VirtualDocumentUri, build_bridge_didopen_notification, build_bridge_moniker_request,
     transform_moniker_response_to_host,
 };
 
@@ -53,7 +53,7 @@ impl LanguageServerPool {
         }
 
         // Build and send moniker request using upstream ID (ADR-0016)
-        let request_id = upstream_request_id;
+        let request_id = RequestId::new(upstream_request_id);
         let moniker_request = build_bridge_moniker_request(
             host_uri,
             host_position,

@@ -14,7 +14,7 @@ use tower_lsp::lsp_types::{Range, Url};
 
 use super::super::pool::LanguageServerPool;
 use super::super::protocol::{
-    ResponseTransformContext, VirtualDocumentUri, build_bridge_didopen_notification,
+    RequestId, ResponseTransformContext, VirtualDocumentUri, build_bridge_didopen_notification,
     build_bridge_inlay_hint_request, transform_inlay_hint_response_to_host,
 };
 
@@ -61,7 +61,7 @@ impl LanguageServerPool {
 
         // Build and send inlay hint request using upstream ID (ADR-0016)
         // Note: request builder transforms host_range to virtual coordinates
-        let request_id = upstream_request_id;
+        let request_id = RequestId::new(upstream_request_id);
         let request = build_bridge_inlay_hint_request(
             host_uri,
             host_range,
@@ -72,15 +72,16 @@ impl LanguageServerPool {
         );
         conn.write_message(&request).await?;
 
-        // Build transformation context for response
-        let context = ResponseTransformContext {
-            request_virtual_uri: virtual_uri.to_uri_string(),
-            request_host_uri: host_uri.to_string(),
-            request_region_start_line: region_start_line,
-        };
-
         // Wait for the inlay hint response (skip notifications)
         let response = conn.wait_for_response(request_id).await?;
+
+        // Build transformation context for response handling
+        let virtual_uri_string = virtual_uri.to_uri_string();
+        let context = ResponseTransformContext {
+            request_virtual_uri: virtual_uri_string,
+            request_host_uri: host_uri.as_str().to_string(),
+            request_region_start_line: region_start_line,
+        };
 
         // Transform response positions and textEdits to host coordinates
         Ok(transform_inlay_hint_response_to_host(response, &context))

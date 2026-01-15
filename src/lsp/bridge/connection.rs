@@ -2,12 +2,123 @@
 //!
 //! This module provides the core connection type for communicating with
 //! language servers via stdio using async I/O.
+//!
+//! # Structure
+//!
+//! - `BridgeWriter`: Handles writing LSP messages to stdin
+//! - `BridgeReader`: Handles reading LSP messages from stdout
+//! - `AsyncBridgeConnection`: Owns the child process and coordinates I/O
+//!
+//! The separation of reader/writer enables future Reader Task introduction
+//! (ADR-0015) where the reader runs in a dedicated task for non-blocking
+//! response routing.
 
 use std::io;
 use std::process::Stdio;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+
+use super::protocol::RequestId;
+
+/// Writer handle for sending LSP messages to downstream language server.
+///
+/// Wraps `ChildStdin` to provide LSP message framing (Content-Length header).
+/// This type will be used directly when single-writer loop is introduced.
+pub(crate) struct BridgeWriter {
+    stdin: ChildStdin,
+}
+
+impl BridgeWriter {
+    /// Write a JSON-RPC message to the downstream language server.
+    ///
+    /// Formats the message with LSP Content-Length header:
+    /// `Content-Length: <length>\r\n\r\n<json>`
+    pub(crate) async fn write_message(&mut self, message: &serde_json::Value) -> io::Result<()> {
+        let body = serde_json::to_string(message)?;
+        let header = format!("Content-Length: {}\r\n\r\n", body.len());
+
+        self.stdin.write_all(header.as_bytes()).await?;
+        self.stdin.write_all(body.as_bytes()).await?;
+        self.stdin.flush().await?;
+
+        Ok(())
+    }
+}
+
+/// Reader handle for receiving LSP messages from downstream language server.
+///
+/// Wraps `BufReader<ChildStdout>` to provide LSP message parsing.
+/// This type will be moved to a dedicated Reader Task (ADR-0015) for
+/// non-blocking response routing via `pending_requests` HashMap.
+pub(crate) struct BridgeReader {
+    stdout: BufReader<ChildStdout>,
+}
+
+impl BridgeReader {
+    /// Read the raw bytes of an LSP message body from stdout.
+    ///
+    /// Parses the Content-Length header, reads the separator, and returns the body bytes.
+    async fn read_message_bytes(&mut self) -> io::Result<Vec<u8>> {
+        use tokio::io::AsyncReadExt;
+
+        // Read header line
+        let mut header_line = String::new();
+        self.stdout.read_line(&mut header_line).await?;
+
+        // Parse content length
+        let content_length: usize = header_line
+            .strip_prefix("Content-Length: ")
+            .and_then(|s| s.trim().parse().ok())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid Content-Length"))?;
+
+        // Read empty line (CRLF separator)
+        let mut empty_line = String::new();
+        self.stdout.read_line(&mut empty_line).await?;
+
+        // Read body
+        let mut body = vec![0u8; content_length];
+        self.stdout.read_exact(&mut body).await?;
+
+        Ok(body)
+    }
+
+    /// Read and parse a JSON-RPC message from the downstream language server.
+    ///
+    /// Parses the Content-Length header and reads the JSON body.
+    pub(crate) async fn read_message(&mut self) -> io::Result<serde_json::Value> {
+        let body = self.read_message_bytes().await?;
+        serde_json::from_slice(&body).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    }
+
+    /// Wait for a response with the given request ID, skipping notifications.
+    ///
+    /// This method reads messages from stdout in a loop until it finds a response
+    /// matching the specified request ID. Notifications (messages without an "id" field)
+    /// are silently skipped.
+    ///
+    /// # Arguments
+    /// * `request_id` - The request ID to wait for
+    ///
+    /// # Returns
+    /// The JSON-RPC response message matching the request ID.
+    ///
+    /// # Note
+    /// This method will be replaced by oneshot channel waiting when Reader Task
+    /// is introduced (ADR-0015 Phase A).
+    pub(crate) async fn wait_for_response(
+        &mut self,
+        request_id: RequestId,
+    ) -> io::Result<serde_json::Value> {
+        loop {
+            let msg = self.read_message().await?;
+            if request_id.matches(&msg) {
+                return Ok(msg);
+            }
+            // Skip notifications and other responses
+        }
+    }
+}
 
 /// Async connection to a downstream language server process.
 ///
@@ -19,10 +130,15 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 /// - Uses `tokio::process::Command` for process spawning
 /// - Dedicated async reader task with `select!` for cancellation
 /// - Pending request tracking via `DashMap<RequestId, oneshot::Sender>`
+///
+/// # Internal Structure
+///
+/// Internally delegates to `BridgeWriter` and `BridgeReader` for I/O operations.
+/// This separation prepares for Reader Task introduction (ADR-0015).
 pub(crate) struct AsyncBridgeConnection {
     child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    writer: BridgeWriter,
+    reader: BridgeReader,
 }
 
 impl AsyncBridgeConnection {
@@ -57,89 +173,39 @@ impl AsyncBridgeConnection {
 
         Ok(Self {
             child,
-            stdin,
-            stdout: BufReader::new(stdout),
+            writer: BridgeWriter { stdin },
+            reader: BridgeReader {
+                stdout: BufReader::new(stdout),
+            },
         })
     }
 
     /// Write a JSON-RPC message to the child process stdin.
     ///
-    /// Formats the message with LSP Content-Length header:
-    /// `Content-Length: <length>\r\n\r\n<json>`
+    /// Delegates to internal `BridgeWriter`.
     pub(crate) async fn write_message(&mut self, message: &serde_json::Value) -> io::Result<()> {
-        let body = serde_json::to_string(message)?;
-        let header = format!("Content-Length: {}\r\n\r\n", body.len());
-
-        self.stdin.write_all(header.as_bytes()).await?;
-        self.stdin.write_all(body.as_bytes()).await?;
-        self.stdin.flush().await?;
-
-        Ok(())
-    }
-
-    /// Read the raw bytes of an LSP message body from stdout.
-    ///
-    /// Parses the Content-Length header, reads the separator, and returns the body bytes.
-    async fn read_message_bytes(&mut self) -> io::Result<Vec<u8>> {
-        use tokio::io::AsyncReadExt;
-
-        // Read header line
-        let mut header_line = String::new();
-        self.stdout.read_line(&mut header_line).await?;
-
-        // Parse content length
-        let content_length: usize = header_line
-            .strip_prefix("Content-Length: ")
-            .and_then(|s| s.trim().parse().ok())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid Content-Length"))?;
-
-        // Read empty line (CRLF separator)
-        let mut empty_line = String::new();
-        self.stdout.read_line(&mut empty_line).await?;
-
-        // Read body
-        let mut body = vec![0u8; content_length];
-        self.stdout.read_exact(&mut body).await?;
-
-        Ok(body)
+        self.writer.write_message(message).await
     }
 
     /// Read and parse a JSON-RPC message from the child process stdout.
     ///
-    /// Parses the Content-Length header and reads the JSON body.
+    /// Delegates to internal `BridgeReader`.
     pub(crate) async fn read_message(&mut self) -> io::Result<serde_json::Value> {
-        let body = self.read_message_bytes().await?;
-        serde_json::from_slice(&body).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+        self.reader.read_message().await
     }
 
     /// Wait for a response with the given request ID, skipping notifications.
     ///
-    /// This method reads messages from stdout in a loop until it finds a response
-    /// matching the specified request ID. Notifications (messages without an "id" field)
-    /// are silently skipped.
-    ///
-    /// # Arguments
-    /// * `request_id` - The request ID to wait for
-    ///
-    /// # Returns
-    /// The JSON-RPC response message matching the request ID.
+    /// Delegates to internal `BridgeReader`.
     ///
     /// # Note
     /// This method will be replaced by oneshot channel waiting when Reader Task
     /// is introduced (ADR-0015 Phase A).
     pub(crate) async fn wait_for_response(
         &mut self,
-        request_id: i64,
+        request_id: RequestId,
     ) -> io::Result<serde_json::Value> {
-        loop {
-            let msg = self.read_message().await?;
-            if let Some(id) = msg.get("id")
-                && id.as_i64() == Some(request_id)
-            {
-                return Ok(msg);
-            }
-            // Skip notifications and other responses
-        }
+        self.reader.wait_for_response(request_id).await
     }
 }
 

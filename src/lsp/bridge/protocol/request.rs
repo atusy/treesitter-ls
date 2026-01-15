@@ -4,6 +4,7 @@
 //! language servers with proper coordinate translation from host to virtual
 //! document coordinates.
 
+use super::request_id::RequestId;
 use super::virtual_uri::VirtualDocumentUri;
 
 /// Build a position-based JSON-RPC request for a downstream language server.
@@ -35,7 +36,7 @@ fn build_position_based_request(
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
-    request_id: i64,
+    request_id: RequestId,
     method: &str,
 ) -> serde_json::Value {
     // Create virtual document URI
@@ -49,7 +50,7 @@ fn build_position_based_request(
 
     serde_json::json!({
         "jsonrpc": "2.0",
-        "id": request_id,
+        "id": request_id.as_i64(),
         "method": method,
         "params": {
             "textDocument": {
@@ -63,41 +64,6 @@ fn build_position_based_request(
     })
 }
 
-/// Build a whole-document JSON-RPC request for a downstream language server.
-///
-/// This is the core helper for building LSP requests that operate on the entire
-/// document without a position (documentLink, documentSymbol, documentColor).
-/// It handles:
-/// - Creating the virtual document URI
-/// - Building the JSON-RPC request structure with only textDocument param
-///
-/// # Arguments
-/// * `host_uri` - The URI of the host document
-/// * `injection_language` - The injection language (e.g., "lua")
-/// * `region_id` - The unique region ID for this injection
-/// * `request_id` - The JSON-RPC request ID
-/// * `method` - The LSP method name (e.g., "textDocument/documentSymbol")
-fn build_whole_document_request(
-    host_uri: &tower_lsp::lsp_types::Url,
-    injection_language: &str,
-    region_id: &str,
-    request_id: i64,
-    method: &str,
-) -> serde_json::Value {
-    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
-
-    serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "method": method,
-        "params": {
-            "textDocument": {
-                "uri": virtual_uri.to_uri_string()
-            }
-        }
-    })
-}
-
 /// Build a JSON-RPC hover request for a downstream language server.
 pub(crate) fn build_bridge_hover_request(
     host_uri: &tower_lsp::lsp_types::Url,
@@ -105,7 +71,7 @@ pub(crate) fn build_bridge_hover_request(
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
-    request_id: i64,
+    request_id: RequestId,
 ) -> serde_json::Value {
     build_position_based_request(
         host_uri,
@@ -125,7 +91,7 @@ pub(crate) fn build_bridge_signature_help_request(
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
-    request_id: i64,
+    request_id: RequestId,
 ) -> serde_json::Value {
     build_position_based_request(
         host_uri,
@@ -145,7 +111,7 @@ pub(crate) fn build_bridge_completion_request(
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
-    request_id: i64,
+    request_id: RequestId,
 ) -> serde_json::Value {
     build_position_based_request(
         host_uri,
@@ -165,7 +131,7 @@ pub(crate) fn build_bridge_definition_request(
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
-    request_id: i64,
+    request_id: RequestId,
 ) -> serde_json::Value {
     build_position_based_request(
         host_uri,
@@ -185,7 +151,7 @@ pub(crate) fn build_bridge_type_definition_request(
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
-    request_id: i64,
+    request_id: RequestId,
 ) -> serde_json::Value {
     build_position_based_request(
         host_uri,
@@ -205,7 +171,7 @@ pub(crate) fn build_bridge_implementation_request(
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
-    request_id: i64,
+    request_id: RequestId,
 ) -> serde_json::Value {
     build_position_based_request(
         host_uri,
@@ -225,7 +191,7 @@ pub(crate) fn build_bridge_declaration_request(
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
-    request_id: i64,
+    request_id: RequestId,
 ) -> serde_json::Value {
     build_position_based_request(
         host_uri,
@@ -245,7 +211,7 @@ pub(crate) fn build_bridge_document_highlight_request(
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
-    request_id: i64,
+    request_id: RequestId,
 ) -> serde_json::Value {
     build_position_based_request(
         host_uri,
@@ -269,7 +235,7 @@ pub(crate) fn build_bridge_references_request(
     region_id: &str,
     region_start_line: u32,
     include_declaration: bool,
-    request_id: i64,
+    request_id: RequestId,
 ) -> serde_json::Value {
     let mut request = build_position_based_request(
         host_uri,
@@ -302,7 +268,7 @@ pub(crate) fn build_bridge_rename_request(
     region_id: &str,
     region_start_line: u32,
     new_name: &str,
-    request_id: i64,
+    request_id: RequestId,
 ) -> serde_json::Value {
     let mut request = build_position_based_request(
         host_uri,
@@ -324,38 +290,65 @@ pub(crate) fn build_bridge_rename_request(
 
 /// Build a JSON-RPC document link request for a downstream language server.
 ///
-/// Whole-document request - asks for all links in the entire document.
+/// Unlike position-based requests (hover, definition, etc.), DocumentLinkParams
+/// only has a textDocument field - no position. The request asks for all links
+/// in the entire document.
+///
+/// # Arguments
+/// * `host_uri` - The URI of the host document
+/// * `injection_language` - The injection language (e.g., "lua")
+/// * `region_id` - The unique region ID for this injection
+/// * `request_id` - The JSON-RPC request ID
 pub(crate) fn build_bridge_document_link_request(
     host_uri: &tower_lsp::lsp_types::Url,
     injection_language: &str,
     region_id: &str,
-    request_id: i64,
+    request_id: RequestId,
 ) -> serde_json::Value {
-    build_whole_document_request(
-        host_uri,
-        injection_language,
-        region_id,
-        request_id,
-        "textDocument/documentLink",
-    )
+    // Create virtual document URI
+    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id.as_i64(),
+        "method": "textDocument/documentLink",
+        "params": {
+            "textDocument": {
+                "uri": virtual_uri.to_uri_string()
+            }
+        }
+    })
 }
 
 /// Build a JSON-RPC document symbol request for a downstream language server.
 ///
-/// Whole-document request - asks for all symbols in the entire document.
+/// Like DocumentLinkParams, DocumentSymbolParams only has a textDocument field -
+/// no position. The request asks for all symbols in the entire document.
+///
+/// # Arguments
+/// * `host_uri` - The URI of the host document
+/// * `injection_language` - The injection language (e.g., "lua")
+/// * `region_id` - The unique region ID for this injection
+/// * `request_id` - The JSON-RPC request ID
 pub(crate) fn build_bridge_document_symbol_request(
     host_uri: &tower_lsp::lsp_types::Url,
     injection_language: &str,
     region_id: &str,
-    request_id: i64,
+    request_id: RequestId,
 ) -> serde_json::Value {
-    build_whole_document_request(
-        host_uri,
-        injection_language,
-        region_id,
-        request_id,
-        "textDocument/documentSymbol",
-    )
+    // Create virtual document URI
+    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id.as_i64(),
+        "method": "textDocument/documentSymbol",
+        "params": {
+            "textDocument": {
+                "uri": virtual_uri.to_uri_string()
+            }
+        }
+    })
 }
 
 /// Build a JSON-RPC inlay hint request for a downstream language server.
@@ -384,7 +377,7 @@ pub(crate) fn build_bridge_inlay_hint_request(
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
-    request_id: i64,
+    request_id: RequestId,
 ) -> serde_json::Value {
     // Create virtual document URI
     let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
@@ -403,7 +396,7 @@ pub(crate) fn build_bridge_inlay_hint_request(
 
     serde_json::json!({
         "jsonrpc": "2.0",
-        "id": request_id,
+        "id": request_id.as_i64(),
         "method": "textDocument/inlayHint",
         "params": {
             "textDocument": {
@@ -449,7 +442,7 @@ pub(crate) fn build_bridge_color_presentation_request(
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
-    request_id: i64,
+    request_id: RequestId,
 ) -> serde_json::Value {
     // Create virtual document URI
     let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
@@ -468,7 +461,7 @@ pub(crate) fn build_bridge_color_presentation_request(
 
     serde_json::json!({
         "jsonrpc": "2.0",
-        "id": request_id,
+        "id": request_id.as_i64(),
         "method": "textDocument/colorPresentation",
         "params": {
             "textDocument": {
@@ -496,7 +489,7 @@ pub(crate) fn build_bridge_moniker_request(
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
-    request_id: i64,
+    request_id: RequestId,
 ) -> serde_json::Value {
     build_position_based_request(
         host_uri,
@@ -511,20 +504,33 @@ pub(crate) fn build_bridge_moniker_request(
 
 /// Build a JSON-RPC document color request for a downstream language server.
 ///
-/// Whole-document request - asks for all colors in the entire document.
+/// Like DocumentLinkParams, DocumentColorParams only has a textDocument field -
+/// no position. The request asks for all colors in the entire document.
+///
+/// # Arguments
+/// * `host_uri` - The URI of the host document
+/// * `injection_language` - The injection language (e.g., "lua")
+/// * `region_id` - The unique region ID for this injection
+/// * `request_id` - The JSON-RPC request ID
 pub(crate) fn build_bridge_document_color_request(
     host_uri: &tower_lsp::lsp_types::Url,
     injection_language: &str,
     region_id: &str,
-    request_id: i64,
+    request_id: RequestId,
 ) -> serde_json::Value {
-    build_whole_document_request(
-        host_uri,
-        injection_language,
-        region_id,
-        request_id,
-        "textDocument/documentColor",
-    )
+    // Create virtual document URI
+    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id.as_i64(),
+        "method": "textDocument/documentColor",
+        "params": {
+            "textDocument": {
+                "uri": virtual_uri.to_uri_string()
+            }
+        }
+    })
 }
 
 /// Build a JSON-RPC didOpen notification for a downstream language server.
@@ -593,6 +599,11 @@ mod tests {
     // Test helpers
     // ==========================================================================
 
+    /// Standard test request ID used across most tests.
+    fn test_request_id() -> RequestId {
+        RequestId::new(42)
+    }
+
     /// Standard test host URI used across most tests.
     fn test_host_uri() -> Url {
         Url::parse("file:///project/doc.md").unwrap()
@@ -643,8 +654,14 @@ mod tests {
 
     #[test]
     fn hover_request_uses_virtual_uri() {
-        let request =
-            build_bridge_hover_request(&test_host_uri(), test_position(), "lua", "region-0", 3, 42);
+        let request = build_bridge_hover_request(
+            &test_host_uri(),
+            test_position(),
+            "lua",
+            "region-0",
+            3,
+            test_request_id(),
+        );
 
         assert_uses_virtual_uri(&request, "lua");
     }
@@ -652,8 +669,14 @@ mod tests {
     #[test]
     fn hover_request_translates_position_to_virtual_coordinates() {
         // Host line 5, region starts at line 3 -> virtual line 2
-        let request =
-            build_bridge_hover_request(&test_host_uri(), test_position(), "lua", "region-0", 3, 42);
+        let request = build_bridge_hover_request(
+            &test_host_uri(),
+            test_position(),
+            "lua",
+            "region-0",
+            3,
+            test_request_id(),
+        );
 
         assert_position_request(&request, "textDocument/hover", 2);
     }
@@ -666,8 +689,14 @@ mod tests {
             character: 5,
         };
 
-        let request =
-            build_bridge_hover_request(&test_host_uri(), host_position, "lua", "region-0", 3, 42);
+        let request = build_bridge_hover_request(
+            &test_host_uri(),
+            host_position,
+            "lua",
+            "region-0",
+            3,
+            test_request_id(),
+        );
 
         assert_eq!(
             request["params"]["position"]["line"], 0,
@@ -683,8 +712,14 @@ mod tests {
             character: 0,
         };
 
-        let request =
-            build_bridge_hover_request(&test_host_uri(), host_position, "lua", "region-0", 0, 42);
+        let request = build_bridge_hover_request(
+            &test_host_uri(),
+            host_position,
+            "lua",
+            "region-0",
+            0,
+            test_request_id(),
+        );
 
         assert_eq!(
             request["params"]["position"]["line"], 5,
@@ -739,7 +774,7 @@ mod tests {
             "lua",
             "region-0",
             3,
-            42,
+            test_request_id(),
         );
 
         assert_uses_virtual_uri(&request, "lua");
@@ -754,7 +789,7 @@ mod tests {
             "lua",
             "region-0",
             3,
-            42,
+            test_request_id(),
         );
 
         assert_position_request(&request, "textDocument/completion", 2);
@@ -772,7 +807,7 @@ mod tests {
             "lua",
             "region-0",
             3,
-            42,
+            test_request_id(),
         );
 
         assert_uses_virtual_uri(&request, "lua");
@@ -787,7 +822,7 @@ mod tests {
             "lua",
             "region-0",
             3,
-            42,
+            test_request_id(),
         );
 
         assert_position_request(&request, "textDocument/signatureHelp", 2);
@@ -805,7 +840,7 @@ mod tests {
             "lua",
             "region-0",
             3,
-            42,
+            test_request_id(),
         );
 
         assert_uses_virtual_uri(&request, "lua");
@@ -820,7 +855,7 @@ mod tests {
             "lua",
             "region-0",
             3,
-            42,
+            test_request_id(),
         );
 
         assert_position_request(&request, "textDocument/definition", 2);
@@ -838,7 +873,7 @@ mod tests {
             "lua",
             "region-0",
             3,
-            42,
+            test_request_id(),
         );
 
         assert_uses_virtual_uri(&request, "lua");
@@ -853,7 +888,7 @@ mod tests {
             "lua",
             "region-0",
             3,
-            42,
+            test_request_id(),
         );
 
         assert_position_request(&request, "textDocument/typeDefinition", 2);
@@ -871,7 +906,7 @@ mod tests {
             "lua",
             "region-0",
             3,
-            42,
+            test_request_id(),
         );
 
         assert_uses_virtual_uri(&request, "lua");
@@ -886,7 +921,7 @@ mod tests {
             "lua",
             "region-0",
             3,
-            42,
+            test_request_id(),
         );
 
         assert_position_request(&request, "textDocument/implementation", 2);
@@ -904,7 +939,7 @@ mod tests {
             "lua",
             "region-0",
             3,
-            42,
+            test_request_id(),
         );
 
         assert_uses_virtual_uri(&request, "lua");
@@ -919,7 +954,7 @@ mod tests {
             "lua",
             "region-0",
             3,
-            42,
+            test_request_id(),
         );
 
         assert_position_request(&request, "textDocument/declaration", 2);
@@ -938,7 +973,7 @@ mod tests {
             "region-0",
             3,
             true, // include_declaration
-            42,
+            test_request_id(),
         );
 
         assert_uses_virtual_uri(&request, "lua");
@@ -954,7 +989,7 @@ mod tests {
             "region-0",
             3,
             true, // include_declaration
-            42,
+            test_request_id(),
         );
 
         assert_position_request(&request, "textDocument/references", 2);
@@ -969,7 +1004,7 @@ mod tests {
             "region-0",
             3,
             true, // include_declaration = true
-            42,
+            test_request_id(),
         );
 
         assert_eq!(
@@ -987,7 +1022,7 @@ mod tests {
             "region-0",
             3,
             false, // include_declaration = false
-            42,
+            test_request_id(),
         );
 
         assert_eq!(
@@ -1008,7 +1043,7 @@ mod tests {
             "lua",
             "region-0",
             3,
-            42,
+            test_request_id(),
         );
 
         assert_uses_virtual_uri(&request, "lua");
@@ -1023,7 +1058,7 @@ mod tests {
             "lua",
             "region-0",
             3,
-            42,
+            test_request_id(),
         );
 
         assert_position_request(&request, "textDocument/documentHighlight", 2);
@@ -1042,7 +1077,7 @@ mod tests {
             "region-0",
             3,
             "newName",
-            42,
+            test_request_id(),
         );
 
         assert_uses_virtual_uri(&request, "lua");
@@ -1058,7 +1093,7 @@ mod tests {
             "region-0",
             3,
             "newName",
-            42,
+            test_request_id(),
         );
 
         assert_position_request(&request, "textDocument/rename", 2);
@@ -1073,7 +1108,7 @@ mod tests {
             "region-0",
             3,
             "renamedVariable",
-            42,
+            test_request_id(),
         );
 
         assert_eq!(
@@ -1088,14 +1123,24 @@ mod tests {
 
     #[test]
     fn document_link_request_uses_virtual_uri() {
-        let request = build_bridge_document_link_request(&test_host_uri(), "lua", "region-0", 42);
+        let request = build_bridge_document_link_request(
+            &test_host_uri(),
+            "lua",
+            "region-0",
+            test_request_id(),
+        );
 
         assert_uses_virtual_uri(&request, "lua");
     }
 
     #[test]
     fn document_link_request_has_correct_method_and_structure() {
-        let request = build_bridge_document_link_request(&test_host_uri(), "lua", "region-0", 123);
+        let request = build_bridge_document_link_request(
+            &test_host_uri(),
+            "lua",
+            "region-0",
+            RequestId::new(123),
+        );
 
         assert_eq!(request["jsonrpc"], "2.0");
         assert_eq!(request["id"], 123);
@@ -1109,10 +1154,18 @@ mod tests {
 
     #[test]
     fn document_link_request_different_languages_produce_different_extensions() {
-        let lua_request =
-            build_bridge_document_link_request(&test_host_uri(), "lua", "region-0", 1);
-        let python_request =
-            build_bridge_document_link_request(&test_host_uri(), "python", "region-0", 1);
+        let lua_request = build_bridge_document_link_request(
+            &test_host_uri(),
+            "lua",
+            "region-0",
+            RequestId::new(1),
+        );
+        let python_request = build_bridge_document_link_request(
+            &test_host_uri(),
+            "python",
+            "region-0",
+            RequestId::new(1),
+        );
 
         assert_uses_virtual_uri(&lua_request, "lua");
         assert_uses_virtual_uri(&python_request, "py");
@@ -1124,15 +1177,24 @@ mod tests {
 
     #[test]
     fn document_symbol_request_uses_virtual_uri() {
-        let request = build_bridge_document_symbol_request(&test_host_uri(), "lua", "region-0", 42);
+        let request = build_bridge_document_symbol_request(
+            &test_host_uri(),
+            "lua",
+            "region-0",
+            test_request_id(),
+        );
 
         assert_uses_virtual_uri(&request, "lua");
     }
 
     #[test]
     fn document_symbol_request_has_correct_method_and_structure() {
-        let request =
-            build_bridge_document_symbol_request(&test_host_uri(), "lua", "region-0", 123);
+        let request = build_bridge_document_symbol_request(
+            &test_host_uri(),
+            "lua",
+            "region-0",
+            RequestId::new(123),
+        );
 
         assert_eq!(request["jsonrpc"], "2.0");
         assert_eq!(request["id"], 123);
@@ -1168,7 +1230,7 @@ mod tests {
             "lua",
             "region-0",
             3, // region_start_line
-            42,
+            test_request_id(),
         );
 
         assert_uses_virtual_uri(&request, "lua");
@@ -1194,7 +1256,7 @@ mod tests {
             "lua",
             "region-0",
             3,
-            123,
+            RequestId::new(123),
         );
 
         assert_eq!(request["jsonrpc"], "2.0");
@@ -1233,7 +1295,7 @@ mod tests {
             "lua",
             "region-0",
             3, // region_start_line
-            42,
+            test_request_id(),
         );
 
         let range = &request["params"]["range"];
@@ -1276,7 +1338,7 @@ mod tests {
             "lua",
             "region-0",
             3, // region_start_line
-            42,
+            test_request_id(),
         );
 
         let range = &request["params"]["range"];
@@ -1296,14 +1358,24 @@ mod tests {
 
     #[test]
     fn document_color_request_uses_virtual_uri() {
-        let request = build_bridge_document_color_request(&test_host_uri(), "lua", "region-0", 42);
+        let request = build_bridge_document_color_request(
+            &test_host_uri(),
+            "lua",
+            "region-0",
+            test_request_id(),
+        );
 
         assert_uses_virtual_uri(&request, "lua");
     }
 
     #[test]
     fn document_color_request_has_correct_method_and_structure() {
-        let request = build_bridge_document_color_request(&test_host_uri(), "lua", "region-0", 123);
+        let request = build_bridge_document_color_request(
+            &test_host_uri(),
+            "lua",
+            "region-0",
+            RequestId::new(123),
+        );
 
         assert_eq!(request["jsonrpc"], "2.0");
         assert_eq!(request["id"], 123);
@@ -1346,7 +1418,7 @@ mod tests {
             "lua",
             "region-0",
             3, // region_start_line
-            42,
+            test_request_id(),
         );
 
         assert_uses_virtual_uri(&request, "lua");
@@ -1381,7 +1453,7 @@ mod tests {
             "lua",
             "region-0",
             3, // region_start_line
-            42,
+            test_request_id(),
         );
 
         let range = &request["params"]["range"];
@@ -1430,7 +1502,7 @@ mod tests {
             "lua",
             "region-0",
             3, // region_start_line
-            42,
+            test_request_id(),
         );
 
         assert_eq!(request["jsonrpc"], "2.0");
@@ -1454,7 +1526,7 @@ mod tests {
             "lua",
             "region-0",
             3,
-            42,
+            test_request_id(),
         );
 
         assert_uses_virtual_uri(&request, "lua");
@@ -1469,7 +1541,7 @@ mod tests {
             "lua",
             "region-0",
             3,
-            42,
+            test_request_id(),
         );
 
         assert_position_request(&request, "textDocument/moniker", 2);

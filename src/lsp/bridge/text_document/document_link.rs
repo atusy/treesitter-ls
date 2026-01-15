@@ -13,8 +13,8 @@ use tower_lsp::lsp_types::Url;
 
 use super::super::pool::LanguageServerPool;
 use super::super::protocol::{
-    VirtualDocumentUri, build_bridge_didopen_notification, build_bridge_document_link_request,
-    transform_document_link_response_to_host,
+    RequestId, VirtualDocumentUri, build_bridge_didopen_notification,
+    build_bridge_document_link_request, transform_document_link_response_to_host,
 };
 
 impl LanguageServerPool {
@@ -59,7 +59,7 @@ impl LanguageServerPool {
 
         // Build and send document link request using upstream ID (ADR-0016)
         // Note: document link doesn't need position - it operates on the whole document
-        let request_id = upstream_request_id;
+        let request_id = RequestId::new(upstream_request_id);
         let request =
             build_bridge_document_link_request(host_uri, injection_language, region_id, request_id);
         conn.write_message(&request).await?;

@@ -10,8 +10,8 @@ use tower_lsp::lsp_types::{Position, Url};
 
 use super::super::pool::LanguageServerPool;
 use super::super::protocol::{
-    VirtualDocumentUri, build_bridge_didopen_notification, build_bridge_document_highlight_request,
-    transform_document_highlight_response_to_host,
+    RequestId, VirtualDocumentUri, build_bridge_didopen_notification,
+    build_bridge_document_highlight_request, transform_document_highlight_response_to_host,
 };
 
 impl LanguageServerPool {
@@ -53,7 +53,7 @@ impl LanguageServerPool {
         }
 
         // Build and send document highlight request using upstream ID (ADR-0016)
-        let request_id = upstream_request_id;
+        let request_id = RequestId::new(upstream_request_id);
         let request = build_bridge_document_highlight_request(
             host_uri,
             host_position,

@@ -10,7 +10,7 @@ use tower_lsp::lsp_types::{Position, Url};
 
 use super::super::pool::LanguageServerPool;
 use super::super::protocol::{
-    VirtualDocumentUri, build_bridge_didopen_notification, build_bridge_hover_request,
+    RequestId, VirtualDocumentUri, build_bridge_didopen_notification, build_bridge_hover_request,
     transform_hover_response_to_host,
 };
 
@@ -53,7 +53,7 @@ impl LanguageServerPool {
         }
 
         // Build and send hover request using upstream ID (ADR-0016)
-        let request_id = upstream_request_id;
+        let request_id = RequestId::new(upstream_request_id);
         let hover_request = build_bridge_hover_request(
             host_uri,
             host_position,

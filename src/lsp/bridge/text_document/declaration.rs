@@ -10,7 +10,7 @@ use tower_lsp::lsp_types::{Position, Url};
 
 use super::super::pool::LanguageServerPool;
 use super::super::protocol::{
-    ResponseTransformContext, VirtualDocumentUri, build_bridge_declaration_request,
+    RequestId, ResponseTransformContext, VirtualDocumentUri, build_bridge_declaration_request,
     build_bridge_didopen_notification, transform_definition_response_to_host,
 };
 
@@ -54,7 +54,7 @@ impl LanguageServerPool {
         }
 
         // Build and send declaration request using upstream ID (ADR-0016)
-        let request_id = upstream_request_id;
+        let request_id = RequestId::new(upstream_request_id);
         let declaration_request = build_bridge_declaration_request(
             host_uri,
             host_position,

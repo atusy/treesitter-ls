@@ -14,8 +14,8 @@ use tower_lsp::lsp_types::{Range, Url};
 
 use super::super::pool::LanguageServerPool;
 use super::super::protocol::{
-    VirtualDocumentUri, build_bridge_color_presentation_request, build_bridge_didopen_notification,
-    transform_color_presentation_response_to_host,
+    RequestId, VirtualDocumentUri, build_bridge_color_presentation_request,
+    build_bridge_didopen_notification, transform_color_presentation_response_to_host,
 };
 
 impl LanguageServerPool {
@@ -63,7 +63,7 @@ impl LanguageServerPool {
 
         // Build and send color presentation request using upstream ID (ADR-0016)
         // Note: request builder transforms host_range to virtual coordinates
-        let request_id = upstream_request_id;
+        let request_id = RequestId::new(upstream_request_id);
         let request = build_bridge_color_presentation_request(
             host_uri,
             host_range,
