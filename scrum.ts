@@ -39,9 +39,10 @@ const scrum: ScrumDashboard = {
     { id: "pbi-inlay-hints", story: { role: "Lua developer editing markdown", capability: "see inline type hints in Lua code blocks", benefit: "understand types without hovering" },
       acceptance_criteria: [
         { criterion: "Bridge forwards textDocument/inlayHint to downstream LS", verification: "E2E test" },
-        { criterion: "Hint positions transformed to host coordinates", verification: "Unit test" },
         { criterion: "Request range transformed to virtual coordinates", verification: "Unit test" },
-      ], status: "ready", refinement_notes: ["Request has range, response has positions", "Bidirectional transform needed"] },
+        { criterion: "Hint positions transformed to host coordinates", verification: "Unit test" },
+        { criterion: "Hint textEdits ranges transformed to host coordinates", verification: "Unit test" },
+      ], status: "ready", refinement_notes: ["Bidirectional: request range -> virtual, response position/textEdits -> host", "textEdits optional but needs transform when present", "InlayHintLabelPart.location deferred (rare, complex cross-doc case)"] },
     { id: "pbi-color-presentation", story: { role: "lua/python developer editing markdown", capability: "pick and edit color values", benefit: "visual color editing" },
       acceptance_criteria: [
         { criterion: "Bridge forwards textDocument/colorPresentation to downstream LS", verification: "E2E test" },
