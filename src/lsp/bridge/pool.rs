@@ -185,6 +185,33 @@ impl ConnectionHandle {
             .ok_or_else(|| io::Error::other("duplicate request ID"))?;
         Ok((request_id, response_rx))
     }
+
+    /// Wait for a response with timeout, cleaning up on timeout.
+    ///
+    /// Takes the oneshot receiver and request ID, waits for response with
+    /// 30-second timeout. On timeout, removes the pending entry from router.
+    pub(crate) async fn wait_for_response(
+        &self,
+        request_id: super::protocol::RequestId,
+        response_rx: tokio::sync::oneshot::Receiver<serde_json::Value>,
+    ) -> io::Result<serde_json::Value> {
+        use tokio::time::timeout;
+
+        const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+        match timeout(REQUEST_TIMEOUT, response_rx).await {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(_)) => Err(io::Error::other("response channel closed")),
+            Err(_) => {
+                // Timeout - clean up pending entry
+                self.router().remove(request_id);
+                Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "bridge request timeout",
+                ))
+            }
+        }
+    }
 }
 
 /// Pool of connections to downstream language servers (ADR-0016).
