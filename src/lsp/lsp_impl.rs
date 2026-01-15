@@ -1195,6 +1195,7 @@ impl LanguageServer for TreeSitterLs {
                 rename_provider: Some(OneOf::Left(true)),
                 inlay_hint_provider: Some(OneOf::Left(true)),
                 color_provider: Some(ColorProviderCapability::Simple(true)),
+                moniker_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
         })
@@ -1572,6 +1573,10 @@ impl LanguageServer for TreeSitterLs {
         params: ColorPresentationParams,
     ) -> Result<Vec<ColorPresentation>> {
         self.color_presentation_impl(params).await
+    }
+
+    async fn moniker(&self, params: MonikerParams) -> Result<Option<Vec<Moniker>>> {
+        self.moniker_impl(params).await
     }
 }
 

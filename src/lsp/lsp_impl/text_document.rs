@@ -11,6 +11,7 @@ mod document_symbol;
 mod hover;
 mod implementation;
 mod inlay_hint;
+mod moniker;
 mod references;
 mod rename;
 mod selection_range;

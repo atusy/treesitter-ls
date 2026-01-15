@@ -1453,8 +1453,14 @@ mod tests {
 
     #[test]
     fn moniker_request_uses_virtual_uri() {
-        let request =
-            build_bridge_moniker_request(&test_host_uri(), test_position(), "lua", "region-0", 3, 42);
+        let request = build_bridge_moniker_request(
+            &test_host_uri(),
+            test_position(),
+            "lua",
+            "region-0",
+            3,
+            42,
+        );
 
         assert_uses_virtual_uri(&request, "lua");
     }
@@ -1462,8 +1468,14 @@ mod tests {
     #[test]
     fn moniker_request_translates_position_to_virtual_coordinates() {
         // Host line 5, region starts at line 3 -> virtual line 2
-        let request =
-            build_bridge_moniker_request(&test_host_uri(), test_position(), "lua", "region-0", 3, 42);
+        let request = build_bridge_moniker_request(
+            &test_host_uri(),
+            test_position(),
+            "lua",
+            "region-0",
+            3,
+            42,
+        );
 
         assert_position_request(&request, "textDocument/moniker", 2);
     }

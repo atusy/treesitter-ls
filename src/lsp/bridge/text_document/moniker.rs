@@ -71,10 +71,7 @@ impl LanguageServerPool {
                 && id.as_i64() == Some(request_id)
             {
                 // Transform response to host coordinates (pass-through for moniker)
-                return Ok(transform_moniker_response_to_host(
-                    msg,
-                    region_start_line,
-                ));
+                return Ok(transform_moniker_response_to_host(msg, region_start_line));
             }
             // Skip notifications and other responses
         }
