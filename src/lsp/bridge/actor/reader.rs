@@ -139,13 +139,7 @@ mod tests {
         // Create a connection that echoes messages
         let mut conn = create_echo_connection().await;
 
-        // Create router and register a request
-        let router = Arc::new(ResponseRouter::new());
-        let _rx = router
-            .register(crate::lsp::bridge::protocol::RequestId::new(42))
-            .unwrap();
-
-        // Write a response that will be echoed back
+        // Write a response before splitting (so it's in the pipe)
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -155,9 +149,31 @@ mod tests {
             .await
             .expect("write should succeed");
 
-        // Extract reader and spawn reader task
-        // Note: We need to access the internal reader, but it's private.
-        // For this test, we'll use a different approach - test the reader_loop directly.
+        // Split the connection to get the reader
+        let (writer, reader) = conn.split();
+
+        // Create router and register a request
+        let router = Arc::new(ResponseRouter::new());
+        let rx = router
+            .register(crate::lsp::bridge::protocol::RequestId::new(42))
+            .unwrap();
+
+        // Spawn the reader task
+        let _handle = spawn_reader_task(reader, Arc::clone(&router));
+
+        // Wait for the response with timeout
+        let received = tokio::time::timeout(std::time::Duration::from_secs(1), rx)
+            .await
+            .expect("should not timeout")
+            .expect("channel should not be closed");
+
+        // Verify the response was routed correctly
+        assert_eq!(received["id"], 42);
+        assert_eq!(received["result"]["contents"], "test hover");
+        assert_eq!(router.pending_count(), 0);
+
+        // Drop writer to clean up child process
+        drop(writer);
     }
 
     #[test]
@@ -198,5 +214,229 @@ mod tests {
 
         // Pending count should still be 1 (notification was ignored)
         assert_eq!(router.pending_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn reader_loop_exits_on_cancellation() {
+        use crate::lsp::bridge::connection::BridgeReader;
+        use tokio::process::Command;
+        use std::process::Stdio;
+
+        // Create a long-running process that won't send any output
+        // Using `sleep` ensures the reader blocks waiting for input
+        let mut child = Command::new("sleep")
+            .arg("60")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("sleep should spawn");
+
+        let stdout = child.stdout.take().expect("stdout should be available");
+        let reader = BridgeReader::new(stdout);
+
+        let router = Arc::new(ResponseRouter::new());
+        let cancel_token = CancellationToken::new();
+        let token_clone = cancel_token.clone();
+
+        // Spawn the reader loop
+        let handle = tokio::spawn(reader_loop(reader, router, token_clone));
+
+        // Give the loop a moment to start
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        // Cancel the token
+        cancel_token.cancel();
+
+        // The loop should exit promptly
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), handle).await;
+        assert!(
+            result.is_ok(),
+            "reader_loop should exit quickly after cancellation"
+        );
+
+        // Clean up
+        let _ = child.kill().await;
+    }
+
+    #[tokio::test]
+    async fn reader_loop_fails_all_on_eof() {
+        use crate::lsp::bridge::protocol::RequestId;
+
+        // Create a connection that will close immediately (empty echo)
+        let mut conn = create_echo_connection().await;
+        let (writer, reader) = conn.split();
+
+        // Drop the writer to close stdin, causing EOF on stdout
+        drop(writer);
+
+        let router = Arc::new(ResponseRouter::new());
+        let rx1 = router.register(RequestId::new(1)).unwrap();
+        let rx2 = router.register(RequestId::new(2)).unwrap();
+
+        let cancel_token = CancellationToken::new();
+
+        // Run the reader loop - it should exit on EOF
+        let handle = tokio::spawn(reader_loop(reader, Arc::clone(&router), cancel_token));
+
+        // Wait for the loop to complete
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), handle).await;
+        assert!(result.is_ok(), "reader_loop should exit on EOF");
+
+        // All pending requests should have received error responses
+        assert_eq!(router.pending_count(), 0, "all pending should be cleared");
+
+        // Check that waiters received error responses
+        let response1 = rx1.await.expect("should receive error response");
+        assert!(
+            response1.get("error").is_some(),
+            "response should be an error"
+        );
+        assert_eq!(response1["error"]["code"], -32603);
+
+        let response2 = rx2.await.expect("should receive error response");
+        assert!(
+            response2.get("error").is_some(),
+            "response should be an error"
+        );
+    }
+
+    #[tokio::test]
+    async fn reader_loop_routes_multiple_responses_in_order() {
+        use crate::lsp::bridge::protocol::RequestId;
+
+        let mut conn = create_echo_connection().await;
+
+        // Write multiple responses before splitting
+        let response1 = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": "first"
+        });
+        let response2 = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": "second"
+        });
+        let response3 = json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "result": "third"
+        });
+
+        conn.write_message(&response1).await.unwrap();
+        conn.write_message(&response2).await.unwrap();
+        conn.write_message(&response3).await.unwrap();
+
+        let (writer, reader) = conn.split();
+
+        let router = Arc::new(ResponseRouter::new());
+        let rx1 = router.register(RequestId::new(1)).unwrap();
+        let rx2 = router.register(RequestId::new(2)).unwrap();
+        let rx3 = router.register(RequestId::new(3)).unwrap();
+
+        let _handle = spawn_reader_task(reader, Arc::clone(&router));
+
+        // All three should be received
+        let received1 = tokio::time::timeout(std::time::Duration::from_secs(1), rx1)
+            .await
+            .expect("should not timeout")
+            .expect("channel should not be closed");
+        assert_eq!(received1["result"], "first");
+
+        let received2 = tokio::time::timeout(std::time::Duration::from_secs(1), rx2)
+            .await
+            .expect("should not timeout")
+            .expect("channel should not be closed");
+        assert_eq!(received2["result"], "second");
+
+        let received3 = tokio::time::timeout(std::time::Duration::from_secs(1), rx3)
+            .await
+            .expect("should not timeout")
+            .expect("channel should not be closed");
+        assert_eq!(received3["result"], "third");
+
+        assert_eq!(router.pending_count(), 0);
+        drop(writer);
+    }
+
+    #[tokio::test]
+    async fn reader_loop_skips_notifications_and_continues() {
+        use crate::lsp::bridge::protocol::RequestId;
+
+        let mut conn = create_echo_connection().await;
+
+        // Write a notification followed by a response
+        let notification = json!({
+            "jsonrpc": "2.0",
+            "method": "$/progress",
+            "params": { "token": "test" }
+        });
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": "after notification"
+        });
+
+        conn.write_message(&notification).await.unwrap();
+        conn.write_message(&response).await.unwrap();
+
+        let (writer, reader) = conn.split();
+
+        let router = Arc::new(ResponseRouter::new());
+        let rx = router.register(RequestId::new(42)).unwrap();
+
+        let _handle = spawn_reader_task(reader, Arc::clone(&router));
+
+        // Should receive the response even though notification came first
+        let received = tokio::time::timeout(std::time::Duration::from_secs(1), rx)
+            .await
+            .expect("should not timeout")
+            .expect("channel should not be closed");
+
+        assert_eq!(received["id"], 42);
+        assert_eq!(received["result"], "after notification");
+
+        drop(writer);
+    }
+
+    #[tokio::test]
+    async fn reader_loop_handles_unknown_response_id() {
+        use crate::lsp::bridge::protocol::RequestId;
+
+        let mut conn = create_echo_connection().await;
+
+        // Write a response with an unregistered ID, followed by one with registered ID
+        let unknown_response = json!({
+            "jsonrpc": "2.0",
+            "id": 999,
+            "result": "unknown"
+        });
+        let known_response = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": "known"
+        });
+
+        conn.write_message(&unknown_response).await.unwrap();
+        conn.write_message(&known_response).await.unwrap();
+
+        let (writer, reader) = conn.split();
+
+        let router = Arc::new(ResponseRouter::new());
+        // Only register ID 1, not 999
+        let rx = router.register(RequestId::new(1)).unwrap();
+
+        let _handle = spawn_reader_task(reader, Arc::clone(&router));
+
+        // Should skip the unknown response and deliver the known one
+        let received = tokio::time::timeout(std::time::Duration::from_secs(1), rx)
+            .await
+            .expect("should not timeout")
+            .expect("channel should not be closed");
+
+        assert_eq!(received["id"], 1);
+        assert_eq!(received["result"], "known");
+
+        drop(writer);
     }
 }
