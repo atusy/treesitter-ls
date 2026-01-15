@@ -11,36 +11,23 @@ const scrum: ScrumDashboard = {
   product_goal: {
     statement: "Improve LSP feature coverage via bridge",
     success_metrics: [
-      {
-        metric: "Bridge coverage",
-        target:
-          "Support completion, signatureHelp, definition, typeDefinition, implementation, declaration, hover, references, document highlight, inlay hints, document link, document symbols, moniker, color presentation, rename",
-      },
-      {
-        metric: "Modular architecture",
-        target:
-          "Bridge module organized with text_document/ subdirectory matching lsp_impl structure",
-      },
-      {
-        metric: "E2E test coverage using treesitter-ls binary",
-        target: "Each bridged feature has E2E test verifying end-to-end flow",
-      },
+      { metric: "Bridge coverage", target: "Support completion, signatureHelp, definition, typeDefinition, implementation, declaration, hover, references, document highlight, inlay hints, document link, document symbols, moniker, color presentation, rename" },
+      { metric: "Modular architecture", target: "Bridge module organized with text_document/ subdirectory matching lsp_impl structure" },
+      { metric: "E2E test coverage using treesitter-ls binary", target: "Each bridged feature has E2E test verifying end-to-end flow" },
     ],
   },
 
   product_backlog: [
     { id: "pbi-color-presentation", story: { role: "lua/python developer editing markdown", capability: "pick and edit color values", benefit: "visual color editing" },
       acceptance_criteria: [
-        // documentColor: whole-document operation (like documentLink)
         { criterion: "Bridge forwards textDocument/documentColor to downstream LS for all injection regions", verification: "E2E test" },
         { criterion: "documentColor response ranges transformed to host coordinates", verification: "Unit test" },
         { criterion: "documentColor results aggregated from multiple injection regions", verification: "Unit test" },
-        // colorPresentation: hybrid pattern - range input with textEdit response (like inlayHint)
         { criterion: "Bridge forwards textDocument/colorPresentation to downstream LS", verification: "E2E test" },
         { criterion: "colorPresentation request range transformed to virtual coordinates", verification: "Unit test" },
         { criterion: "colorPresentation response textEdit ranges transformed to host coordinates", verification: "Unit test" },
         { criterion: "colorPresentation additionalTextEdits transformed to host coordinates", verification: "Unit test" },
-      ], status: "done", refinement_notes: ["Two-part feature: documentColor (whole-doc) + colorPresentation (hybrid)", "documentColor uses resolve_all pattern like documentLink", "colorPresentation uses range->virtual request + textEdit->host response like inlayHint", "ColorInformation[] response contains range+color for each color found", "ColorPresentation[] response contains label + optional textEdit + optional additionalTextEdits"] },
+      ], status: "done" },
     { id: "pbi-moniker", story: { role: "lua/python developer editing markdown", capability: "get unique symbol identifiers", benefit: "cross-project navigation" },
       acceptance_criteria: [
         { criterion: "Bridge forwards textDocument/moniker to downstream LS", verification: "E2E test" },
@@ -65,25 +52,13 @@ const scrum: ScrumDashboard = {
     ],
   },
   retrospectives: [
-    { sprint: 1, improvements: [
-      { action: "Review LSP spec response structure during refinement", timing: "sprint", status: "active", outcome: null },
-    ] },
-    { sprint: 2, improvements: [
-      { action: "Continue reviewing LSP spec for dual response formats during refinement", timing: "sprint", status: "active", outcome: "Would have caught WorkspaceEdit's changes vs documentChanges formats earlier" },
-    ] },
-    { sprint: 3, improvements: [
-      { action: "Continue using InjectionResolver::resolve_all for whole-document operations", timing: "sprint", status: "active", outcome: "Discovered pattern: whole-doc ops (documentLink, symbols) need all regions, position-based ops (hover, definition) need single region" },
-    ] },
-    { sprint: 4, improvements: [
-      { action: "Proactively implement dual response formats when LSP spec shows both options", timing: "sprint", status: "active", outcome: "Both DocumentSymbol[] and SymbolInformation[] formats implemented upfront, eliminating need for additional subtasks" },
-      { action: "Handle recursive structures (DocumentSymbol.children) during initial implementation", timing: "sprint", status: "active", outcome: "Recursive transformation implemented with initial test, avoiding regression risk" },
-      { action: "Continue leveraging established patterns (whole-doc ops, simple transformers)", timing: "sprint", status: "active", outcome: "Sprint executed cleanly with zero blockers by reusing document_link.rs pattern" },
-    ] },
     { sprint: 5, improvements: [
       { action: "Document bidirectional transformation pattern in ADR or architecture guide", timing: "product", status: "active", outcome: "Discovered pattern: some requests need range->virtual transformation, responses need position/textEdit->host transformation (inlayHint, colorPresentation)" },
       { action: "Distinguish hybrid pattern from pure position-based and whole-doc patterns", timing: "product", status: "active", outcome: "Hybrid pattern identified: position-based operation (single region) but with range input parameter, distinct from point-position requests" },
-      { action: "Continue handling optional nested transformations (textEdits, labelPart.location)", timing: "sprint", status: "active", outcome: "Optional textEdits handled correctly; labelPart.location deferred as rare cross-doc case" },
-      { action: "Continue TDD cycle execution with small, focused subtasks", timing: "sprint", status: "active", outcome: "5 subtasks completed cleanly: request builder, position transform, textEdits transform, pool method, E2E test - zero blockers" },
+    ] },
+    { sprint: 6, improvements: [
+      { action: "Document multi-handler PBI pattern (when features require coordinated handlers)", timing: "product", status: "active", outcome: "Successfully delivered two-handler feature (documentColor + colorPresentation) by applying established patterns independently" },
+      { action: "Continue leveraging pattern composition (whole-doc + hybrid patterns in single PBI)", timing: "sprint", status: "active", outcome: "documentColor used whole-doc pattern (resolve_all like documentLink), colorPresentation used hybrid pattern (range->virtual + textEdit->host like inlayHint) - zero conflicts" },
     ] },
   ],
 };
