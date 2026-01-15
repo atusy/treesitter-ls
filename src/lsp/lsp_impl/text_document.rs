@@ -1,5 +1,6 @@
 //! Text document related LSP methods.
 
+mod color_presentation;
 mod completion;
 mod declaration;
 mod definition;

@@ -1563,11 +1563,15 @@ impl LanguageServer for TreeSitterLs {
         self.inlay_hint_impl(params).await
     }
 
-    async fn document_color(
-        &self,
-        params: DocumentColorParams,
-    ) -> Result<Vec<ColorInformation>> {
+    async fn document_color(&self, params: DocumentColorParams) -> Result<Vec<ColorInformation>> {
         self.document_color_impl(params).await
+    }
+
+    async fn color_presentation(
+        &self,
+        params: ColorPresentationParams,
+    ) -> Result<Vec<ColorPresentation>> {
+        self.color_presentation_impl(params).await
     }
 }
 
