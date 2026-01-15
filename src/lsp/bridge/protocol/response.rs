@@ -2605,6 +2605,139 @@ mod tests {
         assert_eq!(label_part["location"]["range"]["start"]["line"], 7);
     }
 
+    #[test]
+    fn inlay_hint_label_part_cross_region_location_is_filtered_out() {
+        // When location.uri is a DIFFERENT virtual URI (cross-region), the part should be removed
+        let request_virtual_uri = "file:///.treesitter-ls/abc123/region-0.lua";
+        let different_virtual_uri = "file:///.treesitter-ls/abc123/region-1.lua"; // Different region
+        let host_uri = "file:///test.md";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "position": { "line": 0, "character": 10 },
+                "label": [
+                    {
+                        "value": "SameRegion",
+                        "location": {
+                            "uri": request_virtual_uri,
+                            "range": {
+                                "start": { "line": 2, "character": 0 },
+                                "end": { "line": 2, "character": 10 }
+                            }
+                        }
+                    },
+                    {
+                        "value": "CrossRegion",
+                        "location": {
+                            "uri": different_virtual_uri,
+                            "range": {
+                                "start": { "line": 5, "character": 0 },
+                                "end": { "line": 5, "character": 11 }
+                            }
+                        }
+                    }
+                ]
+            }]
+        });
+        let context = ResponseTransformContext {
+            request_virtual_uri: request_virtual_uri.to_string(),
+            request_host_uri: host_uri.to_string(),
+            request_region_start_line: 10,
+        };
+
+        let transformed = transform_inlay_hint_response_to_host(response, &context);
+
+        // The label array should have only 1 part (CrossRegion filtered out)
+        let label = transformed["result"][0]["label"].as_array().unwrap();
+        assert_eq!(label.len(), 1, "Cross-region part should be filtered out");
+        assert_eq!(label[0]["value"], "SameRegion");
+        // Same-region part should have URI transformed and range offset applied
+        assert_eq!(label[0]["location"]["uri"], host_uri);
+        assert_eq!(label[0]["location"]["range"]["start"]["line"], 12);
+    }
+
+    #[test]
+    fn inlay_hint_label_part_real_file_uri_preserved_unchanged() {
+        // When location.uri is a real file (not virtual), it should be preserved as-is
+        // Note: Real file URIs don't have ranges transformed (they reference real file positions)
+        let request_virtual_uri = "file:///.treesitter-ls/abc123/region-0.lua";
+        let real_file_uri = "file:///usr/local/lib/lua/5.4/types.lua"; // External library file
+        let host_uri = "file:///test.md";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "position": { "line": 0, "character": 10 },
+                "label": [
+                    {
+                        "value": "ExternalType",
+                        "location": {
+                            "uri": real_file_uri,
+                            "range": {
+                                "start": { "line": 100, "character": 0 },
+                                "end": { "line": 100, "character": 12 }
+                            }
+                        }
+                    }
+                ]
+            }]
+        });
+        let context = ResponseTransformContext {
+            request_virtual_uri: request_virtual_uri.to_string(),
+            request_host_uri: host_uri.to_string(),
+            request_region_start_line: 10,
+        };
+
+        let transformed = transform_inlay_hint_response_to_host(response, &context);
+
+        let label_part = &transformed["result"][0]["label"][0];
+        // Real file URI should be preserved unchanged
+        assert_eq!(label_part["location"]["uri"], real_file_uri);
+        // Range should NOT be transformed (it's a real file, not a virtual document)
+        assert_eq!(label_part["location"]["range"]["start"]["line"], 100);
+    }
+
+    #[test]
+    fn inlay_hint_label_part_without_location_preserved_unchanged() {
+        // Label parts with only value/tooltip/command (no location) should be preserved
+        let request_virtual_uri = "file:///.treesitter-ls/abc123/region-0.lua";
+        let host_uri = "file:///test.md";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "position": { "line": 0, "character": 10 },
+                "label": [
+                    {
+                        "value": "SimpleHint",
+                        "tooltip": "A simple tooltip"
+                    },
+                    {
+                        "value": " -> ",
+                        "command": { "title": "Do something", "command": "action" }
+                    }
+                ]
+            }]
+        });
+        let context = ResponseTransformContext {
+            request_virtual_uri: request_virtual_uri.to_string(),
+            request_host_uri: host_uri.to_string(),
+            request_region_start_line: 10,
+        };
+
+        let transformed = transform_inlay_hint_response_to_host(response, &context);
+
+        // Both label parts should be preserved
+        let label = transformed["result"][0]["label"].as_array().unwrap();
+        assert_eq!(label.len(), 2);
+        assert_eq!(label[0]["value"], "SimpleHint");
+        assert_eq!(label[0]["tooltip"], "A simple tooltip");
+        assert!(label[0].get("location").is_none());
+        assert_eq!(label[1]["value"], " -> ");
+        assert_eq!(label[1]["command"]["title"], "Do something");
+    }
+
     // ==========================================================================
     // Document color response transformation tests
     // ==========================================================================
