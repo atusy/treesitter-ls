@@ -174,12 +174,12 @@ impl AsyncBridgeConnection {
         let stdin = child
             .stdin
             .take()
-            .ok_or_else(|| io::Error::other("failed to capture stdin"))?;
+            .ok_or_else(|| io::Error::other("bridge: failed to capture stdin"))?;
 
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| io::Error::other("failed to capture stdout"))?;
+            .ok_or_else(|| io::Error::other("bridge: failed to capture stdout"))?;
 
         Ok(Self {
             child: Some(child),
@@ -227,7 +227,7 @@ impl AsyncBridgeConnection {
     pub(crate) async fn write_message(&mut self, message: &serde_json::Value) -> io::Result<()> {
         match &mut self.writer {
             Some(writer) => writer.write_message(message).await,
-            None => Err(io::Error::other("writer has been taken")),
+            None => Err(io::Error::other("bridge: writer has been taken")),
         }
     }
 
@@ -238,7 +238,7 @@ impl AsyncBridgeConnection {
     pub(crate) async fn read_message(&mut self) -> io::Result<serde_json::Value> {
         match &mut self.reader {
             Some(reader) => reader.read_message().await,
-            None => Err(io::Error::other("reader has been taken")),
+            None => Err(io::Error::other("bridge: reader has been taken")),
         }
     }
 }

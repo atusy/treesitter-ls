@@ -182,7 +182,7 @@ impl ConnectionHandle {
         let response_rx = self
             .router()
             .register(request_id)
-            .ok_or_else(|| io::Error::other("duplicate request ID"))?;
+            .ok_or_else(|| io::Error::other("bridge: duplicate request ID"))?;
         Ok((request_id, response_rx))
     }
 
@@ -201,13 +201,13 @@ impl ConnectionHandle {
 
         match timeout(REQUEST_TIMEOUT, response_rx).await {
             Ok(Ok(response)) => Ok(response),
-            Ok(Err(_)) => Err(io::Error::other("response channel closed")),
+            Ok(Err(_)) => Err(io::Error::other("bridge: response channel closed")),
             Err(_) => {
                 // Timeout - clean up pending entry
                 self.router().remove(request_id);
                 Err(io::Error::new(
                     io::ErrorKind::TimedOut,
-                    "bridge request timeout",
+                    "bridge: request timeout",
                 ))
             }
         }
@@ -584,7 +584,7 @@ impl LanguageServerPool {
                     // Got the initialize response
                     if msg.get("error").is_some() {
                         return Err(io::Error::other(format!(
-                            "Initialize failed: {:?}",
+                            "bridge: initialize failed: {:?}",
                             msg.get("error")
                         )));
                     }
@@ -629,7 +629,7 @@ impl LanguageServerPool {
                 // Timeout occurred - connection will be dropped
                 Err(io::Error::new(
                     io::ErrorKind::TimedOut,
-                    "Initialize timeout: downstream server unresponsive",
+                    "bridge: initialize timeout",
                 ))
             }
         }
