@@ -16,108 +16,8 @@ const scrum: ScrumDashboard = {
       { metric: "E2E test coverage using treesitter-ls binary", target: "Each bridged feature has E2E test verifying end-to-end flow" },
     ],
   },
-  product_backlog: [
-    {
-      id: "pbi-inlay-hint-label-part-location",
-      story: {
-        role: "Lua developer editing markdown",
-        capability: "see inlay hint label parts with clickable locations that correctly navigate to the host document",
-        benefit: "I can click on type information or other hints that reference code locations and navigate to the correct position in my markdown file, not a non-existent virtual document",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "Transform InlayHintLabelPart.location.range when label is an array",
-          verification: "Unit test: label array with location fields has ranges transformed by region_start_line offset",
-        },
-        {
-          criterion: "Transform InlayHintLabelPart.location.uri from virtual to host URI when same virtual document",
-          verification: "Unit test: location.uri matching request's virtual URI is replaced with host URI",
-        },
-        {
-          criterion: "Filter out InlayHintLabelPart with cross-region location.uri",
-          verification: "Unit test: label parts with different virtual URI are removed from the array",
-        },
-        {
-          criterion: "Preserve InlayHintLabelPart with real file location.uri unchanged",
-          verification: "Unit test: label parts with non-virtual URI have location preserved as-is",
-        },
-        {
-          criterion: "Preserve string labels unchanged (existing behavior)",
-          verification: "Existing tests continue to pass",
-        },
-        {
-          criterion: "Preserve InlayHintLabelPart without location field unchanged",
-          verification: "Unit test: label parts with only value/tooltip/command are preserved",
-        },
-      ],
-      status: "done",
-      refinement_notes: [
-        "Per LSP 3.17 spec, InlayHint.label can be string | InlayHintLabelPart[]",
-        "InlayHintLabelPart has: value (required), tooltip, location, command (all optional)",
-        "location field is { uri: DocumentUri, range: Range } - same as Location type",
-        "Current transform_inlay_hint_item only handles position and textEdits, not label array",
-        "Can reuse transform_location_uri helper for consistent URI/range transformation",
-        "Need ResponseTransformContext to access host_uri and virtual_uri for URI transformation",
-        "Signature change required: transform_inlay_hint_item and transform_inlay_hint_response_to_host need context parameter",
-      ],
-    },
-  ],
-  sprint: {
-    number: 11,
-    pbi_id: "pbi-inlay-hint-label-part-location",
-    goal: "Transform InlayHintLabelPart.location for full LSP compliance",
-    status: "done",
-    subtasks: [
-      {
-        test: "N/A (structural refactoring)",
-        implementation: "Change transform_inlay_hint signature from region_start_line: u32 to ResponseTransformContext",
-        type: "structural",
-        status: "completed",
-        commits: [{ hash: "fbff5867", message: "refactor(bridge): change inlay hint transform to use ResponseTransformContext", phase: "green" }],
-        notes: ["Prerequisite: enables access to host_uri and virtual_uri for URI transformation"],
-      },
-      {
-        test: "Unit test: label array with location fields has ranges transformed by region_start_line offset",
-        implementation: "Transform InlayHintLabelPart.location.range using region_start_line offset",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "a02279fb", message: "feat(bridge): transform InlayHintLabelPart.location.range to host coordinates", phase: "green" }],
-        notes: ["Range transformation follows same pattern as InlayHint.position"],
-      },
-      {
-        test: "Unit test: location.uri matching request's virtual URI is replaced with host URI",
-        implementation: "Transform InlayHintLabelPart.location.uri from virtual to host when same virtual document",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "978ac6d2", message: "feat(bridge): transform InlayHintLabelPart.location using transform_location_uri", phase: "green" }],
-        notes: ["Reuse transform_location_uri helper for consistent URI transformation"],
-      },
-      {
-        test: "Unit test: label parts with different virtual URI are removed from the array",
-        implementation: "Filter out InlayHintLabelPart with cross-region location.uri",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "75043c3e", message: "test(bridge): add tests for InlayHintLabelPart.location edge cases", phase: "green" }],
-        notes: ["Cross-region references cannot be resolved, must be filtered", "Behavior already implemented in 978ac6d2"],
-      },
-      {
-        test: "Unit test: label parts with non-virtual URI have location preserved as-is; label parts with only value/tooltip/command are preserved",
-        implementation: "Preserve real file URIs and label parts without location field unchanged",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "75043c3e", message: "test(bridge): add tests for InlayHintLabelPart.location edge cases", phase: "green" }],
-        notes: ["Real file URIs are already valid; parts without location need no transformation", "Behavior already implemented in 978ac6d2"],
-      },
-      {
-        test: "N/A (integration point)",
-        implementation: "Update pool method to build proper ResponseTransformContext",
-        type: "structural",
-        status: "completed",
-        commits: [{ hash: "fbff5867", message: "refactor(bridge): change inlay hint transform to use ResponseTransformContext", phase: "green" }],
-        notes: ["Wires up the new context parameter at the call site", "Combined with subtask 1"],
-      },
-    ],
-  },
+  product_backlog: [],
+  sprint: null,
   completed: [
     { number: 1, pbi_id: "pbi-document-highlight", goal: "Bridge textDocument/documentHighlight to downstream LS", status: "done", subtasks: [] },
     { number: 2, pbi_id: "pbi-rename", goal: "Bridge textDocument/rename with WorkspaceEdit transformation", status: "done", subtasks: [] },
@@ -129,6 +29,7 @@ const scrum: ScrumDashboard = {
     { number: 8, pbi_id: "pbi-symbol-info-uri-fix", goal: "Fix SymbolInformation URI transformation for LSP compliance", status: "done", subtasks: [] },
     { number: 9, pbi_id: "pbi-document-color-e2e", goal: "Add E2E test coverage for textDocument/documentColor", status: "done", subtasks: [] },
     { number: 10, pbi_id: "pbi-color-presentation-e2e", goal: "Add E2E test coverage for textDocument/colorPresentation", status: "done", subtasks: [] },
+    { number: 11, pbi_id: "pbi-inlay-hint-label-part-location", goal: "Transform InlayHintLabelPart.location for full LSP compliance", status: "done", subtasks: [] },
   ],
   definition_of_done: {
     checks: [
@@ -139,8 +40,9 @@ const scrum: ScrumDashboard = {
     ],
   },
   retrospectives: [
-    { sprint: 10, improvements: [
-      { action: "Consider batching similar PBIs (e.g., multiple E2E tests) in future sprints to reduce overhead", timing: "sprint", status: "active", outcome: null },
+    { sprint: 11, improvements: [
+      { action: "Document pattern for handling LSP types with nested optional Location fields in array properties", timing: "product", status: "active", outcome: null },
+      { action: "When changing function signatures, verify all call sites in same commit to maintain atomicity", timing: "sprint", status: "active", outcome: null },
     ] },
   ],
 };
