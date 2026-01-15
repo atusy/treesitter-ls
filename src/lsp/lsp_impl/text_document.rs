@@ -3,6 +3,7 @@
 mod completion;
 mod declaration;
 mod definition;
+mod document_color;
 mod document_highlight;
 mod document_link;
 mod document_symbol;
