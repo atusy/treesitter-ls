@@ -15,6 +15,7 @@ mod document_link;
 mod document_symbol;
 mod hover;
 mod implementation;
+mod inlay_hint;
 mod references;
 mod rename;
 mod signature_help;
