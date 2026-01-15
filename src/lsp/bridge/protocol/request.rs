@@ -319,6 +319,37 @@ pub(crate) fn build_bridge_document_link_request(
     })
 }
 
+/// Build a JSON-RPC document symbol request for a downstream language server.
+///
+/// Like DocumentLinkParams, DocumentSymbolParams only has a textDocument field -
+/// no position. The request asks for all symbols in the entire document.
+///
+/// # Arguments
+/// * `host_uri` - The URI of the host document
+/// * `injection_language` - The injection language (e.g., "lua")
+/// * `region_id` - The unique region ID for this injection
+/// * `request_id` - The JSON-RPC request ID
+pub(crate) fn build_bridge_document_symbol_request(
+    host_uri: &tower_lsp::lsp_types::Url,
+    injection_language: &str,
+    region_id: &str,
+    request_id: i64,
+) -> serde_json::Value {
+    // Create virtual document URI
+    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/documentSymbol",
+        "params": {
+            "textDocument": {
+                "uri": virtual_uri.to_uri_string()
+            }
+        }
+    })
+}
+
 /// Build a JSON-RPC didOpen notification for a downstream language server.
 ///
 /// Sends the initial document content to the downstream language server when
@@ -908,5 +939,32 @@ mod tests {
 
         assert_uses_virtual_uri(&lua_request, "lua");
         assert_uses_virtual_uri(&python_request, "py");
+    }
+
+    // ==========================================================================
+    // Document symbol request tests
+    // ==========================================================================
+
+    #[test]
+    fn document_symbol_request_uses_virtual_uri() {
+        let request =
+            build_bridge_document_symbol_request(&test_host_uri(), "lua", "region-0", 42);
+
+        assert_uses_virtual_uri(&request, "lua");
+    }
+
+    #[test]
+    fn document_symbol_request_has_correct_method_and_structure() {
+        let request =
+            build_bridge_document_symbol_request(&test_host_uri(), "lua", "region-0", 123);
+
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], 123);
+        assert_eq!(request["method"], "textDocument/documentSymbol");
+        // DocumentSymbol request has no position parameter (whole-document operation)
+        assert!(
+            request["params"].get("position").is_none(),
+            "DocumentSymbol request should not have position parameter"
+        );
     }
 }
