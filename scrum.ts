@@ -45,8 +45,8 @@ const scrum: ScrumDashboard = {
         test: "Test build_bridge_moniker_request transforms position to virtual coordinates",
         implementation: "Add build_bridge_moniker_request using build_position_based_request helper",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "11ddcc1b", message: "feat(bridge): add build_bridge_moniker_request for position transformation", phase: "green" }],
         notes: ["Follow signatureHelp pattern - use build_position_based_request with 'textDocument/moniker' method"],
       },
       {
