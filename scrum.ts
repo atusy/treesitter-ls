@@ -31,10 +31,16 @@ const scrum: ScrumDashboard = {
   product_backlog: [
     { id: "pbi-color-presentation", story: { role: "lua/python developer editing markdown", capability: "pick and edit color values", benefit: "visual color editing" },
       acceptance_criteria: [
+        // documentColor: whole-document operation (like documentLink)
+        { criterion: "Bridge forwards textDocument/documentColor to downstream LS for all injection regions", verification: "E2E test" },
+        { criterion: "documentColor response ranges transformed to host coordinates", verification: "Unit test" },
+        { criterion: "documentColor results aggregated from multiple injection regions", verification: "Unit test" },
+        // colorPresentation: hybrid pattern - range input with textEdit response (like inlayHint)
         { criterion: "Bridge forwards textDocument/colorPresentation to downstream LS", verification: "E2E test" },
-        { criterion: "Request range transformed to virtual coordinates", verification: "Unit test" },
-        { criterion: "Response textEdit ranges transformed to host coordinates", verification: "Unit test" },
-      ], status: "ready", refinement_notes: ["Needs documentColor + colorPresentation handlers", "Both request and response transforms"] },
+        { criterion: "colorPresentation request range transformed to virtual coordinates", verification: "Unit test" },
+        { criterion: "colorPresentation response textEdit ranges transformed to host coordinates", verification: "Unit test" },
+        { criterion: "colorPresentation additionalTextEdits transformed to host coordinates", verification: "Unit test" },
+      ], status: "ready", refinement_notes: ["Two-part feature: documentColor (whole-doc) + colorPresentation (hybrid)", "documentColor uses resolve_all pattern like documentLink", "colorPresentation uses range->virtual request + textEdit->host response like inlayHint", "ColorInformation[] response contains range+color for each color found", "ColorPresentation[] response contains label + optional textEdit + optional additionalTextEdits"] },
     { id: "pbi-moniker", story: { role: "lua/python developer editing markdown", capability: "get unique symbol identifiers", benefit: "cross-project navigation" },
       acceptance_criteria: [
         { criterion: "Bridge forwards textDocument/moniker to downstream LS", verification: "E2E test" },
