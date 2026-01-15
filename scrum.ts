@@ -61,8 +61,8 @@ const scrum: ScrumDashboard = {
       // colorPresentation: hybrid pattern (range input with textEdit response)
       { test: "build_color_presentation_params transforms range to virtual coordinates", implementation: "Add build_color_presentation_params function in color_presentation.rs", type: "behavioral", status: "completed", commits: [], notes: ["Hybrid pattern: range input needs virtual transformation", "Similar to inlayHint request builder"] },
       { test: "transform_color_presentation converts textEdit and additionalTextEdits to host coordinates", implementation: "Add transform_color_presentation function handling both edit types", type: "behavioral", status: "completed", commits: [], notes: ["ColorPresentation has optional textEdit + optional additionalTextEdits", "Both need range->host transformation"] },
-      { test: "resolve_color_presentation forwards to correct region based on range", implementation: "Add resolve_color_presentation to LanguageServerPool using hybrid pattern", type: "behavioral", status: "pending", commits: [], notes: ["Position-based operation (single region)", "Range input determines which injection region"] },
-      { test: "E2E colorPresentation returns edit suggestions for color", implementation: "Wire colorPresentation handler in lsp_impl + E2E test", type: "behavioral", status: "pending", commits: [], notes: ["Handler wiring + E2E verification", "Verify textEdit ranges are correctly transformed"] },
+      { test: "resolve_color_presentation forwards to correct region based on range", implementation: "Add resolve_color_presentation to LanguageServerPool using hybrid pattern", type: "behavioral", status: "completed", commits: [], notes: ["Position-based operation (single region)", "Range input determines which injection region"] },
+      { test: "E2E colorPresentation returns edit suggestions for color", implementation: "Wire colorPresentation handler in lsp_impl + E2E test", type: "behavioral", status: "red", commits: [], notes: ["Handler wiring + E2E verification", "Verify textEdit ranges are correctly transformed"] },
     ],
   },
   completed: [
