@@ -2067,6 +2067,159 @@ mod tests {
     // These tests verify thread-safety when multiple threads call
     // apply_edits() concurrently, mirroring the apply_text_change tests.
 
+    // ============================================================
+    // Phase 4 UTF-8 Multi-byte Tests: apply_edits with Unicode
+    // ============================================================
+    // These tests verify apply_edits handles byte positions correctly
+    // for multi-byte UTF-8 characters. LSP provides byte offsets directly,
+    // so we must ensure the START-priority logic works with any byte values.
+
+    #[test]
+    fn test_apply_edits_utf8_delete_emoji_before_node_shifts() {
+        // Delete 4-byte emoji before node → shift by -4
+        // Mirrors test_utf8_multibyte_edit_before_node_shifts_correctly
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("apply_edits_utf8_before");
+
+        // Text: "abc🦀def" where 🦀 is at bytes [3, 7)
+        // Node at bytes [7, 10) covering "def"
+        let ulid = tracker.get_or_create(&uri, 7, 10, "block");
+
+        // Edit: delete [3, 7) (the emoji), new_end = 3 (delta = -4)
+        let edits = vec![EditInfo::new(3, 7, 3)];
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        assert!(invalidated.is_empty(), "Node after edit should be kept");
+
+        // Node shifts from [7, 10) to [3, 6)
+        assert_eq!(
+            tracker.get(&uri, 3, 6, "block"),
+            Some(ulid),
+            "Node should shift by 4 bytes (emoji size)"
+        );
+    }
+
+    #[test]
+    fn test_apply_edits_utf8_delete_inside_node_adjusts_end() {
+        // Delete 3-byte character inside node → end shrinks
+        // Node [0, 17), delete bytes [8, 11) → [0, 14)
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("apply_edits_utf8_inside");
+
+        // Text: "start日本語end" (17 bytes)
+        // Node covers entire text [0, 17)
+        let ulid = tracker.get_or_create(&uri, 0, 17, "block");
+
+        // Edit: delete "本" at [8, 11), new_end = 8 (delta = -3)
+        let edits = vec![EditInfo::new(8, 11, 8)];
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        assert!(invalidated.is_empty(), "Node START 0 not in [8, 11)");
+
+        // End adjusts from 17 to 14
+        assert_eq!(
+            tracker.get(&uri, 0, 14, "block"),
+            Some(ulid),
+            "Node end should adjust by -3 (3-byte kanji)"
+        );
+    }
+
+    #[test]
+    fn test_apply_edits_utf8_start_inside_edit_invalidates() {
+        // Node START inside edit range → INVALIDATE
+        // Node [7, 14), edit [3, 10) → START 7 ∈ [3, 10) → INVALIDATE
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("apply_edits_utf8_invalidate");
+
+        // Text: "前🎉後text" - node [7, 14) covers "後text"
+        let ulid = tracker.get_or_create(&uri, 7, 14, "block");
+
+        // Edit: delete [3, 10) (🎉後 = 4+3 = 7 bytes), new_end = 3
+        let edits = vec![EditInfo::new(3, 10, 3)];
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        assert_eq!(
+            invalidated,
+            vec![ulid],
+            "Node with START 7 inside [3, 10) should be invalidated"
+        );
+
+        // Original position gone
+        assert_eq!(tracker.get(&uri, 7, 14, "block"), None);
+    }
+
+    #[test]
+    fn test_apply_edits_utf8_insert_emoji_shifts_node() {
+        // Insert 4-byte emoji before node → shift by +4
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("apply_edits_utf8_insert");
+
+        // Text: "abcdef", node [3, 6) covers "def"
+        let ulid = tracker.get_or_create(&uri, 3, 6, "block");
+
+        // Edit: insert 4 bytes at position 2 (ab|🚀|cdef)
+        // [2, 2) → [2, 6) means insert 4 bytes at position 2
+        let edits = vec![EditInfo::new(2, 2, 6)];
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        assert!(invalidated.is_empty(), "Node after insert should be kept");
+
+        // Node shifts from [3, 6) to [7, 10)
+        assert_eq!(
+            tracker.get(&uri, 7, 10, "block"),
+            Some(ulid),
+            "Node should shift by +4 bytes (emoji insertion)"
+        );
+    }
+
+    #[test]
+    fn test_apply_edits_utf8_mixed_operations() {
+        // Multiple UTF-8 aware edits in sequence
+        // Tests running coordinate updates with multi-byte deltas
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("apply_edits_utf8_mixed");
+
+        // Three nodes: [0, 5), [10, 15), [20, 25)
+        let ulid1 = tracker.get_or_create(&uri, 0, 5, "block");
+        let ulid2 = tracker.get_or_create(&uri, 10, 15, "block");
+        let ulid3 = tracker.get_or_create(&uri, 20, 25, "block");
+
+        // Apply two edits in sequence (LSP order: as they were applied)
+        // Edit 1: Insert 3-byte char at position 7 (between nodes 1 and 2)
+        //         [7, 7) → [7, 10) delta +3
+        // Edit 2: Delete 4-byte char at position 18 (between nodes 2 and 3, after first edit)
+        //         [18, 22) → [18, 18) delta -4
+        let edits = vec![EditInfo::new(7, 7, 10), EditInfo::new(18, 22, 18)];
+
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        assert!(invalidated.is_empty(), "No nodes should be invalidated");
+
+        // After edit 1 (delta +3):
+        //   Node 1 [0, 5) - before edit, unchanged
+        //   Node 2 [10, 15) → [13, 18) - after edit
+        //   Node 3 [20, 25) → [23, 28) - after edit
+        // After edit 2 (delta -4), applied to post-edit-1 positions:
+        //   Node 1 [0, 5) - still unchanged (before both edits)
+        //   Node 2 [13, 18) - before edit 2, unchanged
+        //   Node 3 [23, 28) → [19, 24) - after edit 2 (edit at 18 < 23)
+        assert_eq!(
+            tracker.get(&uri, 0, 5, "block"),
+            Some(ulid1),
+            "Node 1 unchanged"
+        );
+        assert_eq!(
+            tracker.get(&uri, 13, 18, "block"),
+            Some(ulid2),
+            "Node 2 shifted by +3 from first edit"
+        );
+        assert_eq!(
+            tracker.get(&uri, 19, 24, "block"),
+            Some(ulid3),
+            "Node 3 shifted by +3 then -4 = -1 net"
+        );
+    }
+
     #[test]
     fn test_concurrent_apply_edits_same_uri_no_panic() {
         use std::sync::Arc;
