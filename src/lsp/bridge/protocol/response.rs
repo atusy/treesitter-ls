@@ -354,18 +354,24 @@ fn transform_document_symbol_item(
 ///
 /// InlayHint responses are arrays of items where each hint has:
 /// - position: The position where the hint should appear (needs transformation)
-/// - label: The hint text (string or label parts)
+/// - label: The hint text (string or InlayHintLabelPart[] with optional location)
 /// - kind, tooltip, paddingLeft, paddingRight, data: Optional fields (preserved unchanged)
 /// - textEdits: Optional array of TextEdit (needs transformation, handled separately)
 ///
-/// This function transforms each hint's position by adding region_start_line to the line number.
+/// When label is an array of InlayHintLabelPart, each part may have a location field
+/// that needs URI and range transformation following the same pattern as definition responses.
+///
+/// This function handles three cases for each location URI:
+/// 1. **Real file URI** (not a virtual URI): Preserved as-is with original coordinates
+/// 2. **Same virtual URI as request**: Transformed using request's context
+/// 3. **Different virtual URI** (cross-region): Label part filtered out
 ///
 /// # Arguments
 /// * `response` - The JSON-RPC response from the downstream language server
-/// * `region_start_line` - The starting line of the injection region in the host document
+/// * `context` - The transformation context with request information
 pub(crate) fn transform_inlay_hint_response_to_host(
     mut response: serde_json::Value,
-    region_start_line: u32,
+    context: &ResponseTransformContext,
 ) -> serde_json::Value {
     // Get mutable reference to result
     let Some(result) = response.get_mut("result") else {
@@ -380,15 +386,17 @@ pub(crate) fn transform_inlay_hint_response_to_host(
     // InlayHint[] is an array
     if let Some(items) = result.as_array_mut() {
         for item in items.iter_mut() {
-            transform_inlay_hint_item(item, region_start_line);
+            transform_inlay_hint_item(item, context);
         }
     }
 
     response
 }
 
-/// Transform a single InlayHint item's position and textEdits to host coordinates.
-fn transform_inlay_hint_item(item: &mut serde_json::Value, region_start_line: u32) {
+/// Transform a single InlayHint item's position, textEdits, and label parts to host coordinates.
+fn transform_inlay_hint_item(item: &mut serde_json::Value, context: &ResponseTransformContext) {
+    let region_start_line = context.request_region_start_line;
+
     // Transform position
     if let Some(position) = item.get_mut("position") {
         transform_position(position, region_start_line);
@@ -2282,6 +2290,16 @@ mod tests {
     // Inlay hint response transformation tests
     // ==========================================================================
 
+    /// Helper to create a ResponseTransformContext for inlay hint tests.
+    /// Uses dummy URIs since most tests only need region_start_line.
+    fn inlay_hint_context(region_start_line: u32) -> ResponseTransformContext {
+        ResponseTransformContext {
+            request_virtual_uri: "file:///test.md.lua.region1".to_string(),
+            request_host_uri: "file:///test.md".to_string(),
+            request_region_start_line: region_start_line,
+        }
+    }
+
     #[test]
     fn inlay_hint_response_transforms_positions_to_host_coordinates() {
         let response = json!({
@@ -2299,9 +2317,9 @@ mod tests {
                 }
             ]
         });
-        let region_start_line = 5;
+        let context = inlay_hint_context(5);
 
-        let transformed = transform_inlay_hint_response_to_host(response, region_start_line);
+        let transformed = transform_inlay_hint_response_to_host(response, &context);
 
         let result = transformed["result"].as_array().unwrap();
         assert_eq!(result.len(), 2);
@@ -2317,7 +2335,8 @@ mod tests {
     fn inlay_hint_response_with_null_result_passes_through() {
         let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
 
-        let transformed = transform_inlay_hint_response_to_host(response.clone(), 5);
+        let transformed =
+            transform_inlay_hint_response_to_host(response.clone(), &inlay_hint_context(5));
         assert_eq!(transformed, response);
     }
 
@@ -2325,7 +2344,8 @@ mod tests {
     fn inlay_hint_response_with_empty_array_passes_through() {
         let response = json!({ "jsonrpc": "2.0", "id": 42, "result": [] });
 
-        let transformed = transform_inlay_hint_response_to_host(response.clone(), 5);
+        let transformed =
+            transform_inlay_hint_response_to_host(response.clone(), &inlay_hint_context(5));
         let result = transformed["result"].as_array().unwrap();
         assert!(result.is_empty());
     }
@@ -2344,9 +2364,9 @@ mod tests {
                 "tooltip": "Type hint"
             }]
         });
-        let region_start_line = 3;
+        let context = inlay_hint_context(3);
 
-        let transformed = transform_inlay_hint_response_to_host(response, region_start_line);
+        let transformed = transform_inlay_hint_response_to_host(response, &context);
 
         let hint = &transformed["result"][0];
         assert_eq!(hint["position"]["line"], 4); // 1 + 3
@@ -2377,9 +2397,9 @@ mod tests {
                 ]
             }]
         });
-        let region_start_line = 5;
+        let context = inlay_hint_context(5);
 
-        let transformed = transform_inlay_hint_response_to_host(response, region_start_line);
+        let transformed = transform_inlay_hint_response_to_host(response, &context);
 
         let hint = &transformed["result"][0];
         // Position transformed
@@ -2418,9 +2438,9 @@ mod tests {
                 ]
             }]
         });
-        let region_start_line = 10;
+        let context = inlay_hint_context(10);
 
-        let transformed = transform_inlay_hint_response_to_host(response, region_start_line);
+        let transformed = transform_inlay_hint_response_to_host(response, &context);
 
         let hint = &transformed["result"][0];
         // Position transformed: 2 + 10 = 12
@@ -2449,9 +2469,9 @@ mod tests {
                 "label": "hint without edits"
             }]
         });
-        let region_start_line = 3;
+        let context = inlay_hint_context(3);
 
-        let transformed = transform_inlay_hint_response_to_host(response, region_start_line);
+        let transformed = transform_inlay_hint_response_to_host(response, &context);
 
         let hint = &transformed["result"][0];
         assert_eq!(hint["position"]["line"], 3);
