@@ -16,7 +16,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 use super::super::pool::LanguageServerPool;
 use super::super::protocol::{
-    RequestId, VirtualDocumentUri, build_bridge_didopen_notification, build_bridge_hover_request,
+    VirtualDocumentUri, build_bridge_didopen_notification, build_bridge_hover_request,
     transform_hover_response_to_host,
 };
 
@@ -52,13 +52,8 @@ impl LanguageServerPool {
         // Build virtual document URI
         let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
 
-        // Build request ID and register with router BEFORE sending
-        // Use unique downstream ID (not upstream ID) to avoid duplicate request ID errors
-        let request_id = RequestId::new(handle.next_request_id());
-        let response_rx = handle
-            .router()
-            .register(request_id)
-            .ok_or_else(|| io::Error::other("duplicate request ID"))?;
+        // Register request with router to get oneshot receiver
+        let (request_id, response_rx) = handle.register_request()?;
 
         // Build hover request
         let hover_request = build_bridge_hover_request(

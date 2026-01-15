@@ -19,7 +19,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 use super::super::pool::LanguageServerPool;
 use super::super::protocol::{
-    RequestId, ResponseTransformContext, VirtualDocumentUri, build_bridge_didopen_notification,
+    ResponseTransformContext, VirtualDocumentUri, build_bridge_didopen_notification,
     build_bridge_document_symbol_request, transform_document_symbol_response_to_host,
 };
 
@@ -57,13 +57,8 @@ impl LanguageServerPool {
         let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
         let virtual_uri_string = virtual_uri.to_uri_string();
 
-        // Build request ID and register with router BEFORE sending
-        // Use unique downstream ID (not upstream ID) to avoid duplicate request ID errors
-        let request_id = RequestId::new(handle.next_request_id());
-        let response_rx = handle
-            .router()
-            .register(request_id)
-            .ok_or_else(|| io::Error::other("duplicate request ID"))?;
+        // Register request with router to get oneshot receiver
+        let (request_id, response_rx) = handle.register_request()?;
 
         // Build document symbol request
         // Note: document symbol doesn't need position - it operates on the whole document

@@ -167,6 +167,24 @@ impl ConnectionHandle {
     pub(crate) fn router(&self) -> &Arc<ResponseRouter> {
         &self.router
     }
+
+    /// Register a new request and return (request_id, response_receiver).
+    ///
+    /// Generates a unique request ID and registers it with the router.
+    /// Returns error if registration fails (should never happen with unique IDs).
+    pub(crate) fn register_request(
+        &self,
+    ) -> io::Result<(
+        super::protocol::RequestId,
+        tokio::sync::oneshot::Receiver<serde_json::Value>,
+    )> {
+        let request_id = super::protocol::RequestId::new(self.next_request_id());
+        let response_rx = self
+            .router()
+            .register(request_id)
+            .ok_or_else(|| io::Error::other("duplicate request ID"))?;
+        Ok((request_id, response_rx))
+    }
 }
 
 /// Pool of connections to downstream language servers (ADR-0016).
