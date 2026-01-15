@@ -3,6 +3,32 @@
 //! This module provides functions to transform JSON-RPC responses from downstream
 //! language servers back to host document coordinates by adding the region_start_line
 //! offset to line numbers.
+//!
+//! ## Function Signature Patterns
+//!
+//! Transform functions use two different signatures based on their transformation needs:
+//!
+//! ### Simple transformers: `fn(response, region_start_line: u32)`
+//!
+//! Used when transformation only requires adding a line offset. The response contains
+//! ranges that reference the same virtual document as the request.
+//!
+//! - [`transform_hover_response_to_host`] - Range in hover result
+//! - [`transform_completion_response_to_host`] - TextEdit ranges in completion items
+//! - [`transform_signature_help_response_to_host`] - No ranges (passthrough)
+//! - [`transform_document_highlight_response_to_host`] - Ranges in highlight array
+//! - [`transform_document_link_response_to_host`] - Ranges in document links
+//!
+//! ### Context-based transformers: `fn(response, &ResponseTransformContext)`
+//!
+//! Used when responses may contain URIs pointing to different documents. These need
+//! the full request context to distinguish between:
+//! - Real file URIs (preserved as-is)
+//! - Same virtual URI as request (transformed with context)
+//! - Cross-region virtual URIs (filtered out)
+//!
+//! - [`transform_definition_response_to_host`] - Location/LocationLink with URIs
+//! - [`transform_workspace_edit_to_host`] - TextDocumentEdit with URIs
 
 /// Transform a hover response from virtual to host document coordinates.
 ///
