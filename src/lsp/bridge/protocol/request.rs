@@ -415,6 +415,37 @@ pub(crate) fn build_bridge_inlay_hint_request(
     })
 }
 
+/// Build a JSON-RPC document color request for a downstream language server.
+///
+/// Like DocumentLinkParams, DocumentColorParams only has a textDocument field -
+/// no position. The request asks for all colors in the entire document.
+///
+/// # Arguments
+/// * `host_uri` - The URI of the host document
+/// * `injection_language` - The injection language (e.g., "lua")
+/// * `region_id` - The unique region ID for this injection
+/// * `request_id` - The JSON-RPC request ID
+pub(crate) fn build_bridge_document_color_request(
+    host_uri: &tower_lsp::lsp_types::Url,
+    injection_language: &str,
+    region_id: &str,
+    request_id: i64,
+) -> serde_json::Value {
+    // Create virtual document URI
+    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/documentColor",
+        "params": {
+            "textDocument": {
+                "uri": virtual_uri.to_uri_string()
+            }
+        }
+    })
+}
+
 /// Build a JSON-RPC didOpen notification for a downstream language server.
 ///
 /// Sends the initial document content to the downstream language server when
@@ -1151,6 +1182,31 @@ mod tests {
         assert_eq!(
             range["end"]["line"], 2,
             "End line should be translated from 5 to 2 (5-3)"
+        );
+    }
+
+    // ==========================================================================
+    // Document color request tests
+    // ==========================================================================
+
+    #[test]
+    fn document_color_request_uses_virtual_uri() {
+        let request = build_bridge_document_color_request(&test_host_uri(), "lua", "region-0", 42);
+
+        assert_uses_virtual_uri(&request, "lua");
+    }
+
+    #[test]
+    fn document_color_request_has_correct_method_and_structure() {
+        let request = build_bridge_document_color_request(&test_host_uri(), "lua", "region-0", 123);
+
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], 123);
+        assert_eq!(request["method"], "textDocument/documentColor");
+        // DocumentColor request has no position parameter (whole-document operation)
+        assert!(
+            request["params"].get("position").is_none(),
+            "DocumentColor request should not have position parameter"
         );
     }
 }
