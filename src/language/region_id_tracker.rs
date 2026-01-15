@@ -1897,6 +1897,97 @@ mod tests {
     }
 
     #[test]
+    fn test_apply_edits_reverse_order_preserves_positions() {
+        // Strengthened VSCode reverse-order test: verify final positions are correct
+        //
+        // Scenario: Multiple nodes, reverse-order edits happen BEFORE them (not at START)
+        // All nodes should be preserved with correctly shifted positions
+        //
+        // Document layout (20 bytes each line for simplicity):
+        // Nodes: A [40, 50), B [80, 90), C [120, 130)
+        //
+        // VSCode sends edits in reverse order (bottom-to-top):
+        // Edit 1: insert 5 bytes at position 100 (between B and C)
+        // Edit 2: insert 3 bytes at position 60 (between A and B)
+        // Edit 3: insert 2 bytes at position 20 (before A)
+        //
+        // Running coordinate analysis:
+        // After Edit 1 (insert 5 at 100):
+        //   A [40, 50) → [40, 50) unchanged (before edit)
+        //   B [80, 90) → [80, 90) unchanged (before edit)
+        //   C [120, 130) → [125, 135) shifted +5
+        //
+        // After Edit 2 (insert 3 at 60, in post-edit-1 coords):
+        //   A [40, 50) → [40, 50) unchanged (before edit)
+        //   B [80, 90) → [83, 93) shifted +3
+        //   C [125, 135) → [128, 138) shifted +3
+        //
+        // After Edit 3 (insert 2 at 20, in post-edit-2 coords):
+        //   A [40, 50) → [42, 52) shifted +2
+        //   B [83, 93) → [85, 95) shifted +2
+        //   C [128, 138) → [130, 140) shifted +2
+        //
+        // Final positions: A [42, 52), B [85, 95), C [130, 140)
+        // Total shift: A +2, B +5, C +10 (cumulative from 3 edits)
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("vscode_reverse_positions");
+
+        let ulid_a = tracker.get_or_create(&uri, 40, 50, "block");
+        let ulid_b = tracker.get_or_create(&uri, 80, 90, "block");
+        let ulid_c = tracker.get_or_create(&uri, 120, 130, "block");
+
+        // VSCode reverse order: later positions first
+        let edits = vec![
+            EditInfo::new(100, 100, 105), // Insert 5 at 100 (between B and C)
+            EditInfo::new(60, 60, 63),    // Insert 3 at 60 (between A and B)
+            EditInfo::new(20, 20, 22),    // Insert 2 at 20 (before A)
+        ];
+
+        let invalidated = tracker.apply_edits(&uri, &edits);
+
+        // No nodes should be invalidated (all edits before their START)
+        assert!(
+            invalidated.is_empty(),
+            "No nodes should be invalidated: {:?}",
+            invalidated
+        );
+
+        // Verify exact final positions
+        assert_eq!(
+            tracker.get(&uri, 42, 52, "block"),
+            Some(ulid_a),
+            "Node A should be at [42, 52) after +2 shift"
+        );
+        assert_eq!(
+            tracker.get(&uri, 85, 95, "block"),
+            Some(ulid_b),
+            "Node B should be at [85, 95) after +5 cumulative shift"
+        );
+        assert_eq!(
+            tracker.get(&uri, 130, 140, "block"),
+            Some(ulid_c),
+            "Node C should be at [130, 140) after +10 cumulative shift"
+        );
+
+        // Verify old positions are gone
+        assert_eq!(
+            tracker.get(&uri, 40, 50, "block"),
+            None,
+            "Old position A [40, 50) should not exist"
+        );
+        assert_eq!(
+            tracker.get(&uri, 80, 90, "block"),
+            None,
+            "Old position B [80, 90) should not exist"
+        );
+        assert_eq!(
+            tracker.get(&uri, 120, 130, "block"),
+            None,
+            "Old position C [120, 130) should not exist"
+        );
+    }
+
+    #[test]
     fn test_apply_edits_invalid_edit_skipped() {
         // Invalid edit (old_end < start) should be skipped with warning
         let tracker = RegionIdTracker::new();
