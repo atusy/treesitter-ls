@@ -486,6 +486,28 @@ pub(crate) fn transform_color_presentation_response_to_host(
     response
 }
 
+/// Transform a moniker response from virtual to host document coordinates.
+///
+/// Moniker responses don't contain ranges or positions that need transformation.
+/// This function passes through the response unchanged, preserving:
+/// - scheme: The moniker scheme (e.g., "tsc", "npm")
+/// - identifier: The unique identifier for the symbol
+/// - unique: Uniqueness level ("document", "project", "scheme", "global")
+/// - kind: Optional moniker kind ("import", "export", "local")
+///
+/// # Arguments
+/// * `response` - The JSON-RPC response from the downstream language server
+/// * `_region_start_line` - The starting line (unused for moniker, kept for API consistency)
+pub(crate) fn transform_moniker_response_to_host(
+    response: serde_json::Value,
+    _region_start_line: u32,
+) -> serde_json::Value {
+    // Moniker doesn't have ranges that need transformation.
+    // scheme, identifier, unique, and kind are all non-coordinate data.
+    // Pass through unchanged.
+    response
+}
+
 /// Check if a URI string represents a virtual document.
 ///
 /// Delegates to [`VirtualDocumentUri::is_virtual_uri`] which is the single source of truth
@@ -2470,6 +2492,56 @@ mod tests {
         let response = json!({ "jsonrpc": "2.0", "id": 42, "result": [] });
 
         let transformed = transform_color_presentation_response_to_host(response.clone(), 5);
+        let result = transformed["result"].as_array().unwrap();
+        assert!(result.is_empty());
+    }
+
+    // ==========================================================================
+    // Moniker response tests
+    // ==========================================================================
+
+    #[test]
+    fn moniker_response_passes_through_unchanged() {
+        // Moniker[] has scheme/identifier/unique/kind - no position/range data
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "scheme": "tsc",
+                    "identifier": "typescript:foo:bar:Baz",
+                    "unique": "document",
+                    "kind": "export"
+                },
+                {
+                    "scheme": "npm",
+                    "identifier": "package:module:Class.method",
+                    "unique": "scheme",
+                    "kind": "local"
+                }
+            ]
+        });
+        let region_start_line = 5;
+
+        let transformed = transform_moniker_response_to_host(response.clone(), region_start_line);
+
+        // Response should be unchanged - no coordinates to transform
+        assert_eq!(transformed, response);
+    }
+
+    #[test]
+    fn moniker_response_with_null_result_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+
+        let transformed = transform_moniker_response_to_host(response.clone(), 5);
+        assert_eq!(transformed, response);
+    }
+
+    #[test]
+    fn moniker_response_with_empty_array_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": [] });
+
+        let transformed = transform_moniker_response_to_host(response.clone(), 5);
         let result = transformed["result"].as_array().unwrap();
         assert!(result.is_empty());
     }
