@@ -16,25 +16,7 @@ const scrum: ScrumDashboard = {
       { metric: "E2E test coverage using treesitter-ls binary", target: "Each bridged feature has E2E test verifying end-to-end flow" },
     ],
   },
-
-  product_backlog: [
-    { id: "pbi-color-presentation", story: { role: "lua/python developer editing markdown", capability: "pick and edit color values", benefit: "visual color editing" },
-      acceptance_criteria: [
-        { criterion: "Bridge forwards textDocument/documentColor to downstream LS for all injection regions", verification: "E2E test" },
-        { criterion: "documentColor response ranges transformed to host coordinates", verification: "Unit test" },
-        { criterion: "documentColor results aggregated from multiple injection regions", verification: "Unit test" },
-        { criterion: "Bridge forwards textDocument/colorPresentation to downstream LS", verification: "E2E test" },
-        { criterion: "colorPresentation request range transformed to virtual coordinates", verification: "Unit test" },
-        { criterion: "colorPresentation response textEdit ranges transformed to host coordinates", verification: "Unit test" },
-        { criterion: "colorPresentation additionalTextEdits transformed to host coordinates", verification: "Unit test" },
-      ], status: "done" },
-    { id: "pbi-moniker", story: { role: "lua/python developer editing markdown", capability: "get unique symbol identifiers", benefit: "cross-project navigation" },
-      acceptance_criteria: [
-        { criterion: "Bridge forwards textDocument/moniker to downstream LS", verification: "E2E test" },
-        { criterion: "Moniker response passed through unchanged", verification: "Unit test" },
-        { criterion: "Request position transformed to virtual coordinates", verification: "Unit test" },
-      ], status: "done", refinement_notes: ["Simplest pattern: position-based request + pass-through response (like signatureHelp)", "Response Moniker[] has scheme/identifier/unique/kind - no position/range data", "Follow signatureHelp implementation as template"] },
-  ],
+  product_backlog: [],
   sprint: null,
   completed: [
     { number: 1, pbi_id: "pbi-document-highlight", goal: "Bridge textDocument/documentHighlight to downstream LS", status: "done", subtasks: [] },
@@ -53,24 +35,9 @@ const scrum: ScrumDashboard = {
     ],
   },
   retrospectives: [
-    { sprint: 5, improvements: [
-      { action: "Document bidirectional transformation pattern in ADR or architecture guide", timing: "product", status: "completed", outcome: "Bidirectional pattern documented in response.rs module docs - hybrid pattern uses range->virtual + textEdit->host transformations (inlayHint, colorPresentation)" },
-      { action: "Distinguish hybrid pattern from pure position-based and whole-doc patterns", timing: "product", status: "completed", outcome: "Pattern taxonomy established: position-based (signatureHelp, moniker), hybrid (inlayHint, colorPresentation), whole-doc (documentLink, documentColor), context-based (definition, rename)" },
-    ] },
-    { sprint: 6, improvements: [
-      { action: "Document multi-handler PBI pattern (when features require coordinated handlers)", timing: "product", status: "completed", outcome: "Multi-handler pattern proven successful - documentColor+colorPresentation delivered as coordinated pair using independent patterns" },
-      { action: "Continue leveraging pattern composition (whole-doc + hybrid patterns in single PBI)", timing: "sprint", status: "completed", outcome: "Pattern composition validated - documentColor (whole-doc) + colorPresentation (hybrid) work together seamlessly" },
-    ] },
     { sprint: 7, improvements: [
-      { action: "Document position-based pass-through pattern in response.rs", timing: "immediate", status: "completed", outcome: "Added transform_moniker_response_to_host to response.rs Simple Transformers list alongside signatureHelp as passthrough example during retrospective" },
-      { action: "Update pattern library completeness assessment", timing: "product", status: "completed", outcome: "Pattern taxonomy: position-based (signatureHelp, moniker), hybrid (inlayHint, colorPresentation), whole-doc (documentLink, documentColor), context-based (definition, rename). Covers 100% of implemented bridge features." },
-      { action: "Review TDD velocity trends across bridge feature sprints", timing: "sprint", status: "completed", outcome: "Sprint 7: 4 commits <1 day. Sprint 6: ~2 days. Sprint 5: ~2-3 days. Sprint 4: ~3-4 days. Pattern reuse enabled 3-4x velocity gain. TDD red-green-refactor maintained across all sprints." },
       { action: "Complete request-side pattern documentation in request.rs", timing: "product", status: "active", outcome: "Response patterns documented in response.rs header. Request patterns (build_position_based_request, build_range_based_request) exist but need similar module-level documentation for developer guidance." },
-    ] },
-    { sprint: "4-7 series", improvements: [
-      { action: "Complete pattern library documentation in response.rs and request.rs", timing: "product", status: "active", outcome: "Response patterns documented in response.rs module header with 4-category taxonomy. Request patterns (build_position_based_request, build_range_based_request) exist but need similar module-level documentation." },
-      { action: "Assess bridge coverage against product goal", timing: "product", status: "completed", outcome: "Sprints 1-7 delivered all 16 LSP features: completion, signatureHelp, definition, typeDefinition, implementation, declaration, hover, references, documentHighlight, rename, documentLink, documentSymbol, inlayHint, documentColor, colorPresentation, moniker. Bridge coverage target 100% ACHIEVED." },
-      { action: "Continue TDD discipline for remaining bridge features", timing: "sprint", status: "completed", outcome: "All sprints 1-7 followed red-green-refactor cycle. Every behavioral change has unit + E2E tests. Zero regressions. Pattern library enables consistent quality." },
+      { action: "Bridge coverage 100% achieved", timing: "product", status: "completed", outcome: "Sprints 1-7 delivered all 16 LSP features. Pattern taxonomy: position-based (signatureHelp, moniker), hybrid (inlayHint, colorPresentation), whole-doc (documentLink, documentColor), context-based (definition, rename)." },
     ] },
   ],
 };
