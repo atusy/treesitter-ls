@@ -53,8 +53,8 @@ const scrum: ScrumDashboard = {
         test: "Test moniker response passes through unchanged (no position/range data to transform)",
         implementation: "Add pass-through response function (identity transform)",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "10717912", message: "feat(bridge): add transform_moniker_response_to_host pass-through", phase: "green" }],
         notes: ["Moniker[] response contains scheme/identifier/unique/kind - no coordinate data", "Verify response is returned unchanged"],
       },
       {
