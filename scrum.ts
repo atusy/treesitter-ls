@@ -29,20 +29,6 @@ const scrum: ScrumDashboard = {
   },
 
   product_backlog: [
-    { id: "pbi-document-symbols", story: { role: "Lua developer editing markdown", capability: "see outline of symbols in Lua code block", benefit: "navigate to functions" },
-      acceptance_criteria: [
-        { criterion: "Bridge forwards textDocument/documentSymbol to downstream LS", verification: "E2E test" },
-        { criterion: "DocumentSymbol range and selectionRange transformed to host coordinates", verification: "Unit test" },
-        { criterion: "Hierarchical children recursively transformed", verification: "Unit test: nested children" },
-        { criterion: "SymbolInformation location.range transformed to host coordinates", verification: "Unit test" },
-      ], status: "done" },
-    { id: "pbi-inlay-hints", story: { role: "Lua developer editing markdown", capability: "see inline type hints in Lua code blocks", benefit: "understand types without hovering" },
-      acceptance_criteria: [
-        { criterion: "Bridge forwards textDocument/inlayHint to downstream LS", verification: "E2E test" },
-        { criterion: "Request range transformed to virtual coordinates", verification: "Unit test" },
-        { criterion: "Hint positions transformed to host coordinates", verification: "Unit test" },
-        { criterion: "Hint textEdits ranges transformed to host coordinates", verification: "Unit test" },
-      ], status: "done", refinement_notes: ["Bidirectional: request range -> virtual, response position/textEdits -> host", "textEdits optional but needs transform when present", "InlayHintLabelPart.location deferred (rare, complex cross-doc case)"] },
     { id: "pbi-color-presentation", story: { role: "lua/python developer editing markdown", capability: "pick and edit color values", benefit: "visual color editing" },
       acceptance_criteria: [
         { criterion: "Bridge forwards textDocument/colorPresentation to downstream LS", verification: "E2E test" },
@@ -56,24 +42,19 @@ const scrum: ScrumDashboard = {
         { criterion: "Request position transformed to virtual coordinates", verification: "Unit test" },
       ], status: "ready", refinement_notes: ["Response has no position data", "Pass-through response"] },
   ],
-  sprint: {
-    number: 5,
-    pbi_id: "pbi-inlay-hints",
-    goal: "Bridge textDocument/inlayHint with bidirectional coordinate transformation",
-    status: "review",
-    subtasks: [
-      { test: "InlayHintParams range transforms to virtual coordinates", implementation: "Request builder with range transformation", type: "behavioral", status: "completed", commits: [{ hash: "ddff2d50", message: "feat(bridge): add inlay hint request builder with range transformation", phase: "green" }], notes: ["Hybrid pattern: position-based (single region) but with range input"] },
-      { test: "InlayHint position transforms to host coordinates", implementation: "Response transformer for hint position", type: "behavioral", status: "completed", commits: [{ hash: "58b08e20", message: "feat(bridge): add inlay hint response transformer for position", phase: "green" }], notes: ["Each hint has single position field"] },
-      { test: "InlayHint textEdits ranges transform to host coordinates", implementation: "Response transformer handles optional textEdits", type: "behavioral", status: "completed", commits: [{ hash: "5d9fd83f", message: "feat(bridge): add textEdits transformation to inlay hint response", phase: "green" }], notes: ["textEdits is optional Vec<TextEdit>, transform when present"] },
-      { test: "Pool.inlay_hints delegates to downstream server", implementation: "Add inlay_hints method to LanguageServerPool", type: "behavioral", status: "completed", commits: [{ hash: "f8e8f296", message: "feat(bridge): add inlay hint pool method with bidirectional transform", phase: "green" }], notes: ["Similar pattern to existing pool methods"] },
-      { test: "E2E: inlay hints from Lua block in markdown", implementation: "Handler wiring in lsp_impl", type: "behavioral", status: "completed", commits: [{ hash: "13192b38", message: "feat(bridge): wire inlay hint handler with E2E test", phase: "green" }], notes: ["Wire request through to pool, verify coordinate transformation end-to-end"] },
-    ],
-  },
+  sprint: null,
   completed: [
     { number: 1, pbi_id: "pbi-document-highlight", goal: "Bridge textDocument/documentHighlight to downstream LS", status: "done", subtasks: [] },
     { number: 2, pbi_id: "pbi-rename", goal: "Bridge textDocument/rename with WorkspaceEdit transformation", status: "done", subtasks: [] },
     { number: 3, pbi_id: "pbi-document-link", goal: "Bridge textDocument/documentLink with range transformation to host coordinates", status: "done", subtasks: [] },
     { number: 4, pbi_id: "pbi-document-symbols", goal: "Bridge textDocument/documentSymbol to downstream LS with coordinate transformation", status: "done", subtasks: [] },
+    { number: 5, pbi_id: "pbi-inlay-hints", goal: "Bridge textDocument/inlayHint with bidirectional coordinate transformation", status: "done", subtasks: [
+      { test: "InlayHintParams range transforms to virtual coordinates", implementation: "Request builder with range transformation", type: "behavioral", status: "completed", commits: [{ hash: "ddff2d50", message: "feat(bridge): add inlay hint request builder with range transformation", phase: "green" }], notes: ["Hybrid pattern: position-based (single region) but with range input"] },
+      { test: "InlayHint position transforms to host coordinates", implementation: "Response transformer for hint position", type: "behavioral", status: "completed", commits: [{ hash: "58b08e20", message: "feat(bridge): add inlay hint response transformer for position", phase: "green" }], notes: ["Each hint has single position field"] },
+      { test: "InlayHint textEdits ranges transform to host coordinates", implementation: "Response transformer handles optional textEdits", type: "behavioral", status: "completed", commits: [{ hash: "5d9fd83f", message: "feat(bridge): add textEdits transformation to inlay hint response", phase: "green" }], notes: ["textEdits is optional Vec<TextEdit>, transform when present"] },
+      { test: "Pool.inlay_hints delegates to downstream server", implementation: "Add inlay_hints method to LanguageServerPool", type: "behavioral", status: "completed", commits: [{ hash: "f8e8f296", message: "feat(bridge): add inlay hint pool method with bidirectional transform", phase: "green" }], notes: ["Similar pattern to existing pool methods"] },
+      { test: "E2E: inlay hints from Lua block in markdown", implementation: "Handler wiring in lsp_impl", type: "behavioral", status: "completed", commits: [{ hash: "13192b38", message: "feat(bridge): wire inlay hint handler with E2E test", phase: "green" }], notes: ["Wire request through to pool, verify coordinate transformation end-to-end"] },
+    ] },
   ],
   definition_of_done: {
     checks: [
@@ -96,6 +77,12 @@ const scrum: ScrumDashboard = {
       { action: "Proactively implement dual response formats when LSP spec shows both options", timing: "sprint", status: "active", outcome: "Both DocumentSymbol[] and SymbolInformation[] formats implemented upfront, eliminating need for additional subtasks" },
       { action: "Handle recursive structures (DocumentSymbol.children) during initial implementation", timing: "sprint", status: "active", outcome: "Recursive transformation implemented with initial test, avoiding regression risk" },
       { action: "Continue leveraging established patterns (whole-doc ops, simple transformers)", timing: "sprint", status: "active", outcome: "Sprint executed cleanly with zero blockers by reusing document_link.rs pattern" },
+    ] },
+    { sprint: 5, improvements: [
+      { action: "Document bidirectional transformation pattern in ADR or architecture guide", timing: "product", status: "active", outcome: "Discovered pattern: some requests need range->virtual transformation, responses need position/textEdit->host transformation (inlayHint, colorPresentation)" },
+      { action: "Distinguish hybrid pattern from pure position-based and whole-doc patterns", timing: "product", status: "active", outcome: "Hybrid pattern identified: position-based operation (single region) but with range input parameter, distinct from point-position requests" },
+      { action: "Continue handling optional nested transformations (textEdits, labelPart.location)", timing: "sprint", status: "active", outcome: "Optional textEdits handled correctly; labelPart.location deferred as rare cross-doc case" },
+      { action: "Continue TDD cycle execution with small, focused subtasks", timing: "sprint", status: "active", outcome: "5 subtasks completed cleanly: request builder, position transform, textEdits transform, pool method, E2E test - zero blockers" },
     ] },
   ],
 };
