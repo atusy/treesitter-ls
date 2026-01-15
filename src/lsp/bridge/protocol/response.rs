@@ -16,6 +16,7 @@
 //! - [`transform_hover_response_to_host`] - Range in hover result
 //! - [`transform_completion_response_to_host`] - TextEdit ranges in completion items
 //! - [`transform_signature_help_response_to_host`] - No ranges (passthrough)
+//! - [`transform_moniker_response_to_host`] - No ranges (passthrough)
 //! - [`transform_document_highlight_response_to_host`] - Ranges in highlight array
 //! - [`transform_document_link_response_to_host`] - Ranges in document links
 //!
@@ -29,6 +30,7 @@
 //!
 //! - [`transform_definition_response_to_host`] - Location/LocationLink with URIs
 //! - [`transform_workspace_edit_to_host`] - TextDocumentEdit with URIs
+//! - [`transform_document_symbol_response_to_host`] - SymbolInformation with URIs
 
 use super::virtual_uri::VirtualDocumentUri;
 
@@ -268,14 +270,20 @@ pub(crate) fn transform_document_link_response_to_host(
 /// - children: Optional nested symbols (recursively processed)
 ///
 /// For SymbolInformation format:
-/// - location.range: The symbol's location range
+/// - location.uri: The symbol's document URI (needs transformation if virtual)
+/// - location.range: The symbol's location range (needs transformation)
+///
+/// This function handles three cases for SymbolInformation URIs:
+/// 1. **Real file URI** (not a virtual URI): Preserved as-is with original coordinates
+/// 2. **Same virtual URI as request**: Transformed using request's context
+/// 3. **Different virtual URI** (cross-region): Filtered out from results
 ///
 /// # Arguments
 /// * `response` - The JSON-RPC response from the downstream language server
-/// * `region_start_line` - The starting line of the injection region in the host document
+/// * `context` - The transformation context with request information
 pub(crate) fn transform_document_symbol_response_to_host(
     mut response: serde_json::Value,
-    region_start_line: u32,
+    context: &ResponseTransformContext,
 ) -> serde_json::Value {
     // Get mutable reference to result
     let Some(result) = response.get_mut("result") else {
@@ -289,45 +297,57 @@ pub(crate) fn transform_document_symbol_response_to_host(
 
     // DocumentSymbol[] or SymbolInformation[] is an array
     if let Some(items) = result.as_array_mut() {
-        for item in items.iter_mut() {
-            transform_document_symbol_item(item, region_start_line);
-        }
+        // Filter out cross-region SymbolInformation items, transform the rest
+        items.retain_mut(|item| transform_document_symbol_item(item, context));
     }
 
     response
 }
 
 /// Transform a single DocumentSymbol or SymbolInformation item.
-fn transform_document_symbol_item(item: &mut serde_json::Value, region_start_line: u32) {
+///
+/// Returns `true` if the item should be kept, `false` if it should be filtered out.
+/// (Only SymbolInformation items with cross-region virtual URIs are filtered.)
+fn transform_document_symbol_item(
+    item: &mut serde_json::Value,
+    context: &ResponseTransformContext,
+) -> bool {
     // DocumentSymbol format: has range + selectionRange (no uri field)
     if let Some(range) = item.get_mut("range")
         && range.is_object()
     {
-        transform_range(range, region_start_line);
+        transform_range(range, context.request_region_start_line);
     }
 
     if let Some(selection_range) = item.get_mut("selectionRange")
         && selection_range.is_object()
     {
-        transform_range(selection_range, region_start_line);
+        transform_range(selection_range, context.request_region_start_line);
     }
 
     // Recursively transform children (DocumentSymbol only)
     if let Some(children) = item.get_mut("children")
         && let Some(children_arr) = children.as_array_mut()
     {
-        for child in children_arr.iter_mut() {
-            transform_document_symbol_item(child, region_start_line);
-        }
+        // Filter out cross-region children too
+        children_arr.retain_mut(|child| transform_document_symbol_item(child, context));
     }
 
     // SymbolInformation format: has location.uri + location.range
-    if let Some(location) = item.get_mut("location")
-        && let Some(range) = location.get_mut("range")
-        && range.is_object()
-    {
-        transform_range(range, region_start_line);
+    if let Some(location) = item.get_mut("location") {
+        // Get the URI to determine how to handle this item
+        if let Some(uri_str) = location
+            .get("uri")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+        {
+            // Use the same URI transformation logic as definition responses
+            return transform_location_uri(location, &uri_str, "uri", "range", context);
+        }
     }
+
+    // No location field (DocumentSymbol format) - always keep
+    true
 }
 
 /// Transform an inlay hint response from virtual to host document coordinates.
@@ -1928,9 +1948,10 @@ mod tests {
                 }
             ]
         });
-        let region_start_line = 3;
+        // DocumentSymbol format doesn't have URI - use dummy context
+        let context = test_context("unused", "unused", 3);
 
-        let transformed = transform_document_symbol_response_to_host(response, region_start_line);
+        let transformed = transform_document_symbol_response_to_host(response, &context);
 
         let result = transformed["result"].as_array().unwrap();
         assert_eq!(result.len(), 1);
@@ -1993,9 +2014,10 @@ mod tests {
                 }
             ]
         });
-        let region_start_line = 5;
+        // DocumentSymbol format doesn't have URI - use dummy context
+        let context = test_context("unused", "unused", 5);
 
-        let transformed = transform_document_symbol_response_to_host(response, region_start_line);
+        let transformed = transform_document_symbol_response_to_host(response, &context);
 
         let result = transformed["result"].as_array().unwrap();
         // Top-level module transformed
@@ -2019,6 +2041,8 @@ mod tests {
     #[test]
     fn document_symbol_response_transforms_symbol_information_location_range() {
         // SymbolInformation format (flat, with location instead of range/selectionRange)
+        // Uses real file URIs which are preserved as-is
+        let real_file_uri = "file:///test.lua";
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -2027,7 +2051,7 @@ mod tests {
                     "name": "myVariable",
                     "kind": 13,
                     "location": {
-                        "uri": "file:///test.lua",
+                        "uri": real_file_uri,
                         "range": {
                             "start": { "line": 2, "character": 6 },
                             "end": { "line": 2, "character": 16 }
@@ -2038,7 +2062,7 @@ mod tests {
                     "name": "myFunction",
                     "kind": 12,
                     "location": {
-                        "uri": "file:///test.lua",
+                        "uri": real_file_uri,
                         "range": {
                             "start": { "line": 5, "character": 0 },
                             "end": { "line": 10, "character": 3 }
@@ -2047,39 +2071,211 @@ mod tests {
                 }
             ]
         });
-        let region_start_line = 7;
+        // Real file URIs are preserved, but ranges still need transformation
+        let context = test_context(
+            "file:///.treesitter-ls/abc/region-0.lua",
+            "file:///doc.md",
+            7,
+        );
 
-        let transformed = transform_document_symbol_response_to_host(response, region_start_line);
+        let transformed = transform_document_symbol_response_to_host(response, &context);
 
         let result = transformed["result"].as_array().unwrap();
         assert_eq!(result.len(), 2);
 
-        // First symbol's location.range transformed: line 2 + 7 = 9
-        assert_eq!(result[0]["location"]["range"]["start"]["line"], 9);
-        assert_eq!(result[0]["location"]["range"]["end"]["line"], 9);
+        // First symbol: real file URI preserved, range NOT transformed (real file, no offset)
+        assert_eq!(result[0]["location"]["uri"], real_file_uri);
+        assert_eq!(result[0]["location"]["range"]["start"]["line"], 2);
+        assert_eq!(result[0]["location"]["range"]["end"]["line"], 2);
         assert_eq!(result[0]["name"], "myVariable");
 
-        // Second symbol's location.range transformed: line 5 + 7 = 12, line 10 + 7 = 17
-        assert_eq!(result[1]["location"]["range"]["start"]["line"], 12);
-        assert_eq!(result[1]["location"]["range"]["end"]["line"], 17);
+        // Second symbol: real file URI preserved, range NOT transformed
+        assert_eq!(result[1]["location"]["uri"], real_file_uri);
+        assert_eq!(result[1]["location"]["range"]["start"]["line"], 5);
+        assert_eq!(result[1]["location"]["range"]["end"]["line"], 10);
         assert_eq!(result[1]["name"], "myFunction");
     }
 
     #[test]
     fn document_symbol_response_with_null_result_passes_through() {
         let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+        let context = test_context("unused", "unused", 5);
 
-        let transformed = transform_document_symbol_response_to_host(response.clone(), 5);
+        let transformed = transform_document_symbol_response_to_host(response.clone(), &context);
         assert_eq!(transformed, response);
     }
 
     #[test]
     fn document_symbol_response_with_empty_array_passes_through() {
         let response = json!({ "jsonrpc": "2.0", "id": 42, "result": [] });
+        let context = test_context("unused", "unused", 5);
 
-        let transformed = transform_document_symbol_response_to_host(response.clone(), 5);
+        let transformed = transform_document_symbol_response_to_host(response.clone(), &context);
         let result = transformed["result"].as_array().unwrap();
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn document_symbol_response_transforms_symbol_information_location_uri_to_host_uri() {
+        // SymbolInformation format with virtual URI - should transform to host URI
+        let virtual_uri = "file:///.treesitter-ls/abc123/region-0.lua";
+        let host_uri = "file:///project/doc.md";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "name": "myVariable",
+                    "kind": 13,
+                    "location": {
+                        "uri": virtual_uri,
+                        "range": {
+                            "start": { "line": 2, "character": 6 },
+                            "end": { "line": 2, "character": 16 }
+                        }
+                    }
+                }
+            ]
+        });
+
+        let context = test_context(virtual_uri, host_uri, 7);
+        let transformed = transform_document_symbol_response_to_host(response, &context);
+
+        let result = transformed["result"].as_array().unwrap();
+        assert_eq!(result.len(), 1);
+        // URI should be transformed from virtual to host
+        assert_eq!(result[0]["location"]["uri"], host_uri);
+        // Range should still be transformed
+        assert_eq!(result[0]["location"]["range"]["start"]["line"], 9);
+        assert_eq!(result[0]["location"]["range"]["end"]["line"], 9);
+    }
+
+    #[test]
+    fn document_symbol_response_filters_out_cross_region_symbol_information() {
+        // SymbolInformation with cross-region virtual URI should be filtered out
+        let request_virtual_uri = "file:///.treesitter-ls/abc/region-0.lua";
+        let cross_region_uri = "file:///.treesitter-ls/abc/region-1.lua";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "name": "crossRegionSymbol",
+                    "kind": 13,
+                    "location": {
+                        "uri": cross_region_uri,
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 10 }
+                        }
+                    }
+                }
+            ]
+        });
+
+        let context = test_context(request_virtual_uri, "file:///doc.md", 5);
+        let transformed = transform_document_symbol_response_to_host(response, &context);
+
+        let result = transformed["result"].as_array().unwrap();
+        assert!(
+            result.is_empty(),
+            "Cross-region SymbolInformation should be filtered out"
+        );
+    }
+
+    #[test]
+    fn document_symbol_response_preserves_real_file_uri_in_symbol_information() {
+        // SymbolInformation with real file URI should be preserved
+        let virtual_uri = "file:///.treesitter-ls/abc/region-0.lua";
+        let real_file_uri = "file:///real/path/module.lua";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "name": "externalSymbol",
+                    "kind": 12,
+                    "location": {
+                        "uri": real_file_uri,
+                        "range": {
+                            "start": { "line": 10, "character": 0 },
+                            "end": { "line": 15, "character": 3 }
+                        }
+                    }
+                }
+            ]
+        });
+
+        let context = test_context(virtual_uri, "file:///doc.md", 5);
+        let transformed = transform_document_symbol_response_to_host(response, &context);
+
+        let result = transformed["result"].as_array().unwrap();
+        assert_eq!(result.len(), 1);
+        // Real file URI should be preserved
+        assert_eq!(result[0]["location"]["uri"], real_file_uri);
+        // Range should NOT be transformed (real file, no offset)
+        assert_eq!(result[0]["location"]["range"]["start"]["line"], 10);
+        assert_eq!(result[0]["location"]["range"]["end"]["line"], 15);
+    }
+
+    #[test]
+    fn document_symbol_response_mixed_symbol_information_filters_only_cross_region() {
+        // Mixed array: same virtual, cross-region virtual, real file
+        let request_virtual_uri = "file:///.treesitter-ls/abc/region-0.lua";
+        let cross_region_uri = "file:///.treesitter-ls/abc/region-1.lua";
+        let real_file_uri = "file:///real/module.lua";
+        let host_uri = "file:///doc.md";
+
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "name": "localSymbol",
+                    "kind": 13,
+                    "location": {
+                        "uri": request_virtual_uri,
+                        "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 10 } }
+                    }
+                },
+                {
+                    "name": "crossRegionSymbol",
+                    "kind": 12,
+                    "location": {
+                        "uri": cross_region_uri,
+                        "range": { "start": { "line": 5, "character": 0 }, "end": { "line": 5, "character": 15 } }
+                    }
+                },
+                {
+                    "name": "externalSymbol",
+                    "kind": 6,
+                    "location": {
+                        "uri": real_file_uri,
+                        "range": { "start": { "line": 20, "character": 0 }, "end": { "line": 25, "character": 3 } }
+                    }
+                }
+            ]
+        });
+
+        let context = test_context(request_virtual_uri, host_uri, 5);
+        let transformed = transform_document_symbol_response_to_host(response, &context);
+
+        let result = transformed["result"].as_array().unwrap();
+        assert_eq!(
+            result.len(),
+            2,
+            "Should have 2 items (cross-region filtered out)"
+        );
+
+        // First: local symbol transformed
+        assert_eq!(result[0]["name"], "localSymbol");
+        assert_eq!(result[0]["location"]["uri"], host_uri);
+        assert_eq!(result[0]["location"]["range"]["start"]["line"], 5);
+
+        // Second: external symbol preserved
+        assert_eq!(result[1]["name"], "externalSymbol");
+        assert_eq!(result[1]["location"]["uri"], real_file_uri);
+        assert_eq!(result[1]["location"]["range"]["start"]["line"], 20);
     }
 
     // ==========================================================================

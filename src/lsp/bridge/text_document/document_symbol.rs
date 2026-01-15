@@ -13,8 +13,8 @@ use tower_lsp::lsp_types::Url;
 
 use super::super::pool::LanguageServerPool;
 use super::super::protocol::{
-    VirtualDocumentUri, build_bridge_didopen_notification, build_bridge_document_symbol_request,
-    transform_document_symbol_response_to_host,
+    ResponseTransformContext, VirtualDocumentUri, build_bridge_didopen_notification,
+    build_bridge_document_symbol_request, transform_document_symbol_response_to_host,
 };
 
 impl LanguageServerPool {
@@ -68,6 +68,13 @@ impl LanguageServerPool {
         );
         conn.write_message(&request).await?;
 
+        // Build transformation context for response
+        let context = ResponseTransformContext {
+            request_virtual_uri: virtual_uri.to_uri_string(),
+            request_host_uri: host_uri.to_string(),
+            request_region_start_line: region_start_line,
+        };
+
         // Wait for the document symbol response (skip notifications)
         loop {
             let msg = conn.read_message().await?;
@@ -75,10 +82,7 @@ impl LanguageServerPool {
                 && id.as_i64() == Some(request_id)
             {
                 // Transform response to host coordinates
-                return Ok(transform_document_symbol_response_to_host(
-                    msg,
-                    region_start_line,
-                ));
+                return Ok(transform_document_symbol_response_to_host(msg, &context));
             }
             // Skip notifications and other responses
         }
