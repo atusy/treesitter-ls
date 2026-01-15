@@ -87,6 +87,8 @@ impl LanguageServerPool {
             } else if !self.is_document_opened(&virtual_uri) {
                 // Document marked for opening but didOpen not yet sent (race condition)
                 // Drop the request per ADR-0015
+                // Clean up pending entry to avoid memory leak
+                handle.router().remove(request_id);
                 return Err(io::Error::other(
                     "bridge: document not yet opened (didOpen pending)",
                 ));

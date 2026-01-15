@@ -94,6 +94,15 @@ impl ResponseRouter {
         pending.len()
     }
 
+    /// Remove a pending request without sending a response.
+    ///
+    /// Used for cleanup when a request fails before being sent to the downstream server.
+    /// Returns `true` if the request was removed, `false` if it wasn't pending.
+    pub(crate) fn remove(&self, id: RequestId) -> bool {
+        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+        pending.remove(&id).is_some()
+    }
+
     /// Fail all pending requests with an internal error response.
     ///
     /// Called when the connection fails (e.g., reader task panic) to ensure
@@ -244,5 +253,27 @@ mod tests {
             "route should return false when receiver dropped"
         );
         assert_eq!(router.pending_count(), 0, "pending should be cleared");
+    }
+
+    #[test]
+    fn remove_clears_pending_request() {
+        let router = ResponseRouter::new();
+        let id = RequestId::new(1);
+
+        let _rx = router.register(id).unwrap();
+        assert_eq!(router.pending_count(), 1);
+
+        let removed = router.remove(id);
+        assert!(removed, "remove should return true for pending request");
+        assert_eq!(router.pending_count(), 0, "pending should be cleared");
+    }
+
+    #[test]
+    fn remove_returns_false_for_unknown_id() {
+        let router = ResponseRouter::new();
+        let id = RequestId::new(999);
+
+        let removed = router.remove(id);
+        assert!(!removed, "remove should return false for unknown ID");
     }
 }
