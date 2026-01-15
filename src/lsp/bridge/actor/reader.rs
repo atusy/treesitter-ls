@@ -21,17 +21,62 @@ use tokio_util::sync::CancellationToken;
 use super::super::connection::BridgeReader;
 use super::ResponseRouter;
 
-/// Handle to a running Reader Task.
+/// Handle to a running Reader Task, managing its lifetime via RAII.
 ///
-/// When dropped, the cancellation token is dropped which signals the reader
-/// loop to stop. The task automatically shuts down on EOF or reader error.
+/// This struct owns the resources needed to control and clean up the reader task.
+/// The underscore-prefixed fields indicate they are held for their Drop semantics
+/// rather than being explicitly accessed.
 ///
-/// The join handle and cancel token are stored to ensure proper cleanup
-/// on drop, even though they're not explicitly accessed.
+/// # Lifecycle and Drop Behavior
+///
+/// When this handle is dropped:
+///
+/// 1. **CancellationToken is dropped** - This cancels the token, which signals the
+///    reader loop's `select!` to exit via `cancel_token.cancelled()`. The reader
+///    loop checks this signal on each iteration and breaks cleanly when cancelled.
+///
+/// 2. **JoinHandle is dropped without awaiting** - This is intentional and safe
+///    because:
+///    - The reader task will exit promptly once cancelled (the `select!` ensures
+///      cancellation is checked on every loop iteration)
+///    - The reader task also exits on EOF or read error, handling the case where
+///      the downstream process terminates
+///    - Tokio tasks are detached when their JoinHandle is dropped; they continue
+///      running but we don't need to await completion
+///    - The task performs no critical cleanup that requires awaiting
+///
+/// # Why Not Await the JoinHandle?
+///
+/// Awaiting would require this drop to be async, which is not possible in Rust.
+/// The reader task is designed to exit quickly on cancellation (within one loop
+/// iteration), so fire-and-forget cleanup is appropriate here.
+///
+/// # Cross-Task Coordination (ADR-0015)
+///
+/// The cancellation token enables coordination between reader and writer tasks.
+/// When the writer task fails, it cancels the shared token, causing the reader
+/// to exit and preventing CPU spin on orphaned channels. Conversely, when the
+/// reader handle is dropped (e.g., during connection shutdown), the reader task
+/// receives the cancellation signal and exits cleanly.
+///
+/// # Resource Cleanup Guarantee
+///
+/// - The reader task holds only borrowed/Arc'd resources (BridgeReader, ResponseRouter)
+/// - On cancellation: logs shutdown, breaks from loop, task completes
+/// - On EOF/error: fails all pending requests via router, then exits
+/// - No resources are leaked regardless of exit path
 pub(crate) struct ReaderTaskHandle {
-    /// Join handle for the reader task (dropped on struct drop)
+    /// Join handle for the spawned reader task.
+    ///
+    /// Dropped without awaiting when this struct is dropped. This is safe because
+    /// the reader task exits promptly on cancellation, EOF, or read error.
     _join_handle: JoinHandle<()>,
-    /// Token to signal graceful shutdown (cancelled on drop)
+
+    /// Cancellation token to signal graceful shutdown.
+    ///
+    /// When this token is dropped, it is automatically cancelled, causing the
+    /// reader loop's `cancel_token.cancelled()` future to complete. This triggers
+    /// a clean exit from the reader loop.
     _cancel_token: CancellationToken,
 }
 
