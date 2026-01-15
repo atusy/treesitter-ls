@@ -264,8 +264,8 @@ mod tests {
     #[tokio::test]
     async fn reader_loop_exits_on_cancellation() {
         use crate::lsp::bridge::connection::BridgeReader;
-        use tokio::process::Command;
         use std::process::Stdio;
+        use tokio::process::Command;
 
         // Create a long-running process that won't send any output
         // Using `sleep` ensures the reader blocks waiting for input
