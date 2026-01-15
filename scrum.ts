@@ -40,7 +40,7 @@ const scrum: ScrumDashboard = {
         { criterion: "colorPresentation request range transformed to virtual coordinates", verification: "Unit test" },
         { criterion: "colorPresentation response textEdit ranges transformed to host coordinates", verification: "Unit test" },
         { criterion: "colorPresentation additionalTextEdits transformed to host coordinates", verification: "Unit test" },
-      ], status: "ready", refinement_notes: ["Two-part feature: documentColor (whole-doc) + colorPresentation (hybrid)", "documentColor uses resolve_all pattern like documentLink", "colorPresentation uses range->virtual request + textEdit->host response like inlayHint", "ColorInformation[] response contains range+color for each color found", "ColorPresentation[] response contains label + optional textEdit + optional additionalTextEdits"] },
+      ], status: "done", refinement_notes: ["Two-part feature: documentColor (whole-doc) + colorPresentation (hybrid)", "documentColor uses resolve_all pattern like documentLink", "colorPresentation uses range->virtual request + textEdit->host response like inlayHint", "ColorInformation[] response contains range+color for each color found", "ColorPresentation[] response contains label + optional textEdit + optional additionalTextEdits"] },
     { id: "pbi-moniker", story: { role: "lua/python developer editing markdown", capability: "get unique symbol identifiers", benefit: "cross-project navigation" },
       acceptance_criteria: [
         { criterion: "Bridge forwards textDocument/moniker to downstream LS", verification: "E2E test" },
@@ -48,29 +48,14 @@ const scrum: ScrumDashboard = {
         { criterion: "Request position transformed to virtual coordinates", verification: "Unit test" },
       ], status: "ready", refinement_notes: ["Response has no position data", "Pass-through response"] },
   ],
-  sprint: {
-    number: 6,
-    pbi_id: "pbi-color-presentation",
-    goal: "Bridge textDocument/documentColor and textDocument/colorPresentation with coordinate transformation",
-    status: "in_progress",
-    subtasks: [
-      // documentColor: whole-document pattern (like documentLink)
-      { test: "transform_color_information converts virtual ranges to host coordinates", implementation: "Add transform_color_information function in document_color.rs", type: "behavioral", status: "completed", commits: [], notes: ["ColorInformation[] contains range+color", "Uses host_document_from_virtual_position for range transformation"] },
-      { test: "resolve_document_color aggregates results from all injection regions", implementation: "Add resolve_document_color to LanguageServerPool using resolve_all pattern", type: "behavioral", status: "completed", commits: [], notes: ["Whole-document operation like documentLink", "Aggregates ColorInformation[] from all regions"] },
-      { test: "E2E documentColor returns color locations from injection region", implementation: "Wire documentColor handler in lsp_impl", type: "behavioral", status: "completed", commits: [], notes: ["Handler wiring + E2E verification"] },
-      // colorPresentation: hybrid pattern (range input with textEdit response)
-      { test: "build_color_presentation_params transforms range to virtual coordinates", implementation: "Add build_color_presentation_params function in color_presentation.rs", type: "behavioral", status: "completed", commits: [], notes: ["Hybrid pattern: range input needs virtual transformation", "Similar to inlayHint request builder"] },
-      { test: "transform_color_presentation converts textEdit and additionalTextEdits to host coordinates", implementation: "Add transform_color_presentation function handling both edit types", type: "behavioral", status: "completed", commits: [], notes: ["ColorPresentation has optional textEdit + optional additionalTextEdits", "Both need range->host transformation"] },
-      { test: "resolve_color_presentation forwards to correct region based on range", implementation: "Add resolve_color_presentation to LanguageServerPool using hybrid pattern", type: "behavioral", status: "completed", commits: [], notes: ["Position-based operation (single region)", "Range input determines which injection region"] },
-      { test: "E2E colorPresentation returns edit suggestions for color", implementation: "Wire colorPresentation handler in lsp_impl + E2E test", type: "behavioral", status: "red", commits: [], notes: ["Handler wiring + E2E verification", "Verify textEdit ranges are correctly transformed"] },
-    ],
-  },
+  sprint: null,
   completed: [
     { number: 1, pbi_id: "pbi-document-highlight", goal: "Bridge textDocument/documentHighlight to downstream LS", status: "done", subtasks: [] },
     { number: 2, pbi_id: "pbi-rename", goal: "Bridge textDocument/rename with WorkspaceEdit transformation", status: "done", subtasks: [] },
     { number: 3, pbi_id: "pbi-document-link", goal: "Bridge textDocument/documentLink with range transformation to host coordinates", status: "done", subtasks: [] },
     { number: 4, pbi_id: "pbi-document-symbols", goal: "Bridge textDocument/documentSymbol to downstream LS with coordinate transformation", status: "done", subtasks: [] },
     { number: 5, pbi_id: "pbi-inlay-hints", goal: "Bridge textDocument/inlayHint with bidirectional coordinate transformation", status: "done", subtasks: [] },
+    { number: 6, pbi_id: "pbi-color-presentation", goal: "Bridge textDocument/documentColor and textDocument/colorPresentation with coordinate transformation", status: "done", subtasks: [] },
   ],
   definition_of_done: {
     checks: [
