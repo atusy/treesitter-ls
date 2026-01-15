@@ -16,7 +16,78 @@ const scrum: ScrumDashboard = {
       { metric: "E2E test coverage using treesitter-ls binary", target: "Each bridged feature has E2E test verifying end-to-end flow" },
     ],
   },
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "pbi-symbol-info-uri-fix",
+      story: {
+        role: "Lua developer editing markdown",
+        capability: "document symbols to work with SymbolInformation responses",
+        benefit: "older language servers are supported",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "SymbolInformation.location.uri transformed to host URI",
+          verification: "Unit test verifies URI transformation from virtual to host",
+        },
+        {
+          criterion: "SymbolInformation.location.range transformed to host coordinates",
+          verification: "Verify existing range transformation works correctly (already implemented)",
+        },
+      ],
+      status: "ready",
+      refinement_notes: [
+        "CRITICAL - LSP Compliance issue",
+        "In response.rs:325-331, when downstream LS returns SymbolInformation[] format, location.uri contains virtual URI but is NOT transformed to host URI",
+        "Fix: Transform location.uri from virtual to host URI, similar to how definition responses handle this",
+      ],
+    },
+    {
+      id: "pbi-document-color-e2e",
+      story: {
+        role: "lua/python developer editing markdown",
+        capability: "document color feature to be E2E tested",
+        benefit: "I have confidence in the feature",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "E2E test verifies documentColor capability is advertised",
+          verification: "Test checks server capabilities include documentColor",
+        },
+        {
+          criterion: "E2E test verifies request handling",
+          verification: "Test sends documentColor request and verifies response (even if empty)",
+        },
+      ],
+      status: "ready",
+      refinement_notes: [
+        "Missing E2E test - No tests/e2e_lsp_lua_document_color.rs exists",
+        "Create E2E test file following existing patterns in tests/e2e_lsp_lua_*.rs",
+      ],
+    },
+    {
+      id: "pbi-color-presentation-e2e",
+      story: {
+        role: "lua/python developer editing markdown",
+        capability: "color presentation feature to be E2E tested",
+        benefit: "I have confidence in the feature",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "E2E test verifies colorPresentation capability is advertised",
+          verification: "Test checks server capabilities include colorPresentation",
+        },
+        {
+          criterion: "E2E test verifies request handling",
+          verification: "Test sends colorPresentation request and verifies response (even if empty)",
+        },
+      ],
+      status: "ready",
+      refinement_notes: [
+        "Missing E2E test - No tests/e2e_lsp_lua_color_presentation.rs exists",
+        "Create E2E test file following existing patterns in tests/e2e_lsp_lua_*.rs",
+      ],
+    },
+  ],
   sprint: null,
   completed: [
     { number: 1, pbi_id: "pbi-document-highlight", goal: "Bridge textDocument/documentHighlight to downstream LS", status: "done", subtasks: [] },
