@@ -418,32 +418,43 @@ fn transform_inlay_hint_item(item: &mut serde_json::Value, context: &ResponseTra
     // Transform label parts if label is an array (InlayHintLabelPart[])
     // Per LSP 3.17: label can be string | InlayHintLabelPart[]
     // InlayHintLabelPart has optional location: { uri, range }
+    // Cross-region parts are filtered out, same as definition response handling
     if let Some(label) = item.get_mut("label")
         && let Some(label_parts) = label.as_array_mut()
     {
-        for part in label_parts.iter_mut() {
-            transform_inlay_hint_label_part(part, context);
-        }
+        label_parts.retain_mut(|part| transform_inlay_hint_label_part(part, context));
     }
 }
 
 /// Transform a single InlayHintLabelPart's location to host coordinates.
 ///
+/// Returns `true` if the part should be kept, `false` if it should be filtered out.
+///
 /// Handles three cases for the location URI:
-/// 1. Real file URI (not virtual): preserved as-is
-/// 2. Same virtual URI as request: transformed using context
-/// 3. Different virtual URI (cross-region): filtered out (handled at caller level)
+/// 1. Real file URI (not virtual): preserved as-is, range NOT transformed
+/// 2. Same virtual URI as request: URI replaced with host URI, range transformed
+/// 3. Different virtual URI (cross-region): filtered out
 fn transform_inlay_hint_label_part(
     part: &mut serde_json::Value,
     context: &ResponseTransformContext,
-) {
-    // Only process parts with location field
-    if let Some(location) = part.get_mut("location") {
-        // Transform range using region_start_line offset
-        if let Some(range) = location.get_mut("range") {
-            transform_range(range, context.request_region_start_line);
-        }
-    }
+) -> bool {
+    // Parts without location field are always kept
+    let Some(location) = part.get_mut("location") else {
+        return true;
+    };
+
+    // Get the URI to determine how to handle this part
+    let Some(uri_str) = location
+        .get("uri")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+    else {
+        return true; // No URI, keep the part
+    };
+
+    // Use the standard URI transformation helper
+    // This handles all three cases: real file, same virtual, cross-region
+    transform_location_uri(location, &uri_str, "uri", "range", context)
 }
 
 /// Transform a position's line number from virtual to host coordinates.
@@ -2513,7 +2524,9 @@ mod tests {
         // InlayHint with label as array of InlayHintLabelPart with location field
         // Per LSP 3.17: label can be string | InlayHintLabelPart[]
         // InlayHintLabelPart.location is { uri, range }
-        let virtual_uri = "file:///test.md.lua.region1";
+        // Use proper virtual URI format (file:///.treesitter-ls/...) so is_virtual_uri recognizes it
+        let virtual_uri = "file:///.treesitter-ls/abc123/region-0.lua";
+        let host_uri = "file:///test.md";
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -2533,7 +2546,11 @@ mod tests {
                 ]
             }]
         });
-        let context = inlay_hint_context(10);
+        let context = ResponseTransformContext {
+            request_virtual_uri: virtual_uri.to_string(),
+            request_host_uri: host_uri.to_string(),
+            request_region_start_line: 10,
+        };
 
         let transformed = transform_inlay_hint_response_to_host(response, &context);
 
@@ -2545,6 +2562,47 @@ mod tests {
         assert_eq!(label_part["value"], "SomeType");
         assert_eq!(label_part["location"]["range"]["start"]["line"], 15);
         assert_eq!(label_part["location"]["range"]["end"]["line"], 15);
+    }
+
+    #[test]
+    fn inlay_hint_label_part_location_uri_transforms_to_host_uri() {
+        // When location.uri matches the request's virtual URI, it should be replaced with host URI
+        // Use proper virtual URI format (file:///.treesitter-ls/...) so is_virtual_uri recognizes it
+        let virtual_uri = "file:///.treesitter-ls/abc123/region-0.lua";
+        let host_uri = "file:///test.md";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "position": { "line": 0, "character": 10 },
+                "label": [
+                    {
+                        "value": "MyType",
+                        "location": {
+                            "uri": virtual_uri,
+                            "range": {
+                                "start": { "line": 2, "character": 0 },
+                                "end": { "line": 2, "character": 6 }
+                            }
+                        }
+                    }
+                ]
+            }]
+        });
+        // Create context with matching URIs
+        let context = ResponseTransformContext {
+            request_virtual_uri: virtual_uri.to_string(),
+            request_host_uri: host_uri.to_string(),
+            request_region_start_line: 5,
+        };
+
+        let transformed = transform_inlay_hint_response_to_host(response, &context);
+
+        let label_part = &transformed["result"][0]["label"][0];
+        // URI should be transformed from virtual to host
+        assert_eq!(label_part["location"]["uri"], host_uri);
+        // Range should also be transformed
+        assert_eq!(label_part["location"]["range"]["start"]["line"], 7);
     }
 
     // ==========================================================================
