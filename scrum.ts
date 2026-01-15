@@ -34,7 +34,7 @@ const scrum: ScrumDashboard = {
           verification: "Verify existing range transformation works correctly (already implemented)",
         },
       ],
-      status: "ready",
+      status: "done",
       refinement_notes: [
         "CRITICAL - LSP Compliance issue",
         "In response.rs:325-331, when downstream LS returns SymbolInformation[] format, location.uri contains virtual URI but is NOT transformed to host URI",
@@ -92,14 +92,14 @@ const scrum: ScrumDashboard = {
     number: 8,
     pbi_id: "pbi-symbol-info-uri-fix",
     goal: "Fix SymbolInformation URI transformation for LSP compliance",
-    status: "in_progress",
+    status: "review",
     subtasks: [
       {
         test: "Add unit test for SymbolInformation.location.uri transformation with virtual URI",
         implementation: "Create test verifying virtual URI is transformed to host URI",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "0fc6db73", message: "fix(bridge): transform SymbolInformation.location.uri for LSP compliance", phase: "green" }],
         notes: [
           "Test should use virtual URI format (treesitter-ls://host_uri/lang/region_id)",
           "Test should verify URI is transformed to host URI after transformation",
@@ -110,8 +110,8 @@ const scrum: ScrumDashboard = {
         test: "Update transform_document_symbol_response_to_host signature to use ResponseTransformContext",
         implementation: "Change function signature from (response, region_start_line) to (response, &ResponseTransformContext)",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "0fc6db73", message: "fix(bridge): transform SymbolInformation.location.uri for LSP compliance", phase: "green" }],
         notes: [
           "ResponseTransformContext contains: request_virtual_uri, request_host_uri, request_region_start_line",
           "Update document_symbol.rs call site to create and pass ResponseTransformContext",
@@ -122,8 +122,8 @@ const scrum: ScrumDashboard = {
         test: "Implement URI transformation in SymbolInformation handling",
         implementation: "In transform_document_symbol_item, transform location.uri using same pattern as transform_location_uri",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "0fc6db73", message: "fix(bridge): transform SymbolInformation.location.uri for LSP compliance", phase: "green" }],
         notes: [
           "Handle three cases: (1) real file URI - preserve, (2) same virtual URI - transform, (3) different virtual URI - filter",
           "Call transform_location_uri helper from transform_document_symbol_item for SymbolInformation case",
@@ -134,8 +134,8 @@ const scrum: ScrumDashboard = {
         test: "Verify existing range transformation still works with new context-based signature",
         implementation: "Run existing tests to confirm range transformation is preserved",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "0fc6db73", message: "fix(bridge): transform SymbolInformation.location.uri for LSP compliance", phase: "green" }],
         notes: [
           "Existing tests: document_symbol_response_transforms_symbol_information_location_range",
           "Verify DocumentSymbol format (range, selectionRange, children) still works",
