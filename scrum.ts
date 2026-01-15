@@ -55,13 +55,12 @@ const scrum: ScrumDashboard = {
         { criterion: "Request position transformed to virtual coordinates", verification: "Unit test" },
       ], status: "ready", refinement_notes: ["Response has no position data", "Pass-through response"] },
   ],
-  sprint: {
-    number: 4,
-    pbi_id: "pbi-document-symbols",
-    goal: "Bridge textDocument/documentSymbol to downstream LS with coordinate transformation",
-    status: "done",
-    subtasks: [
-      // Subtask 1: Response transformer for DocumentSymbol[] (hierarchical format)
+  sprint: null,
+  completed: [
+    { number: 1, pbi_id: "pbi-document-highlight", goal: "Bridge textDocument/documentHighlight to downstream LS", status: "done", subtasks: [] },
+    { number: 2, pbi_id: "pbi-rename", goal: "Bridge textDocument/rename with WorkspaceEdit transformation", status: "done", subtasks: [] },
+    { number: 3, pbi_id: "pbi-document-link", goal: "Bridge textDocument/documentLink with range transformation to host coordinates", status: "done", subtasks: [] },
+    { number: 4, pbi_id: "pbi-document-symbols", goal: "Bridge textDocument/documentSymbol to downstream LS with coordinate transformation", status: "done", subtasks: [
       {
         test: "Test transform_document_symbol_response_to_host transforms DocumentSymbol.range and DocumentSymbol.selectionRange by adding region_start_line offset",
         implementation: "Add transform_document_symbol_response_to_host function in response.rs that transforms both range and selectionRange fields",
@@ -70,7 +69,6 @@ const scrum: ScrumDashboard = {
         commits: [{ hash: "9c7168c8", message: "feat(bridge): add DocumentSymbol response transformer", phase: "green" }],
         notes: ["DocumentSymbol has TWO ranges: range (full scope) and selectionRange (identifier)", "Simple transformer signature: fn(response, region_start_line: u32)"],
       },
-      // Subtask 2: Recursive children transformation
       {
         test: "Test transform_document_symbol_response_to_host recursively transforms nested children's range and selectionRange",
         implementation: "Extend transformer to recursively process children array in DocumentSymbol",
@@ -79,7 +77,6 @@ const scrum: ScrumDashboard = {
         commits: [{ hash: "2198f38d", message: "test(bridge): add test for recursive children transformation", phase: "green" }],
         notes: ["DocumentSymbol.children is optional array of DocumentSymbol", "Use recursive helper function for clarity", "Implemented proactively with initial transformer"],
       },
-      // Subtask 3: Response transformer for SymbolInformation[] (flat format)
       {
         test: "Test transform_document_symbol_response_to_host transforms SymbolInformation.location.range by adding region_start_line offset",
         implementation: "Extend transformer to handle SymbolInformation format (has location.uri + location.range instead of range + selectionRange)",
@@ -88,7 +85,6 @@ const scrum: ScrumDashboard = {
         commits: [{ hash: "cf2e9f7c", message: "test(bridge): add tests for SymbolInformation and edge cases", phase: "green" }],
         notes: ["SymbolInformation is flat format with location field", "location.uri can be ignored - symbols are local to virtual document", "Implemented proactively with initial transformer"],
       },
-      // Subtask 4: Request builder for documentSymbol
       {
         test: "Test build_bridge_document_symbol_request creates valid textDocument/documentSymbol request with virtual URI",
         implementation: "Add build_bridge_document_symbol_request function in request.rs",
@@ -97,7 +93,6 @@ const scrum: ScrumDashboard = {
         commits: [{ hash: "e0bd34a0", message: "feat(bridge): add document symbol request builder", phase: "green" }],
         notes: ["Whole-document operation - no position parameter", "Similar to document_link request builder"],
       },
-      // Subtask 5: Pool method for sending documentSymbol request
       {
         test: "Test LanguageServerPool::send_document_symbol_request sends request and transforms response",
         implementation: "Add send_document_symbol_request method to LanguageServerPool following document_link.rs pattern",
@@ -106,7 +101,6 @@ const scrum: ScrumDashboard = {
         commits: [{ hash: "f9730213", message: "feat(bridge): add send_document_symbol_request pool method", phase: "green" }],
         notes: ["Use InjectionResolver::resolve_all pattern for whole-document operation", "Create new file src/lsp/bridge/text_document/document_symbol.rs"],
       },
-      // Subtask 6: E2E test for documentSymbol bridge
       {
         test: "E2E test: textDocument/documentSymbol request on markdown with Lua code block returns symbols with host coordinates",
         implementation: "Wire up documentSymbol handler in lsp_impl to call bridge for injection regions",
@@ -115,12 +109,7 @@ const scrum: ScrumDashboard = {
         commits: [{ hash: "4c92b4bd", message: "feat(bridge): wire up documentSymbol handler with E2E tests", phase: "green" }],
         notes: ["Test should verify symbol ranges are in host document coordinates", "May need to aggregate symbols from multiple injection regions"],
       },
-    ],
-  },
-  completed: [
-    { number: 1, pbi_id: "pbi-document-highlight", goal: "Bridge textDocument/documentHighlight to downstream LS", status: "done", subtasks: [] },
-    { number: 2, pbi_id: "pbi-rename", goal: "Bridge textDocument/rename with WorkspaceEdit transformation", status: "done", subtasks: [] },
-    { number: 3, pbi_id: "pbi-document-link", goal: "Bridge textDocument/documentLink with range transformation to host coordinates", status: "done", subtasks: [] },
+    ] },
   ],
   definition_of_done: {
     checks: [
@@ -139,6 +128,11 @@ const scrum: ScrumDashboard = {
     ] },
     { sprint: 3, improvements: [
       { action: "Continue using InjectionResolver::resolve_all for whole-document operations", timing: "sprint", status: "active", outcome: "Discovered pattern: whole-doc ops (documentLink, symbols) need all regions, position-based ops (hover, definition) need single region" },
+    ] },
+    { sprint: 4, improvements: [
+      { action: "Proactively implement dual response formats when LSP spec shows both options", timing: "sprint", status: "active", outcome: "Both DocumentSymbol[] and SymbolInformation[] formats implemented upfront, eliminating need for additional subtasks" },
+      { action: "Handle recursive structures (DocumentSymbol.children) during initial implementation", timing: "sprint", status: "active", outcome: "Recursive transformation implemented with initial test, avoiding regression risk" },
+      { action: "Continue leveraging established patterns (whole-doc ops, simple transformers)", timing: "sprint", status: "active", outcome: "Sprint executed cleanly with zero blockers by reusing document_link.rs pattern" },
     ] },
   ],
 };
