@@ -12,6 +12,7 @@ mod did_change;
 mod did_close;
 mod document_highlight;
 mod document_link;
+mod document_symbol;
 mod hover;
 mod implementation;
 mod references;
