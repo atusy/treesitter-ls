@@ -387,7 +387,8 @@ impl RegionIdTracker {
             return invalidated;
         };
 
-        let mut new_entries = HashMap::new();
+        // Pre-size HashMap: most edits don't invalidate, so entries count is a good estimate
+        let mut new_entries = HashMap::with_capacity(entries.len());
 
         for (key, ulid) in entries.drain() {
             if Self::should_invalidate_node(&key, edit) {
