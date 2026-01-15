@@ -2060,4 +2060,158 @@ mod tests {
             "Node should expand to [20, 45) (end shifted by +5)"
         );
     }
+
+    // ============================================================
+    // Phase 4 Concurrency Tests: apply_edits Thread-Safety
+    // ============================================================
+    // These tests verify thread-safety when multiple threads call
+    // apply_edits() concurrently, mirroring the apply_text_change tests.
+
+    #[test]
+    fn test_concurrent_apply_edits_same_uri_no_panic() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let tracker = Arc::new(RegionIdTracker::new());
+        let uri = test_uri("concurrent_apply_edits");
+
+        // Pre-populate with several nodes spread across the document
+        for i in 0..10 {
+            let start = i * 20;
+            tracker.get_or_create(&uri, start, start + 15, "block");
+        }
+
+        // Spawn multiple threads that apply different edits concurrently
+        let handles: Vec<_> = (0..5)
+            .map(|thread_id| {
+                let tracker = Arc::clone(&tracker);
+                let uri = uri.clone();
+                thread::spawn(move || {
+                    // Each thread does multiple edit cycles
+                    for cycle in 0..3 {
+                        // Create edit at different positions per thread
+                        let edit_start = (thread_id * 30 + cycle * 5) % 150;
+                        let edit_end = edit_start + 5;
+
+                        // Small deletion: [edit_start, edit_end) → [edit_start, edit_start)
+                        let edits = vec![EditInfo::new(edit_start, edit_end, edit_start)];
+                        tracker.apply_edits(&uri, &edits);
+                    }
+                })
+            })
+            .collect();
+
+        // Wait for all threads to complete - no panics should occur
+        for handle in handles {
+            handle
+                .join()
+                .expect("Thread should not panic during concurrent apply_edits");
+        }
+
+        // Verify tracker is still functional after concurrent edits
+        let new_ulid = tracker.get_or_create(&uri, 1000, 1010, "test");
+        assert!(
+            new_ulid.to_string().len() == 26,
+            "ULID should be valid after concurrent apply_edits"
+        );
+    }
+
+    #[test]
+    fn test_concurrent_apply_edits_different_uris_independent() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let tracker = Arc::new(RegionIdTracker::new());
+
+        // Each thread works on its own URI
+        let handles: Vec<_> = (0..5)
+            .map(|thread_id| {
+                let tracker = Arc::clone(&tracker);
+                let uri = test_uri(&format!("apply_edits_uri_{}", thread_id));
+
+                thread::spawn(move || {
+                    // Create initial node at [50, 100)
+                    let ulid = tracker.get_or_create(&uri, 50, 100, "block");
+
+                    // Apply an edit that shifts the node: delete [20, 30) before node
+                    // This is a deletion of 10 bytes before the node (delta = -10)
+                    let edits = vec![EditInfo::new(20, 30, 20)];
+                    tracker.apply_edits(&uri, &edits);
+
+                    // After edit, node should shift from [50, 100) to [40, 90)
+                    let shifted_ulid = tracker.get(&uri, 40, 90, "block");
+                    (ulid, shifted_ulid)
+                })
+            })
+            .collect();
+
+        // Collect results and verify each URI maintained correct state
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+
+        for (original, shifted) in results {
+            assert_eq!(
+                Some(original),
+                shifted,
+                "Each URI should independently maintain correct position adjustment with apply_edits"
+            );
+        }
+    }
+
+    #[test]
+    fn test_concurrent_get_and_apply_edits_interleaved() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let tracker = Arc::new(RegionIdTracker::new());
+        let uri = test_uri("apply_edits_interleaved");
+
+        // Pre-populate with one stable node that won't be affected by edits
+        // Node at [0, 10) - edits will be at [50+)
+        let stable_ulid = tracker.get_or_create(&uri, 0, 10, "stable");
+
+        // Spawn threads that interleave get_or_create and apply_edits
+        let handles: Vec<_> = (0..4)
+            .map(|thread_id| {
+                let tracker = Arc::clone(&tracker);
+                let uri = uri.clone();
+                let stable_ulid = stable_ulid;
+
+                thread::spawn(move || {
+                    let mut results = Vec::new();
+
+                    for cycle in 0..5 {
+                        // Create new node at a unique position per thread and cycle
+                        let base = 50 + thread_id * 100 + cycle * 20;
+                        let _ = tracker.get_or_create(&uri, base, base + 10, "dynamic");
+
+                        // Apply edit that doesn't affect stable node at [0, 10)
+                        if cycle % 2 == 0 {
+                            let edit_start = 50 + thread_id * 100;
+                            let edits = vec![EditInfo::new(edit_start, edit_start + 5, edit_start)];
+                            tracker.apply_edits(&uri, &edits);
+                        }
+
+                        // Always verify stable node is accessible
+                        if let Some(ulid) = tracker.get(&uri, 0, 10, "stable") {
+                            results.push(ulid);
+                        }
+                    }
+
+                    // Verify stable node's ULID was consistent across all reads
+                    (stable_ulid, results)
+                })
+            })
+            .collect();
+
+        // Verify all threads saw consistent stable ULID
+        for handle in handles {
+            let (expected, observed) = handle.join().expect("Thread should not panic");
+            for ulid in observed {
+                assert_eq!(
+                    expected, ulid,
+                    "Stable node should have consistent ULID across concurrent apply_edits access"
+                );
+            }
+        }
+    }
 }
