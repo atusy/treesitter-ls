@@ -1766,4 +1766,75 @@ mod tests {
         assert_eq!(result[0]["name"], "myFunction");
         assert_eq!(result[0]["kind"], 12);
     }
+
+    #[test]
+    fn document_symbol_response_recursively_transforms_nested_children() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "name": "myModule",
+                    "kind": 2,
+                    "range": {
+                        "start": { "line": 0, "character": 0 },
+                        "end": { "line": 10, "character": 3 }
+                    },
+                    "selectionRange": {
+                        "start": { "line": 0, "character": 7 },
+                        "end": { "line": 0, "character": 15 }
+                    },
+                    "children": [
+                        {
+                            "name": "innerFunc",
+                            "kind": 12,
+                            "range": {
+                                "start": { "line": 2, "character": 2 },
+                                "end": { "line": 5, "character": 5 }
+                            },
+                            "selectionRange": {
+                                "start": { "line": 2, "character": 11 },
+                                "end": { "line": 2, "character": 20 }
+                            },
+                            "children": [
+                                {
+                                    "name": "deeplyNested",
+                                    "kind": 13,
+                                    "range": {
+                                        "start": { "line": 3, "character": 4 },
+                                        "end": { "line": 4, "character": 7 }
+                                    },
+                                    "selectionRange": {
+                                        "start": { "line": 3, "character": 10 },
+                                        "end": { "line": 3, "character": 22 }
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        });
+        let region_start_line = 5;
+
+        let transformed = transform_document_symbol_response_to_host(response, region_start_line);
+
+        let result = transformed["result"].as_array().unwrap();
+        // Top-level module transformed
+        assert_eq!(result[0]["range"]["start"]["line"], 5);
+        assert_eq!(result[0]["range"]["end"]["line"], 15);
+
+        // First-level child transformed
+        let child = &result[0]["children"][0];
+        assert_eq!(child["range"]["start"]["line"], 7);
+        assert_eq!(child["range"]["end"]["line"], 10);
+        assert_eq!(child["selectionRange"]["start"]["line"], 7);
+
+        // Deeply nested child transformed
+        let deep_child = &child["children"][0];
+        assert_eq!(deep_child["range"]["start"]["line"], 8);
+        assert_eq!(deep_child["range"]["end"]["line"], 9);
+        assert_eq!(deep_child["selectionRange"]["start"]["line"], 8);
+        assert_eq!(deep_child["name"], "deeplyNested");
+    }
 }
