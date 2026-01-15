@@ -139,11 +139,19 @@ fn adjust_position_for_edit(key: PositionKey, edit: &EditInfo, delta: i64) -> Op
         };
 
         // Guard: If range collapses (start >= end), return None to invalidate
-        // NOTE: This is theoretically unreachable when end is clamped, because:
+        //
+        // PRECONDITION: This branch requires node passed START-priority check,
+        // meaning key.start_byte < edit.start_byte (otherwise node would be
+        // invalidated before reaching here).
+        //
+        // Given this precondition, collapse is unreachable because:
         //   - For collapse: new_end <= key.start_byte
         //   - If end absorbed: new_end = edit.new_end_byte >= edit.start_byte > key.start_byte
-        //     (since we're in Node A/B branch, key.start_byte < edit.start_byte)
-        // Kept as defense-in-depth against edge cases.
+        //   - If end after edit: new_end = key.end_byte + delta > key.start_byte
+        //     (since key.end_byte > edit.start_byte > key.start_byte initially)
+        //
+        // Kept as defense-in-depth: protects against future refactoring that
+        // might invalidate the precondition or introduce new branches.
         if new_end <= key.start_byte {
             None // Range collapsed to zero or negative
         } else {
