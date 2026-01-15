@@ -69,7 +69,9 @@ impl TreeSitterLs {
         };
 
         // Collect document symbols from all injection regions
-        let mut all_symbols: Vec<DocumentSymbol> = Vec::new();
+        // We track both formats separately since mixing them isn't meaningful
+        let mut all_document_symbols: Vec<DocumentSymbol> = Vec::new();
+        let mut all_symbol_information: Vec<SymbolInformation> = Vec::new();
 
         for resolved in all_regions {
             // Get bridge server config for this language
@@ -102,14 +104,17 @@ impl TreeSitterLs {
                             continue;
                         }
 
-                        // Try DocumentSymbol[] format first (hierarchical)
+                        // Try DocumentSymbol[] format first (hierarchical, preferred)
                         if let Ok(symbols) =
                             serde_json::from_value::<Vec<DocumentSymbol>>(result.clone())
                         {
-                            all_symbols.extend(symbols);
+                            all_document_symbols.extend(symbols);
+                        } else if let Ok(symbols) =
+                            serde_json::from_value::<Vec<SymbolInformation>>(result.clone())
+                        {
+                            // Fall back to SymbolInformation[] format (flat, deprecated but still used)
+                            all_symbol_information.extend(symbols);
                         }
-                        // SymbolInformation[] format is not directly supported by DocumentSymbolResponse::DocumentSymbol
-                        // We could convert, but most modern language servers use DocumentSymbol
                     }
                 }
                 Err(e) => {
@@ -123,10 +128,15 @@ impl TreeSitterLs {
             }
         }
 
-        if all_symbols.is_empty() {
-            Ok(None)
+        // Return results, preferring DocumentSymbol format if available
+        // If we have any DocumentSymbol results, use Nested format (hierarchical)
+        // Otherwise fall back to Flat format (SymbolInformation) if available
+        if !all_document_symbols.is_empty() {
+            Ok(Some(DocumentSymbolResponse::Nested(all_document_symbols)))
+        } else if !all_symbol_information.is_empty() {
+            Ok(Some(DocumentSymbolResponse::Flat(all_symbol_information)))
         } else {
-            Ok(Some(DocumentSymbolResponse::Nested(all_symbols)))
+            Ok(None)
         }
     }
 }
