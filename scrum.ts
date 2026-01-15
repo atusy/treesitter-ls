@@ -32,9 +32,10 @@ const scrum: ScrumDashboard = {
     { id: "pbi-document-symbols", story: { role: "Lua developer editing markdown", capability: "see outline of symbols in Lua code block", benefit: "navigate to functions" },
       acceptance_criteria: [
         { criterion: "Bridge forwards textDocument/documentSymbol to downstream LS", verification: "E2E test" },
-        { criterion: "Symbol ranges transformed to host coordinates", verification: "Unit test" },
-        { criterion: "Hierarchical structure preserved", verification: "Unit test: nested children" },
-      ], status: "ready", refinement_notes: ["Returns DocumentSymbol[] or SymbolInformation[]", "Recursive transform for children"] },
+        { criterion: "DocumentSymbol range and selectionRange transformed to host coordinates", verification: "Unit test" },
+        { criterion: "Hierarchical children recursively transformed", verification: "Unit test: nested children" },
+        { criterion: "SymbolInformation location.range transformed to host coordinates", verification: "Unit test" },
+      ], status: "ready", refinement_notes: ["Whole-doc operation: use InjectionResolver::resolve_all pattern from document_link", "Dual response: DocumentSymbol[] (hierarchical with children) or SymbolInformation[] (flat with location)", "Simple transformer: fn(response, region_start_line) - no URI filtering needed", "DocumentSymbol has TWO ranges: range (full scope) + selectionRange (identifier)"] },
     { id: "pbi-inlay-hints", story: { role: "Lua developer editing markdown", capability: "see inline type hints in Lua code blocks", benefit: "understand types without hovering" },
       acceptance_criteria: [
         { criterion: "Bridge forwards textDocument/inlayHint to downstream LS", verification: "E2E test" },
