@@ -83,15 +83,7 @@ impl EditInfo {
             new_end_byte,
         }
     }
-}
 
-impl From<&tree_sitter::InputEdit> for EditInfo {
-    fn from(edit: &tree_sitter::InputEdit) -> Self {
-        Self::new(edit.start_byte, edit.old_end_byte, edit.new_end_byte)
-    }
-}
-
-impl EditInfo {
     /// Calculate the byte delta (positive for insertion, negative for deletion).
     fn delta(&self) -> i64 {
         self.new_end_byte as i64 - self.old_end_byte as i64
@@ -103,6 +95,12 @@ impl EditInfo {
     /// they insert content without deleting anything.
     fn is_insertion_only(&self) -> bool {
         self.start_byte == self.old_end_byte
+    }
+}
+
+impl From<&tree_sitter::InputEdit> for EditInfo {
+    fn from(edit: &tree_sitter::InputEdit) -> Self {
+        Self::new(edit.start_byte, edit.old_end_byte, edit.new_end_byte)
     }
 }
 
