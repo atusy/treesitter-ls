@@ -66,6 +66,24 @@ impl VirtualDocumentUri {
         &self.language
     }
 
+    /// The URI prefix used by all virtual documents.
+    ///
+    /// Virtual URIs use a root-relative path (`/.treesitter-ls/`) to avoid
+    /// collision with real file paths that might contain `.treesitter-ls`
+    /// in user directories (e.g., `~/.treesitter-ls/config.lua`).
+    const URI_PREFIX: &'static str = "file:///.treesitter-ls/";
+
+    /// Check if a URI string represents a virtual document.
+    ///
+    /// Virtual document URIs have the pattern `file:///.treesitter-ls/{hash}/{region_id}.{ext}`.
+    /// This is used to distinguish virtual URIs from real file URIs in responses.
+    ///
+    /// Uses a strict prefix check to avoid false positives for real files that happen
+    /// to be in a directory named `.treesitter-ls`.
+    pub(crate) fn is_virtual_uri(uri: &str) -> bool {
+        uri.starts_with(Self::URI_PREFIX)
+    }
+
     /// Convert to a URI string.
     ///
     /// Format: `file:///.treesitter-ls/{host_path_hash}/{region_id}.{ext}`
@@ -96,8 +114,11 @@ impl VirtualDocumentUri {
         // Create a file:// URI with a virtual path
         // This allows downstream language servers to recognize the file type by extension
         format!(
-            "file:///.treesitter-ls/{:x}/{}.{}",
-            host_hash, encoded_region_id, extension
+            "{}{:x}/{}.{}",
+            Self::URI_PREFIX,
+            host_hash,
+            encoded_region_id,
+            extension
         )
     }
 
@@ -489,5 +510,41 @@ mod tests {
         let parsed = parsed.unwrap();
         assert_eq!(parsed.scheme(), "file");
         assert!(parsed.path().starts_with("/.treesitter-ls/"));
+    }
+
+    // ==========================================================================
+    // is_virtual_uri tests
+    // ==========================================================================
+
+    #[test]
+    fn is_virtual_uri_detects_virtual_uris() {
+        assert!(VirtualDocumentUri::is_virtual_uri(
+            "file:///.treesitter-ls/abc123/region-0.lua"
+        ));
+        assert!(VirtualDocumentUri::is_virtual_uri(
+            "file:///.treesitter-ls/def456/01JPMQ8ZYYQA.py"
+        ));
+        assert!(VirtualDocumentUri::is_virtual_uri(
+            "file:///.treesitter-ls/hash/test.txt"
+        ));
+    }
+
+    #[test]
+    fn is_virtual_uri_rejects_real_uris() {
+        assert!(!VirtualDocumentUri::is_virtual_uri(
+            "file:///home/user/project/main.lua"
+        ));
+        assert!(!VirtualDocumentUri::is_virtual_uri(
+            "file:///C:/Users/dev/code.py"
+        ));
+        assert!(!VirtualDocumentUri::is_virtual_uri("untitled:Untitled-1"));
+        // Real file in a directory that happens to contain ".treesitter-ls" in path
+        assert!(!VirtualDocumentUri::is_virtual_uri(
+            "file:///some/treesitter-ls/file.lua"
+        ));
+        // Real file in user's .treesitter-ls config directory (edge case the stricter check fixes)
+        assert!(!VirtualDocumentUri::is_virtual_uri(
+            "file:///home/user/.treesitter-ls/config.lua"
+        ));
     }
 }

@@ -30,6 +30,8 @@
 //! - [`transform_definition_response_to_host`] - Location/LocationLink with URIs
 //! - [`transform_workspace_edit_to_host`] - TextDocumentEdit with URIs
 
+use super::virtual_uri::VirtualDocumentUri;
+
 /// Transform a hover response from virtual to host document coordinates.
 ///
 /// If the response contains a range, translates the line numbers from virtual
@@ -97,13 +99,32 @@ pub(crate) fn transform_completion_response_to_host(
 }
 
 /// Transform the textEdit range in a single completion item to host coordinates.
+///
+/// Handles both TextEdit format (has `range`) and InsertReplaceEdit format (has `insert` + `replace`).
+/// InsertReplaceEdit is used by some language servers (e.g., rust-analyzer, tsserver) to provide
+/// both insert and replace options for the same completion.
 fn transform_completion_item_range(item: &mut serde_json::Value, region_start_line: u32) {
     // Check for textEdit field
-    if let Some(text_edit) = item.get_mut("textEdit")
-        && let Some(range) = text_edit.get_mut("range")
-        && range.is_object()
-    {
-        transform_range(range, region_start_line);
+    if let Some(text_edit) = item.get_mut("textEdit") {
+        // TextEdit format: { range, newText }
+        if let Some(range) = text_edit.get_mut("range")
+            && range.is_object()
+        {
+            transform_range(range, region_start_line);
+        }
+
+        // InsertReplaceEdit format: { insert, replace, newText }
+        // Used by some language servers to offer both insert and replace behaviors
+        if let Some(insert) = text_edit.get_mut("insert")
+            && insert.is_object()
+        {
+            transform_range(insert, region_start_line);
+        }
+        if let Some(replace) = text_edit.get_mut("replace")
+            && replace.is_object()
+        {
+            transform_range(replace, region_start_line);
+        }
     }
 
     // Also check for additionalTextEdits (array of TextEdit)
@@ -237,10 +258,10 @@ pub(crate) fn transform_document_link_response_to_host(
 
 /// Check if a URI string represents a virtual document.
 ///
-/// Virtual document URIs have the pattern `file:///.treesitter-ls/{hash}/{region_id}.{ext}`.
-/// This is used to distinguish virtual URIs from real file URIs in definition responses.
+/// Delegates to [`VirtualDocumentUri::is_virtual_uri`] which is the single source of truth
+/// for virtual URI format knowledge.
 pub(crate) fn is_virtual_uri(uri: &str) -> bool {
-    uri.contains("/.treesitter-ls/")
+    VirtualDocumentUri::is_virtual_uri(uri)
 }
 
 /// Context for transforming definition responses to host coordinates.
@@ -722,6 +743,43 @@ mod tests {
         assert_eq!(items[0]["textEdit"]["range"]["end"]["line"], 5);
     }
 
+    #[test]
+    fn completion_response_transforms_insert_replace_edit() {
+        // InsertReplaceEdit format used by rust-analyzer, tsserver, etc.
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "isIncomplete": false,
+                "items": [{
+                    "label": "println!",
+                    "textEdit": {
+                        "insert": {
+                            "start": { "line": 2, "character": 0 },
+                            "end": { "line": 2, "character": 3 }
+                        },
+                        "replace": {
+                            "start": { "line": 2, "character": 0 },
+                            "end": { "line": 2, "character": 8 }
+                        },
+                        "newText": "println!"
+                    }
+                }]
+            }
+        });
+        let region_start_line = 10;
+
+        let transformed = transform_completion_response_to_host(response, region_start_line);
+
+        let item = &transformed["result"]["items"][0]["textEdit"];
+        // Insert range transformed: line 2 + 10 = 12
+        assert_eq!(item["insert"]["start"]["line"], 12);
+        assert_eq!(item["insert"]["end"]["line"], 12);
+        // Replace range transformed: line 2 + 10 = 12
+        assert_eq!(item["replace"]["start"]["line"], 12);
+        assert_eq!(item["replace"]["end"]["line"], 12);
+    }
+
     // ==========================================================================
     // SignatureHelp response transformation tests
     // ==========================================================================
@@ -964,25 +1022,8 @@ mod tests {
     }
 
     // ==========================================================================
-    // Cross-document transformation tests
+    // Cross-document transformation tests (is_virtual_uri tests are in virtual_uri.rs)
     // ==========================================================================
-
-    #[test]
-    fn is_virtual_uri_detects_virtual_uris() {
-        assert!(is_virtual_uri("file:///.treesitter-ls/abc123/region-0.lua"));
-        assert!(is_virtual_uri(
-            "file:///.treesitter-ls/def456/01JPMQ8ZYYQA.py"
-        ));
-        assert!(is_virtual_uri("file:///.treesitter-ls/hash/test.txt"));
-    }
-
-    #[test]
-    fn is_virtual_uri_rejects_real_uris() {
-        assert!(!is_virtual_uri("file:///home/user/project/main.lua"));
-        assert!(!is_virtual_uri("file:///C:/Users/dev/code.py"));
-        assert!(!is_virtual_uri("untitled:Untitled-1"));
-        assert!(!is_virtual_uri("file:///some/treesitter-ls/file.lua"));
-    }
 
     #[test]
     fn definition_response_preserves_real_file_uri() {
