@@ -256,6 +256,80 @@ pub(crate) fn transform_document_link_response_to_host(
     response
 }
 
+/// Transform a document symbol response from virtual to host document coordinates.
+///
+/// DocumentSymbol responses can be in two formats per LSP spec:
+/// - DocumentSymbol[] (hierarchical with range, selectionRange, and optional children)
+/// - SymbolInformation[] (flat with location.uri + location.range)
+///
+/// For DocumentSymbol format:
+/// - range: The full scope of the symbol (e.g., entire function body)
+/// - selectionRange: The identifier/name of the symbol (e.g., function name)
+/// - children: Optional nested symbols (recursively processed)
+///
+/// For SymbolInformation format:
+/// - location.range: The symbol's location range
+///
+/// # Arguments
+/// * `response` - The JSON-RPC response from the downstream language server
+/// * `region_start_line` - The starting line of the injection region in the host document
+pub(crate) fn transform_document_symbol_response_to_host(
+    mut response: serde_json::Value,
+    region_start_line: u32,
+) -> serde_json::Value {
+    // Get mutable reference to result
+    let Some(result) = response.get_mut("result") else {
+        return response;
+    };
+
+    // Null result - pass through unchanged
+    if result.is_null() {
+        return response;
+    }
+
+    // DocumentSymbol[] or SymbolInformation[] is an array
+    if let Some(items) = result.as_array_mut() {
+        for item in items.iter_mut() {
+            transform_document_symbol_item(item, region_start_line);
+        }
+    }
+
+    response
+}
+
+/// Transform a single DocumentSymbol or SymbolInformation item.
+fn transform_document_symbol_item(item: &mut serde_json::Value, region_start_line: u32) {
+    // DocumentSymbol format: has range + selectionRange (no uri field)
+    if let Some(range) = item.get_mut("range")
+        && range.is_object()
+    {
+        transform_range(range, region_start_line);
+    }
+
+    if let Some(selection_range) = item.get_mut("selectionRange")
+        && selection_range.is_object()
+    {
+        transform_range(selection_range, region_start_line);
+    }
+
+    // Recursively transform children (DocumentSymbol only)
+    if let Some(children) = item.get_mut("children")
+        && let Some(children_arr) = children.as_array_mut()
+    {
+        for child in children_arr.iter_mut() {
+            transform_document_symbol_item(child, region_start_line);
+        }
+    }
+
+    // SymbolInformation format: has location.uri + location.range
+    if let Some(location) = item.get_mut("location")
+        && let Some(range) = location.get_mut("range")
+        && range.is_object()
+    {
+        transform_range(range, region_start_line);
+    }
+}
+
 /// Check if a URI string represents a virtual document.
 ///
 /// Delegates to [`VirtualDocumentUri::is_virtual_uri`] which is the single source of truth
@@ -1650,5 +1724,46 @@ mod tests {
 
         let document_changes = transformed["result"]["documentChanges"].as_array().unwrap();
         assert!(document_changes.is_empty());
+    }
+
+    // ==========================================================================
+    // Document symbol response transformation tests
+    // ==========================================================================
+
+    #[test]
+    fn document_symbol_response_transforms_range_and_selection_range_to_host_coordinates() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "name": "myFunction",
+                    "kind": 12,
+                    "range": {
+                        "start": { "line": 0, "character": 0 },
+                        "end": { "line": 5, "character": 3 }
+                    },
+                    "selectionRange": {
+                        "start": { "line": 0, "character": 9 },
+                        "end": { "line": 0, "character": 19 }
+                    }
+                }
+            ]
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_document_symbol_response_to_host(response, region_start_line);
+
+        let result = transformed["result"].as_array().unwrap();
+        assert_eq!(result.len(), 1);
+        // range transformed: line 0 + 3 = 3, line 5 + 3 = 8
+        assert_eq!(result[0]["range"]["start"]["line"], 3);
+        assert_eq!(result[0]["range"]["end"]["line"], 8);
+        // selectionRange transformed: line 0 + 3 = 3
+        assert_eq!(result[0]["selectionRange"]["start"]["line"], 3);
+        assert_eq!(result[0]["selectionRange"]["end"]["line"], 3);
+        // name and kind preserved
+        assert_eq!(result[0]["name"], "myFunction");
+        assert_eq!(result[0]["kind"], 12);
     }
 }
