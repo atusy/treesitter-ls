@@ -321,8 +321,9 @@ pub(crate) fn build_bridge_document_link_request(
 
 /// Build a JSON-RPC document symbol request for a downstream language server.
 ///
-/// Like DocumentLinkParams, DocumentSymbolParams only has a textDocument field -
-/// no position. The request asks for all symbols in the entire document.
+/// Similar to DocumentLinkParams, DocumentSymbolParams also only has a
+/// textDocument field (no position). The request asks for all symbols in the
+/// entire document.
 ///
 /// # Arguments
 /// * `host_uri` - The URI of the host document
