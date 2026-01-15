@@ -33,13 +33,13 @@ const scrum: ScrumDashboard = {
         { criterion: "Bridge forwards textDocument/moniker to downstream LS", verification: "E2E test" },
         { criterion: "Moniker response passed through unchanged", verification: "Unit test" },
         { criterion: "Request position transformed to virtual coordinates", verification: "Unit test" },
-      ], status: "ready", refinement_notes: ["Simplest pattern: position-based request + pass-through response (like signatureHelp)", "Response Moniker[] has scheme/identifier/unique/kind - no position/range data", "Follow signatureHelp implementation as template"] },
+      ], status: "done", refinement_notes: ["Simplest pattern: position-based request + pass-through response (like signatureHelp)", "Response Moniker[] has scheme/identifier/unique/kind - no position/range data", "Follow signatureHelp implementation as template"] },
   ],
   sprint: {
     number: 7,
     pbi_id: "pbi-moniker",
     goal: "Bridge textDocument/moniker with position transformation and pass-through response",
-    status: "in_progress",
+    status: "done",
     subtasks: [
       {
         test: "Test build_bridge_moniker_request transforms position to virtual coordinates",
@@ -69,8 +69,8 @@ const scrum: ScrumDashboard = {
         test: "E2E test verifying moniker request flows through bridge to downstream LS",
         implementation: "Wire up handler in lsp_impl and add E2E test",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "828983af", message: "feat(bridge): wire up textDocument/moniker handler with E2E test", phase: "green" }],
         notes: ["Handler wiring similar to signatureHelp", "E2E test validates end-to-end flow"],
       },
     ],
