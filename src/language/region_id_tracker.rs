@@ -837,7 +837,6 @@ mod tests {
             .map(|thread_id| {
                 let tracker = Arc::clone(&tracker);
                 let uri = uri.clone();
-                let stable_ulid = stable_ulid;
 
                 thread::spawn(move || {
                     let mut results = Vec::new();
@@ -2584,7 +2583,6 @@ mod tests {
             .map(|thread_id| {
                 let tracker = Arc::clone(&tracker);
                 let uri = uri.clone();
-                let stable_ulid = stable_ulid;
 
                 thread::spawn(move || {
                     let mut results = Vec::new();
@@ -3407,5 +3405,80 @@ mod tests {
 
         let edit2 = EditInfo::new(0, 50, 100);
         assert_eq!(edit2.delta(), 50, "Fallback edit delta should be +50");
+    }
+
+    /// Test the overlap detection algorithm used in apply_text_diff's defensive fallback.
+    ///
+    /// The fallback path (lines 253-269) handles overlapping edits by treating the entire
+    /// document as a single edit. While `similar` crate empirically never produces overlapping
+    /// edits, this test validates the detection logic independently.
+    #[test]
+    fn test_overlap_detection_algorithm() {
+        // Non-overlapping edits (sorted by start_byte)
+        let non_overlapping = vec![
+            EditInfo::new(0, 5, 3),    // [0, 5) -> [0, 3)
+            EditInfo::new(10, 15, 8),  // [10, 15) -> [10, 8) - no overlap with first
+            EditInfo::new(20, 25, 22), // [20, 25) -> [20, 22)
+        ];
+        let has_overlap = non_overlapping
+            .windows(2)
+            .any(|w| w[0].old_end_byte > w[1].start_byte);
+        assert!(
+            !has_overlap,
+            "Non-overlapping edits should not trigger fallback"
+        );
+
+        // Overlapping edits (second starts before first ends)
+        let overlapping = vec![
+            EditInfo::new(0, 15, 10),  // [0, 15)
+            EditInfo::new(10, 20, 15), // [10, 20) - starts at 10, but first ends at 15 > 10
+        ];
+        let has_overlap = overlapping
+            .windows(2)
+            .any(|w| w[0].old_end_byte > w[1].start_byte);
+        assert!(has_overlap, "Overlapping edits should trigger fallback");
+
+        // Edge case: touching edits (not overlapping)
+        let touching = vec![
+            EditInfo::new(0, 10, 8),   // [0, 10)
+            EditInfo::new(10, 20, 18), // [10, 20) - starts exactly where first ends
+        ];
+        let has_overlap = touching
+            .windows(2)
+            .any(|w| w[0].old_end_byte > w[1].start_byte);
+        assert!(!has_overlap, "Touching edits should not trigger fallback");
+    }
+
+    /// Test that fallback edit covers whole document for conservative invalidation.
+    ///
+    /// When overlapping edits are detected (defensive path), the fallback creates
+    /// a single edit spanning [0, old_len) -> [0, new_len).
+    #[test]
+    fn test_fallback_whole_document_edit() {
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("fallback");
+
+        // Create nodes at various positions
+        let n1 = tracker.get_or_create(&uri, 0, 10, "first");
+        let n2 = tracker.get_or_create(&uri, 50, 60, "middle");
+        let n3 = tracker.get_or_create(&uri, 90, 100, "last");
+
+        // Simulate fallback: single edit covering [0, 100) -> [0, 50)
+        let fallback = EditInfo::new(0, 100, 50);
+        let invalidated = tracker.apply_single_edit(&uri, &fallback);
+
+        // All nodes with START in [0, 100) should be invalidated
+        assert!(
+            invalidated.contains(&n1),
+            "First node invalidated by fallback"
+        );
+        assert!(
+            invalidated.contains(&n2),
+            "Middle node invalidated by fallback"
+        );
+        assert!(
+            invalidated.contains(&n3),
+            "Last node invalidated by fallback"
+        );
     }
 }
