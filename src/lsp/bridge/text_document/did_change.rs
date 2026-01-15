@@ -31,15 +31,13 @@ impl LanguageServerPool {
         host_uri: &Url,
         injections: &[(String, String, String)], // (language, region_id, content)
     ) {
-        // Get opened virtual docs for this host (without removing)
-        let opened_docs = self.get_host_virtual_docs(host_uri).await;
-
-        // For each injection, check if it's opened and send didChange
+        // For each injection, check if it's actually opened and send didChange
         for (language, region_id, content) in injections {
             let virtual_uri = VirtualDocumentUri::new(host_uri, language, region_id);
 
-            // Check if this virtual doc is opened (compare full virtual URI)
-            if opened_docs.iter().any(|doc| doc.virtual_uri == virtual_uri) {
+            // Check if this virtual doc has ACTUALLY been opened (didOpen sent to downstream)
+            // per ADR-0015. This prevents sending didChange before didOpen.
+            if self.is_document_opened(&virtual_uri) {
                 // Get version and send didChange
                 if let Some(version) = self.increment_document_version(&virtual_uri).await {
                     let handle = {

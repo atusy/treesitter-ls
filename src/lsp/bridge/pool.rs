@@ -211,14 +211,6 @@ impl LanguageServerPool {
         host_map.remove(host_uri).unwrap_or_default()
     }
 
-    /// Get all virtual documents for a host URI without removing them.
-    ///
-    /// Used by did_change module to check which virtual docs are opened.
-    pub(super) async fn get_host_virtual_docs(&self, host_uri: &Url) -> Vec<OpenedVirtualDoc> {
-        let host_map = self.host_to_virtual.lock().await;
-        host_map.get(host_uri).cloned().unwrap_or_default()
-    }
-
     /// Take virtual documents matching the given ULIDs, removing them from tracking.
     ///
     /// This is atomic: lookup and removal happen in a single lock acquisition,
@@ -435,10 +427,7 @@ impl LanguageServerPool {
         server_config: &crate::config::settings::BridgeServerConfig,
         timeout: Duration,
     ) -> io::Result<Arc<ConnectionHandle>> {
-        #[cfg(test)]
         let mut connections = self.connections.lock().await;
-        #[cfg(not(test))]
-        let connections = self.connections.lock().await;
 
         // Check if we already have a connection for this language
         if let Some(handle) = connections.get(language) {
@@ -467,11 +456,15 @@ impl LanguageServerPool {
             }
         }
 
-        // Drop the connections lock before doing I/O
-        // (We'll re-acquire it when inserting the handle)
-        drop(connections);
+        // IMPORTANT: Hold connections lock during spawn and initialization to prevent
+        // multiple concurrent spawns. This ensures only ONE connection is created per
+        // language. Other requests for the same language will wait on the lock.
+        //
+        // Previous bug: Dropping the lock before spawn allowed multiple requests to
+        // each spawn their own connection, causing didOpen to be sent to one connection
+        // while requests went to others.
 
-        // Spawn new connection
+        // Spawn new connection (while holding lock)
         let mut conn = AsyncBridgeConnection::spawn(server_config.cmd.clone()).await?;
 
         // Perform LSP initialize handshake with timeout
@@ -531,8 +524,7 @@ impl LanguageServerPool {
                 // Create handle with Ready state
                 let handle = Arc::new(ConnectionHandle::new(writer, router, reader_handle));
 
-                // Insert into pool (re-acquire lock)
-                let mut connections = self.connections.lock().await;
+                // Insert into pool (lock still held from start of function)
                 connections.insert(language.to_string(), Arc::clone(&handle));
 
                 Ok(handle)
@@ -1533,6 +1525,8 @@ mod tests {
         // Open a virtual document (simulate first hover/completion request)
         let opened = pool.should_send_didopen(&host_uri, &virtual_uri).await;
         assert!(opened, "First call should open the document");
+        // Also mark as opened (simulating successful didOpen write)
+        pool.mark_document_opened(&virtual_uri);
 
         // Verify document is tracked
         {
@@ -1595,6 +1589,8 @@ mod tests {
         let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
         let opened = pool.should_send_didopen(&host_uri, &virtual_uri).await;
         assert!(opened, "First call should open the document");
+        // Also mark as opened (simulating successful didOpen write)
+        pool.mark_document_opened(&virtual_uri);
 
         let handle = create_handle_with_state(ConnectionState::Ready).await;
         pool.connections
@@ -1680,6 +1676,8 @@ mod tests {
         let lua_virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
         let opened = pool.should_send_didopen(&host_uri, &lua_virtual_uri).await;
         assert!(opened, "First call should open the document");
+        // Also mark as opened (simulating successful didOpen write)
+        pool.mark_document_opened(&lua_virtual_uri);
 
         // Do NOT open python
 
