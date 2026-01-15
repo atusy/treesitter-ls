@@ -22,7 +22,7 @@ use crate::document::DocumentStore;
 use crate::language::injection::{
     CacheableInjectionRegion, InjectionResolver, collect_all_injections,
 };
-use crate::language::region_id_tracker::RegionIdTracker;
+use crate::language::region_id_tracker::{EditInfo, RegionIdTracker};
 use crate::language::{DocumentParserPool, FailedParserRegistry, LanguageCoordinator};
 use crate::language::{LanguageEvent, LanguageLogLevel};
 use crate::lsp::bridge::LanguageServerPool;
@@ -1383,13 +1383,22 @@ impl LanguageServer for TreeSitterLs {
         // Apply content changes and build tree-sitter edits
         let (text, edits) = apply_content_changes_with_edits(&old_text, params.content_changes);
 
-        // Phase 2 (ADR-0019): Apply START-priority invalidation to region ID tracker
+        // Phase 4 (ADR-0019): Apply START-priority invalidation to region ID tracker
+        // Use InputEdits directly for precise invalidation when available,
+        // fall back to diff-based approach for full document sync.
+        //
         // This must be called AFTER content changes are applied (so we have new text)
-        // but BEFORE parse_document (so position sync happens before new tree is built)
-        // Returns ULIDs that were invalidated (Phase 3)
-        let invalidated_ulids = self
-            .region_id_tracker
-            .apply_text_change(&uri, &old_text, &text);
+        // but BEFORE parse_document (so position sync happens before new tree is built).
+        // Returns ULIDs that were invalidated (Phase 3).
+        let invalidated_ulids = if edits.is_empty() {
+            // Full document sync: no InputEdits available, reconstruct from diff
+            self.region_id_tracker
+                .apply_text_diff(&uri, &old_text, &text)
+        } else {
+            // Incremental sync: use InputEdits directly (precise, no over-invalidation)
+            let edit_infos: Vec<EditInfo> = edits.iter().map(EditInfo::from).collect();
+            self.region_id_tracker.apply_input_edits(&uri, &edit_infos)
+        };
 
         // Invalidate injection caches for regions overlapping with edits (AC4/AC5)
         // Must be called BEFORE parse_document which updates the injection_map
@@ -1956,6 +1965,168 @@ mod tests {
         assert!(
             !rmd_settings.is_language_bridgeable("python"),
             "Bridge router should block python for rmd (empty filter)"
+        );
+    }
+
+    // ============================================================
+    // Tests for apply_content_changes_with_edits branch decision
+    // ============================================================
+    // These tests verify that the function returns empty vs non-empty edits
+    // correctly, which controls the branch in did_change between
+    // apply_text_change (full sync) and apply_edits (incremental sync).
+
+    #[test]
+    fn test_apply_content_changes_incremental_produces_edits() {
+        // Incremental change (with range) should produce InputEdits
+        use tower_lsp::lsp_types::TextDocumentContentChangeEvent;
+
+        let old_text = "hello world";
+        let changes = vec![TextDocumentContentChangeEvent {
+            range: Some(Range {
+                start: Position {
+                    line: 0,
+                    character: 6,
+                },
+                end: Position {
+                    line: 0,
+                    character: 11,
+                },
+            }),
+            range_length: Some(5),
+            text: "rust".to_string(),
+        }];
+
+        let (new_text, edits) = super::apply_content_changes_with_edits(old_text, changes);
+
+        // Verify text was updated
+        assert_eq!(new_text, "hello rust");
+
+        // Verify edits is NON-EMPTY (incremental sync path will be taken)
+        assert!(
+            !edits.is_empty(),
+            "Incremental change should produce non-empty edits for apply_edits path"
+        );
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].start_byte, 6);
+        assert_eq!(edits[0].old_end_byte, 11);
+        assert_eq!(edits[0].new_end_byte, 10); // "rust" is 4 bytes
+    }
+
+    #[test]
+    fn test_apply_content_changes_full_sync_produces_empty_edits() {
+        // Full document change (without range) should produce EMPTY edits
+        use tower_lsp::lsp_types::TextDocumentContentChangeEvent;
+
+        let old_text = "hello world";
+        let changes = vec![TextDocumentContentChangeEvent {
+            range: None, // No range = full document sync
+            range_length: None,
+            text: "completely new content".to_string(),
+        }];
+
+        let (new_text, edits) = super::apply_content_changes_with_edits(old_text, changes);
+
+        // Verify text was replaced
+        assert_eq!(new_text, "completely new content");
+
+        // Verify edits is EMPTY (apply_text_change path will be taken)
+        assert!(
+            edits.is_empty(),
+            "Full document sync should produce empty edits for apply_text_change path"
+        );
+    }
+
+    #[test]
+    fn test_apply_content_changes_mixed_clears_edits_on_full_sync() {
+        // Mixed changes: incremental followed by full sync should clear edits
+        use tower_lsp::lsp_types::TextDocumentContentChangeEvent;
+
+        let old_text = "hello world";
+        let changes = vec![
+            // First: incremental change
+            TextDocumentContentChangeEvent {
+                range: Some(Range {
+                    start: Position {
+                        line: 0,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 5,
+                    },
+                }),
+                range_length: Some(5),
+                text: "hi".to_string(),
+            },
+            // Second: full document sync (should clear previous edits)
+            TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: "final content".to_string(),
+            },
+        ];
+
+        let (new_text, edits) = super::apply_content_changes_with_edits(old_text, changes);
+
+        // Verify final text
+        assert_eq!(new_text, "final content");
+
+        // Verify edits is EMPTY because full sync clears all previous edits
+        assert!(
+            edits.is_empty(),
+            "Full document sync should clear previous incremental edits"
+        );
+    }
+
+    #[test]
+    fn test_apply_content_changes_multiple_incremental_accumulates_edits() {
+        // Multiple incremental changes should accumulate edits
+        use tower_lsp::lsp_types::TextDocumentContentChangeEvent;
+
+        let old_text = "aaa bbb ccc";
+        let changes = vec![
+            // First: replace "aaa" with "AAA"
+            TextDocumentContentChangeEvent {
+                range: Some(Range {
+                    start: Position {
+                        line: 0,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 3,
+                    },
+                }),
+                range_length: Some(3),
+                text: "AAA".to_string(),
+            },
+            // Second: replace "ccc" with "CCC" (position adjusted for running coords)
+            TextDocumentContentChangeEvent {
+                range: Some(Range {
+                    start: Position {
+                        line: 0,
+                        character: 8,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 11,
+                    },
+                }),
+                range_length: Some(3),
+                text: "CCC".to_string(),
+            },
+        ];
+
+        let (new_text, edits) = super::apply_content_changes_with_edits(old_text, changes);
+
+        // Verify final text
+        assert_eq!(new_text, "AAA bbb CCC");
+
+        // Verify multiple edits accumulated (incremental sync path)
+        assert_eq!(
+            edits.len(),
+            2,
+            "Multiple incremental changes should produce multiple edits"
         );
     }
 }
