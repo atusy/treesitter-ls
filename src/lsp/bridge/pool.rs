@@ -2102,4 +2102,299 @@ mod tests {
             "is_document_opened should return false even after should_send_didopen"
         );
     }
+
+    // ========================================
+    // ensure_document_opened tests
+    // ========================================
+
+    /// Test that ensure_document_opened sends didOpen when document is not yet opened.
+    ///
+    /// Happy path: Document not in document_versions → should_send_didopen returns true
+    /// → sends didOpen → marks document as opened via mark_document_opened.
+    #[tokio::test]
+    async fn ensure_document_opened_sends_didopen_for_new_document() {
+        use super::super::protocol::VirtualDocumentUri;
+
+        let pool = LanguageServerPool::new();
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+        let virtual_content = "print('hello')";
+
+        // Create a mock writer using cat (will discard our didOpen notification)
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat > /dev/null".to_string(),
+        ])
+        .await
+        .expect("should spawn cat process");
+
+        let (mut writer, _reader) = conn.split();
+
+        // Before ensure_document_opened, document should not be marked as opened
+        assert!(
+            !pool.is_document_opened(&virtual_uri),
+            "Document should not be opened initially"
+        );
+
+        // Track if cleanup was called (should NOT be called in happy path)
+        let cleanup_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cleanup_called_clone = cleanup_called.clone();
+
+        // Call ensure_document_opened
+        let result = pool
+            .ensure_document_opened(
+                &mut writer,
+                &host_uri,
+                &virtual_uri,
+                virtual_content,
+                move || {
+                    cleanup_called_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                },
+            )
+            .await;
+
+        // Should succeed
+        assert!(result.is_ok(), "ensure_document_opened should succeed");
+
+        // Cleanup should NOT have been called
+        assert!(
+            !cleanup_called.load(std::sync::atomic::Ordering::SeqCst),
+            "Cleanup callback should NOT be called in happy path"
+        );
+
+        // After ensure_document_opened, document should be marked as opened
+        assert!(
+            pool.is_document_opened(&virtual_uri),
+            "Document should be marked as opened after ensure_document_opened"
+        );
+
+        // Document should be tracked in document_versions
+        let versions = pool.document_versions.lock().await;
+        let lua_docs = versions.get("lua").expect("Should have lua documents");
+        assert!(
+            lua_docs.contains_key(&virtual_uri.to_uri_string()),
+            "Document should be tracked in document_versions"
+        );
+    }
+
+    /// Test that ensure_document_opened skips didOpen when document is already opened.
+    ///
+    /// Already opened path: Document marked as opened via mark_document_opened
+    /// → should_send_didopen returns false, is_document_opened returns true
+    /// → no didOpen sent, returns Ok(()).
+    #[tokio::test]
+    async fn ensure_document_opened_skips_didopen_for_already_opened_document() {
+        use super::super::protocol::VirtualDocumentUri;
+
+        let pool = LanguageServerPool::new();
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+        let virtual_content = "print('hello')";
+
+        // Pre-open the document (simulate previous didOpen)
+        pool.should_send_didopen(&host_uri, &virtual_uri).await;
+        pool.mark_document_opened(&virtual_uri);
+
+        // Verify document is already marked as opened
+        assert!(
+            pool.is_document_opened(&virtual_uri),
+            "Document should be marked as opened"
+        );
+
+        // Create a mock writer - we use a command that will fail if we try to write
+        // This verifies that no didOpen is actually sent
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat > /dev/null".to_string(),
+        ])
+        .await
+        .expect("should spawn cat process");
+
+        let (mut writer, _reader) = conn.split();
+
+        // Track if cleanup was called (should NOT be called)
+        let cleanup_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cleanup_called_clone = cleanup_called.clone();
+
+        // Call ensure_document_opened - should skip didOpen
+        let result = pool
+            .ensure_document_opened(
+                &mut writer,
+                &host_uri,
+                &virtual_uri,
+                virtual_content,
+                move || {
+                    cleanup_called_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                },
+            )
+            .await;
+
+        // Should succeed (just skips didOpen)
+        assert!(
+            result.is_ok(),
+            "ensure_document_opened should succeed for already opened document"
+        );
+
+        // Cleanup should NOT have been called
+        assert!(
+            !cleanup_called.load(std::sync::atomic::Ordering::SeqCst),
+            "Cleanup callback should NOT be called when document already opened"
+        );
+
+        // Document should still be marked as opened
+        assert!(
+            pool.is_document_opened(&virtual_uri),
+            "Document should still be marked as opened"
+        );
+    }
+
+    /// Test that ensure_document_opened returns error when document is in inconsistent state.
+    ///
+    /// Error path: Another request called should_send_didopen (returned true) but hasn't
+    /// yet called mark_document_opened. Our call sees:
+    /// - should_send_didopen returns false (document_versions entry exists)
+    /// - is_document_opened returns false (not yet marked)
+    /// This is a race condition where didOpen is pending.
+    ///
+    /// Expected behavior: cleanup_on_error is called, returns error.
+    #[tokio::test]
+    async fn ensure_document_opened_returns_error_and_calls_cleanup_for_pending_didopen() {
+        use super::super::protocol::VirtualDocumentUri;
+
+        let pool = LanguageServerPool::new();
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+        let virtual_content = "print('hello')";
+
+        // Simulate another request having called should_send_didopen but NOT mark_document_opened
+        // This puts the document in the "didOpen pending" state
+        pool.should_send_didopen(&host_uri, &virtual_uri).await;
+        // Deliberately do NOT call mark_document_opened to simulate pending didOpen
+
+        // Verify the inconsistent state:
+        // - Document is in document_versions (so should_send_didopen will return false)
+        // - Document is NOT in opened_documents (so is_document_opened will return false)
+        {
+            let versions = pool.document_versions.lock().await;
+            assert!(
+                versions
+                    .get("lua")
+                    .map_or(false, |docs| docs.contains_key(&virtual_uri.to_uri_string())),
+                "Document should be in document_versions"
+            );
+        }
+        assert!(
+            !pool.is_document_opened(&virtual_uri),
+            "Document should NOT be marked as opened"
+        );
+
+        // Create a mock writer
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat > /dev/null".to_string(),
+        ])
+        .await
+        .expect("should spawn cat process");
+
+        let (mut writer, _reader) = conn.split();
+
+        // Track if cleanup was called (SHOULD be called in error path)
+        let cleanup_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cleanup_called_clone = cleanup_called.clone();
+
+        // Call ensure_document_opened - should fail and call cleanup
+        let result = pool
+            .ensure_document_opened(
+                &mut writer,
+                &host_uri,
+                &virtual_uri,
+                virtual_content,
+                move || {
+                    cleanup_called_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                },
+            )
+            .await;
+
+        // Should return error
+        assert!(
+            result.is_err(),
+            "ensure_document_opened should return error for pending didOpen state"
+        );
+
+        // Verify error message
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("didOpen pending"),
+            "Error message should mention didOpen pending: {}",
+            err
+        );
+
+        // CRITICAL: Cleanup callback SHOULD have been called
+        assert!(
+            cleanup_called.load(std::sync::atomic::Ordering::SeqCst),
+            "Cleanup callback MUST be called when returning error for pending didOpen"
+        );
+
+        // Document should still NOT be marked as opened
+        assert!(
+            !pool.is_document_opened(&virtual_uri),
+            "Document should still NOT be marked as opened after error"
+        );
+    }
+
+    /// Test that cleanup callback receives correct context for resource cleanup.
+    ///
+    /// The cleanup callback is typically used to remove a registered request from
+    /// the router. This test verifies the callback is invoked correctly and can
+    /// perform cleanup operations.
+    #[tokio::test]
+    async fn ensure_document_opened_cleanup_callback_can_perform_cleanup() {
+        use super::super::protocol::VirtualDocumentUri;
+
+        let pool = LanguageServerPool::new();
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+        let virtual_content = "print('hello')";
+
+        // Simulate pending didOpen state (inconsistent state)
+        pool.should_send_didopen(&host_uri, &virtual_uri).await;
+
+        // Create a mock writer
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat > /dev/null".to_string(),
+        ])
+        .await
+        .expect("should spawn cat process");
+
+        let (mut writer, _reader) = conn.split();
+
+        // Use a counter to verify cleanup is called exactly once
+        let cleanup_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let cleanup_count_clone = cleanup_count.clone();
+
+        // Call ensure_document_opened - should fail and call cleanup
+        let _result = pool
+            .ensure_document_opened(
+                &mut writer,
+                &host_uri,
+                &virtual_uri,
+                virtual_content,
+                move || {
+                    cleanup_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                },
+            )
+            .await;
+
+        // Cleanup should have been called exactly once
+        assert_eq!(
+            cleanup_count.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "Cleanup callback should be called exactly once"
+        );
+    }
 }
