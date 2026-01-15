@@ -33,7 +33,7 @@ const scrum: ScrumDashboard = {
         { criterion: "Bridge forwards textDocument/moniker to downstream LS", verification: "E2E test" },
         { criterion: "Moniker response passed through unchanged", verification: "Unit test" },
         { criterion: "Request position transformed to virtual coordinates", verification: "Unit test" },
-      ], status: "ready", refinement_notes: ["Response has no position data", "Pass-through response"] },
+      ], status: "ready", refinement_notes: ["Simplest pattern: position-based request + pass-through response (like signatureHelp)", "Response Moniker[] has scheme/identifier/unique/kind - no position/range data", "Follow signatureHelp implementation as template"] },
   ],
   sprint: null,
   completed: [
