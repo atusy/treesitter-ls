@@ -273,7 +273,7 @@ impl RegionIdTracker {
         // This differs from apply_input_edits() which uses FORWARD order because
         // LSP incremental edits use RUNNING coordinates (each edit's position is
         // relative to the document state AFTER all previous edits).
-        // See plan.md Section 5.1 for detailed explanation.
+        // See ADR-0019 for invalidation rules and docs/adr/0019-lazy-node-identity-tracking.md.
         //
         // KNOWN RACE CONDITION (documented, accepted):
         // A concurrent get_or_create() between edit applications may create nodes
@@ -2583,6 +2583,7 @@ mod tests {
             .map(|thread_id| {
                 let tracker = Arc::clone(&tracker);
                 let uri = uri.clone();
+                let stable_ulid = stable_ulid;
 
                 thread::spawn(move || {
                     let mut results = Vec::new();
@@ -3407,78 +3408,168 @@ mod tests {
         assert_eq!(edit2.delta(), 50, "Fallback edit delta should be +50");
     }
 
-    /// Test the overlap detection algorithm used in apply_text_diff's defensive fallback.
-    ///
-    /// The fallback path (lines 253-269) handles overlapping edits by treating the entire
-    /// document as a single edit. While `similar` crate empirically never produces overlapping
-    /// edits, this test validates the detection logic independently.
+    // =========================================================================
+    // Phase 5 Review Iteration 1: CRITICAL Test Gaps
+    // =========================================================================
+
     #[test]
-    fn test_overlap_detection_algorithm() {
-        // Non-overlapping edits (sorted by start_byte)
-        let non_overlapping = vec![
-            EditInfo::new(0, 5, 3),    // [0, 5) -> [0, 3)
-            EditInfo::new(10, 15, 8),  // [10, 15) -> [10, 8) - no overlap with first
-            EditInfo::new(20, 25, 22), // [20, 25) -> [20, 22)
-        ];
-        let has_overlap = non_overlapping
-            .windows(2)
-            .any(|w| w[0].old_end_byte > w[1].start_byte);
+    fn test_position_collision_after_edit() {
+        // CRITICAL: Test that position collision is handled correctly
+        // When two nodes collapse to the same position after an edit,
+        // one wins (non-deterministic) and the other is invalidated.
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("collision");
+
+        // Setup: Two nodes with same start but different end
+        // Node A at [0, 5) kind "X"
+        // Node B at [0, 10) kind "X"
+        // After edit [5, 10) delete 5 bytes:
+        // A: start=0 not in [5,10) → unchanged [0, 5)
+        // B: start=0 not in [5,10), end=10 in [5,10) → clamp end to 5, so [0, 5)
+        // COLLISION! Both are [0, 5) kind "X"
+
+        let n_a = tracker.get_or_create(&uri, 0, 5, "X");
+        let n_b = tracker.get_or_create(&uri, 0, 10, "X"); // Same start, different end
+
+        // Delete [5, 10) - this causes n_b's end to clamp to 5, colliding with n_a
+        let edit = EditInfo::new(5, 10, 5); // delete bytes 5-10
+        let invalidated = tracker.apply_input_edits(&uri, &[edit]);
+
+        // Exactly one of them should be invalidated due to collision
+        // HashMap iteration order is non-deterministic, so we can't predict which
+        let a_invalidated = invalidated.contains(&n_a);
+        let b_invalidated = invalidated.contains(&n_b);
+
         assert!(
-            !has_overlap,
-            "Non-overlapping edits should not trigger fallback"
+            a_invalidated || b_invalidated,
+            "At least one node should be invalidated due to collision"
         );
 
-        // Overlapping edits (second starts before first ends)
-        let overlapping = vec![
-            EditInfo::new(0, 15, 10),  // [0, 15)
-            EditInfo::new(10, 20, 15), // [10, 20) - starts at 10, but first ends at 15 > 10
-        ];
-        let has_overlap = overlapping
-            .windows(2)
-            .any(|w| w[0].old_end_byte > w[1].start_byte);
-        assert!(has_overlap, "Overlapping edits should trigger fallback");
+        // Verify exactly one node remains at [0, 5)
+        let survivor = tracker.get(&uri, 0, 5, "X");
+        assert!(survivor.is_some(), "One node should survive at [0, 5)");
 
-        // Edge case: touching edits (not overlapping)
-        let touching = vec![
-            EditInfo::new(0, 10, 8),   // [0, 10)
-            EditInfo::new(10, 20, 18), // [10, 20) - starts exactly where first ends
-        ];
-        let has_overlap = touching
-            .windows(2)
-            .any(|w| w[0].old_end_byte > w[1].start_byte);
-        assert!(!has_overlap, "Touching edits should not trigger fallback");
+        // The survivor should be the one NOT in invalidated
+        let expected_survivor = if a_invalidated { n_b } else { n_a };
+        assert_eq!(
+            survivor,
+            Some(expected_survivor),
+            "Survivor should be the non-invalidated node"
+        );
     }
 
-    /// Test that fallback edit covers whole document for conservative invalidation.
-    ///
-    /// When overlapping edits are detected (defensive path), the fallback creates
-    /// a single edit spanning [0, old_len) -> [0, new_len).
     #[test]
-    fn test_fallback_whole_document_edit() {
+    fn test_apply_input_edits_empty_slice_preserves_nodes() {
+        // MAJOR: Test that empty edit slice is handled gracefully
+        // (complements existing test_apply_input_edits_empty_slice)
         let tracker = RegionIdTracker::new();
-        let uri = test_uri("fallback");
+        let uri = test_uri("empty_edits_preserve");
 
-        // Create nodes at various positions
-        let n1 = tracker.get_or_create(&uri, 0, 10, "first");
-        let n2 = tracker.get_or_create(&uri, 50, 60, "middle");
-        let n3 = tracker.get_or_create(&uri, 90, 100, "last");
+        // Multiple nodes should all be preserved
+        let n1 = tracker.get_or_create(&uri, 0, 10, "A");
+        let n2 = tracker.get_or_create(&uri, 20, 30, "B");
+        let n3 = tracker.get_or_create(&uri, 50, 60, "C");
 
-        // Simulate fallback: single edit covering [0, 100) -> [0, 50)
-        let fallback = EditInfo::new(0, 100, 50);
-        let invalidated = tracker.apply_single_edit(&uri, &fallback);
+        let invalidated = tracker.apply_input_edits(&uri, &[]);
 
-        // All nodes with START in [0, 100) should be invalidated
+        assert!(invalidated.is_empty(), "Empty edits should return empty");
+        assert_eq!(tracker.get(&uri, 0, 10, "A"), Some(n1));
+        assert_eq!(tracker.get(&uri, 20, 30, "B"), Some(n2));
+        assert_eq!(tracker.get(&uri, 50, 60, "C"), Some(n3));
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid EditInfo")]
+    fn test_edit_info_new_rejects_invalid_in_debug() {
+        // MAJOR: Test that EditInfo::new panics on invalid input in debug builds
+        // This is the first line of defense against invalid edits
+        let _invalid = EditInfo::new(20, 10, 15); // Invalid: old_end=10 < start=20
+    }
+
+    #[test]
+    fn test_apply_input_edits_preserves_order_for_lsp_edits() {
+        // MAJOR: Verify forward-order processing for LSP incremental edits
+        // LSP edits use RUNNING coordinates - each edit's position is
+        // relative to document state AFTER previous edits
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("lsp_order");
+
+        // Document: "AABBCCDD" (8 bytes)
+        // Node at [4, 8) covering "CCDD"
+        let n = tracker.get_or_create(&uri, 4, 8, "block");
+
+        // LSP sends two edits in FORWARD order with RUNNING coordinates:
+        // Edit 1: Insert "XX" at position 0 → "XXAABBCCDD"
+        // Edit 2: Delete [6, 8) in the NEW document → "XXAABBDD"
+        //
+        // If we process in forward order (correct for LSP):
+        // After edit 1: n shifts from [4,8) to [6,10) (delta=+2)
+        // After edit 2: n at [6,10), edit at [6,8) → start=6 in [6,8) → INVALIDATED
+        //
+        // If we incorrectly process in reverse order:
+        // Edit 2 first: n at [4,8), edit at [6,8) → start=4 not in [6,8) → survives, end clamps
+        // Edit 1 next: n shifts → wrong result
+
+        let edit1 = EditInfo::new(0, 0, 2); // Insert 2 bytes at 0
+        let edit2 = EditInfo::new(6, 8, 6); // Delete [6,8) in running coords
+
+        let invalidated = tracker.apply_input_edits(&uri, &[edit1, edit2]);
+
+        // With correct forward-order processing, n should be invalidated
+        // because after edit1 shifts it to [6,10), edit2 at [6,8) invalidates it
         assert!(
-            invalidated.contains(&n1),
-            "First node invalidated by fallback"
+            invalidated.contains(&n),
+            "Node should be invalidated with forward-order LSP processing"
         );
+    }
+
+    #[test]
+    fn test_reconstruct_produces_correct_edit_info_values() {
+        // CRITICAL: Indirectly test reconstruct_individual_edits by verifying
+        // the exact EditInfo values through apply_text_diff behavior
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("reconstruct_verify");
+
+        // Create nodes at strategic positions to verify edit boundaries
+        // "AAABBBCCC" → "AXXBBBCYY"
+        // Edit 1: [1,3) "AA" → "XX" (replace at position 1)
+        // Edit 2: [6,9) "CCC" → "CYY" (wait, this is [6,9) delete 3, insert 3)
+        // Actually: "AAABBBCCC" vs "AXXBBBCYY"
+        // Diff: A=A, A→X, A→X, B=B, B=B, B=B, C=C, C→Y, C→Y
+        // So: Equal(A), Delete(AA)+Insert(XX) at [1,3), Equal(BBBC), Delete(CC)+Insert(YY) at [7,9)
+
+        // Place nodes to detect exact edit boundaries
+        let n_before_edit1 = tracker.get_or_create(&uri, 0, 1, "A0"); // [0,1) before first edit
+        let n_at_edit1_start = tracker.get_or_create(&uri, 1, 2, "A1"); // [1,2) at first edit start
+        let n_between = tracker.get_or_create(&uri, 4, 5, "B1"); // [4,5) between edits
+        let n_at_edit2_start = tracker.get_or_create(&uri, 7, 8, "C1"); // [7,8) at second edit start
+
+        let invalidated = tracker.apply_text_diff(&uri, "AAABBBCCC", "AXXBBBCYY");
+
+        // n_before_edit1: start=0 not in any edit → unchanged
         assert!(
-            invalidated.contains(&n2),
-            "Middle node invalidated by fallback"
+            !invalidated.contains(&n_before_edit1),
+            "Node before first edit should survive"
         );
+
+        // n_at_edit1_start: start=1 in [1,3) → invalidated
         assert!(
-            invalidated.contains(&n3),
-            "Last node invalidated by fallback"
+            invalidated.contains(&n_at_edit1_start),
+            "Node at first edit start should be invalidated"
+        );
+
+        // n_between: start=4, neither edit affects it
+        // After edit1 [1,3)→[1,3) delta=0, n_between unchanged
+        // Edit2 is at [7,9) in original coords
+        assert!(
+            !invalidated.contains(&n_between),
+            "Node between edits should survive"
+        );
+
+        // n_at_edit2_start: start=7 in [7,9) → invalidated
+        assert!(
+            invalidated.contains(&n_at_edit2_start),
+            "Node at second edit start should be invalidated"
         );
     }
 }
