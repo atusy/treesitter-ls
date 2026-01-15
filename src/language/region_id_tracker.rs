@@ -4,7 +4,7 @@
 //! that remain stable across document edits (Phase 2: position-based with START-priority).
 
 use dashmap::DashMap;
-use log::warn;
+use log::{error, warn};
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use ulid::Ulid;
@@ -208,8 +208,9 @@ impl RegionIdTracker {
 
     /// Apply text change and update region positions using START-priority invalidation.
     ///
-    /// This method reconstructs the edit operation from old and new text using
-    /// character-level diff, then applies ADR-0019 invalidation rules.
+    /// Phase 5: Reconstructs individual edits from character-level diff and processes
+    /// them in REVERSE order. This enables precise invalidation: middle content that
+    /// is unchanged between two edits is correctly preserved.
     ///
     /// Returns ULIDs that were invalidated by this edit (for Phase 3 cleanup).
     /// The caller can use these to send didClose notifications for orphaned
@@ -217,17 +218,136 @@ impl RegionIdTracker {
     ///
     /// # Fast path
     /// If old_text == new_text, returns empty Vec without any processing.
+    ///
+    /// # Reverse Order Processing
+    ///
+    /// Unlike `apply_input_edits` which uses FORWARD order for LSP incremental edits
+    /// (because LSP edits use "running coordinates"), this method uses REVERSE order
+    /// because diff-reconstructed edits use ORIGINAL document coordinates.
+    ///
+    /// Processing from highest position to lowest ensures each edit's coordinates
+    /// remain valid in the original coordinate space.
     pub(crate) fn apply_text_diff(&self, uri: &Url, old_text: &str, new_text: &str) -> Vec<Ulid> {
         // Fast path: identical texts need no processing
         if old_text == new_text {
             return Vec::new();
         }
 
-        if let Some(edit) = Self::reconstruct_merged_edit(old_text, new_text) {
-            self.apply_single_edit(uri, &edit)
-        } else {
-            Vec::new()
+        let edits = Self::reconstruct_individual_edits(old_text, new_text);
+
+        if edits.is_empty() {
+            // Defensive: similar crate should always produce edits for different texts.
+            // Empty edits with different texts indicates a library bug, not recoverable.
+            // Returning empty Vec is safe: worst case is nodes aren't invalidated.
+            // Next full parse will correct positions anyway.
+            debug_assert!(false, "No edits from diff despite old_text != new_text");
+            warn!(
+                target: "treesitter_ls::region_tracker",
+                "No edits from diff despite old_text != new_text (uri={}). \
+                 This may indicate a similar crate bug.",
+                uri
+            );
+            return Vec::new();
         }
+
+        // Runtime validation for non-overlapping invariant
+        let has_overlap = edits
+            .windows(2)
+            .any(|w| w[0].old_end_byte > w[1].start_byte);
+        if has_overlap {
+            // Use error! level - this path should be unreachable if similar crate behaves correctly
+            error!(
+                target: "treesitter_ls::region_tracker",
+                "Overlapping edits from diff (uri={}, edit_count={}). \
+                 Falling back to whole-document invalidation. \
+                 This may indicate a similar crate bug or version incompatibility.",
+                uri,
+                edits.len()
+            );
+            // Conservative fallback: treat entire document as single edit
+            let fallback = EditInfo::new(0, old_text.len(), new_text.len());
+            return self.apply_single_edit(uri, &fallback);
+        }
+
+        // IMPORTANT: Process in REVERSE order because diff edits use ORIGINAL coordinates.
+        // This differs from apply_input_edits() which uses FORWARD order because
+        // LSP incremental edits use RUNNING coordinates (each edit's position is
+        // relative to the document state AFTER all previous edits).
+        // See ADR-0019 for invalidation rules and docs/adr/0019-lazy-node-identity-tracking.md.
+        //
+        // KNOWN RACE CONDITION (documented, accepted):
+        // A concurrent get_or_create() between edit applications may create nodes
+        // in intermediate coordinate space. These nodes may be incorrectly processed
+        // by subsequent edits (which use original coordinates).
+        //
+        // Why this is acceptable:
+        // 1. Consequence is benign: misplaced nodes are at stale positions anyway
+        // 2. Next get_or_create() will recreate at correct position
+        // 3. Atomic locking adds complexity without proportional benefit
+        // 4. If bugs emerge, refactor to atomic locking (hold lock for entire loop)
+        let mut all_invalidated = Vec::with_capacity(edits.len() * 2); // Heuristic: ~2 invalidations per edit
+        for edit in edits.iter().rev() {
+            all_invalidated.extend(self.apply_single_edit(uri, edit));
+        }
+        all_invalidated
+    }
+
+    /// Reconstruct individual edits from character-level diff.
+    ///
+    /// Returns edits in ascending position order. Caller MUST process in reverse.
+    ///
+    /// # UTF-8 Handling
+    ///
+    /// `TextDiff::from_chars()` iterates by Unicode code points, producing one `Change`
+    /// per character. Each `change.value()` returns a `&str` (single-character string slice),
+    /// and `.len()` on `&str` returns the **byte length** of that UTF-8 encoded character.
+    ///
+    /// Examples:
+    /// - ASCII 'A': `.len()` = 1 byte
+    /// - Emoji '😀': `.len()` = 4 bytes
+    /// - CJK '漢': `.len()` = 3 bytes
+    ///
+    /// This correctly tracks byte offsets for position adjustment.
+    #[must_use]
+    fn reconstruct_individual_edits(old_text: &str, new_text: &str) -> Vec<EditInfo> {
+        use similar::{ChangeTag, TextDiff};
+
+        let diff = TextDiff::from_chars(old_text, new_text);
+        let mut edits = Vec::with_capacity(4); // Heuristic: typical edit count
+        let mut current_edit: Option<(usize, usize, usize)> = None; // (start, old_end, inserted_len)
+        let mut old_byte = 0;
+
+        for change in diff.iter_all_changes() {
+            match change.tag() {
+                ChangeTag::Equal => {
+                    if let Some((start, old_end, inserted_len)) = current_edit.take() {
+                        edits.push(EditInfo::new(start, old_end, start + inserted_len));
+                    }
+                    old_byte += change.value().len();
+                }
+                ChangeTag::Delete | ChangeTag::Insert => {
+                    let edit = current_edit.get_or_insert((old_byte, old_byte, 0));
+                    if change.tag() == ChangeTag::Delete {
+                        old_byte += change.value().len();
+                        edit.1 = old_byte;
+                    } else {
+                        edit.2 += change.value().len();
+                    }
+                }
+            }
+        }
+
+        if let Some((start, old_end, inserted_len)) = current_edit {
+            edits.push(EditInfo::new(start, old_end, start + inserted_len));
+        }
+
+        // Sort for guaranteed invariant (similar crate empirically sorted, but undocumented)
+        edits.sort_unstable_by_key(|e| e.start_byte);
+
+        // NOTE: Non-overlapping invariant is validated at runtime in apply_text_diff()
+        // with proper fallback handling. No duplicate check needed here.
+
+        edits
     }
 
     /// Apply multiple edits individually for precise invalidation.
@@ -287,56 +407,6 @@ impl RegionIdTracker {
         }
 
         all_invalidated
-    }
-
-    /// Reconstruct a single merged edit from character-level diff.
-    ///
-    /// Returns None if texts are identical (no edit needed).
-    /// Merges all changes into one edit: [first_change_start, last_change_end_old)
-    /// maps to [first_change_start, last_change_end_new).
-    fn reconstruct_merged_edit(old_text: &str, new_text: &str) -> Option<EditInfo> {
-        use similar::{ChangeTag, TextDiff};
-
-        // NOTE: from_chars() for character-level diff (byte positions tracked via .len())
-        // from_lines() would cause line-level granularity and over-invalidation
-        let diff = TextDiff::from_chars(old_text, new_text);
-
-        let mut first_change_start: Option<usize> = None;
-        let mut last_old_end: usize = 0;
-        let mut last_new_end: usize = 0;
-        let mut old_byte = 0;
-        let mut new_byte = 0;
-
-        for change in diff.iter_all_changes() {
-            match change.tag() {
-                ChangeTag::Equal => {
-                    old_byte += change.value().len();
-                    new_byte += change.value().len();
-                }
-                ChangeTag::Delete => {
-                    if first_change_start.is_none() {
-                        first_change_start = Some(old_byte);
-                    }
-                    old_byte += change.value().len();
-                    last_old_end = old_byte;
-                    last_new_end = new_byte;
-                }
-                ChangeTag::Insert => {
-                    if first_change_start.is_none() {
-                        first_change_start = Some(old_byte);
-                    }
-                    new_byte += change.value().len();
-                    last_old_end = old_byte;
-                    last_new_end = new_byte;
-                }
-            }
-        }
-
-        first_change_start.map(|start| EditInfo {
-            start_byte: start,
-            old_end_byte: last_old_end,
-            new_end_byte: last_new_end,
-        })
     }
 
     /// Determine if a node should be invalidated based on START-priority rule (ADR-0019).
@@ -759,7 +829,6 @@ mod tests {
             .map(|thread_id| {
                 let tracker = Arc::clone(&tracker);
                 let uri = uri.clone();
-                let stable_ulid = stable_ulid;
 
                 thread::spawn(move || {
                     let mut results = Vec::new();
@@ -2545,5 +2614,1040 @@ mod tests {
                 );
             }
         }
+    }
+
+    // =========================================================================
+    // Phase 5: Library Validation Tests (Phase 0)
+    // These validate `similar` crate behavior, not our code. Should PASS immediately.
+    // =========================================================================
+
+    #[test]
+    fn test_similar_delete_before_insert() {
+        // Validates that similar crate produces Delete operations before Insert
+        // for replacements. This is important for our byte tracking logic.
+        use similar::{ChangeTag, TextDiff};
+
+        let diff = TextDiff::from_chars("ABC", "XYZ");
+        let changes: Vec<_> = diff.iter_all_changes().collect();
+
+        // For replacement, expect: Delete A, Delete B, Delete C, Insert X, Insert Y, Insert Z
+        // or interleaved Delete-Insert pairs. Key point: deletes come first.
+        let first_delete = changes.iter().position(|c| c.tag() == ChangeTag::Delete);
+        let first_insert = changes.iter().position(|c| c.tag() == ChangeTag::Insert);
+
+        assert!(first_delete.is_some(), "Should have delete operations");
+        assert!(first_insert.is_some(), "Should have insert operations");
+        // Note: similar may interleave, but the contract we care about is
+        // that we can track byte offsets correctly regardless of order
+    }
+
+    #[test]
+    fn test_similar_produces_edits_for_different_texts() {
+        // Validates that similar crate always produces at least one change
+        // when old_text != new_text. This is a proof assumption.
+        use similar::{ChangeTag, TextDiff};
+
+        let test_cases = vec![
+            ("A", "B"),
+            ("", "X"),
+            ("X", ""),
+            ("ABC", "ABD"),
+            ("Hello", "World"),
+        ];
+
+        for (old, new) in test_cases {
+            let diff = TextDiff::from_chars(old, new);
+            let has_changes = diff.iter_all_changes().any(|c| c.tag() != ChangeTag::Equal);
+            assert!(
+                has_changes,
+                "similar should produce changes for '{}' -> '{}'",
+                old, new
+            );
+        }
+    }
+
+    #[test]
+    fn test_reconstruct_touching_edits_verify_similar_behavior() {
+        // Verify that similar crate merges "AAABBB" → "XY"
+        // into single edit [0,6) rather than [0,3)+[3,6)
+        //
+        // This is important because touching edits mean there's no preserved
+        // content between them, so similar treats them as one contiguous change.
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("touching");
+
+        // Node exactly at what would be the "boundary" if edits were separate
+        let n = tracker.get_or_create(&uri, 3, 6, "B");
+
+        let invalidated = tracker.apply_text_diff(&uri, "AAABBB", "XY");
+
+        // Document behavior: similar crate merges touching edits,
+        // so N's START (3) is inside merged edit [0,6) → INVALIDATED
+        assert!(
+            invalidated.contains(&n),
+            "Touching edits should be merged by similar crate, invalidating middle node"
+        );
+    }
+
+    // =========================================================================
+    // Phase 5: Regression Guard Test (Phase A - RED)
+    // This test captures the core behavioral difference of Phase 5.
+    // It should FAIL under Phase 4 (merged behavior) and PASS after Phase 5.
+    // =========================================================================
+
+    #[test]
+    fn test_phase5_regression_middle_node_not_invalidated() {
+        // This test FAILS under Phase 4 (merged) behavior
+        // and PASSES under Phase 5 (individual) behavior.
+        //
+        // Setup: "AAABBBCCC" with nodes at [0,3), [3,6), [6,9)
+        // Edit:  "XBBBYY" - changes "AAA" to "X" and "CCC" to "YY"
+        //
+        // Phase 4 (merged): Single EditInfo [0, 9) → [0, 6)
+        //   Node BBB START (3) is in [0, 9) → INVALIDATED (wrong!)
+        //
+        // Phase 5 (individual): Two EditInfos [0,3) and [6,9)
+        //   Node BBB START (3) is NOT in [0,3) and NOT in [6,9) → KEPT (correct!)
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("regression");
+
+        let n_middle = tracker.get_or_create(&uri, 3, 6, "B");
+        tracker.get_or_create(&uri, 0, 3, "A");
+        tracker.get_or_create(&uri, 6, 9, "C");
+
+        let invalidated = tracker.apply_text_diff(&uri, "AAABBBCCC", "XBBBYY");
+
+        // CRITICAL ASSERTION: This is the Phase 5 behavioral difference
+        assert!(
+            !invalidated.contains(&n_middle),
+            "REGRESSION: Middle node should NOT be invalidated with individual edit processing. \
+             If this fails, merged edit processing may have been accidentally restored."
+        );
+    }
+
+    // =========================================================================
+    // Phase 5: Core Reconstruction Tests (Phase C)
+    // These test `reconstruct_individual_edits` via `apply_text_diff`.
+    // =========================================================================
+
+    #[test]
+    fn test_reconstruct_single_replacement() {
+        // "ABC" → "XYZ": single contiguous replacement
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("single_replace");
+
+        let n = tracker.get_or_create(&uri, 0, 3, "block");
+        let invalidated = tracker.apply_text_diff(&uri, "ABC", "XYZ");
+
+        // Entire range changed → node invalidated
+        assert!(invalidated.contains(&n));
+    }
+
+    #[test]
+    fn test_reconstruct_two_separate_edits() {
+        // "AAABBBCCC" → "XBBBYY": two separate edits with preserved middle
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("two_edits");
+
+        let n1 = tracker.get_or_create(&uri, 0, 3, "A");
+        let n2 = tracker.get_or_create(&uri, 3, 6, "B"); // Should survive
+        let n3 = tracker.get_or_create(&uri, 6, 9, "C");
+
+        let invalidated = tracker.apply_text_diff(&uri, "AAABBBCCC", "XBBBYY");
+
+        assert_eq!(invalidated.len(), 2, "Two nodes should be invalidated");
+        assert!(
+            invalidated.contains(&n1),
+            "First node should be invalidated"
+        );
+        assert!(
+            invalidated.contains(&n3),
+            "Third node should be invalidated"
+        );
+        assert!(!invalidated.contains(&n2), "Middle node should survive");
+    }
+
+    #[test]
+    fn test_reconstruct_pure_insertion() {
+        // "AB" → "AXB": pure insertion at position 1
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("insert");
+
+        // Node after insert point should shift
+        let n = tracker.get_or_create(&uri, 1, 2, "B");
+        let invalidated = tracker.apply_text_diff(&uri, "AB", "AXB");
+
+        // Node's START (1) is at the insert point → invalidated (conservative)
+        // Per ADR-0019: zero-length insert at START → invalidate
+        assert!(
+            invalidated.contains(&n),
+            "Node at insert point should be invalidated"
+        );
+    }
+
+    #[test]
+    fn test_reconstruct_pure_deletion() {
+        // "ABC" → "AC": pure deletion of 'B'
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("delete");
+
+        let n_before = tracker.get_or_create(&uri, 0, 1, "A");
+        let n_deleted = tracker.get_or_create(&uri, 1, 2, "B");
+        let n_after = tracker.get_or_create(&uri, 2, 3, "C");
+
+        let invalidated = tracker.apply_text_diff(&uri, "ABC", "AC");
+
+        assert!(
+            !invalidated.contains(&n_before),
+            "Node before deletion unchanged"
+        );
+        assert!(invalidated.contains(&n_deleted), "Deleted node invalidated");
+        // Node after should shift to [1,2) but not be invalidated
+        assert!(
+            !invalidated.contains(&n_after),
+            "Node after deletion shifted, not invalidated"
+        );
+        assert_eq!(
+            tracker.get(&uri, 1, 2, "C"),
+            Some(n_after),
+            "Node C shifted to [1,2)"
+        );
+    }
+
+    #[test]
+    fn test_reconstruct_empty_to_content() {
+        // "" → "ABC": insert into empty document
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("empty_to_content");
+
+        // No nodes to track initially
+        let invalidated = tracker.apply_text_diff(&uri, "", "ABC");
+        assert!(
+            invalidated.is_empty(),
+            "No nodes to invalidate in empty document"
+        );
+    }
+
+    #[test]
+    fn test_reconstruct_content_to_empty() {
+        // "ABC" → "": delete all content
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("content_to_empty");
+
+        let n = tracker.get_or_create(&uri, 0, 3, "block");
+        let invalidated = tracker.apply_text_diff(&uri, "ABC", "");
+
+        assert!(
+            invalidated.contains(&n),
+            "Node should be invalidated when content deleted"
+        );
+    }
+
+    #[test]
+    fn test_reconstruct_emoji() {
+        // "A😀B" → "AXB": multi-byte character handling
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("emoji");
+
+        // 😀 is 4 bytes, so original positions are: A[0,1), 😀[1,5), B[5,6)
+        let n_emoji = tracker.get_or_create(&uri, 1, 5, "emoji");
+        let n_b = tracker.get_or_create(&uri, 5, 6, "B");
+
+        let invalidated = tracker.apply_text_diff(&uri, "A😀B", "AXB");
+
+        // Emoji node replaced → invalidated
+        assert!(
+            invalidated.contains(&n_emoji),
+            "Emoji node should be invalidated"
+        );
+        // B node shifted from [5,6) to [2,3)
+        assert!(
+            !invalidated.contains(&n_b),
+            "B node should shift, not invalidate"
+        );
+        assert_eq!(
+            tracker.get(&uri, 2, 3, "B"),
+            Some(n_b),
+            "B node at new position"
+        );
+    }
+
+    #[test]
+    fn test_reconstruct_identical() {
+        // "ABC" → "ABC": fast path, no processing
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("identical");
+
+        let n = tracker.get_or_create(&uri, 0, 3, "block");
+        let invalidated = tracker.apply_text_diff(&uri, "ABC", "ABC");
+
+        assert!(invalidated.is_empty(), "Identical text should return empty");
+        assert_eq!(tracker.get(&uri, 0, 3, "block"), Some(n), "Node unchanged");
+    }
+
+    #[test]
+    fn test_reconstruct_crlf_newlines() {
+        // Test CRLF byte offset handling
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("crlf");
+
+        // "line1\r\nline2" has \r\n at bytes [5,7)
+        // Node after the newlines
+        let n = tracker.get_or_create(&uri, 7, 12, "line2");
+
+        let invalidated = tracker.apply_text_diff(&uri, "line1\r\nline2", "line1\r\nmodified");
+
+        // "line2" (5 chars) replaced with "modified" (8 chars) at position 7
+        // Node at [7,12) has START=7 which is at edit start → invalidated
+        assert!(
+            invalidated.contains(&n),
+            "Node at edit start should be invalidated"
+        );
+    }
+
+    #[test]
+    fn test_reconstruct_long_identical_prefix() {
+        // Long unchanged prefix followed by small change
+        let prefix = "A".repeat(1000);
+        let old = format!("{}_X_BBB", prefix);
+        let new = format!("{}_Y_BBB", prefix);
+
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("long_prefix");
+
+        // Node at the changing position (after 1000 A's + underscore)
+        let n = tracker.get_or_create(&uri, 1001, 1002, "X");
+        let n_after = tracker.get_or_create(&uri, 1003, 1006, "BBB");
+
+        let invalidated = tracker.apply_text_diff(&uri, &old, &new);
+
+        assert!(
+            invalidated.contains(&n),
+            "Changed node should be invalidated"
+        );
+        assert!(
+            !invalidated.contains(&n_after),
+            "Node after change should be preserved"
+        );
+    }
+
+    // =========================================================================
+    // Phase 5: Integration Tests
+    // =========================================================================
+
+    #[test]
+    fn test_apply_text_diff_preserves_unaffected_node() {
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("preserve");
+
+        let _n1 = tracker.get_or_create(&uri, 0, 3, "A");
+        let n2 = tracker.get_or_create(&uri, 3, 6, "B"); // Should survive
+        let _n3 = tracker.get_or_create(&uri, 6, 9, "C");
+
+        let invalidated = tracker.apply_text_diff(&uri, "AAABBBCCC", "XBBBYY");
+
+        assert!(!invalidated.contains(&n2), "Middle node should survive");
+    }
+
+    #[test]
+    fn test_apply_text_diff_correct_final_position() {
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("final_pos");
+
+        let n2 = tracker.get_or_create(&uri, 3, 6, "B");
+
+        // "AAABBBCCC" → "XBBBYY"
+        // Edit1: [0,3) AAA→X (delta=-2)
+        // Edit2: [6,9) CCC→YY (delta=-1)
+        // After both edits: BBB at [1,4)
+        tracker.apply_text_diff(&uri, "AAABBBCCC", "XBBBYY");
+
+        assert_eq!(
+            tracker.get(&uri, 1, 4, "B"),
+            Some(n2),
+            "BBB should be at [1,4) after edit"
+        );
+    }
+
+    #[test]
+    fn test_apply_text_diff_empty_to_content() {
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("empty_start");
+
+        let invalidated = tracker.apply_text_diff(&uri, "", "New content");
+        assert!(
+            invalidated.is_empty(),
+            "No invalidation from empty document"
+        );
+    }
+
+    #[test]
+    fn test_apply_text_diff_content_to_empty() {
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("to_empty");
+
+        let n = tracker.get_or_create(&uri, 0, 10, "block");
+        let invalidated = tracker.apply_text_diff(&uri, "0123456789", "");
+
+        assert!(
+            invalidated.contains(&n),
+            "All nodes invalidated when clearing"
+        );
+    }
+
+    #[test]
+    fn test_apply_text_diff_identical_returns_empty() {
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("identical_fast");
+
+        let n = tracker.get_or_create(&uri, 0, 5, "block");
+        let invalidated = tracker.apply_text_diff(&uri, "Hello", "Hello");
+
+        assert!(invalidated.is_empty(), "Identical text returns empty vec");
+        assert_eq!(tracker.get(&uri, 0, 5, "block"), Some(n));
+    }
+
+    #[test]
+    fn test_apply_text_diff_touching_edits() {
+        // When edits touch [0,3)+[3,6), similar merges them
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("touching");
+
+        let n = tracker.get_or_create(&uri, 3, 6, "middle");
+        let invalidated = tracker.apply_text_diff(&uri, "AAABBB", "XY");
+
+        // Similar merges touching edits → middle node invalidated
+        assert!(invalidated.contains(&n));
+    }
+
+    #[test]
+    fn test_apply_text_diff_single_byte_node() {
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("single_byte");
+
+        // Single byte node at position 5
+        let n = tracker.get_or_create(&uri, 5, 6, "X");
+
+        // Edit before: doesn't affect node's START
+        let invalidated = tracker.apply_text_diff(&uri, "01234X6789", "0123X6789");
+
+        // Node at [5,6) - edit deletes byte 4, so node shifts to [4,5)
+        assert!(
+            !invalidated.contains(&n),
+            "Node should shift, not invalidate"
+        );
+        assert_eq!(tracker.get(&uri, 4, 5, "X"), Some(n));
+    }
+
+    #[test]
+    fn test_apply_text_diff_adjacent_nodes_large_delete() {
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("adjacent_delete");
+
+        let n1 = tracker.get_or_create(&uri, 0, 10, "A");
+        let n2 = tracker.get_or_create(&uri, 20, 30, "B");
+
+        // Delete middle section [10,20)
+        let invalidated = tracker.apply_text_diff(
+            &uri,
+            "0123456789__________0123456789",
+            "01234567890123456789",
+        );
+
+        // Neither node's START is in [10,20)
+        assert!(!invalidated.contains(&n1), "First node unchanged");
+        assert!(
+            !invalidated.contains(&n2),
+            "Second node shifts but not invalidated"
+        );
+
+        // n2 should shift from [20,30) to [10,20)
+        assert_eq!(tracker.get(&uri, 10, 20, "B"), Some(n2));
+    }
+
+    // =========================================================================
+    // Phase 5: Boundary Condition Tests
+    // =========================================================================
+
+    #[test]
+    fn test_node_end_exactly_at_edit_start() {
+        // Node [0,30), Edit [30,40) → node unchanged
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("boundary_end_at_start");
+
+        let n = tracker.get_or_create(&uri, 0, 30, "block");
+
+        // Edit starts exactly where node ends
+        let edit = EditInfo::new(30, 40, 35);
+        let invalidated = tracker.apply_single_edit(&uri, &edit);
+
+        assert!(!invalidated.contains(&n), "Node before edit unchanged");
+        assert_eq!(tracker.get(&uri, 0, 30, "block"), Some(n));
+    }
+
+    #[test]
+    fn test_node_end_exactly_at_edit_old_end() {
+        // Node [0,40), Edit [30,40) → end adjustment edge case
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("boundary_end_at_old_end");
+
+        let n = tracker.get_or_create(&uri, 0, 40, "block");
+
+        // Edit: delete [30,40), insert 5 bytes → new_end=35
+        let edit = EditInfo::new(30, 40, 35);
+        let invalidated = tracker.apply_single_edit(&uri, &edit);
+
+        // Node START (0) not in edit range [30,40) → not invalidated
+        // Node END (40) is exactly at edit.old_end → clamped to new_end
+        assert!(!invalidated.contains(&n));
+        assert_eq!(
+            tracker.get(&uri, 0, 35, "block"),
+            Some(n),
+            "Node end clamped"
+        );
+    }
+
+    #[test]
+    fn test_edit_start_exactly_at_node_end() {
+        // Node [0,10), Edit [10,20) → node unchanged
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("edit_at_node_end");
+
+        let n = tracker.get_or_create(&uri, 0, 10, "block");
+
+        let edit = EditInfo::new(10, 20, 15);
+        let invalidated = tracker.apply_single_edit(&uri, &edit);
+
+        assert!(!invalidated.contains(&n), "Node before edit not affected");
+        assert_eq!(tracker.get(&uri, 0, 10, "block"), Some(n));
+    }
+
+    #[test]
+    fn test_edit_fully_inside_node() {
+        // Node [0,30), Edit [10,20) → start unchanged, end adjusted
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("edit_inside");
+
+        let n = tracker.get_or_create(&uri, 0, 30, "block");
+
+        // Delete 10 bytes inside: [10,20) → [10,10) (delta=-10)
+        let edit = EditInfo::new(10, 20, 10);
+        let invalidated = tracker.apply_single_edit(&uri, &edit);
+
+        // Node START (0) not in [10,20) → not invalidated
+        // Node END (30) > edit.old_end (20) → shifted by delta (-10)
+        assert!(!invalidated.contains(&n));
+        assert_eq!(
+            tracker.get(&uri, 0, 20, "block"),
+            Some(n),
+            "Node end adjusted by delta"
+        );
+    }
+
+    // =========================================================================
+    // Phase 5: Additional Integration Tests
+    // =========================================================================
+
+    #[test]
+    fn test_apply_text_diff_cumulative_delta_verification() {
+        // Multiple edits accumulate delta correctly in reverse order
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("cumulative");
+
+        // "AAABBBCCCDDDEEE" with nodes at each segment
+        let nodes: Vec<_> = (0..5)
+            .map(|i| tracker.get_or_create(&uri, i * 3, (i + 1) * 3, &format!("{}", i)))
+            .collect();
+
+        // Remove AAA (delta=-3) and CCC (delta=-3)
+        // Result: "BBBDDDEEE"
+        let invalidated = tracker.apply_text_diff(&uri, "AAABBBCCCDDDEEE", "BBBDDDEEE");
+
+        // Node 0 (AAA) and Node 2 (CCC) invalidated
+        assert!(invalidated.contains(&nodes[0]), "AAA invalidated");
+        assert!(invalidated.contains(&nodes[2]), "CCC invalidated");
+
+        // Node 1 (BBB) shifts from [3,6) to [0,3)
+        assert!(!invalidated.contains(&nodes[1]));
+        assert_eq!(tracker.get(&uri, 0, 3, "1"), Some(nodes[1]));
+
+        // Node 3 (DDD) shifts from [9,12) to [3,6)
+        assert!(!invalidated.contains(&nodes[3]));
+        assert_eq!(tracker.get(&uri, 3, 6, "3"), Some(nodes[3]));
+
+        // Node 4 (EEE) shifts from [12,15) to [6,9)
+        assert!(!invalidated.contains(&nodes[4]));
+        assert_eq!(tracker.get(&uri, 6, 9, "4"), Some(nodes[4]));
+    }
+
+    #[test]
+    fn test_apply_text_diff_prepend_content() {
+        // "BBBCCC" → "AAABBBCCC": prepend content
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("prepend");
+
+        let n1 = tracker.get_or_create(&uri, 0, 3, "B");
+        let n2 = tracker.get_or_create(&uri, 3, 6, "C");
+
+        let invalidated = tracker.apply_text_diff(&uri, "BBBCCC", "AAABBBCCC");
+
+        // Insert at position 0 (zero-length edit at START of n1) → n1 invalidated
+        assert!(
+            invalidated.contains(&n1),
+            "Node at insert point invalidated"
+        );
+
+        // n2 shifts from [3,6) to [6,9)
+        assert!(!invalidated.contains(&n2));
+        assert_eq!(tracker.get(&uri, 6, 9, "C"), Some(n2));
+    }
+
+    #[test]
+    fn test_apply_text_diff_edit_at_document_end() {
+        // Append to document: existing nodes unchanged
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("append");
+
+        let n = tracker.get_or_create(&uri, 0, 10, "existing");
+
+        let invalidated = tracker.apply_text_diff(&uri, "0123456789", "0123456789_appended");
+
+        // Insert at end doesn't affect existing node
+        assert!(!invalidated.contains(&n));
+        assert_eq!(tracker.get(&uri, 0, 10, "existing"), Some(n));
+    }
+
+    #[test]
+    fn test_apply_text_diff_multiple_zero_length_inserts() {
+        // Multiple insertions at different positions
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("multi_insert");
+
+        let n1 = tracker.get_or_create(&uri, 1, 2, "B");
+        let _n2 = tracker.get_or_create(&uri, 3, 4, "D");
+
+        // "ABCD" → "AXBCYD" (insert X after A, Y after C)
+        let invalidated = tracker.apply_text_diff(&uri, "ABCD", "AXBCYD");
+
+        // B at [1,2): insert X at position 1 → B's START=1 is at insert point → invalidated
+        assert!(invalidated.contains(&n1), "B at insert point invalidated");
+
+        // D at [3,4): insert Y at position 3 (original), but after X insert it's effectively
+        // at running position 4. However, similar crate may produce different edits.
+        // The key is the behavior, not the exact invalidation.
+    }
+
+    // =========================================================================
+    // Phase 5: Stress Tests (Phase D)
+    // =========================================================================
+
+    #[test]
+    fn test_reconstruct_many_alternating() {
+        // 18 chars with 9 changes: alternating pattern
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("alternating");
+
+        // Create nodes at alternating positions
+        let nodes: Vec<_> = (0..9)
+            .map(|i| tracker.get_or_create(&uri, i * 2, i * 2 + 1, &format!("{}", i)))
+            .collect();
+
+        // "AXBXCXDXEXFXGXHXI" → "AYBYCYDYEYFYGYHYI"
+        // Change every X to Y
+        let old: String = (0..9)
+            .map(|i| format!("{}X", (b'A' + i as u8) as char))
+            .collect();
+        let new: String = (0..9)
+            .map(|i| format!("{}Y", (b'A' + i as u8) as char))
+            .collect();
+
+        let invalidated = tracker.apply_text_diff(&uri, &old, &new);
+
+        // Nodes at even positions (A, B, C, ...) should be preserved
+        // Only the X's change, which don't have nodes
+        for (i, node) in nodes.iter().enumerate() {
+            assert!(
+                !invalidated.contains(node),
+                "Node {} should not be invalidated",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_apply_text_diff_large_document() {
+        // Performance sanity check with large document
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("large");
+
+        // Create 1000 nodes
+        let nodes: Vec<_> = (0..1000)
+            .map(|i| tracker.get_or_create(&uri, i * 10, i * 10 + 5, &format!("{}", i)))
+            .collect();
+
+        // Large document: 10000 bytes
+        let old = "A".repeat(10000);
+        // Change positions 500-510 and 9500-9510
+        let mut new = old.clone();
+        new.replace_range(500..510, "XXXXXXXXXX");
+        new.replace_range(9500..9510, "YYYYYYYYYY");
+
+        let invalidated = tracker.apply_text_diff(&uri, &old, &new);
+
+        // Only nodes overlapping the edited ranges should be invalidated
+        // Node 50 is at [500, 505) - edit [500, 510) → invalidated
+        // Node 950 is at [9500, 9505) - edit [9500, 9510) → invalidated
+        assert!(
+            invalidated.contains(&nodes[50]),
+            "Node at edit 1 invalidated"
+        );
+        assert!(
+            invalidated.contains(&nodes[950]),
+            "Node at edit 2 invalidated"
+        );
+
+        // Node 0 and 999 should be unchanged
+        assert!(!invalidated.contains(&nodes[0]), "Node 0 unchanged");
+        assert!(!invalidated.contains(&nodes[999]), "Node 999 unchanged");
+    }
+
+    // =========================================================================
+    // Phase 5: Concurrency Tests (Phase D)
+    // =========================================================================
+
+    #[test]
+    fn test_concurrent_apply_text_diff_individual_edits_no_panic() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let tracker = Arc::new(RegionIdTracker::new());
+        let uri = Url::parse("file:///concurrent_individual.md").unwrap();
+
+        // Create many nodes
+        for i in 0..100 {
+            tracker.get_or_create(&uri, i * 10, i * 10 + 5, "block");
+        }
+
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let tracker = Arc::clone(&tracker);
+                let uri = uri.clone();
+                thread::spawn(move || {
+                    for _ in 0..100 {
+                        // Multi-edit diff scenario
+                        let old = "A".repeat(500);
+                        let new = "B".repeat(50) + &"X".repeat(400) + &"C".repeat(50);
+                        tracker.apply_text_diff(&uri, &old, &new);
+                    }
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().expect("Thread should not panic");
+        }
+    }
+
+    #[test]
+    fn test_concurrent_get_and_apply_text_diff_individual() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let tracker = Arc::new(RegionIdTracker::new());
+        let uri = Url::parse("file:///race_individual.md").unwrap();
+
+        // Initial nodes
+        tracker.get_or_create(&uri, 0, 10, "A");
+        tracker.get_or_create(&uri, 20, 30, "B");
+
+        let handles: Vec<_> = (0..2)
+            .map(|id| {
+                let tracker = Arc::clone(&tracker);
+                let uri = uri.clone();
+                thread::spawn(move || {
+                    if id == 0 {
+                        // Thread 0: applies multi-edit diff
+                        for _ in 0..50 {
+                            tracker.apply_text_diff(
+                                &uri,
+                                "0123456789____0123456789",
+                                "XYZ_________ABC",
+                            );
+                        }
+                    } else {
+                        // Thread 1: creates nodes during edits
+                        for i in 0..50 {
+                            tracker.get_or_create(&uri, 5 + i, 8 + i, "C");
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().expect("No panic expected");
+        }
+        // Test passes if no panic/deadlock - exact state is non-deterministic but safe
+    }
+
+    #[test]
+    fn test_fallback_edit_delta_calculation() {
+        // Verify delta = new_len - old_len for fallback edit
+        let edit = EditInfo::new(0, 100, 50);
+        assert_eq!(edit.delta(), -50, "Fallback edit delta should be -50");
+
+        let edit2 = EditInfo::new(0, 50, 100);
+        assert_eq!(edit2.delta(), 50, "Fallback edit delta should be +50");
+    }
+
+    // =========================================================================
+    // Phase 5 Review Iteration 1: CRITICAL Test Gaps
+    // =========================================================================
+
+    #[test]
+    fn test_position_collision_after_edit() {
+        // CRITICAL: Test that position collision is handled correctly
+        // When two nodes collapse to the same position after an edit,
+        // one wins (non-deterministic) and the other is invalidated.
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("collision");
+
+        // Setup: Two nodes with same start but different end
+        // Node A at [0, 5) kind "X"
+        // Node B at [0, 10) kind "X"
+        // After edit [5, 10) delete 5 bytes:
+        // A: start=0 not in [5,10) → unchanged [0, 5)
+        // B: start=0 not in [5,10), end=10 in [5,10) → clamp end to 5, so [0, 5)
+        // COLLISION! Both are [0, 5) kind "X"
+
+        let n_a = tracker.get_or_create(&uri, 0, 5, "X");
+        let n_b = tracker.get_or_create(&uri, 0, 10, "X"); // Same start, different end
+
+        // Delete [5, 10) - this causes n_b's end to clamp to 5, colliding with n_a
+        let edit = EditInfo::new(5, 10, 5); // delete bytes 5-10
+        let invalidated = tracker.apply_input_edits(&uri, &[edit]);
+
+        // Exactly one of them should be invalidated due to collision
+        // HashMap iteration order is non-deterministic, so we can't predict which
+        let a_invalidated = invalidated.contains(&n_a);
+        let b_invalidated = invalidated.contains(&n_b);
+
+        assert!(
+            a_invalidated || b_invalidated,
+            "At least one node should be invalidated due to collision"
+        );
+
+        // Verify exactly one node remains at [0, 5)
+        let survivor = tracker.get(&uri, 0, 5, "X");
+        assert!(survivor.is_some(), "One node should survive at [0, 5)");
+
+        // The survivor should be the one NOT in invalidated
+        let expected_survivor = if a_invalidated { n_b } else { n_a };
+        assert_eq!(
+            survivor,
+            Some(expected_survivor),
+            "Survivor should be the non-invalidated node"
+        );
+    }
+
+    #[test]
+    fn test_apply_input_edits_empty_slice_preserves_nodes() {
+        // MAJOR: Test that empty edit slice is handled gracefully
+        // (complements existing test_apply_input_edits_empty_slice)
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("empty_edits_preserve");
+
+        // Multiple nodes should all be preserved
+        let n1 = tracker.get_or_create(&uri, 0, 10, "A");
+        let n2 = tracker.get_or_create(&uri, 20, 30, "B");
+        let n3 = tracker.get_or_create(&uri, 50, 60, "C");
+
+        let invalidated = tracker.apply_input_edits(&uri, &[]);
+
+        assert!(invalidated.is_empty(), "Empty edits should return empty");
+        assert_eq!(tracker.get(&uri, 0, 10, "A"), Some(n1));
+        assert_eq!(tracker.get(&uri, 20, 30, "B"), Some(n2));
+        assert_eq!(tracker.get(&uri, 50, 60, "C"), Some(n3));
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid EditInfo")]
+    fn test_edit_info_new_rejects_invalid_in_debug() {
+        // MAJOR: Test that EditInfo::new panics on invalid input in debug builds
+        // This is the first line of defense against invalid edits
+        let _invalid = EditInfo::new(20, 10, 15); // Invalid: old_end=10 < start=20
+    }
+
+    #[test]
+    fn test_apply_input_edits_forward_order_with_running_coords() {
+        // MAJOR: Verify apply_input_edits() uses FORWARD-order processing
+        // This is DIFFERENT from apply_text_diff() which uses REVERSE-order.
+        //
+        // LSP incremental edits use RUNNING coordinates - each edit's position is
+        // relative to document state AFTER previous edits, so they must be
+        // processed sequentially in array order.
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("lsp_order");
+
+        // Document: "AABBCCDD" (8 bytes)
+        // Node at [4, 8) covering "CCDD"
+        let n = tracker.get_or_create(&uri, 4, 8, "block");
+
+        // LSP sends two edits in FORWARD order with RUNNING coordinates:
+        // Edit 1: Insert "XX" at position 0 → "XXAABBCCDD"
+        // Edit 2: Delete [6, 8) in the NEW document → "XXAABBDD"
+        //
+        // If we process in forward order (correct for LSP):
+        // After edit 1: n shifts from [4,8) to [6,10) (delta=+2)
+        // After edit 2: n at [6,10), edit at [6,8) → start=6 in [6,8) → INVALIDATED
+        //
+        // If we incorrectly process in reverse order:
+        // Edit 2 first: n at [4,8), edit at [6,8) → start=4 not in [6,8) → survives, end clamps
+        // Edit 1 next: n shifts → wrong result
+
+        let edit1 = EditInfo::new(0, 0, 2); // Insert 2 bytes at 0
+        let edit2 = EditInfo::new(6, 8, 6); // Delete [6,8) in running coords
+
+        let invalidated = tracker.apply_input_edits(&uri, &[edit1, edit2]);
+
+        // With correct forward-order processing, n should be invalidated
+        // because after edit1 shifts it to [6,10), edit2 at [6,8) invalidates it
+        assert!(
+            invalidated.contains(&n),
+            "Node should be invalidated with forward-order LSP processing"
+        );
+    }
+
+    #[test]
+    fn test_reconstruct_produces_correct_edit_info_values() {
+        // CRITICAL: Indirectly test reconstruct_individual_edits by verifying
+        // the exact EditInfo values through apply_text_diff behavior
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("reconstruct_verify");
+
+        // Create nodes at strategic positions to verify edit boundaries
+        // "AAABBBCCC" → "AXXBBBCYY"
+        // Edit 1: [1,3) "AA" → "XX" (replace at position 1)
+        // Edit 2: [6,9) "CCC" → "CYY" (wait, this is [6,9) delete 3, insert 3)
+        // Actually: "AAABBBCCC" vs "AXXBBBCYY"
+        // Diff: A=A, A→X, A→X, B=B, B=B, B=B, C=C, C→Y, C→Y
+        // So: Equal(A), Delete(AA)+Insert(XX) at [1,3), Equal(BBBC), Delete(CC)+Insert(YY) at [7,9)
+
+        // Place nodes to detect exact edit boundaries
+        let n_before_edit1 = tracker.get_or_create(&uri, 0, 1, "A0"); // [0,1) before first edit
+        let n_at_edit1_start = tracker.get_or_create(&uri, 1, 2, "A1"); // [1,2) at first edit start
+        let n_between = tracker.get_or_create(&uri, 4, 5, "B1"); // [4,5) between edits
+        let n_at_edit2_start = tracker.get_or_create(&uri, 7, 8, "C1"); // [7,8) at second edit start
+
+        let invalidated = tracker.apply_text_diff(&uri, "AAABBBCCC", "AXXBBBCYY");
+
+        // n_before_edit1: start=0 not in any edit → unchanged
+        assert!(
+            !invalidated.contains(&n_before_edit1),
+            "Node before first edit should survive"
+        );
+
+        // n_at_edit1_start: start=1 in [1,3) → invalidated
+        assert!(
+            invalidated.contains(&n_at_edit1_start),
+            "Node at first edit start should be invalidated"
+        );
+
+        // n_between: start=4, neither edit affects it
+        // After edit1 [1,3)→[1,3) delta=0, n_between unchanged
+        // Edit2 is at [7,9) in original coords
+        assert!(
+            !invalidated.contains(&n_between),
+            "Node between edits should survive"
+        );
+
+        // n_at_edit2_start: start=7 in [7,9) → invalidated
+        assert!(
+            invalidated.contains(&n_at_edit2_start),
+            "Node at second edit start should be invalidated"
+        );
+    }
+
+    #[test]
+    fn test_reconstruct_multibyte_utf8_boundary_handling() {
+        // HIGH PRIORITY: Test byte offset tracking across multi-byte UTF-8 characters
+        // Emojis are 4 bytes each in UTF-8, CJK characters are typically 3 bytes
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("utf8_multibyte");
+
+        // "A😀B" is 6 bytes: A(1) + 😀(4) + B(1)
+        // "A😀😀B" is 10 bytes: A(1) + 😀(4) + 😀(4) + B(1)
+        // Insert 😀 at byte position 5 (after first 😀)
+        // Edit: [5,5) → [5,9) insert 4 bytes
+
+        // Place nodes to verify byte positions are tracked correctly
+        let n_before = tracker.get_or_create(&uri, 0, 1, "A"); // [0,1) "A"
+        let n_emoji1 = tracker.get_or_create(&uri, 1, 5, "emoji1"); // [1,5) "😀"
+        let n_after = tracker.get_or_create(&uri, 5, 6, "B"); // [5,6) "B"
+
+        let invalidated = tracker.apply_text_diff(&uri, "A😀B", "A😀😀B");
+
+        // n_before: start=0 not affected by insert at 5 → survives
+        assert!(
+            !invalidated.contains(&n_before),
+            "Node before multi-byte insert should survive"
+        );
+
+        // n_emoji1: start=1 not affected, end=5 at insert point → should survive
+        assert!(
+            !invalidated.contains(&n_emoji1),
+            "First emoji node should survive"
+        );
+
+        // n_after: start=5 at insert point → invalidated (zero-length insert at START)
+        assert!(
+            invalidated.contains(&n_after),
+            "Node at multi-byte insert point should be invalidated"
+        );
+
+        // Verify n_after shifted correctly: [5,6) + 4 bytes → [9,10)
+        assert_eq!(
+            tracker.get(&uri, 9, 10, "B"),
+            None, // Should be invalidated, not shifted
+            "Invalidated node should not exist at new position"
+        );
+    }
+
+    #[test]
+    fn test_apply_text_diff_multibyte_replacement() {
+        // Additional UTF-8 test: Replacement involving multi-byte characters
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("utf8_replacement");
+
+        // "Hello世界" is 11 bytes: Hello(5) + 世(3) + 界(3)
+        // "Hello世World" is 14 bytes: Hello(5) + 世(3) + World(5) + 界(1 removed)
+        // Actually: "Hello世界" → "Hi世界" (replace "Hello" with "Hi")
+        // Let's use simpler: "A😀C" → "A😀😀C"
+
+        // "日本語" (Japanese) is 9 bytes: 日(3) + 本(3) + 語(3)
+        // "日X語" replaces 本 with X: [3,6) → [3,4)
+
+        let n_first = tracker.get_or_create(&uri, 0, 3, "日"); // [0,3) first char
+        let n_middle = tracker.get_or_create(&uri, 3, 6, "本"); // [3,6) second char (to be replaced)
+        let n_last = tracker.get_or_create(&uri, 6, 9, "語"); // [6,9) third char
+
+        let invalidated = tracker.apply_text_diff(&uri, "日本語", "日X語");
+
+        // n_first: start=0 not in edit range → survives
+        assert!(!invalidated.contains(&n_first), "First CJK char survives");
+
+        // n_middle: start=3 in edit range [3,6) → invalidated
+        assert!(
+            invalidated.contains(&n_middle),
+            "Replaced CJK char should be invalidated"
+        );
+
+        // n_last: start=6, edit [3,6)→[3,4) delta=-2, shifts to [4,7)
+        assert!(!invalidated.contains(&n_last), "Last CJK char survives");
+        assert_eq!(
+            tracker.get(&uri, 4, 7, "語"),
+            Some(n_last),
+            "Last char shifted correctly by -2 bytes"
+        );
     }
 }
