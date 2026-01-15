@@ -35,11 +35,6 @@ const scrum: ScrumDashboard = {
         },
       ],
       status: "done",
-      refinement_notes: [
-        "CRITICAL - LSP Compliance issue",
-        "In response.rs:325-331, when downstream LS returns SymbolInformation[] format, location.uri contains virtual URI but is NOT transformed to host URI",
-        "Fix: Transform location.uri from virtual to host URI, similar to how definition responses handle this",
-      ],
     },
     {
       id: "pbi-document-color-e2e",
@@ -97,62 +92,7 @@ const scrum: ScrumDashboard = {
     { number: 5, pbi_id: "pbi-inlay-hints", goal: "Bridge textDocument/inlayHint with bidirectional coordinate transformation", status: "done", subtasks: [] },
     { number: 6, pbi_id: "pbi-color-presentation", goal: "Bridge textDocument/documentColor and textDocument/colorPresentation with coordinate transformation", status: "done", subtasks: [] },
     { number: 7, pbi_id: "pbi-moniker", goal: "Bridge textDocument/moniker with position transformation and pass-through response", status: "done", subtasks: [] },
-    {
-      number: 8,
-      pbi_id: "pbi-symbol-info-uri-fix",
-      goal: "Fix SymbolInformation URI transformation for LSP compliance",
-      status: "done",
-      subtasks: [
-        {
-          test: "Add unit test for SymbolInformation.location.uri transformation with virtual URI",
-          implementation: "Create test verifying virtual URI is transformed to host URI",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "0fc6db73", message: "fix(bridge): transform SymbolInformation.location.uri for LSP compliance", phase: "green" }],
-          notes: [
-            "Test should use virtual URI format (treesitter-ls://host_uri/lang/region_id)",
-            "Test should verify URI is transformed to host URI after transformation",
-            "Follow existing pattern in document_symbol_response_transforms_symbol_information_location_range test",
-          ],
-        },
-        {
-          test: "Update transform_document_symbol_response_to_host signature to use ResponseTransformContext",
-          implementation: "Change function signature from (response, region_start_line) to (response, &ResponseTransformContext)",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "0fc6db73", message: "fix(bridge): transform SymbolInformation.location.uri for LSP compliance", phase: "green" }],
-          notes: [
-            "ResponseTransformContext contains: request_virtual_uri, request_host_uri, request_region_start_line",
-            "Update document_symbol.rs call site to create and pass ResponseTransformContext",
-            "Update all existing tests to use new signature",
-          ],
-        },
-        {
-          test: "Implement URI transformation in SymbolInformation handling",
-          implementation: "In transform_document_symbol_item, transform location.uri using same pattern as transform_location_uri",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "0fc6db73", message: "fix(bridge): transform SymbolInformation.location.uri for LSP compliance", phase: "green" }],
-          notes: [
-            "Handle three cases: (1) real file URI - preserve, (2) same virtual URI - transform, (3) different virtual URI - filter",
-            "Call transform_location_uri helper from transform_document_symbol_item for SymbolInformation case",
-            "Ensure range transformation still works after URI transformation",
-          ],
-        },
-        {
-          test: "Verify existing range transformation still works with new context-based signature",
-          implementation: "Run existing tests to confirm range transformation is preserved",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "0fc6db73", message: "fix(bridge): transform SymbolInformation.location.uri for LSP compliance", phase: "green" }],
-          notes: [
-            "Existing tests: document_symbol_response_transforms_symbol_information_location_range",
-            "Verify DocumentSymbol format (range, selectionRange, children) still works",
-            "Verify null and empty array edge cases still pass through correctly",
-          ],
-        },
-      ],
-    },
+    { number: 8, pbi_id: "pbi-symbol-info-uri-fix", goal: "Fix SymbolInformation URI transformation for LSP compliance", status: "done", subtasks: [] },
   ],
   definition_of_done: {
     checks: [
@@ -165,11 +105,6 @@ const scrum: ScrumDashboard = {
     { sprint: 8, improvements: [
       { action: "Establish multi-perspective review practice to catch LSP compliance issues earlier", timing: "sprint", status: "active", outcome: null },
       { action: "Ensure dual response formats (DocumentSymbol[] vs SymbolInformation[]) are equally tested for all bridged features", timing: "product", status: "active", outcome: null },
-      { action: "Add integration tests validating LSP compliance for existing bridged features", timing: "product", status: "active", outcome: null },
-    ] },
-    { sprint: 7, improvements: [
-      { action: "Complete request-side pattern documentation in request.rs", timing: "product", status: "active", outcome: "Response patterns documented in response.rs header. Request patterns (build_position_based_request, build_range_based_request) exist but need similar module-level documentation for developer guidance." },
-      { action: "Bridge coverage 100% achieved", timing: "product", status: "completed", outcome: "Sprints 1-7 delivered all 16 LSP features. Pattern taxonomy: position-based (signatureHelp, moniker), hybrid (inlayHint, colorPresentation), whole-doc (documentLink, documentColor), context-based (definition, rename)." },
     ] },
   ],
 };
