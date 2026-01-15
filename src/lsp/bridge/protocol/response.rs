@@ -536,3 +536,1066 @@ fn transform_workspace_edit_document_changes(
         false
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ==========================================================================
+    // Hover response transformation tests
+    // ==========================================================================
+
+    #[test]
+    fn response_transformation_with_zero_region_start() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "contents": { "kind": "markdown", "value": "docs" },
+                "range": {
+                    "start": { "line": 2, "character": 0 },
+                    "end": { "line": 2, "character": 10 }
+                }
+            }
+        });
+        let region_start_line = 0;
+
+        let transformed = transform_hover_response_to_host(response, region_start_line);
+
+        assert_eq!(
+            transformed["result"]["range"]["start"]["line"], 2,
+            "With region_start_line=0, host line equals virtual line"
+        );
+    }
+
+    #[test]
+    fn response_transformation_at_line_zero() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "contents": { "kind": "markdown", "value": "docs" },
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 5 }
+                }
+            }
+        });
+        let region_start_line = 10;
+
+        let transformed = transform_hover_response_to_host(response, region_start_line);
+
+        assert_eq!(
+            transformed["result"]["range"]["start"]["line"], 10,
+            "Virtual line 0 should map to region_start_line"
+        );
+        assert_eq!(
+            transformed["result"]["range"]["end"]["line"], 10,
+            "Virtual line 0 should map to region_start_line"
+        );
+    }
+
+    #[test]
+    fn hover_response_transforms_range_to_host_coordinates() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "contents": { "kind": "markdown", "value": "docs" },
+                "range": {
+                    "start": { "line": 0, "character": 9 },
+                    "end": { "line": 0, "character": 14 }
+                }
+            }
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_hover_response_to_host(response, region_start_line);
+
+        assert_eq!(transformed["result"]["range"]["start"]["line"], 3);
+        assert_eq!(transformed["result"]["range"]["end"]["line"], 3);
+        assert_eq!(transformed["result"]["range"]["start"]["character"], 9);
+        assert_eq!(transformed["result"]["range"]["end"]["character"], 14);
+    }
+
+    #[test]
+    fn hover_response_without_range_passes_through() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": { "contents": "Simple hover text" }
+        });
+
+        let transformed = transform_hover_response_to_host(response.clone(), 5);
+        assert_eq!(transformed, response);
+    }
+
+    #[test]
+    fn hover_response_with_null_result_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+
+        let transformed = transform_hover_response_to_host(response.clone(), 5);
+        assert_eq!(transformed, response);
+    }
+
+    // ==========================================================================
+    // Completion response transformation tests
+    // ==========================================================================
+
+    #[test]
+    fn completion_response_transforms_textedit_ranges() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "isIncomplete": false,
+                "items": [
+                    {
+                        "label": "print",
+                        "kind": 3,
+                        "textEdit": {
+                            "range": {
+                                "start": { "line": 1, "character": 0 },
+                                "end": { "line": 1, "character": 3 }
+                            },
+                            "newText": "print"
+                        }
+                    },
+                    { "label": "pairs", "kind": 3 }
+                ]
+            }
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_completion_response_to_host(response, region_start_line);
+
+        let items = transformed["result"]["items"].as_array().unwrap();
+        assert_eq!(items[0]["textEdit"]["range"]["start"]["line"], 4);
+        assert_eq!(items[0]["textEdit"]["range"]["end"]["line"], 4);
+        assert_eq!(items[1]["label"], "pairs");
+        assert!(items[1].get("textEdit").is_none());
+    }
+
+    #[test]
+    fn completion_response_with_null_result_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+
+        let transformed = transform_completion_response_to_host(response.clone(), 3);
+        assert_eq!(transformed, response);
+    }
+
+    #[test]
+    fn completion_response_handles_array_format() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "label": "print",
+                "textEdit": {
+                    "range": {
+                        "start": { "line": 0, "character": 0 },
+                        "end": { "line": 0, "character": 2 }
+                    },
+                    "newText": "print"
+                }
+            }]
+        });
+        let region_start_line = 5;
+
+        let transformed = transform_completion_response_to_host(response, region_start_line);
+
+        let items = transformed["result"].as_array().unwrap();
+        assert_eq!(items[0]["textEdit"]["range"]["start"]["line"], 5);
+        assert_eq!(items[0]["textEdit"]["range"]["end"]["line"], 5);
+    }
+
+    // ==========================================================================
+    // SignatureHelp response transformation tests
+    // ==========================================================================
+
+    #[test]
+    fn signature_help_response_with_null_result_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+
+        let transformed = transform_signature_help_response_to_host(response.clone(), 5);
+        assert_eq!(transformed, response);
+    }
+
+    #[test]
+    fn signature_help_response_preserves_active_parameter_and_signature() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "signatures": [
+                    {
+                        "label": "string.format(formatstring, ...)",
+                        "documentation": "Formats a string",
+                        "parameters": [
+                            { "label": "formatstring" },
+                            { "label": "..." }
+                        ]
+                    }
+                ],
+                "activeSignature": 0,
+                "activeParameter": 1
+            }
+        });
+        let region_start_line = 3;
+
+        let transformed =
+            transform_signature_help_response_to_host(response.clone(), region_start_line);
+
+        assert_eq!(transformed["result"]["activeSignature"], 0);
+        assert_eq!(transformed["result"]["activeParameter"], 1);
+        assert_eq!(
+            transformed["result"]["signatures"][0]["label"],
+            "string.format(formatstring, ...)"
+        );
+    }
+
+    #[test]
+    fn signature_help_response_without_metadata_passes_through() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "signatures": [
+                    { "label": "print(...)" }
+                ]
+            }
+        });
+
+        let transformed = transform_signature_help_response_to_host(response.clone(), 5);
+        assert_eq!(transformed, response);
+    }
+
+    // ==========================================================================
+    // Definition response transformation tests
+    // ==========================================================================
+
+    fn test_context(
+        virtual_uri: &str,
+        host_uri: &str,
+        region_start_line: u32,
+    ) -> ResponseTransformContext {
+        ResponseTransformContext {
+            request_virtual_uri: virtual_uri.to_string(),
+            request_host_uri: host_uri.to_string(),
+            request_region_start_line: region_start_line,
+        }
+    }
+
+    #[test]
+    fn definition_response_transforms_location_array_ranges() {
+        let virtual_uri = "file:///.treesitter-ls/abc123/region-0.lua";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "uri": virtual_uri,
+                    "range": {
+                        "start": { "line": 0, "character": 9 },
+                        "end": { "line": 0, "character": 14 }
+                    }
+                },
+                {
+                    "uri": virtual_uri,
+                    "range": {
+                        "start": { "line": 2, "character": 0 },
+                        "end": { "line": 2, "character": 10 }
+                    }
+                }
+            ]
+        });
+        let host_uri = "file:///project/doc.md";
+        let context = test_context(virtual_uri, host_uri, 3);
+        let transformed = transform_definition_response_to_host(response, &context);
+
+        let result = transformed["result"].as_array().unwrap();
+        assert_eq!(result[0]["range"]["start"]["line"], 3);
+        assert_eq!(result[0]["range"]["end"]["line"], 3);
+        assert_eq!(result[1]["range"]["start"]["line"], 5);
+        assert_eq!(result[1]["range"]["end"]["line"], 5);
+        assert_eq!(result[0]["uri"], host_uri);
+        assert_eq!(result[1]["uri"], host_uri);
+    }
+
+    #[test]
+    fn definition_response_transforms_single_location() {
+        let virtual_uri = "file:///.treesitter-ls/abc123/region-0.lua";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "uri": virtual_uri,
+                "range": {
+                    "start": { "line": 1, "character": 5 },
+                    "end": { "line": 1, "character": 15 }
+                }
+            }
+        });
+        let host_uri = "file:///project/doc.md";
+        let context = test_context(virtual_uri, host_uri, 3);
+        let transformed = transform_definition_response_to_host(response, &context);
+
+        assert_eq!(transformed["result"]["range"]["start"]["line"], 4);
+        assert_eq!(transformed["result"]["range"]["end"]["line"], 4);
+        assert_eq!(transformed["result"]["uri"], host_uri);
+    }
+
+    #[test]
+    fn definition_response_transforms_location_link_array() {
+        let virtual_uri = "file:///.treesitter-ls/abc123/region-0.lua";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "originSelectionRange": {
+                    "start": { "line": 5, "character": 0 },
+                    "end": { "line": 5, "character": 10 }
+                },
+                "targetUri": virtual_uri,
+                "targetRange": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 2, "character": 3 }
+                },
+                "targetSelectionRange": {
+                    "start": { "line": 0, "character": 9 },
+                    "end": { "line": 0, "character": 14 }
+                }
+            }]
+        });
+        let host_uri = "file:///project/doc.md";
+        let context = test_context(virtual_uri, host_uri, 3);
+        let transformed = transform_definition_response_to_host(response, &context);
+
+        let result = transformed["result"].as_array().unwrap();
+        // originSelectionRange NOT transformed (in host coordinates)
+        assert_eq!(result[0]["originSelectionRange"]["start"]["line"], 5);
+        // targetRange transformed
+        assert_eq!(result[0]["targetRange"]["start"]["line"], 3);
+        assert_eq!(result[0]["targetRange"]["end"]["line"], 5);
+        // targetSelectionRange transformed
+        assert_eq!(result[0]["targetSelectionRange"]["start"]["line"], 3);
+        assert_eq!(result[0]["targetUri"], host_uri);
+    }
+
+    #[test]
+    fn definition_response_with_null_result_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+        let context = test_context(
+            "file:///.treesitter-ls/abc123/region-0.lua",
+            "file:///project/doc.md",
+            3,
+        );
+
+        let transformed = transform_definition_response_to_host(response.clone(), &context);
+        assert_eq!(transformed, response);
+    }
+
+    #[test]
+    fn definition_response_transforms_location_uri_to_host_uri() {
+        let virtual_uri = "file:///.treesitter-ls/abc123/region-0.lua";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "uri": virtual_uri,
+                "range": {
+                    "start": { "line": 0, "character": 9 },
+                    "end": { "line": 0, "character": 14 }
+                }
+            }]
+        });
+        let host_uri = "file:///project/doc.md";
+        let context = test_context(virtual_uri, host_uri, 3);
+        let transformed = transform_definition_response_to_host(response, &context);
+
+        let result = transformed["result"].as_array().unwrap();
+        assert_eq!(result[0]["uri"], host_uri);
+        assert_eq!(result[0]["range"]["start"]["line"], 3);
+    }
+
+    #[test]
+    fn definition_response_transforms_location_link_target_uri_to_host_uri() {
+        let virtual_uri = "file:///.treesitter-ls/abc123/region-0.lua";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "originSelectionRange": {
+                    "start": { "line": 5, "character": 0 },
+                    "end": { "line": 5, "character": 10 }
+                },
+                "targetUri": virtual_uri,
+                "targetRange": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 2, "character": 3 }
+                },
+                "targetSelectionRange": {
+                    "start": { "line": 0, "character": 9 },
+                    "end": { "line": 0, "character": 14 }
+                }
+            }]
+        });
+        let host_uri = "file:///project/doc.md";
+        let context = test_context(virtual_uri, host_uri, 3);
+        let transformed = transform_definition_response_to_host(response, &context);
+
+        let result = transformed["result"].as_array().unwrap();
+        assert_eq!(result[0]["targetUri"], host_uri);
+        assert_eq!(result[0]["targetRange"]["start"]["line"], 3);
+        assert_eq!(result[0]["targetSelectionRange"]["start"]["line"], 3);
+    }
+
+    // ==========================================================================
+    // Cross-document transformation tests
+    // ==========================================================================
+
+    #[test]
+    fn is_virtual_uri_detects_virtual_uris() {
+        assert!(is_virtual_uri("file:///.treesitter-ls/abc123/region-0.lua"));
+        assert!(is_virtual_uri(
+            "file:///.treesitter-ls/def456/01JPMQ8ZYYQA.py"
+        ));
+        assert!(is_virtual_uri("file:///.treesitter-ls/hash/test.txt"));
+    }
+
+    #[test]
+    fn is_virtual_uri_rejects_real_uris() {
+        assert!(!is_virtual_uri("file:///home/user/project/main.lua"));
+        assert!(!is_virtual_uri("file:///C:/Users/dev/code.py"));
+        assert!(!is_virtual_uri("untitled:Untitled-1"));
+        assert!(!is_virtual_uri("file:///some/treesitter-ls/file.lua"));
+    }
+
+    #[test]
+    fn definition_response_preserves_real_file_uri() {
+        let virtual_uri = "file:///.treesitter-ls/abc123/region-0.lua";
+        let real_file_uri = "file:///real/path/utils.lua";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "uri": real_file_uri,
+                "range": { "start": { "line": 10, "character": 0 }, "end": { "line": 10, "character": 5 } }
+            }]
+        });
+
+        let host_uri = "file:///doc.md";
+        let context = test_context(virtual_uri, host_uri, 5);
+        let transformed = transform_definition_response_to_host(response, &context);
+
+        assert_eq!(transformed["result"][0]["uri"], real_file_uri);
+        assert_eq!(transformed["result"][0]["range"]["start"]["line"], 10);
+    }
+
+    #[test]
+    fn definition_response_filters_out_different_region_virtual_uri() {
+        let request_virtual_uri = "file:///.treesitter-ls/abc/region-0.lua";
+        let different_virtual_uri = "file:///.treesitter-ls/abc/region-1.lua";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "uri": different_virtual_uri,
+                "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 10 } }
+            }]
+        });
+
+        let host_uri = "file:///doc.md";
+        let context = test_context(request_virtual_uri, host_uri, 5);
+
+        let transformed = transform_definition_response_to_host(response, &context);
+
+        let result = transformed["result"].as_array().unwrap();
+        assert!(
+            result.is_empty(),
+            "Cross-region virtual URI should be filtered out"
+        );
+    }
+
+    #[test]
+    fn definition_response_mixed_array_filters_only_cross_region() {
+        let request_virtual_uri = "file:///.treesitter-ls/abc/region-0.lua";
+        let cross_region_uri = "file:///.treesitter-ls/abc/region-1.lua";
+        let real_file_uri = "file:///real/utils.lua";
+
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "uri": real_file_uri,
+                    "range": { "start": { "line": 10, "character": 0 }, "end": { "line": 10, "character": 5 } }
+                },
+                {
+                    "uri": request_virtual_uri,
+                    "range": { "start": { "line": 2, "character": 0 }, "end": { "line": 2, "character": 8 } }
+                },
+                {
+                    "uri": cross_region_uri,
+                    "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 3 } }
+                }
+            ]
+        });
+
+        let host_uri = "file:///doc.md";
+        let context = test_context(request_virtual_uri, host_uri, 5);
+
+        let transformed = transform_definition_response_to_host(response, &context);
+
+        let result = transformed["result"].as_array().unwrap();
+        assert_eq!(
+            result.len(),
+            2,
+            "Should have 2 items (cross-region filtered out)"
+        );
+        assert_eq!(result[0]["uri"], real_file_uri);
+        assert_eq!(result[0]["range"]["start"]["line"], 10);
+        assert_eq!(result[1]["uri"], host_uri);
+        assert_eq!(result[1]["range"]["start"]["line"], 7);
+    }
+
+    #[test]
+    fn definition_response_single_location_filtered_becomes_null() {
+        let request_virtual_uri = "file:///.treesitter-ls/abc/region-0.lua";
+        let cross_region_uri = "file:///.treesitter-ls/abc/region-1.lua";
+
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "uri": cross_region_uri,
+                "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 5 } }
+            }
+        });
+
+        let host_uri = "file:///doc.md";
+        let context = test_context(request_virtual_uri, host_uri, 5);
+
+        let transformed = transform_definition_response_to_host(response, &context);
+
+        assert!(transformed["result"].is_null());
+    }
+
+    #[test]
+    fn definition_response_single_location_link_filtered_becomes_null() {
+        let request_virtual_uri = "file:///.treesitter-ls/abc/region-0.lua";
+        let cross_region_uri = "file:///.treesitter-ls/abc/region-1.lua";
+
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "originSelectionRange": {
+                    "start": { "line": 5, "character": 0 },
+                    "end": { "line": 5, "character": 10 }
+                },
+                "targetUri": cross_region_uri,
+                "targetRange": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 2, "character": 0 }
+                },
+                "targetSelectionRange": {
+                    "start": { "line": 0, "character": 6 },
+                    "end": { "line": 0, "character": 12 }
+                }
+            }
+        });
+
+        let host_uri = "file:///doc.md";
+        let context = test_context(request_virtual_uri, host_uri, 5);
+
+        let transformed = transform_definition_response_to_host(response, &context);
+
+        assert!(transformed["result"].is_null());
+    }
+
+    #[test]
+    fn definition_response_single_location_link_same_region_transforms() {
+        let virtual_uri = "file:///.treesitter-ls/abc/region-0.lua";
+
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "originSelectionRange": {
+                    "start": { "line": 5, "character": 0 },
+                    "end": { "line": 5, "character": 10 }
+                },
+                "targetUri": virtual_uri,
+                "targetRange": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 2, "character": 0 }
+                },
+                "targetSelectionRange": {
+                    "start": { "line": 0, "character": 6 },
+                    "end": { "line": 0, "character": 12 }
+                }
+            }
+        });
+
+        let host_uri = "file:///doc.md";
+        let context = test_context(virtual_uri, host_uri, 10);
+
+        let transformed = transform_definition_response_to_host(response, &context);
+
+        let result = &transformed["result"];
+        assert!(result.is_object());
+        assert_eq!(result["targetUri"], host_uri);
+        assert_eq!(result["targetRange"]["start"]["line"], 10);
+        assert_eq!(result["targetSelectionRange"]["start"]["line"], 10);
+        assert_eq!(result["originSelectionRange"]["start"]["line"], 5);
+    }
+
+    #[test]
+    fn definition_response_location_link_array_filters_cross_region() {
+        let request_virtual_uri = "file:///.treesitter-ls/abc/region-0.lua";
+        let cross_region_uri = "file:///.treesitter-ls/abc/region-1.lua";
+
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "originSelectionRange": { "start": { "line": 1, "character": 0 }, "end": { "line": 1, "character": 5 } },
+                    "targetUri": request_virtual_uri,
+                    "targetRange": { "start": { "line": 0, "character": 0 }, "end": { "line": 1, "character": 0 } },
+                    "targetSelectionRange": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 3 } }
+                },
+                {
+                    "originSelectionRange": { "start": { "line": 2, "character": 0 }, "end": { "line": 2, "character": 5 } },
+                    "targetUri": cross_region_uri,
+                    "targetRange": { "start": { "line": 5, "character": 0 }, "end": { "line": 6, "character": 0 } },
+                    "targetSelectionRange": { "start": { "line": 5, "character": 0 }, "end": { "line": 5, "character": 3 } }
+                }
+            ]
+        });
+
+        let host_uri = "file:///doc.md";
+        let context = test_context(request_virtual_uri, host_uri, 3);
+
+        let transformed = transform_definition_response_to_host(response, &context);
+
+        let result = transformed["result"].as_array().unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["targetUri"], host_uri);
+        assert_eq!(result[0]["targetRange"]["start"]["line"], 3);
+    }
+
+    // ==========================================================================
+    // Document highlight response transformation tests
+    // ==========================================================================
+
+    #[test]
+    fn document_highlight_response_transforms_ranges_to_host_coordinates() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "range": {
+                        "start": { "line": 0, "character": 6 },
+                        "end": { "line": 0, "character": 11 }
+                    },
+                    "kind": 1
+                },
+                {
+                    "range": {
+                        "start": { "line": 2, "character": 0 },
+                        "end": { "line": 2, "character": 5 }
+                    },
+                    "kind": 2
+                },
+                {
+                    "range": {
+                        "start": { "line": 4, "character": 0 },
+                        "end": { "line": 4, "character": 5 }
+                    }
+                }
+            ]
+        });
+        let region_start_line = 3;
+
+        let transformed =
+            transform_document_highlight_response_to_host(response, region_start_line);
+
+        let result = transformed["result"].as_array().unwrap();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0]["range"]["start"]["line"], 3);
+        assert_eq!(result[0]["range"]["end"]["line"], 3);
+        assert_eq!(result[0]["kind"], 1);
+        assert_eq!(result[1]["range"]["start"]["line"], 5);
+        assert_eq!(result[1]["range"]["end"]["line"], 5);
+        assert_eq!(result[2]["range"]["start"]["line"], 7);
+    }
+
+    #[test]
+    fn document_highlight_response_with_null_result_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+
+        let transformed = transform_document_highlight_response_to_host(response.clone(), 5);
+        assert_eq!(transformed, response);
+    }
+
+    #[test]
+    fn document_highlight_response_with_empty_array_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": [] });
+
+        let transformed = transform_document_highlight_response_to_host(response.clone(), 5);
+        let result = transformed["result"].as_array().unwrap();
+        assert!(result.is_empty());
+    }
+
+    // ==========================================================================
+    // Document link response transformation tests
+    // ==========================================================================
+
+    #[test]
+    fn document_link_response_transforms_ranges_to_host_coordinates() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "range": {
+                        "start": { "line": 0, "character": 10 },
+                        "end": { "line": 0, "character": 25 }
+                    },
+                    "target": "file:///some/module.lua"
+                },
+                {
+                    "range": {
+                        "start": { "line": 2, "character": 5 },
+                        "end": { "line": 2, "character": 15 }
+                    }
+                }
+            ]
+        });
+        let region_start_line = 5;
+
+        let transformed = transform_document_link_response_to_host(response, region_start_line);
+
+        let result = transformed["result"].as_array().unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0]["range"]["start"]["line"], 5);
+        assert_eq!(result[0]["range"]["end"]["line"], 5);
+        assert_eq!(result[0]["target"], "file:///some/module.lua");
+        assert_eq!(result[1]["range"]["start"]["line"], 7);
+        assert_eq!(result[1]["range"]["end"]["line"], 7);
+    }
+
+    #[test]
+    fn document_link_response_with_null_result_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+
+        let transformed = transform_document_link_response_to_host(response.clone(), 5);
+        assert_eq!(transformed, response);
+    }
+
+    #[test]
+    fn document_link_response_with_empty_array_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": [] });
+
+        let transformed = transform_document_link_response_to_host(response.clone(), 5);
+        let result = transformed["result"].as_array().unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn document_link_response_preserves_target_tooltip_data_unchanged() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 10 }
+                },
+                "target": "file:///target.lua",
+                "tooltip": "Go to definition",
+                "data": { "custom": "data" }
+            }]
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_document_link_response_to_host(response, region_start_line);
+
+        let result = transformed["result"].as_array().unwrap();
+        assert_eq!(result[0]["range"]["start"]["line"], 3);
+        assert_eq!(result[0]["target"], "file:///target.lua");
+        assert_eq!(result[0]["tooltip"], "Go to definition");
+        assert_eq!(result[0]["data"]["custom"], "data");
+    }
+
+    #[test]
+    fn document_link_response_without_target_transforms_range() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "range": {
+                    "start": { "line": 1, "character": 5 },
+                    "end": { "line": 1, "character": 20 }
+                }
+            }]
+        });
+        let region_start_line = 10;
+
+        let transformed = transform_document_link_response_to_host(response, region_start_line);
+
+        let result = transformed["result"].as_array().unwrap();
+        assert_eq!(result[0]["range"]["start"]["line"], 11);
+        assert_eq!(result[0]["range"]["end"]["line"], 11);
+        assert!(result[0].get("target").is_none());
+    }
+
+    // ==========================================================================
+    // WorkspaceEdit response transformation tests
+    // ==========================================================================
+
+    #[test]
+    fn workspace_edit_with_null_result_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+        let context = test_context(
+            "file:///.treesitter-ls/abc/region-0.lua",
+            "file:///doc.md",
+            5,
+        );
+
+        let transformed = transform_workspace_edit_to_host(response.clone(), &context);
+        assert_eq!(transformed, response);
+    }
+
+    #[test]
+    fn workspace_edit_transforms_textedit_ranges_in_changes_map() {
+        let virtual_uri = "file:///.treesitter-ls/abc/region-0.lua";
+        let host_uri = "file:///doc.md";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "changes": {
+                    (virtual_uri): [
+                        {
+                            "range": {
+                                "start": { "line": 0, "character": 0 },
+                                "end": { "line": 0, "character": 5 }
+                            },
+                            "newText": "renamed"
+                        },
+                        {
+                            "range": {
+                                "start": { "line": 2, "character": 10 },
+                                "end": { "line": 2, "character": 15 }
+                            },
+                            "newText": "renamed"
+                        }
+                    ]
+                }
+            }
+        });
+
+        let context = test_context(virtual_uri, host_uri, 5);
+        let transformed = transform_workspace_edit_to_host(response, &context);
+
+        let changes = &transformed["result"]["changes"];
+        assert!(changes.get(virtual_uri).is_none());
+        let host_edits = changes[host_uri].as_array().unwrap();
+        assert_eq!(host_edits.len(), 2);
+        assert_eq!(host_edits[0]["range"]["start"]["line"], 5);
+        assert_eq!(host_edits[1]["range"]["start"]["line"], 7);
+    }
+
+    #[test]
+    fn workspace_edit_replaces_virtual_uri_key_with_host_uri_in_changes() {
+        let virtual_uri = "file:///.treesitter-ls/abc/region-0.lua";
+        let host_uri = "file:///doc.md";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "changes": {
+                    (virtual_uri): [{
+                        "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 3 } },
+                        "newText": "new"
+                    }]
+                }
+            }
+        });
+
+        let context = test_context(virtual_uri, host_uri, 3);
+        let transformed = transform_workspace_edit_to_host(response, &context);
+
+        let changes = &transformed["result"]["changes"];
+        assert!(changes.get(virtual_uri).is_none());
+        assert!(changes.get(host_uri).is_some());
+    }
+
+    #[test]
+    fn workspace_edit_preserves_real_file_uris_in_changes() {
+        let virtual_uri = "file:///.treesitter-ls/abc/region-0.lua";
+        let real_file_uri = "file:///other/file.lua";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "changes": {
+                    (real_file_uri): [{
+                        "range": { "start": { "line": 10, "character": 0 }, "end": { "line": 10, "character": 5 } },
+                        "newText": "updated"
+                    }]
+                }
+            }
+        });
+
+        let context = test_context(virtual_uri, "file:///doc.md", 5);
+        let transformed = transform_workspace_edit_to_host(response, &context);
+
+        let changes = &transformed["result"]["changes"];
+        assert!(changes.get(real_file_uri).is_some());
+        assert_eq!(changes[real_file_uri][0]["range"]["start"]["line"], 10);
+    }
+
+    #[test]
+    fn workspace_edit_filters_out_cross_region_virtual_uris_in_changes() {
+        let request_virtual_uri = "file:///.treesitter-ls/abc/region-0.lua";
+        let cross_region_uri = "file:///.treesitter-ls/abc/region-1.lua";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "changes": {
+                    (cross_region_uri): [{
+                        "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 5 } },
+                        "newText": "should_be_filtered"
+                    }]
+                }
+            }
+        });
+
+        let context = test_context(request_virtual_uri, "file:///doc.md", 5);
+        let transformed = transform_workspace_edit_to_host(response, &context);
+
+        let changes = &transformed["result"]["changes"];
+        assert!(changes.get(cross_region_uri).is_none());
+    }
+
+    #[test]
+    fn workspace_edit_transforms_textedit_ranges_in_document_changes() {
+        let virtual_uri = "file:///.treesitter-ls/abc/region-0.lua";
+        let host_uri = "file:///doc.md";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "documentChanges": [{
+                    "textDocument": { "uri": virtual_uri, "version": 1 },
+                    "edits": [
+                        {
+                            "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 5 } },
+                            "newText": "renamed"
+                        },
+                        {
+                            "range": { "start": { "line": 2, "character": 10 }, "end": { "line": 2, "character": 15 } },
+                            "newText": "renamed"
+                        }
+                    ]
+                }]
+            }
+        });
+
+        let context = test_context(virtual_uri, host_uri, 5);
+        let transformed = transform_workspace_edit_to_host(response, &context);
+
+        let document_changes = transformed["result"]["documentChanges"].as_array().unwrap();
+        assert_eq!(document_changes.len(), 1);
+        assert_eq!(document_changes[0]["textDocument"]["uri"], host_uri);
+        let edits = document_changes[0]["edits"].as_array().unwrap();
+        assert_eq!(edits[0]["range"]["start"]["line"], 5);
+        assert_eq!(edits[1]["range"]["start"]["line"], 7);
+    }
+
+    #[test]
+    fn workspace_edit_replaces_virtual_uri_with_host_uri_in_document_changes() {
+        let virtual_uri = "file:///.treesitter-ls/abc/region-0.lua";
+        let host_uri = "file:///doc.md";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "documentChanges": [{
+                    "textDocument": { "uri": virtual_uri, "version": 1 },
+                    "edits": [{
+                        "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 3 } },
+                        "newText": "new"
+                    }]
+                }]
+            }
+        });
+
+        let context = test_context(virtual_uri, host_uri, 3);
+        let transformed = transform_workspace_edit_to_host(response, &context);
+
+        let document_changes = transformed["result"]["documentChanges"].as_array().unwrap();
+        assert_eq!(document_changes[0]["textDocument"]["uri"], host_uri);
+    }
+
+    #[test]
+    fn workspace_edit_preserves_real_file_uris_in_document_changes() {
+        let virtual_uri = "file:///.treesitter-ls/abc/region-0.lua";
+        let real_file_uri = "file:///other/file.lua";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "documentChanges": [{
+                    "textDocument": { "uri": real_file_uri, "version": 1 },
+                    "edits": [{
+                        "range": { "start": { "line": 10, "character": 0 }, "end": { "line": 10, "character": 5 } },
+                        "newText": "updated"
+                    }]
+                }]
+            }
+        });
+
+        let context = test_context(virtual_uri, "file:///doc.md", 5);
+        let transformed = transform_workspace_edit_to_host(response, &context);
+
+        let document_changes = transformed["result"]["documentChanges"].as_array().unwrap();
+        assert_eq!(document_changes[0]["textDocument"]["uri"], real_file_uri);
+        assert_eq!(
+            document_changes[0]["edits"][0]["range"]["start"]["line"],
+            10
+        );
+    }
+
+    #[test]
+    fn workspace_edit_filters_out_cross_region_virtual_uris_in_document_changes() {
+        let request_virtual_uri = "file:///.treesitter-ls/abc/region-0.lua";
+        let cross_region_uri = "file:///.treesitter-ls/abc/region-1.lua";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "documentChanges": [{
+                    "textDocument": { "uri": cross_region_uri, "version": 1 },
+                    "edits": [{
+                        "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 5 } },
+                        "newText": "should_be_filtered"
+                    }]
+                }]
+            }
+        });
+
+        let context = test_context(request_virtual_uri, "file:///doc.md", 5);
+        let transformed = transform_workspace_edit_to_host(response, &context);
+
+        let document_changes = transformed["result"]["documentChanges"].as_array().unwrap();
+        assert!(document_changes.is_empty());
+    }
+}
