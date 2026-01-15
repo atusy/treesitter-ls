@@ -56,7 +56,19 @@ const scrum: ScrumDashboard = {
         { criterion: "Request position transformed to virtual coordinates", verification: "Unit test" },
       ], status: "ready", refinement_notes: ["Response has no position data", "Pass-through response"] },
   ],
-  sprint: null,
+  sprint: {
+    number: 5,
+    pbi_id: "pbi-inlay-hints",
+    goal: "Bridge textDocument/inlayHint with bidirectional coordinate transformation",
+    status: "in_progress",
+    subtasks: [
+      { test: "InlayHintParams range transforms to virtual coordinates", implementation: "Request builder with range transformation", type: "behavioral", status: "pending", commits: [], notes: ["Hybrid pattern: position-based (single region) but with range input"] },
+      { test: "InlayHint position transforms to host coordinates", implementation: "Response transformer for hint position", type: "behavioral", status: "pending", commits: [], notes: ["Each hint has single position field"] },
+      { test: "InlayHint textEdits ranges transform to host coordinates", implementation: "Response transformer handles optional textEdits", type: "behavioral", status: "pending", commits: [], notes: ["textEdits is optional Vec<TextEdit>, transform when present"] },
+      { test: "Pool.inlay_hints delegates to downstream server", implementation: "Add inlay_hints method to LanguageServerPool", type: "behavioral", status: "pending", commits: [], notes: ["Similar pattern to existing pool methods"] },
+      { test: "E2E: inlay hints from Lua block in markdown", implementation: "Handler wiring in lsp_impl", type: "behavioral", status: "pending", commits: [], notes: ["Wire request through to pool, verify coordinate transformation end-to-end"] },
+    ],
+  },
   completed: [
     { number: 1, pbi_id: "pbi-document-highlight", goal: "Bridge textDocument/documentHighlight to downstream LS", status: "done", subtasks: [] },
     { number: 2, pbi_id: "pbi-rename", goal: "Bridge textDocument/rename with WorkspaceEdit transformation", status: "done", subtasks: [] },
