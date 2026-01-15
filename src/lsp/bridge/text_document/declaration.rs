@@ -41,20 +41,19 @@ impl LanguageServerPool {
         let handle = self
             .get_or_create_connection(injection_language, server_config)
             .await?;
-        let mut conn = handle.connection().await;
 
         // Build virtual document URI
         let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
         let virtual_uri_string = virtual_uri.to_uri_string();
 
-        // Send didOpen notification only if document hasn't been opened yet
-        if self.should_send_didopen(host_uri, &virtual_uri).await {
-            let did_open = build_bridge_didopen_notification(&virtual_uri, virtual_content);
-            conn.write_message(&did_open).await?;
-        }
-
-        // Build and send declaration request using upstream ID (ADR-0016)
+        // Build request ID and register with router BEFORE sending
         let request_id = RequestId::new(upstream_request_id);
+        let response_rx = handle
+            .router()
+            .register(request_id)
+            .ok_or_else(|| io::Error::other("duplicate request ID"))?;
+
+        // Build declaration request
         let declaration_request = build_bridge_declaration_request(
             host_uri,
             host_position,
@@ -63,7 +62,19 @@ impl LanguageServerPool {
             region_start_line,
             request_id,
         );
-        conn.write_message(&declaration_request).await?;
+
+        // Send messages while holding writer lock, then release
+        {
+            let mut writer = handle.writer().await;
+
+            // Send didOpen notification only if document hasn't been opened yet
+            if self.should_send_didopen(host_uri, &virtual_uri).await {
+                let did_open = build_bridge_didopen_notification(&virtual_uri, virtual_content);
+                writer.write_message(&did_open).await?;
+            }
+
+            writer.write_message(&declaration_request).await?;
+        } // writer lock released here
 
         // Build transformation context for response handling
         let context = ResponseTransformContext {
@@ -72,8 +83,10 @@ impl LanguageServerPool {
             request_region_start_line: region_start_line,
         };
 
-        // Wait for the declaration response (skip notifications)
-        let response = conn.wait_for_response(request_id).await?;
+        // Wait for response via oneshot channel (no Mutex held)
+        let response = response_rx
+            .await
+            .map_err(|_| io::Error::other("response channel closed"))?;
 
         // Transform response to host coordinates and URI
         // Reuse transform_definition_response_to_host (same Location/LocationLink format per LSP spec)

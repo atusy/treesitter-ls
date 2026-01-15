@@ -53,8 +53,8 @@ impl LanguageServerPool {
             }
         });
 
-        let mut conn = handle.connection().await;
-        conn.write_message(&notification).await
+        let mut writer = handle.writer().await;
+        writer.write_message(&notification).await
     }
 
     /// Close a single virtual document: send didClose and remove from tracking.

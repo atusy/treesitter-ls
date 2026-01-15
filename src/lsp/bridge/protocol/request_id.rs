@@ -41,14 +41,6 @@ impl RequestId {
     pub(crate) fn from_json(message: &serde_json::Value) -> Option<Self> {
         message.get("id")?.as_i64().map(Self)
     }
-
-    /// Check if a JSON-RPC message's ID matches this RequestId.
-    ///
-    /// Returns `true` if the message has an "id" field that matches.
-    /// Convenience method for response matching loops.
-    pub(crate) fn matches(&self, message: &serde_json::Value) -> bool {
-        Self::from_json(message) == Some(*self)
-    }
 }
 
 impl From<i64> for RequestId {
@@ -129,26 +121,5 @@ mod tests {
         let msg = json!({"jsonrpc": "2.0", "id": null, "result": null});
         let id = RequestId::from_json(&msg);
         assert_eq!(id, None);
-    }
-
-    #[test]
-    fn request_id_matches_correct_id() {
-        let id = RequestId::new(42);
-        let msg = json!({"jsonrpc": "2.0", "id": 42, "result": null});
-        assert!(id.matches(&msg));
-    }
-
-    #[test]
-    fn request_id_does_not_match_different_id() {
-        let id = RequestId::new(42);
-        let msg = json!({"jsonrpc": "2.0", "id": 99, "result": null});
-        assert!(!id.matches(&msg));
-    }
-
-    #[test]
-    fn request_id_does_not_match_notification() {
-        let id = RequestId::new(42);
-        let msg = json!({"jsonrpc": "2.0", "method": "initialized", "params": {}});
-        assert!(!id.matches(&msg));
     }
 }

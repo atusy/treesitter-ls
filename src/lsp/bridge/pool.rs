@@ -25,20 +25,26 @@ const INIT_TIMEOUT_SECS: u64 = 30;
 /// State of a downstream language server connection.
 ///
 /// Tracks the lifecycle of the LSP handshake per ADR-0015:
-/// - Initializing: spawn started, awaiting initialize response
 /// - Ready: initialize/initialized handshake complete, can accept requests
-/// - Failed: initialization failed (timeout, error, etc.)
+/// - Initializing (test-only): spawn started, awaiting initialize response
+/// - Failed (test-only): initialization failed (timeout, error, etc.)
+///
+/// Note: Initializing and Failed are currently only constructed in tests
+/// to verify concurrent access handling. Production code always starts in Ready.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ConnectionState {
-    /// Server spawned, initialize request sent, awaiting response
-    Initializing,
     /// Initialize/initialized handshake complete, ready for requests
     Ready,
-    /// Initialization failed (timeout, error, server crash)
+    /// Server spawned, initialize request sent, awaiting response (test-only)
+    #[cfg(test)]
+    Initializing,
+    /// Initialization failed (timeout, error, server crash) (test-only)
+    #[cfg(test)]
     Failed,
 }
 
-use super::connection::AsyncBridgeConnection;
+use super::actor::{ReaderTaskHandle, ResponseRouter, spawn_reader_task};
+use super::connection::{AsyncBridgeConnection, SplitConnectionWriter};
 
 /// Represents an opened virtual document for tracking.
 ///
@@ -58,21 +64,43 @@ pub(crate) struct OpenedVirtualDoc {
 /// - Ready: initialize/initialized handshake complete
 /// - Failed: initialization failed (timeout, error, etc.)
 ///
-/// This design ensures state is atomically tied to the connection,
-/// preventing race conditions between state checks and connection access.
+/// # Architecture (ADR-0015 Phase A)
+///
+/// Uses Reader Task separation for non-blocking response waiting:
+/// - `writer`: Mutex-protected for serialized request sending
+/// - `router`: Routes responses to oneshot waiters
+/// - `reader_handle`: Background task reading from stdout
+///
+/// Request flow:
+/// 1. Register request ID with router to get oneshot receiver
+/// 2. Lock writer, send request, release lock
+/// 3. Await oneshot receiver (no Mutex held)
 pub(crate) struct ConnectionHandle {
     /// Connection state - uses std::sync::RwLock for fast, synchronous state checks
     state: std::sync::RwLock<ConnectionState>,
-    /// Async connection to downstream language server
-    connection: tokio::sync::Mutex<AsyncBridgeConnection>,
+    /// Writer for sending messages (Mutex serializes writes)
+    writer: tokio::sync::Mutex<SplitConnectionWriter>,
+    /// Router for pending request tracking
+    router: Arc<ResponseRouter>,
+    /// Handle to the reader task (for graceful shutdown on drop)
+    _reader_handle: ReaderTaskHandle,
 }
 
 impl ConnectionHandle {
-    /// Create a new ConnectionHandle with initial Initializing state.
-    pub(crate) fn new(connection: AsyncBridgeConnection) -> Self {
+    /// Create a new ConnectionHandle from split connection components.
+    ///
+    /// This spawns the Reader Task and sets up response routing.
+    /// Initial state is set to Ready (caller has completed initialization).
+    pub(crate) fn new(
+        writer: SplitConnectionWriter,
+        router: Arc<ResponseRouter>,
+        reader_handle: ReaderTaskHandle,
+    ) -> Self {
         Self {
-            state: std::sync::RwLock::new(ConnectionState::Initializing),
-            connection: tokio::sync::Mutex::new(connection),
+            state: std::sync::RwLock::new(ConnectionState::Ready),
+            writer: tokio::sync::Mutex::new(writer),
+            router,
+            _reader_handle: reader_handle,
         }
     }
 
@@ -93,11 +121,12 @@ impl ConnectionHandle {
         }
     }
 
-    /// Set the connection state.
+    /// Set the connection state (test-only).
     ///
-    /// Used during initialization to transition to Ready or Failed.
+    /// Used in tests to simulate various connection states (Initializing, Failed).
     /// Recovers from poisoned locks with logging per project convention.
-    pub(crate) fn set_state(&self, new_state: ConnectionState) {
+    #[cfg(test)]
+    fn set_state(&self, new_state: ConnectionState) {
         match self.state.write() {
             Ok(mut guard) => *guard = new_state,
             Err(poisoned) => {
@@ -110,11 +139,16 @@ impl ConnectionHandle {
         }
     }
 
-    /// Get access to the underlying async connection.
+    /// Get access to the writer for sending messages.
     ///
-    /// Returns the tokio::sync::MutexGuard for async I/O operations.
-    pub(crate) async fn connection(&self) -> tokio::sync::MutexGuard<'_, AsyncBridgeConnection> {
-        self.connection.lock().await
+    /// Returns the tokio::sync::MutexGuard for exclusive write access.
+    pub(crate) async fn writer(&self) -> tokio::sync::MutexGuard<'_, SplitConnectionWriter> {
+        self.writer.lock().await
+    }
+
+    /// Get the response router for registering pending requests.
+    pub(crate) fn router(&self) -> &Arc<ResponseRouter> {
+        &self.router
     }
 }
 
@@ -320,21 +354,33 @@ impl LanguageServerPool {
     ///
     /// Returns the ConnectionHandle which wraps both the connection and its state.
     /// State transitions are atomic with connection creation (ADR-0015).
+    ///
+    /// # Architecture (ADR-0015 Phase A)
+    ///
+    /// After successful initialization:
+    /// 1. Connection is split into writer + reader
+    /// 2. Reader Task is spawned with ResponseRouter
+    /// 3. ConnectionHandle is created with Ready state
     async fn get_or_create_connection_with_timeout(
         &self,
         language: &str,
         server_config: &crate::config::settings::BridgeServerConfig,
         timeout: Duration,
     ) -> io::Result<Arc<ConnectionHandle>> {
+        #[cfg(test)]
         let mut connections = self.connections.lock().await;
+        #[cfg(not(test))]
+        let connections = self.connections.lock().await;
 
         // Check if we already have a connection for this language
         if let Some(handle) = connections.get(language) {
             // Check state atomically with connection lookup (fixes race condition)
             match handle.state() {
+                #[cfg(test)]
                 ConnectionState::Initializing => {
                     return Err(io::Error::other("bridge: downstream server initializing"));
                 }
+                #[cfg(test)]
                 ConnectionState::Failed => {
                     // Remove failed connection, allow respawn on next attempt
                     connections.remove(language);
@@ -353,19 +399,12 @@ impl LanguageServerPool {
             }
         }
 
-        // Spawn new connection - state starts as Initializing via ConnectionHandle::new()
-        let conn = AsyncBridgeConnection::spawn(server_config.cmd.clone()).await?;
-        let handle = Arc::new(ConnectionHandle::new(conn));
-
-        // Insert handle into map while still initializing
-        // This allows other requests to see the Initializing state
-        connections.insert(language.to_string(), Arc::clone(&handle));
-
         // Drop the connections lock before doing I/O
+        // (We'll re-acquire it when inserting the handle)
         drop(connections);
 
-        // Get mutable access to connection for initialization handshake
-        let mut conn_guard = handle.connection().await;
+        // Spawn new connection
+        let mut conn = AsyncBridgeConnection::spawn(server_config.cmd.clone()).await?;
 
         // Perform LSP initialize handshake with timeout
         // Note: The initialize request ID is internal (not client-facing),
@@ -383,11 +422,11 @@ impl LanguageServerPool {
                 }
             });
 
-            conn_guard.write_message(&init_request).await?;
+            conn.write_message(&init_request).await?;
 
             // Read initialize response (skip any notifications)
             loop {
-                let msg = conn_guard.read_message().await?;
+                let msg = conn.read_message().await?;
                 if msg.get("id").is_some() {
                     // Got the initialize response
                     if msg.get("error").is_some() {
@@ -407,31 +446,35 @@ impl LanguageServerPool {
                 "method": "initialized",
                 "params": {}
             });
-            conn_guard.write_message(&initialized).await?;
+            conn.write_message(&initialized).await?;
 
             Ok::<_, io::Error>(())
         })
         .await;
 
-        // Drop the connection guard before handling result
-        // This is required by the borrow checker - we can't return handle while conn_guard exists
-        drop(conn_guard);
-
         // Handle initialization result
         match init_result {
             Ok(Ok(())) => {
-                // Init succeeded - set state to Ready (atomic with handle)
-                handle.set_state(ConnectionState::Ready);
+                // Init succeeded - split connection and spawn reader task
+                let (writer, reader) = conn.split();
+                let router = Arc::new(ResponseRouter::new());
+                let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
+
+                // Create handle with Ready state
+                let handle = Arc::new(ConnectionHandle::new(writer, router, reader_handle));
+
+                // Insert into pool (re-acquire lock)
+                let mut connections = self.connections.lock().await;
+                connections.insert(language.to_string(), Arc::clone(&handle));
+
                 Ok(handle)
             }
             Ok(Err(e)) => {
-                // Init failed with io::Error - set state to Failed
-                handle.set_state(ConnectionState::Failed);
+                // Init failed with io::Error - connection will be dropped
                 Err(e)
             }
             Err(_elapsed) => {
-                // Timeout occurred - set state to Failed
-                handle.set_state(ConnectionState::Failed);
+                // Timeout occurred - connection will be dropped
                 Err(io::Error::new(
                     io::ErrorKind::TimedOut,
                     "Initialize timeout: downstream server unresponsive",
@@ -454,11 +497,12 @@ mod tests {
     const TEST_ULID_PYTHON_0: &str = "01JPMQ8ZYYQA1W3AVPW4JDRZFT";
 
     /// Test that ConnectionHandle wraps connection with state (ADR-0015).
-    /// State should start as Initializing, and can transition via set_state().
+    /// State should start as Ready (since constructor is called after init handshake),
+    /// and can transition via set_state().
     #[tokio::test]
     async fn connection_handle_wraps_connection_with_state() {
         // Create a mock server process to get a real connection
-        let conn = AsyncBridgeConnection::spawn(vec![
+        let mut conn = AsyncBridgeConnection::spawn(vec![
             "sh".to_string(),
             "-c".to_string(),
             "cat".to_string(),
@@ -466,22 +510,19 @@ mod tests {
         .await
         .expect("should spawn cat process");
 
+        // Split connection and spawn reader task (new architecture)
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
+
         // Wrap in ConnectionHandle
-        let handle = ConnectionHandle::new(conn);
+        let handle = ConnectionHandle::new(writer, router, reader_handle);
 
-        // Initial state should be Initializing
-        assert_eq!(
-            handle.state(),
-            ConnectionState::Initializing,
-            "Initial state should be Initializing"
-        );
-
-        // Can transition to Ready
-        handle.set_state(ConnectionState::Ready);
+        // Initial state should be Ready (ConnectionHandle is created after init handshake)
         assert_eq!(
             handle.state(),
             ConnectionState::Ready,
-            "State should transition to Ready"
+            "Initial state should be Ready"
         );
 
         // Can transition to Failed
@@ -492,9 +533,13 @@ mod tests {
             "State should transition to Failed"
         );
 
-        // Can access connection
-        let _conn_guard = handle.connection().await;
-        // Connection is accessible (test passes if no panic)
+        // Can access writer
+        let _writer_guard = handle.writer().await;
+        // Writer is accessible (test passes if no panic)
+
+        // Can access router
+        let _router = handle.router();
+        // Router is accessible (test passes if no panic)
     }
 
     /// Test that LanguageServerPool starts with no connections.
@@ -518,14 +563,20 @@ mod tests {
     /// Helper to create a ConnectionHandle in a specific state for testing.
     async fn create_handle_with_state(state: ConnectionState) -> Arc<ConnectionHandle> {
         // Create a mock server process to get a real connection
-        let conn = AsyncBridgeConnection::spawn(vec![
+        let mut conn = AsyncBridgeConnection::spawn(vec![
             "sh".to_string(),
             "-c".to_string(),
             "cat".to_string(),
         ])
         .await
         .expect("should spawn cat process");
-        let handle = Arc::new(ConnectionHandle::new(conn));
+
+        // Split connection and spawn reader task (new architecture)
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
+
+        let handle = Arc::new(ConnectionHandle::new(writer, router, reader_handle));
         handle.set_state(state);
         handle
     }
@@ -787,9 +838,14 @@ mod tests {
         );
     }
 
-    /// Test that ConnectionState transitions to Failed on timeout
+    /// Test that timeout returns error and does NOT cache connection
+    ///
+    /// With the Reader Task architecture (ADR-0015 Phase A), failed connections
+    /// are NOT cached. A ConnectionHandle requires a successfully split connection
+    /// with a running reader task. On timeout, the connection is dropped and
+    /// subsequent retries spawn fresh connections.
     #[tokio::test]
-    async fn connection_state_transitions_to_failed_on_timeout() {
+    async fn connection_not_cached_on_timeout() {
         let pool = LanguageServerPool::new();
         let config = BridgeServerConfig {
             cmd: vec![
@@ -803,19 +859,24 @@ mod tests {
         };
 
         // Attempt connection with short timeout (will fail)
-        let _ = pool
+        let result = pool
             .get_or_create_connection_with_timeout("test", &config, Duration::from_millis(100))
             .await;
 
-        // After timeout, state should be Failed (via ConnectionHandle)
-        let connections = pool.connections.lock().await;
-        let handle = connections
-            .get("test")
-            .expect("Connection handle should exist after timeout");
+        // Should return timeout error
+        assert!(result.is_err(), "Should fail with timeout");
         assert_eq!(
-            handle.state(),
-            ConnectionState::Failed,
-            "State should be Failed after timeout"
+            result.err().unwrap().kind(),
+            io::ErrorKind::TimedOut,
+            "Error should be TimedOut"
+        );
+
+        // With Reader Task architecture, failed connections are NOT cached
+        // (A ConnectionHandle requires a valid writer/router/reader_handle)
+        let connections = pool.connections.lock().await;
+        assert!(
+            !connections.contains_key("test"),
+            "Failed connection should NOT be cached (Reader Task architecture)"
         );
     }
 
@@ -1033,18 +1094,17 @@ mod tests {
             "Error should be TimedOut"
         );
 
-        // Verify Failed state is cached
+        // With Reader Task architecture, failed connections are NOT cached
+        // (A ConnectionHandle requires a valid writer/router/reader_handle)
         {
             let connections = pool.connections.lock().await;
-            let handle = connections.get("lua").expect("Should have cached handle");
-            assert_eq!(
-                handle.state(),
-                ConnectionState::Failed,
-                "Should be Failed after timeout"
+            assert!(
+                !connections.contains_key("lua"),
+                "Failed connection should NOT be cached (Reader Task architecture)"
             );
         }
 
-        // Phase 2: Second attempt with working server - should recover
+        // Phase 2: Second attempt with working server - should succeed immediately
         let working_config = BridgeServerConfig {
             cmd: vec!["lua-language-server".to_string()],
             languages: vec!["lua".to_string()],
@@ -1474,8 +1534,8 @@ mod tests {
             .await
             .insert("lua".to_string(), Arc::clone(&handle));
 
-        // Hold the connection lock to simulate an in-flight request.
-        let _conn_guard = handle.connection().await;
+        // Hold the writer lock to simulate an in-flight request.
+        let _writer_guard = handle.writer().await;
 
         let injections = vec![(
             "lua".to_string(),
@@ -1596,13 +1656,18 @@ mod tests {
         }
     }
 
-    /// Test that ConnectionHandle IS cached after timeout with Failed state.
+    /// Test that ConnectionHandle is NOT cached after timeout.
     ///
-    /// When initialization times out, the ConnectionHandle is stored in the pool
-    /// with Failed state. This allows subsequent requests to fail fast without
-    /// attempting to spawn a new connection.
+    /// With the Reader Task architecture (ADR-0015 Phase A), failed connections
+    /// are NOT cached because a ConnectionHandle requires:
+    /// - A successfully split connection (writer + reader)
+    /// - A running reader task
+    /// - A response router
+    ///
+    /// When initialization times out, the connection is dropped and subsequent
+    /// requests will spawn a fresh connection.
     #[tokio::test]
-    async fn connection_handle_cached_with_failed_state_after_timeout() {
+    async fn connection_handle_not_cached_after_timeout() {
         let pool = LanguageServerPool::new();
         let config = BridgeServerConfig {
             cmd: vec![
@@ -1621,17 +1686,11 @@ mod tests {
             .await;
         assert!(result.is_err(), "First attempt should fail with timeout");
 
-        // ConnectionHandle should be cached with Failed state
+        // With Reader Task architecture, ConnectionHandle is NOT cached after timeout
         let connections = pool.connections.lock().await;
         assert!(
-            connections.contains_key("test"),
-            "ConnectionHandle should be cached after timeout"
-        );
-        let handle = connections.get("test").unwrap();
-        assert_eq!(
-            handle.state(),
-            ConnectionState::Failed,
-            "Cached handle should have Failed state"
+            !connections.contains_key("test"),
+            "ConnectionHandle should NOT be cached after timeout (Reader Task architecture)"
         );
     }
 

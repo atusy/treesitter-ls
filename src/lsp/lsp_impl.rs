@@ -1923,15 +1923,13 @@ mod tests {
 
             if let Some(resolved_config) =
                 resolve_language_server_with_wildcard(&servers, server_name)
-            {
-                if resolved_config
+                && resolved_config
                     .languages
                     .iter()
                     .any(|l| l == injection_language)
-                {
-                    found_server = Some(resolved_config);
-                    break;
-                }
+            {
+                found_server = Some(resolved_config);
+                break;
             }
         }
 

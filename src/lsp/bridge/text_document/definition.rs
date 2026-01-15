@@ -20,8 +20,9 @@ impl LanguageServerPool {
     /// This is a convenience method that handles the full request/response cycle:
     /// 1. Get or create a connection (state check is atomic with lookup - ADR-0015)
     /// 2. Send a textDocument/didOpen notification if needed
-    /// 3. Send the definition request
-    /// 4. Wait for and return the response
+    /// 3. Register request with router to get oneshot receiver
+    /// 4. Send the definition request (release writer lock after)
+    /// 5. Wait for response via oneshot channel (no Mutex held)
     ///
     /// The `upstream_request_id` parameter is the request ID from the upstream client,
     /// passed through unchanged to the downstream server per ADR-0016.
@@ -41,20 +42,19 @@ impl LanguageServerPool {
         let handle = self
             .get_or_create_connection(injection_language, server_config)
             .await?;
-        let mut conn = handle.connection().await;
 
         // Build virtual document URI
         let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
         let virtual_uri_string = virtual_uri.to_uri_string();
 
-        // Send didOpen notification only if document hasn't been opened yet
-        if self.should_send_didopen(host_uri, &virtual_uri).await {
-            let did_open = build_bridge_didopen_notification(&virtual_uri, virtual_content);
-            conn.write_message(&did_open).await?;
-        }
-
-        // Build and send definition request using upstream ID (ADR-0016)
+        // Build request ID and register with router BEFORE sending
         let request_id = RequestId::new(upstream_request_id);
+        let response_rx = handle
+            .router()
+            .register(request_id)
+            .ok_or_else(|| io::Error::other("duplicate request ID"))?;
+
+        // Build definition request
         let definition_request = build_bridge_definition_request(
             host_uri,
             host_position,
@@ -63,7 +63,19 @@ impl LanguageServerPool {
             region_start_line,
             request_id,
         );
-        conn.write_message(&definition_request).await?;
+
+        // Send messages while holding writer lock, then release
+        {
+            let mut writer = handle.writer().await;
+
+            // Send didOpen notification only if document hasn't been opened yet
+            if self.should_send_didopen(host_uri, &virtual_uri).await {
+                let did_open = build_bridge_didopen_notification(&virtual_uri, virtual_content);
+                writer.write_message(&did_open).await?;
+            }
+
+            writer.write_message(&definition_request).await?;
+        } // writer lock released here
 
         // Build transformation context for response handling
         let context = ResponseTransformContext {
@@ -72,8 +84,10 @@ impl LanguageServerPool {
             request_region_start_line: region_start_line,
         };
 
-        // Wait for the definition response (skip notifications)
-        let response = conn.wait_for_response(request_id).await?;
+        // Wait for response via oneshot channel (no Mutex held)
+        let response = response_rx
+            .await
+            .map_err(|_| io::Error::other("response channel closed"))?;
 
         // Transform response to host coordinates and URI
         // Cross-region virtual URIs are filtered out

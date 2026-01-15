@@ -19,8 +19,6 @@ use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
-use super::protocol::RequestId;
-
 /// Writer handle for sending LSP messages to downstream language server.
 ///
 /// Wraps `ChildStdin` to provide LSP message framing (Content-Length header).
@@ -49,10 +47,19 @@ impl BridgeWriter {
 /// Reader handle for receiving LSP messages from downstream language server.
 ///
 /// Wraps `BufReader<ChildStdout>` to provide LSP message parsing.
-/// This type will be moved to a dedicated Reader Task (ADR-0015) for
-/// non-blocking response routing via `pending_requests` HashMap.
+/// This type is used by the Reader Task (ADR-0015) for
+/// non-blocking response routing via ResponseRouter.
 pub(crate) struct BridgeReader {
     stdout: BufReader<ChildStdout>,
+}
+
+impl BridgeReader {
+    /// Create a new BridgeReader from a ChildStdout.
+    pub(crate) fn new(stdout: ChildStdout) -> Self {
+        Self {
+            stdout: BufReader::new(stdout),
+        }
+    }
 }
 
 impl BridgeReader {
@@ -90,34 +97,6 @@ impl BridgeReader {
         let body = self.read_message_bytes().await?;
         serde_json::from_slice(&body).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
-
-    /// Wait for a response with the given request ID, skipping notifications.
-    ///
-    /// This method reads messages from stdout in a loop until it finds a response
-    /// matching the specified request ID. Notifications (messages without an "id" field)
-    /// are silently skipped.
-    ///
-    /// # Arguments
-    /// * `request_id` - The request ID to wait for
-    ///
-    /// # Returns
-    /// The JSON-RPC response message matching the request ID.
-    ///
-    /// # Note
-    /// This method will be replaced by oneshot channel waiting when Reader Task
-    /// is introduced (ADR-0015 Phase A).
-    pub(crate) async fn wait_for_response(
-        &mut self,
-        request_id: RequestId,
-    ) -> io::Result<serde_json::Value> {
-        loop {
-            let msg = self.read_message().await?;
-            if request_id.matches(&msg) {
-                return Ok(msg);
-            }
-            // Skip notifications and other responses
-        }
-    }
 }
 
 /// Async connection to a downstream language server process.
@@ -125,20 +104,51 @@ impl BridgeReader {
 /// Manages the lifecycle of a child process running a language server,
 /// providing async I/O for LSP JSON-RPC communication over stdio.
 ///
-/// # Architecture (ADR-0014)
+/// # Architecture (ADR-0015)
 ///
-/// - Uses `tokio::process::Command` for process spawning
-/// - Dedicated async reader task with `select!` for cancellation
-/// - Pending request tracking via `DashMap<RequestId, oneshot::Sender>`
+/// This type can be split into separate writer and reader components:
+/// - Writer stays with the connection for serialized request sending
+/// - Reader moves to a dedicated Reader Task for non-blocking response routing
 ///
-/// # Internal Structure
-///
-/// Internally delegates to `BridgeWriter` and `BridgeReader` for I/O operations.
-/// This separation prepares for Reader Task introduction (ADR-0015).
+/// Use `split()` to separate writer and reader after initialization.
 pub(crate) struct AsyncBridgeConnection {
+    child: Option<Child>,         // Option to support taking for split()
+    writer: Option<BridgeWriter>, // Option to support taking for split()
+    reader: Option<BridgeReader>, // Option to support taking for Reader Task
+}
+
+/// Writer half of a split connection.
+///
+/// Owns the child process and writer. Dropping this kills the child process.
+pub(crate) struct SplitConnectionWriter {
     child: Child,
     writer: BridgeWriter,
-    reader: BridgeReader,
+}
+
+impl SplitConnectionWriter {
+    /// Write a JSON-RPC message to the child process stdin.
+    pub(crate) async fn write_message(&mut self, message: &serde_json::Value) -> io::Result<()> {
+        self.writer.write_message(message).await
+    }
+}
+
+impl Drop for SplitConnectionWriter {
+    fn drop(&mut self) {
+        // Kill the child process to prevent orphans (AC3)
+        if let Err(e) = self.child.start_kill() {
+            log::warn!(
+                target: "treesitter_ls::bridge",
+                "Failed to kill child process: {}",
+                e
+            );
+        } else {
+            log::debug!(
+                target: "treesitter_ls::bridge",
+                "Killed child process {:?}",
+                self.child.id()
+            );
+        }
+    }
 }
 
 impl AsyncBridgeConnection {
@@ -172,59 +182,85 @@ impl AsyncBridgeConnection {
             .ok_or_else(|| io::Error::other("failed to capture stdout"))?;
 
         Ok(Self {
-            child,
-            writer: BridgeWriter { stdin },
-            reader: BridgeReader {
-                stdout: BufReader::new(stdout),
-            },
+            child: Some(child),
+            writer: Some(BridgeWriter { stdin }),
+            reader: Some(BridgeReader::new(stdout)),
         })
+    }
+
+    /// Split into separate writer and reader components.
+    ///
+    /// This takes ownership of the internal components and returns:
+    /// - `SplitConnectionWriter`: For sending messages (holds child process)
+    /// - `BridgeReader`: For receiving messages (goes to Reader Task)
+    ///
+    /// # Panics
+    /// Panics if called more than once (components already taken).
+    pub(crate) fn split(&mut self) -> (SplitConnectionWriter, BridgeReader) {
+        let reader = self
+            .reader
+            .take()
+            .expect("split() called after reader was already taken");
+
+        let child = self
+            .child
+            .take()
+            .expect("split() called after child was already taken");
+
+        let writer_inner = self
+            .writer
+            .take()
+            .expect("split() called after writer was already taken");
+
+        let writer = SplitConnectionWriter {
+            child,
+            writer: writer_inner,
+        };
+
+        (writer, reader)
     }
 
     /// Write a JSON-RPC message to the child process stdin.
     ///
     /// Delegates to internal `BridgeWriter`.
+    /// Returns error if the writer has been taken (via split()).
     pub(crate) async fn write_message(&mut self, message: &serde_json::Value) -> io::Result<()> {
-        self.writer.write_message(message).await
+        match &mut self.writer {
+            Some(writer) => writer.write_message(message).await,
+            None => Err(io::Error::other("writer has been taken")),
+        }
     }
 
     /// Read and parse a JSON-RPC message from the child process stdout.
     ///
     /// Delegates to internal `BridgeReader`.
+    /// Returns None if the reader has been taken (via split()).
     pub(crate) async fn read_message(&mut self) -> io::Result<serde_json::Value> {
-        self.reader.read_message().await
-    }
-
-    /// Wait for a response with the given request ID, skipping notifications.
-    ///
-    /// Delegates to internal `BridgeReader`.
-    ///
-    /// # Note
-    /// This method will be replaced by oneshot channel waiting when Reader Task
-    /// is introduced (ADR-0015 Phase A).
-    pub(crate) async fn wait_for_response(
-        &mut self,
-        request_id: RequestId,
-    ) -> io::Result<serde_json::Value> {
-        self.reader.wait_for_response(request_id).await
+        match &mut self.reader {
+            Some(reader) => reader.read_message().await,
+            None => Err(io::Error::other("reader has been taken")),
+        }
     }
 }
 
 impl Drop for AsyncBridgeConnection {
     fn drop(&mut self) {
         // Kill the child process to prevent orphans (AC3)
-        // start_kill() is non-blocking and signals the process to terminate
-        if let Err(e) = self.child.start_kill() {
-            log::warn!(
-                target: "treesitter_ls::bridge",
-                "Failed to kill child process: {}",
-                e
-            );
-        } else {
-            log::debug!(
-                target: "treesitter_ls::bridge",
-                "Killed child process {:?}",
-                self.child.id()
-            );
+        // Child may be None if split() was called
+        if let Some(ref mut child) = self.child {
+            if let Err(e) = child.start_kill() {
+                log::warn!(
+                    target: "treesitter_ls::bridge",
+                    "Failed to kill child process: {}",
+                    e
+                );
+            } else {
+                log::debug!(
+                    target: "treesitter_ls::bridge",
+                    "Killed child process {:?}",
+                    child.id()
+                );
+            }
         }
     }
 }

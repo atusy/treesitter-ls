@@ -2575,7 +2575,6 @@ mod tests {
             .map(|thread_id| {
                 let tracker = Arc::clone(&tracker);
                 let uri = uri.clone();
-                let stable_ulid = stable_ulid;
 
                 thread::spawn(move || {
                     let mut results = Vec::new();

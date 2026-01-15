@@ -5,10 +5,12 @@
 //!
 //! # Module Structure
 //!
+//! - `actor` - Actor components (ResponseRouter, Reader task) for async I/O (ADR-0015)
 //! - `connection` - AsyncBridgeConnection for process spawning and I/O
 //! - `protocol` - VirtualDocumentUri, request building, and response transformation
 //! - `pool` - LanguageServerPool for server pool coordination (ADR-0016)
 
+mod actor;
 mod connection;
 mod pool;
 mod protocol;

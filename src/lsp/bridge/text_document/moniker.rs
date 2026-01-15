@@ -41,19 +41,18 @@ impl LanguageServerPool {
         let handle = self
             .get_or_create_connection(injection_language, server_config)
             .await?;
-        let mut conn = handle.connection().await;
 
         // Build virtual document URI
         let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
 
-        // Send didOpen notification only if document hasn't been opened yet
-        if self.should_send_didopen(host_uri, &virtual_uri).await {
-            let did_open = build_bridge_didopen_notification(&virtual_uri, virtual_content);
-            conn.write_message(&did_open).await?;
-        }
-
-        // Build and send moniker request using upstream ID (ADR-0016)
+        // Build request ID and register with router BEFORE sending
         let request_id = RequestId::new(upstream_request_id);
+        let response_rx = handle
+            .router()
+            .register(request_id)
+            .ok_or_else(|| io::Error::other("duplicate request ID"))?;
+
+        // Build moniker request
         let moniker_request = build_bridge_moniker_request(
             host_uri,
             host_position,
@@ -62,10 +61,24 @@ impl LanguageServerPool {
             region_start_line,
             request_id,
         );
-        conn.write_message(&moniker_request).await?;
 
-        // Wait for the moniker response (skip notifications)
-        let response = conn.wait_for_response(request_id).await?;
+        // Send messages while holding writer lock, then release
+        {
+            let mut writer = handle.writer().await;
+
+            // Send didOpen notification only if document hasn't been opened yet
+            if self.should_send_didopen(host_uri, &virtual_uri).await {
+                let did_open = build_bridge_didopen_notification(&virtual_uri, virtual_content);
+                writer.write_message(&did_open).await?;
+            }
+
+            writer.write_message(&moniker_request).await?;
+        } // writer lock released here
+
+        // Wait for response via oneshot channel (no Mutex held)
+        let response = response_rx
+            .await
+            .map_err(|_| io::Error::other("response channel closed"))?;
 
         // Transform response to host coordinates (pass-through for moniker)
         Ok(transform_moniker_response_to_host(
