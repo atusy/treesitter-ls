@@ -436,6 +436,56 @@ pub(crate) fn transform_document_color_response_to_host(
     response
 }
 
+/// Transform a color presentation response from virtual to host document coordinates.
+///
+/// ColorPresentation responses are arrays of ColorPresentation items, each containing:
+/// - label: The presentation label (preserved unchanged)
+/// - textEdit: Optional TextEdit with range (needs transformation)
+/// - additionalTextEdits: Optional array of TextEdits (ranges need transformation)
+///
+/// # Arguments
+/// * `response` - The JSON-RPC response from the downstream language server
+/// * `region_start_line` - The starting line of the injection region in the host document
+pub(crate) fn transform_color_presentation_response_to_host(
+    mut response: serde_json::Value,
+    region_start_line: u32,
+) -> serde_json::Value {
+    // Get mutable reference to result
+    let Some(result) = response.get_mut("result") else {
+        return response;
+    };
+
+    // Null result - pass through unchanged
+    if result.is_null() {
+        return response;
+    }
+
+    // ColorPresentation[] is an array
+    if let Some(items) = result.as_array_mut() {
+        for item in items.iter_mut() {
+            // Transform textEdit range if present
+            if let Some(text_edit) = item.get_mut("textEdit")
+                && let Some(range) = text_edit.get_mut("range")
+            {
+                transform_range(range, region_start_line);
+            }
+
+            // Transform additionalTextEdits ranges if present
+            if let Some(additional_edits) = item.get_mut("additionalTextEdits")
+                && let Some(edits_arr) = additional_edits.as_array_mut()
+            {
+                for edit in edits_arr.iter_mut() {
+                    if let Some(range) = edit.get_mut("range") {
+                        transform_range(range, region_start_line);
+                    }
+                }
+            }
+        }
+    }
+
+    response
+}
+
 /// Check if a URI string represents a virtual document.
 ///
 /// Delegates to [`VirtualDocumentUri::is_virtual_uri`] which is the single source of truth
@@ -2289,5 +2339,135 @@ mod tests {
         assert_eq!(result["color"]["green"], 0.25);
         assert_eq!(result["color"]["blue"], 0.75);
         assert_eq!(result["color"]["alpha"], 0.9);
+    }
+
+    // ==========================================================================
+    // Color presentation response transformation tests
+    // ==========================================================================
+
+    #[test]
+    fn color_presentation_response_transforms_text_edit_range_to_host_coordinates() {
+        // ColorPresentation[] contains label + optional textEdit + optional additionalTextEdits
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "label": "#ff0000",
+                    "textEdit": {
+                        "range": {
+                            "start": { "line": 0, "character": 10 },
+                            "end": { "line": 0, "character": 17 }
+                        },
+                        "newText": "#ff0000"
+                    }
+                }
+            ]
+        });
+        let region_start_line = 5;
+
+        let transformed = transform_color_presentation_response_to_host(response, region_start_line);
+
+        let result = transformed["result"].as_array().unwrap();
+        assert_eq!(result.len(), 1);
+        // textEdit range transformed: line 0 + 5 = 5
+        assert_eq!(result[0]["textEdit"]["range"]["start"]["line"], 5);
+        assert_eq!(result[0]["textEdit"]["range"]["end"]["line"], 5);
+        // label preserved unchanged
+        assert_eq!(result[0]["label"], "#ff0000");
+        assert_eq!(result[0]["textEdit"]["newText"], "#ff0000");
+    }
+
+    #[test]
+    fn color_presentation_response_transforms_additional_text_edits_to_host_coordinates() {
+        // ColorPresentation with additionalTextEdits (multiple edits beyond the main one)
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "label": "rgb(255, 0, 0)",
+                "textEdit": {
+                    "range": {
+                        "start": { "line": 2, "character": 5 },
+                        "end": { "line": 2, "character": 12 }
+                    },
+                    "newText": "rgb(255, 0, 0)"
+                },
+                "additionalTextEdits": [
+                    {
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 0 }
+                        },
+                        "newText": "import { rgb } from 'colors';\n"
+                    },
+                    {
+                        "range": {
+                            "start": { "line": 4, "character": 0 },
+                            "end": { "line": 4, "character": 10 }
+                        },
+                        "newText": "cleanup()"
+                    }
+                ]
+            }]
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_color_presentation_response_to_host(response, region_start_line);
+
+        let result = &transformed["result"][0];
+        // textEdit range transformed: line 2 + 3 = 5
+        assert_eq!(result["textEdit"]["range"]["start"]["line"], 5);
+        assert_eq!(result["textEdit"]["range"]["end"]["line"], 5);
+
+        // additionalTextEdits ranges transformed
+        let additional = result["additionalTextEdits"].as_array().unwrap();
+        assert_eq!(additional.len(), 2);
+        // First additional: line 0 + 3 = 3
+        assert_eq!(additional[0]["range"]["start"]["line"], 3);
+        assert_eq!(additional[0]["range"]["end"]["line"], 3);
+        // Second additional: line 4 + 3 = 7
+        assert_eq!(additional[1]["range"]["start"]["line"], 7);
+        assert_eq!(additional[1]["range"]["end"]["line"], 7);
+    }
+
+    #[test]
+    fn color_presentation_response_without_text_edit_passes_through() {
+        // ColorPresentation with only label (no textEdit or additionalTextEdits)
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                { "label": "#ff0000" },
+                { "label": "rgb(255, 0, 0)" },
+                { "label": "hsl(0, 100%, 50%)" }
+            ]
+        });
+        let region_start_line = 5;
+
+        let transformed = transform_color_presentation_response_to_host(response.clone(), region_start_line);
+
+        let result = transformed["result"].as_array().unwrap();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0]["label"], "#ff0000");
+        assert_eq!(result[1]["label"], "rgb(255, 0, 0)");
+        assert_eq!(result[2]["label"], "hsl(0, 100%, 50%)");
+    }
+
+    #[test]
+    fn color_presentation_response_with_null_result_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+
+        let transformed = transform_color_presentation_response_to_host(response.clone(), 5);
+        assert_eq!(transformed, response);
+    }
+
+    #[test]
+    fn color_presentation_response_with_empty_array_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": [] });
+
+        let transformed = transform_color_presentation_response_to_host(response.clone(), 5);
+        let result = transformed["result"].as_array().unwrap();
+        assert!(result.is_empty());
     }
 }
