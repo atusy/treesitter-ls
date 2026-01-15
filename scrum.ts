@@ -55,7 +55,68 @@ const scrum: ScrumDashboard = {
         { criterion: "Request position transformed to virtual coordinates", verification: "Unit test" },
       ], status: "ready", refinement_notes: ["Response has no position data", "Pass-through response"] },
   ],
-  sprint: null,
+  sprint: {
+    number: 4,
+    pbi_id: "pbi-document-symbols",
+    goal: "Bridge textDocument/documentSymbol to downstream LS with coordinate transformation",
+    status: "in_progress",
+    subtasks: [
+      // Subtask 1: Response transformer for DocumentSymbol[] (hierarchical format)
+      {
+        test: "Test transform_document_symbol_response_to_host transforms DocumentSymbol.range and DocumentSymbol.selectionRange by adding region_start_line offset",
+        implementation: "Add transform_document_symbol_response_to_host function in response.rs that transforms both range and selectionRange fields",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["DocumentSymbol has TWO ranges: range (full scope) and selectionRange (identifier)", "Simple transformer signature: fn(response, region_start_line: u32)"],
+      },
+      // Subtask 2: Recursive children transformation
+      {
+        test: "Test transform_document_symbol_response_to_host recursively transforms nested children's range and selectionRange",
+        implementation: "Extend transformer to recursively process children array in DocumentSymbol",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["DocumentSymbol.children is optional array of DocumentSymbol", "Use recursive helper function for clarity"],
+      },
+      // Subtask 3: Response transformer for SymbolInformation[] (flat format)
+      {
+        test: "Test transform_document_symbol_response_to_host transforms SymbolInformation.location.range by adding region_start_line offset",
+        implementation: "Extend transformer to handle SymbolInformation format (has location.uri + location.range instead of range + selectionRange)",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["SymbolInformation is flat format with location field", "location.uri can be ignored - symbols are local to virtual document"],
+      },
+      // Subtask 4: Request builder for documentSymbol
+      {
+        test: "Test build_bridge_document_symbol_request creates valid textDocument/documentSymbol request with virtual URI",
+        implementation: "Add build_bridge_document_symbol_request function in request.rs",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Whole-document operation - no position parameter", "Similar to document_link request builder"],
+      },
+      // Subtask 5: Pool method for sending documentSymbol request
+      {
+        test: "Test LanguageServerPool::send_document_symbol_request sends request and transforms response",
+        implementation: "Add send_document_symbol_request method to LanguageServerPool following document_link.rs pattern",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Use InjectionResolver::resolve_all pattern for whole-document operation", "Create new file src/lsp/bridge/text_document/document_symbol.rs"],
+      },
+      // Subtask 6: E2E test for documentSymbol bridge
+      {
+        test: "E2E test: textDocument/documentSymbol request on markdown with Lua code block returns symbols with host coordinates",
+        implementation: "Wire up documentSymbol handler in lsp_impl to call bridge for injection regions",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Test should verify symbol ranges are in host document coordinates", "May need to aggregate symbols from multiple injection regions"],
+      },
+    ],
+  },
   completed: [
     { number: 1, pbi_id: "pbi-document-highlight", goal: "Bridge textDocument/documentHighlight to downstream LS", status: "done", subtasks: [] },
     { number: 2, pbi_id: "pbi-rename", goal: "Bridge textDocument/rename with WorkspaceEdit transformation", status: "done", subtasks: [] },
