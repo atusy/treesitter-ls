@@ -1837,4 +1837,70 @@ mod tests {
         assert_eq!(deep_child["selectionRange"]["start"]["line"], 8);
         assert_eq!(deep_child["name"], "deeplyNested");
     }
+
+    #[test]
+    fn document_symbol_response_transforms_symbol_information_location_range() {
+        // SymbolInformation format (flat, with location instead of range/selectionRange)
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "name": "myVariable",
+                    "kind": 13,
+                    "location": {
+                        "uri": "file:///test.lua",
+                        "range": {
+                            "start": { "line": 2, "character": 6 },
+                            "end": { "line": 2, "character": 16 }
+                        }
+                    }
+                },
+                {
+                    "name": "myFunction",
+                    "kind": 12,
+                    "location": {
+                        "uri": "file:///test.lua",
+                        "range": {
+                            "start": { "line": 5, "character": 0 },
+                            "end": { "line": 10, "character": 3 }
+                        }
+                    }
+                }
+            ]
+        });
+        let region_start_line = 7;
+
+        let transformed = transform_document_symbol_response_to_host(response, region_start_line);
+
+        let result = transformed["result"].as_array().unwrap();
+        assert_eq!(result.len(), 2);
+
+        // First symbol's location.range transformed: line 2 + 7 = 9
+        assert_eq!(result[0]["location"]["range"]["start"]["line"], 9);
+        assert_eq!(result[0]["location"]["range"]["end"]["line"], 9);
+        assert_eq!(result[0]["name"], "myVariable");
+
+        // Second symbol's location.range transformed: line 5 + 7 = 12, line 10 + 7 = 17
+        assert_eq!(result[1]["location"]["range"]["start"]["line"], 12);
+        assert_eq!(result[1]["location"]["range"]["end"]["line"], 17);
+        assert_eq!(result[1]["name"], "myFunction");
+    }
+
+    #[test]
+    fn document_symbol_response_with_null_result_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+
+        let transformed = transform_document_symbol_response_to_host(response.clone(), 5);
+        assert_eq!(transformed, response);
+    }
+
+    #[test]
+    fn document_symbol_response_with_empty_array_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": [] });
+
+        let transformed = transform_document_symbol_response_to_host(response.clone(), 5);
+        let result = transformed["result"].as_array().unwrap();
+        assert!(result.is_empty());
+    }
 }
