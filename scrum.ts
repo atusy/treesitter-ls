@@ -16,65 +16,7 @@ const scrum: ScrumDashboard = {
       { metric: "E2E test coverage using treesitter-ls binary", target: "Each bridged feature has E2E test verifying end-to-end flow" },
     ],
   },
-  product_backlog: [
-    {
-      id: "pbi-symbol-info-uri-fix",
-      story: {
-        role: "Lua developer editing markdown",
-        capability: "document symbols to work with SymbolInformation responses",
-        benefit: "older language servers are supported",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "SymbolInformation.location.uri transformed to host URI",
-          verification: "Unit test verifies URI transformation from virtual to host",
-        },
-        {
-          criterion: "SymbolInformation.location.range transformed to host coordinates",
-          verification: "Verify existing range transformation works correctly (already implemented)",
-        },
-      ],
-      status: "done",
-    },
-    {
-      id: "pbi-document-color-e2e",
-      story: {
-        role: "lua/python developer editing markdown",
-        capability: "document color feature to be E2E tested",
-        benefit: "I have confidence in the feature",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "E2E test verifies documentColor capability is advertised",
-          verification: "Test checks server capabilities include documentColor",
-        },
-        {
-          criterion: "E2E test verifies request handling",
-          verification: "Test sends documentColor request and verifies response (even if empty)",
-        },
-      ],
-      status: "done",
-    },
-    {
-      id: "pbi-color-presentation-e2e",
-      story: {
-        role: "lua/python developer editing markdown",
-        capability: "color presentation feature to be E2E tested",
-        benefit: "I have confidence in the feature",
-      },
-      acceptance_criteria: [
-        {
-          criterion: "E2E test verifies colorPresentation capability is advertised",
-          verification: "Test checks server capabilities include colorPresentation",
-        },
-        {
-          criterion: "E2E test verifies request handling",
-          verification: "Test sends colorPresentation request and verifies response (even if empty)",
-        },
-      ],
-      status: "done",
-    },
-  ],
+  product_backlog: [],
   sprint: null,
   completed: [
     { number: 1, pbi_id: "pbi-document-highlight", goal: "Bridge textDocument/documentHighlight to downstream LS", status: "done", subtasks: [] },
@@ -86,34 +28,7 @@ const scrum: ScrumDashboard = {
     { number: 7, pbi_id: "pbi-moniker", goal: "Bridge textDocument/moniker with position transformation and pass-through response", status: "done", subtasks: [] },
     { number: 8, pbi_id: "pbi-symbol-info-uri-fix", goal: "Fix SymbolInformation URI transformation for LSP compliance", status: "done", subtasks: [] },
     { number: 9, pbi_id: "pbi-document-color-e2e", goal: "Add E2E test coverage for textDocument/documentColor", status: "done", subtasks: [] },
-    {
-      number: 10,
-      pbi_id: "pbi-color-presentation-e2e",
-      goal: "Add E2E test coverage for textDocument/colorPresentation",
-      status: "done",
-      subtasks: [
-        {
-          test: "E2E test verifies colorPresentation capability is advertised in server capabilities",
-          implementation: "Create tests/e2e_lsp_lua_color_presentation.rs with capability check test",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "b6485545", message: "test(e2e): add colorPresentation E2E tests", phase: "green" }],
-          notes: ["Follow pattern from e2e_lsp_lua_document_color.rs", "Check for colorProvider in capabilities"],
-        },
-        {
-          test: "E2E test verifies colorPresentation request is handled without error",
-          implementation: "Add colorPresentation request test with mock color/range input",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "b6485545", message: "test(e2e): add colorPresentation E2E tests", phase: "green" }],
-          notes: [
-            "colorPresentation requires color and range as input (from documentColor)",
-            "lua-ls actually returns color presentations (e.g., FFFF0000 format)",
-            "Verify response structure (array of ColorPresentation with label field)",
-          ],
-        },
-      ],
-    },
+    { number: 10, pbi_id: "pbi-color-presentation-e2e", goal: "Add E2E test coverage for textDocument/colorPresentation", status: "done", subtasks: [] },
   ],
   definition_of_done: {
     checks: [
@@ -125,17 +40,7 @@ const scrum: ScrumDashboard = {
   },
   retrospectives: [
     { sprint: 10, improvements: [
-      { action: "Mark Sprint 8-10 series improvement actions as completed: all review-identified issues have been addressed with E2E tests and documentation", timing: "immediate", status: "completed", outcome: "Updated sprint 8 retrospective outcomes to reflect completion" },
       { action: "Consider batching similar PBIs (e.g., multiple E2E tests) in future sprints to reduce overhead", timing: "sprint", status: "active", outcome: null },
-      { action: "Document that E2E test pattern is now established and reusable for future bridged features", timing: "immediate", status: "completed", outcome: "Pattern already documented in CLAUDE.md Sprint 9 retrospective, proven reusable in Sprint 10" },
-    ] },
-    { sprint: 9, improvements: [
-      { action: "Update definition of done to include E2E tests as mandatory for all bridged features", timing: "immediate", status: "completed", outcome: "Added E2E test requirement to definition_of_done checks" },
-      { action: "Document pattern for testing bridged features where downstream LS may not return data (verify infrastructure without requiring actual results)", timing: "immediate", status: "completed", outcome: "Added 'Testing Patterns' section to CLAUDE.md with example pattern" },
-    ] },
-    { sprint: 8, improvements: [
-      { action: "Establish multi-perspective review practice to catch LSP compliance issues earlier", timing: "sprint", status: "completed", outcome: "Successfully applied in Sprints 9-10: E2E tests caught capability advertising and infrastructure gaps" },
-      { action: "Ensure dual response formats (DocumentSymbol[] vs SymbolInformation[]) are equally tested for all bridged features", timing: "product", status: "completed", outcome: "Addressed in Sprint 8 with SymbolInformation.location.uri fix and verified through E2E tests" },
     ] },
   ],
 };
