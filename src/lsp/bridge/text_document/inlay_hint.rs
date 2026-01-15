@@ -79,7 +79,10 @@ impl LanguageServerPool {
                 && id.as_i64() == Some(request_id)
             {
                 // Transform response positions and textEdits to host coordinates
-                return Ok(transform_inlay_hint_response_to_host(msg, region_start_line));
+                return Ok(transform_inlay_hint_response_to_host(
+                    msg,
+                    region_start_line,
+                ));
             }
             // Skip notifications and other responses
         }

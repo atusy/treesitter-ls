@@ -1193,6 +1193,7 @@ impl LanguageServer for TreeSitterLs {
                 }),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 rename_provider: Some(OneOf::Left(true)),
+                inlay_hint_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
         })
@@ -1555,6 +1556,10 @@ impl LanguageServer for TreeSitterLs {
 
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
         self.rename_impl(params).await
+    }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        self.inlay_hint_impl(params).await
     }
 }
 
