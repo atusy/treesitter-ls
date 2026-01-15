@@ -1508,6 +1508,39 @@ mod tests {
     // LSP InputEdits directly for precise invalidation.
 
     #[test]
+    fn test_edit_info_from_input_edit_conversion() {
+        // Verify From<&tree_sitter::InputEdit> correctly extracts byte positions.
+        // This is the integration point used in lsp_impl.rs for incremental sync.
+        use tree_sitter::{InputEdit, Point};
+
+        let input_edit = InputEdit {
+            start_byte: 100,
+            old_end_byte: 150,
+            new_end_byte: 120,
+            // Position fields are not used by EditInfo::from
+            start_position: Point::new(5, 10),
+            old_end_position: Point::new(5, 60),
+            new_end_position: Point::new(5, 30),
+        };
+
+        let edit_info = EditInfo::from(&input_edit);
+
+        // Verify all byte fields are correctly extracted
+        assert_eq!(
+            edit_info,
+            EditInfo::new(100, 150, 120),
+            "From<&InputEdit> should extract start_byte, old_end_byte, new_end_byte"
+        );
+
+        // Verify delta calculation works correctly (deletion of 30 bytes)
+        assert_eq!(
+            edit_info.delta(),
+            -30,
+            "Delta should be new_end_byte - old_end_byte = 120 - 150 = -30"
+        );
+    }
+
+    #[test]
     fn test_apply_edits_inside_node_keeps_with_adjusted_end() {
         // ADR-0019 Node A case: Edit INSIDE node → KEEP (adjust end)
         // Node [10, 20), Edit [15, 18) → [15, 25)
