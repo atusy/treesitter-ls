@@ -367,11 +367,24 @@ pub(crate) fn transform_inlay_hint_response_to_host(
     response
 }
 
-/// Transform a single InlayHint item's position to host coordinates.
+/// Transform a single InlayHint item's position and textEdits to host coordinates.
 fn transform_inlay_hint_item(item: &mut serde_json::Value, region_start_line: u32) {
     // Transform position
     if let Some(position) = item.get_mut("position") {
         transform_position(position, region_start_line);
+    }
+
+    // Transform textEdits ranges (optional field)
+    if let Some(text_edits) = item.get_mut("textEdits")
+        && let Some(text_edits_arr) = text_edits.as_array_mut()
+    {
+        for edit in text_edits_arr.iter_mut() {
+            if let Some(range) = edit.get_mut("range")
+                && range.is_object()
+            {
+                transform_range(range, region_start_line);
+            }
+        }
     }
 }
 
@@ -2035,5 +2048,106 @@ mod tests {
         assert_eq!(hint["paddingLeft"], true);
         assert_eq!(hint["paddingRight"], false);
         assert_eq!(hint["tooltip"], "Type hint");
+    }
+
+    #[test]
+    fn inlay_hint_response_transforms_text_edits_ranges() {
+        // InlayHint with textEdits field - ranges need transformation
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "position": { "line": 0, "character": 10 },
+                "label": ": string",
+                "textEdits": [
+                    {
+                        "range": {
+                            "start": { "line": 0, "character": 10 },
+                            "end": { "line": 0, "character": 10 }
+                        },
+                        "newText": ": string"
+                    }
+                ]
+            }]
+        });
+        let region_start_line = 5;
+
+        let transformed = transform_inlay_hint_response_to_host(response, region_start_line);
+
+        let hint = &transformed["result"][0];
+        // Position transformed
+        assert_eq!(hint["position"]["line"], 5);
+        // textEdits range transformed
+        let text_edit = &hint["textEdits"][0];
+        assert_eq!(text_edit["range"]["start"]["line"], 5);
+        assert_eq!(text_edit["range"]["end"]["line"], 5);
+        assert_eq!(text_edit["newText"], ": string");
+    }
+
+    #[test]
+    fn inlay_hint_response_transforms_multiple_text_edits() {
+        // InlayHint with multiple textEdits
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "position": { "line": 2, "character": 5 },
+                "label": "hint",
+                "textEdits": [
+                    {
+                        "range": {
+                            "start": { "line": 1, "character": 0 },
+                            "end": { "line": 1, "character": 5 }
+                        },
+                        "newText": "first"
+                    },
+                    {
+                        "range": {
+                            "start": { "line": 3, "character": 0 },
+                            "end": { "line": 4, "character": 10 }
+                        },
+                        "newText": "second"
+                    }
+                ]
+            }]
+        });
+        let region_start_line = 10;
+
+        let transformed = transform_inlay_hint_response_to_host(response, region_start_line);
+
+        let hint = &transformed["result"][0];
+        // Position transformed: 2 + 10 = 12
+        assert_eq!(hint["position"]["line"], 12);
+
+        let edits = hint["textEdits"].as_array().unwrap();
+        assert_eq!(edits.len(), 2);
+
+        // First edit: 1 + 10 = 11
+        assert_eq!(edits[0]["range"]["start"]["line"], 11);
+        assert_eq!(edits[0]["range"]["end"]["line"], 11);
+
+        // Second edit: 3 + 10 = 13, 4 + 10 = 14
+        assert_eq!(edits[1]["range"]["start"]["line"], 13);
+        assert_eq!(edits[1]["range"]["end"]["line"], 14);
+    }
+
+    #[test]
+    fn inlay_hint_response_without_text_edits_is_valid() {
+        // Most inlay hints don't have textEdits - ensure they work fine
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "position": { "line": 0, "character": 5 },
+                "label": "hint without edits"
+            }]
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_inlay_hint_response_to_host(response, region_start_line);
+
+        let hint = &transformed["result"][0];
+        assert_eq!(hint["position"]["line"], 3);
+        assert!(hint.get("textEdits").is_none());
     }
 }
