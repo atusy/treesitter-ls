@@ -504,8 +504,9 @@ pub(crate) fn build_bridge_moniker_request(
 
 /// Build a JSON-RPC document color request for a downstream language server.
 ///
-/// Like DocumentLinkParams, DocumentColorParams only has a textDocument field -
-/// no position. The request asks for all colors in the entire document.
+/// Similar to DocumentLinkParams, DocumentColorParams also only has a
+/// textDocument field (no position). The request asks for all colors in the
+/// entire document.
 ///
 /// # Arguments
 /// * `host_uri` - The URI of the host document
