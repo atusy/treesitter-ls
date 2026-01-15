@@ -415,6 +415,72 @@ pub(crate) fn build_bridge_inlay_hint_request(
     })
 }
 
+/// Build a JSON-RPC color presentation request for a downstream language server.
+///
+/// ColorPresentationParams has a range field that specifies the color's location
+/// in the document. This range needs to be translated from host to virtual coordinates.
+///
+/// # Arguments
+/// * `host_uri` - The URI of the host document
+/// * `host_range` - The range in the host document where the color is located
+/// * `color` - The color value (RGBA) to get presentations for
+/// * `injection_language` - The injection language (e.g., "lua")
+/// * `region_id` - The unique region ID for this injection
+/// * `region_start_line` - The starting line of the injection region in the host document
+/// * `request_id` - The JSON-RPC request ID
+///
+/// # Preconditions
+///
+/// **`host_range.start.line >= region_start_line`** - The host range must be within or after
+/// the injection region. This is guaranteed by callers which only invoke bridge requests
+/// when the range falls within a detected injection region's line range.
+pub(crate) fn build_bridge_color_presentation_request(
+    host_uri: &tower_lsp::lsp_types::Url,
+    host_range: tower_lsp::lsp_types::Range,
+    color: &serde_json::Value,
+    injection_language: &str,
+    region_id: &str,
+    region_start_line: u32,
+    request_id: i64,
+) -> serde_json::Value {
+    // Create virtual document URI
+    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+
+    // Translate range from host to virtual coordinates
+    let virtual_range = tower_lsp::lsp_types::Range {
+        start: tower_lsp::lsp_types::Position {
+            line: host_range.start.line - region_start_line,
+            character: host_range.start.character,
+        },
+        end: tower_lsp::lsp_types::Position {
+            line: host_range.end.line - region_start_line,
+            character: host_range.end.character,
+        },
+    };
+
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/colorPresentation",
+        "params": {
+            "textDocument": {
+                "uri": virtual_uri.to_uri_string()
+            },
+            "color": color,
+            "range": {
+                "start": {
+                    "line": virtual_range.start.line,
+                    "character": virtual_range.start.character
+                },
+                "end": {
+                    "line": virtual_range.end.line,
+                    "character": virtual_range.end.character
+                }
+            }
+        }
+    })
+}
+
 /// Build a JSON-RPC document color request for a downstream language server.
 ///
 /// Like DocumentLinkParams, DocumentColorParams only has a textDocument field -
@@ -1208,5 +1274,132 @@ mod tests {
             request["params"].get("position").is_none(),
             "DocumentColor request should not have position parameter"
         );
+    }
+
+    // ==========================================================================
+    // Color presentation request tests
+    // ==========================================================================
+
+    #[test]
+    fn color_presentation_request_uses_virtual_uri() {
+        use tower_lsp::lsp_types::Range;
+
+        let host_range = Range {
+            start: Position {
+                line: 5,
+                character: 10,
+            },
+            end: Position {
+                line: 5,
+                character: 17,
+            },
+        };
+        let color = serde_json::json!({
+            "red": 1.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 1.0
+        });
+        let request = build_bridge_color_presentation_request(
+            &test_host_uri(),
+            host_range,
+            &color,
+            "lua",
+            "region-0",
+            3, // region_start_line
+            42,
+        );
+
+        assert_uses_virtual_uri(&request, "lua");
+    }
+
+    #[test]
+    fn color_presentation_request_transforms_range_to_virtual_coordinates() {
+        use tower_lsp::lsp_types::Range;
+
+        // Host range: line 5, region starts at line 3
+        // Virtual range should be: line 2 (5-3=2)
+        let host_range = Range {
+            start: Position {
+                line: 5,
+                character: 10,
+            },
+            end: Position {
+                line: 5,
+                character: 17,
+            },
+        };
+        let color = serde_json::json!({
+            "red": 1.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 1.0
+        });
+        let request = build_bridge_color_presentation_request(
+            &test_host_uri(),
+            host_range,
+            &color,
+            "lua",
+            "region-0",
+            3, // region_start_line
+            42,
+        );
+
+        let range = &request["params"]["range"];
+        assert_eq!(
+            range["start"]["line"], 2,
+            "Start line should be translated from 5 to 2 (5-3)"
+        );
+        assert_eq!(
+            range["start"]["character"], 10,
+            "Start character should remain unchanged"
+        );
+        assert_eq!(
+            range["end"]["line"], 2,
+            "End line should be translated from 5 to 2 (5-3)"
+        );
+        assert_eq!(
+            range["end"]["character"], 17,
+            "End character should remain unchanged"
+        );
+    }
+
+    #[test]
+    fn color_presentation_request_includes_color() {
+        use tower_lsp::lsp_types::Range;
+
+        let host_range = Range {
+            start: Position {
+                line: 3,
+                character: 0,
+            },
+            end: Position {
+                line: 3,
+                character: 7,
+            },
+        };
+        let color = serde_json::json!({
+            "red": 0.5,
+            "green": 0.25,
+            "blue": 0.75,
+            "alpha": 1.0
+        });
+        let request = build_bridge_color_presentation_request(
+            &test_host_uri(),
+            host_range,
+            &color,
+            "lua",
+            "region-0",
+            3, // region_start_line
+            42,
+        );
+
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], 42);
+        assert_eq!(request["method"], "textDocument/colorPresentation");
+        assert_eq!(request["params"]["color"]["red"], 0.5);
+        assert_eq!(request["params"]["color"]["green"], 0.25);
+        assert_eq!(request["params"]["color"]["blue"], 0.75);
+        assert_eq!(request["params"]["color"]["alpha"], 1.0);
     }
 }
