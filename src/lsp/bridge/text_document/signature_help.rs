@@ -70,6 +70,14 @@ impl LanguageServerPool {
             if self.should_send_didopen(host_uri, &virtual_uri).await {
                 let did_open = build_bridge_didopen_notification(&virtual_uri, virtual_content);
                 writer.write_message(&did_open).await?;
+                // Mark as opened AFTER successful write (ADR-0015)
+                self.mark_document_opened(&virtual_uri);
+            } else if !self.is_document_opened(&virtual_uri) {
+                // Document marked for opening but didOpen not yet sent (race condition)
+                // Drop the request per ADR-0015
+                return Err(io::Error::other(
+                    "bridge: document not yet opened (didOpen pending)",
+                ));
             }
 
             writer.write_message(&signature_help_request).await?;

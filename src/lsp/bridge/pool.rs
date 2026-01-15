@@ -5,7 +5,7 @@
 //!
 //! Phase 1: Single-LS-per-Language routing (language → single server).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
@@ -172,6 +172,15 @@ pub(crate) struct LanguageServerPool {
     /// Key: host document URI, Value: list of opened virtual documents
     /// Used for didClose propagation when host document closes.
     host_to_virtual: Mutex<HashMap<Url, Vec<OpenedVirtualDoc>>>,
+    /// Tracks documents that have had didOpen ACTUALLY sent to downstream (ADR-0015).
+    ///
+    /// This is separate from document_versions which marks intent to open.
+    /// A document is only added here AFTER the didOpen notification has been
+    /// written to the downstream server. Request handlers check this before
+    /// sending requests to ensure LSP spec compliance.
+    ///
+    /// Uses std::sync::RwLock for fast, synchronous read checks.
+    opened_documents: std::sync::RwLock<HashSet<String>>,
 }
 
 impl LanguageServerPool {
@@ -181,6 +190,7 @@ impl LanguageServerPool {
             connections: Mutex::new(HashMap::new()),
             document_versions: Mutex::new(HashMap::new()),
             host_to_virtual: Mutex::new(HashMap::new()),
+            opened_documents: std::sync::RwLock::new(HashSet::new()),
         }
     }
 
@@ -265,6 +275,64 @@ impl LanguageServerPool {
         let mut versions = self.document_versions.lock().await;
         if let Some(docs) = versions.get_mut(language) {
             docs.remove(&uri_string);
+        }
+
+        // Also remove from opened_documents (ADR-0015)
+        match self.opened_documents.write() {
+            Ok(mut opened) => {
+                opened.remove(&uri_string);
+            }
+            Err(poisoned) => {
+                warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned opened_documents lock in remove_document_version()"
+                );
+                poisoned.into_inner().remove(&uri_string);
+            }
+        }
+    }
+
+    /// Check if a document has had didOpen ACTUALLY sent to downstream (ADR-0015).
+    ///
+    /// This is a fast, synchronous check used by request handlers to ensure
+    /// they don't send requests before didOpen has been sent.
+    ///
+    /// Returns true if `mark_document_opened()` has been called for this document.
+    /// Returns false if the document hasn't been opened yet.
+    pub(crate) fn is_document_opened(&self, virtual_uri: &VirtualDocumentUri) -> bool {
+        let uri_string = virtual_uri.to_uri_string();
+
+        match self.opened_documents.read() {
+            Ok(opened) => opened.contains(&uri_string),
+            Err(poisoned) => {
+                warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned opened_documents lock in is_document_opened()"
+                );
+                poisoned.into_inner().contains(&uri_string)
+            }
+        }
+    }
+
+    /// Mark a document as having had didOpen sent to downstream (ADR-0015).
+    ///
+    /// This should be called AFTER the didOpen notification has been successfully
+    /// written to the downstream server. Request handlers check `is_document_opened()`
+    /// before sending requests to ensure LSP spec compliance.
+    pub(crate) fn mark_document_opened(&self, virtual_uri: &VirtualDocumentUri) {
+        let uri_string = virtual_uri.to_uri_string();
+
+        match self.opened_documents.write() {
+            Ok(mut opened) => {
+                opened.insert(uri_string);
+            }
+            Err(poisoned) => {
+                warn!(
+                    target: "treesitter_ls::lock_recovery",
+                    "Recovered from poisoned opened_documents lock in mark_document_opened()"
+                );
+                poisoned.into_inner().insert(uri_string);
+            }
         }
     }
 
@@ -1841,6 +1909,73 @@ mod tests {
             remaining[0].virtual_uri.language(),
             "python",
             "Remaining doc should be Python"
+        );
+    }
+
+    // ========================================
+    // ADR-0015: is_document_opened tests
+    // ========================================
+
+    /// Test that is_document_opened returns false before mark_document_opened is called.
+    ///
+    /// This is part of the fix for LSP spec violation where requests were sent
+    /// before didOpen. The is_document_opened() method checks whether didOpen
+    /// has ACTUALLY been sent to the downstream server (not just marked for sending).
+    #[tokio::test]
+    async fn is_document_opened_returns_false_before_marked() {
+        use super::super::protocol::VirtualDocumentUri;
+
+        let pool = LanguageServerPool::new();
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+
+        // Before marking, should return false
+        assert!(
+            !pool.is_document_opened(&virtual_uri),
+            "is_document_opened should return false before mark_document_opened"
+        );
+    }
+
+    /// Test that is_document_opened returns true after mark_document_opened is called.
+    #[tokio::test]
+    async fn is_document_opened_returns_true_after_marked() {
+        use super::super::protocol::VirtualDocumentUri;
+
+        let pool = LanguageServerPool::new();
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+
+        // Mark the document as opened
+        pool.mark_document_opened(&virtual_uri);
+
+        // After marking, should return true
+        assert!(
+            pool.is_document_opened(&virtual_uri),
+            "is_document_opened should return true after mark_document_opened"
+        );
+    }
+
+    /// Test that should_send_didopen does NOT mark document as opened.
+    ///
+    /// should_send_didopen only reserves the document version for tracking.
+    /// The actual "opened" state should only be set by mark_document_opened
+    /// which is called AFTER didOpen is sent to downstream.
+    #[tokio::test]
+    async fn should_send_didopen_does_not_mark_as_opened() {
+        use super::super::protocol::VirtualDocumentUri;
+
+        let pool = LanguageServerPool::new();
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+
+        // Call should_send_didopen - this reserves the version but doesn't mark as opened
+        let should_open = pool.should_send_didopen(&host_uri, &virtual_uri).await;
+        assert!(should_open, "First call should return true");
+
+        // is_document_opened should still return false
+        assert!(
+            !pool.is_document_opened(&virtual_uri),
+            "is_document_opened should return false even after should_send_didopen"
         );
     }
 }
