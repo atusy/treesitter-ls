@@ -237,6 +237,7 @@ impl AsyncBridgeConnection {
     ///
     /// Delegates to internal `BridgeWriter`.
     /// Returns error if the writer has been taken (via split()).
+    #[cfg(test)]
     pub(crate) async fn write_message(&mut self, message: &serde_json::Value) -> io::Result<()> {
         match &mut self.writer {
             Some(writer) => writer.write_message(message).await,
@@ -248,6 +249,7 @@ impl AsyncBridgeConnection {
     ///
     /// Delegates to internal `BridgeReader`.
     /// Returns None if the reader has been taken (via split()).
+    #[cfg(test)]
     pub(crate) async fn read_message(&mut self) -> io::Result<serde_json::Value> {
         match &mut self.reader {
             Some(reader) => reader.read_message().await,
