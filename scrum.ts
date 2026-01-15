@@ -88,7 +88,62 @@ const scrum: ScrumDashboard = {
       ],
     },
   ],
-  sprint: null,
+  sprint: {
+    number: 8,
+    pbi_id: "pbi-symbol-info-uri-fix",
+    goal: "Fix SymbolInformation URI transformation for LSP compliance",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "Add unit test for SymbolInformation.location.uri transformation with virtual URI",
+        implementation: "Create test verifying virtual URI is transformed to host URI",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Test should use virtual URI format (treesitter-ls://host_uri/lang/region_id)",
+          "Test should verify URI is transformed to host URI after transformation",
+          "Follow existing pattern in document_symbol_response_transforms_symbol_information_location_range test",
+        ],
+      },
+      {
+        test: "Update transform_document_symbol_response_to_host signature to use ResponseTransformContext",
+        implementation: "Change function signature from (response, region_start_line) to (response, &ResponseTransformContext)",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "ResponseTransformContext contains: request_virtual_uri, request_host_uri, request_region_start_line",
+          "Update document_symbol.rs call site to create and pass ResponseTransformContext",
+          "Update all existing tests to use new signature",
+        ],
+      },
+      {
+        test: "Implement URI transformation in SymbolInformation handling",
+        implementation: "In transform_document_symbol_item, transform location.uri using same pattern as transform_location_uri",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Handle three cases: (1) real file URI - preserve, (2) same virtual URI - transform, (3) different virtual URI - filter",
+          "Call transform_location_uri helper from transform_document_symbol_item for SymbolInformation case",
+          "Ensure range transformation still works after URI transformation",
+        ],
+      },
+      {
+        test: "Verify existing range transformation still works with new context-based signature",
+        implementation: "Run existing tests to confirm range transformation is preserved",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "Existing tests: document_symbol_response_transforms_symbol_information_location_range",
+          "Verify DocumentSymbol format (range, selectionRange, children) still works",
+          "Verify null and empty array edge cases still pass through correctly",
+        ],
+      },
+    ],
+  },
   completed: [
     { number: 1, pbi_id: "pbi-document-highlight", goal: "Bridge textDocument/documentHighlight to downstream LS", status: "done", subtasks: [] },
     { number: 2, pbi_id: "pbi-rename", goal: "Bridge textDocument/rename with WorkspaceEdit transformation", status: "done", subtasks: [] },
