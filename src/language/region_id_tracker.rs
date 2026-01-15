@@ -325,21 +325,13 @@ impl RegionIdTracker {
                     }
                     old_byte += change.value().len();
                 }
-                ChangeTag::Delete => {
-                    if current_edit.is_none() {
-                        current_edit = Some((old_byte, old_byte, 0));
-                    }
-                    old_byte += change.value().len();
-                    if let Some((_, ref mut old_end, _)) = current_edit {
-                        *old_end = old_byte;
-                    }
-                }
-                ChangeTag::Insert => {
-                    if current_edit.is_none() {
-                        current_edit = Some((old_byte, old_byte, 0));
-                    }
-                    if let Some((_, _, ref mut inserted_len)) = current_edit {
-                        *inserted_len += change.value().len();
+                ChangeTag::Delete | ChangeTag::Insert => {
+                    let edit = current_edit.get_or_insert((old_byte, old_byte, 0));
+                    if change.tag() == ChangeTag::Delete {
+                        old_byte += change.value().len();
+                        edit.1 = old_byte;
+                    } else {
+                        edit.2 += change.value().len();
                     }
                 }
             }
