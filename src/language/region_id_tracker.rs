@@ -208,7 +208,7 @@ impl RegionIdTracker {
     ///
     /// # Fast path
     /// If old_text == new_text, returns empty Vec without any processing.
-    pub(crate) fn apply_text_change(&self, uri: &Url, old_text: &str, new_text: &str) -> Vec<Ulid> {
+    pub(crate) fn apply_text_diff(&self, uri: &Url, old_text: &str, new_text: &str) -> Vec<Ulid> {
         // Fast path: identical texts need no processing
         if old_text == new_text {
             return Vec::new();
@@ -247,7 +247,7 @@ impl RegionIdTracker {
     ///
     /// # Returns
     /// All ULIDs invalidated across all edits.
-    pub(crate) fn apply_edits(&self, uri: &Url, edits: &[EditInfo]) -> Vec<Ulid> {
+    pub(crate) fn apply_input_edits(&self, uri: &Url, edits: &[EditInfo]) -> Vec<Ulid> {
         let mut all_invalidated = Vec::new();
 
         for edit in edits {
@@ -630,13 +630,13 @@ mod tests {
     }
 
     // ============================================================
-    // Concurrent apply_text_change() Tests
+    // Concurrent apply_text_diff() Tests
     // ============================================================
     // These tests verify thread-safety when multiple threads call
-    // apply_text_change() concurrently on the same URI.
+    // apply_text_diff() concurrently on the same URI.
 
     #[test]
-    fn test_concurrent_apply_text_change_same_uri_no_panic() {
+    fn test_concurrent_apply_text_diff_same_uri_no_panic() {
         use std::sync::Arc;
         use std::thread;
 
@@ -666,7 +666,7 @@ mod tests {
                         // Apply a small deletion
                         if edit_pos + 5 <= new_text.len() {
                             new_text.replace_range(edit_pos..edit_pos + 5, "");
-                            tracker.apply_text_change(&uri, &old_text, &new_text);
+                            tracker.apply_text_diff(&uri, &old_text, &new_text);
                         }
                     }
                 })
@@ -690,7 +690,7 @@ mod tests {
     }
 
     #[test]
-    fn test_concurrent_apply_text_change_different_uris_independent() {
+    fn test_concurrent_apply_text_diff_different_uris_independent() {
         use std::sync::Arc;
         use std::thread;
 
@@ -711,7 +711,7 @@ mod tests {
                     let mut new_text = old_text.clone();
                     new_text.replace_range(20..30, ""); // Delete before node, delta = -10
 
-                    tracker.apply_text_change(&uri, &old_text, &new_text);
+                    tracker.apply_text_diff(&uri, &old_text, &new_text);
 
                     // Verify the node was shifted correctly
                     let shifted_ulid = tracker.get(&uri, 40, 90, "block");
@@ -744,7 +744,7 @@ mod tests {
         // Node at [0, 10) - edits will be at [50+)
         let stable_ulid = tracker.get_or_create(&uri, 0, 10, "stable");
 
-        // Spawn threads that interleave get_or_create and apply_text_change
+        // Spawn threads that interleave get_or_create and apply_text_diff
         let handles: Vec<_> = (0..4)
             .map(|thread_id| {
                 let tracker = Arc::clone(&tracker);
@@ -767,7 +767,7 @@ mod tests {
                             let edit_start = 60 + thread_id * 5;
                             if edit_start + 5 <= new_text.len() {
                                 new_text.replace_range(edit_start..edit_start + 5, "");
-                                tracker.apply_text_change(&uri, &old_text, &new_text);
+                                tracker.apply_text_diff(&uri, &old_text, &new_text);
                             }
                         }
 
@@ -825,7 +825,7 @@ mod tests {
         let mut new_text = old_text.clone();
         new_text.replace_range(35..40, ""); // Delete 5 bytes
 
-        tracker.apply_text_change(&uri, &old_text, &new_text);
+        tracker.apply_text_diff(&uri, &old_text, &new_text);
 
         // After edit, node should:
         // - START unchanged (30 not in [35, 40))
@@ -868,7 +868,7 @@ mod tests {
         let mut new_text = old_text.clone();
         new_text.replace_range(40..60, "");
 
-        tracker.apply_text_change(&uri, &old_text, &new_text);
+        tracker.apply_text_diff(&uri, &old_text, &new_text);
 
         // After edit, node should:
         // - START unchanged (20 not in [40, 60))
@@ -903,7 +903,7 @@ mod tests {
         let mut new_text = old_text.clone();
         new_text.replace_range(40..50, "");
 
-        tracker.apply_text_change(&uri, &old_text, &new_text);
+        tracker.apply_text_diff(&uri, &old_text, &new_text);
 
         // After edit, node should:
         // - START unchanged (30 not in [40, 50))
@@ -938,7 +938,7 @@ mod tests {
         let mut new_text = old_text.clone();
         new_text.replace_range(35..45, "");
 
-        tracker.apply_text_change(&uri, &old_text, &new_text);
+        tracker.apply_text_diff(&uri, &old_text, &new_text);
 
         // After edit, node should be INVALIDATED (START 40 is in [35, 45))
         // Try to get with adjusted position [35, 50) - should return NEW ULID
@@ -963,7 +963,7 @@ mod tests {
         let mut new_text = old_text.clone();
         new_text.replace_range(35..50, "");
 
-        tracker.apply_text_change(&uri, &old_text, &new_text);
+        tracker.apply_text_diff(&uri, &old_text, &new_text);
 
         // After edit, node should be INVALIDATED (START 40 is in [35, 50))
         let ulid_after = tracker.get_or_create(&uri, 35, 35, "block");
@@ -987,7 +987,7 @@ mod tests {
         let mut new_text = old_text.clone();
         new_text.replace_range(30..35, "");
 
-        tracker.apply_text_change(&uri, &old_text, &new_text);
+        tracker.apply_text_diff(&uri, &old_text, &new_text);
 
         // After edit, node should:
         // - START shifted: 60 + (-5) = 55
@@ -1022,7 +1022,7 @@ mod tests {
         let mut new_text = old_text.clone();
         new_text.replace_range(30..35, "");
 
-        tracker.apply_text_change(&uri, &old_text, &new_text);
+        tracker.apply_text_diff(&uri, &old_text, &new_text);
 
         // After edit, node position unchanged
         let ulid_after = tracker.get_or_create(&uri, 10, 20, "block");
@@ -1046,7 +1046,7 @@ mod tests {
         let mut new_text = old_text.clone();
         new_text.replace_range(35..40, "");
 
-        tracker.apply_text_change(&uri, &old_text, &new_text);
+        tracker.apply_text_diff(&uri, &old_text, &new_text);
 
         // START 35 is in [35, 40) (inclusive start) → INVALIDATE
         let ulid_after = tracker.get_or_create(&uri, 35, 45, "block");
@@ -1070,7 +1070,7 @@ mod tests {
         let mut new_text = old_text.clone();
         new_text.replace_range(30..40, "");
 
-        tracker.apply_text_change(&uri, &old_text, &new_text);
+        tracker.apply_text_diff(&uri, &old_text, &new_text);
 
         // START 40 is NOT in [30, 40) (exclusive end) → KEEP and shift
         // After edit deleting [30, 40), node shifts from [40, 60) to [30, 50)
@@ -1103,7 +1103,7 @@ mod tests {
         let mut new_text = old_text.clone();
         new_text.insert_str(40, "abc"); // Insert without deleting
 
-        tracker.apply_text_change(&uri, &old_text, &new_text);
+        tracker.apply_text_diff(&uri, &old_text, &new_text);
 
         // Conservative: invalidate because insert is AT START
         let ulid_after = tracker.get_or_create(&uri, 40, 63, "block");
@@ -1127,7 +1127,7 @@ mod tests {
         let mut new_text = old_text.clone();
         new_text.insert_str(30, "abc");
 
-        tracker.apply_text_change(&uri, &old_text, &new_text);
+        tracker.apply_text_diff(&uri, &old_text, &new_text);
 
         // Node shifts: [43, 63)
         let ulid_after = tracker.get(&uri, 43, 63, "block");
@@ -1161,7 +1161,7 @@ mod tests {
         let mut new_text = old_text.clone();
         new_text.replace_range(20..45, "");
 
-        tracker.apply_text_change(&uri, &old_text, &new_text);
+        tracker.apply_text_diff(&uri, &old_text, &new_text);
 
         // Node at [30, 50): START 30 is in [20, 45) → INVALIDATED by START-priority
 
@@ -1175,7 +1175,7 @@ mod tests {
         let mut new_text2 = old_text2.clone();
         new_text2.replace_range(20..60, "");
 
-        tracker.apply_text_change(&uri, &old_text2, &new_text2);
+        tracker.apply_text_diff(&uri, &old_text2, &new_text2);
 
         // Node at [10, 40): START 10 < 20 (not invalidated by START rule)
         // END 40 is inside [20, 60) → clamped to 20
@@ -1214,7 +1214,7 @@ mod tests {
         let new_text = "abcdef";
         assert_eq!(new_text.len(), 6);
 
-        tracker.apply_text_change(&uri, old_text, new_text);
+        tracker.apply_text_diff(&uri, old_text, new_text);
 
         // Node should shift from [7, 10) to [3, 6) (delta = -4 bytes)
         let ulid_after = tracker.get(&uri, 3, 6, "block");
@@ -1254,7 +1254,7 @@ mod tests {
         let new_text = "start日語end";
         assert_eq!(new_text.len(), 14); // 17 - 3 = 14 bytes
 
-        tracker.apply_text_change(&uri, old_text, new_text);
+        tracker.apply_text_diff(&uri, old_text, new_text);
 
         // Node should adjust end from 17 to 14 (delta = -3)
         // START 0 is not in [8, 11), so preserved
@@ -1287,7 +1287,7 @@ mod tests {
         let new_text = "前text";
         assert_eq!(new_text.len(), 7); // 3 + 4 = 7 bytes
 
-        tracker.apply_text_change(&uri, old_text, new_text);
+        tracker.apply_text_diff(&uri, old_text, new_text);
 
         // Node START 7 is in [3, 10) → INVALIDATED
         // Try to get at adjusted position - should be NEW ULID
@@ -1314,7 +1314,7 @@ mod tests {
         let new_text = "ab🚀cdef";
         assert_eq!(new_text.len(), 10); // 6 + 4 = 10 bytes
 
-        tracker.apply_text_change(&uri, old_text, new_text);
+        tracker.apply_text_diff(&uri, old_text, new_text);
 
         // Node should shift from [3, 6) to [7, 10) (delta = +4)
         let ulid_after = tracker.get(&uri, 7, 10, "block");
@@ -1348,7 +1348,7 @@ mod tests {
         let new_text = "Hello🌍World";
         assert_eq!(new_text.len(), 14); // 5 + 4 + 5 = 14
 
-        tracker.apply_text_change(&uri, old_text, new_text);
+        tracker.apply_text_diff(&uri, old_text, new_text);
 
         // "Hello" [0, 5): START 0 not in [5, 11) → KEEP unchanged
         assert_eq!(
@@ -1378,8 +1378,8 @@ mod tests {
     // ========================================
 
     #[test]
-    fn test_apply_text_change_returns_invalidated_ulids() {
-        // Phase 3: Verify apply_text_change returns the invalidated ULIDs
+    fn test_apply_text_diff_returns_invalidated_ulids() {
+        // Phase 3: Verify apply_text_diff returns the invalidated ULIDs
         let tracker = RegionIdTracker::new();
         let uri = test_uri("phase3_return");
 
@@ -1391,7 +1391,7 @@ mod tests {
         let mut new_text = old_text.clone();
         new_text.replace_range(35..45, "");
 
-        let invalidated = tracker.apply_text_change(&uri, &old_text, &new_text);
+        let invalidated = tracker.apply_text_diff(&uri, &old_text, &new_text);
 
         assert_eq!(
             invalidated.len(),
@@ -1405,7 +1405,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_text_change_returns_multiple_invalidated_ulids() {
+    fn test_apply_text_diff_returns_multiple_invalidated_ulids() {
         // Phase 3: Multiple nodes invalidated by a single edit
         let tracker = RegionIdTracker::new();
         let uri = test_uri("phase3_multiple");
@@ -1423,7 +1423,7 @@ mod tests {
         let mut new_text = old_text.clone();
         new_text.replace_range(35..50, "xxxxx"); // Replace 15 chars with 5
 
-        let invalidated = tracker.apply_text_change(&uri, &old_text, &new_text);
+        let invalidated = tracker.apply_text_diff(&uri, &old_text, &new_text);
 
         assert_eq!(
             invalidated.len(),
@@ -1445,7 +1445,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_text_change_returns_empty_when_no_invalidation() {
+    fn test_apply_text_diff_returns_empty_when_no_invalidation() {
         // Phase 3: Edit that doesn't invalidate any node
         let tracker = RegionIdTracker::new();
         let uri = test_uri("phase3_no_invalidation");
@@ -1458,7 +1458,7 @@ mod tests {
         let mut new_text = old_text.clone();
         new_text.replace_range(10..15, "xxx");
 
-        let invalidated = tracker.apply_text_change(&uri, &old_text, &new_text);
+        let invalidated = tracker.apply_text_diff(&uri, &old_text, &new_text);
 
         assert!(
             invalidated.is_empty(),
@@ -1467,7 +1467,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_text_change_returns_empty_for_identical_texts() {
+    fn test_apply_text_diff_returns_empty_for_identical_texts() {
         // Phase 3: Fast path when texts are identical
         let tracker = RegionIdTracker::new();
         let uri = test_uri("phase3_identical");
@@ -1475,7 +1475,7 @@ mod tests {
         let _ulid = tracker.get_or_create(&uri, 10, 20, "block");
 
         let text = text_with_markers(50);
-        let invalidated = tracker.apply_text_change(&uri, &text, &text);
+        let invalidated = tracker.apply_text_diff(&uri, &text, &text);
 
         assert!(
             invalidated.is_empty(),
@@ -1484,7 +1484,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_text_change_returns_empty_for_unknown_uri() {
+    fn test_apply_text_diff_returns_empty_for_unknown_uri() {
         // Phase 3: Unknown URI returns empty (no entries to invalidate)
         let tracker = RegionIdTracker::new();
         let uri = test_uri("phase3_unknown");
@@ -1493,7 +1493,7 @@ mod tests {
         let mut new_text = old_text.clone();
         new_text.replace_range(10..20, "");
 
-        let invalidated = tracker.apply_text_change(&uri, &old_text, &new_text);
+        let invalidated = tracker.apply_text_diff(&uri, &old_text, &new_text);
 
         assert!(
             invalidated.is_empty(),
@@ -1502,9 +1502,9 @@ mod tests {
     }
 
     // ============================================================
-    // Phase 4 Tests: apply_edits for Precise LSP Edit Processing
+    // Phase 4 Tests: apply_input_edits for Precise LSP Edit Processing
     // ============================================================
-    // These tests verify the apply_edits method that processes
+    // These tests verify the apply_input_edits method that processes
     // LSP InputEdits directly for precise invalidation.
 
     #[test]
@@ -1541,7 +1541,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_edits_inside_node_keeps_with_adjusted_end() {
+    fn test_apply_input_edits_inside_node_keeps_with_adjusted_end() {
         // ADR-0019 Node A case: Edit INSIDE node → KEEP (adjust end)
         // Node [10, 20), Edit [15, 18) → [15, 25)
         // START 10 NOT in [15, 18) → KEEP
@@ -1552,7 +1552,7 @@ mod tests {
 
         let edits = vec![EditInfo::new(15, 18, 25)]; // delta = +7
 
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         // Should NOT be invalidated (Node A case)
         assert!(
@@ -1569,7 +1569,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_edits_at_node_start_invalidates() {
+    fn test_apply_input_edits_at_node_start_invalidates() {
         // Edit starts at node's START → INVALIDATE
         // Node [20, 40), Edit [20, 25) → [20, 30)
         // START 20 in [20, 25) → INVALIDATE
@@ -1580,7 +1580,7 @@ mod tests {
 
         let edits = vec![EditInfo::new(20, 25, 30)];
 
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         assert!(
             invalidated.contains(&ulid),
@@ -1589,7 +1589,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_edits_exact_match_invalidates() {
+    fn test_apply_input_edits_exact_match_invalidates() {
         // Delete exactly matching node range → INVALIDATE
         // Node [30, 50), Edit [30, 50) delete all
         // START 30 in [30, 50) → INVALIDATE
@@ -1600,7 +1600,7 @@ mod tests {
 
         let edits = vec![EditInfo::new(30, 50, 30)]; // delete 20 bytes
 
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         assert!(
             invalidated.contains(&ulid),
@@ -1609,7 +1609,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_edits_before_node_shifts() {
+    fn test_apply_input_edits_before_node_shifts() {
         // Edit BEFORE node → KEEP and shift
         // Node [50, 70), Edit [20, 30) delete 10 bytes
         // START 50 NOT in [20, 30) → KEEP, shift to [40, 60)
@@ -1620,7 +1620,7 @@ mod tests {
 
         let edits = vec![EditInfo::new(20, 30, 20)]; // delete 10 bytes, delta = -10
 
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         assert!(
             invalidated.is_empty(),
@@ -1636,7 +1636,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_edits_node_at_edit_old_end_shifts() {
+    fn test_apply_input_edits_node_at_edit_old_end_shifts() {
         // Boundary: Node START exactly at edit.old_end → KEEP (shift)
         // Node [50, 70), Edit [30, 50) delete
         // START 50 NOT in [30, 50) because interval is [30, 50) exclusive
@@ -1647,7 +1647,7 @@ mod tests {
 
         let edits = vec![EditInfo::new(30, 50, 30)]; // delete [30, 50), delta = -20
 
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         assert!(
             invalidated.is_empty(),
@@ -1663,7 +1663,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_edits_multiple_sequential() {
+    fn test_apply_input_edits_multiple_sequential() {
         // Two edits in sequence, both shifting nodes
         //
         // Initial state:
@@ -1690,7 +1690,7 @@ mod tests {
             EditInfo::new(60, 63, 60), // delete 3 bytes (running coords after first edit)
         ];
 
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         // Neither should be invalidated (edits don't touch STARTs)
         assert!(
@@ -1716,7 +1716,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_edits_zero_length_insert_at_start_invalidates() {
+    fn test_apply_input_edits_zero_length_insert_at_start_invalidates() {
         // ADR-0019: Zero-length insert AT node START → INVALIDATE
         let tracker = RegionIdTracker::new();
         let uri = test_uri("zero_at_start");
@@ -1725,7 +1725,7 @@ mod tests {
 
         let edits = vec![EditInfo::new(20, 20, 25)]; // Zero-length insert 5 bytes
 
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         assert!(
             invalidated.contains(&ulid),
@@ -1734,7 +1734,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_edits_zero_length_insert_before_node_shifts() {
+    fn test_apply_input_edits_zero_length_insert_before_node_shifts() {
         // Zero-length insert BEFORE node START → KEEP and shift
         let tracker = RegionIdTracker::new();
         let uri = test_uri("zero_before");
@@ -1743,7 +1743,7 @@ mod tests {
 
         let edits = vec![EditInfo::new(10, 10, 15)]; // Zero-length insert 5 bytes
 
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         assert!(
             invalidated.is_empty(),
@@ -1759,13 +1759,13 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_edits_empty_slice() {
+    fn test_apply_input_edits_empty_slice() {
         let tracker = RegionIdTracker::new();
         let uri = test_uri("empty");
 
         tracker.get_or_create(&uri, 10, 20, "block");
 
-        let invalidated = tracker.apply_edits(&uri, &[]);
+        let invalidated = tracker.apply_input_edits(&uri, &[]);
 
         assert!(
             invalidated.is_empty(),
@@ -1774,13 +1774,13 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_edits_unknown_uri_returns_empty() {
+    fn test_apply_input_edits_unknown_uri_returns_empty() {
         // Unknown URI should return empty Vec (no entries to invalidate)
         let tracker = RegionIdTracker::new();
         let uri = test_uri("unknown");
 
         let edits = vec![EditInfo::new(10, 20, 15)];
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         assert!(
             invalidated.is_empty(),
@@ -1789,7 +1789,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_edits_single_edit_spans_multiple_nodes() {
+    fn test_apply_input_edits_single_edit_spans_multiple_nodes() {
         // Single edit that affects multiple nodes differently
         // Nodes: A [20, 30), B [40, 50), C [60, 70)
         // Edit: delete [35, 55) (delta = -20)
@@ -1812,7 +1812,7 @@ mod tests {
 
         let edits = vec![EditInfo::new(35, 55, 35)]; // delete [35, 55)
 
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         // Only Node B should be invalidated (START in edit range)
         assert!(
@@ -1842,7 +1842,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_edits_end_absorbed_keeps_node() {
+    fn test_apply_input_edits_end_absorbed_keeps_node() {
         // Node's END is inside edit range → clamp end to edit.new_end_byte, KEEP node
         // This is the "end absorbed" case from ADR-0019
         //
@@ -1861,7 +1861,7 @@ mod tests {
 
         let edits = vec![EditInfo::new(25, 55, 25)]; // delete [25, 55)
 
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         // Node should NOT be invalidated (START not in edit range)
         assert!(
@@ -1878,7 +1878,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_edits_larger_than_node_still_invalidates() {
+    fn test_apply_input_edits_larger_than_node_still_invalidates() {
         // Edit range larger than node → should still invalidate
         // Node [40, 50), Edit [30, 60) delete
         // START 40 in [30, 60) → INVALIDATE
@@ -1889,7 +1889,7 @@ mod tests {
 
         let edits = vec![EditInfo::new(30, 60, 30)]; // delete larger range
 
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         assert!(
             invalidated.contains(&ulid),
@@ -1898,7 +1898,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_edits_reverse_order_vscode_multicursor() {
+    fn test_apply_input_edits_reverse_order_vscode_multicursor() {
         // VSCode sends multi-cursor edits in REVERSE order (bottom-to-top)
         // This test verifies we handle non-ascending edit order correctly
         //
@@ -1927,7 +1927,7 @@ mod tests {
             EditInfo::new(0, 0, 1),    // Insert at line1 (earlier position second)
         ];
 
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         // Both should be invalidated (zero-length insert at START)
         assert!(
@@ -1941,7 +1941,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_edits_reverse_order_preserves_positions() {
+    fn test_apply_input_edits_reverse_order_preserves_positions() {
         // Strengthened VSCode reverse-order test: verify final positions are correct
         //
         // Scenario: Multiple nodes, reverse-order edits happen BEFORE them (not at START)
@@ -1987,7 +1987,7 @@ mod tests {
             EditInfo::new(20, 20, 22),    // Insert 2 at 20 (before A)
         ];
 
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         // No nodes should be invalidated (all edits before their START)
         assert!(
@@ -2039,7 +2039,7 @@ mod tests {
     /// runtime check provides graceful degradation in production.
     #[test]
     #[cfg(not(debug_assertions))]
-    fn test_apply_edits_invalid_edit_skipped() {
+    fn test_apply_input_edits_invalid_edit_skipped() {
         // Invalid edit (old_end < start) should be skipped with warning
         let tracker = RegionIdTracker::new();
         let uri = test_uri("invalid_edit");
@@ -2051,7 +2051,7 @@ mod tests {
             EditInfo::new(20, 25, 20), // Valid edit before node (shift)
         ];
 
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         // Invalid edit skipped, valid edit processed
         assert!(
@@ -2069,14 +2069,14 @@ mod tests {
 
     /// Test that invalid edits trigger debug_assert in debug builds.
     ///
-    /// This complements `test_apply_edits_invalid_edit_skipped` which runs
+    /// This complements `test_apply_input_edits_invalid_edit_skipped` which runs
     /// only in release mode. Together they verify the two-layer defense:
     /// - Debug builds: panic early to catch bugs
     /// - Release builds: skip gracefully for production resilience
     #[test]
     #[cfg(debug_assertions)]
     #[should_panic(expected = "Invalid edit")]
-    fn test_apply_edits_invalid_edit_panics_in_debug() {
+    fn test_apply_input_edits_invalid_edit_panics_in_debug() {
         let tracker = RegionIdTracker::new();
         let uri = test_uri("invalid_edit_debug");
 
@@ -2087,11 +2087,11 @@ mod tests {
         ];
 
         // This should panic in debug mode due to debug_assert!
-        let _ = tracker.apply_edits(&uri, &edits);
+        let _ = tracker.apply_input_edits(&uri, &edits);
     }
 
     #[test]
-    fn test_apply_edits_start_inside_edit_range_invalidates() {
+    fn test_apply_input_edits_start_inside_edit_range_invalidates() {
         // Node whose START falls inside edit range → INVALIDATE by START-priority
         //
         // Node [10, 12), Edit: delete [5, 20) → [5, 5)
@@ -2112,7 +2112,7 @@ mod tests {
 
         let edits = vec![EditInfo::new(5, 20, 5)]; // delete [5, 20)
 
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         assert!(
             invalidated.contains(&ulid),
@@ -2121,7 +2121,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_edits_zero_length_insert_after_node_keeps_unchanged() {
+    fn test_apply_input_edits_zero_length_insert_after_node_keeps_unchanged() {
         // Zero-length insert AFTER node → KEEP unchanged
         let tracker = RegionIdTracker::new();
         let uri = test_uri("zero_after");
@@ -2130,7 +2130,7 @@ mod tests {
 
         let edits = vec![EditInfo::new(50, 50, 55)]; // Zero-length insert after node
 
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         assert!(
             invalidated.is_empty(),
@@ -2148,7 +2148,7 @@ mod tests {
     // === Phase 4 Boundary Tests ===
 
     #[test]
-    fn test_apply_edits_end_exactly_at_old_end_clamps() {
+    fn test_apply_input_edits_end_exactly_at_old_end_clamps() {
         // Boundary: Node END exactly equals edit.old_end_byte
         //
         // Node [20, 55), Edit: delete [25, 55) → [25, 25)
@@ -2162,7 +2162,7 @@ mod tests {
 
         let edits = vec![EditInfo::new(25, 55, 25)]; // delete [25, 55)
 
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         assert!(
             invalidated.is_empty(),
@@ -2177,7 +2177,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_edits_end_exactly_at_edit_start_unchanged() {
+    fn test_apply_input_edits_end_exactly_at_edit_start_unchanged() {
         // Boundary: Node END exactly equals edit.start_byte
         //
         // Node [20, 25), Edit: delete [25, 55) → [25, 25)
@@ -2190,7 +2190,7 @@ mod tests {
 
         let edits = vec![EditInfo::new(25, 55, 25)]; // delete [25, 55)
 
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         assert!(
             invalidated.is_empty(),
@@ -2205,7 +2205,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_edits_zero_length_insert_inside_node_expands() {
+    fn test_apply_input_edits_zero_length_insert_inside_node_expands() {
         // Zero-length insert INSIDE node (not at boundaries)
         //
         // Node [20, 40), Edit: insert at [30, 30) → [30, 35) (5 bytes)
@@ -2220,7 +2220,7 @@ mod tests {
 
         let edits = vec![EditInfo::new(30, 30, 35)]; // insert 5 bytes at 30
 
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         assert!(
             invalidated.is_empty(),
@@ -2235,24 +2235,24 @@ mod tests {
     }
 
     // ============================================================
-    // Phase 4 Concurrency Tests: apply_edits Thread-Safety
+    // Phase 4 Concurrency Tests: apply_input_edits Thread-Safety
     // ============================================================
     // These tests verify thread-safety when multiple threads call
-    // apply_edits() concurrently, mirroring the apply_text_change tests.
+    // apply_input_edits() concurrently, mirroring the apply_text_diff tests.
 
     // ============================================================
-    // Phase 4 UTF-8 Multi-byte Tests: apply_edits with Unicode
+    // Phase 4 UTF-8 Multi-byte Tests: apply_input_edits with Unicode
     // ============================================================
-    // These tests verify apply_edits handles byte positions correctly
+    // These tests verify apply_input_edits handles byte positions correctly
     // for multi-byte UTF-8 characters. LSP provides byte offsets directly,
     // so we must ensure the START-priority logic works with any byte values.
 
     #[test]
-    fn test_apply_edits_utf8_delete_emoji_before_node_shifts() {
+    fn test_apply_input_edits_utf8_delete_emoji_before_node_shifts() {
         // Delete 4-byte emoji before node → shift by -4
         // Mirrors test_utf8_multibyte_edit_before_node_shifts_correctly
         let tracker = RegionIdTracker::new();
-        let uri = test_uri("apply_edits_utf8_before");
+        let uri = test_uri("apply_input_edits_utf8_before");
 
         // Text: "abc🦀def" where 🦀 is at bytes [3, 7)
         // Node at bytes [7, 10) covering "def"
@@ -2260,7 +2260,7 @@ mod tests {
 
         // Edit: delete [3, 7) (the emoji), new_end = 3 (delta = -4)
         let edits = vec![EditInfo::new(3, 7, 3)];
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         assert!(invalidated.is_empty(), "Node after edit should be kept");
 
@@ -2273,11 +2273,11 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_edits_utf8_delete_inside_node_adjusts_end() {
+    fn test_apply_input_edits_utf8_delete_inside_node_adjusts_end() {
         // Delete 3-byte character inside node → end shrinks
         // Node [0, 17), delete bytes [8, 11) → [0, 14)
         let tracker = RegionIdTracker::new();
-        let uri = test_uri("apply_edits_utf8_inside");
+        let uri = test_uri("apply_input_edits_utf8_inside");
 
         // Text: "start日本語end" (17 bytes)
         // Node covers entire text [0, 17)
@@ -2285,7 +2285,7 @@ mod tests {
 
         // Edit: delete "本" at [8, 11), new_end = 8 (delta = -3)
         let edits = vec![EditInfo::new(8, 11, 8)];
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         assert!(invalidated.is_empty(), "Node START 0 not in [8, 11)");
 
@@ -2298,18 +2298,18 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_edits_utf8_start_inside_edit_invalidates() {
+    fn test_apply_input_edits_utf8_start_inside_edit_invalidates() {
         // Node START inside edit range → INVALIDATE
         // Node [7, 14), edit [3, 10) → START 7 ∈ [3, 10) → INVALIDATE
         let tracker = RegionIdTracker::new();
-        let uri = test_uri("apply_edits_utf8_invalidate");
+        let uri = test_uri("apply_input_edits_utf8_invalidate");
 
         // Text: "前🎉後text" - node [7, 14) covers "後text"
         let ulid = tracker.get_or_create(&uri, 7, 14, "block");
 
         // Edit: delete [3, 10) (🎉後 = 4+3 = 7 bytes), new_end = 3
         let edits = vec![EditInfo::new(3, 10, 3)];
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         assert_eq!(
             invalidated,
@@ -2322,10 +2322,10 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_edits_utf8_insert_emoji_shifts_node() {
+    fn test_apply_input_edits_utf8_insert_emoji_shifts_node() {
         // Insert 4-byte emoji before node → shift by +4
         let tracker = RegionIdTracker::new();
-        let uri = test_uri("apply_edits_utf8_insert");
+        let uri = test_uri("apply_input_edits_utf8_insert");
 
         // Text: "abcdef", node [3, 6) covers "def"
         let ulid = tracker.get_or_create(&uri, 3, 6, "block");
@@ -2333,7 +2333,7 @@ mod tests {
         // Edit: insert 4 bytes at position 2 (ab|🚀|cdef)
         // [2, 2) → [2, 6) means insert 4 bytes at position 2
         let edits = vec![EditInfo::new(2, 2, 6)];
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         assert!(invalidated.is_empty(), "Node after insert should be kept");
 
@@ -2346,11 +2346,11 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_edits_utf8_mixed_operations() {
+    fn test_apply_input_edits_utf8_mixed_operations() {
         // Multiple UTF-8 aware edits in sequence
         // Tests running coordinate updates with multi-byte deltas
         let tracker = RegionIdTracker::new();
-        let uri = test_uri("apply_edits_utf8_mixed");
+        let uri = test_uri("apply_input_edits_utf8_mixed");
 
         // Three nodes: [0, 5), [10, 15), [20, 25)
         let ulid1 = tracker.get_or_create(&uri, 0, 5, "block");
@@ -2364,7 +2364,7 @@ mod tests {
         //         [18, 22) → [18, 18) delta -4
         let edits = vec![EditInfo::new(7, 7, 10), EditInfo::new(18, 22, 18)];
 
-        let invalidated = tracker.apply_edits(&uri, &edits);
+        let invalidated = tracker.apply_input_edits(&uri, &edits);
 
         assert!(invalidated.is_empty(), "No nodes should be invalidated");
 
@@ -2394,12 +2394,12 @@ mod tests {
     }
 
     #[test]
-    fn test_concurrent_apply_edits_same_uri_no_panic() {
+    fn test_concurrent_apply_input_edits_same_uri_no_panic() {
         use std::sync::Arc;
         use std::thread;
 
         let tracker = Arc::new(RegionIdTracker::new());
-        let uri = test_uri("concurrent_apply_edits");
+        let uri = test_uri("concurrent_apply_input_edits");
 
         // Pre-populate with several nodes spread across the document
         for i in 0..10 {
@@ -2421,7 +2421,7 @@ mod tests {
 
                         // Small deletion: [edit_start, edit_end) → [edit_start, edit_start)
                         let edits = vec![EditInfo::new(edit_start, edit_end, edit_start)];
-                        tracker.apply_edits(&uri, &edits);
+                        tracker.apply_input_edits(&uri, &edits);
                     }
                 })
             })
@@ -2431,19 +2431,19 @@ mod tests {
         for handle in handles {
             handle
                 .join()
-                .expect("Thread should not panic during concurrent apply_edits");
+                .expect("Thread should not panic during concurrent apply_input_edits");
         }
 
         // Verify tracker is still functional after concurrent edits
         let new_ulid = tracker.get_or_create(&uri, 1000, 1010, "test");
         assert!(
             new_ulid.to_string().len() == 26,
-            "ULID should be valid after concurrent apply_edits"
+            "ULID should be valid after concurrent apply_input_edits"
         );
     }
 
     #[test]
-    fn test_concurrent_apply_edits_different_uris_independent() {
+    fn test_concurrent_apply_input_edits_different_uris_independent() {
         use std::sync::Arc;
         use std::thread;
 
@@ -2453,7 +2453,7 @@ mod tests {
         let handles: Vec<_> = (0..5)
             .map(|thread_id| {
                 let tracker = Arc::clone(&tracker);
-                let uri = test_uri(&format!("apply_edits_uri_{}", thread_id));
+                let uri = test_uri(&format!("apply_input_edits_uri_{}", thread_id));
 
                 thread::spawn(move || {
                     // Create initial node at [50, 100)
@@ -2462,7 +2462,7 @@ mod tests {
                     // Apply an edit that shifts the node: delete [20, 30) before node
                     // This is a deletion of 10 bytes before the node (delta = -10)
                     let edits = vec![EditInfo::new(20, 30, 20)];
-                    tracker.apply_edits(&uri, &edits);
+                    tracker.apply_input_edits(&uri, &edits);
 
                     // After edit, node should shift from [50, 100) to [40, 90)
                     let shifted_ulid = tracker.get(&uri, 40, 90, "block");
@@ -2478,24 +2478,24 @@ mod tests {
             assert_eq!(
                 Some(original),
                 shifted,
-                "Each URI should independently maintain correct position adjustment with apply_edits"
+                "Each URI should independently maintain correct position adjustment with apply_input_edits"
             );
         }
     }
 
     #[test]
-    fn test_concurrent_get_and_apply_edits_interleaved() {
+    fn test_concurrent_get_and_apply_input_edits_interleaved() {
         use std::sync::Arc;
         use std::thread;
 
         let tracker = Arc::new(RegionIdTracker::new());
-        let uri = test_uri("apply_edits_interleaved");
+        let uri = test_uri("apply_input_edits_interleaved");
 
         // Pre-populate with one stable node that won't be affected by edits
         // Node at [0, 10) - edits will be at [50+)
         let stable_ulid = tracker.get_or_create(&uri, 0, 10, "stable");
 
-        // Spawn threads that interleave get_or_create and apply_edits
+        // Spawn threads that interleave get_or_create and apply_input_edits
         let handles: Vec<_> = (0..4)
             .map(|thread_id| {
                 let tracker = Arc::clone(&tracker);
@@ -2514,7 +2514,7 @@ mod tests {
                         if cycle % 2 == 0 {
                             let edit_start = 50 + thread_id * 100;
                             let edits = vec![EditInfo::new(edit_start, edit_start + 5, edit_start)];
-                            tracker.apply_edits(&uri, &edits);
+                            tracker.apply_input_edits(&uri, &edits);
                         }
 
                         // Always verify stable node is accessible
@@ -2535,7 +2535,7 @@ mod tests {
             for ulid in observed {
                 assert_eq!(
                     expected, ulid,
-                    "Stable node should have consistent ULID across concurrent apply_edits access"
+                    "Stable node should have consistent ULID across concurrent apply_input_edits access"
                 );
             }
         }

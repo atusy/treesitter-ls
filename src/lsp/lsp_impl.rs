@@ -1393,11 +1393,11 @@ impl LanguageServer for TreeSitterLs {
         let invalidated_ulids = if edits.is_empty() {
             // Full document sync: no InputEdits available, reconstruct from diff
             self.region_id_tracker
-                .apply_text_change(&uri, &old_text, &text)
+                .apply_text_diff(&uri, &old_text, &text)
         } else {
             // Incremental sync: use InputEdits directly (precise, no over-invalidation)
             let edit_infos: Vec<EditInfo> = edits.iter().map(EditInfo::from).collect();
-            self.region_id_tracker.apply_edits(&uri, &edit_infos)
+            self.region_id_tracker.apply_input_edits(&uri, &edit_infos)
         };
 
         // Invalidate injection caches for regions overlapping with edits (AC4/AC5)
