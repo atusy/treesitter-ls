@@ -79,7 +79,34 @@ const scrum: ScrumDashboard = {
       ],
     },
   ],
-  sprint: null,
+  sprint: {
+    number: 10,
+    pbi_id: "pbi-color-presentation-e2e",
+    goal: "Add E2E test coverage for textDocument/colorPresentation",
+    status: "in_progress",
+    subtasks: [
+      {
+        test: "E2E test verifies colorPresentation capability is advertised in server capabilities",
+        implementation: "Create tests/e2e_lsp_lua_color_presentation.rs with capability check test",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Follow pattern from e2e_lsp_lua_document_color.rs", "Check for colorProvider in capabilities"],
+      },
+      {
+        test: "E2E test verifies colorPresentation request is handled without error",
+        implementation: "Add colorPresentation request test with mock color/range input",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: [
+          "colorPresentation requires color and range as input (from documentColor)",
+          "Use mock color values since lua-ls may not return actual colors",
+          "Verify response structure (array of ColorPresentation or empty)",
+        ],
+      },
+    ],
+  },
   completed: [
     { number: 1, pbi_id: "pbi-document-highlight", goal: "Bridge textDocument/documentHighlight to downstream LS", status: "done", subtasks: [] },
     { number: 2, pbi_id: "pbi-rename", goal: "Bridge textDocument/rename with WorkspaceEdit transformation", status: "done", subtasks: [] },
