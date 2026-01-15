@@ -22,6 +22,13 @@ use super::virtual_uri::VirtualDocumentUri;
 /// * `region_start_line` - The starting line of the injection region in the host document
 /// * `request_id` - The JSON-RPC request ID
 /// * `method` - The LSP method name (e.g., "textDocument/hover")
+///
+/// # Preconditions
+///
+/// **`host_position.line >= region_start_line`** - The host position must be within or after
+/// the injection region. This is guaranteed by callers which only invoke bridge requests
+/// when the cursor position falls within a detected injection region's line range.
+/// Violation would cause underflow in debug builds (wrapping in release).
 fn build_position_based_request(
     host_uri: &tower_lsp::lsp_types::Url,
     host_position: tower_lsp::lsp_types::Position,

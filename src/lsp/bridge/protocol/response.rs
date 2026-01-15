@@ -97,13 +97,32 @@ pub(crate) fn transform_completion_response_to_host(
 }
 
 /// Transform the textEdit range in a single completion item to host coordinates.
+///
+/// Handles both TextEdit format (has `range`) and InsertReplaceEdit format (has `insert` + `replace`).
+/// InsertReplaceEdit is used by some language servers (e.g., rust-analyzer, tsserver) to provide
+/// both insert and replace options for the same completion.
 fn transform_completion_item_range(item: &mut serde_json::Value, region_start_line: u32) {
     // Check for textEdit field
-    if let Some(text_edit) = item.get_mut("textEdit")
-        && let Some(range) = text_edit.get_mut("range")
-        && range.is_object()
-    {
-        transform_range(range, region_start_line);
+    if let Some(text_edit) = item.get_mut("textEdit") {
+        // TextEdit format: { range, newText }
+        if let Some(range) = text_edit.get_mut("range")
+            && range.is_object()
+        {
+            transform_range(range, region_start_line);
+        }
+
+        // InsertReplaceEdit format: { insert, replace, newText }
+        // Used by some language servers to offer both insert and replace behaviors
+        if let Some(insert) = text_edit.get_mut("insert")
+            && insert.is_object()
+        {
+            transform_range(insert, region_start_line);
+        }
+        if let Some(replace) = text_edit.get_mut("replace")
+            && replace.is_object()
+        {
+            transform_range(replace, region_start_line);
+        }
     }
 
     // Also check for additionalTextEdits (array of TextEdit)
@@ -239,8 +258,11 @@ pub(crate) fn transform_document_link_response_to_host(
 ///
 /// Virtual document URIs have the pattern `file:///.treesitter-ls/{hash}/{region_id}.{ext}`.
 /// This is used to distinguish virtual URIs from real file URIs in definition responses.
+///
+/// Uses a strict prefix check to avoid false positives for real files that happen to be
+/// in a directory named `.treesitter-ls` (e.g., `file:///home/user/.treesitter-ls/config.lua`).
 pub(crate) fn is_virtual_uri(uri: &str) -> bool {
-    uri.contains("/.treesitter-ls/")
+    uri.starts_with("file:///.treesitter-ls/")
 }
 
 /// Context for transforming definition responses to host coordinates.
@@ -722,6 +744,43 @@ mod tests {
         assert_eq!(items[0]["textEdit"]["range"]["end"]["line"], 5);
     }
 
+    #[test]
+    fn completion_response_transforms_insert_replace_edit() {
+        // InsertReplaceEdit format used by rust-analyzer, tsserver, etc.
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "isIncomplete": false,
+                "items": [{
+                    "label": "println!",
+                    "textEdit": {
+                        "insert": {
+                            "start": { "line": 2, "character": 0 },
+                            "end": { "line": 2, "character": 3 }
+                        },
+                        "replace": {
+                            "start": { "line": 2, "character": 0 },
+                            "end": { "line": 2, "character": 8 }
+                        },
+                        "newText": "println!"
+                    }
+                }]
+            }
+        });
+        let region_start_line = 10;
+
+        let transformed = transform_completion_response_to_host(response, region_start_line);
+
+        let item = &transformed["result"]["items"][0]["textEdit"];
+        // Insert range transformed: line 2 + 10 = 12
+        assert_eq!(item["insert"]["start"]["line"], 12);
+        assert_eq!(item["insert"]["end"]["line"], 12);
+        // Replace range transformed: line 2 + 10 = 12
+        assert_eq!(item["replace"]["start"]["line"], 12);
+        assert_eq!(item["replace"]["end"]["line"], 12);
+    }
+
     // ==========================================================================
     // SignatureHelp response transformation tests
     // ==========================================================================
@@ -981,7 +1040,12 @@ mod tests {
         assert!(!is_virtual_uri("file:///home/user/project/main.lua"));
         assert!(!is_virtual_uri("file:///C:/Users/dev/code.py"));
         assert!(!is_virtual_uri("untitled:Untitled-1"));
+        // Real file in a directory that happens to contain ".treesitter-ls" in path
         assert!(!is_virtual_uri("file:///some/treesitter-ls/file.lua"));
+        // Real file in user's .treesitter-ls config directory (edge case the stricter check fixes)
+        assert!(!is_virtual_uri(
+            "file:///home/user/.treesitter-ls/config.lua"
+        ));
     }
 
     #[test]
