@@ -15,58 +15,11 @@
 
 mod helpers;
 
-use helpers::lsp_client::LspClient;
+use helpers::lsp_polling::poll_for_completions;
 use helpers::lua_bridge::{
     create_lua_configured_client, shutdown_client, skip_if_lua_ls_unavailable,
 };
 use serde_json::json;
-
-/// Poll for completion results with retries to allow lua-ls time to index.
-fn poll_for_completions(
-    client: &mut LspClient,
-    uri: &str,
-    line: u32,
-    character: u32,
-    max_attempts: u32,
-    delay_ms: u64,
-) -> Option<serde_json::Value> {
-    for attempt in 1..=max_attempts {
-        let response = client.send_request(
-            "textDocument/completion",
-            json!({
-                "textDocument": { "uri": uri },
-                "position": { "line": line, "character": character }
-            }),
-        );
-
-        // Check for error
-        if response.get("error").is_some() {
-            eprintln!(
-                "Attempt {}/{}: Error: {:?}",
-                attempt,
-                max_attempts,
-                response.get("error")
-            );
-            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-            continue;
-        }
-
-        // Check result
-        if let Some(result) = response.get("result") {
-            if !result.is_null() {
-                // Got actual completions
-                return Some(response);
-            }
-        }
-
-        eprintln!(
-            "Attempt {}/{}: null result, retrying...",
-            attempt, max_attempts
-        );
-        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-    }
-    None
-}
 
 #[test]
 fn test_lua_completion_in_markdown_code_block_via_binary() {
