@@ -89,30 +89,7 @@ const scrum: ScrumDashboard = {
     { number: 6, pbi_id: "pbi-color-presentation", goal: "Bridge textDocument/documentColor and textDocument/colorPresentation with coordinate transformation", status: "done", subtasks: [] },
     { number: 7, pbi_id: "pbi-moniker", goal: "Bridge textDocument/moniker with position transformation and pass-through response", status: "done", subtasks: [] },
     { number: 8, pbi_id: "pbi-symbol-info-uri-fix", goal: "Fix SymbolInformation URI transformation for LSP compliance", status: "done", subtasks: [] },
-    {
-      number: 9,
-      pbi_id: "pbi-document-color-e2e",
-      goal: "Add E2E test coverage for textDocument/documentColor",
-      status: "done",
-      subtasks: [
-        {
-          test: "E2E test verifies documentColor capability is advertised in server capabilities",
-          implementation: "Create tests/e2e_lsp_lua_document_color.rs with capability advertisement test",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "57c4d800", message: "test(e2e): add documentColor E2E tests for bridge infrastructure", phase: "green" }],
-          notes: ["Follow pattern from e2e_lsp_lua_document_symbol.rs"],
-        },
-        {
-          test: "E2E test verifies documentColor request is handled without error",
-          implementation: "Add test that sends documentColor request and handles response (even if empty)",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "57c4d800", message: "test(e2e): add documentColor E2E tests for bridge infrastructure", phase: "green" }],
-          notes: ["lua-language-server may not return actual colors for Lua code, so handle empty response gracefully"],
-        },
-      ],
-    },
+    { number: 9, pbi_id: "pbi-document-color-e2e", goal: "Add E2E test coverage for textDocument/documentColor", status: "done", subtasks: [] },
   ],
   definition_of_done: {
     checks: [
