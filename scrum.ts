@@ -61,8 +61,8 @@ const scrum: ScrumDashboard = {
         test: "Test LanguageServerPool::send_moniker_request delegates to downstream LS",
         implementation: "Add send_moniker_request method to pool following signatureHelp pattern",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "c7ef8faa", message: "feat(bridge): add send_moniker_request pool method", phase: "green" }],
         notes: ["Position-based, single region lookup", "Use pass-through response transformer"],
       },
       {
