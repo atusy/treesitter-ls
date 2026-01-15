@@ -55,7 +55,7 @@ const scrum: ScrumDashboard = {
     status: "in_progress",
     subtasks: [
       // documentColor: whole-document pattern (like documentLink)
-      { test: "transform_color_information converts virtual ranges to host coordinates", implementation: "Add transform_color_information function in document_color.rs", type: "behavioral", status: "pending", commits: [], notes: ["ColorInformation[] contains range+color", "Uses host_document_from_virtual_position for range transformation"] },
+      { test: "transform_color_information converts virtual ranges to host coordinates", implementation: "Add transform_color_information function in document_color.rs", type: "behavioral", status: "completed", commits: [], notes: ["ColorInformation[] contains range+color", "Uses host_document_from_virtual_position for range transformation"] },
       { test: "resolve_document_color aggregates results from all injection regions", implementation: "Add resolve_document_color to LanguageServerPool using resolve_all pattern", type: "behavioral", status: "pending", commits: [], notes: ["Whole-document operation like documentLink", "Aggregates ColorInformation[] from all regions"] },
       { test: "E2E documentColor returns color locations from injection region", implementation: "Wire documentColor handler in lsp_impl", type: "behavioral", status: "pending", commits: [], notes: ["Handler wiring + E2E verification"] },
       // colorPresentation: hybrid pattern (range input with textEdit response)
