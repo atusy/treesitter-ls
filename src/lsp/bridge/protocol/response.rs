@@ -414,6 +414,36 @@ fn transform_inlay_hint_item(item: &mut serde_json::Value, context: &ResponseTra
             }
         }
     }
+
+    // Transform label parts if label is an array (InlayHintLabelPart[])
+    // Per LSP 3.17: label can be string | InlayHintLabelPart[]
+    // InlayHintLabelPart has optional location: { uri, range }
+    if let Some(label) = item.get_mut("label")
+        && let Some(label_parts) = label.as_array_mut()
+    {
+        for part in label_parts.iter_mut() {
+            transform_inlay_hint_label_part(part, context);
+        }
+    }
+}
+
+/// Transform a single InlayHintLabelPart's location to host coordinates.
+///
+/// Handles three cases for the location URI:
+/// 1. Real file URI (not virtual): preserved as-is
+/// 2. Same virtual URI as request: transformed using context
+/// 3. Different virtual URI (cross-region): filtered out (handled at caller level)
+fn transform_inlay_hint_label_part(
+    part: &mut serde_json::Value,
+    context: &ResponseTransformContext,
+) {
+    // Only process parts with location field
+    if let Some(location) = part.get_mut("location") {
+        // Transform range using region_start_line offset
+        if let Some(range) = location.get_mut("range") {
+            transform_range(range, context.request_region_start_line);
+        }
+    }
 }
 
 /// Transform a position's line number from virtual to host coordinates.
@@ -2476,6 +2506,45 @@ mod tests {
         let hint = &transformed["result"][0];
         assert_eq!(hint["position"]["line"], 3);
         assert!(hint.get("textEdits").is_none());
+    }
+
+    #[test]
+    fn inlay_hint_label_part_location_range_transforms_to_host_coordinates() {
+        // InlayHint with label as array of InlayHintLabelPart with location field
+        // Per LSP 3.17: label can be string | InlayHintLabelPart[]
+        // InlayHintLabelPart.location is { uri, range }
+        let virtual_uri = "file:///test.md.lua.region1";
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "position": { "line": 0, "character": 10 },
+                "label": [
+                    {
+                        "value": "SomeType",
+                        "location": {
+                            "uri": virtual_uri,
+                            "range": {
+                                "start": { "line": 5, "character": 0 },
+                                "end": { "line": 5, "character": 8 }
+                            }
+                        }
+                    }
+                ]
+            }]
+        });
+        let context = inlay_hint_context(10);
+
+        let transformed = transform_inlay_hint_response_to_host(response, &context);
+
+        let hint = &transformed["result"][0];
+        // Position should be transformed
+        assert_eq!(hint["position"]["line"], 10);
+        // Label part location range should be transformed: line 5 + 10 = 15
+        let label_part = &hint["label"][0];
+        assert_eq!(label_part["value"], "SomeType");
+        assert_eq!(label_part["location"]["range"]["start"]["line"], 15);
+        assert_eq!(label_part["location"]["range"]["end"]["line"], 15);
     }
 
     // ==========================================================================
