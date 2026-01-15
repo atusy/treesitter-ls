@@ -22,21 +22,7 @@ pub(crate) fn transform_hover_response_to_host(
         && let Some(range) = result.get_mut("range")
         && range.is_object()
     {
-        // Transform start position
-        if let Some(start) = range.get_mut("start")
-            && let Some(line) = start.get_mut("line")
-            && let Some(line_num) = line.as_u64()
-        {
-            *line = serde_json::json!(line_num + region_start_line as u64);
-        }
-
-        // Transform end position
-        if let Some(end) = range.get_mut("end")
-            && let Some(line) = end.get_mut("line")
-            && let Some(line_num) = line.as_u64()
-        {
-            *line = serde_json::json!(line_num + region_start_line as u64);
-        }
+        transform_range(range, region_start_line);
     }
 
     response
