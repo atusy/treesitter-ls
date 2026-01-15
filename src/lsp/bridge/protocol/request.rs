@@ -947,8 +947,7 @@ mod tests {
 
     #[test]
     fn document_symbol_request_uses_virtual_uri() {
-        let request =
-            build_bridge_document_symbol_request(&test_host_uri(), "lua", "region-0", 42);
+        let request = build_bridge_document_symbol_request(&test_host_uri(), "lua", "region-0", 42);
 
         assert_uses_virtual_uri(&request, "lua");
     }

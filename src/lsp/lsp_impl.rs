@@ -1191,6 +1191,7 @@ impl LanguageServer for TreeSitterLs {
                     resolve_provider: None,
                     work_done_progress_options: WorkDoneProgressOptions::default(),
                 }),
+                document_symbol_provider: Some(OneOf::Left(true)),
                 rename_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
@@ -1543,6 +1544,13 @@ impl LanguageServer for TreeSitterLs {
 
     async fn document_link(&self, params: DocumentLinkParams) -> Result<Option<Vec<DocumentLink>>> {
         self.document_link_impl(params).await
+    }
+
+    async fn document_symbol(
+        &self,
+        params: DocumentSymbolParams,
+    ) -> Result<Option<DocumentSymbolResponse>> {
+        self.document_symbol_impl(params).await
     }
 
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
