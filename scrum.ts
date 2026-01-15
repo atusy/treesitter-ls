@@ -42,7 +42,7 @@ const scrum: ScrumDashboard = {
         { criterion: "Request range transformed to virtual coordinates", verification: "Unit test" },
         { criterion: "Hint positions transformed to host coordinates", verification: "Unit test" },
         { criterion: "Hint textEdits ranges transformed to host coordinates", verification: "Unit test" },
-      ], status: "ready", refinement_notes: ["Bidirectional: request range -> virtual, response position/textEdits -> host", "textEdits optional but needs transform when present", "InlayHintLabelPart.location deferred (rare, complex cross-doc case)"] },
+      ], status: "done", refinement_notes: ["Bidirectional: request range -> virtual, response position/textEdits -> host", "textEdits optional but needs transform when present", "InlayHintLabelPart.location deferred (rare, complex cross-doc case)"] },
     { id: "pbi-color-presentation", story: { role: "lua/python developer editing markdown", capability: "pick and edit color values", benefit: "visual color editing" },
       acceptance_criteria: [
         { criterion: "Bridge forwards textDocument/colorPresentation to downstream LS", verification: "E2E test" },
@@ -60,13 +60,13 @@ const scrum: ScrumDashboard = {
     number: 5,
     pbi_id: "pbi-inlay-hints",
     goal: "Bridge textDocument/inlayHint with bidirectional coordinate transformation",
-    status: "in_progress",
+    status: "review",
     subtasks: [
       { test: "InlayHintParams range transforms to virtual coordinates", implementation: "Request builder with range transformation", type: "behavioral", status: "completed", commits: [{ hash: "ddff2d50", message: "feat(bridge): add inlay hint request builder with range transformation", phase: "green" }], notes: ["Hybrid pattern: position-based (single region) but with range input"] },
       { test: "InlayHint position transforms to host coordinates", implementation: "Response transformer for hint position", type: "behavioral", status: "completed", commits: [{ hash: "58b08e20", message: "feat(bridge): add inlay hint response transformer for position", phase: "green" }], notes: ["Each hint has single position field"] },
       { test: "InlayHint textEdits ranges transform to host coordinates", implementation: "Response transformer handles optional textEdits", type: "behavioral", status: "completed", commits: [{ hash: "5d9fd83f", message: "feat(bridge): add textEdits transformation to inlay hint response", phase: "green" }], notes: ["textEdits is optional Vec<TextEdit>, transform when present"] },
       { test: "Pool.inlay_hints delegates to downstream server", implementation: "Add inlay_hints method to LanguageServerPool", type: "behavioral", status: "completed", commits: [{ hash: "f8e8f296", message: "feat(bridge): add inlay hint pool method with bidirectional transform", phase: "green" }], notes: ["Similar pattern to existing pool methods"] },
-      { test: "E2E: inlay hints from Lua block in markdown", implementation: "Handler wiring in lsp_impl", type: "behavioral", status: "pending", commits: [], notes: ["Wire request through to pool, verify coordinate transformation end-to-end"] },
+      { test: "E2E: inlay hints from Lua block in markdown", implementation: "Handler wiring in lsp_impl", type: "behavioral", status: "completed", commits: [{ hash: "13192b38", message: "feat(bridge): wire inlay hint handler with E2E test", phase: "green" }], notes: ["Wire request through to pool, verify coordinate transformation end-to-end"] },
     ],
   },
   completed: [
