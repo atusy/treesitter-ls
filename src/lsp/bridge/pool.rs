@@ -8,6 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
 use log::warn;
@@ -84,6 +85,12 @@ pub(crate) struct ConnectionHandle {
     router: Arc<ResponseRouter>,
     /// Handle to the reader task (for graceful shutdown on drop)
     _reader_handle: ReaderTaskHandle,
+    /// Atomic counter for generating unique downstream request IDs.
+    ///
+    /// Each upstream request may have the same ID (from different contexts),
+    /// so we generate unique IDs for downstream requests to avoid
+    /// "duplicate request ID" errors in the ResponseRouter.
+    next_request_id: AtomicI64,
 }
 
 impl ConnectionHandle {
@@ -101,7 +108,17 @@ impl ConnectionHandle {
             writer: tokio::sync::Mutex::new(writer),
             router,
             _reader_handle: reader_handle,
+            next_request_id: AtomicI64::new(1),
         }
+    }
+
+    /// Generate a unique downstream request ID.
+    ///
+    /// Each call returns the next ID in the sequence (1, 2, 3, ...).
+    /// This ensures unique IDs for the ResponseRouter even when multiple
+    /// upstream requests have the same ID.
+    pub(crate) fn next_request_id(&self) -> i64 {
+        self.next_request_id.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Get the current connection state.
@@ -555,6 +572,40 @@ mod tests {
     const TEST_ULID_LUA_0: &str = "01JPMQ8ZYYQA1W3AVPW4JDRZFR";
     const TEST_ULID_LUA_1: &str = "01JPMQ8ZYYQA1W3AVPW4JDRZFS";
     const TEST_ULID_PYTHON_0: &str = "01JPMQ8ZYYQA1W3AVPW4JDRZFT";
+
+    /// Test that ConnectionHandle provides unique request IDs via atomic counter.
+    ///
+    /// Each call to next_request_id() should return a unique, incrementing value.
+    /// This is critical for avoiding "duplicate request ID" errors when multiple
+    /// upstream requests have the same ID (they come from different contexts).
+    #[tokio::test]
+    async fn connection_handle_provides_unique_request_ids() {
+        // Create a mock server process to get a real connection
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat".to_string(),
+        ])
+        .await
+        .expect("should spawn cat process");
+
+        // Split connection and spawn reader task
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
+
+        // Wrap in ConnectionHandle
+        let handle = ConnectionHandle::new(writer, router, reader_handle);
+
+        // Get multiple request IDs - they should be unique and incrementing
+        let id1 = handle.next_request_id();
+        let id2 = handle.next_request_id();
+        let id3 = handle.next_request_id();
+
+        assert_eq!(id1, 1, "First request ID should be 1");
+        assert_eq!(id2, 2, "Second request ID should be 2");
+        assert_eq!(id3, 3, "Third request ID should be 3");
+    }
 
     /// Test that ConnectionHandle wraps connection with state (ADR-0015).
     /// State should start as Ready (since constructor is called after init handshake),

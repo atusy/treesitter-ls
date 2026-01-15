@@ -40,7 +40,7 @@ impl LanguageServerPool {
         region_id: &str,
         region_start_line: u32,
         virtual_content: &str,
-        upstream_request_id: i64,
+        _upstream_request_id: i64,
     ) -> io::Result<serde_json::Value> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
@@ -52,7 +52,8 @@ impl LanguageServerPool {
         let virtual_uri_string = virtual_uri.to_uri_string();
 
         // Build request ID and register with router BEFORE sending
-        let request_id = RequestId::new(upstream_request_id);
+        // Use unique downstream ID (not upstream ID) to avoid duplicate request ID errors
+        let request_id = RequestId::new(handle.next_request_id());
         let response_rx = handle
             .router()
             .register(request_id)
