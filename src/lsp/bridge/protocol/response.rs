@@ -30,6 +30,8 @@
 //! - [`transform_definition_response_to_host`] - Location/LocationLink with URIs
 //! - [`transform_workspace_edit_to_host`] - TextDocumentEdit with URIs
 
+use super::virtual_uri::VirtualDocumentUri;
+
 /// Transform a hover response from virtual to host document coordinates.
 ///
 /// If the response contains a range, translates the line numbers from virtual
@@ -256,13 +258,10 @@ pub(crate) fn transform_document_link_response_to_host(
 
 /// Check if a URI string represents a virtual document.
 ///
-/// Virtual document URIs have the pattern `file:///.treesitter-ls/{hash}/{region_id}.{ext}`.
-/// This is used to distinguish virtual URIs from real file URIs in definition responses.
-///
-/// Uses a strict prefix check to avoid false positives for real files that happen to be
-/// in a directory named `.treesitter-ls` (e.g., `file:///home/user/.treesitter-ls/config.lua`).
+/// Delegates to [`VirtualDocumentUri::is_virtual_uri`] which is the single source of truth
+/// for virtual URI format knowledge.
 pub(crate) fn is_virtual_uri(uri: &str) -> bool {
-    uri.starts_with("file:///.treesitter-ls/")
+    VirtualDocumentUri::is_virtual_uri(uri)
 }
 
 /// Context for transforming definition responses to host coordinates.
@@ -1023,30 +1022,8 @@ mod tests {
     }
 
     // ==========================================================================
-    // Cross-document transformation tests
+    // Cross-document transformation tests (is_virtual_uri tests are in virtual_uri.rs)
     // ==========================================================================
-
-    #[test]
-    fn is_virtual_uri_detects_virtual_uris() {
-        assert!(is_virtual_uri("file:///.treesitter-ls/abc123/region-0.lua"));
-        assert!(is_virtual_uri(
-            "file:///.treesitter-ls/def456/01JPMQ8ZYYQA.py"
-        ));
-        assert!(is_virtual_uri("file:///.treesitter-ls/hash/test.txt"));
-    }
-
-    #[test]
-    fn is_virtual_uri_rejects_real_uris() {
-        assert!(!is_virtual_uri("file:///home/user/project/main.lua"));
-        assert!(!is_virtual_uri("file:///C:/Users/dev/code.py"));
-        assert!(!is_virtual_uri("untitled:Untitled-1"));
-        // Real file in a directory that happens to contain ".treesitter-ls" in path
-        assert!(!is_virtual_uri("file:///some/treesitter-ls/file.lua"));
-        // Real file in user's .treesitter-ls config directory (edge case the stricter check fixes)
-        assert!(!is_virtual_uri(
-            "file:///home/user/.treesitter-ls/config.lua"
-        ));
-    }
 
     #[test]
     fn definition_response_preserves_real_file_uri() {
