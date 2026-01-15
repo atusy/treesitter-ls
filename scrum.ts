@@ -16,7 +16,52 @@ const scrum: ScrumDashboard = {
       { metric: "E2E test coverage using treesitter-ls binary", target: "Each bridged feature has E2E test verifying end-to-end flow" },
     ],
   },
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "pbi-inlay-hint-label-part-location",
+      story: {
+        role: "Lua developer editing markdown",
+        capability: "see inlay hint label parts with clickable locations that correctly navigate to the host document",
+        benefit: "I can click on type information or other hints that reference code locations and navigate to the correct position in my markdown file, not a non-existent virtual document",
+      },
+      acceptance_criteria: [
+        {
+          criterion: "Transform InlayHintLabelPart.location.range when label is an array",
+          verification: "Unit test: label array with location fields has ranges transformed by region_start_line offset",
+        },
+        {
+          criterion: "Transform InlayHintLabelPart.location.uri from virtual to host URI when same virtual document",
+          verification: "Unit test: location.uri matching request's virtual URI is replaced with host URI",
+        },
+        {
+          criterion: "Filter out InlayHintLabelPart with cross-region location.uri",
+          verification: "Unit test: label parts with different virtual URI are removed from the array",
+        },
+        {
+          criterion: "Preserve InlayHintLabelPart with real file location.uri unchanged",
+          verification: "Unit test: label parts with non-virtual URI have location preserved as-is",
+        },
+        {
+          criterion: "Preserve string labels unchanged (existing behavior)",
+          verification: "Existing tests continue to pass",
+        },
+        {
+          criterion: "Preserve InlayHintLabelPart without location field unchanged",
+          verification: "Unit test: label parts with only value/tooltip/command are preserved",
+        },
+      ],
+      status: "ready",
+      refinement_notes: [
+        "Per LSP 3.17 spec, InlayHint.label can be string | InlayHintLabelPart[]",
+        "InlayHintLabelPart has: value (required), tooltip, location, command (all optional)",
+        "location field is { uri: DocumentUri, range: Range } - same as Location type",
+        "Current transform_inlay_hint_item only handles position and textEdits, not label array",
+        "Can reuse transform_location_uri helper for consistent URI/range transformation",
+        "Need ResponseTransformContext to access host_uri and virtual_uri for URI transformation",
+        "Signature change required: transform_inlay_hint_item and transform_inlay_hint_response_to_host need context parameter",
+      ],
+    },
+  ],
   sprint: null,
   completed: [
     { number: 1, pbi_id: "pbi-document-highlight", goal: "Bridge textDocument/documentHighlight to downstream LS", status: "done", subtasks: [] },
