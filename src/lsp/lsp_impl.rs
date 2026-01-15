@@ -1191,7 +1191,11 @@ impl LanguageServer for TreeSitterLs {
                     resolve_provider: None,
                     work_done_progress_options: WorkDoneProgressOptions::default(),
                 }),
+                document_symbol_provider: Some(OneOf::Left(true)),
                 rename_provider: Some(OneOf::Left(true)),
+                inlay_hint_provider: Some(OneOf::Left(true)),
+                color_provider: Some(ColorProviderCapability::Simple(true)),
+                moniker_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
         })
@@ -1545,8 +1549,34 @@ impl LanguageServer for TreeSitterLs {
         self.document_link_impl(params).await
     }
 
+    async fn document_symbol(
+        &self,
+        params: DocumentSymbolParams,
+    ) -> Result<Option<DocumentSymbolResponse>> {
+        self.document_symbol_impl(params).await
+    }
+
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
         self.rename_impl(params).await
+    }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        self.inlay_hint_impl(params).await
+    }
+
+    async fn document_color(&self, params: DocumentColorParams) -> Result<Vec<ColorInformation>> {
+        self.document_color_impl(params).await
+    }
+
+    async fn color_presentation(
+        &self,
+        params: ColorPresentationParams,
+    ) -> Result<Vec<ColorPresentation>> {
+        self.color_presentation_impl(params).await
+    }
+
+    async fn moniker(&self, params: MonikerParams) -> Result<Option<Vec<Moniker>>> {
+        self.moniker_impl(params).await
     }
 }
 

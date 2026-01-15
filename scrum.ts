@@ -11,72 +11,38 @@ const scrum: ScrumDashboard = {
   product_goal: {
     statement: "Improve LSP feature coverage via bridge",
     success_metrics: [
-      {
-        metric: "Bridge coverage",
-        target:
-          "Support completion, signatureHelp, definition, typeDefinition, implementation, declaration, hover, references, document highlight, inlay hints, document link, document symbols, moniker, color presentation, rename",
-      },
-      {
-        metric: "Modular architecture",
-        target:
-          "Bridge module organized with text_document/ subdirectory matching lsp_impl structure",
-      },
-      {
-        metric: "E2E test coverage using treesitter-ls binary",
-        target: "Each bridged feature has E2E test verifying end-to-end flow",
-      },
+      { metric: "Bridge coverage", target: "Support completion, signatureHelp, definition, typeDefinition, implementation, declaration, hover, references, document highlight, inlay hints, document link, document symbols, moniker, color presentation, rename" },
+      { metric: "Modular architecture", target: "Bridge module organized with text_document/ subdirectory matching lsp_impl structure" },
+      { metric: "E2E test coverage using treesitter-ls binary", target: "Each bridged feature has E2E test verifying end-to-end flow" },
     ],
   },
-
-  product_backlog: [
-    { id: "pbi-document-symbols", story: { role: "Lua developer editing markdown", capability: "see outline of symbols in Lua code block", benefit: "navigate to functions" },
-      acceptance_criteria: [
-        { criterion: "Bridge forwards textDocument/documentSymbol to downstream LS", verification: "E2E test" },
-        { criterion: "Symbol ranges transformed to host coordinates", verification: "Unit test" },
-        { criterion: "Hierarchical structure preserved", verification: "Unit test: nested children" },
-      ], status: "ready", refinement_notes: ["Returns DocumentSymbol[] or SymbolInformation[]", "Recursive transform for children"] },
-    { id: "pbi-inlay-hints", story: { role: "Lua developer editing markdown", capability: "see inline type hints in Lua code blocks", benefit: "understand types without hovering" },
-      acceptance_criteria: [
-        { criterion: "Bridge forwards textDocument/inlayHint to downstream LS", verification: "E2E test" },
-        { criterion: "Hint positions transformed to host coordinates", verification: "Unit test" },
-        { criterion: "Request range transformed to virtual coordinates", verification: "Unit test" },
-      ], status: "ready", refinement_notes: ["Request has range, response has positions", "Bidirectional transform needed"] },
-    { id: "pbi-color-presentation", story: { role: "lua/python developer editing markdown", capability: "pick and edit color values", benefit: "visual color editing" },
-      acceptance_criteria: [
-        { criterion: "Bridge forwards textDocument/colorPresentation to downstream LS", verification: "E2E test" },
-        { criterion: "Request range transformed to virtual coordinates", verification: "Unit test" },
-        { criterion: "Response textEdit ranges transformed to host coordinates", verification: "Unit test" },
-      ], status: "ready", refinement_notes: ["Needs documentColor + colorPresentation handlers", "Both request and response transforms"] },
-    { id: "pbi-moniker", story: { role: "lua/python developer editing markdown", capability: "get unique symbol identifiers", benefit: "cross-project navigation" },
-      acceptance_criteria: [
-        { criterion: "Bridge forwards textDocument/moniker to downstream LS", verification: "E2E test" },
-        { criterion: "Moniker response passed through unchanged", verification: "Unit test" },
-        { criterion: "Request position transformed to virtual coordinates", verification: "Unit test" },
-      ], status: "ready", refinement_notes: ["Response has no position data", "Pass-through response"] },
-  ],
+  product_backlog: [],
   sprint: null,
   completed: [
     { number: 1, pbi_id: "pbi-document-highlight", goal: "Bridge textDocument/documentHighlight to downstream LS", status: "done", subtasks: [] },
     { number: 2, pbi_id: "pbi-rename", goal: "Bridge textDocument/rename with WorkspaceEdit transformation", status: "done", subtasks: [] },
     { number: 3, pbi_id: "pbi-document-link", goal: "Bridge textDocument/documentLink with range transformation to host coordinates", status: "done", subtasks: [] },
+    { number: 4, pbi_id: "pbi-document-symbols", goal: "Bridge textDocument/documentSymbol to downstream LS with coordinate transformation", status: "done", subtasks: [] },
+    { number: 5, pbi_id: "pbi-inlay-hints", goal: "Bridge textDocument/inlayHint with bidirectional coordinate transformation", status: "done", subtasks: [] },
+    { number: 6, pbi_id: "pbi-color-presentation", goal: "Bridge textDocument/documentColor and textDocument/colorPresentation with coordinate transformation", status: "done", subtasks: [] },
+    { number: 7, pbi_id: "pbi-moniker", goal: "Bridge textDocument/moniker with position transformation and pass-through response", status: "done", subtasks: [] },
+    { number: 8, pbi_id: "pbi-symbol-info-uri-fix", goal: "Fix SymbolInformation URI transformation for LSP compliance", status: "done", subtasks: [] },
+    { number: 9, pbi_id: "pbi-document-color-e2e", goal: "Add E2E test coverage for textDocument/documentColor", status: "done", subtasks: [] },
+    { number: 10, pbi_id: "pbi-color-presentation-e2e", goal: "Add E2E test coverage for textDocument/colorPresentation", status: "done", subtasks: [] },
+    { number: 11, pbi_id: "pbi-inlay-hint-label-part-location", goal: "Transform InlayHintLabelPart.location for full LSP compliance", status: "done", subtasks: [] },
   ],
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
       { name: "Code quality checks pass", run: "make check" },
       { name: "E2E tests pass", run: "make test_e2e" },
+      { name: "E2E test exists for bridged features (test infrastructure even if downstream LS returns no data)", run: "verify tests/e2e_lsp_lua_*.rs exists for feature" },
     ],
   },
   retrospectives: [
-    { sprint: 1, improvements: [
-      { action: "Review LSP spec response structure during refinement", timing: "sprint", status: "active", outcome: null },
-    ] },
-    { sprint: 2, improvements: [
-      { action: "Continue reviewing LSP spec for dual response formats during refinement", timing: "sprint", status: "active", outcome: "Would have caught WorkspaceEdit's changes vs documentChanges formats earlier" },
-      { action: "Document reusable patterns (URI filtering, coordinate transformation) for reference", timing: "immediate", status: "completed", outcome: "Pattern recognition accelerated implementation" },
-    ] },
-    { sprint: 3, improvements: [
-      { action: "Continue using InjectionResolver::resolve_all for whole-document operations", timing: "sprint", status: "active", outcome: "Discovered pattern: whole-doc ops (documentLink, symbols) need all regions, position-based ops (hover, definition) need single region" },
+    { sprint: 11, improvements: [
+      { action: "Document pattern for handling LSP types with nested optional Location fields in array properties", timing: "product", status: "active", outcome: null },
+      { action: "When changing function signatures, verify all call sites in same commit to maintain atomicity", timing: "sprint", status: "active", outcome: null },
     ] },
   ],
 };

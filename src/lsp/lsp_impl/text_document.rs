@@ -1,12 +1,17 @@
 //! Text document related LSP methods.
 
+mod color_presentation;
 mod completion;
 mod declaration;
 mod definition;
+mod document_color;
 mod document_highlight;
 mod document_link;
+mod document_symbol;
 mod hover;
 mod implementation;
+mod inlay_hint;
+mod moniker;
 mod references;
 mod rename;
 mod selection_range;

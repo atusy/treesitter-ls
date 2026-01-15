@@ -63,6 +63,41 @@ fn build_position_based_request(
     })
 }
 
+/// Build a whole-document JSON-RPC request for a downstream language server.
+///
+/// This is the core helper for building LSP requests that operate on the entire
+/// document without a position (documentLink, documentSymbol, documentColor).
+/// It handles:
+/// - Creating the virtual document URI
+/// - Building the JSON-RPC request structure with only textDocument param
+///
+/// # Arguments
+/// * `host_uri` - The URI of the host document
+/// * `injection_language` - The injection language (e.g., "lua")
+/// * `region_id` - The unique region ID for this injection
+/// * `request_id` - The JSON-RPC request ID
+/// * `method` - The LSP method name (e.g., "textDocument/documentSymbol")
+fn build_whole_document_request(
+    host_uri: &tower_lsp::lsp_types::Url,
+    injection_language: &str,
+    region_id: &str,
+    request_id: i64,
+    method: &str,
+) -> serde_json::Value {
+    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": method,
+        "params": {
+            "textDocument": {
+                "uri": virtual_uri.to_uri_string()
+            }
+        }
+    })
+}
+
 /// Build a JSON-RPC hover request for a downstream language server.
 pub(crate) fn build_bridge_hover_request(
     host_uri: &tower_lsp::lsp_types::Url,
@@ -289,34 +324,207 @@ pub(crate) fn build_bridge_rename_request(
 
 /// Build a JSON-RPC document link request for a downstream language server.
 ///
-/// Unlike position-based requests (hover, definition, etc.), DocumentLinkParams
-/// only has a textDocument field - no position. The request asks for all links
-/// in the entire document.
-///
-/// # Arguments
-/// * `host_uri` - The URI of the host document
-/// * `injection_language` - The injection language (e.g., "lua")
-/// * `region_id` - The unique region ID for this injection
-/// * `request_id` - The JSON-RPC request ID
+/// Whole-document request - asks for all links in the entire document.
 pub(crate) fn build_bridge_document_link_request(
     host_uri: &tower_lsp::lsp_types::Url,
     injection_language: &str,
     region_id: &str,
     request_id: i64,
 ) -> serde_json::Value {
+    build_whole_document_request(
+        host_uri,
+        injection_language,
+        region_id,
+        request_id,
+        "textDocument/documentLink",
+    )
+}
+
+/// Build a JSON-RPC document symbol request for a downstream language server.
+///
+/// Whole-document request - asks for all symbols in the entire document.
+pub(crate) fn build_bridge_document_symbol_request(
+    host_uri: &tower_lsp::lsp_types::Url,
+    injection_language: &str,
+    region_id: &str,
+    request_id: i64,
+) -> serde_json::Value {
+    build_whole_document_request(
+        host_uri,
+        injection_language,
+        region_id,
+        request_id,
+        "textDocument/documentSymbol",
+    )
+}
+
+/// Build a JSON-RPC inlay hint request for a downstream language server.
+///
+/// Unlike position-based requests (hover, definition, etc.), InlayHintParams
+/// has a range field that specifies the visible document range for which
+/// inlay hints should be computed. This range needs to be translated from
+/// host to virtual coordinates.
+///
+/// # Arguments
+/// * `host_uri` - The URI of the host document
+/// * `host_range` - The range in the host document
+/// * `injection_language` - The injection language (e.g., "lua")
+/// * `region_id` - The unique region ID for this injection
+/// * `region_start_line` - The starting line of the injection region in the host document
+/// * `request_id` - The JSON-RPC request ID
+///
+/// # Preconditions
+///
+/// **`host_range.start.line >= region_start_line`** - The host range must be within or after
+/// the injection region. This is guaranteed by callers which only invoke bridge requests
+/// when the range falls within a detected injection region's line range.
+pub(crate) fn build_bridge_inlay_hint_request(
+    host_uri: &tower_lsp::lsp_types::Url,
+    host_range: tower_lsp::lsp_types::Range,
+    injection_language: &str,
+    region_id: &str,
+    region_start_line: u32,
+    request_id: i64,
+) -> serde_json::Value {
     // Create virtual document URI
     let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+
+    // Translate range from host to virtual coordinates
+    let virtual_range = tower_lsp::lsp_types::Range {
+        start: tower_lsp::lsp_types::Position {
+            line: host_range.start.line - region_start_line,
+            character: host_range.start.character,
+        },
+        end: tower_lsp::lsp_types::Position {
+            line: host_range.end.line - region_start_line,
+            character: host_range.end.character,
+        },
+    };
 
     serde_json::json!({
         "jsonrpc": "2.0",
         "id": request_id,
-        "method": "textDocument/documentLink",
+        "method": "textDocument/inlayHint",
         "params": {
             "textDocument": {
                 "uri": virtual_uri.to_uri_string()
+            },
+            "range": {
+                "start": {
+                    "line": virtual_range.start.line,
+                    "character": virtual_range.start.character
+                },
+                "end": {
+                    "line": virtual_range.end.line,
+                    "character": virtual_range.end.character
+                }
             }
         }
     })
+}
+
+/// Build a JSON-RPC color presentation request for a downstream language server.
+///
+/// ColorPresentationParams has a range field that specifies the color's location
+/// in the document. This range needs to be translated from host to virtual coordinates.
+///
+/// # Arguments
+/// * `host_uri` - The URI of the host document
+/// * `host_range` - The range in the host document where the color is located
+/// * `color` - The color value (RGBA) to get presentations for
+/// * `injection_language` - The injection language (e.g., "lua")
+/// * `region_id` - The unique region ID for this injection
+/// * `region_start_line` - The starting line of the injection region in the host document
+/// * `request_id` - The JSON-RPC request ID
+///
+/// # Preconditions
+///
+/// **`host_range.start.line >= region_start_line`** - The host range must be within or after
+/// the injection region. This is guaranteed by callers which only invoke bridge requests
+/// when the range falls within a detected injection region's line range.
+pub(crate) fn build_bridge_color_presentation_request(
+    host_uri: &tower_lsp::lsp_types::Url,
+    host_range: tower_lsp::lsp_types::Range,
+    color: &serde_json::Value,
+    injection_language: &str,
+    region_id: &str,
+    region_start_line: u32,
+    request_id: i64,
+) -> serde_json::Value {
+    // Create virtual document URI
+    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+
+    // Translate range from host to virtual coordinates
+    let virtual_range = tower_lsp::lsp_types::Range {
+        start: tower_lsp::lsp_types::Position {
+            line: host_range.start.line - region_start_line,
+            character: host_range.start.character,
+        },
+        end: tower_lsp::lsp_types::Position {
+            line: host_range.end.line - region_start_line,
+            character: host_range.end.character,
+        },
+    };
+
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "textDocument/colorPresentation",
+        "params": {
+            "textDocument": {
+                "uri": virtual_uri.to_uri_string()
+            },
+            "color": color,
+            "range": {
+                "start": {
+                    "line": virtual_range.start.line,
+                    "character": virtual_range.start.character
+                },
+                "end": {
+                    "line": virtual_range.end.line,
+                    "character": virtual_range.end.character
+                }
+            }
+        }
+    })
+}
+
+/// Build a JSON-RPC moniker request for a downstream language server.
+pub(crate) fn build_bridge_moniker_request(
+    host_uri: &tower_lsp::lsp_types::Url,
+    host_position: tower_lsp::lsp_types::Position,
+    injection_language: &str,
+    region_id: &str,
+    region_start_line: u32,
+    request_id: i64,
+) -> serde_json::Value {
+    build_position_based_request(
+        host_uri,
+        host_position,
+        injection_language,
+        region_id,
+        region_start_line,
+        request_id,
+        "textDocument/moniker",
+    )
+}
+
+/// Build a JSON-RPC document color request for a downstream language server.
+///
+/// Whole-document request - asks for all colors in the entire document.
+pub(crate) fn build_bridge_document_color_request(
+    host_uri: &tower_lsp::lsp_types::Url,
+    injection_language: &str,
+    region_id: &str,
+    request_id: i64,
+) -> serde_json::Value {
+    build_whole_document_request(
+        host_uri,
+        injection_language,
+        region_id,
+        request_id,
+        "textDocument/documentColor",
+    )
 }
 
 /// Build a JSON-RPC didOpen notification for a downstream language server.
@@ -908,5 +1116,362 @@ mod tests {
 
         assert_uses_virtual_uri(&lua_request, "lua");
         assert_uses_virtual_uri(&python_request, "py");
+    }
+
+    // ==========================================================================
+    // Document symbol request tests
+    // ==========================================================================
+
+    #[test]
+    fn document_symbol_request_uses_virtual_uri() {
+        let request = build_bridge_document_symbol_request(&test_host_uri(), "lua", "region-0", 42);
+
+        assert_uses_virtual_uri(&request, "lua");
+    }
+
+    #[test]
+    fn document_symbol_request_has_correct_method_and_structure() {
+        let request =
+            build_bridge_document_symbol_request(&test_host_uri(), "lua", "region-0", 123);
+
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], 123);
+        assert_eq!(request["method"], "textDocument/documentSymbol");
+        // DocumentSymbol request has no position parameter (whole-document operation)
+        assert!(
+            request["params"].get("position").is_none(),
+            "DocumentSymbol request should not have position parameter"
+        );
+    }
+
+    // ==========================================================================
+    // Inlay hint request tests
+    // ==========================================================================
+
+    #[test]
+    fn inlay_hint_request_uses_virtual_uri() {
+        use tower_lsp::lsp_types::Range;
+
+        let host_range = Range {
+            start: Position {
+                line: 5,
+                character: 0,
+            },
+            end: Position {
+                line: 10,
+                character: 20,
+            },
+        };
+        let request = build_bridge_inlay_hint_request(
+            &test_host_uri(),
+            host_range,
+            "lua",
+            "region-0",
+            3, // region_start_line
+            42,
+        );
+
+        assert_uses_virtual_uri(&request, "lua");
+    }
+
+    #[test]
+    fn inlay_hint_request_has_correct_method_and_structure() {
+        use tower_lsp::lsp_types::Range;
+
+        let host_range = Range {
+            start: Position {
+                line: 5,
+                character: 0,
+            },
+            end: Position {
+                line: 10,
+                character: 20,
+            },
+        };
+        let request = build_bridge_inlay_hint_request(
+            &test_host_uri(),
+            host_range,
+            "lua",
+            "region-0",
+            3,
+            123,
+        );
+
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], 123);
+        assert_eq!(request["method"], "textDocument/inlayHint");
+        // InlayHint request has range, not position
+        assert!(
+            request["params"].get("range").is_some(),
+            "InlayHint request should have range parameter"
+        );
+        assert!(
+            request["params"].get("position").is_none(),
+            "InlayHint request should not have position parameter"
+        );
+    }
+
+    #[test]
+    fn inlay_hint_request_transforms_range_to_virtual_coordinates() {
+        use tower_lsp::lsp_types::Range;
+
+        // Host range: lines 5-10, region starts at line 3
+        // Virtual range should be: lines 2-7 (5-3=2, 10-3=7)
+        let host_range = Range {
+            start: Position {
+                line: 5,
+                character: 0,
+            },
+            end: Position {
+                line: 10,
+                character: 20,
+            },
+        };
+        let request = build_bridge_inlay_hint_request(
+            &test_host_uri(),
+            host_range,
+            "lua",
+            "region-0",
+            3, // region_start_line
+            42,
+        );
+
+        let range = &request["params"]["range"];
+        assert_eq!(
+            range["start"]["line"], 2,
+            "Start line should be translated from 5 to 2 (5-3)"
+        );
+        assert_eq!(
+            range["start"]["character"], 0,
+            "Start character should remain unchanged"
+        );
+        assert_eq!(
+            range["end"]["line"], 7,
+            "End line should be translated from 10 to 7 (10-3)"
+        );
+        assert_eq!(
+            range["end"]["character"], 20,
+            "End character should remain unchanged"
+        );
+    }
+
+    #[test]
+    fn inlay_hint_request_at_region_start_becomes_line_zero() {
+        use tower_lsp::lsp_types::Range;
+
+        // When range starts at region_start_line, virtual start should be 0
+        let host_range = Range {
+            start: Position {
+                line: 3,
+                character: 5,
+            },
+            end: Position {
+                line: 5,
+                character: 10,
+            },
+        };
+        let request = build_bridge_inlay_hint_request(
+            &test_host_uri(),
+            host_range,
+            "lua",
+            "region-0",
+            3, // region_start_line
+            42,
+        );
+
+        let range = &request["params"]["range"];
+        assert_eq!(
+            range["start"]["line"], 0,
+            "Range starting at region_start_line should translate to line 0"
+        );
+        assert_eq!(
+            range["end"]["line"], 2,
+            "End line should be translated from 5 to 2 (5-3)"
+        );
+    }
+
+    // ==========================================================================
+    // Document color request tests
+    // ==========================================================================
+
+    #[test]
+    fn document_color_request_uses_virtual_uri() {
+        let request = build_bridge_document_color_request(&test_host_uri(), "lua", "region-0", 42);
+
+        assert_uses_virtual_uri(&request, "lua");
+    }
+
+    #[test]
+    fn document_color_request_has_correct_method_and_structure() {
+        let request = build_bridge_document_color_request(&test_host_uri(), "lua", "region-0", 123);
+
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], 123);
+        assert_eq!(request["method"], "textDocument/documentColor");
+        // DocumentColor request has no position parameter (whole-document operation)
+        assert!(
+            request["params"].get("position").is_none(),
+            "DocumentColor request should not have position parameter"
+        );
+    }
+
+    // ==========================================================================
+    // Color presentation request tests
+    // ==========================================================================
+
+    #[test]
+    fn color_presentation_request_uses_virtual_uri() {
+        use tower_lsp::lsp_types::Range;
+
+        let host_range = Range {
+            start: Position {
+                line: 5,
+                character: 10,
+            },
+            end: Position {
+                line: 5,
+                character: 17,
+            },
+        };
+        let color = serde_json::json!({
+            "red": 1.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 1.0
+        });
+        let request = build_bridge_color_presentation_request(
+            &test_host_uri(),
+            host_range,
+            &color,
+            "lua",
+            "region-0",
+            3, // region_start_line
+            42,
+        );
+
+        assert_uses_virtual_uri(&request, "lua");
+    }
+
+    #[test]
+    fn color_presentation_request_transforms_range_to_virtual_coordinates() {
+        use tower_lsp::lsp_types::Range;
+
+        // Host range: line 5, region starts at line 3
+        // Virtual range should be: line 2 (5-3=2)
+        let host_range = Range {
+            start: Position {
+                line: 5,
+                character: 10,
+            },
+            end: Position {
+                line: 5,
+                character: 17,
+            },
+        };
+        let color = serde_json::json!({
+            "red": 1.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 1.0
+        });
+        let request = build_bridge_color_presentation_request(
+            &test_host_uri(),
+            host_range,
+            &color,
+            "lua",
+            "region-0",
+            3, // region_start_line
+            42,
+        );
+
+        let range = &request["params"]["range"];
+        assert_eq!(
+            range["start"]["line"], 2,
+            "Start line should be translated from 5 to 2 (5-3)"
+        );
+        assert_eq!(
+            range["start"]["character"], 10,
+            "Start character should remain unchanged"
+        );
+        assert_eq!(
+            range["end"]["line"], 2,
+            "End line should be translated from 5 to 2 (5-3)"
+        );
+        assert_eq!(
+            range["end"]["character"], 17,
+            "End character should remain unchanged"
+        );
+    }
+
+    #[test]
+    fn color_presentation_request_includes_color() {
+        use tower_lsp::lsp_types::Range;
+
+        let host_range = Range {
+            start: Position {
+                line: 3,
+                character: 0,
+            },
+            end: Position {
+                line: 3,
+                character: 7,
+            },
+        };
+        let color = serde_json::json!({
+            "red": 0.5,
+            "green": 0.25,
+            "blue": 0.75,
+            "alpha": 1.0
+        });
+        let request = build_bridge_color_presentation_request(
+            &test_host_uri(),
+            host_range,
+            &color,
+            "lua",
+            "region-0",
+            3, // region_start_line
+            42,
+        );
+
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], 42);
+        assert_eq!(request["method"], "textDocument/colorPresentation");
+        assert_eq!(request["params"]["color"]["red"], 0.5);
+        assert_eq!(request["params"]["color"]["green"], 0.25);
+        assert_eq!(request["params"]["color"]["blue"], 0.75);
+        assert_eq!(request["params"]["color"]["alpha"], 1.0);
+    }
+
+    // ==========================================================================
+    // Moniker request tests
+    // ==========================================================================
+
+    #[test]
+    fn moniker_request_uses_virtual_uri() {
+        let request = build_bridge_moniker_request(
+            &test_host_uri(),
+            test_position(),
+            "lua",
+            "region-0",
+            3,
+            42,
+        );
+
+        assert_uses_virtual_uri(&request, "lua");
+    }
+
+    #[test]
+    fn moniker_request_translates_position_to_virtual_coordinates() {
+        // Host line 5, region starts at line 3 -> virtual line 2
+        let request = build_bridge_moniker_request(
+            &test_host_uri(),
+            test_position(),
+            "lua",
+            "region-0",
+            3,
+            42,
+        );
+
+        assert_position_request(&request, "textDocument/moniker", 2);
     }
 }
