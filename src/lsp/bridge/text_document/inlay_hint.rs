@@ -52,7 +52,6 @@ impl LanguageServerPool {
 
         // Build virtual document URI
         let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
-        let virtual_uri_string = virtual_uri.to_uri_string();
 
         // Send didOpen notification only if document hasn't been opened yet
         if self.should_send_didopen(host_uri, &virtual_uri).await {
@@ -73,23 +72,17 @@ impl LanguageServerPool {
         );
         conn.write_message(&request).await?;
 
-        // Build transformation context for response handling
+        // Build transformation context for response
         let context = ResponseTransformContext {
-            request_virtual_uri: virtual_uri_string,
-            request_host_uri: host_uri.as_str().to_string(),
+            request_virtual_uri: virtual_uri.to_uri_string(),
+            request_host_uri: host_uri.to_string(),
             request_region_start_line: region_start_line,
         };
 
         // Wait for the inlay hint response (skip notifications)
-        loop {
-            let msg = conn.read_message().await?;
-            if let Some(id) = msg.get("id")
-                && id.as_i64() == Some(request_id)
-            {
-                // Transform response positions, textEdits, and label parts to host coordinates
-                return Ok(transform_inlay_hint_response_to_host(msg, &context));
-            }
-            // Skip notifications and other responses
-        }
+        let response = conn.wait_for_response(request_id).await?;
+
+        // Transform response positions and textEdits to host coordinates
+        Ok(transform_inlay_hint_response_to_host(response, &context))
     }
 }

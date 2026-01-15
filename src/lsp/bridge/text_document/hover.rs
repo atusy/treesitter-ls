@@ -65,15 +65,12 @@ impl LanguageServerPool {
         conn.write_message(&hover_request).await?;
 
         // Wait for the hover response (skip notifications)
-        loop {
-            let msg = conn.read_message().await?;
-            if let Some(id) = msg.get("id")
-                && id.as_i64() == Some(request_id)
-            {
-                // Transform response to host coordinates
-                return Ok(transform_hover_response_to_host(msg, region_start_line));
-            }
-            // Skip notifications and other responses
-        }
+        let response = conn.wait_for_response(request_id).await?;
+
+        // Transform response to host coordinates
+        Ok(transform_hover_response_to_host(
+            response,
+            region_start_line,
+        ))
     }
 }

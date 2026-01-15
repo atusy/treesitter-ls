@@ -111,6 +111,36 @@ impl AsyncBridgeConnection {
         let body = self.read_message_bytes().await?;
         serde_json::from_slice(&body).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
+
+    /// Wait for a response with the given request ID, skipping notifications.
+    ///
+    /// This method reads messages from stdout in a loop until it finds a response
+    /// matching the specified request ID. Notifications (messages without an "id" field)
+    /// are silently skipped.
+    ///
+    /// # Arguments
+    /// * `request_id` - The request ID to wait for
+    ///
+    /// # Returns
+    /// The JSON-RPC response message matching the request ID.
+    ///
+    /// # Note
+    /// This method will be replaced by oneshot channel waiting when Reader Task
+    /// is introduced (ADR-0015 Phase A).
+    pub(crate) async fn wait_for_response(
+        &mut self,
+        request_id: i64,
+    ) -> io::Result<serde_json::Value> {
+        loop {
+            let msg = self.read_message().await?;
+            if let Some(id) = msg.get("id")
+                && id.as_i64() == Some(request_id)
+            {
+                return Ok(msg);
+            }
+            // Skip notifications and other responses
+        }
+    }
 }
 
 impl Drop for AsyncBridgeConnection {

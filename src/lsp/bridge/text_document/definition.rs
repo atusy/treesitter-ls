@@ -73,16 +73,10 @@ impl LanguageServerPool {
         };
 
         // Wait for the definition response (skip notifications)
-        loop {
-            let msg = conn.read_message().await?;
-            if let Some(id) = msg.get("id")
-                && id.as_i64() == Some(request_id)
-            {
-                // Transform response to host coordinates and URI
-                // Cross-region virtual URIs are filtered out
-                return Ok(transform_definition_response_to_host(msg, &context));
-            }
-            // Skip notifications and other responses
-        }
+        let response = conn.wait_for_response(request_id).await?;
+
+        // Transform response to host coordinates and URI
+        // Cross-region virtual URIs are filtered out
+        Ok(transform_definition_response_to_host(response, &context))
     }
 }
