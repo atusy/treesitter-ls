@@ -8,9 +8,15 @@
 //! that need transformation back to host coordinates.
 
 use std::io;
+use std::time::Duration;
 
 use crate::config::settings::BridgeServerConfig;
+use tokio::time::timeout;
 use tower_lsp::lsp_types::{Range, Url};
+
+/// Timeout for waiting on downstream language server responses.
+/// Matches the connection initialization timeout (30 seconds).
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 use super::super::pool::LanguageServerPool;
 use super::super::protocol::{
@@ -97,10 +103,21 @@ impl LanguageServerPool {
             writer.write_message(&request).await?;
         } // writer lock released here
 
-        // Wait for response via oneshot channel (no Mutex held)
-        let response = response_rx
-            .await
-            .map_err(|_| io::Error::other("response channel closed"))?;
+        // Wait for response via oneshot channel (no Mutex held) with timeout
+        let response = match timeout(REQUEST_TIMEOUT, response_rx).await {
+            Ok(Ok(response)) => response,
+            Ok(Err(_)) => {
+                return Err(io::Error::other("response channel closed"));
+            }
+            Err(_) => {
+                // Timeout - clean up pending entry
+                handle.router().remove(request_id);
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "bridge request timeout",
+                ));
+            }
+        };
 
         // Transform response textEdits and additionalTextEdits to host coordinates
         Ok(transform_color_presentation_response_to_host(
