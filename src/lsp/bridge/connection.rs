@@ -65,25 +65,38 @@ impl BridgeReader {
 impl BridgeReader {
     /// Read the raw bytes of an LSP message body from stdout.
     ///
-    /// Parses the Content-Length header, reads the separator, and returns the body bytes.
+    /// Parses headers until empty line, extracts Content-Length, and returns the body bytes.
+    /// Handles multiple headers and different header orders per LSP spec.
     async fn read_message_bytes(&mut self) -> io::Result<Vec<u8>> {
         use tokio::io::AsyncReadExt;
 
-        // Read header line
-        let mut header_line = String::new();
-        self.stdout.read_line(&mut header_line).await?;
+        let mut content_length: Option<usize> = None;
 
-        // Parse content length
-        let content_length: usize = header_line
-            .strip_prefix("Content-Length: ")
-            .and_then(|s| s.trim().parse().ok())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid Content-Length"))?;
+        // Read headers until empty line
+        loop {
+            let mut line = String::new();
+            self.stdout.read_line(&mut line).await?;
 
-        // Read empty line (CRLF separator)
-        let mut empty_line = String::new();
-        self.stdout.read_line(&mut empty_line).await?;
+            // Trim CRLF/LF endings
+            let trimmed = line.trim_end_matches(['\r', '\n']);
 
-        // Read body
+            if trimmed.is_empty() {
+                break; // Empty line = end of headers
+            }
+
+            if let Some(value) = trimmed.strip_prefix("Content-Length: ") {
+                content_length = Some(value.trim().parse().map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidData, "invalid Content-Length value")
+                })?);
+            }
+            // Other headers (Content-Type, etc.) are silently ignored per LSP spec
+        }
+
+        let content_length = content_length.ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "missing Content-Length header")
+        })?;
+
+        // Read exact body bytes
         let mut body = vec![0u8; content_length];
         self.stdout.read_exact(&mut body).await?;
 
