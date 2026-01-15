@@ -9,18 +9,12 @@ const userStoryRoles = [
 
 const scrum: ScrumDashboard = {
   product_goal: {
-    statement:
-      "Implement LSP bridge to support essential language server features indirectly through bridging (ADR-0013, 0014, 0015, 0016, 0017, 0018)",
+    statement: "Improve LSP feature coverage via bridge",
     success_metrics: [
-      {
-        metric: "ADR alignment",
-        target:
-          "Must align with Phase 1 of ADR-0013, 0014, 0015, 0016, 0017, 0018 in @docs/adr",
-      },
       {
         metric: "Bridge coverage",
         target:
-          "Support completion, signatureHelp, codeAction, definition, typeDefinition, implementation, declaration, hover, references, rename",
+          "Support completion, signatureHelp, definition, typeDefinition, implementation, declaration, hover, references, document highlight, inlay hints, document link, document symbols, moniker, color presentation, rename",
       },
       {
         metric: "Modular architecture",
@@ -28,15 +22,44 @@ const scrum: ScrumDashboard = {
           "Bridge module organized with text_document/ subdirectory matching lsp_impl structure",
       },
       {
-        metric: "E2E test coverage",
+        metric: "E2E test coverage using treesitter-ls binary",
         target: "Each bridged feature has E2E test verifying end-to-end flow",
       },
     ],
   },
 
-  product_backlog: [],
+  product_backlog: [
+    { id: "pbi-document-symbols", story: { role: "Lua developer editing markdown", capability: "see outline of symbols in Lua code block", benefit: "navigate to functions" },
+      acceptance_criteria: [
+        { criterion: "Bridge forwards textDocument/documentSymbol to downstream LS", verification: "E2E test" },
+        { criterion: "Symbol ranges transformed to host coordinates", verification: "Unit test" },
+        { criterion: "Hierarchical structure preserved", verification: "Unit test: nested children" },
+      ], status: "ready", refinement_notes: ["Returns DocumentSymbol[] or SymbolInformation[]", "Recursive transform for children"] },
+    { id: "pbi-inlay-hints", story: { role: "Lua developer editing markdown", capability: "see inline type hints in Lua code blocks", benefit: "understand types without hovering" },
+      acceptance_criteria: [
+        { criterion: "Bridge forwards textDocument/inlayHint to downstream LS", verification: "E2E test" },
+        { criterion: "Hint positions transformed to host coordinates", verification: "Unit test" },
+        { criterion: "Request range transformed to virtual coordinates", verification: "Unit test" },
+      ], status: "ready", refinement_notes: ["Request has range, response has positions", "Bidirectional transform needed"] },
+    { id: "pbi-color-presentation", story: { role: "lua/python developer editing markdown", capability: "pick and edit color values", benefit: "visual color editing" },
+      acceptance_criteria: [
+        { criterion: "Bridge forwards textDocument/colorPresentation to downstream LS", verification: "E2E test" },
+        { criterion: "Request range transformed to virtual coordinates", verification: "Unit test" },
+        { criterion: "Response textEdit ranges transformed to host coordinates", verification: "Unit test" },
+      ], status: "ready", refinement_notes: ["Needs documentColor + colorPresentation handlers", "Both request and response transforms"] },
+    { id: "pbi-moniker", story: { role: "lua/python developer editing markdown", capability: "get unique symbol identifiers", benefit: "cross-project navigation" },
+      acceptance_criteria: [
+        { criterion: "Bridge forwards textDocument/moniker to downstream LS", verification: "E2E test" },
+        { criterion: "Moniker response passed through unchanged", verification: "Unit test" },
+        { criterion: "Request position transformed to virtual coordinates", verification: "Unit test" },
+      ], status: "ready", refinement_notes: ["Response has no position data", "Pass-through response"] },
+  ],
   sprint: null,
-  completed: [],
+  completed: [
+    { number: 1, pbi_id: "pbi-document-highlight", goal: "Bridge textDocument/documentHighlight to downstream LS", status: "done", subtasks: [] },
+    { number: 2, pbi_id: "pbi-rename", goal: "Bridge textDocument/rename with WorkspaceEdit transformation", status: "done", subtasks: [] },
+    { number: 3, pbi_id: "pbi-document-link", goal: "Bridge textDocument/documentLink with range transformation to host coordinates", status: "done", subtasks: [] },
+  ],
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
@@ -44,7 +67,18 @@ const scrum: ScrumDashboard = {
       { name: "E2E tests pass", run: "make test_e2e" },
     ],
   },
-  retrospectives: [],
+  retrospectives: [
+    { sprint: 1, improvements: [
+      { action: "Review LSP spec response structure during refinement", timing: "sprint", status: "active", outcome: null },
+    ] },
+    { sprint: 2, improvements: [
+      { action: "Continue reviewing LSP spec for dual response formats during refinement", timing: "sprint", status: "active", outcome: "Would have caught WorkspaceEdit's changes vs documentChanges formats earlier" },
+      { action: "Document reusable patterns (URI filtering, coordinate transformation) for reference", timing: "immediate", status: "completed", outcome: "Pattern recognition accelerated implementation" },
+    ] },
+    { sprint: 3, improvements: [
+      { action: "Continue using InjectionResolver::resolve_all for whole-document operations", timing: "sprint", status: "active", outcome: "Discovered pattern: whole-doc ops (documentLink, symbols) need all regions, position-based ops (hover, definition) need single region" },
+    ] },
+  ],
 };
 
 // Type Definitions (DO NOT MODIFY) =============================================

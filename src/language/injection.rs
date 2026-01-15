@@ -599,6 +599,58 @@ impl InjectionResolver {
             injection.content_node.kind(),
         )
     }
+
+    /// Resolve all injection regions in a document.
+    ///
+    /// This is used for whole-document operations like document_link that need
+    /// to iterate over all injection regions rather than finding one at a position.
+    ///
+    /// # Lock Safety
+    /// This function does not hold Document locks. All inputs (tree, text) must be
+    /// pre-cloned, typically via DocumentSnapshot.
+    ///
+    /// # Arguments
+    /// * `tracker` - Region ID tracker for stable ULID generation
+    /// * `uri` - Host document URI
+    /// * `tree` - Parsed syntax tree
+    /// * `text` - Document text content
+    /// * `injection_query` - Query for finding injection regions
+    ///
+    /// # Returns
+    /// Vector of resolved injections, may be empty if no injections found.
+    pub(crate) fn resolve_all(
+        tracker: &RegionIdTracker,
+        uri: &Url,
+        tree: &Tree,
+        text: &str,
+        injection_query: &Query,
+    ) -> Vec<ResolvedInjection> {
+        // Collect all injection regions
+        let Some(injections) =
+            collect_all_injections(&tree.root_node(), text, Some(injection_query))
+        else {
+            return Vec::new();
+        };
+
+        // Resolve each injection
+        injections
+            .iter()
+            .map(|region| {
+                let region_id = Self::calculate_region_id(tracker, uri, region);
+                let region_id_str = region_id.to_string();
+                let cacheable_region =
+                    CacheableInjectionRegion::from_region_info(region, &region_id_str, text);
+                let virtual_content = cacheable_region.extract_content(text).to_string();
+
+                ResolvedInjection {
+                    region: cacheable_region,
+                    region_id: region_id_str,
+                    injection_language: region.language.clone(),
+                    virtual_content,
+                }
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
