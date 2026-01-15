@@ -23,8 +23,22 @@ impl LanguageServerPool {
     /// 4. Send the hover request (release writer lock after)
     /// 5. Wait for response via oneshot channel (no Mutex held)
     ///
-    /// The `upstream_request_id` parameter is the request ID from the upstream client,
-    /// passed through unchanged to the downstream server per ADR-0016.
+    /// # Note on `_upstream_request_id`
+    ///
+    /// This parameter is intentionally unused. Originally, the upstream request ID was
+    /// passed directly to downstream servers (per ADR-0016's "Request ID Semantics").
+    /// However, using upstream IDs caused ID collisions when multiple downstream servers
+    /// were active, since each server expects unique request IDs within its connection.
+    ///
+    /// The current implementation generates unique downstream request IDs via
+    /// `register_request()` (using an atomic counter per connection). The parameter is
+    /// retained for:
+    /// - **API consistency**: All text_document handlers share a uniform signature
+    /// - **Future correlation logging**: May be used to correlate upstream/downstream
+    ///   request pairs in debug logs
+    ///
+    /// The underscore prefix signals "intentionally unused" to both the compiler and
+    /// code reviewers.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn send_hover_request(
         &self,

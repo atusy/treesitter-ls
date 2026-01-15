@@ -23,8 +23,8 @@ impl LanguageServerPool {
     /// 3. Send the references request
     /// 4. Wait for and return the response
     ///
-    /// The `upstream_request_id` parameter is the request ID from the upstream client,
-    /// passed through unchanged to the downstream server per ADR-0016.
+    /// See [`send_hover_request`](Self::send_hover_request) for documentation on why
+    /// `_upstream_request_id` is intentionally unused.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn send_references_request(
         &self,
