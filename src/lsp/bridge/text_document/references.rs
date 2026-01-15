@@ -16,8 +16,8 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 use super::super::pool::LanguageServerPool;
 use super::super::protocol::{
-    ResponseTransformContext, VirtualDocumentUri, build_bridge_didopen_notification,
-    build_bridge_references_request, transform_definition_response_to_host,
+    ResponseTransformContext, VirtualDocumentUri, build_bridge_references_request,
+    transform_definition_response_to_host,
 };
 
 impl LanguageServerPool {
@@ -72,20 +72,16 @@ impl LanguageServerPool {
             let mut writer = handle.writer().await;
 
             // Send didOpen notification only if document hasn't been opened yet
-            if self.should_send_didopen(host_uri, &virtual_uri).await {
-                let did_open = build_bridge_didopen_notification(&virtual_uri, virtual_content);
-                writer.write_message(&did_open).await?;
-                // Mark as opened AFTER successful write (ADR-0015)
-                self.mark_document_opened(&virtual_uri);
-            } else if !self.is_document_opened(&virtual_uri) {
-                // Document marked for opening but didOpen not yet sent (race condition)
-                // Drop the request per ADR-0015
-                // Clean up pending entry to avoid memory leak
-                handle.router().remove(request_id);
-                return Err(io::Error::other(
-                    "bridge: document not yet opened (didOpen pending)",
-                ));
-            }
+            self.ensure_document_opened(
+                &mut writer,
+                host_uri,
+                &virtual_uri,
+                virtual_content,
+                || {
+                    handle.router().remove(request_id);
+                },
+            )
+            .await?;
 
             writer.write_message(&references_request).await?;
         } // writer lock released here

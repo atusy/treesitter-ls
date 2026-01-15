@@ -15,7 +15,7 @@ use log::warn;
 use tokio::sync::Mutex;
 use tower_lsp::lsp_types::Url;
 
-use super::protocol::VirtualDocumentUri;
+use super::protocol::{VirtualDocumentUri, build_bridge_didopen_notification};
 
 /// Timeout for LSP initialize handshake (ADR-0018 Tier 0: 30-60s recommended).
 ///
@@ -361,6 +361,36 @@ impl LanguageServerPool {
                 poisoned.into_inner().insert(uri_string);
             }
         }
+    }
+
+    /// Ensure document is opened before sending a request.
+    ///
+    /// Sends didOpen if this is the first request for the document.
+    /// Returns error if another request is in the process of opening (race condition).
+    ///
+    /// The `cleanup_on_error` closure is called before returning error to clean up resources.
+    pub(crate) async fn ensure_document_opened<F>(
+        &self,
+        writer: &mut SplitConnectionWriter,
+        host_uri: &Url,
+        virtual_uri: &VirtualDocumentUri,
+        virtual_content: &str,
+        cleanup_on_error: F,
+    ) -> io::Result<()>
+    where
+        F: FnOnce(),
+    {
+        if self.should_send_didopen(host_uri, virtual_uri).await {
+            let did_open = build_bridge_didopen_notification(virtual_uri, virtual_content);
+            writer.write_message(&did_open).await?;
+            self.mark_document_opened(virtual_uri);
+        } else if !self.is_document_opened(virtual_uri) {
+            cleanup_on_error();
+            return Err(io::Error::other(
+                "bridge: document not yet opened (didOpen pending)",
+            ));
+        }
+        Ok(())
     }
 
     /// Increment the version of a virtual document and return the new version.
