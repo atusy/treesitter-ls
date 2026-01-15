@@ -288,6 +288,41 @@ pub(crate) fn build_bridge_rename_request(
     request
 }
 
+/// Build a whole-document JSON-RPC request for a downstream language server.
+///
+/// This is the core helper for building LSP requests that operate on an entire
+/// document without position (documentLink, documentSymbol, documentColor, etc.).
+/// It handles:
+/// - Creating the virtual document URI
+/// - Building the JSON-RPC request structure with just textDocument
+///
+/// # Arguments
+/// * `host_uri` - The URI of the host document
+/// * `injection_language` - The injection language (e.g., "lua")
+/// * `region_id` - The unique region ID for this injection
+/// * `request_id` - The JSON-RPC request ID
+/// * `method` - The LSP method name (e.g., "textDocument/documentLink")
+fn build_whole_document_request(
+    host_uri: &tower_lsp::lsp_types::Url,
+    injection_language: &str,
+    region_id: &str,
+    request_id: RequestId,
+    method: &str,
+) -> serde_json::Value {
+    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id.as_i64(),
+        "method": method,
+        "params": {
+            "textDocument": {
+                "uri": virtual_uri.to_uri_string()
+            }
+        }
+    })
+}
+
 /// Build a JSON-RPC document link request for a downstream language server.
 ///
 /// Unlike position-based requests (hover, definition, etc.), DocumentLinkParams
@@ -305,19 +340,13 @@ pub(crate) fn build_bridge_document_link_request(
     region_id: &str,
     request_id: RequestId,
 ) -> serde_json::Value {
-    // Create virtual document URI
-    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
-
-    serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": request_id.as_i64(),
-        "method": "textDocument/documentLink",
-        "params": {
-            "textDocument": {
-                "uri": virtual_uri.to_uri_string()
-            }
-        }
-    })
+    build_whole_document_request(
+        host_uri,
+        injection_language,
+        region_id,
+        request_id,
+        "textDocument/documentLink",
+    )
 }
 
 /// Build a JSON-RPC document symbol request for a downstream language server.
@@ -336,19 +365,13 @@ pub(crate) fn build_bridge_document_symbol_request(
     region_id: &str,
     request_id: RequestId,
 ) -> serde_json::Value {
-    // Create virtual document URI
-    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
-
-    serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": request_id.as_i64(),
-        "method": "textDocument/documentSymbol",
-        "params": {
-            "textDocument": {
-                "uri": virtual_uri.to_uri_string()
-            }
-        }
-    })
+    build_whole_document_request(
+        host_uri,
+        injection_language,
+        region_id,
+        request_id,
+        "textDocument/documentSymbol",
+    )
 }
 
 /// Build a JSON-RPC inlay hint request for a downstream language server.
@@ -518,19 +541,13 @@ pub(crate) fn build_bridge_document_color_request(
     region_id: &str,
     request_id: RequestId,
 ) -> serde_json::Value {
-    // Create virtual document URI
-    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
-
-    serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": request_id.as_i64(),
-        "method": "textDocument/documentColor",
-        "params": {
-            "textDocument": {
-                "uri": virtual_uri.to_uri_string()
-            }
-        }
-    })
+    build_whole_document_request(
+        host_uri,
+        injection_language,
+        region_id,
+        request_id,
+        "textDocument/documentColor",
+    )
 }
 
 /// Build a JSON-RPC didOpen notification for a downstream language server.
