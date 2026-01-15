@@ -251,7 +251,18 @@ impl RegionIdTracker {
         let mut all_invalidated = Vec::new();
 
         for edit in edits {
-            // Defensive: skip invalid edits (old_end < start is malformed)
+            // Debug-only assertion: catch invalid edits early in development.
+            // LSP implementations should never send old_end < start, so this
+            // helps identify bugs in upstream code or test fixtures.
+            debug_assert!(
+                edit.old_end_byte >= edit.start_byte,
+                "Invalid edit: old_end_byte ({}) < start_byte ({}). \
+                 This indicates a bug in the LSP client or test setup.",
+                edit.old_end_byte,
+                edit.start_byte
+            );
+
+            // Defensive: skip invalid edits in production (graceful degradation)
             if edit.old_end_byte < edit.start_byte {
                 warn!(
                     target: "treesitter_ls::region_tracker",
@@ -1987,7 +1998,14 @@ mod tests {
         );
     }
 
+    /// Test that invalid edits are skipped gracefully in production.
+    ///
+    /// NOTE: This test only runs in release mode (`--release`) because debug
+    /// builds have a `debug_assert!` that catches invalid edits early.
+    /// The debug_assert helps catch bugs during development, while the
+    /// runtime check provides graceful degradation in production.
     #[test]
+    #[cfg(not(debug_assertions))]
     fn test_apply_edits_invalid_edit_skipped() {
         // Invalid edit (old_end < start) should be skipped with warning
         let tracker = RegionIdTracker::new();
@@ -2014,6 +2032,29 @@ mod tests {
             Some(ulid),
             "Node should shift after valid edit (invalid edit skipped)"
         );
+    }
+
+    /// Test that invalid edits trigger debug_assert in debug builds.
+    ///
+    /// This complements `test_apply_edits_invalid_edit_skipped` which runs
+    /// only in release mode. Together they verify the two-layer defense:
+    /// - Debug builds: panic early to catch bugs
+    /// - Release builds: skip gracefully for production resilience
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "Invalid edit")]
+    fn test_apply_edits_invalid_edit_panics_in_debug() {
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("invalid_edit_debug");
+
+        tracker.get_or_create(&uri, 30, 50, "block");
+
+        let edits = vec![
+            EditInfo::new(50, 40, 50), // INVALID: old_end_byte 40 < start_byte 50
+        ];
+
+        // This should panic in debug mode due to debug_assert!
+        let _ = tracker.apply_edits(&uri, &edits);
     }
 
     #[test]
