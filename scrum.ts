@@ -35,7 +35,7 @@ const scrum: ScrumDashboard = {
         { criterion: "DocumentSymbol range and selectionRange transformed to host coordinates", verification: "Unit test" },
         { criterion: "Hierarchical children recursively transformed", verification: "Unit test: nested children" },
         { criterion: "SymbolInformation location.range transformed to host coordinates", verification: "Unit test" },
-      ], status: "ready", refinement_notes: ["Whole-doc operation: use InjectionResolver::resolve_all pattern from document_link", "Dual response: DocumentSymbol[] (hierarchical with children) or SymbolInformation[] (flat with location)", "Simple transformer: fn(response, region_start_line) - no URI filtering needed", "DocumentSymbol has TWO ranges: range (full scope) + selectionRange (identifier)"] },
+      ], status: "done", refinement_notes: ["Whole-doc operation: use InjectionResolver::resolve_all pattern from document_link", "Dual response: DocumentSymbol[] (hierarchical with children) or SymbolInformation[] (flat with location)", "Simple transformer: fn(response, region_start_line) - no URI filtering needed", "DocumentSymbol has TWO ranges: range (full scope) + selectionRange (identifier)"] },
     { id: "pbi-inlay-hints", story: { role: "Lua developer editing markdown", capability: "see inline type hints in Lua code blocks", benefit: "understand types without hovering" },
       acceptance_criteria: [
         { criterion: "Bridge forwards textDocument/inlayHint to downstream LS", verification: "E2E test" },
@@ -59,7 +59,7 @@ const scrum: ScrumDashboard = {
     number: 4,
     pbi_id: "pbi-document-symbols",
     goal: "Bridge textDocument/documentSymbol to downstream LS with coordinate transformation",
-    status: "in_progress",
+    status: "done",
     subtasks: [
       // Subtask 1: Response transformer for DocumentSymbol[] (hierarchical format)
       {
@@ -111,8 +111,8 @@ const scrum: ScrumDashboard = {
         test: "E2E test: textDocument/documentSymbol request on markdown with Lua code block returns symbols with host coordinates",
         implementation: "Wire up documentSymbol handler in lsp_impl to call bridge for injection regions",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "4c92b4bd", message: "feat(bridge): wire up documentSymbol handler with E2E tests", phase: "green" }],
         notes: ["Test should verify symbol ranges are in host document coordinates", "May need to aggregate symbols from multiple injection regions"],
       },
     ],
