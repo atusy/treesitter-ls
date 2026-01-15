@@ -65,7 +65,18 @@ pub(crate) struct EditInfo {
 
 impl EditInfo {
     /// Create a new EditInfo with byte positions.
+    ///
+    /// # Debug Assertions
+    /// In debug builds, asserts that `old_end_byte >= start_byte`.
+    /// Invalid edits should never occur in correct LSP implementations.
     pub(crate) fn new(start_byte: usize, old_end_byte: usize, new_end_byte: usize) -> Self {
+        debug_assert!(
+            old_end_byte >= start_byte,
+            "Invalid EditInfo: old_end_byte ({}) < start_byte ({}). \
+             This indicates a bug in the caller.",
+            old_end_byte,
+            start_byte
+        );
         Self {
             start_byte,
             old_end_byte,
@@ -2069,25 +2080,21 @@ mod tests {
 
     /// Test that invalid edits trigger debug_assert in debug builds.
     ///
+    /// This validates fail-fast behavior: `EditInfo::new()` panics immediately
+    /// when given invalid parameters (old_end_byte < start_byte), catching
+    /// bugs at the source rather than during processing.
+    ///
     /// This complements `test_apply_input_edits_invalid_edit_skipped` which runs
     /// only in release mode. Together they verify the two-layer defense:
-    /// - Debug builds: panic early to catch bugs
+    /// - Debug builds: panic early in constructor to catch bugs at source
     /// - Release builds: skip gracefully for production resilience
     #[test]
     #[cfg(debug_assertions)]
-    #[should_panic(expected = "Invalid edit")]
+    #[should_panic(expected = "Invalid EditInfo")]
     fn test_apply_input_edits_invalid_edit_panics_in_debug() {
-        let tracker = RegionIdTracker::new();
-        let uri = test_uri("invalid_edit_debug");
-
-        tracker.get_or_create(&uri, 30, 50, "block");
-
-        let edits = vec![
-            EditInfo::new(50, 40, 50), // INVALID: old_end_byte 40 < start_byte 50
-        ];
-
-        // This should panic in debug mode due to debug_assert!
-        let _ = tracker.apply_input_edits(&uri, &edits);
+        // The panic happens in EditInfo::new(), not in apply_input_edits()
+        // This is intentional: fail-fast at construction time
+        EditInfo::new(50, 40, 50); // INVALID: old_end_byte 40 < start_byte 50
     }
 
     #[test]
