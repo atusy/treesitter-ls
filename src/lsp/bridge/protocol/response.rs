@@ -330,6 +330,60 @@ fn transform_document_symbol_item(item: &mut serde_json::Value, region_start_lin
     }
 }
 
+/// Transform an inlay hint response from virtual to host document coordinates.
+///
+/// InlayHint responses are arrays of items where each hint has:
+/// - position: The position where the hint should appear (needs transformation)
+/// - label: The hint text (string or label parts)
+/// - kind, tooltip, paddingLeft, paddingRight, data: Optional fields (preserved unchanged)
+/// - textEdits: Optional array of TextEdit (needs transformation, handled separately)
+///
+/// This function transforms each hint's position by adding region_start_line to the line number.
+///
+/// # Arguments
+/// * `response` - The JSON-RPC response from the downstream language server
+/// * `region_start_line` - The starting line of the injection region in the host document
+pub(crate) fn transform_inlay_hint_response_to_host(
+    mut response: serde_json::Value,
+    region_start_line: u32,
+) -> serde_json::Value {
+    // Get mutable reference to result
+    let Some(result) = response.get_mut("result") else {
+        return response;
+    };
+
+    // Null result - pass through unchanged
+    if result.is_null() {
+        return response;
+    }
+
+    // InlayHint[] is an array
+    if let Some(items) = result.as_array_mut() {
+        for item in items.iter_mut() {
+            transform_inlay_hint_item(item, region_start_line);
+        }
+    }
+
+    response
+}
+
+/// Transform a single InlayHint item's position to host coordinates.
+fn transform_inlay_hint_item(item: &mut serde_json::Value, region_start_line: u32) {
+    // Transform position
+    if let Some(position) = item.get_mut("position") {
+        transform_position(position, region_start_line);
+    }
+}
+
+/// Transform a position's line number from virtual to host coordinates.
+fn transform_position(position: &mut serde_json::Value, region_start_line: u32) {
+    if let Some(line) = position.get_mut("line")
+        && let Some(line_num) = line.as_u64()
+    {
+        *line = serde_json::json!(line_num + region_start_line as u64);
+    }
+}
+
 /// Check if a URI string represents a virtual document.
 ///
 /// Delegates to [`VirtualDocumentUri::is_virtual_uri`] which is the single source of truth
@@ -1902,5 +1956,84 @@ mod tests {
         let transformed = transform_document_symbol_response_to_host(response.clone(), 5);
         let result = transformed["result"].as_array().unwrap();
         assert!(result.is_empty());
+    }
+
+    // ==========================================================================
+    // Inlay hint response transformation tests
+    // ==========================================================================
+
+    #[test]
+    fn inlay_hint_response_transforms_positions_to_host_coordinates() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "position": { "line": 0, "character": 10 },
+                    "label": "string"
+                },
+                {
+                    "position": { "line": 2, "character": 15 },
+                    "label": "number",
+                    "kind": 1
+                }
+            ]
+        });
+        let region_start_line = 5;
+
+        let transformed = transform_inlay_hint_response_to_host(response, region_start_line);
+
+        let result = transformed["result"].as_array().unwrap();
+        assert_eq!(result.len(), 2);
+        // First hint: line 0 + 5 = 5
+        assert_eq!(result[0]["position"]["line"], 5);
+        assert_eq!(result[0]["position"]["character"], 10);
+        // Second hint: line 2 + 5 = 7
+        assert_eq!(result[1]["position"]["line"], 7);
+        assert_eq!(result[1]["position"]["character"], 15);
+    }
+
+    #[test]
+    fn inlay_hint_response_with_null_result_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+
+        let transformed = transform_inlay_hint_response_to_host(response.clone(), 5);
+        assert_eq!(transformed, response);
+    }
+
+    #[test]
+    fn inlay_hint_response_with_empty_array_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": [] });
+
+        let transformed = transform_inlay_hint_response_to_host(response.clone(), 5);
+        let result = transformed["result"].as_array().unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn inlay_hint_response_preserves_non_position_fields() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "position": { "line": 1, "character": 5 },
+                "label": "string",
+                "kind": 1,
+                "paddingLeft": true,
+                "paddingRight": false,
+                "tooltip": "Type hint"
+            }]
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_inlay_hint_response_to_host(response, region_start_line);
+
+        let hint = &transformed["result"][0];
+        assert_eq!(hint["position"]["line"], 4); // 1 + 3
+        assert_eq!(hint["label"], "string");
+        assert_eq!(hint["kind"], 1);
+        assert_eq!(hint["paddingLeft"], true);
+        assert_eq!(hint["paddingRight"], false);
+        assert_eq!(hint["tooltip"], "Type hint");
     }
 }
