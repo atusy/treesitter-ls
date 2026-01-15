@@ -2366,7 +2366,8 @@ mod tests {
         });
         let region_start_line = 5;
 
-        let transformed = transform_color_presentation_response_to_host(response, region_start_line);
+        let transformed =
+            transform_color_presentation_response_to_host(response, region_start_line);
 
         let result = transformed["result"].as_array().unwrap();
         assert_eq!(result.len(), 1);
@@ -2413,7 +2414,8 @@ mod tests {
         });
         let region_start_line = 3;
 
-        let transformed = transform_color_presentation_response_to_host(response, region_start_line);
+        let transformed =
+            transform_color_presentation_response_to_host(response, region_start_line);
 
         let result = &transformed["result"][0];
         // textEdit range transformed: line 2 + 3 = 5
@@ -2445,7 +2447,8 @@ mod tests {
         });
         let region_start_line = 5;
 
-        let transformed = transform_color_presentation_response_to_host(response.clone(), region_start_line);
+        let transformed =
+            transform_color_presentation_response_to_host(response.clone(), region_start_line);
 
         let result = transformed["result"].as_array().unwrap();
         assert_eq!(result.len(), 3);

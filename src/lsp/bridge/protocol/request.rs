@@ -481,6 +481,26 @@ pub(crate) fn build_bridge_color_presentation_request(
     })
 }
 
+/// Build a JSON-RPC moniker request for a downstream language server.
+pub(crate) fn build_bridge_moniker_request(
+    host_uri: &tower_lsp::lsp_types::Url,
+    host_position: tower_lsp::lsp_types::Position,
+    injection_language: &str,
+    region_id: &str,
+    region_start_line: u32,
+    request_id: i64,
+) -> serde_json::Value {
+    build_position_based_request(
+        host_uri,
+        host_position,
+        injection_language,
+        region_id,
+        region_start_line,
+        request_id,
+        "textDocument/moniker",
+    )
+}
+
 /// Build a JSON-RPC document color request for a downstream language server.
 ///
 /// Like DocumentLinkParams, DocumentColorParams only has a textDocument field -
@@ -1138,8 +1158,14 @@ mod tests {
         use tower_lsp::lsp_types::Range;
 
         let host_range = Range {
-            start: Position { line: 5, character: 0 },
-            end: Position { line: 10, character: 20 },
+            start: Position {
+                line: 5,
+                character: 0,
+            },
+            end: Position {
+                line: 10,
+                character: 20,
+            },
         };
         let request = build_bridge_inlay_hint_request(
             &test_host_uri(),
@@ -1158,8 +1184,14 @@ mod tests {
         use tower_lsp::lsp_types::Range;
 
         let host_range = Range {
-            start: Position { line: 5, character: 0 },
-            end: Position { line: 10, character: 20 },
+            start: Position {
+                line: 5,
+                character: 0,
+            },
+            end: Position {
+                line: 10,
+                character: 20,
+            },
         };
         let request = build_bridge_inlay_hint_request(
             &test_host_uri(),
@@ -1191,8 +1223,14 @@ mod tests {
         // Host range: lines 5-10, region starts at line 3
         // Virtual range should be: lines 2-7 (5-3=2, 10-3=7)
         let host_range = Range {
-            start: Position { line: 5, character: 0 },
-            end: Position { line: 10, character: 20 },
+            start: Position {
+                line: 5,
+                character: 0,
+            },
+            end: Position {
+                line: 10,
+                character: 20,
+            },
         };
         let request = build_bridge_inlay_hint_request(
             &test_host_uri(),
@@ -1228,8 +1266,14 @@ mod tests {
 
         // When range starts at region_start_line, virtual start should be 0
         let host_range = Range {
-            start: Position { line: 3, character: 5 },
-            end: Position { line: 5, character: 10 },
+            start: Position {
+                line: 3,
+                character: 5,
+            },
+            end: Position {
+                line: 5,
+                character: 10,
+            },
         };
         let request = build_bridge_inlay_hint_request(
             &test_host_uri(),
@@ -1401,5 +1445,26 @@ mod tests {
         assert_eq!(request["params"]["color"]["green"], 0.25);
         assert_eq!(request["params"]["color"]["blue"], 0.75);
         assert_eq!(request["params"]["color"]["alpha"], 1.0);
+    }
+
+    // ==========================================================================
+    // Moniker request tests
+    // ==========================================================================
+
+    #[test]
+    fn moniker_request_uses_virtual_uri() {
+        let request =
+            build_bridge_moniker_request(&test_host_uri(), test_position(), "lua", "region-0", 3, 42);
+
+        assert_uses_virtual_uri(&request, "lua");
+    }
+
+    #[test]
+    fn moniker_request_translates_position_to_virtual_coordinates() {
+        // Host line 5, region starts at line 3 -> virtual line 2
+        let request =
+            build_bridge_moniker_request(&test_host_uri(), test_position(), "lua", "region-0", 3, 42);
+
+        assert_position_request(&request, "textDocument/moniker", 2);
     }
 }

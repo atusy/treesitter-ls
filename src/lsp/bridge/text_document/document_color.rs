@@ -60,8 +60,12 @@ impl LanguageServerPool {
         // Build and send document color request using upstream ID (ADR-0016)
         // Note: document color doesn't need position - it operates on the whole document
         let request_id = upstream_request_id;
-        let request =
-            build_bridge_document_color_request(host_uri, injection_language, region_id, request_id);
+        let request = build_bridge_document_color_request(
+            host_uri,
+            injection_language,
+            region_id,
+            request_id,
+        );
         conn.write_message(&request).await?;
 
         // Wait for the document color response (skip notifications)
