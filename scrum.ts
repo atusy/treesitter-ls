@@ -35,7 +35,7 @@ const scrum: ScrumDashboard = {
         { criterion: "DocumentSymbol range and selectionRange transformed to host coordinates", verification: "Unit test" },
         { criterion: "Hierarchical children recursively transformed", verification: "Unit test: nested children" },
         { criterion: "SymbolInformation location.range transformed to host coordinates", verification: "Unit test" },
-      ], status: "done", refinement_notes: ["Whole-doc operation: use InjectionResolver::resolve_all pattern from document_link", "Dual response: DocumentSymbol[] (hierarchical with children) or SymbolInformation[] (flat with location)", "Simple transformer: fn(response, region_start_line) - no URI filtering needed", "DocumentSymbol has TWO ranges: range (full scope) + selectionRange (identifier)"] },
+      ], status: "done" },
     { id: "pbi-inlay-hints", story: { role: "Lua developer editing markdown", capability: "see inline type hints in Lua code blocks", benefit: "understand types without hovering" },
       acceptance_criteria: [
         { criterion: "Bridge forwards textDocument/inlayHint to downstream LS", verification: "E2E test" },
@@ -60,56 +60,7 @@ const scrum: ScrumDashboard = {
     { number: 1, pbi_id: "pbi-document-highlight", goal: "Bridge textDocument/documentHighlight to downstream LS", status: "done", subtasks: [] },
     { number: 2, pbi_id: "pbi-rename", goal: "Bridge textDocument/rename with WorkspaceEdit transformation", status: "done", subtasks: [] },
     { number: 3, pbi_id: "pbi-document-link", goal: "Bridge textDocument/documentLink with range transformation to host coordinates", status: "done", subtasks: [] },
-    { number: 4, pbi_id: "pbi-document-symbols", goal: "Bridge textDocument/documentSymbol to downstream LS with coordinate transformation", status: "done", subtasks: [
-      {
-        test: "Test transform_document_symbol_response_to_host transforms DocumentSymbol.range and DocumentSymbol.selectionRange by adding region_start_line offset",
-        implementation: "Add transform_document_symbol_response_to_host function in response.rs that transforms both range and selectionRange fields",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "9c7168c8", message: "feat(bridge): add DocumentSymbol response transformer", phase: "green" }],
-        notes: ["DocumentSymbol has TWO ranges: range (full scope) and selectionRange (identifier)", "Simple transformer signature: fn(response, region_start_line: u32)"],
-      },
-      {
-        test: "Test transform_document_symbol_response_to_host recursively transforms nested children's range and selectionRange",
-        implementation: "Extend transformer to recursively process children array in DocumentSymbol",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "2198f38d", message: "test(bridge): add test for recursive children transformation", phase: "green" }],
-        notes: ["DocumentSymbol.children is optional array of DocumentSymbol", "Use recursive helper function for clarity", "Implemented proactively with initial transformer"],
-      },
-      {
-        test: "Test transform_document_symbol_response_to_host transforms SymbolInformation.location.range by adding region_start_line offset",
-        implementation: "Extend transformer to handle SymbolInformation format (has location.uri + location.range instead of range + selectionRange)",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "cf2e9f7c", message: "test(bridge): add tests for SymbolInformation and edge cases", phase: "green" }],
-        notes: ["SymbolInformation is flat format with location field", "location.uri can be ignored - symbols are local to virtual document", "Implemented proactively with initial transformer"],
-      },
-      {
-        test: "Test build_bridge_document_symbol_request creates valid textDocument/documentSymbol request with virtual URI",
-        implementation: "Add build_bridge_document_symbol_request function in request.rs",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "e0bd34a0", message: "feat(bridge): add document symbol request builder", phase: "green" }],
-        notes: ["Whole-document operation - no position parameter", "Similar to document_link request builder"],
-      },
-      {
-        test: "Test LanguageServerPool::send_document_symbol_request sends request and transforms response",
-        implementation: "Add send_document_symbol_request method to LanguageServerPool following document_link.rs pattern",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "f9730213", message: "feat(bridge): add send_document_symbol_request pool method", phase: "green" }],
-        notes: ["Use InjectionResolver::resolve_all pattern for whole-document operation", "Create new file src/lsp/bridge/text_document/document_symbol.rs"],
-      },
-      {
-        test: "E2E test: textDocument/documentSymbol request on markdown with Lua code block returns symbols with host coordinates",
-        implementation: "Wire up documentSymbol handler in lsp_impl to call bridge for injection regions",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "4c92b4bd", message: "feat(bridge): wire up documentSymbol handler with E2E tests", phase: "green" }],
-        notes: ["Test should verify symbol ranges are in host document coordinates", "May need to aggregate symbols from multiple injection regions"],
-      },
-    ] },
+    { number: 4, pbi_id: "pbi-document-symbols", goal: "Bridge textDocument/documentSymbol to downstream LS with coordinate transformation", status: "done", subtasks: [] },
   ],
   definition_of_done: {
     checks: [
@@ -124,7 +75,6 @@ const scrum: ScrumDashboard = {
     ] },
     { sprint: 2, improvements: [
       { action: "Continue reviewing LSP spec for dual response formats during refinement", timing: "sprint", status: "active", outcome: "Would have caught WorkspaceEdit's changes vs documentChanges formats earlier" },
-      { action: "Document reusable patterns (URI filtering, coordinate transformation) for reference", timing: "immediate", status: "completed", outcome: "Pattern recognition accelerated implementation" },
     ] },
     { sprint: 3, improvements: [
       { action: "Continue using InjectionResolver::resolve_all for whole-document operations", timing: "sprint", status: "active", outcome: "Discovered pattern: whole-doc ops (documentLink, symbols) need all regions, position-based ops (hover, definition) need single region" },
