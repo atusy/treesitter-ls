@@ -53,11 +53,7 @@ const scrum: ScrumDashboard = {
           verification: "Test sends documentColor request and verifies response (even if empty)",
         },
       ],
-      status: "ready",
-      refinement_notes: [
-        "Missing E2E test - No tests/e2e_lsp_lua_document_color.rs exists",
-        "Create E2E test file following existing patterns in tests/e2e_lsp_lua_*.rs",
-      ],
+      status: "done",
     },
     {
       id: "pbi-color-presentation-e2e",
@@ -83,30 +79,7 @@ const scrum: ScrumDashboard = {
       ],
     },
   ],
-  sprint: {
-    number: 9,
-    pbi_id: "pbi-document-color-e2e",
-    goal: "Add E2E test coverage for textDocument/documentColor",
-    status: "in_progress",
-    subtasks: [
-      {
-        test: "E2E test verifies documentColor capability is advertised in server capabilities",
-        implementation: "Create tests/e2e_lsp_lua_document_color.rs with capability advertisement test",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "57c4d800", message: "test(e2e): add documentColor E2E tests for bridge infrastructure", phase: "green" }],
-        notes: ["Follow pattern from e2e_lsp_lua_document_symbol.rs"],
-      },
-      {
-        test: "E2E test verifies documentColor request is handled without error",
-        implementation: "Add test that sends documentColor request and handles response (even if empty)",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "57c4d800", message: "test(e2e): add documentColor E2E tests for bridge infrastructure", phase: "green" }],
-        notes: ["lua-language-server may not return actual colors for Lua code, so handle empty response gracefully"],
-      },
-    ],
-  },
+  sprint: null,
   completed: [
     { number: 1, pbi_id: "pbi-document-highlight", goal: "Bridge textDocument/documentHighlight to downstream LS", status: "done", subtasks: [] },
     { number: 2, pbi_id: "pbi-rename", goal: "Bridge textDocument/rename with WorkspaceEdit transformation", status: "done", subtasks: [] },
@@ -116,15 +89,44 @@ const scrum: ScrumDashboard = {
     { number: 6, pbi_id: "pbi-color-presentation", goal: "Bridge textDocument/documentColor and textDocument/colorPresentation with coordinate transformation", status: "done", subtasks: [] },
     { number: 7, pbi_id: "pbi-moniker", goal: "Bridge textDocument/moniker with position transformation and pass-through response", status: "done", subtasks: [] },
     { number: 8, pbi_id: "pbi-symbol-info-uri-fix", goal: "Fix SymbolInformation URI transformation for LSP compliance", status: "done", subtasks: [] },
+    {
+      number: 9,
+      pbi_id: "pbi-document-color-e2e",
+      goal: "Add E2E test coverage for textDocument/documentColor",
+      status: "done",
+      subtasks: [
+        {
+          test: "E2E test verifies documentColor capability is advertised in server capabilities",
+          implementation: "Create tests/e2e_lsp_lua_document_color.rs with capability advertisement test",
+          type: "behavioral",
+          status: "completed",
+          commits: [{ hash: "57c4d800", message: "test(e2e): add documentColor E2E tests for bridge infrastructure", phase: "green" }],
+          notes: ["Follow pattern from e2e_lsp_lua_document_symbol.rs"],
+        },
+        {
+          test: "E2E test verifies documentColor request is handled without error",
+          implementation: "Add test that sends documentColor request and handles response (even if empty)",
+          type: "behavioral",
+          status: "completed",
+          commits: [{ hash: "57c4d800", message: "test(e2e): add documentColor E2E tests for bridge infrastructure", phase: "green" }],
+          notes: ["lua-language-server may not return actual colors for Lua code, so handle empty response gracefully"],
+        },
+      ],
+    },
   ],
   definition_of_done: {
     checks: [
       { name: "All unit tests pass", run: "make test" },
       { name: "Code quality checks pass", run: "make check" },
       { name: "E2E tests pass", run: "make test_e2e" },
+      { name: "E2E test exists for bridged features (test infrastructure even if downstream LS returns no data)", run: "verify tests/e2e_lsp_lua_*.rs exists for feature" },
     ],
   },
   retrospectives: [
+    { sprint: 9, improvements: [
+      { action: "Update definition of done to include E2E tests as mandatory for all bridged features", timing: "immediate", status: "completed", outcome: "Added E2E test requirement to definition_of_done checks" },
+      { action: "Document pattern for testing bridged features where downstream LS may not return data (verify infrastructure without requiring actual results)", timing: "immediate", status: "completed", outcome: "Added 'Testing Patterns' section to CLAUDE.md with example pattern" },
+    ] },
     { sprint: 8, improvements: [
       { action: "Establish multi-perspective review practice to catch LSP compliance issues earlier", timing: "sprint", status: "active", outcome: null },
       { action: "Ensure dual response formats (DocumentSymbol[] vs SymbolInformation[]) are equally tested for all bridged features", timing: "product", status: "active", outcome: null },
