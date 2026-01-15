@@ -397,6 +397,45 @@ fn transform_position(position: &mut serde_json::Value, region_start_line: u32) 
     }
 }
 
+/// Transform a document color response from virtual to host document coordinates.
+///
+/// DocumentColor responses are arrays of ColorInformation items, each containing:
+/// - range: The range where the color was found (needs transformation)
+/// - color: The color value with RGBA components (preserved unchanged)
+///
+/// # Arguments
+/// * `response` - The JSON-RPC response from the downstream language server
+/// * `region_start_line` - The starting line of the injection region in the host document
+pub(crate) fn transform_document_color_response_to_host(
+    mut response: serde_json::Value,
+    region_start_line: u32,
+) -> serde_json::Value {
+    // Get mutable reference to result
+    let Some(result) = response.get_mut("result") else {
+        return response;
+    };
+
+    // Null result - pass through unchanged
+    if result.is_null() {
+        return response;
+    }
+
+    // ColorInformation[] is an array
+    if let Some(items) = result.as_array_mut() {
+        for item in items.iter_mut() {
+            // Transform range in each ColorInformation
+            // Color values are preserved unchanged
+            if let Some(range) = item.get_mut("range")
+                && range.is_object()
+            {
+                transform_range(range, region_start_line);
+            }
+        }
+    }
+
+    response
+}
+
 /// Check if a URI string represents a virtual document.
 ///
 /// Delegates to [`VirtualDocumentUri::is_virtual_uri`] which is the single source of truth
@@ -2149,5 +2188,106 @@ mod tests {
         let hint = &transformed["result"][0];
         assert_eq!(hint["position"]["line"], 3);
         assert!(hint.get("textEdits").is_none());
+    }
+
+    // ==========================================================================
+    // Document color response transformation tests
+    // ==========================================================================
+
+    #[test]
+    fn document_color_response_transforms_ranges_to_host_coordinates() {
+        // ColorInformation[] contains range + color for each color found
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "range": {
+                        "start": { "line": 0, "character": 10 },
+                        "end": { "line": 0, "character": 17 }
+                    },
+                    "color": {
+                        "red": 1.0,
+                        "green": 0.0,
+                        "blue": 0.0,
+                        "alpha": 1.0
+                    }
+                },
+                {
+                    "range": {
+                        "start": { "line": 2, "character": 5 },
+                        "end": { "line": 2, "character": 12 }
+                    },
+                    "color": {
+                        "red": 0.0,
+                        "green": 1.0,
+                        "blue": 0.0,
+                        "alpha": 1.0
+                    }
+                }
+            ]
+        });
+        let region_start_line = 5;
+
+        let transformed = transform_document_color_response_to_host(response, region_start_line);
+
+        let result = transformed["result"].as_array().unwrap();
+        assert_eq!(result.len(), 2);
+        // First color: line 0 + 5 = 5
+        assert_eq!(result[0]["range"]["start"]["line"], 5);
+        assert_eq!(result[0]["range"]["end"]["line"], 5);
+        // Verify color is preserved unchanged
+        assert_eq!(result[0]["color"]["red"], 1.0);
+        assert_eq!(result[0]["color"]["green"], 0.0);
+        // Second color: line 2 + 5 = 7
+        assert_eq!(result[1]["range"]["start"]["line"], 7);
+        assert_eq!(result[1]["range"]["end"]["line"], 7);
+    }
+
+    #[test]
+    fn document_color_response_with_null_result_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+
+        let transformed = transform_document_color_response_to_host(response.clone(), 5);
+        assert_eq!(transformed, response);
+    }
+
+    #[test]
+    fn document_color_response_with_empty_array_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": [] });
+
+        let transformed = transform_document_color_response_to_host(response.clone(), 5);
+        let result = transformed["result"].as_array().unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn document_color_response_preserves_color_values() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 7 }
+                },
+                "color": {
+                    "red": 0.5,
+                    "green": 0.25,
+                    "blue": 0.75,
+                    "alpha": 0.9
+                }
+            }]
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_document_color_response_to_host(response, region_start_line);
+
+        let result = &transformed["result"][0];
+        assert_eq!(result["range"]["start"]["line"], 3);
+        assert_eq!(result["color"]["red"], 0.5);
+        assert_eq!(result["color"]["green"], 0.25);
+        assert_eq!(result["color"]["blue"], 0.75);
+        assert_eq!(result["color"]["alpha"], 0.9);
     }
 }
