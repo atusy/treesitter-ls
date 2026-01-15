@@ -3487,10 +3487,13 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_input_edits_preserves_order_for_lsp_edits() {
-        // MAJOR: Verify forward-order processing for LSP incremental edits
-        // LSP edits use RUNNING coordinates - each edit's position is
-        // relative to document state AFTER previous edits
+    fn test_apply_input_edits_forward_order_with_running_coords() {
+        // MAJOR: Verify apply_input_edits() uses FORWARD-order processing
+        // This is DIFFERENT from apply_text_diff() which uses REVERSE-order.
+        //
+        // LSP incremental edits use RUNNING coordinates - each edit's position is
+        // relative to document state AFTER previous edits, so they must be
+        // processed sequentially in array order.
         let tracker = RegionIdTracker::new();
         let uri = test_uri("lsp_order");
 
@@ -3570,6 +3573,89 @@ mod tests {
         assert!(
             invalidated.contains(&n_at_edit2_start),
             "Node at second edit start should be invalidated"
+        );
+    }
+
+    #[test]
+    fn test_reconstruct_multibyte_utf8_boundary_handling() {
+        // HIGH PRIORITY: Test byte offset tracking across multi-byte UTF-8 characters
+        // Emojis are 4 bytes each in UTF-8, CJK characters are typically 3 bytes
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("utf8_multibyte");
+
+        // "A😀B" is 6 bytes: A(1) + 😀(4) + B(1)
+        // "A😀😀B" is 10 bytes: A(1) + 😀(4) + 😀(4) + B(1)
+        // Insert 😀 at byte position 5 (after first 😀)
+        // Edit: [5,5) → [5,9) insert 4 bytes
+
+        // Place nodes to verify byte positions are tracked correctly
+        let n_before = tracker.get_or_create(&uri, 0, 1, "A"); // [0,1) "A"
+        let n_emoji1 = tracker.get_or_create(&uri, 1, 5, "emoji1"); // [1,5) "😀"
+        let n_after = tracker.get_or_create(&uri, 5, 6, "B"); // [5,6) "B"
+
+        let invalidated = tracker.apply_text_diff(&uri, "A😀B", "A😀😀B");
+
+        // n_before: start=0 not affected by insert at 5 → survives
+        assert!(
+            !invalidated.contains(&n_before),
+            "Node before multi-byte insert should survive"
+        );
+
+        // n_emoji1: start=1 not affected, end=5 at insert point → should survive
+        assert!(
+            !invalidated.contains(&n_emoji1),
+            "First emoji node should survive"
+        );
+
+        // n_after: start=5 at insert point → invalidated (zero-length insert at START)
+        assert!(
+            invalidated.contains(&n_after),
+            "Node at multi-byte insert point should be invalidated"
+        );
+
+        // Verify n_after shifted correctly: [5,6) + 4 bytes → [9,10)
+        assert_eq!(
+            tracker.get(&uri, 9, 10, "B"),
+            None, // Should be invalidated, not shifted
+            "Invalidated node should not exist at new position"
+        );
+    }
+
+    #[test]
+    fn test_apply_text_diff_multibyte_replacement() {
+        // Additional UTF-8 test: Replacement involving multi-byte characters
+        let tracker = RegionIdTracker::new();
+        let uri = test_uri("utf8_replacement");
+
+        // "Hello世界" is 11 bytes: Hello(5) + 世(3) + 界(3)
+        // "Hello世World" is 14 bytes: Hello(5) + 世(3) + World(5) + 界(1 removed)
+        // Actually: "Hello世界" → "Hi世界" (replace "Hello" with "Hi")
+        // Let's use simpler: "A😀C" → "A😀😀C"
+
+        // "日本語" (Japanese) is 9 bytes: 日(3) + 本(3) + 語(3)
+        // "日X語" replaces 本 with X: [3,6) → [3,4)
+
+        let n_first = tracker.get_or_create(&uri, 0, 3, "日"); // [0,3) first char
+        let n_middle = tracker.get_or_create(&uri, 3, 6, "本"); // [3,6) second char (to be replaced)
+        let n_last = tracker.get_or_create(&uri, 6, 9, "語"); // [6,9) third char
+
+        let invalidated = tracker.apply_text_diff(&uri, "日本語", "日X語");
+
+        // n_first: start=0 not in edit range → survives
+        assert!(!invalidated.contains(&n_first), "First CJK char survives");
+
+        // n_middle: start=3 in edit range [3,6) → invalidated
+        assert!(
+            invalidated.contains(&n_middle),
+            "Replaced CJK char should be invalidated"
+        );
+
+        // n_last: start=6, edit [3,6)→[3,4) delta=-2, shifts to [4,7)
+        assert!(!invalidated.contains(&n_last), "Last CJK char survives");
+        assert_eq!(
+            tracker.get(&uri, 4, 7, "語"),
+            Some(n_last),
+            "Last char shifted correctly by -2 bytes"
         );
     }
 }
