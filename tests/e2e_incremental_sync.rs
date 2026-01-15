@@ -118,14 +118,15 @@ More text.
 
     // Phase 2: Trigger hover on "foo" to establish virtual document
     // Line 3: "local foo = 1", character 6 is on "foo"
-    let hover_before = poll_for_hover(&mut client, markdown_uri, 3, 6, 5, 500);
+    // Use more retries (10) to allow lua-ls time to index
+    let hover_before = poll_for_hover(&mut client, markdown_uri, 3, 6, 10, 500);
 
-    if hover_before.is_none() {
-        eprintln!("Note: Initial hover returned null, lua-ls may not be ready");
-        println!("✓ Incremental sync test infrastructure works (lua-ls warmup TBD)");
-        shutdown_client(&mut client);
-        return;
-    }
+    // STRICT: Fail if hover doesn't work - this indicates lua-ls integration issue
+    assert!(
+        hover_before.is_some(),
+        "Initial hover should succeed after 10 retries. \
+         This indicates lua-ls may not be ready or there's an integration issue."
+    );
 
     println!("Phase 2: Hover before incremental change succeeded");
 
@@ -166,14 +167,14 @@ More text.
     // - Region tracking correctly processed the incremental edit
     // - ULID was preserved (not over-invalidated)
     // - Virtual document URI remains stable
-    let hover_after = poll_for_hover(&mut client, markdown_uri, 3, 6, 5, 500);
+    let hover_after = poll_for_hover(&mut client, markdown_uri, 3, 6, 10, 500);
 
-    if hover_after.is_none() {
-        eprintln!("Note: Hover after incremental change returned null");
-        println!("✓ Incremental sync didChange was sent (lua-ls response TBD)");
-        shutdown_client(&mut client);
-        return;
-    }
+    // STRICT: Fail if hover doesn't work after incremental edit
+    assert!(
+        hover_after.is_some(),
+        "Hover after incremental edit should succeed. \
+         This indicates region tracking may have incorrectly invalidated the ULID."
+    );
 
     println!("Phase 4: Hover after incremental change succeeded");
 
@@ -184,7 +185,7 @@ More text.
         hover_after.as_ref().unwrap().get("error")
     );
 
-    println!("✓ E2E: Incremental sync preserves region tracking - hover works after edit!");
+    println!("E2E: Incremental sync preserves region tracking - hover works after edit!");
 
     // Clean shutdown
     shutdown_client(&mut client);
@@ -243,22 +244,20 @@ local b = 2
 
     std::thread::sleep(std::time::Duration::from_millis(500));
 
-    // Hover on first Lua block to establish virtual document
-    let hover1 = poll_for_hover(&mut client, markdown_uri, 3, 6, 5, 500);
-    if hover1.is_none() {
-        println!("Note: First block hover returned null, skipping");
-        shutdown_client(&mut client);
-        return;
-    }
+    // Hover on first Lua block to establish virtual document (10 retries)
+    let hover1 = poll_for_hover(&mut client, markdown_uri, 3, 6, 10, 500);
+    assert!(
+        hover1.is_some(),
+        "First Lua block hover should succeed after 10 retries"
+    );
     println!("Established first Lua block virtual document");
 
-    // Hover on second Lua block to establish its virtual document
-    let hover2 = poll_for_hover(&mut client, markdown_uri, 9, 6, 5, 500);
-    if hover2.is_none() {
-        println!("Note: Second block hover returned null, skipping");
-        shutdown_client(&mut client);
-        return;
-    }
+    // Hover on second Lua block to establish its virtual document (10 retries)
+    let hover2 = poll_for_hover(&mut client, markdown_uri, 9, 6, 10, 500);
+    assert!(
+        hover2.is_some(),
+        "Second Lua block hover should succeed after 10 retries"
+    );
     println!("Established second Lua block virtual document");
 
     // Send multiple incremental edits in sequence
@@ -307,19 +306,23 @@ local b = 2
     std::thread::sleep(std::time::Duration::from_millis(300));
 
     // Verify first Lua block still works (after both edits)
-    let hover1_after = poll_for_hover(&mut client, markdown_uri, 3, 6, 5, 500);
-    if hover1_after.is_some() {
-        println!("✓ First Lua block hover works after multiple incremental edits");
-    }
+    let hover1_after = poll_for_hover(&mut client, markdown_uri, 3, 6, 10, 500);
+    assert!(
+        hover1_after.is_some(),
+        "First Lua block hover should still work after multiple incremental edits"
+    );
+    println!("First Lua block hover works after multiple incremental edits");
 
     // Verify second Lua block still works (now shifted to line 10)
-    let hover2_after = poll_for_hover(&mut client, markdown_uri, 10, 6, 5, 500);
-    if hover2_after.is_some() {
-        println!("✓ Second Lua block hover works after position shift");
-    }
+    let hover2_after = poll_for_hover(&mut client, markdown_uri, 10, 6, 10, 500);
+    assert!(
+        hover2_after.is_some(),
+        "Second Lua block hover should work at new position after line shift"
+    );
+    println!("Second Lua block hover works after position shift");
 
-    // Success criteria: no panics/errors from region tracking
-    println!("✓ E2E: Multiple incremental edits maintain correct region positions");
+    // All assertions passed
+    println!("E2E: Multiple incremental edits maintain correct region positions");
 
     shutdown_client(&mut client);
 }
