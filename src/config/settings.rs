@@ -31,7 +31,7 @@ pub struct BridgeLanguageConfig {
 /// Configuration for a bridge language server.
 ///
 /// This is used to configure external language servers (like rust-analyzer, pyright)
-/// that treesitter-ls can redirect requests to for injection regions.
+/// that tree-sitter-ls can redirect requests to for injection regions.
 #[derive(Debug, Clone, Deserialize, serde::Serialize, PartialEq, Eq)]
 pub struct BridgeServerConfig {
     /// Command array: first element is the program, rest are arguments
@@ -59,7 +59,7 @@ pub struct QueryTypeMappings {
 
 pub type CaptureMappings = HashMap<String, QueryTypeMappings>;
 
-/// Query type for treesitter query files.
+/// Query type for tree-sitter query files.
 ///
 /// Used in the unified `queries` field to specify what kind of query a file contains.
 /// When not specified, the kind is inferred from the filename pattern.
@@ -662,7 +662,7 @@ mod tests {
                 LanguageConfig {
                     library: Some(format!("/usr/lib/libtree-sitter-{}.so", lang)),
                     queries: None,
-                    highlights: Some(vec![format!("/etc/treesitter/{}/highlights.scm", lang)]),
+                    highlights: Some(vec![format!("/etc/tree-sitter/{}/highlights.scm", lang)]),
                     locals: None,
                     injections: None,
                     bridge: None,

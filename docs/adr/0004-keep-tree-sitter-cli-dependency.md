@@ -6,7 +6,7 @@
 | **Date** | 2025-12-18 |
 | **Decision-makers** | atusy |
 | **Consulted** | Claude Code |
-| **Informed** | treesitter-ls users |
+| **Informed** | tree-sitter-ls users |
 | **Supersedes** | [ADR-0003](0003-parser-compilation-fallback-strategy.md) |
 
 ## Context and Problem Statement
@@ -24,7 +24,7 @@ During backlog refinement, we identified a critical issue: direct C compilation 
 
 ## Considered Options
 
-1. **Embed tree-sitter headers in binary** - Bundle `parser.h` inside treesitter-ls
+1. **Embed tree-sitter headers in binary** - Bundle `parser.h` inside tree-sitter-ls
 2. **Download headers on demand** - Fetch from GitHub when compilation is needed
 3. **Document headers as user requirement** - Require users to provide headers manually
 4. **Keep tree-sitter-cli as sole dependency** - Abandon direct C compilation

@@ -1,10 +1,10 @@
-//! End-to-end test for document color in Markdown code blocks via treesitter-ls binary.
+//! End-to-end test for document color in Markdown code blocks via tree-sitter-ls binary.
 //!
 //! This test verifies the full bridge infrastructure wiring for document color:
-//! - treesitter-ls binary spawned via LspClient (not direct BridgeConnection)
+//! - tree-sitter-ls binary spawned via LspClient (not direct BridgeConnection)
 //! - Markdown document with Lua code block opened via didOpen
 //! - Document color request sent
-//! - treesitter-ls detects injection, spawns lua-ls, and transforms coordinates
+//! - tree-sitter-ls detects injection, spawns lua-ls, and transforms coordinates
 //!
 //! Run with: `cargo test --test e2e_lsp_lua_document_color --features e2e`
 //!

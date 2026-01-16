@@ -145,9 +145,9 @@ pub(crate) fn resolve_language_settings_with_wildcard(
 
 /// Returns the default search paths for parsers and queries.
 /// Uses the platform-specific data directory (via `dirs` crate):
-/// - Linux: ~/.local/share/treesitter-ls
-/// - macOS: ~/Library/Application Support/treesitter-ls
-/// - Windows: %APPDATA%/treesitter-ls
+/// - Linux: ~/.local/share/tree-sitter-ls
+/// - macOS: ~/Library/Application Support/tree-sitter-ls
+/// - Windows: %APPDATA%/tree-sitter-ls
 ///
 /// Note: Returns the base directory only. The resolver functions append
 /// "parser/" or "queries/" subdirectories as needed.
@@ -829,8 +829,8 @@ mod tests {
         // Should contain parser and queries subdirectories
         let paths_str = workspace.search_paths.join("|");
         assert!(
-            paths_str.contains("treesitter-ls"),
-            "Default paths should include treesitter-ls directory: {:?}",
+            paths_str.contains("tree-sitter-ls"),
+            "Default paths should include tree-sitter-ls directory: {:?}",
             workspace.search_paths
         );
     }
@@ -939,11 +939,11 @@ mod tests {
         // resolve_library_path() appends "parser/" to each search path,
         // so default_search_paths() should NOT include "parser" or "queries" subdirectories.
         //
-        // WRONG: [".../treesitter-ls/parser", ".../treesitter-ls/queries"]
-        //   -> resolve_library_path looks for ".../treesitter-ls/parser/parser/lua.so" (FAILS)
+        // WRONG: [".../tree-sitter-ls/parser", ".../tree-sitter-ls/queries"]
+        //   -> resolve_library_path looks for ".../tree-sitter-ls/parser/parser/lua.so" (FAILS)
         //
-        // CORRECT: [".../treesitter-ls"]
-        //   -> resolve_library_path looks for ".../treesitter-ls/parser/lua.so" (WORKS)
+        // CORRECT: [".../tree-sitter-ls"]
+        //   -> resolve_library_path looks for ".../tree-sitter-ls/parser/lua.so" (WORKS)
         let paths = default_search_paths();
 
         // Should have exactly one path (the base directory)
@@ -962,10 +962,10 @@ mod tests {
             path
         );
 
-        // The path should end with "treesitter-ls" (the base directory name)
+        // The path should end with "tree-sitter-ls" (the base directory name)
         assert!(
-            path.ends_with("treesitter-ls"),
-            "Path should end with 'treesitter-ls': {}",
+            path.ends_with("tree-sitter-ls"),
+            "Path should end with 'tree-sitter-ls': {}",
             path
         );
     }

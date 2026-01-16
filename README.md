@@ -1,6 +1,6 @@
 <!-- Focus on providing info for users. Avoid technical details -->
 
-# treesitter-ls
+# tree-sitter-ls
 
 Tree-sitter-based language server for accurate parsing and language-aware features across multiple programming languages.
 
@@ -12,11 +12,11 @@ Tree-sitter-based language server for accurate parsing and language-aware featur
 
 ### Pre-built Binaries
 
-Download the latest release for your platform from [GitHub Releases](https://github.com/atusy/treesitter-ls/releases)
+Download the latest release for your platform from [GitHub Releases](https://github.com/atusy/tree-sitter-ls/releases)
 
 ### Enable Automatic Parser/Query Installation
 
-Prepare the following, and treesitter-ls will auto-install parsers/queries as needed:
+Prepare the following, and tree-sitter-ls will auto-install parsers/queries as needed:
 
 - tree-sitter CLI
 - Git
@@ -35,7 +35,7 @@ nvim -u scripts/minimal_init.lua
 
 ## Supported LSP Features
 
-treesitter-ls supports LSP features via three mechanisms:
+tree-sitter-ls supports LSP features via three mechanisms:
 
 - **Host**: Direct support for the main document language
 - **Injection**: Embedded language regions (e.g., code blocks in Markdown)

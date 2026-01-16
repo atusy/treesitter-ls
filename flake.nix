@@ -1,5 +1,5 @@
 {
-  description = "treesitter-ls - A Tree-sitter Language Server";
+  description = "tree-sitter-ls - A Tree-sitter Language Server";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -23,7 +23,7 @@
         };
 
         # Tree-sitter grammars for testing (each includes parser + queries)
-        treesitterGrammars = with pkgs.tree-sitter-grammars; [
+        treeSitterGrammars = with pkgs.tree-sitter-grammars; [
           tree-sitter-bash
           tree-sitter-c
           tree-sitter-go
@@ -41,7 +41,7 @@
 
         # Combined tree-sitter directory with all grammars
         # Structure: parser/<lang>.so, queries/<lang>/*.scm
-        treesitterCombined = pkgs.runCommand "treesitter-grammars-combined" {} ''
+        treeSitterCombined = pkgs.runCommand "tree-sitter-grammars-combined" {} ''
           mkdir -p $out/parser $out/queries
           ${pkgs.lib.concatMapStringsSep "\n" (grammar:
             let
@@ -64,7 +64,7 @@
                 done
               fi
             ''
-          ) treesitterGrammars}
+          ) treeSitterGrammars}
         '';
       in
       {
@@ -96,7 +96,7 @@
           ];
 
           shellHook = ''
-            echo "🌲 treesitter-ls development environment"
+            echo "🌲 tree-sitter-ls development environment"
             echo "Rust: $(rustc --version)"
             echo "Cargo: $(cargo --version)"
             echo ""
@@ -113,12 +113,12 @@
           RUST_LOG = "info";
 
           # Tree-sitter paths for testing
-          TREESITTER_GRAMMARS = "${treesitterCombined}";
+          TREE_SITTER_GRAMMARS = "${treeSitterCombined}";
           MINI_NVIM = "${pkgs.vimPlugins.mini-nvim}";
         };
 
         packages.default = pkgs.rustPlatform.buildRustPackage {
-          pname = "treesitter-ls";
+          pname = "tree-sitter-ls";
           version = (pkgs.lib.importTOML ./Cargo.toml).package.version;
           src = self;
 
@@ -139,7 +139,7 @@
 
           meta = with pkgs.lib; {
             description = "A Tree-sitter Language Server";
-            homepage = "https://github.com/atusy/treesitter-ls";
+            homepage = "https://github.com/atusy/tree-sitter-ls";
             license = licenses.mit;
             maintainers = with maintainers; [ atusy ];
           };

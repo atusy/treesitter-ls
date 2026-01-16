@@ -6,7 +6,7 @@
 use serial_test::serial;
 use std::sync::Arc;
 use std::thread;
-use treesitter_ls::language::{ConfigStore, FiletypeResolver, LanguageRegistry, QueryStore};
+use tree_sitter_ls::language::{ConfigStore, FiletypeResolver, LanguageRegistry, QueryStore};
 
 #[test]
 #[serial(poison)]
@@ -105,7 +105,7 @@ fn test_query_store_recovers_from_poisoned_write_lock() {
 #[test]
 #[serial(poison)]
 fn test_config_store_recovers_from_poisoned_lock() {
-    use treesitter_ls::config::settings::LanguageConfig;
+    use tree_sitter_ls::config::settings::LanguageConfig;
 
     let store = Arc::new(ConfigStore::new());
     let store_clone = store.clone();

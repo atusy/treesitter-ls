@@ -710,9 +710,9 @@ mod tests {
     use super::*;
 
     /// Returns the search path for tree-sitter grammars.
-    /// Uses TREESITTER_GRAMMARS env var if set (Nix), otherwise falls back to deps/treesitter.
+    /// Uses TREE_SITTER_GRAMMARS env var if set (Nix), otherwise falls back to deps/tree-sitter.
     fn test_search_path() -> String {
-        std::env::var("TREESITTER_GRAMMARS").unwrap_or_else(|_| "deps/treesitter".to_string())
+        std::env::var("TREE_SITTER_GRAMMARS").unwrap_or_else(|_| "deps/tree-sitter".to_string())
     }
 
     #[test]

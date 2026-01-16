@@ -6,14 +6,14 @@
 | **Date** | 2025-12-18 |
 | **Decision-makers** | atusy |
 | **Consulted** | Claude Code |
-| **Informed** | treesitter-ls users |
+| **Informed** | tree-sitter-ls users |
 | **Superseded by** | [ADR-0004](0004-keep-tree-sitter-cli-dependency.md) |
 
 > **⚠️ SUPERSEDED**: This ADR has been superseded by [ADR-0004](0004-keep-tree-sitter-cli-dependency.md). See that document for the rationale.
 
 ## Context and Problem Statement
 
-treesitter-ls needs to load Tree-sitter parser shared libraries (`.so`/`.dylib` files) at runtime. Currently, users must either find pre-compiled binaries or install `tree-sitter-cli` via `cargo install tree-sitter-cli` to compile parsers themselves. This creates a high barrier to entry, especially since `tree-sitter-cli` requires the Rust toolchain.
+tree-sitter-ls needs to load Tree-sitter parser shared libraries (`.so`/`.dylib` files) at runtime. Currently, users must either find pre-compiled binaries or install `tree-sitter-cli` via `cargo install tree-sitter-cli` to compile parsers themselves. This creates a high barrier to entry, especially since `tree-sitter-cli` requires the Rust toolchain.
 
 How can we minimize dependencies for parser compilation while maintaining compatibility with all parser repositories?
 

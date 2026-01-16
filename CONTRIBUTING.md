@@ -1,6 +1,6 @@
-# Contributing to treesitter-ls
+# Contributing to tree-sitter-ls
 
-Thank you for your interest in contributing to treesitter-ls! This document provides guidelines and information for contributors.
+Thank you for your interest in contributing to tree-sitter-ls! This document provides guidelines and information for contributors.
 
 ## Table of Contents
 
@@ -37,12 +37,12 @@ make build
 
 ```bash
 # Clone the repository
-git clone https://github.com/atusy/treesitter-ls.git
-cd treesitter-ls
+git clone https://github.com/atusy/tree-sitter-ls.git
+cd tree-sitter-ls
 
 # Build release binary
 cargo build --release
-# Binary location: target/release/treesitter-ls
+# Binary location: target/release/tree-sitter-ls
 
 # Build debug binary
 cargo build
@@ -56,7 +56,7 @@ make debug
 
 ```bash
 # Setup test dependencies (recommended for integration tests)
-make deps  # Creates deps/treesitter with parsers and queries
+make deps  # Creates deps/tree-sitter with parsers and queries
 
 # Run all Rust tests
 cargo test
@@ -82,7 +82,7 @@ cargo test -- --test-threads=1
 make check  # runs cargo check, clippy, and fmt --check
 ```
 
-The `deps/treesitter` directory created by `make deps` contains pre-built Tree-sitter parsers and queries that can be used in Rust integration tests by setting appropriate search paths in test configuration.
+The `deps/tree-sitter` directory created by `make deps` contains pre-built Tree-sitter parsers and queries that can be used in Rust integration tests by setting appropriate search paths in test configuration.
 
 #### Neovim E2E Tests
 
@@ -105,7 +105,7 @@ rm -rf deps/
 The test infrastructure includes:
 - **deps/nvim/mini.nvim**: Testing framework for Neovim E2E tests
 - **deps/nvim/nvim-treesitter**: Neovim Tree-sitter integration for E2E testing
-- **deps/treesitter**: Pre-built Tree-sitter parsers and queries used by both Rust integration tests and Neovim E2E tests
+- **deps/tree-sitter**: Pre-built Tree-sitter parsers and queries used by both Rust integration tests and Neovim E2E tests
 
 ### Code Quality Commands
 
@@ -129,7 +129,7 @@ make check
 
 ## Architecture Overview
 
-treesitter-ls follows a **vertical slice architecture** where each module is responsible for a complete feature area. This design was chosen to avoid circular dependencies and maintain clear separation of concerns.
+tree-sitter-ls follows a **vertical slice architecture** where each module is responsible for a complete feature area. This design was chosen to avoid circular dependencies and maintain clear separation of concerns.
 
 ### Design Principles
 
@@ -143,7 +143,7 @@ treesitter-ls follows a **vertical slice architecture** where each module is res
 #### Why Vertical Slices?
 
 The initial codebase had several problems:
-- Circular dependencies between `state/` and `treesitter/` modules
+- Circular dependencies between `state/` and `tree_sitter/` modules
 - Upward dependencies (e.g., `layers/` depending on `state/`)
 - Scattered responsibilities across multiple modules
 - "God objects" with too many responsibilities
@@ -169,7 +169,7 @@ The vertical slice architecture solves these by:
 │   ├── nvim/              # Neovim plugins for E2E tests
 │   │   ├── mini.nvim/     # Testing framework
 │   │   └── nvim-treesitter/ # Tree-sitter integration
-│   └── treesitter/        # Pre-built parsers and queries (used by both Rust and Neovim tests)
+│   └── tree-sitter/       # Pre-built parsers and queries (used by both Rust and Neovim tests)
 ├── Cargo.toml             # Rust dependencies
 ├── Makefile               # Build and test automation
 └── CONTRIBUTING.md        # This file
@@ -402,11 +402,11 @@ fn test_semantic_tokens() {
     assert_eq!(tokens.unwrap().data.len(), expected_count);
 }
 
-// Example: Integration test using deps/treesitter parsers
+// Example: Integration test using deps/tree-sitter parsers
 #[test]
 fn test_with_real_parser() {
-    // Use parsers from deps/treesitter directory
-    let search_paths = vec!["deps/treesitter".to_string()];
+    // Use parsers from deps/tree-sitter directory
+    let search_paths = vec!["deps/tree-sitter".to_string()];
     let settings = TreeSitterSettings {
         searchPaths: Some(search_paths),
         languages: /* language config */,
@@ -486,7 +486,7 @@ match self.data.lock() {
     Ok(guard) => guard.get(key).cloned(),
     Err(poisoned) => {
         warn!(
-            target: "treesitter_ls::lock_recovery",
+            target: "tree_sitter_ls::lock_recovery",
             "Recovered from poisoned lock in module::function"
         );
         poisoned.into_inner().get(key).cloned()
@@ -661,4 +661,4 @@ If you have questions about contributing:
 3. Open an issue for design discussions
 4. Ask in pull request comments
 
-Thank you for contributing to treesitter-ls!
+Thank you for contributing to tree-sitter-ls!

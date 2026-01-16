@@ -1,16 +1,16 @@
-//! End-to-end test for Lua document link in Markdown code blocks via treesitter-ls binary.
+//! End-to-end test for Lua document link in Markdown code blocks via tree-sitter-ls binary.
 //!
 //! This test verifies the full bridge infrastructure wiring for document link:
-//! - treesitter-ls binary spawned via LspClient (not direct BridgeConnection)
+//! - tree-sitter-ls binary spawned via LspClient (not direct BridgeConnection)
 //! - Markdown document with Lua code block opened via didOpen
 //! - Document link request sent
-//! - treesitter-ls detects injection, spawns lua-ls, and transforms coordinates
+//! - tree-sitter-ls detects injection, spawns lua-ls, and transforms coordinates
 //!
 //! Run with: `cargo test --test e2e_lsp_lua_document_link --features e2e`
 //!
 //! **Requirements**: lua-language-server must be installed and in PATH.
 //! **Note**: lua-ls may not support documentLink (returns method not found), so
-//! this test mainly verifies the treesitter-ls infrastructure is wired correctly.
+//! this test mainly verifies the tree-sitter-ls infrastructure is wired correctly.
 
 #![cfg(feature = "e2e")]
 
@@ -104,16 +104,16 @@ More text.
     // - array of DocumentLink objects
     // - error (method not supported by lua-ls)
 
-    // All of these are valid - the important thing is treesitter-ls handled the request
+    // All of these are valid - the important thing is tree-sitter-ls handled the request
     assert!(
         link_response.get("id").is_some(),
         "Response should have id field"
     );
 
-    // Check that we didn't get an internal error from treesitter-ls itself
+    // Check that we didn't get an internal error from tree-sitter-ls itself
     if let Some(error) = link_response.get("error") {
         // Method not found (-32601) from downstream is acceptable
-        // Internal errors from treesitter-ls would be different codes
+        // Internal errors from tree-sitter-ls would be different codes
         let code = error.get("code").and_then(|c| c.as_i64()).unwrap_or(0);
         if code != -32601 {
             // -32601 is "method not found" which is OK (lua-ls doesn't support documentLink)

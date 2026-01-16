@@ -1,10 +1,10 @@
-//! End-to-end test for Lua inlay hints in Markdown code blocks via treesitter-ls binary.
+//! End-to-end test for Lua inlay hints in Markdown code blocks via tree-sitter-ls binary.
 //!
 //! This test verifies the full bridge infrastructure wiring for inlay hints:
-//! - treesitter-ls binary spawned via LspClient (not direct BridgeConnection)
+//! - tree-sitter-ls binary spawned via LspClient (not direct BridgeConnection)
 //! - Markdown document with Lua code block opened via didOpen
 //! - Inlay hint request with range in Lua block
-//! - treesitter-ls detects injection, translates range, spawns lua-ls
+//! - tree-sitter-ls detects injection, translates range, spawns lua-ls
 //! - Inlay hints received from lua-language-server with transformed coordinates
 //!
 //! Run with: `cargo test --test e2e_lsp_lua_inlay_hint --features e2e`

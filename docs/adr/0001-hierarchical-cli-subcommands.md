@@ -6,11 +6,11 @@ Accepted
 
 ## Context
 
-treesitter-ls started with flat CLI commands:
+tree-sitter-ls started with flat CLI commands:
 
 ```
-treesitter-ls install <language>
-treesitter-ls list-languages
+tree-sitter-ls install <language>
+tree-sitter-ls list-languages
 ```
 
 As the project grows, we need to add more commands:
@@ -30,11 +30,11 @@ A flat command structure leads to:
 Adopt a hierarchical subcommand structure following the `<resource> <action>` pattern:
 
 ```
-treesitter-ls language install <lang>
-treesitter-ls language list
-treesitter-ls language status
-treesitter-ls language uninstall <lang>
-treesitter-ls config init
+tree-sitter-ls language install <lang>
+tree-sitter-ls language list
+tree-sitter-ls language status
+tree-sitter-ls language uninstall <lang>
+tree-sitter-ls config init
 ```
 
 This follows established CLI patterns from:
@@ -45,7 +45,7 @@ This follows established CLI patterns from:
 ### Command Structure
 
 ```
-treesitter-ls
+tree-sitter-ls
 ├── language          # Language/parser management
 │   ├── install       # Install parser and queries
 │   ├── list          # List available languages
@@ -60,7 +60,7 @@ treesitter-ls
 
 ### Positive
 
-- **Discoverability**: `treesitter-ls language --help` shows all language-related commands
+- **Discoverability**: `tree-sitter-ls language --help` shows all language-related commands
 - **Scalability**: Easy to add new resource groups (e.g., `cache`, `debug`)
 - **Consistency**: All commands follow the same `<resource> <action>` pattern
 - **Tab completion**: Shell completion can suggest resources first, then actions

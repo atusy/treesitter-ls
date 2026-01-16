@@ -70,7 +70,7 @@ pub struct QueryInstallResult {
 ///
 /// # Arguments
 /// * `language` - The language to install queries for (e.g., "lua", "rust")
-/// * `data_dir` - The base data directory for treesitter-ls
+/// * `data_dir` - The base data directory for tree-sitter-ls
 /// * `force` - Whether to overwrite existing queries
 ///
 /// # Returns

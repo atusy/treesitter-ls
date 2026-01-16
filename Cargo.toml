@@ -1,10 +1,10 @@
 [package]
-name = "treesitter-ls"
+name = "tree-sitter-ls"
 version = "0.1.0"
 edition = "2024"
 
 [[bin]]
-name = "treesitter-ls"
+name = "tree-sitter-ls"
 path = "src/bin/main.rs"
 
 

@@ -1,4 +1,4 @@
-//! Error handling types for treesitter-ls
+//! Error handling types for tree-sitter-ls
 //!
 //! This module provides error types used throughout the LSP server.
 
@@ -59,7 +59,7 @@ impl<T> LockResultExt<T> for Result<T, PoisonError<T>> {
             Ok(guard) => Ok(guard),
             Err(poisoned) => {
                 log::warn!(
-                    target: "treesitter_ls::lock_recovery",
+                    target: "tree_sitter_ls::lock_recovery",
                     "Recovered from poisoned lock in {}",
                     context
                 );

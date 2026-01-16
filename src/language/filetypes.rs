@@ -22,7 +22,7 @@ impl FiletypeResolver {
         match self.filetype_map.write() {
             Ok(mut guard) => *guard = map,
             Err(poisoned) => {
-                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::set_filetype_map");
+                warn!(target: "tree_sitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::set_filetype_map");
                 *poisoned.into_inner() = map;
             }
         }
@@ -34,7 +34,7 @@ impl FiletypeResolver {
         match self.filetype_map.read() {
             Ok(guard) => guard.get(extension).cloned(),
             Err(poisoned) => {
-                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::get_language_for_path");
+                warn!(target: "tree_sitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::get_language_for_path");
                 poisoned.into_inner().get(extension).cloned()
             }
         }
@@ -45,7 +45,7 @@ impl FiletypeResolver {
         match self.filetype_map.read() {
             Ok(guard) => guard.get(extension).cloned(),
             Err(poisoned) => {
-                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::get_language_for_extension");
+                warn!(target: "tree_sitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::get_language_for_extension");
                 poisoned.into_inner().get(extension).cloned()
             }
         }
@@ -56,7 +56,7 @@ impl FiletypeResolver {
         match self.filetype_map.read() {
             Ok(guard) => guard.clone(),
             Err(poisoned) => {
-                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::get_filetype_map");
+                warn!(target: "tree_sitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::get_filetype_map");
                 poisoned.into_inner().clone()
             }
         }
@@ -69,7 +69,7 @@ impl FiletypeResolver {
                 guard.insert(extension, language);
             }
             Err(poisoned) => {
-                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::add_mapping");
+                warn!(target: "tree_sitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::add_mapping");
                 poisoned.into_inner().insert(extension, language);
             }
         }
@@ -80,7 +80,7 @@ impl FiletypeResolver {
         match self.filetype_map.write() {
             Ok(mut guard) => guard.remove(extension),
             Err(poisoned) => {
-                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::remove_mapping");
+                warn!(target: "tree_sitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::remove_mapping");
                 poisoned.into_inner().remove(extension)
             }
         }
@@ -91,7 +91,7 @@ impl FiletypeResolver {
         match self.filetype_map.write() {
             Ok(mut guard) => guard.clear(),
             Err(poisoned) => {
-                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::clear");
+                warn!(target: "tree_sitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::clear");
                 poisoned.into_inner().clear();
             }
         }
@@ -102,7 +102,7 @@ impl FiletypeResolver {
         match self.filetype_map.read() {
             Ok(guard) => guard.values().any(|l| l == language),
             Err(poisoned) => {
-                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::has_language");
+                warn!(target: "tree_sitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::has_language");
                 poisoned.into_inner().values().any(|l| l == language)
             }
         }
@@ -122,7 +122,7 @@ impl FiletypeResolver {
                 })
                 .collect(),
             Err(poisoned) => {
-                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::get_extensions_for_language");
+                warn!(target: "tree_sitter_ls::lock_recovery", "Recovered from poisoned lock in filetype_resolver::get_extensions_for_language");
                 poisoned
                     .into_inner()
                     .iter()

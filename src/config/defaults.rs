@@ -1,4 +1,4 @@
-//! Default configuration values for treesitter-ls.
+//! Default configuration values for tree-sitter-ls.
 //!
 //! This module provides type-safe default values that are used by `config init`
 //! to generate configuration templates.

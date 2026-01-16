@@ -67,7 +67,7 @@ Sprint 146 delivered **8 out of 10 subtasks** with complete infrastructure for c
 9. **E2E: Partial Identifier Completion** (Subtask 9)
    - Test: 'pri' in Lua block shows 'print' completion
    - Status: RED (infrastructure works, lua-ls returns null)
-   - Notes: Changed virtual URI to `file:///.treesitter-ls/{hash}/{id}.lua` for compatibility
+   - Notes: Changed virtual URI to `file:///.tree-sitter-ls/{hash}/{id}.lua` for compatibility
 
 10. **E2E: Member Completion** (Subtask 10)
     - Test: 'string.' shows member completions
@@ -80,8 +80,8 @@ Sprint 146 delivered **8 out of 10 subtasks** with complete infrastructure for c
 ### Architecture Changes
 
 **Virtual Document URI Format:**
-- Old: Custom scheme (e.g., `treesitter-ls://virtual/...`)
-- New: `file:///.treesitter-ls/{hash}/{id}.lua` (lua-ls compatible)
+- Old: Custom scheme (e.g., `tree-sitter-ls://virtual/...`)
+- New: `file:///.tree-sitter-ls/{hash}/{id}.lua` (lua-ls compatible)
 - Commit: `7845a679` - "feat(bridge): change virtual URI to file:// scheme for lua-ls compatibility"
 
 **Document Lifecycle Management:**
@@ -198,7 +198,7 @@ Note: lua-ls still returns null after polling
 - Virtual document not indexed by lua-ls
 
 **Hypotheses:**
-1. **Virtual URI not recognized** - lua-ls may not accept `file:///.treesitter-ls/` scheme
+1. **Virtual URI not recognized** - lua-ls may not accept `file:///.tree-sitter-ls/` scheme
 2. **Missing rootUri** - lua-ls may require workspace root for indexing
 3. **Workspace configuration** - lua-ls may need `workspace/configuration` responses
 4. **Document materialization** - Per ADR-0007, virtual documents may need to exist on disk
@@ -306,7 +306,7 @@ Note: lua-ls still returns null after polling
 **Pros:**
 - Maintains sprint velocity
 - Infrastructure proven with hover (E2E working)
-- Clear separation of concerns (treesitter-ls vs lua-ls)
+- Clear separation of concerns (tree-sitter-ls vs lua-ls)
 
 **Cons:**
 - Completions not E2E verified
@@ -415,17 +415,17 @@ aa80f61e docs(adr): add Closing + panic → Closed to transition table
 ## Files Involved
 
 **Core Implementation:**
-- `/Users/atusy/ghq/github.com/atusy/treesitter-ls___async-bridge/src/lsp/bridge/protocol.rs` (536 lines added)
-- `/Users/atusy/ghq/github.com/atusy/treesitter-ls___async-bridge/src/lsp/bridge/manager.rs` (347 lines added)
-- `/Users/atusy/ghq/github.com/atusy/treesitter-ls___async-bridge/src/lsp/lsp_impl/text_document/completion.rs` (173 lines modified)
+- `/Users/atusy/ghq/github.com/atusy/tree-sitter-ls___async-bridge/src/lsp/bridge/protocol.rs` (536 lines added)
+- `/Users/atusy/ghq/github.com/atusy/tree-sitter-ls___async-bridge/src/lsp/bridge/manager.rs` (347 lines added)
+- `/Users/atusy/ghq/github.com/atusy/tree-sitter-ls___async-bridge/src/lsp/lsp_impl/text_document/completion.rs` (173 lines modified)
 
 **E2E Testing:**
-- `/Users/atusy/ghq/github.com/atusy/treesitter-ls___async-bridge/tests/e2e_lsp_lua_completion.rs` (219 lines)
-- `/Users/atusy/ghq/github.com/atusy/treesitter-ls___async-bridge/tests/helpers/lsp_client.rs` (305 lines)
-- `/Users/atusy/ghq/github.com/atusy/treesitter-ls___async-bridge/tests/helpers/lsp_polling.rs` (64 lines)
+- `/Users/atusy/ghq/github.com/atusy/tree-sitter-ls___async-bridge/tests/e2e_lsp_lua_completion.rs` (219 lines)
+- `/Users/atusy/ghq/github.com/atusy/tree-sitter-ls___async-bridge/tests/helpers/lsp_client.rs` (305 lines)
+- `/Users/atusy/ghq/github.com/atusy/tree-sitter-ls___async-bridge/tests/helpers/lsp_polling.rs` (64 lines)
 
 **Dashboard:**
-- `/Users/atusy/ghq/github.com/atusy/treesitter-ls___async-bridge/scrum.ts` (337 lines)
+- `/Users/atusy/ghq/github.com/atusy/tree-sitter-ls___async-bridge/scrum.ts` (337 lines)
 
 ---
 

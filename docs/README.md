@@ -1,6 +1,6 @@
-# treesitter-ls Documentation
+# tree-sitter-ls Documentation
 
-treesitter-ls is a Language Server Protocol (LSP) server that uses Tree-sitter for fast, accurate parsing. It provides semantic highlighting, selection ranges, and code actions for any language with a Tree-sitter grammar.
+tree-sitter-ls is a Language Server Protocol (LSP) server that uses Tree-sitter for fast, accurate parsing. It provides semantic highlighting, selection ranges, and code actions for any language with a Tree-sitter grammar.
 
 ## Features
 
@@ -38,7 +38,7 @@ See [Configuration: Bridge](#bridge) for setup instructions.
 
 ## Prerequisites
 
-treesitter-ls automatically compiles Tree-sitter parsers from source, which requires these external tools:
+tree-sitter-ls automatically compiles Tree-sitter parsers from source, which requires these external tools:
 
 ### Required Dependencies
 
@@ -71,11 +71,11 @@ cc --version  # or gcc --version / clang --version
 git --version
 ```
 
-If any command fails, install the missing dependency before using treesitter-ls.
+If any command fails, install the missing dependency before using tree-sitter-ls.
 
 ## Zero-Configuration Usage
 
-treesitter-ls works out of the box with no configuration required:
+tree-sitter-ls works out of the box with no configuration required:
 
 1. Start the LSP server
 2. Open any file with a supported language
@@ -85,9 +85,9 @@ treesitter-ls works out of the box with no configuration required:
 
 | Platform | Path |
 |----------|------|
-| Linux | `~/.local/share/treesitter-ls/` |
-| macOS | `~/Library/Application Support/treesitter-ls/` |
-| Windows | `%APPDATA%/treesitter-ls/` |
+| Linux | `~/.local/share/tree-sitter-ls/` |
+| macOS | `~/Library/Application Support/tree-sitter-ls/` |
+| Windows | `%APPDATA%/tree-sitter-ls/` |
 
 Parsers are stored in `{data_dir}/parser/` and queries in `{data_dir}/queries/`.
 
@@ -128,9 +128,9 @@ Configuration is provided via LSP `initializationOptions`. All options are optio
 #### `searchPaths`
 
 Array of base directories to search for parsers and queries. If not specified, uses platform-specific defaults:
-- Linux: `~/.local/share/treesitter-ls`
-- macOS: `~/Library/Application Support/treesitter-ls`
-- Windows: `%APPDATA%/treesitter-ls`
+- Linux: `~/.local/share/tree-sitter-ls`
+- macOS: `~/Library/Application Support/tree-sitter-ls`
+- Windows: `%APPDATA%/tree-sitter-ls`
 
 **Important:** Specify base directories, not subdirectories. The resolver automatically appends `parser/` and `queries/` subdirectories.
 
@@ -144,7 +144,7 @@ Queries are searched as `{searchPath}/queries/{language}/{query_type}.scm`.
 
 #### `languages`
 
-Per-language configuration. Usually not needed as treesitter-ls auto-detects languages.
+Per-language configuration. Usually not needed as tree-sitter-ls auto-detects languages.
 
 | Field | Description |
 |-------|-------------|
@@ -226,7 +226,7 @@ The `bridge` map in language configuration controls which injection languages ar
 
 ### Project Configuration File
 
-You can also use a `treesitter-ls.toml` file in your project root:
+You can also use a `tree-sitter-ls.toml` file in your project root:
 
 ```toml
 [captureMappings._.highlights]
@@ -240,56 +240,56 @@ Project configuration is merged with LSP initialization options.
 
 ## CLI Commands
 
-The CLI uses a hierarchical subcommand structure: `treesitter-ls <resource> <action>`.
+The CLI uses a hierarchical subcommand structure: `tree-sitter-ls <resource> <action>`.
 
 ### Language Management
 
 ```bash
 # Install a language (parser + queries)
-treesitter-ls language install lua
+tree-sitter-ls language install lua
 
 # Install with verbose output
-treesitter-ls language install rust --verbose
+tree-sitter-ls language install rust --verbose
 
 # Force reinstall
-treesitter-ls language install python --force
+tree-sitter-ls language install python --force
 
 # Custom data directory
-treesitter-ls language install go --data-dir /custom/path
+tree-sitter-ls language install go --data-dir /custom/path
 
 # Bypass metadata cache
-treesitter-ls language install ruby --no-cache
+tree-sitter-ls language install ruby --no-cache
 
 # List supported languages
-treesitter-ls language list
+tree-sitter-ls language list
 
 # Show installed languages and their status
-treesitter-ls language status
+tree-sitter-ls language status
 
 # Show status with file paths
-treesitter-ls language status --verbose
+tree-sitter-ls language status --verbose
 
 # Show status for custom data directory
-treesitter-ls language status --data-dir /custom/path
+tree-sitter-ls language status --data-dir /custom/path
 
 # Uninstall a language (parser + queries)
-treesitter-ls language uninstall lua
+tree-sitter-ls language uninstall lua
 
 # Uninstall without confirmation prompt
-treesitter-ls language uninstall rust --force
+tree-sitter-ls language uninstall rust --force
 
 # Uninstall all installed languages
-treesitter-ls language uninstall --all --force
+tree-sitter-ls language uninstall --all --force
 ```
 
 ### Configuration Management
 
 ```bash
 # Generate a default configuration file in current directory
-treesitter-ls config init
+tree-sitter-ls config init
 
 # Overwrite existing configuration file
-treesitter-ls config init --force
+tree-sitter-ls config init --force
 ```
 
 ## Editor Integration
@@ -299,8 +299,8 @@ treesitter-ls config init --force
 Using Neovim's built-in LSP client (0.11+):
 
 ```lua
-vim.lsp.config.treesitter_ls = {
-  cmd = { "treesitter-ls" },
+vim.lsp.config.tree_sitter_ls = {
+  cmd = { "tree-sitter-ls" },
   init_options = {
     autoInstall = true,
     -- LSP Bridge configuration (optional)
@@ -321,7 +321,7 @@ vim.lsp.config.treesitter_ls = {
     },
   },
 }
-vim.lsp.enable("treesitter_ls")
+vim.lsp.enable("tree_sitter_ls")
 
 -- Disable built-in treesitter highlighting to avoid conflicts
 vim.api.nvim_create_autocmd("FileType", {
@@ -334,7 +334,7 @@ vim.api.nvim_create_autocmd("FileType", {
 With nvim-lspconfig:
 
 ```lua
-require("lspconfig").treesitter_ls.setup({
+require("lspconfig").tree_sitter_ls.setup({
   init_options = {
     autoInstall = true,
   },
@@ -347,11 +347,11 @@ require("lspconfig").treesitter_ls.setup({
 
 ### Other Editors
 
-Any editor supporting LSP can use treesitter-ls. Configure it as a language server with the `treesitter-ls` command.
+Any editor supporting LSP can use tree-sitter-ls. Configure it as a language server with the `tree-sitter-ls` command.
 
 ## Supported Languages
 
-treesitter-ls supports any language with a Tree-sitter grammar available in nvim-treesitter. Common languages include:
+tree-sitter-ls supports any language with a Tree-sitter grammar available in nvim-treesitter. Common languages include:
 
 - Lua, Python, Rust, Go, C, C++
 - JavaScript, TypeScript, TSX, JSX
@@ -361,7 +361,7 @@ treesitter-ls supports any language with a Tree-sitter grammar available in nvim
 - SQL, GraphQL
 - And many more...
 
-Run `treesitter-ls list-languages` for the complete list.
+Run `tree-sitter-ls language list` for the complete list.
 
 ## Query Inheritance
 
@@ -377,30 +377,30 @@ When you install a language with inheritance, the base queries are automatically
 
 ## Logging
 
-treesitter-ls uses Rust's standard logging with `env_logger`. Configure logging via the `RUST_LOG` environment variable.
+tree-sitter-ls uses Rust's standard logging with `env_logger`. Configure logging via the `RUST_LOG` environment variable.
 
 ### Log Targets
 
 | Target | Level | Description |
 |--------|-------|-------------|
-| `treesitter_ls::lock_recovery` | warn | Thread synchronization recovery events |
-| `treesitter_ls::crash_recovery` | error | Parser crash detection and recovery |
-| `treesitter_ls::query` | info | Query syntax/validation issues |
+| `tree_sitter_ls::lock_recovery` | warn | Thread synchronization recovery events |
+| `tree_sitter_ls::crash_recovery` | error | Parser crash detection and recovery |
+| `tree_sitter_ls::query` | info | Query syntax/validation issues |
 
 ### Examples
 
 ```bash
-# Enable all treesitter-ls logs at debug level
-RUST_LOG=treesitter_ls=debug treesitter-ls
+# Enable all tree-sitter-ls logs at debug level
+RUST_LOG=tree_sitter_ls=debug tree-sitter-ls
 
 # Only show crash events (most severe)
-RUST_LOG=treesitter_ls::crash_recovery=error treesitter-ls
+RUST_LOG=tree_sitter_ls::crash_recovery=error tree-sitter-ls
 
 # Show query issues (helpful for query authors)
-RUST_LOG=treesitter_ls::query=info treesitter-ls
+RUST_LOG=tree_sitter_ls::query=info tree-sitter-ls
 
 # Show lock recovery events (for debugging thread issues)
-RUST_LOG=treesitter_ls::lock_recovery=warn treesitter-ls
+RUST_LOG=tree_sitter_ls::lock_recovery=warn tree-sitter-ls
 ```
 
 **Note:** Logs are written to stderr. Stdout is reserved for LSP JSON-RPC protocol messages.
@@ -409,13 +409,13 @@ RUST_LOG=treesitter_ls::lock_recovery=warn treesitter-ls
 
 ### Parser fails to load
 
-1. Check if the parser exists: `ls ~/.local/share/treesitter-ls/parser/`
-2. Reinstall: `treesitter-ls language install <language> --force`
+1. Check if the parser exists: `ls ~/.local/share/tree-sitter-ls/parser/`
+2. Reinstall: `tree-sitter-ls language install <language> --force`
 3. Check for ABI compatibility with your Tree-sitter version
 
 ### No syntax highlighting
 
-1. Verify queries exist: `ls ~/.local/share/treesitter-ls/queries/<language>/`
+1. Verify queries exist: `ls ~/.local/share/tree-sitter-ls/queries/<language>/`
 2. Check LSP logs for errors
 3. Ensure your editor has semantic tokens enabled
 
@@ -424,6 +424,6 @@ RUST_LOG=treesitter_ls::lock_recovery=warn treesitter-ls
 These languages use query inheritance. Ensure base queries are installed:
 
 ```bash
-treesitter-ls language install typescript --force
+tree-sitter-ls language install typescript --force
 # This automatically installs 'ecma' queries
 ```

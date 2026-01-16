@@ -1,10 +1,10 @@
-//! End-to-end test for Lua hover in Markdown code blocks via treesitter-ls binary.
+//! End-to-end test for Lua hover in Markdown code blocks via tree-sitter-ls binary.
 //!
 //! This test verifies the full bridge infrastructure wiring:
-//! - treesitter-ls binary spawned via LspClient (not direct BridgeConnection)
+//! - tree-sitter-ls binary spawned via LspClient (not direct BridgeConnection)
 //! - Markdown document with Lua code block opened via didOpen
 //! - Hover request at position in Lua block over built-in function
-//! - treesitter-ls detects injection, translates position, spawns lua-ls
+//! - tree-sitter-ls detects injection, translates position, spawns lua-ls
 //! - Real Hover information received from lua-language-server
 //!
 //! Run with: `cargo test --test e2e_lsp_lua_hover --features e2e`

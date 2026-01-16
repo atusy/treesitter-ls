@@ -1,7 +1,7 @@
 local cwd = vim.uv.cwd()
--- Get default treesitter-ls data directory
-vim.lsp.config["treesitter-ls"] = {
-	cmd = { cwd .. "/target/debug/treesitter-ls" },
+-- Get default tree-sitter-ls data directory
+vim.lsp.config["tree-sitter-ls"] = {
+	cmd = { cwd .. "/target/debug/tree-sitter-ls" },
 	init_options = {
 		languages = {
 			markdown = {
@@ -33,7 +33,7 @@ vim.lsp.config["treesitter-ls"] = {
 		client.server_capabilities.semanticTokensProvider.range = false
 	end,
 }
-vim.lsp.enable("treesitter-ls")
+vim.lsp.enable("tree-sitter-ls")
 vim.lsp.log.set_level(vim.lsp.log_levels.DEBUG)
 
 vim.keymap.set("n", "gd", function()
@@ -121,13 +121,13 @@ end
 if #vim.api.nvim_list_uis() == 0 then
 	-- Use Nix-provided paths if available, otherwise fall back to deps/
 	local mini_nvim = vim.env.MINI_NVIM or "deps/nvim/mini.nvim"
-	local treesitter_grammars = vim.env.TREESITTER_GRAMMARS or "deps/treesitter"
+	local tree_sitter_grammars = vim.env.TREE_SITTER_GRAMMARS or "deps/tree-sitter"
 
 	vim.cmd("set rtp+=" .. mini_nvim)
-	vim.cmd("set rtp+=" .. treesitter_grammars)
+	vim.cmd("set rtp+=" .. tree_sitter_grammars)
 
 	-- Only add nvim-treesitter if not using Nix (Nix grammars include queries)
-	if not vim.env.TREESITTER_GRAMMARS then
+	if not vim.env.TREE_SITTER_GRAMMARS then
 		vim.cmd("set rtp+=deps/nvim/nvim-treesitter")
 	end
 

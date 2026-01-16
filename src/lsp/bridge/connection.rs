@@ -150,13 +150,13 @@ impl Drop for SplitConnectionWriter {
         // Kill the child process to prevent orphans (AC3)
         if let Err(e) = self.child.start_kill() {
             log::warn!(
-                target: "treesitter_ls::bridge",
+                target: "tree_sitter_ls::bridge",
                 "Failed to kill child process: {}",
                 e
             );
         } else {
             log::debug!(
-                target: "treesitter_ls::bridge",
+                target: "tree_sitter_ls::bridge",
                 "Killed child process {:?}",
                 self.child.id()
             );
@@ -265,13 +265,13 @@ impl Drop for AsyncBridgeConnection {
         if let Some(ref mut child) = self.child {
             if let Err(e) = child.start_kill() {
                 log::warn!(
-                    target: "treesitter_ls::bridge",
+                    target: "tree_sitter_ls::bridge",
                     "Failed to kill child process: {}",
                     e
                 );
             } else {
                 log::debug!(
-                    target: "treesitter_ls::bridge",
+                    target: "tree_sitter_ls::bridge",
                     "Killed child process {:?}",
                     child.id()
                 );

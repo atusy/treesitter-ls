@@ -1,10 +1,10 @@
-# Makefile for treesitter-ls
+# Makefile for tree-sitter-ls
 
 # Variables
 CARGO = cargo
 TARGET_DIR = target
 RELEASE_DIR = $(TARGET_DIR)/release
-BINARY_NAME = treesitter-ls
+BINARY_NAME = tree-sitter-ls
 RELEASE_BINARY = $(RELEASE_DIR)/$(BINARY_NAME)
 
 # Default target
@@ -70,7 +70,7 @@ install: build
 	$(CARGO) install --path .
 
 # Determine if running in Nix environment (skip deps if so)
-ifdef TREESITTER_GRAMMARS
+ifdef TREE_SITTER_GRAMMARS
   NVIM_DEPS =
 else
   NVIM_DEPS = deps
@@ -85,7 +85,7 @@ test_nvim_file: $(NVIM_DEPS) build-debug
 	nvim --headless --noplugin -u ./scripts/minimal_init.lua -c "lua MiniTest.run_file('$(FILE)')"
 
 # Download 'mini.nvim' to use its 'mini.test' testing module
-deps: deps/nvim deps/treesitter
+deps: deps/nvim deps/tree-sitter
 
 deps/nvim: build-debug deps/nvim/mini.nvim deps/nvim/nvim-treesitter deps/nvim/catppuccin
 
@@ -98,16 +98,16 @@ deps/nvim/nvim-treesitter:
 deps/nvim/catppuccin:
 	git clone --filter=blob:none https://github.com/catppuccin/nvim $@
 
-target/debug/treesitter-ls: build-debug
+target/debug/tree-sitter-ls: build-debug
 
-deps/treesitter/.installed: target/debug/treesitter-ls
-	@mkdir -p deps/treesitter
+deps/tree-sitter/.installed: target/debug/tree-sitter-ls
+	@mkdir -p deps/tree-sitter
 	for lang in lua rust markdown markdown_inline yaml; do \
-		./target/debug/treesitter-ls language install $$lang --data-dir deps/treesitter --force; \
+		./target/debug/tree-sitter-ls language install $$lang --data-dir deps/tree-sitter --force; \
 	done
 	@touch $@
 
-deps/treesitter: deps/treesitter/.installed
+deps/tree-sitter: deps/tree-sitter/.installed
 
 deps/vim/prabirshrestha/vim-lsp:
 	git clone --filter=blob:none https://github.com/prabirshrestha/vim-lsp $@

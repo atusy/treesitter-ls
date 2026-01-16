@@ -65,7 +65,7 @@ impl LanguageServerPool {
     async fn close_single_virtual_doc(&self, doc: &OpenedVirtualDoc) {
         if let Err(e) = self.send_didclose_notification(&doc.virtual_uri).await {
             log::warn!(
-                target: "treesitter_ls::bridge",
+                target: "tree_sitter_ls::bridge",
                 "Failed to send didClose for {}: {}",
                 doc.virtual_uri.to_uri_string(), e
             );
