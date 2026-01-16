@@ -28,14 +28,14 @@ pub(crate) use parser::parser_file_exists;
 
 use std::path::PathBuf;
 
-/// Get the default data directory for treesitter-ls.
+/// Get the default data directory for tree-sitter-ls.
 ///
 /// Platform-specific paths:
-/// - Linux: ~/.local/share/treesitter-ls/
-/// - macOS: ~/Library/Application Support/treesitter-ls/
-/// - Windows: %APPDATA%/treesitter-ls/
+/// - Linux: ~/.local/share/tree-sitter-ls/
+/// - macOS: ~/Library/Application Support/tree-sitter-ls/
+/// - Windows: %APPDATA%/tree-sitter-ls/
 pub fn default_data_dir() -> Option<PathBuf> {
-    dirs::data_dir().map(|p| p.join("treesitter-ls"))
+    dirs::data_dir().map(|p| p.join("tree-sitter-ls"))
 }
 
 /// Result of installing a language (both parser and queries).
@@ -65,7 +65,7 @@ impl InstallResult {
 ///
 /// # Arguments
 /// * `language` - The language to install (e.g., "lua", "rust")
-/// * `data_dir` - The base data directory for treesitter-ls
+/// * `data_dir` - The base data directory for tree-sitter-ls
 /// * `force` - Whether to overwrite existing files
 pub(crate) async fn install_language_async(
     language: String,
@@ -132,7 +132,7 @@ mod tests {
         let dir = default_data_dir();
         assert!(dir.is_some());
         let path = dir.unwrap();
-        assert!(path.to_string_lossy().contains("treesitter-ls"));
+        assert!(path.to_string_lossy().contains("tree-sitter-ls"));
     }
 
     #[test]
