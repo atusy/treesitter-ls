@@ -10,8 +10,7 @@ use tower_lsp::lsp_types::{Position, Url};
 
 use super::super::pool::LanguageServerPool;
 use super::super::protocol::{
-    VirtualDocumentUri, build_bridge_didopen_notification, build_bridge_moniker_request,
-    transform_moniker_response_to_host,
+    VirtualDocumentUri, build_bridge_moniker_request, transform_moniker_response_to_host,
 };
 
 impl LanguageServerPool {
@@ -23,8 +22,8 @@ impl LanguageServerPool {
     /// 3. Send the moniker request
     /// 4. Wait for and return the response
     ///
-    /// The `upstream_request_id` parameter is the request ID from the upstream client,
-    /// passed through unchanged to the downstream server per ADR-0016.
+    /// See [`send_hover_request`](Self::send_hover_request) for documentation on why
+    /// `_upstream_request_id` is intentionally unused.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn send_moniker_request(
         &self,
@@ -35,25 +34,20 @@ impl LanguageServerPool {
         region_id: &str,
         region_start_line: u32,
         virtual_content: &str,
-        upstream_request_id: i64,
+        _upstream_request_id: i64,
     ) -> io::Result<serde_json::Value> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
             .get_or_create_connection(injection_language, server_config)
             .await?;
-        let mut conn = handle.connection().await;
 
         // Build virtual document URI
         let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
 
-        // Send didOpen notification only if document hasn't been opened yet
-        if self.should_send_didopen(host_uri, &virtual_uri).await {
-            let did_open = build_bridge_didopen_notification(&virtual_uri, virtual_content);
-            conn.write_message(&did_open).await?;
-        }
+        // Register request with router to get oneshot receiver
+        let (request_id, response_rx) = handle.register_request()?;
 
-        // Build and send moniker request using upstream ID (ADR-0016)
-        let request_id = upstream_request_id;
+        // Build moniker request
         let moniker_request = build_bridge_moniker_request(
             host_uri,
             host_position,
@@ -62,18 +56,33 @@ impl LanguageServerPool {
             region_start_line,
             request_id,
         );
-        conn.write_message(&moniker_request).await?;
 
-        // Wait for the moniker response (skip notifications)
-        loop {
-            let msg = conn.read_message().await?;
-            if let Some(id) = msg.get("id")
-                && id.as_i64() == Some(request_id)
-            {
-                // Transform response to host coordinates (pass-through for moniker)
-                return Ok(transform_moniker_response_to_host(msg, region_start_line));
-            }
-            // Skip notifications and other responses
-        }
+        // Send messages while holding writer lock, then release
+        {
+            let mut writer = handle.writer().await;
+
+            // Send didOpen notification only if document hasn't been opened yet
+            self.ensure_document_opened(
+                &mut writer,
+                host_uri,
+                &virtual_uri,
+                virtual_content,
+                || {
+                    handle.router().remove(request_id);
+                },
+            )
+            .await?;
+
+            writer.write_message(&moniker_request).await?;
+        } // writer lock released here
+
+        // Wait for response via oneshot channel (no Mutex held) with timeout
+        let response = handle.wait_for_response(request_id, response_rx).await?;
+
+        // Transform response to host coordinates (pass-through for moniker)
+        Ok(transform_moniker_response_to_host(
+            response,
+            region_start_line,
+        ))
     }
 }

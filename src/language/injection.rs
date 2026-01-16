@@ -1364,7 +1364,7 @@ mod tests {
         assert_eq!(nodes.len(), 3, "Should find 3 strings");
 
         // Create injection regions manually: lua, python, lua
-        let injections = vec![
+        let injections = [
             InjectionRegionInfo {
                 language: "lua".to_string(),
                 content_node: nodes[0],

@@ -5,10 +5,12 @@
 //!
 //! # Module Structure
 //!
+//! - `actor` - Actor components (ResponseRouter, Reader task) for async I/O (ADR-0015)
 //! - `connection` - AsyncBridgeConnection for process spawning and I/O
 //! - `protocol` - VirtualDocumentUri, request building, and response transformation
 //! - `pool` - LanguageServerPool for server pool coordination (ADR-0016)
 
+mod actor;
 mod connection;
 mod pool;
 mod protocol;
@@ -134,14 +136,16 @@ mod tests {
         assert!(json_response.get("id").is_some());
     }
 
-    /// Integration test: Verify upstream request ID flows to downstream unchanged (ADR-0016).
+    /// Integration test: Verify unique downstream request IDs are generated.
     ///
-    /// This test verifies the full request ID passthrough flow:
-    /// 1. Send hover request with explicit upstream_request_id = 42
-    /// 2. Verify the downstream server receives the same ID
-    /// 3. Verify the response contains the same ID
+    /// This test verifies that downstream requests use unique generated IDs,
+    /// separate from upstream IDs. This prevents "duplicate request ID" errors
+    /// when multiple upstream requests have the same ID.
+    ///
+    /// The upstream_request_id parameter is now unused (prefixed with _) since
+    /// we generate unique downstream IDs internally.
     #[tokio::test]
-    async fn upstream_request_id_flows_to_downstream_unchanged() {
+    async fn downstream_request_uses_unique_generated_id() {
         // Skip test if lua-language-server is not available
         if std::process::Command::new("lua-language-server")
             .arg("--version")
@@ -167,8 +171,8 @@ mod tests {
         };
         let virtual_content = "function greet(name)\n    return \"Hello, \" .. name\nend";
 
-        // Use a specific request ID (42) to verify it flows through unchanged
-        let upstream_request_id = 42;
+        // upstream_request_id is no longer used for downstream requests
+        // (unique IDs are generated internally)
         let response = pool
             .send_hover_request(
                 &server_config,
@@ -178,7 +182,7 @@ mod tests {
                 "region-0",
                 3, // region_start_line
                 virtual_content,
-                upstream_request_id,
+                42, // upstream_request_id (unused)
             )
             .await;
 
@@ -188,19 +192,31 @@ mod tests {
             response.err()
         );
 
-        // Verify the response contains the same request ID we sent
+        // Verify the response has valid JSON-RPC structure
+        // The response ID will be from our generated sequence
+        // Note: ID 1 is used by the initialize request during connection setup,
+        // so the first user request gets ID 2
         let json_response = response.unwrap();
         assert_eq!(json_response["jsonrpc"], "2.0");
+        assert!(
+            json_response.get("id").is_some(),
+            "Response should contain an ID"
+        );
+        // First user request gets ID 2 (ID 1 is used by initialize request)
         assert_eq!(
             json_response["id"].as_i64(),
-            Some(upstream_request_id),
-            "Response should contain the upstream request ID"
+            Some(2),
+            "Response should contain generated downstream ID (2, since 1 is used by initialize)"
         );
     }
 
-    /// Integration test: Verify completion request ID flows through unchanged (ADR-0016).
+    /// Integration test: Verify completion request uses unique generated downstream ID.
+    ///
+    /// This test verifies that completion requests use unique generated IDs,
+    /// separate from upstream IDs. This prevents "duplicate request ID" errors
+    /// when multiple upstream requests have the same ID.
     #[tokio::test]
-    async fn completion_request_id_flows_to_downstream_unchanged() {
+    async fn completion_request_uses_unique_generated_id() {
         // Skip test if lua-language-server is not available
         if std::process::Command::new("lua-language-server")
             .arg("--version")
@@ -226,8 +242,8 @@ mod tests {
         };
         let virtual_content = "pri"; // Partial identifier for completion
 
-        // Use a specific request ID (123) to verify it flows through unchanged
-        let upstream_request_id = 123;
+        // upstream_request_id is no longer used for downstream requests
+        // (unique IDs are generated internally)
         let response = pool
             .send_completion_request(
                 &server_config,
@@ -237,7 +253,7 @@ mod tests {
                 "region-0",
                 3, // region_start_line
                 virtual_content,
-                upstream_request_id,
+                123, // upstream_request_id (unused)
             )
             .await;
 
@@ -247,13 +263,21 @@ mod tests {
             response.err()
         );
 
-        // Verify the response contains the same request ID we sent
+        // Verify the response has valid JSON-RPC structure
+        // The response ID will be from our generated sequence
+        // Note: ID 1 is used by the initialize request during connection setup,
+        // so the first user request gets ID 2
         let json_response = response.unwrap();
         assert_eq!(json_response["jsonrpc"], "2.0");
+        assert!(
+            json_response.get("id").is_some(),
+            "Response should contain an ID"
+        );
+        // First user request gets ID 2 (ID 1 is used by initialize request)
         assert_eq!(
             json_response["id"].as_i64(),
-            Some(upstream_request_id),
-            "Response should contain the upstream request ID"
+            Some(2),
+            "Response should contain generated downstream ID (2, since 1 is used by initialize)"
         );
     }
 

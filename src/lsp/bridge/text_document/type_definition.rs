@@ -10,8 +10,8 @@ use tower_lsp::lsp_types::{Position, Url};
 
 use super::super::pool::LanguageServerPool;
 use super::super::protocol::{
-    ResponseTransformContext, VirtualDocumentUri, build_bridge_didopen_notification,
-    build_bridge_type_definition_request, transform_definition_response_to_host,
+    ResponseTransformContext, VirtualDocumentUri, build_bridge_type_definition_request,
+    transform_definition_response_to_host,
 };
 
 impl LanguageServerPool {
@@ -23,8 +23,8 @@ impl LanguageServerPool {
     /// 3. Send the type definition request
     /// 4. Wait for and return the response
     ///
-    /// The `upstream_request_id` parameter is the request ID from the upstream client,
-    /// passed through unchanged to the downstream server per ADR-0016.
+    /// See [`send_hover_request`](Self::send_hover_request) for documentation on why
+    /// `_upstream_request_id` is intentionally unused.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn send_type_definition_request(
         &self,
@@ -35,26 +35,21 @@ impl LanguageServerPool {
         region_id: &str,
         region_start_line: u32,
         virtual_content: &str,
-        upstream_request_id: i64,
+        _upstream_request_id: i64,
     ) -> io::Result<serde_json::Value> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
             .get_or_create_connection(injection_language, server_config)
             .await?;
-        let mut conn = handle.connection().await;
 
         // Build virtual document URI
         let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
         let virtual_uri_string = virtual_uri.to_uri_string();
 
-        // Send didOpen notification only if document hasn't been opened yet
-        if self.should_send_didopen(host_uri, &virtual_uri).await {
-            let did_open = build_bridge_didopen_notification(&virtual_uri, virtual_content);
-            conn.write_message(&did_open).await?;
-        }
+        // Register request with router to get oneshot receiver
+        let (request_id, response_rx) = handle.register_request()?;
 
-        // Build and send type definition request using upstream ID (ADR-0016)
-        let request_id = upstream_request_id;
+        // Build type definition request
         let type_definition_request = build_bridge_type_definition_request(
             host_uri,
             host_position,
@@ -63,7 +58,25 @@ impl LanguageServerPool {
             region_start_line,
             request_id,
         );
-        conn.write_message(&type_definition_request).await?;
+
+        // Send messages while holding writer lock, then release
+        {
+            let mut writer = handle.writer().await;
+
+            // Send didOpen notification only if document hasn't been opened yet
+            self.ensure_document_opened(
+                &mut writer,
+                host_uri,
+                &virtual_uri,
+                virtual_content,
+                || {
+                    handle.router().remove(request_id);
+                },
+            )
+            .await?;
+
+            writer.write_message(&type_definition_request).await?;
+        } // writer lock released here
 
         // Build transformation context for response handling
         let context = ResponseTransformContext {
@@ -72,17 +85,11 @@ impl LanguageServerPool {
             request_region_start_line: region_start_line,
         };
 
-        // Wait for the type definition response (skip notifications)
-        loop {
-            let msg = conn.read_message().await?;
-            if let Some(id) = msg.get("id")
-                && id.as_i64() == Some(request_id)
-            {
-                // Transform response to host coordinates and URI
-                // Cross-region virtual URIs are filtered out
-                return Ok(transform_definition_response_to_host(msg, &context));
-            }
-            // Skip notifications and other responses
-        }
+        // Wait for response via oneshot channel (no Mutex held) with timeout
+        let response = handle.wait_for_response(request_id, response_rx).await?;
+
+        // Transform response to host coordinates and URI
+        // Cross-region virtual URIs are filtered out
+        Ok(transform_definition_response_to_host(response, &context))
     }
 }

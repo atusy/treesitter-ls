@@ -2403,6 +2403,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tokio-test",
+ "tokio-util",
  "toml",
  "tower 0.4.13",
  "tower-lsp",
