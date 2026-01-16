@@ -6,7 +6,7 @@ Accepted (Implemented across Sprints 118, 119, 120)
 
 ## Context
 
-treesitter-ls needs to support multiple configuration sources to accommodate different use cases:
+tree-sitter-ls needs to support multiple configuration sources to accommodate different use cases:
 
 1. **Programmed defaults**: Built-in defaults for zero-config usage
 2. **User-wide defaults**: Settings that apply across all projects for a user
@@ -16,8 +16,8 @@ treesitter-ls needs to support multiple configuration sources to accommodate dif
 The limitations of the current system are:
 
 - Missing **User-wide defaults**
-- **Project-specific settings** are only based on `./treesitter-ls.toml`
-- Complex `captureMappings` overrides must be duplicated in each project's `treesitter-ls.toml`
+- **Project-specific settings** are only based on `./tree-sitter-ls.toml`
+- Complex `captureMappings` overrides must be duplicated in each project's `tree-sitter-ls.toml`
 
 The standard pattern in many language servers and CLI tools is layered configuration with clear precedence rules. This ADR proposes adding a **user configuration layer** between programmed defaults and project config.
 
@@ -27,7 +27,7 @@ The standard pattern in many language servers and CLI tools is layered configura
 
 ### Query Configuration Schema
 
-treesitter-ls introduces a unified `queries` field to simplify query file configuration:
+tree-sitter-ls introduces a unified `queries` field to simplify query file configuration:
 
 ```toml
 [languages.python]
@@ -92,12 +92,12 @@ The `queries` field coexists with the legacy `highlights`, `locals`, and `inject
    - Purpose: Sensible out-of-the-box behavior; enables zero-config experience
 
 2. **User configuration file**
-   - Location: `$XDG_CONFIG_HOME/treesitter-ls/treesitter-ls.toml`
-   - Falls back to `~/.config/treesitter-ls/treesitter-ls.toml` on most Unix systems
+   - Location: `$XDG_CONFIG_HOME/tree-sitter-ls/tree-sitter-ls.toml`
+   - Falls back to `~/.config/tree-sitter-ls/tree-sitter-ls.toml` on most Unix systems
    - Purpose: User-wide defaults (e.g., default `searchPaths`, global `captureMappings` overrides)
 
 3. **Project configuration file**
-   - Location: `./treesitter-ls.toml` in workspace root (loaded via `load_toml_settings()`)
+   - Location: `./tree-sitter-ls.toml` in workspace root (loaded via `load_toml_settings()`)
    - Future: `--config` CLI option to specify alternative path
    - Purpose: Project-specific settings, version-controlled with the project
 
@@ -292,11 +292,11 @@ fn load_configuration(cli_config_path: Option<&Path>) -> Option<TreeSitterSettin
 
 ### Phase 3: User Configuration File (Completed - Sprint 120, PBI-149)
 - [x] XDG Base Directory compliance for config path
-- [x] Load user config from `$XDG_CONFIG_HOME/treesitter-ls/treesitter-ls.toml`
+- [x] Load user config from `$XDG_CONFIG_HOME/tree-sitter-ls/tree-sitter-ls.toml`
 - [x] Silent ignore for missing user config file
 
-### Phase 4: Project Configuration (Partial - existing `./treesitter-ls.toml`)
-- [x] Load project config from `./treesitter-ls.toml`
+### Phase 4: Project Configuration (Partial - existing `./tree-sitter-ls.toml`)
+- [x] Load project config from `./tree-sitter-ls.toml`
 - [ ] `--config` CLI option for alternative path
 - [ ] Error on missing file when explicitly specified
 
@@ -370,7 +370,7 @@ queries = [
 1. Replace each legacy array with `queries` entries
 2. Add explicit `kind` for `locals` and `injections` (highlights is the default)
 3. If filenames are exactly `highlights.scm`, `locals.scm`, or `injections.scm`, `kind` can be omitted
-4. Test configuration with `treesitter-ls --check-config` (future feature)
+4. Test configuration with `tree-sitter-ls --check-config` (future feature)
 5. Remove legacy fields once satisfied
 
 ## Related Decisions

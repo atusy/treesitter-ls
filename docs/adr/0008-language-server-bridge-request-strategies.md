@@ -12,7 +12,7 @@ Accepted (Partially superseded by [ADR-0012](0012-multi-ls-async-bridge-architec
 
 When bridging LSP requests for injection regions (see [ADR-0006](0006-language-server-bridge.md)), different LSP methods have different characteristics:
 
-| Method | Latency Sensitivity | treesitter-ls Capability | Language Server Value |
+| Method | Latency Sensitivity | tree-sitter-ls Capability | Language Server Value |
 |--------|---------------------|--------------------------|----------------------|
 | Semantic Tokens | High (visual feedback) | Good (Tree-sitter highlights) | Better (type-aware) |
 | Go-to-Definition | Medium | Local only (locals.scm) | Cross-file resolution |
@@ -58,7 +58,7 @@ A single bridge strategy doesn't fit all methods. We need per-method strategies 
 
 ```
                     ┌─────────────────────────────┐
- Request ──────────▶│      treesitter-ls          │
+ Request ──────────▶│      tree-sitter-ls          │
                     │  ┌─────────────────────┐    │
                     │  │ Tree-sitter tokens  │────│───▶ Immediate response
                     │  │ (local, fast)       │    │     (use if bridge slow)
@@ -227,7 +227,7 @@ Relatively simple—all edits are within the virtual document.
 
 ```
                     ┌─────────────────────────────┐
- (No request)       │      treesitter-ls          │
+ (No request)       │      tree-sitter-ls          │
                     │                             │
  Document Change ──▶│  Notify language servers    │
                     │           │                 │
@@ -248,7 +248,7 @@ Relatively simple—all edits are within the virtual document.
 
 **Behavior**:
 - Language servers push diagnostics asynchronously
-- treesitter-ls filters to virtual document URI only
+- tree-sitter-ls filters to virtual document URI only
 - Translate all diagnostic ranges to host coordinates
 - Merge and deduplicate diagnostics from multiple servers
 - Forward combined diagnostics to the editor with host document URI

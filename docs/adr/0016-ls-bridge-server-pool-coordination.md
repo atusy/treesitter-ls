@@ -46,7 +46,7 @@ Each language maps to exactly one downstream server. Routing is simple: language
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                   treesitter-ls (Host LS)               │
+│                   tree-sitter-ls (Host LS)               │
 │  ┌────────────────────────────────────────────────────┐ │
 │  │              LanguageServerPool                    │ │
 │  │                                                    │ │
@@ -80,7 +80,7 @@ Each language maps to exactly one downstream server. Routing is simple: language
 
 **Phase 1 Flow** (single server per language):
 ```
-Client (editor)          treesitter-ls           Downstream Server
+Client (editor)          tree-sitter-ls           Downstream Server
      ├─ hover ID=42 ────→ Router ──────────────→ pyright (ID=42)
      ◀─ result ─────────────────────────────────◀
 ```

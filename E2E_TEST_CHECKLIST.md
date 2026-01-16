@@ -109,5 +109,5 @@ end
 
 - Sprint 119 Retrospective: Created `helper.retry_for_lsp_indexing()` to eliminate duplication
 - Sprint 120 Retrospective: Identified need for checklist to enforce pattern adoption
-- Test Helper: `/Users/atusy/ghq/github.com/atusy/treesitter-ls___async-bridge/scripts/minimal_init.lua`
+- Test Helper: `/Users/atusy/ghq/github.com/atusy/tree-sitter-ls/scripts/minimal_init.lua`
 - Example Tests: `tests/test_lsp_hover.lua`, `tests/test_lsp_goto_definition.lua`

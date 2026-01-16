@@ -158,7 +158,7 @@ pub struct ResponseError {
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         treesitter-ls (Host LS)                         │
+│                         tree-sitter-ls (Host LS)                         │
 │  ┌────────────────────────────────────────────────────────────────────┐ │
 │  │                      LanguageServerPool                            │ │
 │  │                                                                    │ │
@@ -278,16 +278,16 @@ Notifications must navigate two critical phases before entering normal operation
 
 **Rationale for dropping document notifications in Phase 2:**
 
-During the initialization window (after `initialized` but before treesitter-ls sends `didOpen` to downstream), the client may send `didChange` notifications to treesitter-ls for the host document. These must be translated to the virtual document for downstream, but:
+During the initialization window (after `initialized` but before tree-sitter-ls sends `didOpen` to downstream), the client may send `didChange` notifications to tree-sitter-ls for the host document. These must be translated to the virtual document for downstream, but:
 
 1. **State accumulation**: Any changes before `didOpen` are already incorporated into the document state that will be sent
 2. **LSP semantics**: The LSP spec mandates `didOpen` must precede `didChange` for the same document (LSP 3.x § Text Document Synchronization)
-3. **Bridge control**: treesitter-ls controls when to send `didOpen` downstream, thus also when to start forwarding `didChange`
+3. **Bridge control**: tree-sitter-ls controls when to send `didOpen` downstream, thus also when to start forwarding `didChange`
 
 **Example scenario:**
 ```
 ┌────────┐     ┌──────────────┐     ┌──────────┐
-│ Client │     │ treesitter-ls│     │ pyright  │
+│ Client │     │ tree-sitter-ls│     │ pyright  │
 └───┬────┘     └──────┬───────┘     └────┬─────┘
     │──didOpen(md)───▶│                  │
     │                 │ (spawn pyright)  │
@@ -433,13 +433,13 @@ didChange(v10) → completion  (in downstream read order)
 
 **Problem: Client sends requests before bridge downstream is ready**
 
-treesitter-ls responds to client's `initialize` immediately, independent of downstream bridge connections. This creates a race condition.
+tree-sitter-ls responds to client's `initialize` immediately, independent of downstream bridge connections. This creates a race condition.
 
-**Bridge spawn timing:** When treesitter-ls detects embedded language blocks (e.g., Python in markdown), it spawns the corresponding downstream LS (e.g., pyright). Detection can occur on `didOpen` or `didChange`.
+**Bridge spawn timing:** When tree-sitter-ls detects embedded language blocks (e.g., Python in markdown), it spawns the corresponding downstream LS (e.g., pyright). Detection can occur on `didOpen` or `didChange`.
 
 ```
 ┌────────┐     ┌──────────────┐     ┌──────────┐
-│ Client │     │ treesitter-ls│     │ pyright  │
+│ Client │     │ tree-sitter-ls│     │ pyright  │
 └───┬────┘     └──────┬───────┘     └────┬─────┘
     │                 │                  │
     │──initialize────▶│                  │
@@ -454,7 +454,7 @@ treesitter-ls responds to client's `initialize` immediately, independent of down
     │                 │                  │
     │                 │◀──init result────│
     │                 │──initialized────▶│
-    │                 │──didOpen────────▶│  (treesitter-ls sends, not client)
+    │                 │──didOpen────────▶│  (tree-sitter-ls sends, not client)
     │                 │                  │
     ════════════════════════════════════════════ didOpen sent
     │                 │                  │
@@ -462,7 +462,7 @@ treesitter-ls responds to client's `initialize` immediately, independent of down
     │◀──result────────│◀──result─────────│
 ```
 
-**Key insight:** The client never sends `didOpen` to the downstream LS. treesitter-ls is responsible for sending `didOpen` to the bridge downstream. This defines two distinct phases:
+**Key insight:** The client never sends `didOpen` to the downstream LS. tree-sitter-ls is responsible for sending `didOpen` to the bridge downstream. This defines two distinct phases:
 
 | Phase | Duration | Request Handling |
 |-------|----------|------------------|
@@ -865,7 +865,7 @@ The current async bridge has **hang issues** due to waker/channel race condition
 **Scope**: Support **one language server per language** (multiple languages supported, but each language uses only one LS)
 
 ```
-treesitter-ls (host)
+tree-sitter-ls (host)
   ├─→ pyright  (Python only)
   ├─→ lua-ls   (Lua only)
   └─→ sqlls    (SQL only)
@@ -933,7 +933,7 @@ treesitter-ls (host)
 **Scope**: Extend to support **multiple language servers per language** with routing and aggregation
 
 ```
-treesitter-ls (host)
+tree-sitter-ls (host)
   └─→ Python blocks
         ├─→ pyright  (type checking, completion) ← Circuit breaker from Phase 2
         └─→ ruff     (linting, formatting)       ← Bulkhead from Phase 2

@@ -1,6 +1,6 @@
-# Contributing to treesitter-ls
+# Contributing to tree-sitter-ls
 
-Thank you for your interest in contributing to treesitter-ls! This document provides guidelines and information for contributors.
+Thank you for your interest in contributing to tree-sitter-ls! This document provides guidelines and information for contributors.
 
 ## Table of Contents
 
@@ -37,12 +37,12 @@ make build
 
 ```bash
 # Clone the repository
-git clone https://github.com/atusy/treesitter-ls.git
-cd treesitter-ls
+git clone https://github.com/atusy/tree-sitter-ls.git
+cd tree-sitter-ls
 
 # Build release binary
 cargo build --release
-# Binary location: target/release/treesitter-ls
+# Binary location: target/release/tree-sitter-ls
 
 # Build debug binary
 cargo build
@@ -129,7 +129,7 @@ make check
 
 ## Architecture Overview
 
-treesitter-ls follows a **vertical slice architecture** where each module is responsible for a complete feature area. This design was chosen to avoid circular dependencies and maintain clear separation of concerns.
+tree-sitter-ls follows a **vertical slice architecture** where each module is responsible for a complete feature area. This design was chosen to avoid circular dependencies and maintain clear separation of concerns.
 
 ### Design Principles
 
@@ -486,7 +486,7 @@ match self.data.lock() {
     Ok(guard) => guard.get(key).cloned(),
     Err(poisoned) => {
         warn!(
-            target: "treesitter_ls::lock_recovery",
+            target: "tree_sitter_ls::lock_recovery",
             "Recovered from poisoned lock in module::function"
         );
         poisoned.into_inner().get(key).cloned()
@@ -661,4 +661,4 @@ If you have questions about contributing:
 3. Open an issue for design discussions
 4. Ask in pull request comments
 
-Thank you for contributing to treesitter-ls!
+Thank you for contributing to tree-sitter-ls!

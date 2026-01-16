@@ -27,9 +27,9 @@ Each injection region becomes its own virtual document:
 ```
 Host: file:///docs/tutorial.md
   │
-  ├─▶ treesitter-ls:///docs/tutorial.md#injection-0.rs  (lines 5-10)
-  ├─▶ treesitter-ls:///docs/tutorial.md#injection-1.rs  (lines 20-25)
-  └─▶ treesitter-ls:///docs/tutorial.md#injection-2.rs  (lines 40-50)
+  ├─▶ tree-sitter-ls:///docs/tutorial.md#injection-0.rs  (lines 5-10)
+  ├─▶ tree-sitter-ls:///docs/tutorial.md#injection-1.rs  (lines 20-25)
+  └─▶ tree-sitter-ls:///docs/tutorial.md#injection-2.rs  (lines 40-50)
 ```
 
 #### Why Isolation by Default
@@ -96,7 +96,7 @@ Note: The `isolation` field is configured per **host/injection pair** within the
 
 Non-isolated mode considerations for future implementation:
 - Insert placeholder lines (comments/whitespace) to preserve line numbers for diagnostics
-- Handle conflicting symbols gracefully (report as diagnostics from treesitter-ls, not language server)
+- Handle conflicting symbols gracefully (report as diagnostics from tree-sitter-ls, not language server)
 - Consider block ordering annotations for explicit concatenation order
 
 #### Feature-Specific Isolation Overrides
