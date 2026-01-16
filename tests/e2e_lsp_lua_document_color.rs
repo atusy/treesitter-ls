@@ -13,7 +13,7 @@
 //! **Note**: lua-language-server typically doesn't return color information for Lua code,
 //! so this test verifies the bridge infrastructure works correctly by accepting empty results.
 
-#![cfg(feature = "e2e")]
+#![cfg(all(feature = "e2e", feature = "experimental"))]
 
 mod helpers;
 

@@ -39,6 +39,7 @@ percent-encoding = "2"
 
 [features]
 e2e = []
+experimental = []
 
 [dev-dependencies]
 tokio-test = "0.4"

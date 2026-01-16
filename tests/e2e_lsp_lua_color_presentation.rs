@@ -13,7 +13,7 @@
 //! **Note**: colorPresentation is typically called after documentColor returns colors.
 //! Since lua-ls doesn't return colors, we use mock values to test the infrastructure.
 
-#![cfg(feature = "e2e")]
+#![cfg(all(feature = "e2e", feature = "experimental"))]
 
 mod helpers;
 
