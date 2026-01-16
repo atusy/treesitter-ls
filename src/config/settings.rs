@@ -59,7 +59,7 @@ pub struct QueryTypeMappings {
 
 pub type CaptureMappings = HashMap<String, QueryTypeMappings>;
 
-/// Query type for treesitter query files.
+/// Query type for tree-sitter query files.
 ///
 /// Used in the unified `queries` field to specify what kind of query a file contains.
 /// When not specified, the kind is inferred from the filename pattern.
@@ -662,7 +662,7 @@ mod tests {
                 LanguageConfig {
                     library: Some(format!("/usr/lib/libtree-sitter-{}.so", lang)),
                     queries: None,
-                    highlights: Some(vec![format!("/etc/treesitter/{}/highlights.scm", lang)]),
+                    highlights: Some(vec![format!("/etc/tree-sitter/{}/highlights.scm", lang)]),
                     locals: None,
                     injections: None,
                     bridge: None,

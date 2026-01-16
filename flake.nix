@@ -23,7 +23,7 @@
         };
 
         # Tree-sitter grammars for testing (each includes parser + queries)
-        treesitterGrammars = with pkgs.tree-sitter-grammars; [
+        treeSitterGrammars = with pkgs.tree-sitter-grammars; [
           tree-sitter-bash
           tree-sitter-c
           tree-sitter-go
@@ -41,7 +41,7 @@
 
         # Combined tree-sitter directory with all grammars
         # Structure: parser/<lang>.so, queries/<lang>/*.scm
-        treesitterCombined = pkgs.runCommand "treesitter-grammars-combined" {} ''
+        treeSitterCombined = pkgs.runCommand "tree-sitter-grammars-combined" {} ''
           mkdir -p $out/parser $out/queries
           ${pkgs.lib.concatMapStringsSep "\n" (grammar:
             let
@@ -64,7 +64,7 @@
                 done
               fi
             ''
-          ) treesitterGrammars}
+          ) treeSitterGrammars}
         '';
       in
       {
@@ -113,7 +113,7 @@
           RUST_LOG = "info";
 
           # Tree-sitter paths for testing
-          TREESITTER_GRAMMARS = "${treesitterCombined}";
+          TREESITTER_GRAMMARS = "${treeSitterCombined}";
           MINI_NVIM = "${pkgs.vimPlugins.mini-nvim}";
         };
 

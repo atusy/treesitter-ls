@@ -193,14 +193,14 @@ mod tests {
         let project_dir = TempDir::new().expect("failed to create project temp dir");
 
         // Set up user config with unique searchPath
-        let treesitter_config_dir = user_config_dir.path().join("tree-sitter-ls");
-        fs::create_dir_all(&treesitter_config_dir).expect("failed to create config dir");
+        let tree_sitter_config_dir = user_config_dir.path().join("tree-sitter-ls");
+        fs::create_dir_all(&tree_sitter_config_dir).expect("failed to create config dir");
         let user_config_content = r#"
             searchPaths = ["/user/search/path"]
             autoInstall = false
         "#;
         fs::write(
-            treesitter_config_dir.join("tree-sitter-ls.toml"),
+            tree_sitter_config_dir.join("tree-sitter-ls.toml"),
             user_config_content,
         )
         .expect("failed to write user config");
@@ -272,13 +272,13 @@ mod tests {
         let project_dir = TempDir::new().expect("failed to create project temp dir");
 
         // Set up user config
-        let treesitter_config_dir = user_config_dir.path().join("tree-sitter-ls");
-        fs::create_dir_all(&treesitter_config_dir).expect("failed to create config dir");
+        let tree_sitter_config_dir = user_config_dir.path().join("tree-sitter-ls");
+        fs::create_dir_all(&tree_sitter_config_dir).expect("failed to create config dir");
         let user_config_content = r#"
             autoInstall = false
         "#;
         fs::write(
-            treesitter_config_dir.join("tree-sitter-ls.toml"),
+            tree_sitter_config_dir.join("tree-sitter-ls.toml"),
             user_config_content,
         )
         .expect("failed to write user config");
@@ -347,13 +347,13 @@ mod tests {
         let user_config_dir = TempDir::new().expect("failed to create user config temp dir");
 
         // Set up user config
-        let treesitter_config_dir = user_config_dir.path().join("tree-sitter-ls");
-        fs::create_dir_all(&treesitter_config_dir).expect("failed to create config dir");
+        let tree_sitter_config_dir = user_config_dir.path().join("tree-sitter-ls");
+        fs::create_dir_all(&tree_sitter_config_dir).expect("failed to create config dir");
         let user_config_content = r#"
             autoInstall = false
         "#;
         fs::write(
-            treesitter_config_dir.join("tree-sitter-ls.toml"),
+            tree_sitter_config_dir.join("tree-sitter-ls.toml"),
             user_config_content,
         )
         .expect("failed to write user config");

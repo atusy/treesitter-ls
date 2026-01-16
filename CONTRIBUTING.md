@@ -56,7 +56,7 @@ make debug
 
 ```bash
 # Setup test dependencies (recommended for integration tests)
-make deps  # Creates deps/treesitter with parsers and queries
+make deps  # Creates deps/tree-sitter with parsers and queries
 
 # Run all Rust tests
 cargo test
@@ -82,7 +82,7 @@ cargo test -- --test-threads=1
 make check  # runs cargo check, clippy, and fmt --check
 ```
 
-The `deps/treesitter` directory created by `make deps` contains pre-built Tree-sitter parsers and queries that can be used in Rust integration tests by setting appropriate search paths in test configuration.
+The `deps/tree-sitter` directory created by `make deps` contains pre-built Tree-sitter parsers and queries that can be used in Rust integration tests by setting appropriate search paths in test configuration.
 
 #### Neovim E2E Tests
 
@@ -105,7 +105,7 @@ rm -rf deps/
 The test infrastructure includes:
 - **deps/nvim/mini.nvim**: Testing framework for Neovim E2E tests
 - **deps/nvim/nvim-treesitter**: Neovim Tree-sitter integration for E2E testing
-- **deps/treesitter**: Pre-built Tree-sitter parsers and queries used by both Rust integration tests and Neovim E2E tests
+- **deps/tree-sitter**: Pre-built Tree-sitter parsers and queries used by both Rust integration tests and Neovim E2E tests
 
 ### Code Quality Commands
 
@@ -143,7 +143,7 @@ tree-sitter-ls follows a **vertical slice architecture** where each module is re
 #### Why Vertical Slices?
 
 The initial codebase had several problems:
-- Circular dependencies between `state/` and `treesitter/` modules
+- Circular dependencies between `state/` and `tree_sitter/` modules
 - Upward dependencies (e.g., `layers/` depending on `state/`)
 - Scattered responsibilities across multiple modules
 - "God objects" with too many responsibilities
@@ -169,7 +169,7 @@ The vertical slice architecture solves these by:
 │   ├── nvim/              # Neovim plugins for E2E tests
 │   │   ├── mini.nvim/     # Testing framework
 │   │   └── nvim-treesitter/ # Tree-sitter integration
-│   └── treesitter/        # Pre-built parsers and queries (used by both Rust and Neovim tests)
+│   └── tree-sitter/       # Pre-built parsers and queries (used by both Rust and Neovim tests)
 ├── Cargo.toml             # Rust dependencies
 ├── Makefile               # Build and test automation
 └── CONTRIBUTING.md        # This file
@@ -402,11 +402,11 @@ fn test_semantic_tokens() {
     assert_eq!(tokens.unwrap().data.len(), expected_count);
 }
 
-// Example: Integration test using deps/treesitter parsers
+// Example: Integration test using deps/tree-sitter parsers
 #[test]
 fn test_with_real_parser() {
-    // Use parsers from deps/treesitter directory
-    let search_paths = vec!["deps/treesitter".to_string()];
+    // Use parsers from deps/tree-sitter directory
+    let search_paths = vec!["deps/tree-sitter".to_string()];
     let settings = TreeSitterSettings {
         searchPaths: Some(search_paths),
         languages: /* language config */,
