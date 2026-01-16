@@ -63,10 +63,10 @@ pub fn load_settings(
     // Layer 1: Programmed defaults (ADR-0010: lowest precedence)
     let defaults = Some(default_settings());
 
-    // Layer 2: User config from XDG_CONFIG_HOME (~/.config/treesitter-ls/treesitter-ls.toml)
+    // Layer 2: User config from XDG_CONFIG_HOME (~/.config/tree-sitter-ls/tree-sitter-ls.toml)
     let user_config = load_user_config_with_events(&mut events);
 
-    // Layer 3: Project config from root_path/treesitter-ls.toml
+    // Layer 3: Project config from root_path/tree-sitter-ls.toml
     let project_settings = load_toml_settings(root_path, &mut events);
 
     // Layer 4: Override settings from initialization options or client configuration
@@ -108,7 +108,7 @@ fn load_toml_settings(
     events: &mut Vec<SettingsEvent>,
 ) -> Option<TreeSitterSettings> {
     let root = root_path?;
-    let config_path = root.join("treesitter-ls.toml");
+    let config_path = root.join("tree-sitter-ls.toml");
     if !config_path.exists() {
         return None;
     }
@@ -122,13 +122,13 @@ fn load_toml_settings(
         Ok(contents) => match toml::from_str::<TreeSitterSettings>(&contents) {
             Ok(settings) => {
                 events.push(SettingsEvent::info(
-                    "Successfully loaded treesitter-ls.toml",
+                    "Successfully loaded tree-sitter-ls.toml",
                 ));
                 Some(settings)
             }
             Err(err) => {
                 events.push(SettingsEvent::warning(format!(
-                    "Failed to parse treesitter-ls.toml: {}",
+                    "Failed to parse tree-sitter-ls.toml: {}",
                     err
                 )));
                 None
@@ -136,7 +136,7 @@ fn load_toml_settings(
         },
         Err(err) => {
             events.push(SettingsEvent::warning(format!(
-                "Failed to read treesitter-ls.toml: {}",
+                "Failed to read tree-sitter-ls.toml: {}",
                 err
             )));
             None
@@ -193,14 +193,14 @@ mod tests {
         let project_dir = TempDir::new().expect("failed to create project temp dir");
 
         // Set up user config with unique searchPath
-        let treesitter_config_dir = user_config_dir.path().join("treesitter-ls");
+        let treesitter_config_dir = user_config_dir.path().join("tree-sitter-ls");
         fs::create_dir_all(&treesitter_config_dir).expect("failed to create config dir");
         let user_config_content = r#"
             searchPaths = ["/user/search/path"]
             autoInstall = false
         "#;
         fs::write(
-            treesitter_config_dir.join("treesitter-ls.toml"),
+            treesitter_config_dir.join("tree-sitter-ls.toml"),
             user_config_content,
         )
         .expect("failed to write user config");
@@ -210,7 +210,7 @@ mod tests {
             autoInstall = true
         "#;
         fs::write(
-            project_dir.path().join("treesitter-ls.toml"),
+            project_dir.path().join("tree-sitter-ls.toml"),
             project_config_content,
         )
         .expect("failed to write project config");
@@ -272,13 +272,13 @@ mod tests {
         let project_dir = TempDir::new().expect("failed to create project temp dir");
 
         // Set up user config
-        let treesitter_config_dir = user_config_dir.path().join("treesitter-ls");
+        let treesitter_config_dir = user_config_dir.path().join("tree-sitter-ls");
         fs::create_dir_all(&treesitter_config_dir).expect("failed to create config dir");
         let user_config_content = r#"
             autoInstall = false
         "#;
         fs::write(
-            treesitter_config_dir.join("treesitter-ls.toml"),
+            treesitter_config_dir.join("tree-sitter-ls.toml"),
             user_config_content,
         )
         .expect("failed to write user config");
@@ -288,7 +288,7 @@ mod tests {
             autoInstall = false
         "#;
         fs::write(
-            project_dir.path().join("treesitter-ls.toml"),
+            project_dir.path().join("tree-sitter-ls.toml"),
             project_config_content,
         )
         .expect("failed to write project config");
@@ -347,13 +347,13 @@ mod tests {
         let user_config_dir = TempDir::new().expect("failed to create user config temp dir");
 
         // Set up user config
-        let treesitter_config_dir = user_config_dir.path().join("treesitter-ls");
+        let treesitter_config_dir = user_config_dir.path().join("tree-sitter-ls");
         fs::create_dir_all(&treesitter_config_dir).expect("failed to create config dir");
         let user_config_content = r#"
             autoInstall = false
         "#;
         fs::write(
-            treesitter_config_dir.join("treesitter-ls.toml"),
+            treesitter_config_dir.join("tree-sitter-ls.toml"),
             user_config_content,
         )
         .expect("failed to write user config");

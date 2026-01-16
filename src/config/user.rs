@@ -1,8 +1,8 @@
-//! User configuration loading for treesitter-ls.
+//! User configuration loading for tree-sitter-ls.
 //!
 //! This module handles loading user-wide configuration from the XDG config directory.
-//! User config location: $XDG_CONFIG_HOME/treesitter-ls/treesitter-ls.toml
-//! Fallback: ~/.config/treesitter-ls/treesitter-ls.toml
+//! User config location: $XDG_CONFIG_HOME/tree-sitter-ls/tree-sitter-ls.toml
+//! Fallback: ~/.config/tree-sitter-ls/tree-sitter-ls.toml
 
 use crate::config::TreeSitterSettings;
 use log::warn;
@@ -90,8 +90,8 @@ pub fn load_user_config() -> UserConfigResult<Option<TreeSitterSettings>> {
 /// Returns the path to the user configuration file.
 ///
 /// The path is determined by:
-/// 1. If $XDG_CONFIG_HOME is set and valid: $XDG_CONFIG_HOME/treesitter-ls/treesitter-ls.toml
-/// 2. Otherwise: ~/.config/treesitter-ls/treesitter-ls.toml
+/// 1. If $XDG_CONFIG_HOME is set and valid: $XDG_CONFIG_HOME/tree-sitter-ls/tree-sitter-ls.toml
+/// 2. Otherwise: ~/.config/tree-sitter-ls/tree-sitter-ls.toml
 ///
 /// Security: XDG_CONFIG_HOME is validated to prevent path traversal attacks:
 /// - Must be an absolute path (not relative)
@@ -124,17 +124,17 @@ pub fn user_config_path() -> Option<PathBuf> {
                 // Fall through to use ~/.config
             } else {
                 // Path is absolute and doesn't contain .. components
-                return Some(xdg_path.join("treesitter-ls").join("treesitter-ls.toml"));
+                return Some(xdg_path.join("tree-sitter-ls").join("tree-sitter-ls.toml"));
             }
         }
     }
 
-    // Fallback to ~/.config/treesitter-ls/treesitter-ls.toml
+    // Fallback to ~/.config/tree-sitter-ls/tree-sitter-ls.toml
     // dirs::home_dir() returns the user's home directory
     dirs::home_dir().map(|home| {
         home.join(".config")
-            .join("treesitter-ls")
-            .join("treesitter-ls.toml")
+            .join("tree-sitter-ls")
+            .join("tree-sitter-ls.toml")
     })
 }
 
@@ -174,8 +174,8 @@ mod tests {
         let path = path.unwrap();
         assert_eq!(
             path,
-            PathBuf::from("/custom/config/treesitter-ls/treesitter-ls.toml"),
-            "should use XDG_CONFIG_HOME/treesitter-ls/treesitter-ls.toml"
+            PathBuf::from("/custom/config/tree-sitter-ls/tree-sitter-ls.toml"),
+            "should use XDG_CONFIG_HOME/tree-sitter-ls/tree-sitter-ls.toml"
         );
     }
 
@@ -202,19 +202,19 @@ mod tests {
         }
 
         // On a normal system, we should get a path even without XDG_CONFIG_HOME
-        // It should fall back to $HOME/.config/treesitter-ls/treesitter-ls.toml
+        // It should fall back to $HOME/.config/tree-sitter-ls/tree-sitter-ls.toml
         assert!(
             path.is_some(),
             "user_config_path should return Some even when XDG_CONFIG_HOME is unset"
         );
         let path = path.unwrap();
 
-        // Verify the path structure - should end with treesitter-ls/treesitter-ls.toml
+        // Verify the path structure - should end with tree-sitter-ls/tree-sitter-ls.toml
         // and contain ".config" in the path (the fallback behavior)
         let path_str = path.to_string_lossy();
         assert!(
-            path_str.ends_with("treesitter-ls/treesitter-ls.toml"),
-            "path should end with treesitter-ls/treesitter-ls.toml, got: {}",
+            path_str.ends_with("tree-sitter-ls/tree-sitter-ls.toml"),
+            "path should end with tree-sitter-ls/tree-sitter-ls.toml, got: {}",
             path_str
         );
         assert!(
@@ -271,10 +271,10 @@ mod tests {
 
         // Create temp directory with valid config file
         let temp_dir = TempDir::new().expect("failed to create temp dir");
-        let config_dir = temp_dir.path().join("treesitter-ls");
+        let config_dir = temp_dir.path().join("tree-sitter-ls");
         fs::create_dir_all(&config_dir).expect("failed to create config dir");
 
-        let config_path = config_dir.join("treesitter-ls.toml");
+        let config_path = config_dir.join("tree-sitter-ls.toml");
         let config_content = r#"
             autoInstall = false
             searchPaths = ["/user/custom/path"]
@@ -332,10 +332,10 @@ mod tests {
 
         // Create temp directory with invalid TOML config file
         let temp_dir = TempDir::new().expect("failed to create temp dir");
-        let config_dir = temp_dir.path().join("treesitter-ls");
+        let config_dir = temp_dir.path().join("tree-sitter-ls");
         fs::create_dir_all(&config_dir).expect("failed to create config dir");
 
-        let config_path = config_dir.join("treesitter-ls.toml");
+        let config_path = config_dir.join("tree-sitter-ls.toml");
         // Invalid TOML: missing closing bracket
         let invalid_content = r#"
             autoInstall = true
@@ -369,7 +369,7 @@ mod tests {
         // Error message should include the file path
         let error_message = error.to_string();
         assert!(
-            error_message.contains("treesitter-ls.toml"),
+            error_message.contains("tree-sitter-ls.toml"),
             "error should include file path, got: {}",
             error_message
         );
