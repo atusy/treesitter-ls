@@ -1075,7 +1075,7 @@ mod tests {
     /// immediately in Initializing state. On timeout, they transition to Failed
     /// state. Subsequent requests will remove the failed entry and spawn fresh.
     #[tokio::test]
-    async fn connection_not_cached_on_timeout() {
+    async fn connection_transitions_to_failed_state_on_timeout() {
         let pool = LanguageServerPool::new();
         let config = BridgeServerConfig {
             cmd: vec![
@@ -1909,7 +1909,7 @@ mod tests {
     /// When initialization times out, the connection transitions to Failed state.
     /// Subsequent requests will remove the failed entry and spawn fresh.
     #[tokio::test]
-    async fn connection_handle_not_cached_after_timeout() {
+    async fn connection_handle_transitions_to_failed_after_timeout() {
         let pool = LanguageServerPool::new();
         let config = BridgeServerConfig {
             cmd: vec![
