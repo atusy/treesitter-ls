@@ -5,12 +5,14 @@
 //!
 //! The structure mirrors `lsp_impl/text_document/` for consistency.
 
+#[cfg(feature = "experimental")]
 mod color_presentation;
 mod completion;
 mod declaration;
 mod definition;
 mod did_change;
 mod did_close;
+#[cfg(feature = "experimental")]
 mod document_color;
 mod document_highlight;
 mod document_link;

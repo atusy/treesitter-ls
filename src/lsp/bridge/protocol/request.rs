@@ -458,6 +458,7 @@ pub(crate) fn build_bridge_inlay_hint_request(
 /// **`host_range.start.line >= region_start_line`** - The host range must be within or after
 /// the injection region. This is guaranteed by callers which only invoke bridge requests
 /// when the range falls within a detected injection region's line range.
+#[cfg(feature = "experimental")]
 pub(crate) fn build_bridge_color_presentation_request(
     host_uri: &tower_lsp::lsp_types::Url,
     host_range: tower_lsp::lsp_types::Range,
@@ -535,6 +536,7 @@ pub(crate) fn build_bridge_moniker_request(
 /// * `injection_language` - The injection language (e.g., "lua")
 /// * `region_id` - The unique region ID for this injection
 /// * `request_id` - The JSON-RPC request ID
+#[cfg(feature = "experimental")]
 pub(crate) fn build_bridge_document_color_request(
     host_uri: &tower_lsp::lsp_types::Url,
     injection_language: &str,
@@ -1374,6 +1376,7 @@ mod tests {
     // ==========================================================================
 
     #[test]
+    #[cfg(feature = "experimental")]
     fn document_color_request_uses_virtual_uri() {
         let request = build_bridge_document_color_request(
             &test_host_uri(),
@@ -1386,6 +1389,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "experimental")]
     fn document_color_request_has_correct_method_and_structure() {
         let request = build_bridge_document_color_request(
             &test_host_uri(),
@@ -1409,6 +1413,7 @@ mod tests {
     // ==========================================================================
 
     #[test]
+    #[cfg(feature = "experimental")]
     fn color_presentation_request_uses_virtual_uri() {
         use tower_lsp::lsp_types::Range;
 
@@ -1442,6 +1447,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "experimental")]
     fn color_presentation_request_transforms_range_to_virtual_coordinates() {
         use tower_lsp::lsp_types::Range;
 
@@ -1493,6 +1499,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "experimental")]
     fn color_presentation_request_includes_color() {
         use tower_lsp::lsp_types::Range;
 
