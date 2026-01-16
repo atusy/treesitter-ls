@@ -281,7 +281,7 @@ impl TreeSitterLs {
                 MessageType::WARNING,
                 format!(
                     "Parser for '{}' not found. Auto-install is disabled because {}. \
-                     Please install the parser manually using: tree-sitter-ls language install {}",
+                     Please install the parser manually using: kakehashi language install {}",
                     language, reason, language
                 ),
             )
@@ -1155,7 +1155,7 @@ impl LanguageServer for TreeSitterLs {
             .await;
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
-                name: "tree-sitter-ls".to_string(),
+                name: "kakehashi".to_string(),
                 version: Some(env!("CARGO_PKG_VERSION").to_string()),
             }),
             capabilities: ServerCapabilities {

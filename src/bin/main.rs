@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 /// A Language Server Protocol (LSP) server using Tree-sitter for parsing
 #[derive(Parser)]
-#[command(name = "tree-sitter-ls")]
+#[command(name = "kakehashi")]
 #[command(version)]
 #[command(about = "A Language Server Protocol (LSP) server using Tree-sitter for parsing")]
 struct Cli {
@@ -33,7 +33,7 @@ enum LanguageAction {
         /// The language to install (e.g., lua, rust, python)
         language: String,
 
-        /// Custom data directory (default: ~/.local/share/tree-sitter-ls on Linux)
+        /// Custom data directory (default: ~/.local/share/kakehashi on Linux)
         #[arg(long)]
         data_dir: Option<PathBuf>,
 
@@ -57,7 +57,7 @@ enum LanguageAction {
     },
     /// Show installed languages and their status
     Status {
-        /// Custom data directory (default: ~/.local/share/tree-sitter-ls on Linux)
+        /// Custom data directory (default: ~/.local/share/kakehashi on Linux)
         #[arg(long)]
         data_dir: Option<PathBuf>,
 
@@ -71,7 +71,7 @@ enum LanguageAction {
         #[arg(required_unless_present = "all")]
         language: Option<String>,
 
-        /// Custom data directory (default: ~/.local/share/tree-sitter-ls on Linux)
+        /// Custom data directory (default: ~/.local/share/kakehashi on Linux)
         #[arg(long)]
         data_dir: Option<PathBuf>,
 
@@ -174,7 +174,7 @@ fn run_list_languages(no_cache: bool) {
 
 /// Documentation link for configuration
 const DOC_LINK: &str =
-    "# Documentation: https://github.com/atusy/tree-sitter-ls/blob/main/docs/README.md\n";
+    "# Documentation: https://github.com/atusy/kakehashi/blob/main/docs/README.md\n";
 
 /// Run the language status command
 fn run_language_status(data_dir: Option<PathBuf>, verbose: bool) {
@@ -220,7 +220,7 @@ fn run_language_status(data_dir: Option<PathBuf>, verbose: bool) {
 
     if languages.is_empty() {
         eprintln!("No languages installed in {}", data_dir.display());
-        eprintln!("Use 'tree-sitter-ls language install <language>' to install one.");
+        eprintln!("Use 'kakehashi language install <language>' to install one.");
         return;
     }
 

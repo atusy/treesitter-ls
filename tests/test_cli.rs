@@ -18,7 +18,7 @@ fn test_help_flag_shows_help_message() {
 
     // Should contain program name
     assert!(
-        stdout.contains("tree-sitter-ls"),
+        stdout.contains("kakehashi"),
         "Help should contain program name. Got: {}",
         stdout
     );
