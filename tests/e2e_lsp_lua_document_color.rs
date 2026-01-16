@@ -1,3 +1,4 @@
+#![cfg(all(feature = "e2e", feature = "experimental"))]
 //! End-to-end test for document color in Markdown code blocks via tree-sitter-ls binary.
 //!
 //! This test verifies the full bridge infrastructure wiring for document color:

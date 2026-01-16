@@ -1,9 +1,11 @@
 //! Text document related LSP methods.
 
+#[cfg(feature = "experimental")]
 mod color_presentation;
 mod completion;
 mod declaration;
 mod definition;
+#[cfg(feature = "experimental")]
 mod document_color;
 mod document_highlight;
 mod document_link;

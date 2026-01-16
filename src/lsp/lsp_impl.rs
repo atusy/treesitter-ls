@@ -1194,7 +1194,10 @@ impl LanguageServer for TreeSitterLs {
                 document_symbol_provider: Some(OneOf::Left(true)),
                 rename_provider: Some(OneOf::Left(true)),
                 inlay_hint_provider: Some(OneOf::Left(true)),
+                #[cfg(feature = "experimental")]
                 color_provider: Some(ColorProviderCapability::Simple(true)),
+                #[cfg(not(feature = "experimental"))]
+                color_provider: None,
                 moniker_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
             },
@@ -1564,10 +1567,12 @@ impl LanguageServer for TreeSitterLs {
         self.inlay_hint_impl(params).await
     }
 
+    #[cfg(feature = "experimental")]
     async fn document_color(&self, params: DocumentColorParams) -> Result<Vec<ColorInformation>> {
         self.document_color_impl(params).await
     }
 
+    #[cfg(feature = "experimental")]
     async fn color_presentation(
         &self,
         params: ColorPresentationParams,

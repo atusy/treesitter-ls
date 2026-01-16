@@ -475,6 +475,7 @@ fn transform_position(position: &mut serde_json::Value, region_start_line: u32) 
 /// # Arguments
 /// * `response` - The JSON-RPC response from the downstream language server
 /// * `region_start_line` - The starting line of the injection region in the host document
+#[cfg(feature = "experimental")]
 pub(crate) fn transform_document_color_response_to_host(
     mut response: serde_json::Value,
     region_start_line: u32,
@@ -515,6 +516,7 @@ pub(crate) fn transform_document_color_response_to_host(
 /// # Arguments
 /// * `response` - The JSON-RPC response from the downstream language server
 /// * `region_start_line` - The starting line of the injection region in the host document
+#[cfg(feature = "experimental")]
 pub(crate) fn transform_color_presentation_response_to_host(
     mut response: serde_json::Value,
     region_start_line: u32,
@@ -2743,6 +2745,7 @@ mod tests {
     // ==========================================================================
 
     #[test]
+    #[cfg(feature = "experimental")]
     fn document_color_response_transforms_ranges_to_host_coordinates() {
         // ColorInformation[] contains range + color for each color found
         let response = json!({
@@ -2793,6 +2796,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "experimental")]
     fn document_color_response_with_null_result_passes_through() {
         let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
 
@@ -2801,6 +2805,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "experimental")]
     fn document_color_response_with_empty_array_passes_through() {
         let response = json!({ "jsonrpc": "2.0", "id": 42, "result": [] });
 
@@ -2810,6 +2815,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "experimental")]
     fn document_color_response_preserves_color_values() {
         let response = json!({
             "jsonrpc": "2.0",
@@ -2844,6 +2850,7 @@ mod tests {
     // ==========================================================================
 
     #[test]
+    #[cfg(feature = "experimental")]
     fn color_presentation_response_transforms_text_edit_range_to_host_coordinates() {
         // ColorPresentation[] contains label + optional textEdit + optional additionalTextEdits
         let response = json!({
@@ -2878,6 +2885,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "experimental")]
     fn color_presentation_response_transforms_additional_text_edits_to_host_coordinates() {
         // ColorPresentation with additionalTextEdits (multiple edits beyond the main one)
         let response = json!({
@@ -2932,6 +2940,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "experimental")]
     fn color_presentation_response_without_text_edit_passes_through() {
         // ColorPresentation with only label (no textEdit or additionalTextEdits)
         let response = json!({
@@ -2956,6 +2965,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "experimental")]
     fn color_presentation_response_with_null_result_passes_through() {
         let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
 
@@ -2964,6 +2974,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "experimental")]
     fn color_presentation_response_with_empty_array_passes_through() {
         let response = json!({ "jsonrpc": "2.0", "id": 42, "result": [] });
 
