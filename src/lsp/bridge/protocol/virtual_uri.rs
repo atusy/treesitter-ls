@@ -9,9 +9,9 @@
 /// Encodes host URI + injection language + region ID into a file:// URI
 /// that downstream language servers can use to identify virtual documents.
 ///
-/// Format: `file:///.tree-sitter-ls/{host_hash}/{region_id}.{ext}`
+/// Format: `file:///.kakehashi/{host_hash}/{region_id}.{ext}`
 ///
-/// Example: `file:///.tree-sitter-ls/a1b2c3d4e5f6/region-0.lua`
+/// Example: `file:///.kakehashi/a1b2c3d4e5f6/region-0.lua`
 ///
 /// The file:// scheme is used for compatibility with language servers that
 /// only support file:// URIs (e.g., lua-language-server).
@@ -68,27 +68,27 @@ impl VirtualDocumentUri {
 
     /// The URI prefix used by all virtual documents.
     ///
-    /// Virtual URIs use a root-relative path (`/.tree-sitter-ls/`) to avoid
-    /// collision with real file paths that might contain `.tree-sitter-ls`
-    /// in user directories (e.g., `~/.tree-sitter-ls/config.lua`).
-    const URI_PREFIX: &'static str = "file:///.tree-sitter-ls/";
+    /// Virtual URIs use a root-relative path (`/.kakehashi/`) to avoid
+    /// collision with real file paths that might contain `.kakehashi`
+    /// in user directories (e.g., `~/.kakehashi/config.lua`).
+    const URI_PREFIX: &'static str = "file:///.kakehashi/";
 
     /// Check if a URI string represents a virtual document.
     ///
-    /// Virtual document URIs have the pattern `file:///.tree-sitter-ls/{hash}/{region_id}.{ext}`.
+    /// Virtual document URIs have the pattern `file:///.kakehashi/{hash}/{region_id}.{ext}`.
     /// This is used to distinguish virtual URIs from real file URIs in responses.
     ///
     /// Uses a strict prefix check to avoid false positives for real files that happen
-    /// to be in a directory named `.tree-sitter-ls`.
+    /// to be in a directory named `.kakehashi`.
     pub(crate) fn is_virtual_uri(uri: &str) -> bool {
         uri.starts_with(Self::URI_PREFIX)
     }
 
     /// Convert to a URI string.
     ///
-    /// Format: `file:///.tree-sitter-ls/{host_path_hash}/{region_id}.{ext}`
+    /// Format: `file:///.kakehashi/{host_path_hash}/{region_id}.{ext}`
     ///
-    /// Uses file:// scheme with a virtual path under .tree-sitter-ls directory.
+    /// Uses file:// scheme with a virtual path under .kakehashi directory.
     /// This format is compatible with most language servers that expect file:// URIs.
     /// The file extension is derived from the language to help downstream language servers
     /// recognize the file type (e.g., lua-language-server needs `.lua` extension).
@@ -207,8 +207,8 @@ mod tests {
 
         let uri_string = virtual_uri.to_uri_string();
         assert!(
-            uri_string.starts_with("file:///.tree-sitter-ls/"),
-            "URI should use file:///.tree-sitter-ls/ path: {}",
+            uri_string.starts_with("file:///.kakehashi/"),
+            "URI should use file:///.kakehashi/ path: {}",
             uri_string
         );
     }
@@ -509,7 +509,7 @@ mod tests {
 
         let parsed = parsed.unwrap();
         assert_eq!(parsed.scheme(), "file");
-        assert!(parsed.path().starts_with("/.tree-sitter-ls/"));
+        assert!(parsed.path().starts_with("/.kakehashi/"));
     }
 
     // ==========================================================================
@@ -519,13 +519,13 @@ mod tests {
     #[test]
     fn is_virtual_uri_detects_virtual_uris() {
         assert!(VirtualDocumentUri::is_virtual_uri(
-            "file:///.tree-sitter-ls/abc123/region-0.lua"
+            "file:///.kakehashi/abc123/region-0.lua"
         ));
         assert!(VirtualDocumentUri::is_virtual_uri(
-            "file:///.tree-sitter-ls/def456/01JPMQ8ZYYQA.py"
+            "file:///.kakehashi/def456/01JPMQ8ZYYQA.py"
         ));
         assert!(VirtualDocumentUri::is_virtual_uri(
-            "file:///.tree-sitter-ls/hash/test.txt"
+            "file:///.kakehashi/hash/test.txt"
         ));
     }
 
@@ -544,7 +544,7 @@ mod tests {
         ));
         // Real file in user's .tree-sitter-ls config directory (edge case the stricter check fixes)
         assert!(!VirtualDocumentUri::is_virtual_uri(
-            "file:///home/user/.tree-sitter-ls/config.lua"
+            "file:///home/user/.kakehashi/config.lua"
         ));
     }
 }

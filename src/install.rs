@@ -28,14 +28,14 @@ pub(crate) use parser::parser_file_exists;
 
 use std::path::PathBuf;
 
-/// Get the default data directory for tree-sitter-ls.
+/// Get the default data directory for kakehashi.
 ///
 /// Platform-specific paths:
-/// - Linux: ~/.local/share/tree-sitter-ls/
-/// - macOS: ~/Library/Application Support/tree-sitter-ls/
-/// - Windows: %APPDATA%/tree-sitter-ls/
+/// - Linux: ~/.local/share/kakehashi/
+/// - macOS: ~/Library/Application Support/kakehashi/
+/// - Windows: %APPDATA%/kakehashi/
 pub fn default_data_dir() -> Option<PathBuf> {
-    dirs::data_dir().map(|p| p.join("tree-sitter-ls"))
+    dirs::data_dir().map(|p| p.join("kakehashi"))
 }
 
 /// Result of installing a language (both parser and queries).
@@ -132,7 +132,7 @@ mod tests {
         let dir = default_data_dir();
         assert!(dir.is_some());
         let path = dir.unwrap();
-        assert!(path.to_string_lossy().contains("tree-sitter-ls"));
+        assert!(path.to_string_lossy().contains("kakehashi"));
     }
 
     #[test]

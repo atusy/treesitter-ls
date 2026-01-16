@@ -829,8 +829,8 @@ mod tests {
         // Should contain parser and queries subdirectories
         let paths_str = workspace.search_paths.join("|");
         assert!(
-            paths_str.contains("tree-sitter-ls"),
-            "Default paths should include tree-sitter-ls directory: {:?}",
+            paths_str.contains("kakehashi"),
+            "Default paths should include kakehashi directory: {:?}",
             workspace.search_paths
         );
     }
@@ -962,10 +962,10 @@ mod tests {
             path
         );
 
-        // The path should end with "tree-sitter-ls" (the base directory name)
+        // The path should end with "kakehashi" (the base directory name)
         assert!(
-            path.ends_with("tree-sitter-ls"),
-            "Path should end with 'tree-sitter-ls': {}",
+            path.ends_with("kakehashi"),
+            "Path should end with 'kakehashi': {}",
             path
         );
     }

@@ -273,14 +273,14 @@ fn test_config_init_output_creates_file() {
     use std::path::Path;
 
     let test_dir = "/tmp/test-config-init-output";
-    let config_path = Path::new(test_dir).join("tree-sitter-ls.toml");
+    let config_path = Path::new(test_dir).join("kakehashi.toml");
 
     // Clean up before test
     let _ = fs::remove_dir_all(test_dir);
     fs::create_dir_all(test_dir).expect("Failed to create test directory");
 
     let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
-        .args(["config", "init", "--output", "tree-sitter-ls.toml"])
+        .args(["config", "init", "--output", "kakehashi.toml"])
         .current_dir(test_dir)
         .output()
         .expect("Failed to execute command");
@@ -318,7 +318,7 @@ fn test_config_init_output_no_overwrite_without_force() {
     use std::path::Path;
 
     let test_dir = "/tmp/test-config-no-overwrite";
-    let config_path = Path::new(test_dir).join("tree-sitter-ls.toml");
+    let config_path = Path::new(test_dir).join("kakehashi.toml");
 
     // Clean up and setup
     let _ = fs::remove_dir_all(test_dir);
@@ -326,7 +326,7 @@ fn test_config_init_output_no_overwrite_without_force() {
     fs::write(&config_path, "existing").expect("Failed to write existing config");
 
     let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
-        .args(["config", "init", "--output", "tree-sitter-ls.toml"])
+        .args(["config", "init", "--output", "kakehashi.toml"])
         .current_dir(test_dir)
         .output()
         .expect("Failed to execute command");
@@ -352,7 +352,7 @@ fn test_config_init_output_force_overwrites() {
     use std::path::Path;
 
     let test_dir = "/tmp/test-config-force";
-    let config_path = Path::new(test_dir).join("tree-sitter-ls.toml");
+    let config_path = Path::new(test_dir).join("kakehashi.toml");
 
     // Clean up and setup
     let _ = fs::remove_dir_all(test_dir);
@@ -360,13 +360,7 @@ fn test_config_init_output_force_overwrites() {
     fs::write(&config_path, "existing").expect("Failed to write existing config");
 
     let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
-        .args([
-            "config",
-            "init",
-            "--output",
-            "tree-sitter-ls.toml",
-            "--force",
-        ])
+        .args(["config", "init", "--output", "kakehashi.toml", "--force"])
         .current_dir(test_dir)
         .output()
         .expect("Failed to execute command");
