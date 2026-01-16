@@ -1,7 +1,7 @@
 //! Lua bridge helpers for E2E tests.
 //!
 //! Provides reusable initialization and verification patterns for tests that
-//! interact with lua-language-server via the tree-sitter-ls bridge.
+//! interact with lua-language-server via the kakehashi bridge.
 
 use super::lsp_client::LspClient;
 use serde_json::json;
@@ -43,7 +43,7 @@ pub fn skip_if_lua_ls_unavailable() -> bool {
 /// Create an LspClient initialized with lua-language-server configuration.
 ///
 /// This helper encapsulates the common initialization pattern for Lua bridge tests:
-/// - Spawn tree-sitter-ls binary
+/// - Spawn kakehashi binary
 /// - Send initialize request with lua-language-server bridge configuration
 /// - Send initialized notification to complete handshake
 ///

@@ -538,11 +538,11 @@ mod tests {
             "file:///C:/Users/dev/code.py"
         ));
         assert!(!VirtualDocumentUri::is_virtual_uri("untitled:Untitled-1"));
-        // Real file in a directory that happens to contain "tree-sitter-ls" in path
+        // Real file in a directory that happens to contain "kakehashi" in path
         assert!(!VirtualDocumentUri::is_virtual_uri(
-            "file:///some/tree-sitter-ls/file.lua"
+            "file:///some/kakehashi/file.lua"
         ));
-        // Real file in user's .tree-sitter-ls config directory (edge case the stricter check fixes)
+        // Real file in user's .kakehashi config directory (edge case the stricter check fixes)
         assert!(!VirtualDocumentUri::is_virtual_uri(
             "file:///home/user/.kakehashi/config.lua"
         ));

@@ -1,6 +1,6 @@
 //! End-to-end tests for LSP protocol conformance.
 //!
-//! These tests verify that tree-sitter-ls correctly implements the core LSP
+//! These tests verify that kakehashi correctly implements the core LSP
 //! protocol lifecycle: spawning, initialization handshake, and clean shutdown.
 //! They test the server itself, not any specific language features or bridge
 //! functionality.
@@ -16,7 +16,7 @@ use serde_json::json;
 
 #[test]
 fn test_spawn_binary_starts_process() {
-    // Creating an LspClient should spawn the tree-sitter-ls binary and
+    // Creating an LspClient should spawn the kakehashi binary and
     // establish LSP communication channels without panicking.
     //
     // If the binary fails to start (e.g., missing executable, spawn error),
@@ -57,14 +57,14 @@ fn test_initialize_returns_capabilities() {
 
     let capabilities = result.get("capabilities").unwrap();
 
-    // Verify some expected capabilities for tree-sitter-ls
+    // Verify some expected capabilities for kakehashi
     assert!(
         capabilities.get("textDocumentSync").is_some(),
         "Server should support textDocumentSync: {:?}",
         capabilities
     );
 
-    // tree-sitter-ls should support definition (for bridging)
+    // kakehashi should support definition (for bridging)
     assert!(
         capabilities.get("definitionProvider").is_some(),
         "Server should support definitionProvider: {:?}",

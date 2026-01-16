@@ -1,6 +1,6 @@
 //! LSP client for E2E tests.
 //!
-//! Provides a simple LSP client that communicates with tree-sitter-ls binary
+//! Provides a simple LSP client that communicates with kakehashi binary
 //! via stdin/stdout using JSON-RPC 2.0 protocol.
 
 use serde_json::{Value, json};
@@ -8,7 +8,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
-/// LSP client for communicating with tree-sitter-ls binary.
+/// LSP client for communicating with kakehashi binary.
 ///
 /// Handles JSON-RPC 2.0 message framing with Content-Length headers,
 /// request/response matching, and server-initiated notifications.
@@ -20,16 +20,16 @@ pub struct LspClient {
 }
 
 impl LspClient {
-    /// Spawn the tree-sitter-ls binary and create a new LSP client.
+    /// Spawn the kakehashi binary and create a new LSP client.
     pub fn new() -> Self {
         // `CARGO_BIN_EXE_kakehashi` is set by Cargo's test harness for integration tests
-        // and points to the built `tree-sitter-ls` binary, so we don't hardcode its path here.
+        // and points to the built `kakehashi` binary, so we don't hardcode its path here.
         let mut child = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("Failed to spawn tree-sitter-ls binary");
+            .expect("Failed to spawn kakehashi binary");
 
         let stdin = child.stdin.take().expect("Failed to get stdin");
         let stdout = BufReader::new(child.stdout.take().expect("Failed to get stdout"));

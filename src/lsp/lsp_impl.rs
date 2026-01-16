@@ -207,8 +207,8 @@ impl Kakehashi {
     /// Uses the default data directory for state storage.
     /// If initialization fails, returns an empty registry.
     fn init_failed_parser_registry() -> FailedParserRegistry {
-        let state_dir = crate::install::default_data_dir()
-            .unwrap_or_else(|| PathBuf::from("/tmp/tree-sitter-ls"));
+        let state_dir =
+            crate::install::default_data_dir().unwrap_or_else(|| PathBuf::from("/tmp/kakehashi"));
 
         let registry = FailedParserRegistry::new(&state_dir);
 

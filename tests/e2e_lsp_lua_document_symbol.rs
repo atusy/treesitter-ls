@@ -1,10 +1,10 @@
-//! End-to-end test for Lua document symbol in Markdown code blocks via tree-sitter-ls binary.
+//! End-to-end test for Lua document symbol in Markdown code blocks via kakehashi binary.
 //!
 //! This test verifies the full bridge infrastructure wiring for document symbol:
-//! - tree-sitter-ls binary spawned via LspClient (not direct BridgeConnection)
+//! - kakehashi binary spawned via LspClient (not direct BridgeConnection)
 //! - Markdown document with Lua code block opened via didOpen
 //! - Document symbol request sent
-//! - tree-sitter-ls detects injection, spawns lua-ls, and transforms coordinates
+//! - kakehashi detects injection, spawns lua-ls, and transforms coordinates
 //!
 //! Run with: `cargo test --test e2e_lsp_lua_document_symbol --features e2e`
 //!

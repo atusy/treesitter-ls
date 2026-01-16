@@ -1,4 +1,4 @@
-// CLI integration tests for tree-sitter-ls
+// CLI integration tests for kakehashi
 // Tests the command-line interface functionality
 
 use std::process::Command;
@@ -131,7 +131,7 @@ fn test_version_flag() {
 
     // Should contain version number pattern
     assert!(
-        stdout.contains("tree-sitter-ls") || stdout.contains("0."),
+        stdout.contains("kakehashi") || stdout.contains("0."),
         "Version should show program name or version. Got: {}",
         stdout
     );

@@ -1,12 +1,12 @@
 //! End-to-end tests for non-blocking initialization (PBI-304).
 //!
-//! These tests verify that tree-sitter-ls responds quickly even when
+//! These tests verify that kakehashi responds quickly even when
 //! downstream language servers like lua-language-server are still initializing.
 //!
 //! Run with: `cargo test --test e2e_nonblocking_init --features e2e`
 //!
 //! **PBI-304 Acceptance Criteria**:
-//! - AC1: tree-sitter-ls responds without blocking during lua-ls startup
+//! - AC1: kakehashi responds without blocking during lua-ls startup
 //! - AC4: Native features (selection range, etc.) work during bridge init
 
 #![cfg(feature = "e2e")]
@@ -41,7 +41,7 @@ fn create_minimal_client() -> LspClient {
 
 /// E2E test: Native selection range works regardless of bridge state (AC4)
 ///
-/// This test verifies that tree-sitter-ls native features like selection range
+/// This test verifies that kakehashi native features like selection range
 /// work correctly even while bridge language servers might be initializing.
 #[test]
 fn e2e_native_selection_range_works_during_bridge_init() {

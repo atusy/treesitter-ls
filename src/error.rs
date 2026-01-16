@@ -1,4 +1,4 @@
-//! Error handling types for tree-sitter-ls
+//! Error handling types for kakehashi
 //!
 //! This module provides error types used throughout the LSP server.
 

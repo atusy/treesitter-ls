@@ -1,10 +1,10 @@
-//! End-to-end test for Lua moniker in Markdown code blocks via tree-sitter-ls binary.
+//! End-to-end test for Lua moniker in Markdown code blocks via kakehashi binary.
 //!
 //! This test verifies the full bridge infrastructure wiring:
-//! - tree-sitter-ls binary spawned via LspClient (not direct BridgeConnection)
+//! - kakehashi binary spawned via LspClient (not direct BridgeConnection)
 //! - Markdown document with Lua code block opened via didOpen
 //! - Moniker request at position on symbol in Lua block
-//! - tree-sitter-ls detects injection, translates position, spawns lua-ls
+//! - kakehashi detects injection, translates position, spawns lua-ls
 //! - Response received from lua-language-server (may be null if not supported)
 //!
 //! Run with: `cargo test --test e2e_lsp_lua_moniker --features e2e`

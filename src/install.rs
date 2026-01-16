@@ -65,7 +65,7 @@ impl InstallResult {
 ///
 /// # Arguments
 /// * `language` - The language to install (e.g., "lua", "rust")
-/// * `data_dir` - The base data directory for tree-sitter-ls
+/// * `data_dir` - The base data directory for kakehashi
 /// * `force` - Whether to overwrite existing files
 pub(crate) async fn install_language_async(
     language: String,
