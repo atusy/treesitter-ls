@@ -185,6 +185,48 @@ impl ConnectionHandle {
         }
     }
 
+    /// Attempt a state transition, validating the transition is allowed.
+    ///
+    /// Valid transitions per ADR-0015/ADR-0017:
+    /// - Initializing -> Ready (successful init)
+    /// - Initializing -> Failed (timeout/error)
+    /// - Initializing -> Closing (shutdown signal)
+    /// - Ready -> Closing (shutdown signal)
+    /// - Ready -> Failed (crash/panic)
+    /// - Failed -> Closed (direct, bypass Closing)
+    /// - Closing -> Closed (completion/timeout)
+    ///
+    /// Returns Ok(()) if transition is valid and was applied.
+    /// Returns Err with the attempted transition if invalid.
+    pub(crate) fn try_transition(
+        &self,
+        new_state: ConnectionState,
+    ) -> Result<(), (ConnectionState, ConnectionState)> {
+        let current = self.state();
+        if Self::is_valid_transition(current, new_state) {
+            self.set_state(new_state);
+            Ok(())
+        } else {
+            Err((current, new_state))
+        }
+    }
+
+    /// Check if a state transition is valid per ADR-0015/ADR-0017.
+    fn is_valid_transition(from: ConnectionState, to: ConnectionState) -> bool {
+        use ConnectionState::*;
+        matches!(
+            (from, to),
+            // Initializing can go to Ready, Failed, or Closing
+            (Initializing, Ready) | (Initializing, Failed) | (Initializing, Closing) |
+            // Ready can go to Closing or Failed
+            (Ready, Closing) | (Ready, Failed) |
+            // Failed goes directly to Closed (bypass Closing)
+            (Failed, Closed) |
+            // Closing goes to Closed
+            (Closing, Closed)
+        )
+    }
+
     /// Get access to the writer for sending messages.
     ///
     /// Returns the tokio::sync::MutexGuard for exclusive write access.
@@ -2500,5 +2542,22 @@ mod tests {
         assert_ne!(ConnectionState::Failed, ConnectionState::Closing);
         assert_ne!(ConnectionState::Failed, ConnectionState::Closed);
         assert_ne!(ConnectionState::Closing, ConnectionState::Closed);
+    }
+
+    /// Test that Ready -> Closing transition is valid (shutdown signal).
+    ///
+    /// Per ADR-0015/ADR-0017, when a Ready connection receives a shutdown signal,
+    /// it should transition to Closing state to begin draining operations.
+    #[tokio::test]
+    async fn ready_to_closing_transition_is_valid() {
+        let handle = create_handle_with_state(ConnectionState::Ready).await;
+
+        // Verify starting state
+        assert_eq!(handle.state(), ConnectionState::Ready);
+
+        // Attempt transition to Closing (shutdown signal)
+        let result = handle.try_transition(ConnectionState::Closing);
+        assert!(result.is_ok(), "Ready -> Closing should be valid");
+        assert_eq!(handle.state(), ConnectionState::Closing);
     }
 }
