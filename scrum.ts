@@ -137,8 +137,8 @@ const scrum: ScrumDashboard = {
         test: "Unit test: ConnectionState enum has all 5 variants (Initializing, Ready, Failed, Closing, Closed)",
         implementation: "Add Closing and Closed variants to ConnectionState enum in pool.rs",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "57e5445e", message: "feat(pool): add Closing and Closed variants to ConnectionState enum", phase: "green" }],
         notes: [],
       },
       {
