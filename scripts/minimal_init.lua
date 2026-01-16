@@ -1,7 +1,7 @@
 local cwd = vim.uv.cwd()
--- Get default tree-sitter-ls data directory
-vim.lsp.config["tree-sitter-ls"] = {
-	cmd = { cwd .. "/target/debug/tree-sitter-ls" },
+-- Get default kakehashi data directory
+vim.lsp.config["kakehashi"] = {
+	cmd = { cwd .. "/target/debug/kakehashi" },
 	init_options = {
 		languages = {
 			markdown = {
@@ -33,7 +33,7 @@ vim.lsp.config["tree-sitter-ls"] = {
 		client.server_capabilities.semanticTokensProvider.range = false
 	end,
 }
-vim.lsp.enable("tree-sitter-ls")
+vim.lsp.enable("kakehashi")
 vim.lsp.log.set_level(vim.lsp.log_levels.DEBUG)
 
 vim.keymap.set("n", "gd", function()
