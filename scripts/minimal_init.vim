@@ -23,7 +23,7 @@ augroup END
 
 " Enable semantic highlight
 let g:lsp_semantic_enabled = 1
-let g:lsp_semantic_delay = 500
+let g:lsp_semantic_delay = 50
 highlight LspSemanticComment guifg=#8b949e ctermfg=245
 highlight LspSemanticKeyword guifg=#ff7b72 ctermfg=167 gui=bold cterm=bold
 highlight LspSemanticString guifg=#a5d6ff ctermfg=117

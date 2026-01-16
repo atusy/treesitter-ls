@@ -37,6 +37,11 @@ use super::auto_install::{InstallingLanguages, get_injected_languages};
 use super::progress::{create_progress_begin, create_progress_end};
 use super::semantic_request_tracker::SemanticRequestTracker;
 
+/// Timeout for semantic tokens refresh requests in milliseconds.
+/// This timeout prevents deadlock with clients (e.g., vim-lsp) that don't respond
+/// to workspace/semanticTokens/refresh, and prevents memory leaks from accumulated pending requests.
+const SEMANTIC_TOKENS_REFRESH_TIMEOUT_MS: u64 = 500;
+
 fn lsp_legend_types() -> Vec<SemanticTokenType> {
     LEGEND_TYPES
         .iter()
@@ -662,16 +667,31 @@ impl TreeSitterLs {
                     self.client.log_message(message_type, message.clone()).await;
                 }
                 LanguageEvent::SemanticTokensRefresh { language_id } => {
-                    if let Err(err) = self.client.semantic_tokens_refresh().await {
-                        self.client
-                            .log_message(
-                                MessageType::ERROR,
-                                format!(
-                                    "Failed to request semantic tokens refresh for {language_id}: {err}"
-                                ),
-                            )
-                            .await;
-                    }
+                    // Fire-and-forget with timeout to prevent deadlock with clients
+                    // that don't respond to workspace/semanticTokens/refresh (e.g., vim-lsp).
+                    // Timeout prevents memory leak from accumulated pending requests.
+                    let client = self.client.clone();
+                    let lang_id = language_id.clone();
+                    tokio::spawn(async move {
+                        match tokio::time::timeout(
+                            std::time::Duration::from_millis(SEMANTIC_TOKENS_REFRESH_TIMEOUT_MS),
+                            client.semantic_tokens_refresh(),
+                        )
+                        .await
+                        {
+                            Ok(Ok(())) => {}
+                            Ok(Err(err)) => {
+                                log::debug!(
+                                    "semantic_tokens_refresh failed for {}: {}",
+                                    lang_id,
+                                    err
+                                );
+                            }
+                            Err(_) => {
+                                log::debug!("semantic_tokens_refresh timed out for {}", lang_id);
+                            }
+                        }
+                    });
                 }
             }
         }
@@ -913,29 +933,22 @@ impl TreeSitterLs {
         // Apply the updated settings
         self.apply_settings(updated_settings).await;
 
-        // Ensure the language is loaded
+        // Ensure the language is loaded and process its events.
         // apply_settings only stores configuration but doesn't load the parser.
-        let _load_result = self.language.ensure_language_loaded(language);
+        // The load result contains SemanticTokensRefresh event that will trigger
+        // a non-blocking refresh request to the client via handle_language_events.
+        let load_result = self.language.ensure_language_loaded(language);
+        self.handle_language_events(&load_result.events).await;
 
         // For document languages, re-parse the document that triggered the install.
         // For injection languages, DON'T re-parse - the host document is already parsed
         // with the correct language. Re-parsing with the injection language would break
-        // all highlighting. Instead, just refresh semantic tokens.
+        // all highlighting. The SemanticTokensRefresh event above will notify the client.
         if !is_injection {
             // Get the host language for this document (not the installed language)
             let host_language = self.get_language_for_document(&uri);
             let lang_for_parse = host_language.as_deref();
             self.parse_document(uri.clone(), text, lang_for_parse, vec![])
-                .await;
-        }
-
-        // Request semantic tokens refresh
-        if self.client.semantic_tokens_refresh().await.is_ok() {
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    format!("Language '{}' loaded, semantic tokens refreshed", language),
-                )
                 .await;
         }
     }
@@ -1299,40 +1312,10 @@ impl LanguageServer for TreeSitterLs {
         // This must be called AFTER parse_document so we have access to the AST
         self.check_injected_languages_auto_install(&uri).await;
 
-        // Check if queries are ready for the document
-        if let Some(language_name) = self.get_language_for_document(&uri) {
-            let has_queries = self.language.has_queries(&language_name);
-
-            if has_queries {
-                // Always request semantic tokens refresh on file open
-                // This ensures the client always has fresh tokens, especially important
-                // when reopening files after they were closed
-                if self.client.semantic_tokens_refresh().await.is_ok() {
-                    self.client
-                        .log_message(
-                            MessageType::INFO,
-                            "Requested semantic tokens refresh on file open",
-                        )
-                        .await;
-                }
-            } else {
-                // If document is parsed but queries aren't ready, wait and retry
-                // Give a small delay for queries to load
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-                // Check again after delay
-                let has_queries_after_delay = self.language.has_queries(&language_name);
-
-                if has_queries_after_delay && self.client.semantic_tokens_refresh().await.is_ok() {
-                    self.client
-                        .log_message(
-                            MessageType::INFO,
-                            "Requested semantic tokens refresh after queries loaded",
-                        )
-                        .await;
-                }
-            }
-        }
+        // NOTE: No semantic_tokens_refresh() on didOpen.
+        // Capable LSP clients should request by themselves.
+        // Calling refresh would be redundant and can cause deadlocks with clients
+        // like vim-lsp that don't respond to workspace/semanticTokens/refresh requests.
 
         self.client
             .log_message(MessageType::INFO, "file opened!")
