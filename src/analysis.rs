@@ -16,8 +16,10 @@ pub use refactor::handle_code_actions;
 pub use result_id::next_result_id;
 pub use selection::handle_selection_range;
 pub use semantic::{
-    LEGEND_MODIFIERS, LEGEND_TYPES, collect_injection_languages, handle_semantic_tokens_full,
-    handle_semantic_tokens_full_delta, handle_semantic_tokens_full_with_local_parsers,
-    handle_semantic_tokens_range,
+    LEGEND_MODIFIERS, LEGEND_TYPES, handle_semantic_tokens_full,
+    handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
+};
+pub(crate) use semantic::{
+    collect_injection_languages, handle_semantic_tokens_full_with_local_parsers,
 };
 pub use semantic_cache::{InjectionMap, InjectionTokenCache, SemanticTokenCache};

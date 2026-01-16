@@ -138,6 +138,168 @@ const MAX_INJECTION_DEPTH: usize = 10;
 /// (line, column, length, capture_index, mapped_name)
 type RawToken = (usize, usize, usize, u32, String);
 
+/// Collect tokens from a single document's highlight query (no injection processing).
+///
+/// This is the common logic shared by both pool-based and local-parser-based
+/// recursive functions. It processes the given query against the tree and
+/// maps positions from content-local coordinates to host document coordinates.
+#[allow(clippy::too_many_arguments)]
+fn collect_host_tokens(
+    text: &str,
+    tree: &Tree,
+    query: &Query,
+    filetype: Option<&str>,
+    capture_mappings: Option<&crate::config::CaptureMappings>,
+    host_text: &str,
+    host_lines: &[&str],
+    content_start_byte: usize,
+    all_tokens: &mut Vec<RawToken>,
+) {
+    // Calculate position mapping from content-local to host document
+    let content_start_line = if content_start_byte == 0 {
+        0
+    } else {
+        host_text[..content_start_byte]
+            .chars()
+            .filter(|c| *c == '\n')
+            .count()
+    };
+
+    let content_start_col = if content_start_byte == 0 {
+        0
+    } else {
+        let last_newline = host_text[..content_start_byte].rfind('\n');
+        match last_newline {
+            Some(pos) => content_start_byte - pos - 1,
+            None => content_start_byte,
+        }
+    };
+
+    // Collect tokens from this document's highlight query
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(query, tree.root_node(), text.as_bytes());
+
+    while let Some(m) = matches.next() {
+        let filtered_captures = crate::language::filter_captures(query, m, text);
+
+        for c in filtered_captures {
+            let node = c.node;
+            let start_pos = node.start_position();
+            let end_pos = node.end_position();
+
+            if start_pos.row == end_pos.row {
+                let host_line = content_start_line + start_pos.row;
+                let host_line_text = host_lines.get(host_line).unwrap_or(&"");
+
+                let byte_offset_in_host = if start_pos.row == 0 {
+                    content_start_col + start_pos.column
+                } else {
+                    start_pos.column
+                };
+                let start_utf16 = byte_to_utf16_col(host_line_text, byte_offset_in_host);
+
+                let end_byte_offset_in_host = if start_pos.row == 0 {
+                    content_start_col + end_pos.column
+                } else {
+                    end_pos.column
+                };
+                let end_utf16 = byte_to_utf16_col(host_line_text, end_byte_offset_in_host);
+
+                let capture_name = &query.capture_names()[c.index as usize];
+                let mapped_name = apply_capture_mapping(capture_name, filetype, capture_mappings);
+
+                all_tokens.push((
+                    host_line,
+                    start_utf16,
+                    end_utf16 - start_utf16,
+                    c.index,
+                    mapped_name,
+                ));
+            }
+        }
+    }
+}
+
+/// Data for processing a single injection (parser-agnostic).
+///
+/// This struct captures all the information needed to process an injection
+/// before the actual parsing step.
+struct InjectionContext<'a> {
+    resolved_lang: String,
+    highlight_query: std::sync::Arc<Query>,
+    content_text: &'a str,
+    host_start_byte: usize,
+}
+
+/// Collect all injection contexts from a document tree.
+///
+/// This function processes the injection query and returns a list of
+/// `InjectionContext` structs, each containing the information needed
+/// to parse and process one injection. This is parser-agnostic; actual
+/// parsing happens after this function returns.
+fn collect_injection_contexts<'a>(
+    text: &'a str,
+    tree: &Tree,
+    filetype: Option<&str>,
+    coordinator: &crate::language::LanguageCoordinator,
+    content_start_byte: usize,
+) -> Vec<InjectionContext<'a>> {
+    use crate::language::{collect_all_injections, injection::parse_offset_directive_for_pattern};
+
+    let current_lang = filetype.unwrap_or("unknown");
+    let Some(injection_query) = coordinator.get_injection_query(current_lang) else {
+        return Vec::new();
+    };
+
+    let Some(injections) = collect_all_injections(&tree.root_node(), text, Some(&injection_query))
+    else {
+        return Vec::new();
+    };
+
+    let mut contexts = Vec::with_capacity(injections.len());
+
+    for injection in injections {
+        // Resolve injection language with alias fallback
+        let Some((resolved_lang, _)) = coordinator.resolve_injection_language(&injection.language)
+        else {
+            continue;
+        };
+
+        // Get highlight query for resolved language
+        let Some(inj_highlight_query) = coordinator.get_highlight_query(&resolved_lang) else {
+            continue;
+        };
+
+        // Get offset directive if any
+        let offset = parse_offset_directive_for_pattern(&injection_query, injection.pattern_index);
+
+        // Calculate effective content range
+        let content_node = injection.content_node;
+        let (inj_start_byte, inj_end_byte) = if let Some(off) = offset {
+            use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range};
+            let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
+            let effective = calculate_effective_range(text, byte_range, off);
+            (effective.start, effective.end)
+        } else {
+            (content_node.start_byte(), content_node.end_byte())
+        };
+
+        // Validate range
+        if inj_start_byte >= text.len() || inj_end_byte > text.len() {
+            continue;
+        }
+
+        contexts.push(InjectionContext {
+            resolved_lang,
+            highlight_query: inj_highlight_query,
+            content_text: &text[inj_start_byte..inj_end_byte],
+            host_start_byte: content_start_byte + inj_start_byte,
+        });
+    }
+
+    contexts
+}
+
 /// Post-process and delta-encode raw tokens into SemanticTokensResult.
 ///
 /// This shared helper:
@@ -213,7 +375,7 @@ use crate::language::injection::collect_all_injections;
 ///
 /// Note: This only collects top-level injections. Nested injections (e.g., Lua
 /// inside Markdown inside Markdown) are discovered during recursive processing.
-pub fn collect_injection_languages(
+pub(crate) fn collect_injection_languages(
     tree: &Tree,
     text: &str,
     host_language: &str,
@@ -261,163 +423,66 @@ fn collect_injection_tokens_recursive(
     capture_mappings: Option<&crate::config::CaptureMappings>,
     coordinator: Option<&crate::language::LanguageCoordinator>,
     parser_pool: Option<&mut crate::language::DocumentParserPool>,
-    host_text: &str,     // The original host document text (for position conversion)
-    host_lines: &[&str], // Lines from the host document
-    content_start_byte: usize, // Byte offset where this content starts in the host document
-    depth: usize,        // Current recursion depth
-    all_tokens: &mut Vec<(usize, usize, usize, u32, String)>, // Output token buffer
+    host_text: &str,
+    host_lines: &[&str],
+    content_start_byte: usize,
+    depth: usize,
+    all_tokens: &mut Vec<RawToken>,
 ) {
-    use crate::language::{collect_all_injections, injection::parse_offset_directive_for_pattern};
-
     // Safety check for recursion depth
     if depth >= MAX_INJECTION_DEPTH {
         return;
     }
 
-    // Calculate position mapping from content-local to host document
-    let content_start_line = if content_start_byte == 0 {
-        0
-    } else {
-        host_text[..content_start_byte]
-            .chars()
-            .filter(|c| *c == '\n')
-            .count()
-    };
-
-    let content_start_col = if content_start_byte == 0 {
-        0
-    } else {
-        let last_newline = host_text[..content_start_byte].rfind('\n');
-        match last_newline {
-            Some(pos) => content_start_byte - pos - 1,
-            None => content_start_byte,
-        }
-    };
-
     // 1. Collect tokens from this document's highlight query
-    let mut cursor = QueryCursor::new();
-    let mut matches = cursor.matches(query, tree.root_node(), text.as_bytes());
+    collect_host_tokens(
+        text,
+        tree,
+        query,
+        filetype,
+        capture_mappings,
+        host_text,
+        host_lines,
+        content_start_byte,
+        all_tokens,
+    );
 
-    while let Some(m) = matches.next() {
-        let filtered_captures = crate::language::filter_captures(query, m, text);
-
-        for c in filtered_captures {
-            let node = c.node;
-            let start_pos = node.start_position();
-            let end_pos = node.end_position();
-
-            if start_pos.row == end_pos.row {
-                // Map position to host document coordinates
-                let host_line = content_start_line + start_pos.row;
-                let host_line_text = host_lines.get(host_line).unwrap_or(&"");
-
-                let byte_offset_in_host = if start_pos.row == 0 {
-                    content_start_col + start_pos.column
-                } else {
-                    start_pos.column
-                };
-                let start_utf16 = byte_to_utf16_col(host_line_text, byte_offset_in_host);
-
-                let end_byte_offset_in_host = if start_pos.row == 0 {
-                    content_start_col + end_pos.column
-                } else {
-                    end_pos.column
-                };
-                let end_utf16 = byte_to_utf16_col(host_line_text, end_byte_offset_in_host);
-
-                let capture_name = &query.capture_names()[c.index as usize];
-                let mapped_name = apply_capture_mapping(capture_name, filetype, capture_mappings);
-
-                all_tokens.push((
-                    host_line,
-                    start_utf16,
-                    end_utf16 - start_utf16,
-                    c.index,
-                    mapped_name,
-                ));
-            }
-        }
-    }
-
-    // 2. Find and process injections in this document
-    // Skip injection processing if coordinator or parser_pool is None
+    // 2. Find and process injections
     let (Some(coordinator), Some(parser_pool)) = (coordinator, parser_pool) else {
         return; // No injection support available
     };
 
-    let current_lang = filetype.unwrap_or("unknown");
-    let Some(injection_query) = coordinator.get_injection_query(current_lang) else {
-        return; // No injection query for this language
-    };
+    let contexts = collect_injection_contexts(text, tree, filetype, coordinator, content_start_byte);
 
-    let Some(injections) = collect_all_injections(&tree.root_node(), text, Some(&injection_query))
-    else {
-        return; // No injections found
-    };
-
-    for injection in injections {
-        // ADR-0005: Resolve injection language with alias fallback
-        // Try direct identifier first, then normalize (py -> python, etc.)
-        let Some((resolved_lang, _)) = coordinator.resolve_injection_language(&injection.language)
-        else {
+    for ctx in contexts {
+        // Acquire parser from pool
+        let Some(mut parser) = parser_pool.acquire(&ctx.resolved_lang) else {
             continue;
         };
 
-        // Get highlight query for resolved language
-        let Some(inj_highlight_query) = coordinator.get_highlight_query(&resolved_lang) else {
+        // Parse the injected content
+        let Some(injected_tree) = parser.parse(ctx.content_text, None) else {
+            parser_pool.release(ctx.resolved_lang.clone(), parser);
             continue;
         };
-
-        // Get offset directive if any
-        let offset = parse_offset_directive_for_pattern(&injection_query, injection.pattern_index);
-
-        // Calculate effective content range with offset (relative to current text)
-        let content_node = injection.content_node;
-        let (inj_start_byte, inj_end_byte) = if let Some(off) = offset {
-            use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range};
-            let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
-            let effective = calculate_effective_range(text, byte_range, off);
-            (effective.start, effective.end)
-        } else {
-            (content_node.start_byte(), content_node.end_byte())
-        };
-
-        // Extract the content text
-        if inj_start_byte >= text.len() || inj_end_byte > text.len() {
-            continue;
-        }
-        let inj_content_text = &text[inj_start_byte..inj_end_byte];
-
-        // Parse the injected content using resolved language name
-        let Some(mut parser) = parser_pool.acquire(&resolved_lang) else {
-            continue;
-        };
-        let Some(injected_tree) = parser.parse(inj_content_text, None) else {
-            parser_pool.release(resolved_lang.clone(), parser);
-            continue;
-        };
-
-        // Calculate the byte offset of this injection in the host document
-        // We need to map from current text position to host text position
-        let inj_host_start_byte = content_start_byte + inj_start_byte;
 
         // Recursively collect tokens from the injected content
         collect_injection_tokens_recursive(
-            inj_content_text,
+            ctx.content_text,
             &injected_tree,
-            &inj_highlight_query,
-            Some(&resolved_lang),
+            &ctx.highlight_query,
+            Some(&ctx.resolved_lang),
             capture_mappings,
             Some(coordinator),
             Some(parser_pool),
             host_text,
             host_lines,
-            inj_host_start_byte,
+            ctx.host_start_byte,
             depth + 1,
             all_tokens,
         );
 
-        parser_pool.release(resolved_lang.clone(), parser);
+        parser_pool.release(ctx.resolved_lang.clone(), parser);
     }
 }
 
@@ -493,7 +558,7 @@ pub fn handle_semantic_tokens_full(
 /// # Returns
 /// Semantic tokens for the entire document including injected content
 #[allow(clippy::too_many_arguments)]
-pub fn handle_semantic_tokens_full_with_local_parsers(
+pub(crate) fn handle_semantic_tokens_full_with_local_parsers(
     text: &str,
     tree: &Tree,
     query: &Query,
@@ -541,143 +606,54 @@ fn collect_injection_tokens_recursive_with_local_parsers(
     host_lines: &[&str],
     content_start_byte: usize,
     depth: usize,
-    all_tokens: &mut Vec<(usize, usize, usize, u32, String)>,
+    all_tokens: &mut Vec<RawToken>,
 ) {
-    use crate::language::{collect_all_injections, injection::parse_offset_directive_for_pattern};
-
     if depth >= MAX_INJECTION_DEPTH {
         return;
     }
 
-    // Calculate position mapping from content-local to host document
-    let content_start_line = if content_start_byte == 0 {
-        0
-    } else {
-        host_text[..content_start_byte]
-            .chars()
-            .filter(|c| *c == '\n')
-            .count()
-    };
-
-    let content_start_col = if content_start_byte == 0 {
-        0
-    } else {
-        let last_newline = host_text[..content_start_byte].rfind('\n');
-        match last_newline {
-            Some(pos) => content_start_byte - pos - 1,
-            None => content_start_byte,
-        }
-    };
-
     // 1. Collect tokens from this document's highlight query
-    let mut cursor = QueryCursor::new();
-    let mut matches = cursor.matches(query, tree.root_node(), text.as_bytes());
-
-    while let Some(m) = matches.next() {
-        let filtered_captures = crate::language::filter_captures(query, m, text);
-
-        for c in filtered_captures {
-            let node = c.node;
-            let start_pos = node.start_position();
-            let end_pos = node.end_position();
-
-            if start_pos.row == end_pos.row {
-                let host_line = content_start_line + start_pos.row;
-                let host_line_text = host_lines.get(host_line).unwrap_or(&"");
-
-                let byte_offset_in_host = if start_pos.row == 0 {
-                    content_start_col + start_pos.column
-                } else {
-                    start_pos.column
-                };
-                let start_utf16 = byte_to_utf16_col(host_line_text, byte_offset_in_host);
-
-                let end_byte_offset_in_host = if start_pos.row == 0 {
-                    content_start_col + end_pos.column
-                } else {
-                    end_pos.column
-                };
-                let end_utf16 = byte_to_utf16_col(host_line_text, end_byte_offset_in_host);
-
-                let capture_name = &query.capture_names()[c.index as usize];
-                let mapped_name = apply_capture_mapping(capture_name, filetype, capture_mappings);
-
-                all_tokens.push((
-                    host_line,
-                    start_utf16,
-                    end_utf16 - start_utf16,
-                    c.index,
-                    mapped_name,
-                ));
-            }
-        }
-    }
+    collect_host_tokens(
+        text,
+        tree,
+        query,
+        filetype,
+        capture_mappings,
+        host_text,
+        host_lines,
+        content_start_byte,
+        all_tokens,
+    );
 
     // 2. Find and process injections
     let Some(coordinator) = coordinator else {
         return;
     };
 
-    let current_lang = filetype.unwrap_or("unknown");
-    let Some(injection_query) = coordinator.get_injection_query(current_lang) else {
-        return;
-    };
+    let contexts = collect_injection_contexts(text, tree, filetype, coordinator, content_start_byte);
 
-    let Some(injections) = collect_all_injections(&tree.root_node(), text, Some(&injection_query))
-    else {
-        return;
-    };
-
-    for injection in injections {
-        let Some((resolved_lang, _)) = coordinator.resolve_injection_language(&injection.language)
-        else {
-            continue;
-        };
-
-        let Some(inj_highlight_query) = coordinator.get_highlight_query(&resolved_lang) else {
-            continue;
-        };
-
-        let offset = parse_offset_directive_for_pattern(&injection_query, injection.pattern_index);
-
-        let content_node = injection.content_node;
-        let (inj_start_byte, inj_end_byte) = if let Some(off) = offset {
-            use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range};
-            let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
-            let effective = calculate_effective_range(text, byte_range, off);
-            (effective.start, effective.end)
-        } else {
-            (content_node.start_byte(), content_node.end_byte())
-        };
-
-        if inj_start_byte >= text.len() || inj_end_byte > text.len() {
-            continue;
-        }
-        let inj_content_text = &text[inj_start_byte..inj_end_byte];
-
+    for ctx in contexts {
         // Use parser from local map (if available)
-        let Some(parser) = local_parsers.get_mut(&resolved_lang) else {
+        let Some(parser) = local_parsers.get_mut(&ctx.resolved_lang) else {
             continue;
         };
 
-        let Some(injected_tree) = parser.parse(inj_content_text, None) else {
+        let Some(injected_tree) = parser.parse(ctx.content_text, None) else {
             continue;
         };
-
-        let inj_host_start_byte = content_start_byte + inj_start_byte;
 
         // Recursively collect tokens
         collect_injection_tokens_recursive_with_local_parsers(
-            inj_content_text,
+            ctx.content_text,
             &injected_tree,
-            &inj_highlight_query,
-            Some(&resolved_lang),
+            &ctx.highlight_query,
+            Some(&ctx.resolved_lang),
             capture_mappings,
             Some(coordinator),
             local_parsers,
             host_text,
             host_lines,
-            inj_host_start_byte,
+            ctx.host_start_byte,
             depth + 1,
             all_tokens,
         );
