@@ -2594,4 +2594,45 @@ mod tests {
         assert!(result.is_ok(), "Closing -> Closed should be valid");
         assert_eq!(handle.state(), ConnectionState::Closed);
     }
+
+    /// Test that Failed -> Closed transition is valid (direct, bypass Closing).
+    ///
+    /// Per ADR-0015/ADR-0017, Failed connections go directly to Closed without
+    /// going through Closing. This is because Failed connections have no working
+    /// LSP channel for shutdown handshake - they use SIGTERM/SIGKILL only.
+    #[tokio::test]
+    async fn failed_to_closed_transition_is_valid() {
+        let handle = create_handle_with_state(ConnectionState::Failed).await;
+
+        // Verify starting state
+        assert_eq!(handle.state(), ConnectionState::Failed);
+
+        // Attempt direct transition to Closed (bypassing Closing)
+        let result = handle.try_transition(ConnectionState::Closed);
+        assert!(result.is_ok(), "Failed -> Closed should be valid (bypass Closing)");
+        assert_eq!(handle.state(), ConnectionState::Closed);
+    }
+
+    /// Test that Failed -> Closing is invalid (Failed goes directly to Closed).
+    ///
+    /// Failed connections should NOT go through Closing because they have no
+    /// working LSP channel for shutdown handshake.
+    #[tokio::test]
+    async fn failed_to_closing_transition_is_invalid() {
+        let handle = create_handle_with_state(ConnectionState::Failed).await;
+
+        // Verify starting state
+        assert_eq!(handle.state(), ConnectionState::Failed);
+
+        // Attempt invalid transition to Closing (should fail)
+        let result = handle.try_transition(ConnectionState::Closing);
+        assert!(result.is_err(), "Failed -> Closing should be invalid");
+        assert_eq!(
+            result.unwrap_err(),
+            (ConnectionState::Failed, ConnectionState::Closing)
+        );
+
+        // State should remain Failed
+        assert_eq!(handle.state(), ConnectionState::Failed);
+    }
 }
