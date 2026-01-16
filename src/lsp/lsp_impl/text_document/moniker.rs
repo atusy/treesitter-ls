@@ -1,4 +1,4 @@
-//! Moniker method for TreeSitterLs.
+//! Moniker method for Kakehashi.
 
 use tower_lsp::jsonrpc::{Id, Result};
 use tower_lsp::lsp_types::*;
@@ -7,9 +7,9 @@ use crate::language::InjectionResolver;
 use crate::lsp::get_current_request_id;
 use crate::text::PositionMapper;
 
-use super::super::TreeSitterLs;
+use super::super::Kakehashi;
 
-impl TreeSitterLs {
+impl Kakehashi {
     pub(crate) async fn moniker_impl(&self, params: MonikerParams) -> Result<Option<Vec<Moniker>>> {
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;

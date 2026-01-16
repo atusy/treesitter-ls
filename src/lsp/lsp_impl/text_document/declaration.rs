@@ -1,4 +1,4 @@
-//! Goto declaration method for TreeSitterLs.
+//! Goto declaration method for Kakehashi.
 
 use tower_lsp::jsonrpc::{Id, Result};
 use tower_lsp::lsp_types::request::{GotoDeclarationParams, GotoDeclarationResponse};
@@ -8,9 +8,9 @@ use crate::language::InjectionResolver;
 use crate::lsp::get_current_request_id;
 use crate::text::PositionMapper;
 
-use super::super::TreeSitterLs;
+use super::super::Kakehashi;
 
-impl TreeSitterLs {
+impl Kakehashi {
     pub(crate) async fn goto_declaration_impl(
         &self,
         params: GotoDeclarationParams,

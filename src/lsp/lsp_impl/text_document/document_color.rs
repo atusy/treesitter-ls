@@ -1,4 +1,4 @@
-//! Document color method for TreeSitterLs.
+//! Document color method for Kakehashi.
 
 use tower_lsp::jsonrpc::{Id, Result};
 use tower_lsp::lsp_types::*;
@@ -6,9 +6,9 @@ use tower_lsp::lsp_types::*;
 use crate::language::InjectionResolver;
 use crate::lsp::get_current_request_id;
 
-use super::super::TreeSitterLs;
+use super::super::Kakehashi;
 
-impl TreeSitterLs {
+impl Kakehashi {
     pub(crate) async fn document_color_impl(
         &self,
         params: DocumentColorParams,

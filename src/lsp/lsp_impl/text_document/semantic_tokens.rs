@@ -1,4 +1,4 @@
-//! Semantic token methods for TreeSitterLs.
+//! Semantic token methods for Kakehashi.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use tokio::time::Duration;
@@ -12,7 +12,7 @@ use crate::analysis::{
     next_result_id,
 };
 
-use super::super::TreeSitterLs;
+use super::super::Kakehashi;
 
 /// Reason why a semantic token request was cancelled.
 #[derive(Debug, Clone, Copy)]
@@ -21,7 +21,7 @@ enum CancellationReason {
     DocumentMissing,
 }
 
-impl TreeSitterLs {
+impl Kakehashi {
     /// Check if the document text matches the expected text, returning the cancellation reason if not.
     fn check_text_staleness(&self, uri: &Url, expected_text: &str) -> Option<CancellationReason> {
         match self.documents.get(uri) {
@@ -681,7 +681,7 @@ mod tests {
 
     #[tokio::test]
     async fn semantic_tokens_delta_does_not_overwrite_newer_text() {
-        let (service, _socket) = LspService::new(TreeSitterLs::new);
+        let (service, _socket) = LspService::new(Kakehashi::new);
         let server = service.inner();
         let uri = Url::parse("file:///semantic_delta_race.lua").expect("should construct test uri");
 
@@ -742,7 +742,7 @@ mod tests {
 
     #[tokio::test]
     async fn semantic_tokens_full_times_out_but_parses_on_demand() {
-        let (service, _socket) = LspService::new(TreeSitterLs::new);
+        let (service, _socket) = LspService::new(Kakehashi::new);
         let server = service.inner();
         let uri = Url::parse("file:///semantic_timeout.rs").expect("should construct test uri");
 

@@ -127,7 +127,7 @@ fn apply_content_changes_with_edits(
     (text, edits)
 }
 
-pub struct TreeSitterLs {
+pub struct Kakehashi {
     client: Client,
     language: LanguageCoordinator,
     parser_pool: Mutex<DocumentParserPool>,
@@ -153,9 +153,9 @@ pub struct TreeSitterLs {
     region_id_tracker: RegionIdTracker,
 }
 
-impl std::fmt::Debug for TreeSitterLs {
+impl std::fmt::Debug for Kakehashi {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TreeSitterLs")
+        f.debug_struct("Kakehashi")
             .field("client", &self.client)
             .field("language", &"LanguageCoordinator")
             .field("parser_pool", &"Mutex<DocumentParserPool>")
@@ -173,7 +173,7 @@ impl std::fmt::Debug for TreeSitterLs {
     }
 }
 
-impl TreeSitterLs {
+impl Kakehashi {
     pub fn new(client: Client) -> Self {
         let language = LanguageCoordinator::new();
         let parser_pool = language.create_document_parser_pool();
@@ -1089,7 +1089,7 @@ impl TreeSitterLs {
 }
 
 #[tower_lsp::async_trait]
-impl LanguageServer for TreeSitterLs {
+impl LanguageServer for Kakehashi {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         // Debug: Log initialization
         self.client
@@ -1768,7 +1768,7 @@ mod tests {
     /// we should use wildcard resolution so that undefined languages inherit
     /// from languages._ settings.
     ///
-    /// Since get_bridge_config_for_language needs TreeSitterLs which is hard to instantiate
+    /// Since get_bridge_config_for_language needs Kakehashi which is hard to instantiate
     /// in unit tests, we verify the behavior at the LanguageSettings level.
     #[test]
     fn test_language_settings_wildcard_lookup_blocks_bridging_for_undefined_host() {

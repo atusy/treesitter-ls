@@ -520,7 +520,7 @@ fn run_install(
 #[tokio::main]
 async fn run_lsp_server() {
     use env_logger::Builder;
-    use kakehashi::lsp::{RequestIdCapture, TreeSitterLs};
+    use kakehashi::lsp::{Kakehashi, RequestIdCapture};
     use tokio::io::{stdin, stdout};
     use tower_lsp::{LspService, Server};
 
@@ -533,7 +533,7 @@ async fn run_lsp_server() {
     let stdin = stdin();
     let stdout = stdout();
 
-    let (service, socket) = LspService::new(TreeSitterLs::new);
+    let (service, socket) = LspService::new(Kakehashi::new);
 
     // Wrap service with RequestIdCapture to capture upstream request IDs
     // This enables downstream bridge requests to use the same ID per ADR-0016

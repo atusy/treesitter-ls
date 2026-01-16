@@ -1,13 +1,13 @@
-//! Selection range method for TreeSitterLs.
+//! Selection range method for Kakehashi.
 
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 
 use crate::analysis::handle_selection_range;
 
-use super::super::TreeSitterLs;
+use super::super::Kakehashi;
 
-impl TreeSitterLs {
+impl Kakehashi {
     pub(crate) async fn selection_range_impl(
         &self,
         params: SelectionRangeParams,
