@@ -6,7 +6,7 @@ Implemented (Sprints 121-123)
 
 ## Context
 
-ADR-0010 defines how configuration merges across layers (user → project → init_options). However, there's another dimension of merging: **within a single config**, the `_` (wildcard) key serves as defaults that should be inherited by specific entries.
+ADR-0010 defines how configuration merges across layers (user → project → InitializationOptions). However, there's another dimension of merging: **within a single config**, the `_` (wildcard) key serves as defaults that should be inherited by specific entries.
 
 Currently in `captureMappings`:
 - `captureMappings._` defines default capture-to-token mappings for all languages
@@ -41,7 +41,7 @@ effective_config[rust] = merge(config["_"], config["rust"])
 Wildcard inheritance happens **after** cross-layer merging (ADR-0010):
 
 ```
-1. Merge across layers:    final_config = merge_all([user, project, init_options])
+1. Merge across layers:    final_config = merge_all([user, project, InitializationOptions])
 2. Resolve wildcards:      effective[rust] = merge(final_config["_"], final_config["rust"])
 ```
 

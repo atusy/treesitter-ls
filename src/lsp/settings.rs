@@ -178,7 +178,7 @@ mod tests {
     ///
     /// This test verifies that load_settings():
     /// 1. Loads user config from XDG_CONFIG_HOME
-    /// 2. Uses merge_all() with 4 layers: defaults < user < project < init_options
+    /// 2. Uses merge_all() with 4 layers: defaults < user < project < InitializationOptions
     #[test]
     #[serial(xdg_env)]
     fn test_load_settings_merges_user_config_with_project_and_override() {
@@ -257,7 +257,7 @@ mod tests {
         );
     }
 
-    /// PBI-155: Verify override_settings (init_options) has highest precedence
+    /// PBI-155: Verify override_settings (InitializationOptions) has highest precedence
     #[test]
     #[serial(xdg_env)]
     fn test_load_settings_override_has_highest_precedence() {
@@ -299,7 +299,7 @@ mod tests {
             env::set_var("XDG_CONFIG_HOME", user_config_dir.path());
         }
 
-        // Create override settings via init_options with autoInstall = true
+        // Create override settings via InitializationOptions with autoInstall = true
         let override_json = serde_json::json!({
             "autoInstall": true
         });
@@ -329,7 +329,7 @@ mod tests {
         // Verify: override's autoInstall=true should win over user and project's autoInstall=false
         assert!(
             settings.auto_install,
-            "Override (init_options) autoInstall=true should have highest precedence"
+            "Override (InitializationOptions) autoInstall=true should have highest precedence"
         );
     }
 

@@ -119,14 +119,14 @@ fn merge_all(configs: &[Option<TreeSitterSettings>]) -> Option<TreeSitterSetting
 Configs are applied in order (earlier = lower precedence, later = higher precedence):
 
 ```
-final_config = merge_all(&[defaults, user_config, project_config, init_options])
+final_config = merge_all(&[defaults, user_config, project_config, InitializationOptions])
 ```
 
 This design allows adding new layers (e.g., workspace-level config) without changing the function signature.
 
 **Scalar values and Option types** (`searchPaths`, `autoInstall`):
 - Later sources completely replace earlier values (via `primary.or(fallback)`)
-- Example: `autoInstall: false` in init_options overrides `autoInstall: true` from project config
+- Example: `autoInstall: false` in InitializationOptions overrides `autoInstall: true` from project config
 
 **Languages HashMap** (`languages`):
 - **Deep merge at language level**: Keys from later sources override same keys from earlier sources
@@ -233,7 +233,7 @@ fn load_configuration(cli_config_path: Option<&Path>) -> Option<TreeSitterSettin
     let defaults = Some(default_settings());  // from src/config/defaults.rs
     let user_config = load_optional(xdg_config_path());
     let project_config = load_optional_project_config(cli_config_path);
-    // init_options applied later in LSP initialize handler
+    // InitializationOptions applied later in LSP initialize handler
 
     merge_all(&[defaults, user_config, project_config])
 }
@@ -304,7 +304,7 @@ fn load_configuration(cli_config_path: Option<&Path>) -> Option<TreeSitterSettin
 - [ ] Unit tests for `QueryItem` parsing and type inference
 - [ ] Unit tests for `merge()` function covering all value types
 - [ ] Integration tests loading actual files from XDG and project paths
-- [ ] E2E Neovim tests verifying init_options override file-based config
+- [ ] E2E Neovim tests verifying InitializationOptions override file-based config
 
 ## Alternatives Considered
 

@@ -397,7 +397,7 @@ mod tests {
 
     #[test]
     fn should_handle_completely_empty_json_object() {
-        // This is crucial for zero-config: init_options = {} should work
+        // This is crucial for zero-config: InitializationOptions = {} should work
         let completely_empty = r#"{}"#;
 
         let settings: TreeSitterSettings = serde_json::from_str(completely_empty).unwrap();
@@ -1008,7 +1008,7 @@ mod tests {
 
     #[test]
     fn should_parse_language_servers_at_root() {
-        // PBI-119: languageServers field should be at root level of init_options
+        // PBI-119: languageServers field should be at root level of InitializationOptions
         // This replaces the nested bridge.servers structure with a flatter schema
         let config_json = r#"{
             "searchPaths": ["/usr/local/lib"],
