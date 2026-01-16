@@ -145,8 +145,8 @@ const scrum: ScrumDashboard = {
         test: "Unit test: Ready state + shutdown signal = Closing state (valid transition)",
         implementation: "Update set_state() to allow Ready -> Closing transition",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "0e0a0c65", message: "feat(pool): add try_transition with state machine validation", phase: "green" }],
         notes: [],
       },
       {
