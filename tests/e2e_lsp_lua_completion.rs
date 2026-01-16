@@ -1,10 +1,10 @@
-//! End-to-end test for Lua completion in Markdown code blocks via treesitter-ls binary.
+//! End-to-end test for Lua completion in Markdown code blocks via tree-sitter-ls binary.
 //!
 //! This test verifies the full bridge infrastructure wiring:
-//! - treesitter-ls binary spawned via LspClient (not direct BridgeConnection)
+//! - tree-sitter-ls binary spawned via LspClient (not direct BridgeConnection)
 //! - Markdown document with Lua code block opened via didOpen
 //! - Completion request at position in Lua block
-//! - treesitter-ls detects injection, translates position, spawns lua-ls
+//! - tree-sitter-ls detects injection, translates position, spawns lua-ls
 //! - Real CompletionItems received from lua-language-server
 //!
 //! Run with: `cargo test --test e2e_lsp_lua_completion --features e2e`
@@ -129,7 +129,7 @@ More text.
     );
 
     println!(
-        "✓ Received {} completion items from lua-language-server via treesitter-ls binary",
+        "✓ Received {} completion items from lua-language-server via tree-sitter-ls binary",
         items.len()
     );
 

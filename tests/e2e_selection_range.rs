@@ -1,6 +1,6 @@
-//! End-to-end tests for selectionRange using direct LSP communication with treesitter-ls binary.
+//! End-to-end tests for selectionRange using direct LSP communication with tree-sitter-ls binary.
 //!
-//! These tests verify that selection range requests work correctly with treesitter-ls native
+//! These tests verify that selection range requests work correctly with tree-sitter-ls native
 //! implementation (NOT through the bridge - bridge support is not yet implemented).
 //!
 //! Selection range allows expanding/shrinking text selection based on syntax tree structure.

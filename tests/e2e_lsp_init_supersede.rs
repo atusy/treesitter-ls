@@ -29,7 +29,7 @@ fn test_rapid_typing_during_init_triggers_superseding() {
         return;
     }
 
-    // Spawn treesitter-ls binary
+    // Spawn tree-sitter-ls binary
     let mut client = LspClient::new();
 
     // Initialize handshake

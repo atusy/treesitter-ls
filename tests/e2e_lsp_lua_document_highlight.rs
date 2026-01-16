@@ -1,10 +1,10 @@
-//! End-to-end test for Lua document highlight in Markdown code blocks via treesitter-ls binary.
+//! End-to-end test for Lua document highlight in Markdown code blocks via tree-sitter-ls binary.
 //!
 //! This test verifies the full bridge infrastructure wiring for document highlight:
-//! - treesitter-ls binary spawned via LspClient (not direct BridgeConnection)
+//! - tree-sitter-ls binary spawned via LspClient (not direct BridgeConnection)
 //! - Markdown document with Lua code block opened via didOpen
 //! - Document highlight request at position in Lua block
-//! - treesitter-ls detects injection, translates position, spawns lua-ls
+//! - tree-sitter-ls detects injection, translates position, spawns lua-ls
 //! - Highlight ranges received from lua-language-server with transformed coordinates
 //!
 //! Run with: `cargo test --test e2e_lsp_lua_document_highlight --features e2e`
