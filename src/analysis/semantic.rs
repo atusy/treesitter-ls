@@ -134,6 +134,65 @@ fn map_capture_to_token_type_and_modifiers(capture_name: &str) -> (u32, u32) {
 /// Maximum recursion depth for nested injections to prevent stack overflow
 const MAX_INJECTION_DEPTH: usize = 10;
 
+/// Type alias for raw token data before delta encoding
+/// (line, column, length, capture_index, mapped_name)
+type RawToken = (usize, usize, usize, u32, String);
+
+/// Post-process and delta-encode raw tokens into SemanticTokensResult.
+///
+/// This shared helper:
+/// 1. Filters zero-length tokens
+/// 2. Sorts by position
+/// 3. Deduplicates tokens at same position
+/// 4. Delta-encodes for LSP protocol
+fn finalize_tokens(mut all_tokens: Vec<RawToken>) -> Option<SemanticTokensResult> {
+    // Filter out zero-length tokens
+    all_tokens.retain(|(_, _, length, _, _)| *length > 0);
+
+    // Sort by position
+    all_tokens.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+
+    // Deduplicate at same position
+    all_tokens.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+
+    if all_tokens.is_empty() {
+        return None;
+    }
+
+    // Delta-encode
+    let mut data = Vec::with_capacity(all_tokens.len());
+    let mut last_line = 0usize;
+    let mut last_start = 0usize;
+
+    for (line, start, length, _capture_index, mapped_name) in all_tokens {
+        let (token_type, token_modifiers_bitset) =
+            map_capture_to_token_type_and_modifiers(&mapped_name);
+
+        let delta_line = line - last_line;
+        let delta_start = if delta_line == 0 {
+            start - last_start
+        } else {
+            start
+        };
+
+        data.push(SemanticToken {
+            delta_line: delta_line as u32,
+            delta_start: delta_start as u32,
+            length: length as u32,
+            token_type,
+            token_modifiers_bitset,
+        });
+
+        last_line = line;
+        last_start = start;
+    }
+
+    Some(SemanticTokensResult::Tokens(SemanticTokens {
+        result_id: None,
+        data,
+    }))
+}
+
 use crate::language::injection::collect_all_injections;
 
 /// Collect all unique injection language identifiers from a document tree.
@@ -413,58 +472,7 @@ pub fn handle_semantic_tokens_full(
         &mut all_tokens,
     );
 
-    // --- Post-processing phase ---
-
-    // 3. Filter out zero-length tokens (they don't provide useful highlighting)
-    // This also fixes issues where overlapping injections create duplicate tokens
-    // at the same position (e.g., markdown_inline creates zero-length tokens that
-    // would otherwise shadow real tokens from code block injections)
-    all_tokens.retain(|(_, _, length, _, _)| *length > 0);
-
-    // 4. Sort tokens by position
-    all_tokens.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-
-    // 5. Deduplicate tokens at the same position
-    // When host document and injected content produce tokens at the same position,
-    // keep only the first one (which is typically the one with more context).
-    // This prevents issues with Neovim's semantic token highlighter which may
-    // mishandle multiple tokens at the exact same position.
-    all_tokens.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
-
-    // --- Delta encoding phase ---
-
-    // 6. Convert to delta encoding
-    let mut last_line = 0;
-    let mut last_start = 0;
-    let mut data = Vec::with_capacity(all_tokens.len());
-
-    for (line, start, length, _capture_index, mapped_name) in all_tokens {
-        let delta_line = line - last_line;
-        let delta_start = if delta_line == 0 {
-            start - last_start
-        } else {
-            start
-        };
-
-        let (token_type, token_modifiers_bitset) =
-            map_capture_to_token_type_and_modifiers(&mapped_name);
-
-        data.push(SemanticToken {
-            delta_line: delta_line as u32,
-            delta_start: delta_start as u32,
-            length: length as u32,
-            token_type,
-            token_modifiers_bitset,
-        });
-
-        last_line = line;
-        last_start = start;
-    }
-
-    Some(SemanticTokensResult::Tokens(SemanticTokens {
-        result_id: None,
-        data,
-    }))
+    finalize_tokens(all_tokens)
 }
 
 /// Handle semantic tokens full request with pre-acquired local parsers.
@@ -494,7 +502,7 @@ pub fn handle_semantic_tokens_full_with_local_parsers(
     coordinator: Option<&crate::language::LanguageCoordinator>,
     local_parsers: &mut std::collections::HashMap<String, tree_sitter::Parser>,
 ) -> Option<SemanticTokensResult> {
-    let mut all_tokens: Vec<(usize, usize, usize, u32, String)> = Vec::with_capacity(1000);
+    let mut all_tokens: Vec<RawToken> = Vec::with_capacity(1000);
     let lines: Vec<&str> = text.lines().collect();
 
     // Recursively collect tokens using local parsers
@@ -513,47 +521,7 @@ pub fn handle_semantic_tokens_full_with_local_parsers(
         &mut all_tokens,
     );
 
-    // Post-processing (same as handle_semantic_tokens_full)
-    all_tokens.retain(|(_, _, length, _, _)| *length > 0);
-    all_tokens.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-    all_tokens.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
-
-    if all_tokens.is_empty() {
-        return None;
-    }
-
-    // Delta-encode tokens
-    let mut data = Vec::with_capacity(all_tokens.len());
-    let mut last_line = 0u32;
-    let mut last_start = 0u32;
-
-    for (line, start, length, _capture_index, mapped_name) in all_tokens {
-        let (token_type, modifiers) =
-            map_capture_to_token_type_and_modifiers(&mapped_name);
-
-        let delta_line = (line as u32) - last_line;
-        let delta_start = if delta_line == 0 {
-            (start as u32) - last_start
-        } else {
-            start as u32
-        };
-
-        data.push(SemanticToken {
-            delta_line,
-            delta_start,
-            length: length as u32,
-            token_type,
-            token_modifiers_bitset: modifiers,
-        });
-
-        last_line = line as u32;
-        last_start = start as u32;
-    }
-
-    Some(SemanticTokensResult::Tokens(SemanticTokens {
-        result_id: None,
-        data,
-    }))
+    finalize_tokens(all_tokens)
 }
 
 /// Recursive helper for collecting tokens with local parsers.
