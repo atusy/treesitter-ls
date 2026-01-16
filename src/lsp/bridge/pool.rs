@@ -2635,4 +2635,83 @@ mod tests {
         // State should remain Failed
         assert_eq!(handle.state(), ConnectionState::Failed);
     }
+
+    /// Test that requests during Closing state return error immediately (operation gating).
+    ///
+    /// Per ADR-0015/ADR-0017, when a connection is in Closing state, new requests
+    /// should be rejected with "bridge: connection closing" error. This prevents
+    /// new operations from being sent to a server that is shutting down.
+    #[tokio::test]
+    async fn request_during_closing_returns_error_immediately() {
+        use std::sync::Arc;
+        use tower_lsp::lsp_types::{Position, Url};
+
+        let pool = Arc::new(LanguageServerPool::new());
+        let config = BridgeServerConfig {
+            cmd: vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "cat > /dev/null".to_string(),
+            ],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        // Insert a ConnectionHandle with Closing state
+        {
+            let handle = create_handle_with_state(ConnectionState::Closing).await;
+            pool.connections
+                .lock()
+                .await
+                .insert("lua".to_string(), handle);
+        }
+
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let host_position = Position {
+            line: 3,
+            character: 5,
+        };
+
+        // Test hover request - should fail immediately with connection closing error
+        let start = std::time::Instant::now();
+        let result = pool
+            .send_hover_request(
+                &config,
+                &host_uri,
+                host_position,
+                "lua",
+                "region-0",
+                3,
+                "print('hello')",
+                1, // upstream_request_id
+            )
+            .await;
+        assert!(
+            start.elapsed() < Duration::from_millis(100),
+            "Should not block"
+        );
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "bridge: connection closing"
+        );
+
+        // Test completion request - same behavior
+        let result = pool
+            .send_completion_request(
+                &config,
+                &host_uri,
+                host_position,
+                "lua",
+                "region-0",
+                3,
+                "print('hello')",
+                2, // upstream_request_id
+            )
+            .await;
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "bridge: connection closing"
+        );
+    }
 }
