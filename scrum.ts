@@ -153,9 +153,9 @@ const scrum: ScrumDashboard = {
         test: "Unit test: Initializing state + shutdown signal = Closing state (valid transition)",
         implementation: "Update set_state() to allow Initializing -> Closing transition",
         type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
+        status: "completed",
+        commits: [{ hash: "32bf333a", message: "test(pool): add test for Initializing -> Closing transition", phase: "green" }],
+        notes: ["Implementation was already done in try_transition from subtask 2"],
       },
       {
         test: "Unit test: Closing state completes to Closed (valid transition)",
