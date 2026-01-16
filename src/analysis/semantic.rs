@@ -134,6 +134,54 @@ fn map_capture_to_token_type_and_modifiers(capture_name: &str) -> (u32, u32) {
 /// Maximum recursion depth for nested injections to prevent stack overflow
 const MAX_INJECTION_DEPTH: usize = 10;
 
+use crate::language::injection::collect_all_injections;
+
+/// Collect all unique injection language identifiers from a document tree.
+///
+/// This function discovers all injection regions in the document and returns
+/// the unique set of language identifiers needed to process them. This is useful
+/// for acquiring parsers upfront before processing, allowing the parser pool
+/// lock to be released early.
+///
+/// Note: This only collects top-level injections. Nested injections (e.g., Lua
+/// inside Markdown inside Markdown) are discovered during recursive processing.
+pub fn collect_injection_languages(
+    tree: &Tree,
+    text: &str,
+    coordinator: &crate::language::LanguageCoordinator,
+) -> Vec<String> {
+    use std::collections::HashSet;
+
+    let mut languages = HashSet::new();
+
+    // Get the host language from the tree's language name
+    // For now, we need to get the injection query for the host language
+    // We'll try common document types that support injections
+    let host_lang = tree.language().node_kind_count(); // This is a hack - we need the actual language name
+
+    // Try to find injection query - coordinator knows about loaded languages
+    // We iterate through potential host languages to find injections
+    // In practice, the caller should pass the host language, but for now
+    // we'll check if the coordinator has an injection query for the tree's language
+
+    // Get all injection regions from the tree
+    // Try markdown first (most common injection host)
+    for lang_id in ["markdown", "html", "nix", "rust", "python", "javascript", "typescript"] {
+        if let Some(injection_query) = coordinator.get_injection_query(lang_id) {
+            if let Some(injections) = collect_all_injections(&tree.root_node(), text, Some(&injection_query)) {
+                for injection in injections {
+                    // Resolve the injection language (handles aliases like py -> python)
+                    if let Some((resolved_lang, _)) = coordinator.resolve_injection_language(&injection.language) {
+                        languages.insert(resolved_lang);
+                    }
+                }
+            }
+        }
+    }
+
+    languages.into_iter().collect()
+}
+
 /// Recursively collect semantic tokens from a document and its injections.
 ///
 /// This function processes the given text and tree, collecting tokens from both
@@ -1873,6 +1921,58 @@ let z = 42"#;
         assert_eq!(
             result, "function",
             "Should inherit 'function' mapping from wildcard for 'rust'"
+        );
+    }
+
+    #[test]
+    fn test_collect_injection_languages_returns_unique_languages() {
+        // Test that collect_injection_languages() returns all unique injection languages
+        // This is needed for narrowing lock scope: we need to know which parsers to acquire
+        // BEFORE starting the semantic token processing.
+        //
+        // example.md has a lua fenced code block, so "lua" should be in the result.
+
+        use crate::config::WorkspaceSettings;
+        use crate::language::LanguageCoordinator;
+
+        // Read the test fixture
+        let text = include_str!("../../tests/assets/example.md");
+
+        // Set up coordinator with search paths
+        let coordinator = LanguageCoordinator::new();
+        let settings = WorkspaceSettings {
+            search_paths: vec![test_search_path()],
+            ..Default::default()
+        };
+        let _summary = coordinator.load_settings(settings);
+
+        // Load markdown language (host)
+        let load_result = coordinator.ensure_language_loaded("markdown");
+        assert!(load_result.success, "Should load markdown language");
+
+        // Parse the markdown document
+        let mut parser_pool = coordinator.create_document_parser_pool();
+        let tree = {
+            let mut parser = parser_pool
+                .acquire("markdown")
+                .expect("Should get markdown parser");
+            let result = parser.parse(text, None).expect("Should parse markdown");
+            parser_pool.release("markdown".to_string(), parser);
+            result
+        };
+
+        // Collect injection languages - this function doesn't exist yet (RED phase)
+        let languages = collect_injection_languages(
+            &tree,
+            text,
+            &coordinator,
+        );
+
+        // Should find "lua" as an injection language
+        assert!(
+            languages.contains(&"lua".to_string()),
+            "Should find 'lua' as injection language in example.md. Found: {:?}",
+            languages
         );
     }
 }
