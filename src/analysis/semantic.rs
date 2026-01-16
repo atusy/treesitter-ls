@@ -143,39 +143,42 @@ use crate::language::injection::collect_all_injections;
 /// for acquiring parsers upfront before processing, allowing the parser pool
 /// lock to be released early.
 ///
+/// # Arguments
+/// * `tree` - The parsed syntax tree of the host document
+/// * `text` - The source text of the host document
+/// * `host_language` - The language identifier of the host document (e.g., "markdown")
+/// * `coordinator` - Language coordinator for injection query lookup
+///
+/// # Returns
+/// A vector of unique resolved language identifiers for all injections found.
+///
 /// Note: This only collects top-level injections. Nested injections (e.g., Lua
 /// inside Markdown inside Markdown) are discovered during recursive processing.
 pub fn collect_injection_languages(
     tree: &Tree,
     text: &str,
+    host_language: &str,
     coordinator: &crate::language::LanguageCoordinator,
 ) -> Vec<String> {
     use std::collections::HashSet;
 
     let mut languages = HashSet::new();
 
-    // Get the host language from the tree's language name
-    // For now, we need to get the injection query for the host language
-    // We'll try common document types that support injections
-    let host_lang = tree.language().node_kind_count(); // This is a hack - we need the actual language name
+    // Get injection query for the host language
+    let Some(injection_query) = coordinator.get_injection_query(host_language) else {
+        return Vec::new(); // No injection support for this language
+    };
 
-    // Try to find injection query - coordinator knows about loaded languages
-    // We iterate through potential host languages to find injections
-    // In practice, the caller should pass the host language, but for now
-    // we'll check if the coordinator has an injection query for the tree's language
+    // Find all injection regions in the document
+    let Some(injections) = collect_all_injections(&tree.root_node(), text, Some(&injection_query)) else {
+        return Vec::new(); // No injections found
+    };
 
-    // Get all injection regions from the tree
-    // Try markdown first (most common injection host)
-    for lang_id in ["markdown", "html", "nix", "rust", "python", "javascript", "typescript"] {
-        if let Some(injection_query) = coordinator.get_injection_query(lang_id) {
-            if let Some(injections) = collect_all_injections(&tree.root_node(), text, Some(&injection_query)) {
-                for injection in injections {
-                    // Resolve the injection language (handles aliases like py -> python)
-                    if let Some((resolved_lang, _)) = coordinator.resolve_injection_language(&injection.language) {
-                        languages.insert(resolved_lang);
-                    }
-                }
-            }
+    // Collect unique resolved language identifiers
+    for injection in injections {
+        // Resolve the injection language (handles aliases like py -> python)
+        if let Some((resolved_lang, _)) = coordinator.resolve_injection_language(&injection.language) {
+            languages.insert(resolved_lang);
         }
     }
 
@@ -1961,10 +1964,11 @@ let z = 42"#;
             result
         };
 
-        // Collect injection languages - this function doesn't exist yet (RED phase)
+        // Collect injection languages from the markdown document
         let languages = collect_injection_languages(
             &tree,
             text,
+            "markdown",
             &coordinator,
         );
 
