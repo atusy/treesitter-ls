@@ -111,6 +111,11 @@ const scrum: ScrumDashboard = {
     ],
   },
   retrospectives: [
+    { sprint: 12, improvements: [
+      { action: "Fix unrelated test failures (markdown language loading) before starting new sprints to maintain clean test baseline", timing: "immediate", status: "active", outcome: null },
+      { action: "Document expected dead code warnings in commit messages when building foundation code that will be integrated in subsequent PBIs", timing: "sprint", status: "active", outcome: null },
+      { action: "Consider vertical slicing: prefer smaller increments with immediate integration over larger foundation-first approaches", timing: "product", status: "active", outcome: null },
+    ] },
     { sprint: 11, improvements: [
       { action: "Document pattern for handling LSP types with nested optional Location fields in array properties", timing: "product", status: "active", outcome: null },
       { action: "When changing function signatures, verify all call sites in same commit to maintain atomicity", timing: "sprint", status: "active", outcome: null },
