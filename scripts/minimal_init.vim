@@ -1,3 +1,5 @@
+" do make deps/vim first
+
 set nocompatible
 filetype plugin indent on
 syntax off
@@ -5,7 +7,7 @@ syntax off
 
 " Setup tree-sitter-ls
 let s:cwd = getcwd()
-set rtp+=deps/vim/vim-lsp
+set rtp+=deps/vim/prabirshrestha/vim-lsp
 augroup lsp_setup
   autocmd!
   autocmd User lsp_setup call lsp#register_server({
