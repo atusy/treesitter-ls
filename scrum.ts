@@ -131,7 +131,7 @@ const scrum: ScrumDashboard = {
     number: 12,
     pbi_id: "pbi-connection-states",
     goal: "Add Closing and Closed states with valid transitions and operation gating",
-    status: "in_progress",
+    status: "review",
     subtasks: [
       {
         test: "Unit test: ConnectionState enum has all 5 variants (Initializing, Ready, Failed, Closing, Closed)",
@@ -177,9 +177,9 @@ const scrum: ScrumDashboard = {
         test: "Unit test: new requests in Closing state receive REQUEST_FAILED error",
         implementation: "Add operation gating for Closing state in request handling that rejects with REQUEST_FAILED",
         type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
+        status: "completed",
+        commits: [{ hash: "76e3073d", message: "test(pool): add test for operation gating during Closing state", phase: "green" }],
+        notes: ["Implementation was already done in subtask 1 when Closing arm was added to the match statement", "Error message is 'bridge: connection closing' (io::Error::other)"],
       },
     ],
   },
