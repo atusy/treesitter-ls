@@ -201,7 +201,7 @@ mod tests {
     use tower_lsp::lsp_types::Url;
 
     #[test]
-    fn uses_treesitter_ls_path_prefix() {
+    fn uses_tree_sitter_ls_path_prefix() {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
         let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
 
@@ -538,9 +538,9 @@ mod tests {
             "file:///C:/Users/dev/code.py"
         ));
         assert!(!VirtualDocumentUri::is_virtual_uri("untitled:Untitled-1"));
-        // Real file in a directory that happens to contain ".tree-sitter-ls" in path
+        // Real file in a directory that happens to contain "tree-sitter-ls" in path
         assert!(!VirtualDocumentUri::is_virtual_uri(
-            "file:///some/treesitter-ls/file.lua"
+            "file:///some/tree-sitter-ls/file.lua"
         ));
         // Real file in user's .tree-sitter-ls config directory (edge case the stricter check fixes)
         assert!(!VirtualDocumentUri::is_virtual_uri(

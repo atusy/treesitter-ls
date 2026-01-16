@@ -1,4 +1,4 @@
-//! Auto-install functionality for treesitter-ls.
+//! Auto-install functionality for tree-sitter-ls.
 //!
 //! This module handles automatic installation of missing language parsers and queries
 //! when a file is opened that requires them.

@@ -1,4 +1,4 @@
-//! Error handling types for treesitter-ls
+//! Error handling types for tree-sitter-ls
 //!
 //! This module provides error types used throughout the LSP server.
 
