@@ -430,7 +430,10 @@ impl LanguageServerPool {
     {
         if self.should_send_didopen(host_uri, virtual_uri).await {
             let did_open = build_bridge_didopen_notification(virtual_uri, virtual_content);
-            writer.write_message(&did_open).await?;
+            if let Err(e) = writer.write_message(&did_open).await {
+                cleanup_on_error();
+                return Err(e);
+            }
             self.mark_document_opened(virtual_uri);
         } else if !self.is_document_opened(virtual_uri) {
             cleanup_on_error();
