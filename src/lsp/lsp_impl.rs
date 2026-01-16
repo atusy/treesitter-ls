@@ -1299,40 +1299,10 @@ impl LanguageServer for TreeSitterLs {
         // This must be called AFTER parse_document so we have access to the AST
         self.check_injected_languages_auto_install(&uri).await;
 
-        // Check if queries are ready for the document
-        if let Some(language_name) = self.get_language_for_document(&uri) {
-            let has_queries = self.language.has_queries(&language_name);
-
-            if has_queries {
-                // Always request semantic tokens refresh on file open
-                // This ensures the client always has fresh tokens, especially important
-                // when reopening files after they were closed
-                if self.client.semantic_tokens_refresh().await.is_ok() {
-                    self.client
-                        .log_message(
-                            MessageType::INFO,
-                            "Requested semantic tokens refresh on file open",
-                        )
-                        .await;
-                }
-            } else {
-                // If document is parsed but queries aren't ready, wait and retry
-                // Give a small delay for queries to load
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-                // Check again after delay
-                let has_queries_after_delay = self.language.has_queries(&language_name);
-
-                if has_queries_after_delay && self.client.semantic_tokens_refresh().await.is_ok() {
-                    self.client
-                        .log_message(
-                            MessageType::INFO,
-                            "Requested semantic tokens refresh after queries loaded",
-                        )
-                        .await;
-                }
-            }
-        }
+        // NOTE: No semantic_tokens_refresh() on didOpen.
+        // Capable LSP clients should request by themselves.
+        // Calling refresh would be redundant and can cause deadlocks with clients
+        // like vim-lsp that don't respond to workspace/semanticTokens/refresh requests.
 
         self.client
             .log_message(MessageType::INFO, "file opened!")
