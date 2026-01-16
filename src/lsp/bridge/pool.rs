@@ -2577,4 +2577,21 @@ mod tests {
         assert!(result.is_ok(), "Initializing -> Closing should be valid");
         assert_eq!(handle.state(), ConnectionState::Closing);
     }
+
+    /// Test that Closing -> Closed transition is valid (shutdown complete).
+    ///
+    /// Per ADR-0015/ADR-0017, when a Closing connection completes shutdown
+    /// (LSP handshake done or timeout), it transitions to Closed terminal state.
+    #[tokio::test]
+    async fn closing_to_closed_transition_is_valid() {
+        let handle = create_handle_with_state(ConnectionState::Closing).await;
+
+        // Verify starting state
+        assert_eq!(handle.state(), ConnectionState::Closing);
+
+        // Attempt transition to Closed (shutdown complete)
+        let result = handle.try_transition(ConnectionState::Closed);
+        assert!(result.is_ok(), "Closing -> Closed should be valid");
+        assert_eq!(handle.state(), ConnectionState::Closed);
+    }
 }
