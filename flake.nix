@@ -1,5 +1,5 @@
 {
-  description = "tree-sitter-ls - A Tree-sitter Language Server";
+  description = "kakehashi - A Tree-sitter Language Server";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -96,7 +96,7 @@
           ];
 
           shellHook = ''
-            echo "🌲 tree-sitter-ls development environment"
+            echo "kakehashi development environment"
             echo "Rust: $(rustc --version)"
             echo "Cargo: $(cargo --version)"
             echo ""
@@ -118,7 +118,7 @@
         };
 
         packages.default = pkgs.rustPlatform.buildRustPackage {
-          pname = "tree-sitter-ls";
+          pname = "kakehashi";
           version = (pkgs.lib.importTOML ./Cargo.toml).package.version;
           src = self;
 
@@ -138,8 +138,8 @@
           ];
 
           meta = with pkgs.lib; {
-            description = "A Tree-sitter Language Server";
-            homepage = "https://github.com/atusy/tree-sitter-ls";
+            description = "kakehashi - A Tree-sitter Language Server";
+            homepage = "https://github.com/atusy/kakehashi";
             license = licenses.mit;
             maintainers = with maintainers; [ atusy ];
           };
