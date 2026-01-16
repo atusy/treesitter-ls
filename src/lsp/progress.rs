@@ -10,10 +10,10 @@ use tower_lsp::lsp_types::{
 
 /// Creates a progress token for a language installation.
 ///
-/// Format: `treesitter-ls/install/{language}`
+/// Format: `tree-sitter-ls/install/{language}`
 /// Each language gets a unique token to allow concurrent installations.
 pub fn progress_token(language: &str) -> NumberOrString {
-    NumberOrString::String(format!("treesitter-ls/install/{}", language))
+    NumberOrString::String(format!("tree-sitter-ls/install/{}", language))
 }
 
 /// Creates a ProgressParams for the Begin phase of parser installation.
@@ -57,10 +57,10 @@ mod tests {
     fn test_progress_token_format() {
         let token = progress_token("python");
 
-        // Token should be a string with the format treesitter-ls/install/{language}
+        // Token should be a string with the format tree-sitter-ls/install/{language}
         match token {
             NumberOrString::String(s) => {
-                assert_eq!(s, "treesitter-ls/install/python");
+                assert_eq!(s, "tree-sitter-ls/install/python");
             }
             NumberOrString::Number(_) => {
                 panic!("Expected String token, got Number");
@@ -75,7 +75,7 @@ mod tests {
         // Verify token format
         match &params.token {
             NumberOrString::String(s) => {
-                assert_eq!(s, "treesitter-ls/install/python");
+                assert_eq!(s, "tree-sitter-ls/install/python");
             }
             NumberOrString::Number(_) => {
                 panic!("Expected String token, got Number");
@@ -99,7 +99,7 @@ mod tests {
 
         match &params_success.token {
             NumberOrString::String(s) => {
-                assert_eq!(s, "treesitter-ls/install/python");
+                assert_eq!(s, "tree-sitter-ls/install/python");
             }
             NumberOrString::Number(_) => panic!("Expected String token"),
         }

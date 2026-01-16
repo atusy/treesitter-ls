@@ -203,7 +203,7 @@ impl TreeSitterLs {
     /// If initialization fails, returns an empty registry.
     fn init_failed_parser_registry() -> FailedParserRegistry {
         let state_dir = crate::install::default_data_dir()
-            .unwrap_or_else(|| PathBuf::from("/tmp/treesitter-ls"));
+            .unwrap_or_else(|| PathBuf::from("/tmp/tree-sitter-ls"));
 
         let registry = FailedParserRegistry::new(&state_dir);
 
@@ -276,7 +276,7 @@ impl TreeSitterLs {
                 MessageType::WARNING,
                 format!(
                     "Parser for '{}' not found. Auto-install is disabled because {}. \
-                     Please install the parser manually using: treesitter-ls language install {}",
+                     Please install the parser manually using: tree-sitter-ls language install {}",
                     language, reason, language
                 ),
             )
@@ -1142,7 +1142,7 @@ impl LanguageServer for TreeSitterLs {
             .await;
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
-                name: "treesitter-ls".to_string(),
+                name: "tree-sitter-ls".to_string(),
                 version: Some(env!("CARGO_PKG_VERSION").to_string()),
             }),
             capabilities: ServerCapabilities {
