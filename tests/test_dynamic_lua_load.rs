@@ -1,8 +1,8 @@
 //! Integration test for dynamically loading Lua from searchPaths
 
 use std::collections::HashMap;
-use treesitter_ls::config::{TreeSitterSettings, WorkspaceSettings};
-use treesitter_ls::language::LanguageCoordinator;
+use tree_sitter_ls::config::{TreeSitterSettings, WorkspaceSettings};
+use tree_sitter_ls::language::LanguageCoordinator;
 
 /// Verify that the coordinator can dynamically load Lua when searchPaths points to deps/treesitter
 #[test]

@@ -6,10 +6,10 @@
 use std::collections::HashSet;
 use tower_lsp::lsp_types::Url;
 use tree_sitter::{Parser, Query};
-use treesitter_ls::document::DocumentStore;
-use treesitter_ls::language::LanguageCoordinator;
-use treesitter_ls::language::injection::collect_all_injections;
-use treesitter_ls::lsp::auto_install::InstallingLanguages;
+use tree_sitter_ls::document::DocumentStore;
+use tree_sitter_ls::language::LanguageCoordinator;
+use tree_sitter_ls::language::injection::collect_all_injections;
+use tree_sitter_ls::lsp::auto_install::InstallingLanguages;
 
 #[test]
 fn test_did_open_should_call_check_injected_languages_after_parsing() {
@@ -577,7 +577,7 @@ fn test_reload_after_install_requires_ensure_language_loaded_sequence() {
     // This test verifies the correct behavior at the coordinator level.
     // The actual bug is in lsp_impl.rs which needs to call ensure_language_loaded.
 
-    use treesitter_ls::language::LanguageCoordinator;
+    use tree_sitter_ls::language::LanguageCoordinator;
 
     let coordinator = LanguageCoordinator::new();
 

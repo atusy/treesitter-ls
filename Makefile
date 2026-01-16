@@ -4,7 +4,7 @@
 CARGO = cargo
 TARGET_DIR = target
 RELEASE_DIR = $(TARGET_DIR)/release
-BINARY_NAME = treesitter-ls
+BINARY_NAME = tree-sitter-ls
 RELEASE_BINARY = $(RELEASE_DIR)/$(BINARY_NAME)
 
 # Default target
@@ -98,12 +98,12 @@ deps/nvim/nvim-treesitter:
 deps/nvim/catppuccin:
 	git clone --filter=blob:none https://github.com/catppuccin/nvim $@
 
-target/debug/treesitter-ls: build-debug
+target/debug/tree-sitter-ls: build-debug
 
-deps/treesitter/.installed: target/debug/treesitter-ls
+deps/treesitter/.installed: target/debug/tree-sitter-ls
 	@mkdir -p deps/treesitter
 	for lang in lua rust markdown markdown_inline yaml; do \
-		./target/debug/treesitter-ls language install $$lang --data-dir deps/treesitter --force; \
+		./target/debug/tree-sitter-ls language install $$lang --data-dir deps/treesitter --force; \
 	done
 	@touch $@
 

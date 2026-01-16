@@ -1,5 +1,5 @@
 {
-  description = "treesitter-ls - A Tree-sitter Language Server";
+  description = "tree-sitter-ls - A Tree-sitter Language Server";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -96,7 +96,7 @@
           ];
 
           shellHook = ''
-            echo "🌲 treesitter-ls development environment"
+            echo "🌲 tree-sitter-ls development environment"
             echo "Rust: $(rustc --version)"
             echo "Cargo: $(cargo --version)"
             echo ""
@@ -118,7 +118,7 @@
         };
 
         packages.default = pkgs.rustPlatform.buildRustPackage {
-          pname = "treesitter-ls";
+          pname = "tree-sitter-ls";
           version = (pkgs.lib.importTOML ./Cargo.toml).package.version;
           src = self;
 
@@ -139,7 +139,7 @@
 
           meta = with pkgs.lib; {
             description = "A Tree-sitter Language Server";
-            homepage = "https://github.com/atusy/treesitter-ls";
+            homepage = "https://github.com/atusy/tree-sitter-ls";
             license = licenses.mit;
             maintainers = with maintainers; [ atusy ];
           };

@@ -4,8 +4,8 @@
 //! InjectionMap contains CacheableInjectionRegion entries.
 
 use tree_sitter::{Parser, Query};
-use treesitter_ls::analysis::{InjectionMap, next_result_id};
-use treesitter_ls::language::injection::{CacheableInjectionRegion, collect_all_injections};
+use tree_sitter_ls::analysis::{InjectionMap, next_result_id};
+use tree_sitter_ls::language::injection::{CacheableInjectionRegion, collect_all_injections};
 use url::Url;
 
 /// Helper to populate injection map from a parsed tree (simulates parse_document behavior).
@@ -277,7 +277,7 @@ fn test_edit_outside_injection_preserves_all_caches() {
     // AC4: Edit host document text (line 0), verify InjectionTokenCache entries unchanged
 
     let injection_map = InjectionMap::new();
-    let injection_token_cache = treesitter_ls::analysis::InjectionTokenCache::new();
+    let injection_token_cache = tree_sitter_ls::analysis::InjectionTokenCache::new();
     let uri = Url::parse("file:///test/edit_outside.md").unwrap();
 
     // Document structure:
@@ -355,7 +355,7 @@ fn test_edit_in_footer_preserves_all_caches() {
     // AC4 variant: Edit in footer (after all injections)
 
     let injection_map = InjectionMap::new();
-    let injection_token_cache = treesitter_ls::analysis::InjectionTokenCache::new();
+    let injection_token_cache = tree_sitter_ls::analysis::InjectionTokenCache::new();
     let uri = Url::parse("file:///test/edit_footer.md").unwrap();
 
     let markdown_text = "# Header\n\n```lua\nprint(1)\n```\n\nFooter text\n";
@@ -419,7 +419,7 @@ fn test_edit_inside_injection_invalidates_only_that_region() {
     // AC5: Edit inside code block (injection region), verify only that region_id is removed
 
     let injection_map = InjectionMap::new();
-    let injection_token_cache = treesitter_ls::analysis::InjectionTokenCache::new();
+    let injection_token_cache = tree_sitter_ls::analysis::InjectionTokenCache::new();
     let uri = Url::parse("file:///test/edit_inside.md").unwrap();
 
     // Document with two code blocks
@@ -613,7 +613,7 @@ fn test_removing_code_block_clears_stale_cache() {
     // AC6: Remove code block, verify stale cache entries are handled
 
     let injection_map = InjectionMap::new();
-    let injection_token_cache = treesitter_ls::analysis::InjectionTokenCache::new();
+    let injection_token_cache = tree_sitter_ls::analysis::InjectionTokenCache::new();
     let uri = Url::parse("file:///test/remove_block.md").unwrap();
 
     // Initial document with two code blocks
@@ -951,7 +951,7 @@ fn test_cache_hit_after_edit_outside_injection() {
     // the preserved result_id.
 
     let injection_map = InjectionMap::new();
-    let injection_token_cache = treesitter_ls::analysis::InjectionTokenCache::new();
+    let injection_token_cache = tree_sitter_ls::analysis::InjectionTokenCache::new();
     let uri = Url::parse("file:///test/cache_hit.md").unwrap();
 
     // Document with one code block
