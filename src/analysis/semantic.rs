@@ -357,53 +357,124 @@ fn finalize_tokens(mut all_tokens: Vec<RawToken>) -> Option<SemanticTokensResult
 
 use crate::language::injection::collect_all_injections;
 
-/// Collect all unique injection language identifiers from a document tree.
+/// Collect all unique injection language identifiers from a document tree recursively.
 ///
-/// This function discovers all injection regions in the document and returns
-/// the unique set of language identifiers needed to process them. This is useful
-/// for acquiring parsers upfront before processing, allowing the parser pool
-/// lock to be released early.
+/// This function discovers all injection regions in the document (including nested
+/// injections) and returns the unique set of language identifiers needed to process
+/// them. This is essential for the narrow lock scope pattern: acquire all parsers
+/// upfront, release the lock, then process without holding the mutex.
 ///
 /// # Arguments
 /// * `tree` - The parsed syntax tree of the host document
 /// * `text` - The source text of the host document
 /// * `host_language` - The language identifier of the host document (e.g., "markdown")
 /// * `coordinator` - Language coordinator for injection query lookup
+/// * `parser_pool` - Parser pool for parsing nested injection content
 ///
 /// # Returns
-/// A vector of unique resolved language identifiers for all injections found.
-///
-/// Note: This only collects top-level injections. Nested injections (e.g., Lua
-/// inside Markdown inside Markdown) are discovered during recursive processing.
+/// A vector of unique resolved language identifiers for all injections found,
+/// including those nested inside other injections (up to MAX_INJECTION_DEPTH).
 pub(crate) fn collect_injection_languages(
     tree: &Tree,
     text: &str,
     host_language: &str,
     coordinator: &crate::language::LanguageCoordinator,
+    parser_pool: &mut crate::language::DocumentParserPool,
 ) -> Vec<String> {
     use std::collections::HashSet;
 
     let mut languages = HashSet::new();
+    collect_injection_languages_recursive(
+        tree,
+        text,
+        host_language,
+        coordinator,
+        parser_pool,
+        &mut languages,
+        0,
+    );
+    languages.into_iter().collect()
+}
 
-    // Get injection query for the host language
-    let Some(injection_query) = coordinator.get_injection_query(host_language) else {
-        return Vec::new(); // No injection support for this language
-    };
+/// Recursive helper for collecting injection languages at all depths.
+fn collect_injection_languages_recursive(
+    tree: &Tree,
+    text: &str,
+    language: &str,
+    coordinator: &crate::language::LanguageCoordinator,
+    parser_pool: &mut crate::language::DocumentParserPool,
+    languages: &mut std::collections::HashSet<String>,
+    depth: usize,
+) {
+    use crate::language::injection::parse_offset_directive_for_pattern;
 
-    // Find all injection regions in the document
-    let Some(injections) = collect_all_injections(&tree.root_node(), text, Some(&injection_query)) else {
-        return Vec::new(); // No injections found
-    };
-
-    // Collect unique resolved language identifiers
-    for injection in injections {
-        // Resolve the injection language (handles aliases like py -> python)
-        if let Some((resolved_lang, _)) = coordinator.resolve_injection_language(&injection.language) {
-            languages.insert(resolved_lang);
-        }
+    if depth >= MAX_INJECTION_DEPTH {
+        return;
     }
 
-    languages.into_iter().collect()
+    // Get injection query for this language
+    let Some(injection_query) = coordinator.get_injection_query(language) else {
+        return;
+    };
+
+    // Find all injection regions
+    let Some(injections) = collect_all_injections(&tree.root_node(), text, Some(&injection_query))
+    else {
+        return;
+    };
+
+    for injection in injections {
+        // Resolve the injection language
+        let Some((resolved_lang, _)) = coordinator.resolve_injection_language(&injection.language)
+        else {
+            continue;
+        };
+
+        // Add to set (whether already present or not)
+        languages.insert(resolved_lang.clone());
+
+        // Get offset directive if any
+        let offset = parse_offset_directive_for_pattern(&injection_query, injection.pattern_index);
+
+        // Calculate effective content range
+        let content_node = injection.content_node;
+        let (inj_start_byte, inj_end_byte) = if let Some(off) = offset {
+            use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range};
+            let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
+            let effective = calculate_effective_range(text, byte_range, off);
+            (effective.start, effective.end)
+        } else {
+            (content_node.start_byte(), content_node.end_byte())
+        };
+
+        // Validate range
+        if inj_start_byte >= text.len() || inj_end_byte > text.len() {
+            continue;
+        }
+        let inj_content_text = &text[inj_start_byte..inj_end_byte];
+
+        // Parse the injected content to discover nested injections
+        let Some(mut parser) = parser_pool.acquire(&resolved_lang) else {
+            continue;
+        };
+        let Some(injected_tree) = parser.parse(inj_content_text, None) else {
+            parser_pool.release(resolved_lang.clone(), parser);
+            continue;
+        };
+
+        // Recursively collect languages from nested injections
+        collect_injection_languages_recursive(
+            &injected_tree,
+            inj_content_text,
+            &resolved_lang,
+            coordinator,
+            parser_pool,
+            languages,
+            depth + 1,
+        );
+
+        parser_pool.release(resolved_lang, parser);
+    }
 }
 
 /// Recursively collect semantic tokens from a document and its injections.
@@ -2163,6 +2234,7 @@ let z = 42"#;
             text,
             "markdown",
             &coordinator,
+            &mut parser_pool,
         );
 
         // Should find "lua" as an injection language
@@ -2229,7 +2301,7 @@ let z = 42"#;
         );
 
         // Step 2: Pre-acquire parsers into local HashMap
-        let injection_languages = collect_injection_languages(&tree, text, "markdown", &coordinator);
+        let injection_languages = collect_injection_languages(&tree, text, "markdown", &coordinator, &mut parser_pool);
         let mut local_parsers: HashMap<String, Parser> = HashMap::new();
         for lang_id in &injection_languages {
             if let Some(parser) = parser_pool.acquire(lang_id) {
@@ -2268,6 +2340,123 @@ let z = 42"#;
             orig.data.len(),
             new.data.len(),
             "Token count should match between original and local-parsers version"
+        );
+    }
+
+    #[test]
+    fn test_nested_only_language_with_local_parsers() {
+        // This test verifies that nested injection languages are discovered.
+        //
+        // Test document structure:
+        // `````markdown
+        // ```rust
+        // fn main() {}
+        // ```
+        // `````
+        //
+        // "rust" is ONLY inside the nested markdown, not at top level.
+        // collect_injection_languages() must recursively discover it:
+        // - Depth 0: finds "markdown"
+        // - Depth 1: parses nested markdown, finds "rust"
+        // Result: ["markdown", "rust"]
+        //
+        // The `fn` keyword should produce a semantic token.
+
+        use crate::config::WorkspaceSettings;
+        use crate::language::LanguageCoordinator;
+        use std::collections::HashMap;
+        use tree_sitter::Parser;
+
+        // Document with rust ONLY inside nested markdown (not at top level)
+        let text = r#"`````markdown
+```rust
+fn main() {}
+```
+`````"#;
+
+        let coordinator = LanguageCoordinator::new();
+        let settings = WorkspaceSettings {
+            search_paths: vec![test_search_path()],
+            ..Default::default()
+        };
+        let _summary = coordinator.load_settings(settings);
+
+        coordinator.ensure_language_loaded("markdown");
+        coordinator.ensure_language_loaded("rust");
+
+        let mut parser_pool = coordinator.create_document_parser_pool();
+
+        let tree = {
+            let mut parser = parser_pool
+                .acquire("markdown")
+                .expect("Should get markdown parser");
+            let result = parser.parse(text, None).expect("Should parse markdown");
+            parser_pool.release("markdown".to_string(), parser);
+            result
+        };
+
+        let md_highlight_query = coordinator
+            .get_highlight_query("markdown")
+            .expect("Should have markdown highlight query");
+
+        // Pre-acquire parsers using collect_injection_languages (now recursive!)
+        let injection_languages = collect_injection_languages(&tree, text, "markdown", &coordinator, &mut parser_pool);
+
+        // With recursive collection, rust should now be found!
+        eprintln!("Injection languages found: {:?}", injection_languages);
+
+        let mut local_parsers: HashMap<String, Parser> = HashMap::new();
+        for lang_id in &injection_languages {
+            if let Some(parser) = parser_pool.acquire(lang_id) {
+                local_parsers.insert(lang_id.clone(), parser);
+            }
+        }
+
+        // Call new function with local parsers
+        let result = handle_semantic_tokens_full_with_local_parsers(
+            text,
+            &tree,
+            &md_highlight_query,
+            Some("markdown"),
+            None,
+            Some(&coordinator),
+            &mut local_parsers,
+        );
+
+        // Return parsers to pool
+        for (lang_id, parser) in local_parsers {
+            parser_pool.release(lang_id, parser);
+        }
+
+        let tokens = result.expect("Should return tokens");
+        let SemanticTokensResult::Tokens(tokens) = tokens else {
+            panic!("Expected full tokens result");
+        };
+
+        // Find the `fn` keyword token at line 2 (0-indexed), col 0
+        let mut abs_line = 0u32;
+        let mut abs_col = 0u32;
+        let mut found_fn_keyword = false;
+
+        for token in &tokens.data {
+            abs_line += token.delta_line;
+            if token.delta_line > 0 {
+                abs_col = token.delta_start;
+            } else {
+                abs_col += token.delta_start;
+            }
+
+            // Line 2 (0-indexed), col 0, keyword type (1), length 2 ("fn")
+            if abs_line == 2 && abs_col == 0 && token.token_type == 1 && token.length == 2 {
+                found_fn_keyword = true;
+                break;
+            }
+        }
+
+        assert!(
+            found_fn_keyword,
+            "Should find `fn` keyword at line 2 from nested Rust injection (Markdown -> Markdown -> Rust). \
+             collect_injection_languages() must recursively discover nested languages."
         );
     }
 }
