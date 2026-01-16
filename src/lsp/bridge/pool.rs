@@ -30,10 +30,14 @@ const INIT_TIMEOUT_SECS: u64 = 30;
 /// - Ready: initialize/initialized handshake complete, can accept requests
 /// - Failed: initialization failed (timeout, error, etc.)
 ///
-/// State transitions per ADR-0015 Operation Gating:
+/// State transitions per ADR-0015/ADR-0017 Operation Gating:
 /// - Initializing -> Ready (on successful init)
 /// - Initializing -> Failed (on timeout/error)
-/// - Failed connections are removed from pool, next request spawns fresh server
+/// - Initializing -> Closing (on shutdown signal)
+/// - Ready -> Closing (on shutdown signal)
+/// - Ready -> Failed (on crash/panic)
+/// - Failed -> Closed (direct, bypass Closing - no LSP handshake)
+/// - Closing -> Closed (on completion or timeout)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ConnectionState {
     /// Server spawned, initialize request sent, awaiting response
@@ -42,6 +46,10 @@ pub(crate) enum ConnectionState {
     Ready,
     /// Initialization failed (timeout, error, server crash)
     Failed,
+    /// Shutdown initiated, draining operations, new requests rejected
+    Closing,
+    /// Terminal state, connection fully terminated
+    Closed,
 }
 
 use super::actor::{ReaderTaskHandle, ResponseRouter, spawn_reader_task};
@@ -556,8 +564,8 @@ impl LanguageServerPool {
                 ConnectionState::Initializing => {
                     return Err(io::Error::other("bridge: downstream server initializing"));
                 }
-                ConnectionState::Failed => {
-                    // Remove failed connection, allow respawn on next attempt
+                ConnectionState::Failed | ConnectionState::Closed => {
+                    // Remove failed/closed connection, allow respawn on next attempt
                     connections.remove(language);
                     drop(connections);
                     // Recursive call to spawn fresh connection (boxed to avoid infinite future size)
@@ -567,6 +575,10 @@ impl LanguageServerPool {
                         timeout,
                     ))
                     .await;
+                }
+                ConnectionState::Closing => {
+                    // Connection is shutting down, reject new requests
+                    return Err(io::Error::other("bridge: connection closing"));
                 }
                 ConnectionState::Ready => {
                     return Ok(Arc::clone(handle));
@@ -2449,5 +2461,44 @@ mod tests {
             1,
             "Cleanup callback should be called exactly once"
         );
+    }
+
+    // ========================================
+    // Sprint 12: Connection State Machine Tests
+    // ========================================
+
+    /// Test that ConnectionState enum has all 5 variants per ADR-0015/ADR-0017.
+    ///
+    /// The complete state machine requires:
+    /// - Initializing: spawn started, awaiting initialize response
+    /// - Ready: initialize/initialized handshake complete
+    /// - Failed: initialization failed (timeout, error, server crash)
+    /// - Closing: shutdown initiated, draining operations
+    /// - Closed: terminal state, connection fully terminated
+    #[test]
+    fn connection_state_has_all_five_variants() {
+        // Test that all 5 variants exist and can be created
+        let states = [
+            ConnectionState::Initializing,
+            ConnectionState::Ready,
+            ConnectionState::Failed,
+            ConnectionState::Closing,
+            ConnectionState::Closed,
+        ];
+
+        // Verify we have exactly 5 distinct states
+        assert_eq!(states.len(), 5, "ConnectionState should have exactly 5 variants");
+
+        // Verify each state is distinct (PartialEq is derived)
+        assert_ne!(ConnectionState::Initializing, ConnectionState::Ready);
+        assert_ne!(ConnectionState::Initializing, ConnectionState::Failed);
+        assert_ne!(ConnectionState::Initializing, ConnectionState::Closing);
+        assert_ne!(ConnectionState::Initializing, ConnectionState::Closed);
+        assert_ne!(ConnectionState::Ready, ConnectionState::Failed);
+        assert_ne!(ConnectionState::Ready, ConnectionState::Closing);
+        assert_ne!(ConnectionState::Ready, ConnectionState::Closed);
+        assert_ne!(ConnectionState::Failed, ConnectionState::Closing);
+        assert_ne!(ConnectionState::Failed, ConnectionState::Closed);
+        assert_ne!(ConnectionState::Closing, ConnectionState::Closed);
     }
 }
