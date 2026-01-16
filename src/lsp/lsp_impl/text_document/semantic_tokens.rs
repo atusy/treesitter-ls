@@ -7,8 +7,9 @@ use tower_lsp::lsp_types::*;
 use tree_sitter::Tree;
 
 use crate::analysis::{
-    IncrementalDecision, compute_incremental_tokens, decide_tokenization_strategy,
-    decode_semantic_tokens, encode_semantic_tokens, handle_semantic_tokens_full_delta,
+    IncrementalDecision, collect_injection_languages, compute_incremental_tokens,
+    decide_tokenization_strategy, decode_semantic_tokens, encode_semantic_tokens,
+    handle_semantic_tokens_full_delta, handle_semantic_tokens_full_with_local_parsers,
     next_result_id,
 };
 
@@ -252,17 +253,45 @@ impl Kakehashi {
             // Get capture mappings
             let capture_mappings = self.language.get_capture_mappings();
 
-            // Use injection-aware handler (works with or without injection support)
-            let mut pool = self.parser_pool.lock().await;
-            let result = crate::analysis::handle_semantic_tokens_full(
+            // Narrow lock scope pattern (Task 1.1):
+            // 1. Collect injection languages (~instant)
+            // 2. Acquire lock, pre-acquire parsers, release lock (~10μs)
+            // 3. Process tokens without holding lock (100ms-1s)
+            // 4. Acquire lock, return parsers (~10μs)
+            let injection_languages =
+                collect_injection_languages(&tree, &text, &language_name, &self.language);
+
+            // Step 2: Pre-acquire parsers with brief lock
+            let mut local_parsers = {
+                let mut pool = self.parser_pool.lock().await;
+                let mut parsers = std::collections::HashMap::new();
+                for lang_id in &injection_languages {
+                    if let Some(parser) = pool.acquire(lang_id) {
+                        parsers.insert(lang_id.clone(), parser);
+                    }
+                }
+                parsers
+            }; // Lock released here
+
+            // Step 3: Process tokens (no lock held)
+            let result = handle_semantic_tokens_full_with_local_parsers(
                 &text,
                 &tree,
                 &query,
                 Some(&language_name),
                 Some(&capture_mappings),
                 Some(&self.language),
-                Some(&mut pool),
+                &mut local_parsers,
             );
+
+            // Step 4: Return parsers with brief lock
+            {
+                let mut pool = self.parser_pool.lock().await;
+                for (lang_id, parser) in local_parsers {
+                    pool.release(lang_id, parser);
+                }
+            }
+
             (result, text)
         }; // doc reference is dropped here
 
