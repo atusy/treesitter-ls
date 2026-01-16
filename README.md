@@ -1,6 +1,6 @@
 <!-- Focus on providing info for users. Avoid technical details -->
 
-# kakehashi (架け橋)
+# 🌉 kakehashi (架け橋)
 
 **kakehashi** is a Tree-sitter-based language server that bridges the gap between languages, editors, and tooling.
 
