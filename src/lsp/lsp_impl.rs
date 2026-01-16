@@ -662,16 +662,31 @@ impl TreeSitterLs {
                     self.client.log_message(message_type, message.clone()).await;
                 }
                 LanguageEvent::SemanticTokensRefresh { language_id } => {
-                    if let Err(err) = self.client.semantic_tokens_refresh().await {
-                        self.client
-                            .log_message(
-                                MessageType::ERROR,
-                                format!(
-                                    "Failed to request semantic tokens refresh for {language_id}: {err}"
-                                ),
-                            )
-                            .await;
-                    }
+                    // Fire-and-forget with timeout to prevent deadlock with clients
+                    // that don't respond to workspace/semanticTokens/refresh (e.g., vim-lsp).
+                    // Timeout prevents memory leak from accumulated pending requests.
+                    let client = self.client.clone();
+                    let lang_id = language_id.clone();
+                    tokio::spawn(async move {
+                        match tokio::time::timeout(
+                            std::time::Duration::from_millis(500),
+                            client.semantic_tokens_refresh(),
+                        )
+                        .await
+                        {
+                            Ok(Ok(())) => {}
+                            Ok(Err(err)) => {
+                                log::debug!(
+                                    "semantic_tokens_refresh failed for {}: {}",
+                                    lang_id,
+                                    err
+                                );
+                            }
+                            Err(_) => {
+                                log::debug!("semantic_tokens_refresh timed out for {}", lang_id);
+                            }
+                        }
+                    });
                 }
             }
         }
@@ -913,29 +928,22 @@ impl TreeSitterLs {
         // Apply the updated settings
         self.apply_settings(updated_settings).await;
 
-        // Ensure the language is loaded
+        // Ensure the language is loaded and process its events.
         // apply_settings only stores configuration but doesn't load the parser.
-        let _load_result = self.language.ensure_language_loaded(language);
+        // The load result contains SemanticTokensRefresh event that will trigger
+        // a non-blocking refresh request to the client via handle_language_events.
+        let load_result = self.language.ensure_language_loaded(language);
+        self.handle_language_events(&load_result.events).await;
 
         // For document languages, re-parse the document that triggered the install.
         // For injection languages, DON'T re-parse - the host document is already parsed
         // with the correct language. Re-parsing with the injection language would break
-        // all highlighting. Instead, just refresh semantic tokens.
+        // all highlighting. The SemanticTokensRefresh event above will notify the client.
         if !is_injection {
             // Get the host language for this document (not the installed language)
             let host_language = self.get_language_for_document(&uri);
             let lang_for_parse = host_language.as_deref();
             self.parse_document(uri.clone(), text, lang_for_parse, vec![])
-                .await;
-        }
-
-        // Request semantic tokens refresh
-        if self.client.semantic_tokens_refresh().await.is_ok() {
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    format!("Language '{}' loaded, semantic tokens refreshed", language),
-                )
                 .await;
         }
     }
