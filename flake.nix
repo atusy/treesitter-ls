@@ -113,7 +113,7 @@
           RUST_LOG = "info";
 
           # Tree-sitter paths for testing
-          TREESITTER_GRAMMARS = "${treeSitterCombined}";
+          TREE_SITTER_GRAMMARS = "${treeSitterCombined}";
           MINI_NVIM = "${pkgs.vimPlugins.mini-nvim}";
         };
 

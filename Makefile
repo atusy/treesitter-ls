@@ -70,7 +70,7 @@ install: build
 	$(CARGO) install --path .
 
 # Determine if running in Nix environment (skip deps if so)
-ifdef TREESITTER_GRAMMARS
+ifdef TREE_SITTER_GRAMMARS
   NVIM_DEPS =
 else
   NVIM_DEPS = deps
