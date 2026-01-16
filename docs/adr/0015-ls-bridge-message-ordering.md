@@ -254,7 +254,7 @@ Operations are gated at two levels: **server lifecycle** and **document lifecycl
   - `Closing`/`Closed` → DROP (writer loop stopped, see ADR-0017)
   - Subject to document lifecycle gating below
 
-**Why `REQUEST_FAILED` instead of `SERVER_NOT_INITIALIZED`**: The upstream client communicates with tree-sitter-ls, which IS initialized. The client has no knowledge of downstream servers—that's an internal implementation detail. Using `SERVER_NOT_INITIALIZED` would confuse clients that just received an `initialized` response from tree-sitter-ls.
+**Why `REQUEST_FAILED` instead of `SERVER_NOT_INITIALIZED`**: The upstream client communicates with kakehashi, which IS initialized. The client has no knowledge of downstream servers—that's an internal implementation detail. Using `SERVER_NOT_INITIALIZED` would confuse clients that just received an `initialized` response from kakehashi.
 
 **Document Lifecycle Gating** (per downstream, per URI):
 

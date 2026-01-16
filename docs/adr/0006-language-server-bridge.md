@@ -6,16 +6,16 @@ Proposed (Phase 1 complete: infrastructure with go-to-definition working)
 
 ## Context
 
-Markdown code blocks and other injection regions (e.g., JavaScript inside HTML `<script>` tags, SQL in string literals) currently only receive Tree-sitter-based features from tree-sitter-ls. While Tree-sitter provides excellent syntax highlighting via semantic tokens, injection regions lack access to full LSP capabilities such as:
+Markdown code blocks and other injection regions (e.g., JavaScript inside HTML `<script>` tags, SQL in string literals) currently only receive Tree-sitter-based features from kakehashi. While Tree-sitter provides excellent syntax highlighting via semantic tokens, injection regions lack access to full LSP capabilities such as:
 
 - Go-to-definition with cross-file resolution
 - Completion with type information
 - Hover documentation
 - Diagnostics from language-specific analyzers
 
-Modern editors can only attach one LSP server per buffer, meaning users must choose between tree-sitter-ls (fast semantic tokens for the host document) and a language-specific server (full features but only for the primary language).
+Modern editors can only attach one LSP server per buffer, meaning users must choose between kakehashi (fast semantic tokens for the host document) and a language-specific server (full features but only for the primary language).
 
-The key insight is: **tree-sitter-ls already knows where injection regions are and what languages they contain**. It can act as an LSP Bridge, connecting injection regions to appropriate language servers with position translation.
+The key insight is: **kakehashi already knows where injection regions are and what languages they contain**. It can act as an LSP Bridge, connecting injection regions to appropriate language servers with position translation.
 
 ### Language Server Constraints
 
@@ -31,13 +31,13 @@ These constraints mean bridging is not simply "forward request, return response"
 
 ## Decision
 
-**Implement LSP Bridge capability in tree-sitter-ls to connect injection regions to configured language servers, with position translation, user-provided initialization options, and connection pooling.**
+**Implement LSP Bridge capability in kakehashi to connect injection regions to configured language servers, with position translation, user-provided initialization options, and connection pooling.**
 
 ### Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        tree-sitter-ls                            │
+│                        kakehashi                            │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  ┌──────────────┐    ┌─────────────────┐    ┌────────────────┐  │
@@ -68,7 +68,7 @@ These constraints mean bridging is not simply "forward request, return response"
 
 ### Security Model
 
-**Only explicitly configured servers are spawned.** tree-sitter-ls does not auto-discover or execute arbitrary language servers based on injection content. A malicious code block cannot trigger execution of unregistered commands.
+**Only explicitly configured servers are spawned.** kakehashi does not auto-discover or execute arbitrary language servers based on injection content. A malicious code block cannot trigger execution of unregistered commands.
 
 - Servers must be listed in user configuration with explicit `cmd` field
 - No shell expansion or command interpolation in server commands
@@ -159,7 +159,7 @@ The bridge requires knowing which server to use for each language. Language serv
       "languages": ["rust"],
       "workspaceType": "cargo",
       "initializationOptions": {
-        "linkedProjects": ["~/.config/tree-sitter-ls/rust-project.json"]
+        "linkedProjects": ["~/.config/kakehashi/rust-project.json"]
       }
     },
     "pyright": {
@@ -218,7 +218,7 @@ This enables scenarios like:
 - **R Markdown files**: Bridge only R (no Python bridge needed)
 - **Plain Markdown**: Disable all bridging (use Tree-sitter only)
 
-The bridge filtering happens at request time: when a request targets an injection region, tree-sitter-ls checks if the injection language has `enabled: true` in the host's `bridge` map before routing to a server.
+The bridge filtering happens at request time: when a request targets an injection region, kakehashi checks if the injection language has `enabled: true` in the host's `bridge` map before routing to a server.
 
 #### Multiple Servers Per Language
 
@@ -257,14 +257,14 @@ Injection content must be written to disk for servers that require real files.
 Temp files use deterministic, unique paths to support multiple concurrent injections:
 
 ```
-{temp_dir}/tree-sitter-ls/{document_hash}/{language}_{injection_index}.{ext}
+{temp_dir}/kakehashi/{document_hash}/{language}_{injection_index}.{ext}
 ```
 
 Example:
 ```
-/tmp/tree-sitter-ls/a1b2c3d4/rust_0.rs
-/tmp/tree-sitter-ls/a1b2c3d4/rust_1.rs
-/tmp/tree-sitter-ls/e5f6g7h8/python_0.py
+/tmp/kakehashi/a1b2c3d4/rust_0.rs
+/tmp/kakehashi/a1b2c3d4/rust_1.rs
+/tmp/kakehashi/e5f6g7h8/python_0.py
 ```
 
 | Component | Source |
@@ -280,10 +280,10 @@ Example:
 | Event | Action |
 |-------|--------|
 | Document closed | Delete temp files for that document |
-| tree-sitter-ls startup | Clean stale files from previous sessions |
-| tree-sitter-ls shutdown | Delete all temp files |
+| kakehashi startup | Clean stale files from previous sessions |
+| kakehashi shutdown | Delete all temp files |
 
-Startup cleanup handles crash recovery: scan `{temp_dir}/tree-sitter-ls/` and remove directories older than 24 hours.
+Startup cleanup handles crash recovery: scan `{temp_dir}/kakehashi/` and remove directories older than 24 hours.
 
 ### Workspace Provisioning
 
@@ -298,7 +298,7 @@ Different language servers have different project structure requirements:
 
 #### Design: User-Configured LSP + Minimal File Creation
 
-tree-sitter-ls should be as simple as possible:
+kakehashi should be as simple as possible:
 1. **Create only the source file** with injection content
 2. **Pass user-provided settings** to the language server via `initializationOptions`
 3. **Let the language server** use its own configuration mechanisms
@@ -306,20 +306,20 @@ tree-sitter-ls should be as simple as possible:
 For rust-analyzer, users maintain a `rust-project.json` that defines a virtual crate:
 
 ```json
-// ~/.config/tree-sitter-ls/rust-project.json
+// ~/.config/kakehashi/rust-project.json
 {
   "sysroot_src": "~/.rustup/toolchains/stable-x86_64-apple-darwin/lib/rustlib/src/rust/library",
   "crates": [{
-    "root_module": "/tmp/tree-sitter-ls/injection.rs",
+    "root_module": "/tmp/kakehashi/injection.rs",
     "edition": "2021",
     "deps": []
   }]
 }
 ```
 
-> **Note**: The `root_module` path should match the temp file location used by tree-sitter-ls. For multiple injections, consider using a glob pattern if rust-analyzer supports it, or configure multiple crate entries.
+> **Note**: The `root_module` path should match the temp file location used by kakehashi. For multiple injections, consider using a glob pattern if rust-analyzer supports it, or configure multiple crate entries.
 
-tree-sitter-ls configuration points rust-analyzer to this file:
+kakehashi configuration points rust-analyzer to this file:
 
 ```json
 {
@@ -329,7 +329,7 @@ tree-sitter-ls configuration points rust-analyzer to this file:
       "languages": ["rust"],
       "workspaceType": "cargo",
       "initializationOptions": {
-        "linkedProjects": ["~/.config/tree-sitter-ls/rust-project.json"]
+        "linkedProjects": ["~/.config/kakehashi/rust-project.json"]
       }
     }
   }
@@ -337,7 +337,7 @@ tree-sitter-ls configuration points rust-analyzer to this file:
 ```
 
 **Benefits**:
-- tree-sitter-ls has zero language-specific knowledge
+- kakehashi has zero language-specific knowledge
 - Users leverage familiar LSP configuration patterns
 - Full flexibility for any language server
 - Simpler implementation (just write source files)
@@ -369,7 +369,7 @@ Implementation uses a multi-signal approach:
 
 ### Async Communication and Error Handling
 
-Language server communication uses synchronous stdio which blocks the thread. In tree-sitter-ls's async runtime (tokio), this requires `spawn_blocking` to avoid stalling other tasks.
+Language server communication uses synchronous stdio which blocks the thread. In kakehashi's async runtime (tokio), this requires `spawn_blocking` to avoid stalling other tasks.
 
 ```rust
 let result = tokio::time::timeout(
@@ -404,7 +404,7 @@ match result {
 | Malformed response | JSON parse error | Return `None`, log error |
 | Server busy | No response within timeout | Return `None`, consider increasing timeout |
 
-Cancellation: When the user moves the cursor before a response arrives, the LSP client typically sends a new request. tree-sitter-ls should:
+Cancellation: When the user moves the cursor before a response arrives, the LSP client typically sends a new request. kakehashi should:
 1. Not block waiting for the old response
 2. Allow the old request to complete in background (result discarded)
 3. Process the new request immediately
@@ -448,7 +448,7 @@ Translation is straightforward for positions within a single injection. See [ADR
 ### Positive
 
 - **Full LSP in injections**: Users get completion, hover, diagnostics in code blocks
-- **No editor configuration**: Works transparently; editor only talks to tree-sitter-ls
+- **No editor configuration**: Works transparently; editor only talks to kakehashi
 - **Leverages existing detection**: Reuses injection detection from Tree-sitter queries
 - **Progressive enhancement**: Falls back gracefully to Tree-sitter when servers unavailable
 - **Low latency**: Connection pooling enables fast responses after initial spawn
@@ -457,7 +457,7 @@ Translation is straightforward for positions within a single injection. See [ADR
 ### Negative
 
 - **Resource overhead**: Multiple language server processes consume memory
-- **Complexity**: tree-sitter-ls becomes both server and client; protocol translation adds complexity
+- **Complexity**: kakehashi becomes both server and client; protocol translation adds complexity
 - **Initial latency**: First request to a language incurs server spawn time (mitigated by eager spawn)
 - **Debugging difficulty**: Multi-hop request/response makes troubleshooting harder
 - **Configuration burden**: Some servers (rust-analyzer) require non-trivial setup
