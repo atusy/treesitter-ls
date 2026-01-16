@@ -149,7 +149,7 @@ impl ConnectionHandle {
             Ok(guard) => *guard,
             Err(poisoned) => {
                 warn!(
-                    target: "treesitter_ls::lock_recovery",
+                    target: "tree_sitter_ls::lock_recovery",
                     "Recovered from poisoned state lock in ConnectionHandle::state()"
                 );
                 *poisoned.into_inner()
@@ -169,7 +169,7 @@ impl ConnectionHandle {
             Ok(mut guard) => *guard = new_state,
             Err(poisoned) => {
                 warn!(
-                    target: "treesitter_ls::lock_recovery",
+                    target: "tree_sitter_ls::lock_recovery",
                     "Recovered from poisoned state lock in ConnectionHandle::set_state()"
                 );
                 *poisoned.into_inner() = new_state;
@@ -359,7 +359,7 @@ impl LanguageServerPool {
             }
             Err(poisoned) => {
                 warn!(
-                    target: "treesitter_ls::lock_recovery",
+                    target: "tree_sitter_ls::lock_recovery",
                     "Recovered from poisoned opened_documents lock in remove_document_version()"
                 );
                 poisoned.into_inner().remove(&uri_string);
@@ -381,7 +381,7 @@ impl LanguageServerPool {
             Ok(opened) => opened.contains(&uri_string),
             Err(poisoned) => {
                 warn!(
-                    target: "treesitter_ls::lock_recovery",
+                    target: "tree_sitter_ls::lock_recovery",
                     "Recovered from poisoned opened_documents lock in is_document_opened()"
                 );
                 poisoned.into_inner().contains(&uri_string)
@@ -403,7 +403,7 @@ impl LanguageServerPool {
             }
             Err(poisoned) => {
                 warn!(
-                    target: "treesitter_ls::lock_recovery",
+                    target: "tree_sitter_ls::lock_recovery",
                     "Recovered from poisoned opened_documents lock in mark_document_opened()"
                 );
                 poisoned.into_inner().insert(uri_string);

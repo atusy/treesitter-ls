@@ -27,7 +27,7 @@ impl QueryStore {
             }
             Err(poisoned) => {
                 warn!(
-                    target: "treesitter_ls::lock_recovery",
+                    target: "tree_sitter_ls::lock_recovery",
                     "Recovered from poisoned lock in query_store::insert_highlight_query for language: {}",
                     lang_name
                 );
@@ -41,7 +41,7 @@ impl QueryStore {
             Ok(queries) => queries.get(lang_name).cloned(),
             Err(poisoned) => {
                 warn!(
-                    target: "treesitter_ls::lock_recovery",
+                    target: "tree_sitter_ls::lock_recovery",
                     "Recovered from poisoned lock in query_store::get_highlight_query for language: {}",
                     lang_name
                 );
@@ -55,7 +55,7 @@ impl QueryStore {
             Ok(queries) => queries.contains_key(lang_name),
             Err(poisoned) => {
                 warn!(
-                    target: "treesitter_ls::lock_recovery",
+                    target: "tree_sitter_ls::lock_recovery",
                     "Recovered from poisoned lock in query_store::has_highlight_query for language: {}",
                     lang_name
                 );
@@ -72,7 +72,7 @@ impl QueryStore {
             }
             Err(poisoned) => {
                 warn!(
-                    target: "treesitter_ls::lock_recovery",
+                    target: "tree_sitter_ls::lock_recovery",
                     "Recovered from poisoned lock in query_store::insert_locals_query for language: {}",
                     lang_name
                 );
@@ -86,7 +86,7 @@ impl QueryStore {
             Ok(queries) => queries.get(lang_name).cloned(),
             Err(poisoned) => {
                 warn!(
-                    target: "treesitter_ls::lock_recovery",
+                    target: "tree_sitter_ls::lock_recovery",
                     "Recovered from poisoned lock in query_store::get_locals_query for language: {}",
                     lang_name
                 );
@@ -103,7 +103,7 @@ impl QueryStore {
             }
             Err(poisoned) => {
                 warn!(
-                    target: "treesitter_ls::lock_recovery",
+                    target: "tree_sitter_ls::lock_recovery",
                     "Recovered from poisoned lock in query_store::insert_injection_query for language: {}",
                     lang_name
                 );
@@ -117,7 +117,7 @@ impl QueryStore {
             Ok(queries) => queries.get(lang_name).cloned(),
             Err(poisoned) => {
                 warn!(
-                    target: "treesitter_ls::lock_recovery",
+                    target: "tree_sitter_ls::lock_recovery",
                     "Recovered from poisoned lock in query_store::get_injection_query for language: {}",
                     lang_name
                 );
@@ -134,7 +134,7 @@ impl QueryStore {
             }
             Err(poisoned) => {
                 warn!(
-                    target: "treesitter_ls::lock_recovery",
+                    target: "tree_sitter_ls::lock_recovery",
                     "Recovered from poisoned lock in query_store::clear_language (highlight) for language: {}",
                     lang_name
                 );
@@ -148,7 +148,7 @@ impl QueryStore {
             }
             Err(poisoned) => {
                 warn!(
-                    target: "treesitter_ls::lock_recovery",
+                    target: "tree_sitter_ls::lock_recovery",
                     "Recovered from poisoned lock in query_store::clear_language (locals) for language: {}",
                     lang_name
                 );
@@ -162,7 +162,7 @@ impl QueryStore {
             }
             Err(poisoned) => {
                 warn!(
-                    target: "treesitter_ls::lock_recovery",
+                    target: "tree_sitter_ls::lock_recovery",
                     "Recovered from poisoned lock in query_store::clear_language (injection) for language: {}",
                     lang_name
                 );
@@ -177,7 +177,7 @@ impl QueryStore {
             Ok(mut queries) => queries.clear(),
             Err(poisoned) => {
                 warn!(
-                    target: "treesitter_ls::lock_recovery",
+                    target: "tree_sitter_ls::lock_recovery",
                     "Recovered from poisoned lock in query_store::clear_all (highlight)"
                 );
                 poisoned.into_inner().clear();
@@ -188,7 +188,7 @@ impl QueryStore {
             Ok(mut queries) => queries.clear(),
             Err(poisoned) => {
                 warn!(
-                    target: "treesitter_ls::lock_recovery",
+                    target: "tree_sitter_ls::lock_recovery",
                     "Recovered from poisoned lock in query_store::clear_all (locals)"
                 );
                 poisoned.into_inner().clear();
@@ -199,7 +199,7 @@ impl QueryStore {
             Ok(mut queries) => queries.clear(),
             Err(poisoned) => {
                 warn!(
-                    target: "treesitter_ls::lock_recovery",
+                    target: "tree_sitter_ls::lock_recovery",
                     "Recovered from poisoned lock in query_store::clear_all (injection)"
                 );
                 poisoned.into_inner().clear();

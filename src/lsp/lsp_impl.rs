@@ -210,7 +210,7 @@ impl TreeSitterLs {
         // Initialize and detect any previous crashes
         if let Err(e) = registry.init() {
             log::warn!(
-                target: "treesitter_ls::crash_recovery",
+                target: "tree_sitter_ls::crash_recovery",
                 "Failed to initialize crash recovery state: {}",
                 e
             );
@@ -309,7 +309,7 @@ impl TreeSitterLs {
                     // This region is affected - invalidate its cache
                     self.injection_token_cache.remove(uri, &region.result_id);
                     log::debug!(
-                        target: "treesitter_ls::injection_cache",
+                        target: "tree_sitter_ls::injection_cache",
                         "Invalidated injection cache for {} region (edit bytes {}..{})",
                         region.language,
                         edit_start,
@@ -472,7 +472,7 @@ impl TreeSitterLs {
             // Check if this parser has previously crashed
             if self.failed_parsers.is_failed(&language_name) {
                 log::warn!(
-                    target: "treesitter_ls::crash_recovery",
+                    target: "tree_sitter_ls::crash_recovery",
                     "Skipping parsing for '{}' - parser previously crashed",
                     language_name
                 );
@@ -600,7 +600,7 @@ impl TreeSitterLs {
             && !host_settings.is_language_bridgeable(injection_language)
         {
             log::debug!(
-                target: "treesitter_ls::bridge",
+                target: "tree_sitter_ls::bridge",
                 "Bridge filter for {} blocks injection language {}",
                 host_language,
                 injection_language
@@ -1212,7 +1212,7 @@ impl LanguageServer for TreeSitterLs {
         // This enables crash recovery to detect if parsing was in progress
         if let Err(e) = self.failed_parsers.persist_state() {
             log::warn!(
-                target: "treesitter_ls::crash_recovery",
+                target: "tree_sitter_ls::crash_recovery",
                 "Failed to persist crash detection state on shutdown: {}",
                 e
             );
@@ -1357,7 +1357,7 @@ impl LanguageServer for TreeSitterLs {
         let closed_docs = self.language_server_pool.close_host_document(&uri).await;
         if !closed_docs.is_empty() {
             log::debug!(
-                target: "treesitter_ls::bridge",
+                target: "tree_sitter_ls::bridge",
                 "Closed {} virtual documents for host {}",
                 closed_docs.len(),
                 uri

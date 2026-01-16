@@ -44,7 +44,7 @@ impl TreeSitterLs {
 
         // Get the language for this document
         let Some(language_name) = self.get_language_for_document(&uri) else {
-            log::debug!(target: "treesitter_ls::inlay_hint", "No language detected");
+            log::debug!(target: "tree_sitter_ls::inlay_hint", "No language detected");
             return Ok(None);
         };
 

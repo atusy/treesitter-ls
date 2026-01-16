@@ -24,7 +24,7 @@ impl ConfigStore {
         match self.language_configs.write() {
             Ok(mut guard) => *guard = configs,
             Err(poisoned) => {
-                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in config_store::set_language_configs");
+                warn!(target: "tree_sitter_ls::lock_recovery", "Recovered from poisoned lock in config_store::set_language_configs");
                 *poisoned.into_inner() = configs;
             }
         }
@@ -40,7 +40,7 @@ impl ConfigStore {
         match self.language_configs.read() {
             Ok(guard) => guard.get(lang_name).cloned(),
             Err(poisoned) => {
-                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in config_store::get_language_config");
+                warn!(target: "tree_sitter_ls::lock_recovery", "Recovered from poisoned lock in config_store::get_language_config");
                 poisoned.into_inner().get(lang_name).cloned()
             }
         }
@@ -50,7 +50,7 @@ impl ConfigStore {
         match self.language_configs.read() {
             Ok(guard) => guard.clone(),
             Err(poisoned) => {
-                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in config_store::get_all_language_configs");
+                warn!(target: "tree_sitter_ls::lock_recovery", "Recovered from poisoned lock in config_store::get_all_language_configs");
                 poisoned.into_inner().clone()
             }
         }
@@ -61,7 +61,7 @@ impl ConfigStore {
         match self.capture_mappings.write() {
             Ok(mut guard) => *guard = mappings,
             Err(poisoned) => {
-                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in config_store::set_capture_mappings");
+                warn!(target: "tree_sitter_ls::lock_recovery", "Recovered from poisoned lock in config_store::set_capture_mappings");
                 *poisoned.into_inner() = mappings;
             }
         }
@@ -71,7 +71,7 @@ impl ConfigStore {
         match self.capture_mappings.read() {
             Ok(guard) => guard.clone(),
             Err(poisoned) => {
-                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in config_store::get_capture_mappings");
+                warn!(target: "tree_sitter_ls::lock_recovery", "Recovered from poisoned lock in config_store::get_capture_mappings");
                 poisoned.into_inner().clone()
             }
         }
@@ -82,7 +82,7 @@ impl ConfigStore {
         match self.search_paths.write() {
             Ok(mut guard) => *guard = paths,
             Err(poisoned) => {
-                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in config_store::set_search_paths");
+                warn!(target: "tree_sitter_ls::lock_recovery", "Recovered from poisoned lock in config_store::set_search_paths");
                 *poisoned.into_inner() = paths;
             }
         }
@@ -92,7 +92,7 @@ impl ConfigStore {
         match self.search_paths.read() {
             Ok(guard) => guard.clone(),
             Err(poisoned) => {
-                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in config_store::get_search_paths");
+                warn!(target: "tree_sitter_ls::lock_recovery", "Recovered from poisoned lock in config_store::get_search_paths");
                 poisoned.into_inner().clone()
             }
         }
@@ -103,7 +103,7 @@ impl ConfigStore {
         match self.search_paths.read() {
             Ok(guard) => Arc::new(guard.clone()),
             Err(poisoned) => {
-                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in config_store::get_search_paths_ref");
+                warn!(target: "tree_sitter_ls::lock_recovery", "Recovered from poisoned lock in config_store::get_search_paths_ref");
                 Arc::new(poisoned.into_inner().clone())
             }
         }
@@ -114,21 +114,21 @@ impl ConfigStore {
         match self.language_configs.write() {
             Ok(mut guard) => guard.clear(),
             Err(poisoned) => {
-                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in config_store::clear (language_configs)");
+                warn!(target: "tree_sitter_ls::lock_recovery", "Recovered from poisoned lock in config_store::clear (language_configs)");
                 poisoned.into_inner().clear();
             }
         }
         match self.capture_mappings.write() {
             Ok(mut guard) => *guard = CaptureMappings::default(),
             Err(poisoned) => {
-                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in config_store::clear (capture_mappings)");
+                warn!(target: "tree_sitter_ls::lock_recovery", "Recovered from poisoned lock in config_store::clear (capture_mappings)");
                 *poisoned.into_inner() = CaptureMappings::default();
             }
         }
         match self.search_paths.write() {
             Ok(mut guard) => *guard = None,
             Err(poisoned) => {
-                warn!(target: "treesitter_ls::lock_recovery", "Recovered from poisoned lock in config_store::clear (search_paths)");
+                warn!(target: "tree_sitter_ls::lock_recovery", "Recovered from poisoned lock in config_store::clear (search_paths)");
                 *poisoned.into_inner() = None;
             }
         }

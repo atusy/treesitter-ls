@@ -58,7 +58,7 @@ pub fn parse_offset_directive_for_pattern(
                     // Validate argument count (should be 5: capture + 4 offsets)
                     if arg_count < 5 {
                         log::info!(
-                            target: "treesitter_ls::query",
+                            target: "tree_sitter_ls::query",
                             "Malformed #offset! directive for pattern {}: expected 4 offset values, got {}. \
                             Using default offset (0, 0, 0, 0). \
                             Correct format: (#offset! @injection.content start_row start_col end_row end_col)",
@@ -109,7 +109,7 @@ pub fn parse_offset_directive_for_pattern(
                             .collect();
 
                         log::info!(
-                            target: "treesitter_ls::query",
+                            target: "tree_sitter_ls::query",
                             "Failed to parse #offset! directive for pattern {}: invalid values [{}]. \
                             Using default offset (0, 0, 0, 0). \
                             All offset values must be integers.",
