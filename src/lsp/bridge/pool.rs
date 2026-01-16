@@ -2560,4 +2560,21 @@ mod tests {
         assert!(result.is_ok(), "Ready -> Closing should be valid");
         assert_eq!(handle.state(), ConnectionState::Closing);
     }
+
+    /// Test that Initializing -> Closing transition is valid (shutdown signal during init).
+    ///
+    /// Per ADR-0015/ADR-0017, when an Initializing connection receives a shutdown signal,
+    /// it should transition to Closing state (abort init, begin shutdown).
+    #[tokio::test]
+    async fn initializing_to_closing_transition_is_valid() {
+        let handle = create_handle_with_state(ConnectionState::Initializing).await;
+
+        // Verify starting state
+        assert_eq!(handle.state(), ConnectionState::Initializing);
+
+        // Attempt transition to Closing (shutdown signal during init)
+        let result = handle.try_transition(ConnectionState::Closing);
+        assert!(result.is_ok(), "Initializing -> Closing should be valid");
+        assert_eq!(handle.state(), ConnectionState::Closing);
+    }
 }
