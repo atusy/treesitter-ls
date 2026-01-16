@@ -1440,13 +1440,10 @@ impl LanguageServer for TreeSitterLs {
         // This must be called AFTER parse_document so we have access to the updated AST
         self.check_injected_languages_auto_install(&uri).await;
 
-        // Request the client to refresh semantic tokens
-        // This will trigger the client to request new semantic tokens
-        if self.client.semantic_tokens_refresh().await.is_ok() {
-            self.client
-                .log_message(MessageType::INFO, "Requested semantic tokens refresh")
-                .await;
-        }
+        // NOTE: We intentionally do NOT call semantic_tokens_refresh() here.
+        // LSP clients already request new tokens after didChange (via semanticTokens/full/delta).
+        // Calling refresh would be redundant and can cause deadlocks with synchronous clients
+        // like vim-lsp on Vim, which cannot respond to server requests while processing.
 
         self.client
             .log_message(MessageType::INFO, "file changed!")
