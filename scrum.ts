@@ -161,9 +161,9 @@ const scrum: ScrumDashboard = {
         test: "Unit test: Closing state completes to Closed (valid transition)",
         implementation: "Update set_state() to allow Closing -> Closed transition",
         type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
+        status: "completed",
+        commits: [{ hash: "191f16c9", message: "test(pool): add test for Closing -> Closed transition", phase: "green" }],
+        notes: ["Implementation was already done in try_transition from subtask 2"],
       },
       {
         test: "Unit test: Failed state transitions directly to Closed, bypassing Closing",
